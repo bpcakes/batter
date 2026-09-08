@@ -6,8 +6,10 @@ Batter's unit of reuse is an invariant: who owns this work, which deadline bound
 it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.
 
-The source is one library crate with small modules plus a separate test-support
-crate. Public functions accept native futures, concrete errors, and runtime
+The root is a virtual Cargo workspace. The `batter` foundation,
+`batter-axum` adapter, and `batter-test-support` utilities are separate libraries;
+`batter-example-postgres-lifecycle` is an unpublished executable package.
+Public functions accept native futures, concrete errors, and runtime
 primitives. Only process/cleanup boundaries erase errors into BoxError, because
 those boundaries aggregate heterogeneous component results.
 
@@ -17,18 +19,31 @@ application composition root
   |-- batter lifecycle + cleanup
   |-- batter operation + retry + admission
   |-- native tracing subscriber and exporters (application-owned)
-  |-- optional batter HTTP adapter -> Axum / Tower
+  |-- optional batter-axum -> batter + Axum / Tower
   |-- native SQLx PgPool / Transaction
   |-- Runlimit, Runledger (future thin adapters)
   `-- tests -> batter-test-support + postgres-test-harness (future composition)
 ```
 
-The default graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.
+The foundation graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.
 The latter provides safe pin projection for a private, allocation-free tracing
-context wrapper; it was already a transitive dependency. Axum/Serde are
-optional. SQLx is optional for the example. There is no TypeScript runtime,
+context wrapper; it was already a transitive dependency. Axum/Serde belong to
+the adapter package. SQLx belongs to the example package. There is no TypeScript runtime,
 algebraic-effect datatype, service locator, runtime-neutral abstraction, or
 cyclic dependency on the user's reusable libraries.
+
+`batter-test-support` depends on neither the foundation nor an adapter. Core
+tests can use its generic scripts without pulling higher layers back into the
+foundation. Cross-package fixtures belong in their application/example test
+targets. The external PostgreSQL harness is not moved or made a dependency by
+this reorganization. New SQLx, Runlimit, or Runledger adapter crates require
+proven shared mechanics; the current SQLx composition remains native application
+code. See [ADR-006](adr/006-workspace-packages.md).
+
+Each package declares its version, Rust minimum, and publication policy. All
+currently retain version 0.1.0, Rust 1.94, and `publish = false`; a shared
+workspace does not imply a mandatory stack or synchronized releases. The root
+lockfile and verification matrix remain shared.
 
 ## Three work lifetimes
 
@@ -140,6 +155,14 @@ destruction of Batter-owned futures, including their nested spans. Operations
 and HTTP boundaries capture it on first poll; admitted finite work captures it
 at submission. This requires no downstream wrapper, global subscriber, extra
 task, or per-operation heap allocation.
+
+`batter::telemetry::with_current_dispatch` exposes this behavior as an opaque
+future for adapter authors. It captures the current dispatcher when called and
+protects both inner polling and destruction. It does not capture or enter the
+current span; instrument the inner future when needed. The Axum adapter calls it inside
+its async boundary, preserving the existing first-poll capture. Observations and
+nested spans must live inside the protected future. This seam introduces no
+task ownership, cancellation shielding, global subscriber, or runtime abstraction.
 
 ## Why there is no resource graph yet
 

@@ -1,8 +1,8 @@
 # Guarantees, preconditions, and non-guarantees
 
-These describe the implemented contract and its limits. The dependency refresh
-raises the workspace minimum to Rust 1.94 and pins development to Rust 1.98.1;
-SQLx 0.9.0 remains an optional example dependency. See [validation](validation.md)
+These describe the implemented contract and its limits. All workspace packages
+retain Rust 1.94 as their minimum, with development pinned to Rust 1.98.1.
+SQLx 0.9.0 belongs only to the unpublished PostgreSQL example package. See [validation](validation.md)
 for executed checks. Passing tests do not establish guarantees beyond their scope.
 
 ## Execution boundary
@@ -29,6 +29,13 @@ of its observed futures. Completion/drop events and nested span destruction stay
 with that subscriber when a runtime abort happens outside the original poll.
 Operations and HTTP boundaries capture this context on first poll; this does not
 install global state or supervise application tasks spawned outside Batter.
+
+Adapter authors can use `batter::telemetry::with_current_dispatch` to preserve
+the dispatcher at wrapper construction through inner-future polling and
+destruction. It returns a future and adds no task, heap allocation, or `Send` /
+`'static` requirement to the wrapped future. Keep observations and nested spans
+inside it. It does not capture or enter the current span, drive a dropped future
+to completion, or supervise work.
 
 `reserve_finalization` divides an existing context into sibling work/finalization
 contexts. Work ends at the original deadline minus the positive reserve;
@@ -181,6 +188,11 @@ must handle partial acquisition and initialization according to native resource
 contracts. Resource values must not require an unavailable runtime after shutdown.
 
 ## HTTP boundary
+
+Handler panics propagate through this middleware; `HttpFailure::Internal` is not
+an automatic panic catcher. Process-task and cleanup-hook panic observation does
+not establish HTTP recovery or redact Rust's default panic-hook output.
+This is source-inspected behavior, unverified by a dedicated HTTP handler-panic test.
 
 The admission point is the readiness read. A request racing drain may be admitted
 when that read sees Ready. It receives an OperationContext extension tied to

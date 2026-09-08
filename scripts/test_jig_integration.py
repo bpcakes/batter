@@ -166,13 +166,21 @@ class ArchiveTests(unittest.TestCase):
             repo = Path(directory) / "repo"
             (repo / "scripts").mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/package.py", repo / "scripts/package.py")
-            included = ["scripts/jig", "scripts/install-jig.sh", ".mcp.json", ".jig.toml",
+            included = ["Cargo.toml", "Cargo.lock", "scripts/jig", "scripts/install-jig.sh", ".mcp.json", ".jig.toml",
                         ".gitattributes", ".agent/jig-contract.json", ".agent/PLANS.md",
-                        ".agent/state/receipts.jsonl", ".agent/plans/.gitkeep"]
+                        ".agent/state/receipts.jsonl", ".agent/plans/.gitkeep",
+                        "crates/batter/Cargo.toml", "crates/batter/src/lib.rs",
+                        "crates/batter/examples/worker.rs", "crates/batter/tests/lifecycle.rs",
+                        "crates/batter-axum/Cargo.toml", "crates/batter-axum/src/lib.rs",
+                        "crates/batter-axum/examples/http_service.rs",
+                        "crates/batter-test-support/Cargo.toml", "crates/batter-test-support/src/lib.rs",
+                        "examples/postgres-lifecycle/Cargo.toml", "examples/postgres-lifecycle/src/main.rs"]
             excluded = [".agent/.cache/runtime.json", ".agent/.cache/adopt/backup.md",
                         ".agent/runtime/session.json", ".agent/tmp/note.md",
                         ".agent/state/adopt-last.json", ".agent/plans/example.md.lock",
-                        ".env", "target/cache.rs", "validation/local/check.json"]
+                        ".env", "target/cache.rs", "validation/local/check.json",
+                        "crates/batter/target/cache.rs", "examples/postgres-lifecycle/target/cache.rs",
+                        "examples/postgres-lifecycle/.env"]
             for name in included + excluded:
                 path = repo / name
                 path.parent.mkdir(parents=True, exist_ok=True)

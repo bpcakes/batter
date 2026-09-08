@@ -5,12 +5,12 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This snapshot contains implementation, 123 failure-contract tests plus one
-doctest, and five examples.
+This workspace contains three library packages and one SQLx example package,
+with failure-contract tests, doctests, and five runnable demonstrations.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification passed on Rust 1.94.0 and 1.98.1 after upgrading the dependencies;
 `docs/validation.md` records exact commands, versions, outcomes, and limitations.
-Cargo.lock was refreshed by Cargo. Both workspace packages have publishing disabled.
+Cargo.lock was refreshed by Cargo. Every workspace package has publishing disabled.
 
 ## Reading order
 
@@ -22,8 +22,9 @@ Cargo.lock was refreshed by Cargo. Both workspace packages have publishing disab
 
 ## Verification: BTR-001
 
-The default toolchain is pinned to Rust 1.98.1. The workspace minimum is Rust
-1.94 because SQLx 0.9.0 requires it. Run `bash scripts/verify.sh` and
+The default toolchain is pinned to Rust 1.98.1. All packages retain Rust 1.94
+as their minimum; SQLx 0.9.0 requires it in the example package. No lower library
+minimum is claimed after extraction. Run `bash scripts/verify.sh` and
 `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`, then build and execute the HTTP
 smoke test described in `docs/testing.md`. Repair failures without relaxing
 semantic tests. Update validation evidence when the code or dependency graph changes.
@@ -36,18 +37,22 @@ definition is not evidence of a hosted CI execution.
 
 ## Code map
 
-`src/lifecycle.rs` and `src/lifecycle/` own critical/finite process tasks, readiness
+`crates/batter/src/lifecycle.rs` and `crates/batter/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.
-`src/cleanup.rs` owns explicit LIFO finalizers.
-`src/operation.rs` owns deadline/cancellation boundaries and typed failures.
-`src/retry.rs` owns replay policy, bounded attempts, and backoff.
-`src/admission.rs` owns process-local concurrency permits.
-`src/telemetry.rs` records outcomes without printing error contents.
-`src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
+`crates/batter/src/cleanup.rs` owns explicit LIFO finalizers.
+`crates/batter/src/operation.rs` owns deadline/cancellation boundaries and typed failures.
+`crates/batter/src/retry.rs` owns replay policy, bounded attempts, and backoff.
+`crates/batter/src/admission.rs` owns process-local concurrency permits.
+`crates/batter/src/telemetry.rs` records outcomes without printing error contents
+and exposes `with_current_dispatch` for adapter-owned futures.
+`crates/batter/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
 full inner-future destruction, without heap allocation.
-`src/http.rs` adapts Axum and is behind the `axum` feature.
+`crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter.
 `crates/batter-test-support` contains dependency scripts and error combination.
-`examples` contains worker, HTTP, and native SQLx composition roots.
+`crates/batter/examples` contains worker and operation/process ownership examples.
+`crates/batter-axum/examples` contains the HTTP composition root.
+`examples/postgres-lifecycle` is an unpublished native SQLx executable package.
+There is no root package, root source tree, or root integration-test target.
 
 ## Preserve these invariants
 
@@ -94,6 +99,9 @@ bracket helper that skips finalization when its outer future is cancelled.
 Applications -> batter adapters -> native ecosystem libraries. Runlimit,
 Runledger, and postgres-test-harness must not depend on batter. Keep their own
 supervision, persistence, policy validation, and provisioning responsibilities.
+The foundation must not depend on adapters. `batter-test-support` remains a
+generic leaf crate, including in tests; composition fixtures belong with their
+example/application. PostgreSQL provisioning remains external to this workspace.
 Never implement a second job queue, workflow engine, outbox, limiter storage
 engine, database harness, or repository abstraction here.
 
@@ -150,7 +158,8 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 ## Backend Defaults
 
-- Treat `.`, `crates` as Rust crate roots.
+- The root is a virtual workspace. Rust package roots are `crates` and
+  `examples`; follow each package's nearest guide.
 - Add crate-level `AGENTS.md` files when a crate has meaningful ownership, entrypoint, or invariant guidance that should travel with that crate.
 
 - Keep transport logic thin and business logic in the owning crate.
@@ -161,7 +170,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 No web apps or development proxy are configured in `.jig.toml`.
 
-Jig database tooling is disabled: SQLx is currently an optional example only.
+Jig database tooling is disabled: SQLx is currently an example package only.
 
 ## Preferred Commands
 
@@ -195,3 +204,119 @@ When a backend package or crate has an `AGENTS.md`, use these sections:
 - `## Invariants`
 - `## Common commands`
 <!-- END JIG MANAGED BLOCK -->
+
+<!-- bv-agent-instructions-v5 -->
+
+---
+
+## Beads Workflow Integration
+
+This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI—for issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
+
+**Choose the tracker CLI from this repository's instructions and configuration.** Use `bd` commands in a Go Beads workspace and `br` commands in a beads_rust workspace. Do not run both trackers against the same workspace or infer the tracker solely from the JSONL filename.
+
+### Using bv as an AI sidecar
+
+bv is a graph-aware triage engine for Beads projects. Instead of parsing .beads/issues.jsonl / .beads/beads.jsonl directly or hallucinating graph traversal, use robot flags for deterministic, dependency-aware outputs with precomputed metrics (PageRank, betweenness, critical path, cycles, HITS, eigenvector, k-core).
+
+**Scope boundary:** bv handles *what to work on* (triage, priority, planning). The selected tracker CLI (`bd` or `br`) handles creating, claiming, modifying, and closing beads.
+
+**CRITICAL: Use ONLY --robot-* flags. Bare bv launches an interactive TUI that blocks your session.**
+
+#### The Workflow: Start With Triage
+
+**`bv --robot-triage` is your single entry point.** It returns everything you need in one call:
+- `quick_ref`: at-a-glance counts + top 3 picks
+- `recommendations`: ranked actionable items with scores, reasons, unblock info
+- `quick_wins`: low-effort high-impact items
+- `blockers_to_clear`: items that unblock the most downstream work
+- `project_health`: status/type/priority distributions, graph metrics
+- `commands`: copy-paste shell commands for next steps
+
+```bash
+bv --robot-triage        # THE MEGA-COMMAND: start here
+bv --robot-next          # Minimal: just the single top pick + claim command
+
+# TOON output (--format toon): a compact tabular encoding. Measured on this
+# repository it is 7% smaller than JSON for --robot-graph but 9-15% LARGER for
+# nested payloads (--robot-triage, --robot-plan, --robot-insights,
+# --robot-label-health); use --stats to see both sizes before adopting it.
+bv --robot-graph --format toon
+bv --robot-triage --format toon --stats
+```
+
+Before claiming, verify current state with the selected tracker: `br show <id> --json`/`br ready --json` or `bd show <id> --json`/`bd ready --json`. `recommendations` can include graph-important blocked or assigned work; only `quick_ref.top_picks` and non-empty `claim_command` fields represent claimable work.
+
+#### Other bv Commands
+
+| Command | Returns |
+|---------|---------|
+| `--robot-plan` | Parallel execution tracks with unblocks lists |
+| `--robot-priority` | Priority misalignment detection with confidence |
+| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core |
+| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
+| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions, cycle breaks |
+| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues |
+| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
+
+Every robot command emits one JSON object; with `--graph-format=dot` or `mermaid` the diagram text is the `graph` field (`bv --robot-graph --graph-format=dot | jq -r .graph`), not the whole output.
+
+#### Scoping & Filtering
+
+```bash
+bv --robot-plan --label backend              # Scope to label's subgraph
+bv --robot-insights --as-of HEAD~30          # Historical point-in-time
+bv --recipe actionable --robot-plan          # Pre-filter: ready to work (no blockers)
+bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
+```
+
+### Tracker Commands for Issue Management
+
+Use exactly one command family, matching the tracker configured for the repository.
+
+#### Rust beads_rust (`br`)
+
+```bash
+br ready --json                       # Show issues ready to work (no blockers)
+br list --status=open --json          # All open issues
+br show <id> --json                   # Full issue details with dependencies
+br create --title="..." --type=task --priority=2 --json
+br update <id> --status=in_progress --json
+br close <id> --reason="Completed" --json
+br close <id1> <id2> --reason="Completed" --json
+br sync --flush-only                  # Export DB to JSONL after Beads mutations
+```
+
+#### Go Beads (`bd`)
+
+```bash
+bd ready --json                       # Show issues ready to work
+bd show <id> --json                   # Full issue details
+bd create "..." -t task -p 2 --json
+bd update <id> --claim --json         # Atomically claim work
+bd close <id> --json
+bd dep add <issue> <depends-on>
+bd export -o .beads/issues.jsonl        # Refresh the compatibility export read by bv
+```
+
+### Workflow Pattern
+
+1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
+2. **Verify**: Check the selected tracker's `show`/`ready` output before claiming
+3. **Claim**: Use `br update <id> --status=in_progress --json` or `bd update <id> --claim --json`
+4. **Work**: Implement the task
+5. **Complete**: Use the selected tracker's `close` command
+6. **Refresh for bv**: Run `br sync --flush-only` or the `bd export` command above so the JSONL export is current
+
+### Key Concepts
+
+- **Dependencies**: Issues can block other issues. `br ready --json` and `bd ready --json` show unblocked work.
+- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
+- **Types**: task, bug, feature, epic, chore, docs, question
+- **Blocking**: Use `br dep add <issue> <depends-on>` or `bd dep add <issue> <depends-on>` to add dependencies
+
+### Git Policy
+
+Tracker commands do not grant permission to commit or push application code. Follow this repository's own git and tracker instructions before staging, committing, syncing, or pushing. If the repository says "commit only when asked," that rule overrides any generic workflow advice.
+
+<!-- end-bv-agent-instructions -->

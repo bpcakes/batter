@@ -28,8 +28,8 @@ if [[ ! -f Cargo.lock ]]; then
   exit 2
 fi
 cargo fmt --all -- --check
-cargo check --lib --no-default-features --locked
-cargo test --workspace --no-default-features --lib --tests --locked
+cargo check -p batter --lib --no-default-features --locked
+cargo test -p batter --no-default-features --lib --tests --locked
 cargo test --workspace --all-features --all-targets --locked
 cargo test --workspace --all-features --doc --locked
 cargo clippy --workspace --all-features --all-targets --locked -- -D warnings

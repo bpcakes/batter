@@ -501,3 +501,116 @@ tests, 123 all-feature tests, and one doctest. Rust source and Cargo.lock are
 unchanged by this follow-up, so the earlier two-toolchain and HTTP evidence
 continues to apply. No hosted CI/cache operation, PostgreSQL provisioning,
 commit, push, or publication occurred.
+
+## Effect v4 analysis reconciliation: 2026-09-08
+
+Baseline: `5c77593c6700de9b2e8d3cbc1d2acf4bbbb0b71d`. This change updates
+documentation and append-only Jig work records. Runtime source, tests, manifests,
+and Cargo.lock are unchanged. Lock SHA-256 remains
+`7bcb7ba0d656d0f996ed7c91cc49409c2b75c92ba63749dcc81324ca2eddbca5`.
+Local platform: Linux 7.0.11-76070011-generic, x86_64 GNU/Linux;
+rustc 1.98.1 (48a229cea 2026-09-01), cargo 1.98.1 (797e8a9bc 2026-08-05).
+
+Independent source reviews checked the runtime and HTTP/context/test boundaries.
+Primary upstream release, migration, and boundary references were rechecked in
+[references](references.md). Proposed capabilities remain labelled unimplemented;
+HTTP handler panic propagation is source-inspected with no dedicated regression.
+
+Executed successfully:
+
+```sh
+scripts/jig doctor
+scripts/jig work check --plan-id plan_01M200DQFXPVDNMTBK1E40YPD3
+scripts/jig work evidence --plan-id plan_01M200DQFXPVDNMTBK1E40YPD3 --json
+scripts/jig work gates --plan-id plan_01M200DQFXPVDNMTBK1E40YPD3 --json
+python3 scripts/check_package.py
+git diff --check
+```
+
+The configured profile passed Clippy, formatting, locked tests, repository
+contract, and file budget. Tests passed 108 core cases, 123 all-feature cases,
+and one doctest; all five example targets compiled. No tests failed or were
+ignored. The work gate reported passed with fresh target receipts. Static
+package inspection found no lexical/TOML/internal-file-link failures.
+
+The two-toolchain verification script and HTTP process smoke were not repeated
+for these documentation changes; their earlier evidence remains historical.
+No new PostgreSQL, durable integration, hosted CI, production, or performance
+evidence was produced. No commit or publication was requested or performed.
+
+## Virtual workspace and Axum extraction: 2026-09-08
+
+Baseline: `5c77593c6700de9b2e8d3cbc1d2acf4bbbb0b71d`, with the preceding
+documentation changes already present in the working tree. The workspace now
+contains the `batter`, `batter-axum`, and `batter-test-support` libraries plus
+the unpublished `batter-example-postgres-lifecycle` executable package. The
+external PostgreSQL harness and downstream repositories were not modified.
+
+Platform: Linux 7.0.11-76070011-generic, x86_64-unknown-linux-gnu. Toolchains:
+rustc 1.98.1 (48a229cea 2026-09-01), Cargo 1.98.1 (797e8a9bc 2026-08-05);
+rustc 1.94.0 (4a4ef493e 2026-03-02), Cargo 1.94.0 (85eff7c80 2026-01-15).
+Every member retains Rust 1.94 and `publish = false`; this relocation makes
+no claim of compatibility with an older compiler.
+
+Cargo regenerated local workspace package entries during an offline check.
+All external package versions, sources, and checksums match the preceding lock.
+Current Cargo.lock SHA-256:
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+Executed successfully on the final Rust source (exit 0):
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+cargo run -p batter --example process_owned --locked
+cargo run -p batter --example operation_budget --locked
+cargo build -p batter-example-postgres-lifecycle --locked
+cargo tree -p batter --edges normal --locked
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+python3 scripts/check_package.py
+scripts/jig check agent-guides
+scripts/jig check agent-map
+scripts/jig work check --plan-id plan_01M201112SDGVHTPKG68SW2165
+scripts/jig work evidence --plan-id plan_01M201112SDGVHTPKG68SW2165 --json
+scripts/jig work gates --plan-id plan_01M201112SDGVHTPKG68SW2165 --json
+scripts/jig check test
+```
+
+Each full Rust verification run passed core-only compilation and **106 core
+tests**, then **127 workspace tests** (106 core, 16 Axum, five generic support),
+**two doctests**, every example/binary compilation target, Clippy and rustdoc
+with warnings denied. No failures, ignored tests, or filtered tests occurred.
+All 123 pre-refactor named tests remain present. Four additional tests cover
+the public dispatch wrapper's capture/poll/abort/unpolled destruction behavior,
+borrowed non-Send work, and HTTP budget validation after extraction. The core
+and adapter still use the same private pin/drop implementation. HTTP readiness,
+request budgets, failure rendering, and scoped destruction assertions were
+preserved; the adapter's combined RequestPolicy was not redesigned.
+
+The three HTTP process checks passed probes, work/deadline behavior, sanitized
+error envelopes, request IDs, ordinary INFO observations and clean SIGTERM or
+SIGINT termination. The process-owned and operation-budget examples exited
+successfully. Cargo's normal dependency tree for `batter` contains neither
+Axum nor SQLx. The SQLx executable builds as an independent package. The seven
+Python tooling tests passed, including source-archive coverage for nested
+members and exclusion of nested build/environment artifacts. All four package
+guides and the agent map passed their checks.
+
+The unchanged 848-line lifecycle source exceeds the existing 800-line budget
+by 48 lines. Its exact rename was recorded in the Git index so Jig can compare
+it to the original path; the policy thresholds were not changed. An initial
+intent-to-add attempt was rejected as lacking stable index authority. A
+subsequent check recognized unchanged legacy debt but rejected concurrent
+documentation edits as worktree drift. With edits stopped, the complete Jig
+profile passed Clippy, formatting, tests, contract and file-budget checks; its
+required evidence gate reported passed with fresh receipts. The final
+`scripts/jig check test` also passed. No semantic tests or policy limits were
+relaxed.
+
+Local logs are retained under ignored `.agent/tmp/workspace-refactor/`.
+Live PostgreSQL, external library integrations, hosted CI, production, and
+performance tests were not run. No commit, publication, or deployment occurred.

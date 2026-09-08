@@ -4,8 +4,45 @@
 //! application errors, request bodies, identities, URLs, or panic payloads.
 //! Operation names must be developer-controlled constants, not user input.
 
+use std::future::Future;
 use tokio::time::Instant;
 use tracing::Span;
+
+/// Retain the current tracing subscriber while polling and destroying a future.
+///
+/// The subscriber is captured when this function is called, even if the returned
+/// future is never polled. All of the owned future is destroyed under that
+/// subscriber, including captured values and nested instrumented spans. Wrap
+/// outside [`tracing::Instrument::instrument`] to protect span destruction too.
+///
+/// This does not capture or enter the current span; instrument the future when
+/// it needs that parent context. It does not spawn work, allocate on the heap,
+/// install a global subscriber, or extend the lifetime of a Tokio runtime.
+/// Borrowed and non-`Send` futures are accepted; a `Send` future remains `Send`.
+/// To capture at the first poll of an async entry point, call this inside its
+/// async body rather than when constructing that entry point's future.
+///
+/// ```
+/// use batter::telemetry::with_current_dispatch;
+/// use tracing::Instrument;
+///
+/// # async fn example() {
+/// let mut value = String::from("borrowed");
+/// let result = with_current_dispatch(
+///     async {
+///         value.push_str(" value");
+///         tracing::info!("adapter work finished");
+///         value.as_str()
+///     }
+///     .instrument(tracing::info_span!("adapter.work")),
+/// )
+/// .await;
+/// assert_eq!(result, "borrowed value");
+/// # }
+/// ```
+pub fn with_current_dispatch<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    crate::scoped_dispatch::scope(future)
+}
 
 /// Boundary outcome, independent of application error types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 //! An operational foundation, not a new effect runtime or web framework.
 //!
 //! The core uses ordinary futures, typed application errors, and Tokio.
-//! `axum` enables a thin HTTP boundary; it is disabled by default.
+//! The separate `batter-axum` crate provides a thin HTTP boundary.
 //!
 //! # Important limits
 //!
@@ -32,9 +32,6 @@ pub mod lifecycle;
 pub mod operation;
 pub mod retry;
 pub mod telemetry;
-
-#[cfg(feature = "axum")]
-pub mod http;
 
 mod scoped_dispatch;
 mod validation;

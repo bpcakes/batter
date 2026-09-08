@@ -37,13 +37,13 @@ not whole-process secret redaction. Never put secrets in panic messages.
 
 ## Dependencies and publishing
 
-The local source forbids unsafe code in both crate roots; that is not an audit
+The local source forbids unsafe code in all three library crate roots; that is not an audit
 of transitive dependencies or proof of logical cancellation safety. Resolve and
 review Cargo.lock, run your dependency advisory/license checks, and evaluate
 all optional features on the actual target platform. CI actions are separate
 supply-chain dependencies that also require review.
 
 Publishing is disabled. No crates.io account, repository, deployment, or registry
-name was created/reserved for this package. Before publication, establish an
+name was created/reserved for these packages. Before publication, establish an
 owner-controlled private vulnerability reporting channel rather than inventing
 a maintainer email address here.

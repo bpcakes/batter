@@ -28,7 +28,7 @@ jobs:
           fi
       - name: Build and smoke-test the HTTP example
         run: |
-          cargo build --example http_service --features axum --locked
+          cargo build -p batter-axum --example http_service --locked
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline

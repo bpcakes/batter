@@ -25,3 +25,9 @@ Amendment, 2026-09-08: HTTP infrastructure failures may use an application-owned
 renderer receiving typed failure plus a request-parts snapshot. Trusted metadata
 must be established outside the adapter; callback output sanitization and domain
 mapping remain application responsibilities. The default Problem JSON is retained.
+
+Packaging amendment, 2026-09-08: [ADR-006](006-workspace-packages.md) selects a
+separate `batter-axum` package instead of a foundation feature and moves SQLx
+to its own unpublished example package. This leaves upstream ownership and
+the combined request-policy contract unchanged. The PostgreSQL harness remains
+external and is not a workspace dependency.

@@ -1,0 +1,44 @@
+# ADR-006: Separate adoption packages in a virtual workspace
+
+Status: accepted. Date: 2026-09-08.
+
+Context: the early foundation has no downstream consumers. Its optional Axum
+module and SQLx example currently share one package manifest, making package
+ownership and dependency adoption less explicit than their actual roles.
+
+Decision: use a virtual root workspace with three libraries: `batter`,
+`batter-axum`, and `batter-test-support`. Move the native SQLx executable to
+`batter-example-postgres-lifecycle`. Keep core examples/tests with the core,
+HTTP examples/tests with the adapter, and SQLx dependencies with the executable.
+Make the direct source cutover from `batter::http` to `batter_axum`; remove the
+old `axum` and `postgres-example` features without a compatibility facade.
+
+The core keeps its existing modules together. The Axum package depends on it;
+the core never depends on the adapter. Generic test support remains independent
+of both. A public `batter::telemetry::with_current_dispatch` helper returns an
+opaque future while the pin/drop wrapper stays private. It captures dispatch
+at the helper call and protects polling and destruction without adding task
+ownership or `Send`/`'static` bounds. The HTTP entrypoint calls it during its
+first poll to preserve the previous behavior. `RequestPolicy` still combines
+readiness and request deadline policy; this is not a middleware redesign.
+
+Each package declares version 0.1.0, Rust 1.94, and `publish = false` explicitly.
+Share the root lockfile, dependency requirements, lints, and verification tooling.
+SQLx's minimum applies to the example; this move makes no lower-MSRV claim for
+the libraries. Independent packages may acquire different versions/minimums
+later, subject to their dependency contracts and validation.
+
+The external PostgreSQL harness stays outside the workspace, with no new
+dependency or downstream change. No SQLx, Runlimit, Runledger, or fixture library
+is created speculatively. Integration composition belongs in an unpublished
+reference application first. Generic test support must not gain higher-layer
+dependencies; foundation tests already use it. This also avoids dev-dependency
+cycles and their duplicate-type hazards.
+
+Consequences: consumers select the packages they need, and library adoption does
+not bring in SQLx or Axum. Workspace commands select packages explicitly; the
+full matrix still compiles the SQLx executable without claiming PostgreSQL
+execution. Existing lifecycle, HTTP, tracing, and cleanup failure contracts
+must pass after relocation, and the public dispatch seam needs direct tests.
+Publication remains a separate decision. See [Cargo references](../references.md#workspace-packaging-reviewed-2026-09-08)
+and [validation](../validation.md) for external semantics and execution evidence.

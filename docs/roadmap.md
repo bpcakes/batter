@@ -2,6 +2,9 @@
 
 This is a backlog, not a promise that the following features exist. Each task
 must update implementation status, tests, and validation evidence when complete.
+The [Effect v4 reconciliation](effect-v4-reconciliation.md) groups these items
+into a complete reference application path. It preserves the existing ownership
+decisions and identifies missing conventions without adding a second framework.
 
 ## BTR-001: Validate the source snapshot
 
@@ -48,6 +51,26 @@ Do not disable failure-path assertions merely to obtain a green run.
 Files: all source as required, Cargo.lock, docs/validation.md, CI, changelog.
 No new framework abstractions until this gate is closed.
 
+## BTR-002: Separate adoption packages
+
+**Priority P0. Status IMPLEMENTED; validation recorded separately.**
+
+Use a virtual workspace with `batter`, `batter-axum`, generic
+`batter-test-support`, and the unpublished `batter-example-postgres-lifecycle`
+executable. Move core/HTTP tests and examples with their owners. Remove the old
+foundation adapter/example features; preserve the combined HTTP readiness and
+deadline behavior. Expose a tested dispatch-preservation future for adapters
+while keeping pin/drop machinery private. Retain Rust 1.94 and disabled
+publication explicitly in each manifest.
+
+Acceptance: foundation-only dependencies exclude Axum/SQLx/test utilities;
+generic test support stays independent; existing failure contracts and new
+dispatch/budget-boundary regressions pass; both Rust toolchains, all package
+targets, docs, and HTTP smoke pass. Update package guides, commands, source
+links, and Jig/CI wiring. The PostgreSQL harness stays external and unchanged;
+no new upstream integration or live database claim is part of this work.
+See [ADR-006](adr/006-workspace-packages.md) and [validation](validation.md).
+
 ## BTR-010: Harden lifecycle and cancellation under real scheduling
 
 **Priority P0 before production. Status PARTIAL. Depends on BTR-001.**
@@ -73,6 +96,13 @@ what startup and transitive termination have been acknowledged. Document whether
 streaming gets an explicit adapter or stays excluded. Retain separate drain and
 forced-cancel phases. Keep the conservative teardown rule unless a stronger
 protocol has been proven and recorded in an ADR.
+
+Reconciliation follow-up: decide whether the reference HTTP application needs an
+opt-in panic boundary using existing Tower facilities. No catcher exists today.
+If added, test sanitized responses for unwinding handler panics and middleware
+ordering; keep aborting panics, default hook output, shared-state recovery, and
+body panics after headers outside the conversion guarantee. Do not translate
+panics into expected/retryable domain failures.
 
 Files: lifecycle/cleanup/operation/http tests and modules, guarantees, operations.
 
@@ -128,8 +158,9 @@ the pinned upstream release and a second-consumer evaluation before generalizing
 
 **Priority P1. Status NOT IMPLEMENTED. Depends on BTR-001.**
 
-Scope: optional test-support integration providing native SQLx setup and teardown
-around the existing harness's templates/leases. Cache harness/template per test
+Scope: an application/example test fixture providing native SQLx setup and teardown
+around the external harness's templates/leases. Keep it outside the generic
+`batter-test-support` leaf crate. Cache harness/template per test
 process; fingerprint ordered application and dependency migrations and behavior
 revisions; support existing-server and owned-container modes through upstream.
 
@@ -138,6 +169,8 @@ migration/setup changes; pool limits respect the harness budget; pools close
 before lease cleanup; body, close, lease, and deferred-drain failures all survive;
 empty-database migration tests remain separate; missing prerequisites cannot
 silently pass; no copied provisioning or unsafe name-prefix cleanup appears.
+No harness relocation or new fixture package is authorized by the workspace
+reorganization. Extract shared fixture mechanics only after actual reuse.
 
 ## BTR-030: Cross-boundary telemetry and metrics
 
@@ -147,6 +180,12 @@ durable correlation depends on BTR-020.**
 Scope: optional exporter/metric adapters, versioned safe correlation envelopes,
 request-to-job trace links, stable outcome/attempt/cleanup metrics, ordered exporter
 flush. Keep the application in charge of subscriber installation.
+
+Start the correlation portion with BTR-020's reference path. Define typed trusted
+request metadata separately from OperationContext and application dependencies.
+Use explicit extensions/arguments first; task-local access needs a concrete
+consumer and documented absence/spawn behavior. The HTTP request-ID example is
+not an ambient tenant/principal context or distributed propagation adapter.
 
 Implemented local baseline: operation completion visible with an ordinary INFO
 subscriber, separate HTTP status/outcome/latency, cleanup span context, scoped
@@ -160,6 +199,9 @@ redaction tests reject subjects and source messages in automatic outputs; startu
 shutdown, cancellation, uncertain commit, and skipped-cleanup telemetry are distinct;
 exporter failure is observed without changing admission or application results.
 Account for panic-hook output separately rather than claiming tracing sanitizes it.
+Prove concurrent requests cannot exchange metadata, untrusted headers cannot
+become authority, worker authorization is explicit, and a committed job outlives
+request cancellation. Persist only a validated, versioned durable representation.
 
 ## BTR-040: Fleet-safe retry policy extensions
 
@@ -180,6 +222,10 @@ budget; timeout/uncertain mutation replay still requires an explicit protocol;
 last errors and attempt counts survive interruption; generated delays cannot
 overflow or spin; a retry budget is not conflated with user quotas/concurrency.
 Retain one retry owner. Do not add an automatic universal is_retryable trait.
+Prove adapter composition does not multiply attempts or wrap upstream durable
+rescheduling in a second loop; any handler timing translation requires a checked
+upstream API. Shared policy mechanics do not authorize transaction replay or
+resolve uncertain commit outcomes. No replacement with backon is required.
 
 ## BTR-050: Schema and API contract coherence
 
@@ -188,10 +234,19 @@ Retain one retry owner. Do not add an automatic universal is_retryable trait.
 Scope: validated input/newtypes, consistent domain-error mapping, OpenAPI/client
 integration using existing Rust ecosystem facilities first.
 
+Prove the first recipe in BTR-020's reference application. Keep concrete domain
+errors and map them explicitly into the same sanitized envelope used for
+infrastructure failures. Basic Problem JSON exists; a universal Error or Cause
+type is not required. Document stable problem types/codes and validation errors;
+select/version-check extractor and schema libraries during implementation.
+
 Acceptance: invalid boundaries are rejected; generated contract/client round-trip
 checks run; internal causes never serialize accidentally; database row/domain/
 request/response types remain separate when their meaning differs; no bespoke
 endpoint macro language is introduced without a demonstrated unmet requirement.
+Check response status/body agreement and route coverage in the generated spec,
+including malformed/invalid input and declared error responses. Promote reusable
+boundary types only after the example establishes their semantics.
 
 ## BTR-060: Configuration and secret handling
 
@@ -206,6 +261,9 @@ Debug/telemetry/error bodies; environment mutation is not used unsafely in
 concurrent tests; source precedence is tested; global mutable configuration and
 hidden dependency lookup are excluded. Do not automatically treat serde as
 business validation.
+Compose configuration in the reference root using upstream public options;
+do not require upstream libraries to adopt Batter's loader or depend on Batter.
+Keep test overrides explicit and register exporter/pool cleanup after acquisition.
 
 ## BTR-070: Only extract proven repeated mechanics
 

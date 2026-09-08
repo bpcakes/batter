@@ -1,12 +1,12 @@
 # batter
 
-A small operational foundation for Rust backends built on Tokio, with an optional
-Axum boundary. Keep your normal futures, application error enums, SQLx pools,
+A small operational foundation for Rust backends built on Tokio, with a separate
+Axum adapter. Keep your normal futures, application error enums, SQLx pools,
 transactions, and routers. Standardize how work is owned, bounded, observed, and
 stopped—not how every business operation is written.
 
 **Status: 0.1.0 MVP, locally validated; not a production-validated release.**
-The package includes failure-contract tests and five examples. Dependencies were upgraded to
+The workspace includes failure-contract tests and five runnable demonstrations. Dependencies were upgraded to
 the latest stable direct releases on 2026-09-07, including SQLx 0.9.0, with a
 Cargo-generated lockfile. See [validation](docs/validation.md) for executed
 checks and remaining gaps, and [current status](docs/status.md).
@@ -21,18 +21,32 @@ checks and remaining gaps, and [current status](docs/status.md).
 | `retry` | Fresh attempts, explicit replay authorization, capped backoff with optional injected jitter, provider delay lower bounds, retained last error. |
 | `admission` | Native Tokio semaphore permits with reject-or-wait policy; waiting uses the existing deadline. |
 | `telemetry` | Stable operation outcomes, elapsed time, attempt/task/cleanup events through `tracing`; no global subscriber installation. |
-| `http` (`axum` feature) | Readiness gate, request deadline/context, configurable sanitized error rendering, HTTP status/latency events, separate probes. |
+| `batter-axum` | Readiness gate, request deadline/context, configurable sanitized error rendering, HTTP status/latency events, separate probes. |
 | `batter-test-support` | Scripted dependency results and preservation of both test-body and cleanup errors. |
 
-The default feature set excludes Axum and SQLx. `postgres-example` only enables
-the native SQLx lifecycle example; it does not introduce a database abstraction.
+The virtual workspace has three library packages and one unpublished example:
+
+| Package | Location | Adoption boundary |
+| --- | --- | --- |
+| `batter` | [crates/batter](crates/batter/README.md) | Tokio lifecycle, operations, retry, admission, cleanup, and telemetry. |
+| `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | Add alongside `batter` when using the HTTP adapter. |
+| `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
+| `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
+
+Depending on `batter` does not bring in Axum, SQLx, or test utilities. HTTP APIs
+are imported from `batter_axum`; there is no `batter::http`, `axum` feature, or
+`postgres-example` feature. Package versions and Rust minimums are declared
+individually. PostgreSQL provisioning remains in the external
+`postgres-test-harness` repository; it is not a workspace member or dependency.
 Runlimit, Runledger, and postgres-test-harness adapters are **not implemented**.
 Their ownership boundaries and next tasks are documented in [integrations](docs/integrations.md).
 
 ## Verification
 
-The default toolchain is pinned to Rust 1.98.1. The workspace minimum is Rust
-1.94, required by SQLx 0.9.0. CI covers 1.94.0, 1.98.1, and current stable.
+The default toolchain is pinned to Rust 1.98.1. All four packages retain Rust
+1.94 as their minimum. SQLx 0.9.0 requires it in the example package; extracting
+that dependency does not establish a lower minimum for the libraries.
+The CI definition covers 1.94.0, 1.98.1, and current stable.
 Network access is required to download dependencies on the first run.
 
 ```sh
@@ -48,7 +62,7 @@ without weakening the documented contracts.
 ## Run the examples
 
 ```sh
-cargo run --example http_service --features axum
+cargo run -p batter-axum --example http_service
 # In a second terminal:
 curl -i http://127.0.0.1:3000/live
 curl -i http://127.0.0.1:3000/ready
@@ -63,11 +77,11 @@ SIGINT and SIGTERM trigger shutdown
 on Unix. The non-Unix example uses Ctrl-C.
 
 ```sh
-cargo run --example worker
-cargo run --example process_owned
-cargo run --example operation_budget
+cargo run -p batter --example worker
+cargo run -p batter --example process_owned
+cargo run -p batter --example operation_budget
 DATABASE_URL='postgres://user:password@localhost/database' \
-  cargo run --example postgres_lifecycle --features postgres-example
+  cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
 
 The PostgreSQL example connects to an existing database, probes it with `SELECT
@@ -77,12 +91,14 @@ test database for initial verification; never commit real connection secrets.
 
 ## Use as a local dependency
 
-The crate is intentionally `publish = false`; no registry name has been reserved
-and no publishing action has been taken.
+Every workspace package is intentionally `publish = false`; no registry name has
+been reserved and no publishing action has been taken.
 
 ```toml
 [dependencies]
-batter = { path = "../batter", features = ["axum"] }
+batter = { path = "../batter/crates/batter" }
+# Add this dependency for the HTTP adapter.
+batter-axum = { path = "../batter/crates/batter-axum" }
 
 [dev-dependencies]
 batter-test-support = { path = "../batter/crates/batter-test-support" }
@@ -137,6 +153,8 @@ These are API contracts and limitations, not footnotes. Read
 Start with [status](docs/status.md), [architecture](docs/architecture.md), and
 [guarantees](docs/guarantees.md). The [Effect v4 brief](docs/effect-v4-brief.md)
 preserves the design rationale, including topics not implemented here.
+The [reconciliation](docs/effect-v4-reconciliation.md) maps the broader conventions
+proposal to implemented APIs, deliberate differences, and remaining delivery work.
 
 [AGENTS.md](AGENTS.md) gives the next agent a reading order, exact verification
 commands, dependency boundaries, and change rules. The [roadmap](docs/roadmap.md)

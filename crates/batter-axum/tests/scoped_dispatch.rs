@@ -1,9 +1,6 @@
-use batter::operation::OperationContext;
 use std::{
-    cell::Cell,
     future::Future,
     io::{self, Write},
-    rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -70,50 +67,10 @@ impl Drop for DropTrace {
 }
 
 #[test]
-fn aborted_operation_drops_work_and_observation_in_its_scoped_dispatch() {
-    let scoped = Capture::new();
-    let ambient = Capture::new();
-    ambient.block_on(async {
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(
-            async move {
-                OperationContext::new(Duration::from_secs(60))
-                    .unwrap()
-                    .run("operation.abort", |_| async move {
-                        let _resource = DropTrace("operation.resource");
-                        started_tx.send(()).unwrap();
-                        std::future::pending::<Result<(), io::Error>>().await
-                    })
-                    .await
-            }
-            .with_subscriber(scoped.dispatch.clone()),
-        );
-        started_rx.await.unwrap();
-        task.abort();
-        let error = task.await.unwrap_err();
-        assert!(error.is_cancelled(), "{error}");
-        assert!(!error.is_panic(), "{error}");
-    });
-    let text = scoped.text();
-    assert_eq!(
-        text.matches("operation boundary finished").count(),
-        1,
-        "{text}"
-    );
-    assert!(text.contains("operation.abort"), "{text}");
-    assert!(text.contains("outcome=\"dropped\""), "{text}");
-    assert!(text.contains("operation.resource"), "{text}");
-    assert!(ambient.text().is_empty(), "{}", ambient.text());
-}
-
-#[cfg(feature = "axum")]
-#[test]
 fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     use axum::{Router, body::Body, http::Request, middleware, routing::get};
-    use batter::{
-        http::{RequestPolicy, request_scope},
-        lifecycle::ShutdownHandle,
-    };
+    use batter::lifecycle::ShutdownHandle;
+    use batter_axum::{RequestPolicy, request_scope};
     use tower::ServiceExt;
 
     let scoped = Capture::new();
@@ -170,22 +127,4 @@ fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     assert!(text.contains("http_outcome=\"dropped\""), "{text}");
     assert!(text.contains("http.resource"), "{text}");
     assert!(ambient.text().is_empty(), "{}", ambient.text());
-}
-
-#[tokio::test]
-async fn operation_still_accepts_borrowed_non_send_work() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
-    let mut value = String::from("borrowed");
-    let count = Rc::new(Cell::new(0));
-    let result = context
-        .run("operation.borrowed", |_| async {
-            tokio::task::yield_now().await;
-            count.set(count.get() + 1);
-            value.push_str(" value");
-            Ok::<_, io::Error>(value.as_str())
-        })
-        .await
-        .unwrap();
-    assert_eq!(result, "borrowed value");
-    assert_eq!(count.get(), 1);
 }

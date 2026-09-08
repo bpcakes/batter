@@ -9,7 +9,7 @@ template_source_url = ""
 harness_footprint = "full"
 
 sqlx_enabled = false
-rust_crate_roots = [".", "crates"]
+rust_crate_roots = ["crates", "examples"]
 
 schema_dump_enabled = false
 
@@ -251,8 +251,8 @@ allow_global = false
 [commands]
 api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files"
 api_fmt_command = "cargo fmt --all -- --check"
-api_test_command = "cargo test --workspace --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
-api_test_locked_command = "cargo test --workspace --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
+api_test_command = "cargo check -p batter --lib --no-default-features --locked && cargo test -p batter --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
+api_test_locked_command = "cargo check -p batter --lib --no-default-features --locked && cargo test -p batter --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
 repo_bootstrap_command = "cargo fetch --locked"
 
 [execution]

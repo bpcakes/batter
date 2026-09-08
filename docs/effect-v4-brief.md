@@ -1,5 +1,9 @@
 # Preserved design brief: Effect v4 -> a Rust operational foundation
 
+The [2026-09-08 reconciliation](effect-v4-reconciliation.md) compares the supplied
+eight-priority analysis with current source and tests. It records which proposals
+are already implemented, need narrower contracts, or remain future work.
+
 ## The thesis
 
 Borrow Effect's coordinated runtime semantics, not its TypeScript remediation
@@ -73,9 +77,10 @@ because the term appears in an architecture checklist. Use the upstream
 transactional enqueue or durable-intent API appropriate to the application.
 
 postgres-test-harness owns provisioning, template fingerprints, isolated clones,
-connection admission, and cleanup machinery. Batter test support should compose
-application initialization and teardown around it, not copy Docker/database
-management code. Native SQLx queries and migrations remain available.
+connection admission, and cleanup machinery. Application/example fixtures should
+compose initialization and teardown around it, not copy Docker/database management
+code into the foundation or generic test utilities. The harness stays external;
+native SQLx queries and migrations remain available.
 
 ## Failure semantics that must survive future work
 

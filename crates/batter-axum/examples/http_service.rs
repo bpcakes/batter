@@ -12,10 +12,10 @@ use axum::{
 use batter::{
     BoxError,
     admission::{Admission, AdmissionError, Bulkhead},
-    http::{HttpFailure, RequestPolicy, liveness, readiness, request_scope},
     lifecycle::Supervisor,
     operation::{Interruption, OperationContext, OperationError},
 };
+use batter_axum::{HttpFailure, RequestPolicy, liveness, readiness, request_scope};
 use serde::Serialize;
 use std::{
     convert::Infallible,

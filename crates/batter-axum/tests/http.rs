@@ -1,5 +1,3 @@
-#![cfg(feature = "axum")]
-
 use axum::{
     Extension, Json, Router,
     body::{Body, to_bytes},
@@ -9,10 +7,10 @@ use axum::{
     routing::get,
 };
 use batter::{
-    http::{HttpFailure, RequestPolicy, liveness, readiness, request_scope},
     lifecycle::ShutdownHandle,
     operation::{Interruption, OperationContext},
 };
+use batter_axum::{HttpFailure, RequestPolicy, liveness, readiness, request_scope};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -37,6 +35,22 @@ fn application(handle: ShutdownHandle) -> Router {
             RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
             request_scope,
         ))
+}
+
+#[test]
+fn request_budget_preserves_the_positive_representable_one_year_limit() {
+    let year = Duration::from_secs(365 * 24 * 60 * 60);
+    assert!(RequestPolicy::new(ShutdownHandle::new(), year).is_ok());
+    assert!(matches!(
+        RequestPolicy::new(ShutdownHandle::new(), Duration::ZERO),
+        Err(batter::ConfigurationError::Zero("HTTP request budget"))
+    ));
+    for budget in [year + Duration::from_nanos(1), Duration::MAX] {
+        assert!(matches!(
+            RequestPolicy::new(ShutdownHandle::new(), budget),
+            Err(batter::ConfigurationError::TooLarge("HTTP request budget"))
+        ));
+    }
 }
 
 #[tokio::test]

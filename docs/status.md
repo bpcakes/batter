@@ -4,13 +4,16 @@ Updated: 2026-09-08. The local Rust verification matrix passes on 1.94.0 and
 1.98.1 with the refreshed lockfile. There are no hidden implemented adapters
 behind the planned rows. See [validation](validation.md) for execution evidence
 and limits; local checks do not establish production or hosted CI validation.
+The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains the remaining
+application conventions and deliberate differences from the broader proposal.
 
 | Concern | Source status | Evidence / boundary |
 | --- | --- | --- |
+| Workspace package boundaries | Implemented | Virtual root, separate `batter` / `batter-axum` / generic test-support libraries, and unpublished SQLx example package; independent manifests retain Rust 1.94. PostgreSQL harness stays external. [ADR-006](adr/006-workspace-packages.md); execution evidence in [validation](validation.md). |
 | Jig harness | Locally validated | Official v0.3.0 installation, MCP, five configured targets, and guide checks; CI comparison, cache reuse, plan merging, and archive regression tests. Hosted cache reuse remains unverified. Use `update --recopy` to retain the selected release. See [validation](validation.md). |
-| Clippy complexity and length limits | Enabled | Both workspace packages inherit warning-level lints; thresholds 20 / 100, enforced by `-D warnings`. |
+| Clippy complexity and length limits | Enabled | All workspace packages inherit warning-level lints; thresholds 20 / 100, enforced by `-D warnings`. |
 | Dependency/toolchain refresh | Locally validated | Latest stable direct dependencies, SQLx 0.9.0, Rust 1.94 minimum, default toolchain 1.98.1; [versions](references.md#dependency-refresh-2026-09-07). |
-| Typed execution errors | Implemented | `operation` preserves E; interruption is separate. Tests authored in [operation](../tests/operation.rs). |
+| Typed execution errors | Implemented | `operation` preserves E; interruption is separate. Tests authored in [operation](../crates/batter/tests/operation.rs). |
 | Total deadline and child deadline clamp | Implemented | Tokio Instant, no serialization; cancellation-first boundary precedence. |
 | Child cancellation on operation finish/drop | Implemented | CancellationToken drop guard; does not join spawned children. |
 | Critical process task supervision | Implemented | Registered factories start inside JoinSet tasks; observed early Ok, error, and panic. |
@@ -20,16 +23,19 @@ and limits; local checks do not establish production or hosted CI validation.
 | Bounded drain, cancellation, abort observation | Implemented | Ready-result harvesting before escalation; only unfinished abort targets; unpolled driver drop signals shutdown. Cooperative scheduler assumption remains. |
 | Ordered explicit asynchronous teardown | Implemented | LIFO, total/per-hook budgets, errors retained, one report/event per skip, skipped capture destruction in dependency order. |
 | Generic async resource acquisition scope | Not implemented | No Effect-style interruption mask or acquire/register atomic protocol. |
-| Partial-startup cleanup | Pattern implemented | `take_cleanup`; [SQLx example](../examples/postgres_lifecycle.rs). Must be explicitly driven. |
+| Partial-startup cleanup | Pattern implemented | `take_cleanup`; [SQLx example](../examples/postgres-lifecycle/src/main.rs). Must be explicitly driven. |
 | Concurrency admission | Implemented | Native semaphore permits; no waiter-count or memory bound. |
 | Retry classification and replay authorization | Implemented | No timeout retries; provider lower bound; last error retained. |
 | Finalization reserves and injected jitter | Implemented | Sibling phase contexts, deterministic samples, provider floor; neither masking nor fleet coordination. |
 | Attempt deadlines, retry tokens, circuit breaking, fallback | Not implemented | Remaining BTR-040 scope. |
 | Tracing conventions | Implemented | INFO/WARN completion events, HTTP status/outcome/latency; scoped dispatch survives owned-future destruction and nested spans. No exporter or metric backend. |
-| Axum middleware/probes | Implemented, optional | Bounds response construction, not streaming; fixed server budget. |
-| Typed HTTP infrastructure errors | Implemented | Sanitized default problems or configured application renderer with request parts; trust/domain mapping remains external. |
+| Public adapter dispatch seam | Implemented | `telemetry::with_current_dispatch` captures the current subscriber at the call, preserves polling/destruction, and accepts borrowed/non-Send work; [direct tests](../crates/batter/tests/scoped_dispatch.rs). It does not capture the current span or own a task. |
+| Axum middleware/probes | Implemented, separate package | `batter_axum` retains combined readiness/deadline policy. Bounds response construction, not streaming; fixed server budget. |
+| Typed HTTP infrastructure errors | Implemented | Stable codes and basic Problem JSON or a configured application renderer; no app-wide domain taxonomy or comprehensive RFC conformance test. |
+| HTTP handler panic recovery | Not implemented | Owned task/cleanup panic observation does not convert handler panics into HTTP 500s. BTR-010 decision; default panic-hook output remains separate. |
+| Request metadata / ambient context | Partial example only | Explicit deadline/cancellation extension plus example-generated request IDs; no task-local tenant/principal context or inbound trace-parent handling. BTR-030. |
 | Configuration framework / secret types | Not implemented | Only operational argument validation and example env parsing. |
-| SQLx native pool integration | Example only | Connection, probe, pool close, partial-startup pattern; no pool wrapper. |
+| SQLx native pool integration | Example package only | `batter-example-postgres-lifecycle`: connection, probe, pool close, partial-startup pattern; no pool wrapper or SQLx dependency in the foundation. |
 | SQLx transactional Runledger reference path | Not implemented | BTR-020. No business transaction or durable job test in this package. |
 | Runledger host/trace adapter | Not implemented | Preserve upstream supervision; do not recreate worker loops. |
 | Runlimit admission/observer adapter | Not implemented | Preserve key trust boundary and consumption certainty. |

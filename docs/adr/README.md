@@ -10,6 +10,7 @@ establish that the current source has passed validation.
 | [003](003-replay-and-budgets.md) | One total budget and explicit replay authorization. |
 | [004](004-optional-adapters.md) | Optional adapters with one-way upstream dependency ownership. |
 | [005](005-errors-and-telemetry.md) | Concrete domain errors; aggregate internal reports; sanitized telemetry. |
+| [006](006-workspace-packages.md) | Virtual workspace, separate adoption packages, and a shared dispatch seam. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, and an update to the validation/status documents. Do not silently weaken

@@ -1,0 +1,28 @@
+[package]
+name = "batter-axum"
+description = "Axum request boundaries and lifecycle probes for Batter"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+readme = "README.md"
+autoexamples = false
+
+[lints]
+workspace = true
+
+[dependencies]
+batter.workspace = true
+axum.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros", "signal", "net"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tower = { workspace = true, features = ["util"] }
+
+[[example]]
+name = "http_service"

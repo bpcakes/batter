@@ -1,11 +1,79 @@
 # Primary references and verification boundaries
 
-Reviewed for this design on 2026-09-07. URLs pointing at `latest` may change;
+Initially reviewed on 2026-09-07; dated follow-up checks appear below.
+URLs pointing at `latest` may change;
 verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Workspace packaging: reviewed 2026-09-08
+
+The package split in [ADR-006](adr/006-workspace-packages.md) follows Cargo's
+documented package/dependency boundaries:
+
+- [Workspaces](https://doc.rust-lang.org/cargo/reference/workspaces.html): a
+  virtual manifest has no root package; members share a lockfile and output
+  directory. Package metadata inheritance is opt-in, so package versions and
+  Rust minimums can remain explicit.
+- [Dependency resolution](https://doc.rust-lang.org/cargo/reference/resolver.html#features):
+  building multiple workspace members unifies their dependency features. Run
+  the foundation check separately to verify its isolated dependency selection.
+- [Development dependency cycles](https://doc.rust-lang.org/cargo/reference/resolver.html#dev-dependency-cycles):
+  Cargo permits some cycles involving tests, but unit-test builds can expose
+  incompatible copies of library types. Keep generic test support independent.
+- [Rust-version resolution](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version):
+  mixed-minimum workspaces use resolution heuristics, not a guarantee of each
+  member's compatibility. Retain and verify the declared Rust 1.94 minimum.
+
+These rules do not supply execution evidence. The workspace does not import the
+external PostgreSQL harness or create a new database integration.
+
 ## Effect v4
+
+Rechecked on 2026-09-08 for the [analysis reconciliation](effect-v4-reconciliation.md).
+The [official RC announcement](https://effect.website/blog/releases/effect/40-rc),
+updated August 12, announces the tagged candidate and presumed-final interfaces,
+while allowing necessary narrow breaking changes. Q3/Q4 2026 is its stable
+release target, not a guarantee. The [rc.112 release](https://github.com/Effect-TS/effect/releases/tag/effect%404.0.0-rc.112)
+is dated August 25 and was the latest visible on the inspected
+[release listing](https://github.com/Effect-TS/effect/releases). Use the current
+Effect-TS/effect repository for this tag, not the older effect-smol repository.
+
+The [beta announcement](https://effect.website/blog/releases/effect/40-beta)
+documents the runtime rewrite, coordinated first-party package versions, and
+platform/RPC/cluster consolidation into `effect`. Concrete platform, database
+driver, and provider packages still exist separately. Modules under `unstable`
+may change in minor releases; this is an explicit compatibility policy, not
+simply a packaging switch. These statements do not imply a stable v4 release.
+
+Version-pinned migration references:
+
+- [Services](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/migration/services.md):
+  Context.Service replaces Context.Tag; construction still has explicit wiring.
+- [Fiber references](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/migration/fiberref.md):
+  Context.Reference and scoped service provision replace FiberRef conventions;
+  this is more than a spelling change.
+- [Cause](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/migration/cause.md):
+  flat Fail/Die/Interrupt reasons no longer encode sequential versus parallel
+  composition. Batter's internal reports are a smaller aggregation contract.
+- [Layer memoization](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/migration/layer-memoization.md):
+  sharing spans provide calls, with explicit freshness/local overrides. The guide
+  still recommends explicit layer composition.
+- [Schema migration](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/migration/schema.md)
+  documents redesigned codec, refinement, transformation, and issue APIs.
+  [Schema](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/packages/effect/src/Schema.ts)
+  and [JsonSchema](https://github.com/Effect-TS/effect/blob/effect%404.0.0-rc.112/packages/effect/src/JsonSchema.ts)
+  are core modules. The [unstable tree](https://github.com/Effect-TS/effect/tree/effect%404.0.0-rc.112/packages/effect/src/unstable)
+  has additional schema facilities, not a wholesale unstable Schema/JsonSchema API.
+- [TxRef](https://effect.website/docs/v4/api/effect/TxRef): core STM operations
+  coordinate through Effect.tx. Rust mutexes/atomics/channels do not reproduce
+  those semantics merely by being native concurrency tools.
+
+No primary benchmark substantiating the supplied blanket claim that streams and
+batching are approximately 20 times faster was verified. Do not promote that
+claim into a Batter performance comparison or implementation requirement.
+
+The original architectural references remain useful:
 
 - [Scope](https://effect.website/docs/v4/api/effect/Scope): managed finalization;
   Batter deliberately does not claim equivalent interruptibility guarantees.
@@ -74,6 +142,25 @@ See [validation](validation.md) for executed checks and remaining limitations.
 - [Tracing instrumentation](https://docs.rs/tracing/latest/tracing/trait.Instrument.html):
   native async span propagation; Batter does not install a subscriber.
 
+## Boundary conventions reviewed: 2026-09-08
+
+- [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html), sections 3.1, 3.2,
+  4.2.1, and 5: Problem Details uses `type` as its primary identifier, allows
+  extensions, and does not require `detail` or `instance`. `about:blank` carries
+  HTTP status semantics; its title should match that status phrase. A separate
+  `code` extension is not a standard problem-type identifier. Response data must
+  be selected to avoid exposing internals. Batter's existing basic body and tests
+  do not establish an application-wide problem-type taxonomy or full conformance.
+- [Tower HTTP panic middleware](https://docs.rs/tower-http/latest/tower_http/catch_panic/index.html)
+  provides a native adapter candidate. No tower-http version is selected and no
+  catcher is implemented in Batter; inspect the chosen release before integrating.
+  Rust's [catch_unwind contract](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html)
+  excludes aborting panics and runs the panic hook before catching an unwind.
+  Sanitizing a response does not sanitize hook output or recover arbitrary state.
+- [Cargo feature compatibility](https://doc.rust-lang.org/cargo/reference/features.html#semver-compatibility):
+  optional APIs still require compatibility decisions. An `unstable` feature
+  name is not itself an exemption from a crate's published stability policy.
+
 ## Cancellation hardening: 2026-09-08
 
 The resolved registry sources were inspected locally before these fixes:
@@ -118,7 +205,7 @@ summary of the requested architecture and ownership decisions.
 defines `cognitive-complexity-threshold` and `too-many-lines-threshold`.
 Batter sets these to 20 and 100 and explicitly enables the corresponding
 `cognitive_complexity` and `too_many_lines` lints in the workspace manifest;
-both packages opt into the shared lint settings.
+all workspace packages opt into the shared lint settings.
 
 
 ## Tracing callsite test isolation: 2026-09-08

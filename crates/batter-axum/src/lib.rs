@@ -1,22 +1,24 @@
-//! Optional Axum admission and request-operation boundary.
+//! Axum admission and request-operation boundary for Batter.
 //!
 //! This bounds obtaining a response, NOT streaming its body or a WebSocket
 //! session. It does not detect disconnects that the transport does not surface
 //! by dropping the handler future. Bodies, proxy trust, auth, and request IDs
 //! are deliberately not interpreted. Keep liveness/readiness outside this layer.
 
-use crate::{
-    ConfigurationError,
-    lifecycle::{Readiness, ShutdownHandle},
-    operation::{Interruption, OperationContext, OperationError},
-    validation,
-};
+#![forbid(unsafe_code)]
+
 use axum::{
     Json,
     extract::{MatchedPath, Request, State},
     http::{Method, StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
+};
+use batter::{
+    ConfigurationError,
+    lifecycle::{Readiness, ShutdownHandle},
+    operation::{Interruption, OperationContext, OperationError},
+    telemetry::with_current_dispatch,
 };
 use serde::Serialize;
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -36,7 +38,7 @@ pub struct RequestPolicy {
 impl RequestPolicy {
     /// A fixed server-side budget. No client-supplied deadline is trusted.
     pub fn new(shutdown: ShutdownHandle, budget: Duration) -> Result<Self, ConfigurationError> {
-        validation::positive(budget, "HTTP request budget")?;
+        validate_budget(budget)?;
         Ok(Self {
             shutdown,
             budget,
@@ -67,6 +69,19 @@ impl RequestPolicy {
             None => failure.into_response(),
         }
     }
+}
+
+fn validate_budget(budget: Duration) -> Result<(), ConfigurationError> {
+    const FIELD: &str = "HTTP request budget";
+    if budget.is_zero() {
+        return Err(ConfigurationError::Zero(FIELD));
+    }
+    if budget > Duration::from_secs(365 * 24 * 60 * 60)
+        || Instant::now().checked_add(budget).is_none()
+    {
+        return Err(ConfigurationError::TooLarge(FIELD));
+    }
+    Ok(())
 }
 
 /// Sanitized infrastructure failures. Domain-to-HTTP mappings remain app-owned.
@@ -152,7 +167,7 @@ pub async fn request_scope(
     request: Request,
     next: Next,
 ) -> Response {
-    crate::scoped_dispatch::scope(request_scope_inner(policy, request, next)).await
+    with_current_dispatch(request_scope_inner(policy, request, next)).await
 }
 
 async fn request_scope_inner(policy: RequestPolicy, request: Request, next: Next) -> Response {

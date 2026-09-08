@@ -100,15 +100,36 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "batter"
 version = "0.1.0"
 dependencies = [
- "axum",
  "batter-test-support",
  "pin-project-lite",
- "serde",
- "sqlx",
  "thiserror",
  "tokio",
  "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "batter-axum"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "batter",
+ "serde",
+ "tokio",
  "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "batter-example-postgres-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "batter",
+ "sqlx",
+ "thiserror",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1,8 +1,8 @@
 # Usage patterns
 
-Source examples are part of the intended compile/test matrix; no example has yet
-been compiled in this package's authoring environment. The Rust snippets below
-illustrate the existing APIs, not future APIs disguised as working code.
+Source examples belong to their owning packages and are part of the workspace
+compile/test matrix. See [validation](validation.md) for executed commands and
+remaining gaps. The Rust snippets below illustrate existing APIs.
 
 ## Fresh futures and explicit replay
 
@@ -68,8 +68,8 @@ The application must choose and test the intended accounting.
 
 ## Supervising a service
 
-The [worker example](../examples/worker.rs) shows inert registration and observed
-signal handling. The [HTTP example](../examples/http_service.rs) shows Axum's
+The [worker example](../crates/batter/examples/worker.rs) shows inert registration and observed
+signal handling. The [HTTP example](../crates/batter-axum/examples/http_service.rs) shows Axum's
 native server future and separate probe/router state. Do not add a bare spawn
 inside a registered component merely to make borrowing convenient; use composed
 futures or an explicitly owned JoinSet and await its shutdown.
@@ -88,7 +88,7 @@ driven cleanup still requires the runtime to remain alive.
 
 ## Finite process-owned work
 
-The [process-owned example](../examples/process_owned.rs) configures a finite
+The [process-owned example](../crates/batter/examples/process_owned.rs) configures a finite
 capacity, transfers a dependency permit into admitted work, drops its result
 receipt, and observes completion through shutdown. Rejection is immediate, not
 a new queue of waiters. Do not capture arbitrarily large request bodies merely
@@ -107,7 +107,7 @@ counter rather than accumulating one report record per operation forever.
 
 ## Reserve work and finalization budgets
 
-The [operation-budget example](../examples/operation_budget.rs) uses
+The [operation-budget example](../crates/batter/examples/operation_budget.rs) uses
 `reserve_finalization` before work, runs under `phases.work()`, then explicitly
 awaits `phases.finalization()` and retains both outcomes. The latter has the
 original total deadline, not a fresh timeout. Work and finalization have sibling
@@ -122,10 +122,12 @@ production. Provider-directed delays remain a lower bound after jitter. Existing
 
 ## Application HTTP envelopes
 
+Import `RequestPolicy`, `HttpFailure`, and `request_scope` from `batter_axum`.
+Select the separate `batter-axum` dependency; the foundation has no HTTP feature.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
 render your envelope. Install trusted metadata middleware outside the policy so
-it is available even for readiness/deadline failures. The [HTTP example](../examples/http_service.rs)
+it is available even for readiness/deadline failures. The [HTTP example](../crates/batter-axum/examples/http_service.rs)
 generates a process-local ID rather than trusting an incoming correlation header.
 Applications remain responsible for ID uniqueness requirements and trust policy.
 
@@ -135,13 +137,27 @@ own contract. Keep HTTP status/outcome observations separate from whether the
 handler successfully constructed a response. An ordinary INFO fmt subscriber
 receives completion events without enabling span events or logging raw causes.
 
+## Adapter tracing context
+
+Use `batter::telemetry::with_current_dispatch(future)` when an adapter must keep
+its caller's subscriber during both polling and full future destruction. Capture
+occurs at the helper call, including for a never-polled future; call it inside an
+async entrypoint to capture at that entrypoint's first poll. Borrowed/non-Send
+futures remain supported. The helper does not capture or enter the current span:
+instrument the inner future when span context is needed, then wrap the whole
+instrumented future so its span is destroyed under the saved dispatcher.
+
+This does not spawn a task, allocate a wrapper on the heap, install a subscriber,
+or shield asynchronous cleanup from cancellation. Ordinary operation users get
+dispatch preservation from `OperationContext::run` without adding this wrapper.
+
 ## Resource acquisition and partial startup
 
 Register a cleanup factory immediately after acquiring an owned resource. A
 resource dependency closes after its dependents, so register it before them.
 If later startup fails, call supervisor.take_cleanup().close(budget).await and
 retain both the startup failure and the complete cleanup report. The [native
-SQLx example](../examples/postgres_lifecycle.rs) demonstrates this shape.
+SQLx example](../examples/postgres-lifecycle/src/main.rs) demonstrates this shape.
 
 The example's outer CLI error is sanitized; its StartupFailure object has the
 original cause plus cleanup report available for a trusted error sink. In a

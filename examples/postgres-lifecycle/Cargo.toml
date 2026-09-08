@@ -1,0 +1,24 @@
+[package]
+name = "batter-example-postgres-lifecycle"
+description = "Native SQLx composition with Batter lifecycle and explicit startup cleanup"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+batter.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "postgres_lifecycle"
+path = "src/main.rs"

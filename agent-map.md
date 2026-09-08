@@ -8,7 +8,14 @@ Fast jump index for agent-facing guidance in this repository.
 
 ## Nested guides
 
-_None yet_
+- [Foundation](./crates/batter/AGENTS.md): lifecycle, operations, retry, cleanup,
+  admission, and telemetry.
+- [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, probes, rendering,
+  and HTTP observations.
+- [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
+  and error-preserving result combination.
+- [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool
+  acquisition and explicit teardown.
 
 ## Suggested usage pattern
 

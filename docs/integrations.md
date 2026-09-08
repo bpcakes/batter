@@ -1,13 +1,15 @@
 # Integration ownership and planned adapters
 
-Only the Axum adapter and the native SQLx **example** exist in this snapshot.
+Only the `batter-axum` adapter package and the native SQLx **example package**
+exist in this snapshot.
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The designs below are handoff requirements, not
 unimplemented APIs advertised as available.
 
 ## Axum: implemented, with a deliberately small boundary
 
-Use RequestPolicy with middleware::from_fn_with_state. Put the guarded business
+Import `RequestPolicy` and `request_scope` from `batter_axum` and use
+middleware::from_fn_with_state. Put the guarded business
 router behind it and merge unguarded liveness/readiness routes separately. Domain
 services receive their own dependencies through State/FromRef/constructors;
 request operation context arrives through Extension<OperationContext>.
@@ -18,6 +20,12 @@ run outside it; never assume raw inbound headers are trusted. Application
 handlers must use their own renderer too. The HTTP example demonstrates both
 paths with matching generated request-ID headers/body fields. Readiness requires
 all registered components to acknowledge startup before traffic is admitted.
+
+The separate package retains one combined readiness/deadline policy. It does
+not split request lifetime from process readiness or introduce a new policy
+interface. Its tracing boundary uses `batter::telemetry::with_current_dispatch`
+inside the async entrypoint to preserve capture at first poll and destruction
+under the captured dispatcher.
 
 Keep authentication, authorization, request body limits, CORS, TLS, proxy trust,
 trace-header validation, tenant resolution, and user admission policy external.
@@ -33,7 +41,8 @@ slow bodies, streaming responses, shutdown, and client disconnects.
 
 ## SQLx: keep transactions visible
 
-The [example](../examples/postgres_lifecycle.rs) uses native PgPoolOptions,
+The [example](../examples/postgres-lifecycle/src/main.rs), packaged as
+`batter-example-postgres-lifecycle`, uses native PgPoolOptions,
 query_scalar, and Pool::close. It registers close as a dependency finalizer and
 shows startup-error cleanup. No database abstraction or generic transaction retry
 is introduced. The example compiles with SQLx 0.9.0; it has not been run against
@@ -106,8 +115,11 @@ Reviewed baseline: postgres-test-harness 0.2.0 provisions/connects to PostgreSQL
 18, caches fingerprinted templates, and clones isolated test databases. Its
 public API is independent of SQLx. Re-check the actual release before coding.
 
-The future adapter belongs in test support behind an optional feature, with no
-production container dependency. Cache a harness and stable templates once per
+The future fixture belongs beside the application/example integration tests,
+with no production container dependency. Generic `batter-test-support` remains
+independent of the harness, foundation, and adapters. The harness itself remains
+external; this workspace split imports neither its source nor its dependency.
+Cache a harness and stable templates once per
 test process. Fingerprint every ordered application and dependency migration
 bundle plus a revision for setup behavior not represented by SQL bytes.
 
@@ -125,7 +137,11 @@ Use explicit feature/test targets and report prerequisites or failures.
 
 Applications depend on Batter and the upstream libraries. Batter adapters may
 depend on upstream libraries; upstream core crates must not depend on Batter.
-Avoid a feature that forces all three integrations onto every consumer.
+Select adapter packages explicitly rather than requiring all integrations for
+every consumer. Keep SQLx, Runlimit, and Runledger composition local to an
+example until common mechanics justify extraction. Integration fixtures may
+depend on the participating libraries; the foundation must not depend back on
+them through its generic test utilities.
 
 Before promoting an adapter into a stable public API, use it in two different
 application composition roots, exercise partial-startup and shutdown failures,

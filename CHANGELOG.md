@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Split the virtual workspace into `batter`, `batter-axum`, independent generic
+  test support, and an unpublished SQLx example package. HTTP imports move to
+  `batter_axum`; the old `axum` and `postgres-example` features are removed.
+  Keep PostgreSQL provisioning external and retain Rust 1.94 for every package.
+- Expose `batter::telemetry::with_current_dispatch` for adapter futures while
+  preserving dispatch during polling and destruction. Keep the combined HTTP
+  `RequestPolicy` readiness/deadline contract unchanged.
 - Adopt Jig with locked core/all-feature/doctest gates and example-only SQLx
   database tooling disabled. Keep the existing two-toolchain and HTTP checks.
 - Move shared example support to `support.rs`, extract HTTP event assertions,
