@@ -2,6 +2,46 @@
 
 Snapshot date: 2026-09-07.
 
+## Beads backlog migration: 2026-09-08
+
+Audited delivery requirements against Git baseline `9654b2e`, including the
+roadmap, integration/testing/operations docs, Effect reconciliation, capability
+status, security policy and completed execution plans. Four planning review
+rounds, a separate fresh-context fixture check and a final source-removal audit
+resolved dependency sequencing and cleanup-ownership ambiguities. No runtime
+code, dependency graph, upstream integration or publication behavior changed.
+
+The tracker now contains 34 records: 29 tasks and five epics, comprising 28 open,
+three closed and three deferred outcomes. The existing extraction issue was
+reused; completed local-validation/finite-ownership milestones were migrated as
+closed rather than rerun or reopened. All 12 former roadmap identifiers survive
+in Beads provenance. Markdown task inventories were removed; contracts,
+implemented capability facts and historical execution evidence remain.
+
+Migration checks executed locally:
+
+- Compared all 34 stored descriptions, acceptance fields, priorities, statuses
+  and types through `br show` / `br list` with the reviewed issue descriptions.
+- Compared each `br dep list <id> --json` result with the intended graph:
+  66 edges, including parent grouping and blocking prerequisites.
+- `br dep cycles --json`: no cycles.
+- `br lint --status all --json`: no missing issue-template sections.
+- `br ready --type task --json`: ten actionable delivery tasks; deferred items
+  and tasks with unfinished prerequisites were excluded.
+- `br --no-db list --all --deferred --json`: the JSONL-only view matched the
+  database's descriptions, statuses and priorities. `br sync --flush-only`
+  refreshed the tracked export, and `bv --robot-triage` saw all 34 records.
+- `python3 scripts/check_package.py`: no TOML, internal-link or static source
+  inspection failures. `git diff --check`: no whitespace errors.
+
+An attempted `bv --beads-file` override was rejected by the installed CLI; no
+such command was retained in documentation. Viewer source/count checks use its
+reported `source_path` and the authoritative `br` result. Epic template lint
+initially requested `Success Criteria` headings; those headings were corrected
+and the clean result above is the final check. These are migration checks, not
+new Rust, hosted-CI or live-database execution evidence. Current work is available
+through [Beads navigation](roadmap.md).
+
 ## Original authoring evidence (historical)
 
 The following table describes the original authoring environment only. Subsequent
@@ -59,8 +99,9 @@ source-status claims only after the corresponding command succeeds. Database
 and upstream-integration claims need their own actual executions; successful
 SQLx example compilation alone does not establish transaction behavior.
 
-See [BTR-001](roadmap.md#btr-001-validate-the-source-snapshot) for the initial gate;
-its original Rust 1.88 baseline precedes the SQLx-driven minimum-version increase.
+The initial validation milestone is retained as closed Bead `batter-okz`.
+Its original Rust 1.88 baseline precedes the SQLx-driven minimum-version increase;
+see [backlog access](roadmap.md) for tracker commands.
 
 ## Dependency and toolchain refresh: 2026-09-07
 

@@ -39,7 +39,8 @@ are imported from `batter_axum`; there is no `batter::http`, `axum` feature, or
 individually. PostgreSQL provisioning remains in the external
 `postgres-test-harness` repository; it is not a workspace member or dependency.
 Runlimit, Runledger, and postgres-test-harness adapters are **not implemented**.
-Their ownership boundaries and next tasks are documented in [integrations](docs/integrations.md).
+Their ownership boundaries are documented in [integrations](docs/integrations.md);
+delivery tasks live in the [Beads backlog](docs/roadmap.md).
 
 ## Verification
 
@@ -157,8 +158,8 @@ The [reconciliation](docs/effect-v4-reconciliation.md) maps the broader conventi
 proposal to implemented APIs, deliberate differences, and remaining delivery work.
 
 [AGENTS.md](AGENTS.md) gives the next agent a reading order, exact verification
-commands, dependency boundaries, and change rules. The [roadmap](docs/roadmap.md)
-provides prioritized, scoped work items with acceptance criteria. See also
+commands, dependency boundaries, and change rules. The [backlog navigation page](docs/roadmap.md)
+points to Beads, the sole owner of delivery tasks and their dependencies. See also
 [testing](docs/testing.md), [operations](docs/operations.md),
 [security](SECURITY.md), and [primary references](docs/references.md).
 

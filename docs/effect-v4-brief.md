@@ -2,7 +2,8 @@
 
 The [2026-09-08 reconciliation](effect-v4-reconciliation.md) compares the supplied
 eight-priority analysis with current source and tests. It records which proposals
-are already implemented, need narrower contracts, or remain future work.
+are implemented and which capabilities or guarantees are absent. Delivery
+work lives only in [Beads](roadmap.md).
 
 ## The thesis
 
@@ -101,15 +102,9 @@ reliability. They increase the amount of private framework behavior an agent
 must guess. A small API surface, compile-checked examples, and failure-path
 contracts are the useful response to the "AI era" framing.
 
-## Intended extraction order
+## Delivery ownership
 
-First establish process lifecycle/failure visibility in two actual applications.
-Then standardize bounded operations and telemetry around one real dependency.
-Then prove one complete HTTP -> domain -> native SQLx transaction -> Runledger
-submission -> worker -> trace -> isolated-test teardown path.
-
-The first two areas have source in this snapshot. The complete durable reference
-path does not. Additional schema conventions, caching/batching, or service graph
-machinery follow actual repeated requirements, not a desire to match Effect's
-feature inventory. The [roadmap](roadmap.md) is the executable handoff for that
-remaining work.
+[Beads](roadmap.md) owns the audited delivery outcomes and dependency graph.
+This brief preserves design rationale and ownership boundaries, not a parallel
+implementation sequence. Reusable APIs still require evidence of repeated
+consumer needs and shared failure semantics.

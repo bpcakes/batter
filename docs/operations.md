@@ -108,7 +108,7 @@ finished. The reserve neither ignores parent cancellation nor extends total time
 
 ## Deployment prerequisites
 
-Complete BTR-001 and BTR-010, obtain application-specific latency/overload data,
-exercise shutdown under traffic, audit dependency/security updates, and test the
-actual database/provider semantics before treating the package as production
-infrastructure. The source is explicitly not a production certification.
+Production and publication evidence is tracked in [Beads](roadmap.md).
+Local library validation is not application-specific operational evidence or
+production certification. Deployment and publication remain separate owner
+decisions.

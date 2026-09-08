@@ -19,7 +19,7 @@ Own native Tokio operational contracts. Read the root guide and
 Keep runtime-independent application policy out of this crate. Change HTTP
 translation in `batter-axum`; change SQLx composition in the example package.
 Put foundation failure tests in `tests` and core usage examples in `examples`.
-Update the root contracts, status, roadmap, and validation for behavior changes.
+Update the root contracts, implemented status, owning Bead, and validation for behavior changes.
 
 ## Invariants
 

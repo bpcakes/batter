@@ -5,8 +5,8 @@ linked below. This is a design reconciliation, not a new implementation or a
 claim of production validation. Execution evidence lives in [validation](validation.md).
 
 Batter implements much of the operational core proposed in the analysis. The
-remaining work is to prove that core in a complete application path and establish
-the missing boundary conventions. The central thesis holds: ordinary Rust types,
+complete application path and some boundary conventions remain unimplemented.
+Delivery outcomes and dependencies are tracked in [Beads](roadmap.md). The central thesis holds: ordinary Rust types,
 futures, constructors, and Tokio should remain the programming model. Uniformity
 is useful where it makes ownership, errors, and boundaries predictable.
 
@@ -16,16 +16,16 @@ application composition roots or upstream libraries.
 
 ## What exists against the eight priorities
 
-| Proposed area | Implemented evidence | Remaining work / decision |
+| Proposed area | Implemented evidence | Current boundary |
 | --- | --- | --- |
-| 1. Error model | [OperationError<E>](../crates/batter/src/operation.rs) and [RetryError<E>](../crates/batter/src/retry.rs) preserve concrete failures and distinguish interruption; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Keep domain errors concrete; standardize wire mappings in BTR-050 and evaluate panic handling in BTR-010. |
-| 2. Composition root and lifecycle | [Supervisor](../crates/batter/src/lifecycle.rs), [owned driver](../crates/batter/src/lifecycle/driver.rs), [finite work](../crates/batter/src/lifecycle/process.rs), and [CleanupStack](../crates/batter/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. BTR-010 still needs transport/non-yielding hardening. |
-| 3. Ambient request context | HTTP supplies explicit `Extension<OperationContext>` with deadline/cancellation. The [HTTP example](../crates/batter-axum/examples/http_service.rs) supplies generated request IDs and spans. | No task-local request context, tenant/principal model, inbound trace-parent handling, or durable envelope. BTR-030 should establish trusted correlation with BTR-020; ambient access is optional ergonomics, not an authorization mechanism. |
-| 4. Retry policy | [RetryPolicy](../crates/batter/src/retry.rs) implements fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, and injected jitter. | No `backon` dependency or outbound HTTP/SQLx/job adapter. Per-attempt budgets and retry tokens remain BTR-040. Share mechanics while retaining one retry owner for each operation. |
-| 5. Config and secrets | [Argument validation](../crates/batter/src/validation.rs) rejects invalid budgets/registration; examples parse their own environment settings. | Typed root configuration, source precedence, secret containers, and redaction tests remain BTR-060. Existing argument validation is not a config framework. |
-| 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; HTTP records actual status and matched route. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | Metrics, exporters, durable trace continuity, and an exporter/metrics setup recipe remain BTR-030. No global subscriber installation belongs in the library. |
-| 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. BTR-050 should prove these on the reference API before extracting reusable types. |
-| 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. | No TestApp or PostgreSQL harness adapter. BTR-020/022 must prove isolated transactions, idempotency, worker execution, and teardown with real PostgreSQL. |
+| 1. Error model | [OperationError<E>](../crates/batter/src/operation.rs) and [RetryError<E>](../crates/batter/src/retry.rs) preserve concrete failures and distinguish interruption; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Domain errors remain concrete; wire policy belongs to the application. |
+| 2. Composition root and lifecycle | [Supervisor](../crates/batter/src/lifecycle.rs), [owned driver](../crates/batter/src/lifecycle/driver.rs), [finite work](../crates/batter/src/lifecycle/process.rs), and [CleanupStack](../crates/batter/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Transport and non-yielding behavior lack full execution evidence. |
+| 3. Ambient request context | HTTP supplies explicit `Extension<OperationContext>` with deadline/cancellation. The [HTTP example](../crates/batter-axum/examples/http_service.rs) supplies generated request IDs and spans. | No task-local request context, tenant/principal model, inbound trace-parent handling, or durable envelope. Ambient access is optional ergonomics, not an authorization mechanism. |
+| 4. Retry policy | [RetryPolicy](../crates/batter/src/retry.rs) implements fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, and injected jitter. | No `backon` dependency or outbound HTTP/SQLx/job adapter. There are no per-attempt budgets or retry tokens. Share mechanics while retaining one retry owner for each operation. |
+| 5. Config and secrets | [Argument validation](../crates/batter/src/validation.rs) rejects invalid budgets/registration; examples parse their own environment settings. | No typed root configuration or shared secret-container recipe exists. Existing argument validation is not a config framework. |
+| 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; HTTP records actual status and matched route. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library. |
+| 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. |
+| 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. | No TestApp or PostgreSQL harness adapter. Real database composition is unverified. |
 
 The crate also already has [process-local concurrency admission](../crates/batter/src/admission.rs),
 explicit finalization reserves, bounded finite task receipts, and shutdown waiters
@@ -48,19 +48,19 @@ The default HTTP body already contains `type: "about:blank"`, `title`, `status`,
 and `code`, with `application/problem+json`. It is a basic Problem Details shape,
 not an app-wide problem-type catalogue. RFC 9457 uses `type` as the primary problem
 identifier; `code` is Batter's extension, and `detail`/`instance` are not mandatory.
-Future domain contracts should document their types/codes and test body/status
-agreement. Existing response tests do not establish comprehensive RFC conformance.
+Application-owned types/codes define the domain wire contract. Existing response
+tests do not establish comprehensive RFC conformance.
 See the [RFC reference](references.md#boundary-conventions-reviewed-2026-09-08).
 
 **Panic observation and HTTP panic recovery are different.** Owned task and
 cleanup panics are reported. Operation panics propagate, and the HTTP middleware
 does not catch handler panics or turn them into `HttpFailure::Internal`.
 This is source-inspected; a dedicated HTTP handler-panic regression is still absent.
-A future opt-in Tower panic boundary needs an explicit sanitized renderer and
-unwinding tests. It cannot catch aborting panics, sanitize the default panic hook,
+An opt-in Tower panic boundary would require an explicit application renderer.
+Such a boundary cannot catch aborting panics, sanitize the default panic hook,
 or convert a body panic into a fresh 500 after headers were sent. The application
 owns panic-hook policy; recovery does not establish that damaged shared state can
-continue serving. This is an open BTR-010 decision, not an implemented guarantee.
+continue serving. No HTTP panic recovery guarantee is implemented.
 
 **Use the existing supervisor.** JoinSet supplies direct completion and panic
 observation; substituting TaskTracker alone would lose the failure-supervision
@@ -80,7 +80,7 @@ Durable jobs may carry validated, versioned correlation and application-selected
 identity data, but correlation alone grants no authority. Worker authorization
 must be explicit. Never persist a CancellationToken or Tokio Instant, or make
 committed durable work a child of the request's cancellation token. Each durable
-job attempt gets a new execution budget. BTR-020 and BTR-030 must prove this distinction.
+job attempt needs a new execution budget; this composition is not yet verified here.
 
 **Unify retry rules without multiplying retry owners.** The current policy is
 already independent of a dependency's error type. HTTP replay, transaction replay,
@@ -97,26 +97,6 @@ Root config may compose upstream typed options; it should not require upstream
 crates to depend on Batter or replace their public configuration conventions.
 Schema/extractor libraries named in the analysis are candidates, not selected
 dependencies. Choose and version-check them during the reference implementation.
-
-## Delivery order after reconciliation
-
-1. Finish BTR-010's production-blocking lifecycle/transport evidence and decide
-   the optional panic-boundary contract. The existing local checks remain useful
-   but do not cover full disconnect, streaming, or non-yielding behavior.
-2. Deliver BTR-020 with BTR-022: one HTTP command, native SQLx transaction,
-   transactional job submission, hosted upstream worker, durable result, and
-   isolated test teardown. Include the smallest BTR-030 correlation contract
-   needed to connect request and job; measure attempts to expose nested retry.
-3. Use that same application to prove BTR-050's validated DTO/error/contract path
-   and BTR-060's typed config/secrets recipe. These are adoption work, not reasons
-   to wait for two consumers before writing a first example. Require a second
-   consumer before promoting broadly reusable adapters.
-4. Complete BTR-021 admission observation and the remaining BTR-030 metrics/flush
-   work. BTR-040's fleet retry extensions remain required before multi-replica
-   retry adoption. Keep fallback, circuits, caches, and graphs demand-driven.
-
-These are delivery groupings of the existing [roadmap](roadmap.md), not claims
-that the reference application or either consumer already exists.
 
 ## Durable execution, AI, packaging, and agent guidance
 
@@ -142,8 +122,7 @@ use separate packages; neither is a foundation feature. See
 
 [AGENTS.md](../AGENTS.md), rustdoc, five runnable demonstrations, and the
 [failure-contract test map](testing.md) already provide the agent-facing starting
-point. No `llms.txt` exists. A future index may link to those sources; it should
-not become a competing contract. Predictability should come from checked types,
+point. No `llms.txt` exists. An additional index would be navigation only, not a competing contract. Predictability should come from checked types,
 examples, and failure tests, including the missing reference path.
 
 ## Evidence behind this comparison

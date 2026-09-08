@@ -17,10 +17,10 @@ Cargo.lock was refreshed by Cargo. Every workspace package has publishing disabl
 1. [README](README.md), [status](docs/status.md), [guarantees](docs/guarantees.md).
 2. [Architecture](docs/architecture.md) and [ADRs](docs/adr/README.md).
 3. [Testing](docs/testing.md) and [validation](docs/validation.md).
-4. [Integration contracts](docs/integrations.md), [roadmap](docs/roadmap.md), and
+4. [Integration contracts](docs/integrations.md), [Beads backlog](docs/roadmap.md), and
    [Effect v4 rationale](docs/effect-v4-brief.md).
 
-## Verification: BTR-001
+## Verification
 
 The default toolchain is pinned to Rust 1.98.1. All packages retain Rust 1.94
 as their minimum; SQLx 0.9.0 requires it in the example package. No lower library
@@ -110,7 +110,10 @@ engine, database harness, or repository abstraction here.
 Use generic scenario names in source, tests, examples, documentation, and updates.
 Do not use application-specific project names or project-shaped labels.
 
-Update the relevant contract, failure-path test, status row, and roadmap item.
+Update the relevant contract, failure-path test, implemented-status row, and owning Bead.
+Beads owns delivery scope, acceptance, priority, status and dependencies; do not
+reintroduce Markdown backlog lists. Task-local ExecPlans document execution for
+their owning Bead, and completed plans are historical evidence.
 New public APIs need rustdoc and an example. New claims need executable tests
 or an explicit unverified label. Record external semantics against primary
 sources in `docs/references.md`; re-check the actual upstream version before
@@ -120,18 +123,16 @@ Do not hide body streaming, transaction commit ambiguity, non-yielding tasks,
 unbounded semaphore waiters, or default panic-hook output behind generic words
 like "safe" or "reliable". Test what those words would actually mean.
 
-## Next priorities after validation
+## Finding the next task
 
-BTR-010: cancellation/shutdown race and real-transport hardening.
-BTR-020: one native SQLx transaction -> Runledger -> worker reference path,
-with postgres-test-harness isolation and rollback/idempotency tests.
-BTR-021: thin Runlimit admission/observation integration.
-BTR-030: bounded-cardinality metrics and request-to-job trace context.
-BTR-040: per-attempt budgets and retry-token policy beyond injected jitter.
+Run `bv --robot-triage`, then verify current state with `br ready --type task --json`
+and `br show <id> --json`. This repository uses Rust Beads (`br`), not Go `bd`.
+Epics group outcomes; claim a ready delivery task rather than its umbrella epic.
+Use `br list --all --deferred --label roadmap --json` for the migrated inventory.
+The [backlog navigation page](docs/roadmap.md) explains tracker/export access.
 
-Detailed scopes, dependencies, and acceptance criteria are in the roadmap.
-Publication and deployment require a separate user decision; do not infer it
-from a request to implement or test this ZIP.
+Publication and deployment require a separate user decision; completing a Bead
+does not grant that permission.
 
 <!-- BEGIN JIG MANAGED BLOCK -->
 This repository uses the shared `jig.sh` workflow. Keep repo-local business rules and ownership guidance in backend-level guides; keep generic agent workflow and repo policy here.
@@ -212,6 +213,9 @@ When a backend package or crate has an `AGENTS.md`, use these sections:
 ## Beads Workflow Integration
 
 This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI—for issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
+
+**This repository uses Rust beads_rust (`br`).** The generic command examples
+below describe both families, but only `br` applies here.
 
 **Choose the tracker CLI from this repository's instructions and configuration.** Use `bd` commands in a Go Beads workspace and `br` commands in a beads_rust workspace. Do not run both trackers against the same workspace or infer the tracker solely from the JSONL filename.
 

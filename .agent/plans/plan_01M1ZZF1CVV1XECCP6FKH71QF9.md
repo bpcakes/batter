@@ -1,21 +1,23 @@
+# Archived execution record: Jig review fixes
+
 ## Progress
-- Fix manual CI comparison authority, cache the selected Jig runtime, and use normal merging for Markdown plans.
-- Validate GitHub-style ref layouts, cache configuration, merge behavior, and existing repository checks.
+
+Completed. Delivery status is owned by Bead `batter-okz`; use `br show batter-okz --json`.
+The original implementation steps are preserved in Git history rather than
+maintained as another Markdown task list.
 
 ## Surprises & Discoveries
-The review reproduced missing local master on manual workflow dispatch and contradictory union merges of edited plans. CI currently rebuilds Jig on every runner.
+
+Manual dispatch now compares against origin/master, installed runtime caching includes configuration/platform identity, and Markdown plans use normal conflict-producing text merges while append-only JSONL retains union merging. Seven Python regressions passed locally. Hosted cache behavior remains unverified and is tracked separately in Beads.
 
 ## Decision Log
-Preserve exact pull-request/push/merge-group comparison authority. Cache the repository-local runtime using source revision, contract/profile, platform, and toolchain identity. Preserve union merging for append-only JSONL records.
+
+This record is historical. Existing contract and validation decisions remain in
+the repository docs; it does not authorize new implementation, publication or
+deployment. Beads owns all remaining delivery outcomes.
 
 ## Outcomes & Retrospective
-Pending verification. Update docs and stage fixes; do not commit or publish.
 
-## Progress update
-Implemented all three review fixes: manual CI uses origin/master, a pinned actions/cache step restores only runtime cache directories with complete identity inputs, and a project-owned text merge override protects editable plans after template refreshes. JSONL union merging is preserved.
-
-## Validation update
-All seven committed standard-library Python regression tests pass against the selected runtime. They enforce actual event budgets, unavailable-base rejection, zero push-before behavior, cold/warm cache behavior with Cargo blocked, Git conflict/union semantics, and source ZIP exclusions. Workflow syntax/cache configuration and static package checks pass. One Jig Rust check correctly blocked when validation documentation changed during its planning window; rerunning after staging the settled files.
-
-## Outcomes & Retrospective update
-Hosted cache service behavior remains unverified. No project commit or publication performed.
+Exact execution commands, versions, failures, resolved blockers and limitations
+remain in [validation](../../docs/validation.md). Append-only Jig memory is
+preserved. See [backlog access](../../docs/roadmap.md) for current work.

@@ -2,10 +2,12 @@
 
 Updated: 2026-09-08. The local Rust verification matrix passes on 1.94.0 and
 1.98.1 with the refreshed lockfile. There are no hidden implemented adapters
-behind the planned rows. See [validation](validation.md) for execution evidence
+behind the capability rows. See [validation](validation.md) for execution evidence
 and limits; local checks do not establish production or hosted CI validation.
-The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains the remaining
-application conventions and deliberate differences from the broader proposal.
+The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains current
+capabilities and deliberate differences from the broader proposal. This page
+records implemented facts and limits; [Beads](roadmap.md) owns delivery status,
+priorities, acceptance and dependencies.
 
 | Concern | Source status | Evidence / boundary |
 | --- | --- | --- |
@@ -27,28 +29,29 @@ application conventions and deliberate differences from the broader proposal.
 | Concurrency admission | Implemented | Native semaphore permits; no waiter-count or memory bound. |
 | Retry classification and replay authorization | Implemented | No timeout retries; provider lower bound; last error retained. |
 | Finalization reserves and injected jitter | Implemented | Sibling phase contexts, deterministic samples, provider floor; neither masking nor fleet coordination. |
-| Attempt deadlines, retry tokens, circuit breaking, fallback | Not implemented | Remaining BTR-040 scope. |
+| Attempt deadlines and retry tokens | Not implemented | Current retry execution has one total budget. |
+| Circuit breaking and fallback | Not implemented | No measured consumer requirement has established a shared abstraction. |
 | Tracing conventions | Implemented | INFO/WARN completion events, HTTP status/outcome/latency; scoped dispatch survives owned-future destruction and nested spans. No exporter or metric backend. |
 | Public adapter dispatch seam | Implemented | `telemetry::with_current_dispatch` captures the current subscriber at the call, preserves polling/destruction, and accepts borrowed/non-Send work; [direct tests](../crates/batter/tests/scoped_dispatch.rs). It does not capture the current span or own a task. |
 | Axum middleware/probes | Implemented, separate package | `batter_axum` retains combined readiness/deadline policy. Bounds response construction, not streaming; fixed server budget. |
 | Typed HTTP infrastructure errors | Implemented | Stable codes and basic Problem JSON or a configured application renderer; no app-wide domain taxonomy or comprehensive RFC conformance test. |
-| HTTP handler panic recovery | Not implemented | Owned task/cleanup panic observation does not convert handler panics into HTTP 500s. BTR-010 decision; default panic-hook output remains separate. |
-| Request metadata / ambient context | Partial example only | Explicit deadline/cancellation extension plus example-generated request IDs; no task-local tenant/principal context or inbound trace-parent handling. BTR-030. |
+| HTTP handler panic recovery | Not implemented | Owned task/cleanup panic observation does not convert handler panics into HTTP 500s. Default panic-hook output remains separate. |
+| Request metadata / ambient context | Partial example only | Explicit deadline/cancellation extension plus example-generated request IDs; no task-local tenant/principal context or inbound trace-parent handling. |
 | Configuration framework / secret types | Not implemented | Only operational argument validation and example env parsing. |
 | SQLx native pool integration | Example package only | `batter-example-postgres-lifecycle`: connection, probe, pool close, partial-startup pattern; no pool wrapper or SQLx dependency in the foundation. |
-| SQLx transactional Runledger reference path | Not implemented | BTR-020. No business transaction or durable job test in this package. |
+| SQLx transactional Runledger reference path | Not implemented | No business transaction or durable job test in this package. |
 | Runledger host/trace adapter | Not implemented | Preserve upstream supervision; do not recreate worker loops. |
 | Runlimit admission/observer adapter | Not implemented | Preserve key trust boundary and consumption certainty. |
 | postgres-test-harness app adapter | Not implemented | No database/container provisioning code is copied here. |
 | Scripted fake / error-preserving teardown helper | Implemented | [Test support](../crates/batter-test-support/src/lib.rs). |
 | Live PostgreSQL integration tests | Not implemented or executed | No test silently skips a missing database. |
-| Schema/OpenAPI/client generation | Not implemented | BTR-050; existing ecosystem integration first. |
+| Schema/OpenAPI/client generation | Not implemented | No generated API/client pipeline exists. |
 | Durable correlation / distributed tracing | Not implemented | No serialization of cancellation tokens or monotonic deadlines. |
 | Request-scoped child-task joining | Not implemented | Ordinary composed futures recommended; no fake structured-concurrency guarantee. |
-| Cache/batching/service graph | Deliberately deferred | Extract only after two real consumers establish common semantics. |
+| Cache/batching/service graph | Not implemented | Shared extraction requires two actual consumers with common semantics. |
 | Memory safety/Send/Sync/Result replacement | Out of scope | Use Rust directly. |
 
-## Release evidence still required
+## Limits of current evidence
 
 Hosted CI execution, a real HTTP traffic/streaming/disconnect hardening suite,
 non-yielding child-process tests, and a real PostgreSQL setup remain outstanding.
@@ -57,4 +60,4 @@ recorded separately in validation; they do
 not establish database integration or detached-descendant shutdown guarantees.
 
 See [validation](validation.md) for what was actually checked, and
-[roadmap](roadmap.md) for scoped follow-on work.
+[Beads](roadmap.md) for delivery work.

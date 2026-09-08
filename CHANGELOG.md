@@ -1,5 +1,11 @@
 # Changelog
 
+## Backlog migration — 2026-09-08
+
+Audited Markdown delivery requirements into dependency-linked Beads with completed
+and deferred outcomes preserved. Removed duplicate roadmap/task lists; docs retain
+contracts, capability facts and validation history.
+
 ## Unreleased
 
 - Split the virtual workspace into `batter`, `batter-axum`, independent generic

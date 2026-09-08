@@ -36,8 +36,8 @@ and records its SHA in `_commit`; this is source installation metadata, not a
 persistent product-version constraint. Use `scripts/jig update --recopy` to
 retain the selected revision, or `scripts/jig update --vcs-ref v0.3.0` to select
 the release explicitly. Plain `scripts/jig update` advances to the upstream
-default branch. A future first-class version pin can replace this policy when
-Jig supports it; `jig_version` is legacy in modern contracts.
+default branch. `jig_version` is legacy in modern contracts; this accepted release-selection
+policy remains in force.
 
 On a fresh checkout, run `scripts/jig doctor` before starting an MCP client.
 The first invocation builds the repository-local runtime using Cargo, Git,
@@ -165,25 +165,18 @@ not a streaming/disconnect/load suite. It never contacts a user deployment.
 A temporary local port is selected before launch; another local process can race
 that port reservation, in which case the smoke test should fail visibly.
 
-## Missing evidence and hardening tests
+## Limits of current coverage
 
-The [reconciliation](effect-v4-reconciliation.md) also identifies no dedicated
-HTTP handler-panic regression and no comprehensive Problem Details/route-contract
-suite. Operation panic tests and HTTP abort tests do not establish handler panic
-recovery. Track these under BTR-010 and BTR-050; no HTTP catcher is implemented.
+The suite does not establish full real-transport behavior, non-yielding task
+termination, live PostgreSQL/upstream compatibility, or HTTP handler-panic
+recovery. Basic Problem JSON tests do not establish comprehensive route-contract
+or RFC conformance. Bounded multi-thread regressions are not exhaustive race
+exploration. Compiler/lint/doc and HTTP smoke results remain recorded in
+[validation](validation.md).
 
-Real PostgreSQL and Runledger/Runlimit/harness compatibility remain unverified.
-Compiler/lint/doc and HTTP smoke results are recorded in [validation](validation.md).
-Still add real transport keep-alive/stream/drop tests, randomized
-cancellation race exploration, and sustained multi-thread stress tests beyond
-the bounded race regressions. Non-yielding tasks should
-be tested in a killable child process, not by hanging the main test runtime.
-
-Test partial acquisition and factory panic separately. Test both the successful
-and uncertain transaction outcomes around commit. Use database isolation from
-the user's harness, not a global shared database reset. Verify connection limits
-and teardown after test assertion errors, panics, and cancellation. Never turn a
-missing database into a silent successful return from an integration test.
+The audited missing-test requirements and their dependencies live in
+[Beads](roadmap.md), not in a second checklist here. Database prerequisites must
+never be silently skipped, and non-yielding tests must not hang the test runner.
 
 ## Reporting convention
 

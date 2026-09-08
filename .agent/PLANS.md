@@ -2,6 +2,12 @@
 
 This document defines the contract for a self-contained execution plan that another engineer or agent can implement without prior context.
 
+Beads owns delivery scope, acceptance criteria, priority, status and dependencies.
+Identify the owning Bead in each implementation ExecPlan. Keep detailed execution
+steps, decisions and validation here; update the Bead when those discoveries
+change delivery scope. Do not copy the project backlog into Markdown. Completed
+plans are historical execution records, not additional open task lists.
+
 ## Required Properties
 
 - Every ExecPlan must be self-contained.

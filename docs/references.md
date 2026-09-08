@@ -187,7 +187,7 @@ The resolved registry sources were inspected locally before these fixes:
 The preceding conversation reviewed these libraries' published READMEs. This
 package has not compiled against them and does not assert version compatibility.
 Re-read source/documentation through the relevant connected repository tool or
-registry before implementing BTR-020/021/022.
+registry before implementing any upstream integration tracked in Beads.
 
 - [Runlimit repository](https://github.com/bpcakes/runlimit) and
   [runlimit-core](https://crates.io/crates/runlimit-core).

@@ -18,7 +18,7 @@ at the composition root.
 Change HTTP policy and rendering here. Change operation/lifecycle semantics in
 `batter`. Keep `RequestPolicy`'s combined readiness and deadline contract unless
 a separately approved API change calls for decoupling. Update the root HTTP
-contract, source map, status, roadmap, and validation with changes.
+contract, source map, implemented status, owning Bead, and validation with changes.
 
 ## Invariants
 

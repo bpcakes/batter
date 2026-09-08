@@ -1,10 +1,10 @@
-# Integration ownership and planned adapters
+# Integration ownership contracts
 
 Only the `batter-axum` adapter package and the native SQLx **example package**
 exist in this snapshot.
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
-library/test-support crate. The designs below are handoff requirements, not
-unimplemented APIs advertised as available.
+library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
+APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.md).
 
 ## Axum: implemented, with a deliberately small boundary
 
@@ -36,8 +36,7 @@ security template. See [guarantees](guarantees.md).
 The supervised Axum server uses with_graceful_shutdown and waits for it to finish
 while dependencies remain alive. Aborting that wrapper is not accepted as proof
 of transitive child termination; resource finalizers are conservatively skipped.
-A real-transport verification task must exercise idle/active keep-alive requests,
-slow bodies, streaming responses, shutdown, and client disconnects.
+The existing smoke test does not establish full connection/body lifetime behavior.
 
 ## SQLx: keep transactions visible
 
@@ -78,11 +77,10 @@ must not casually drop run_until_shutdown before its own cleanup completes.
 Do not assume an adapter can mechanically map every inner signal to Batter's
 forced token; inspect upstream behavior and document that translation.
 
-The reference application should transactionally create a business record and
-submit a job using the current native enqueue/intent API. Tests must prove that
-rolling back removes both, reusing a key with the same request deduplicates,
-and changed-payload conflicts are explicit. External effects remain at least
-once unless the external protocol independently protects them.
+Application writes and dependent job submission share a native transaction.
+Rollback, idempotency and payload-conflict semantics belong to the selected
+upstream protocol and application. External effects remain at least once unless
+the external protocol independently protects them.
 
 Copy correlation metadata into durable payload/envelope fields only through a
 versioned, validated representation. Never persist a CancellationToken or Tokio
@@ -104,10 +102,8 @@ error strings as labels. Preserve normal quota denial vs capacity denial vs
 backend failure, shadow decisions, retry timing, and consumption certainty. Do
 not charge a new user quota automatically for each internal retry attempt.
 
-The integration example should show explicit layer ordering: trusted metadata,
-authentication as needed, Runlimit admission, Batter operation policy, and domain
-execution. The correct order depends on which identity is being limited and must
-not become a universal security claim.
+Layer ordering depends on trusted metadata, authentication and which identity
+is being limited. No single order is a universal security claim.
 
 ## postgres-test-harness: future application test adapter
 

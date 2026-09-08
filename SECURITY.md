@@ -2,7 +2,8 @@
 
 This MVP has local compiler/runtime validation, but not a security audit or
 production validation. Do not deploy it as a security control without completing the validation
-and application-specific hardening work in docs/roadmap.md.
+and application-specific hardening outcomes tracked in Beads; see
+[backlog access](docs/roadmap.md).
 
 ## Boundaries that remain application-owned
 
