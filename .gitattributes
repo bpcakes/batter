@@ -1,0 +1,6 @@
+# BEGIN JIG MANAGED BLOCK
+.agent/state/*.jsonl merge=union
+# END JIG MANAGED BLOCK
+
+# Plans contain editable decisions: surface conflicts even after a Jig refresh.
+.agent/plans/*.md merge=text

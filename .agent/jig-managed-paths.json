@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "paths": [
+    ".agent/.cache/.gitignore",
+    ".agent/PLANS.md",
+    ".agent/jig-contract.json",
+    ".agent/jig-managed-paths.json",
+    ".agent/plans/.gitkeep",
+    ".agent/state/.gitkeep",
+    ".gitattributes",
+    ".github/workflows/repo-policy.yml",
+    ".gitignore",
+    ".jig.toml",
+    ".mcp.json",
+    "AGENTS.md",
+    "agent-map.md",
+    "scripts/install-jig.sh",
+    "scripts/jig"
+  ]
+}

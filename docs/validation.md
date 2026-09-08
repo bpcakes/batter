@@ -304,3 +304,200 @@ recorded above; Cargo.lock is unchanged, SHA-256
 `7bcb7ba0d656d0f996ed7c91cc49409c2b75c92ba63749dcc81324ca2eddbca5`.
 Live PostgreSQL, hosted CI, other platforms, and the remaining operational
 hardening work were not exercised. No commit or publication was performed.
+
+## Jig adoption verification: 2026-09-08
+
+Baseline: initial commit `3e64cb2`, followed by the owner's uncommitted Jig
+adoption. Local platform and compiler/Cargo versions remain those recorded above:
+Linux 7.0.11-76070011-generic, x86_64-unknown-linux-gnu; Rust 1.98.1 and 1.94.0.
+Jig runtime 0.3.0 accepts contract version 7. Cargo.lock is unchanged, SHA-256
+`7bcb7ba0d656d0f996ed7c91cc49409c2b75c92ba63749dcc81324ca2eddbca5`.
+
+The first `scripts/jig check` exited 1. Clippy rejected the shared example
+`mod.rs` layout and the 107-line HTTP telemetry test under the current 100-line
+limit. The default test gate also reproduced an empty-log failure in
+`budget_exhaustion_reports_and_logs_each_skipped_hook_once_in_dependency_order`;
+a separate repetition of `cargo test --locked --test cleanup` reproduced it on
+run 9. Initial doctor failed its SQLx CLI probe, although the configured SQLx
+check returned success. Neither result established any database behavior.
+
+At the owner's request, Jig's inferred SQLx adapter, migration/metadata actions,
+profile target, required command, generated CI jobs/environment, and associated
+agent instructions were removed. The optional SQLx dependency and lifecycle
+example remain. Both Jig test aliases now execute locked core, all-feature
+all-target, and doctest commands. Shared example support moved to `support.rs`;
+all five examples are explicitly declared to exclude that support module from
+Cargo's executable discovery. HTTP completion assertions moved into a private
+helper. No lint threshold, failure assertion, or library runtime logic changed.
+
+The two cleanup observation tests and their fixture moved intact into
+`tests/cleanup_observation.rs`, isolating their scoped subscribers from other
+cleanup tests that register the same tracing callsites without subscribers.
+The callsite-interference diagnosis and its limits are in [references](references.md).
+After isolation, 100 fresh invocations of the following command passed, each
+running 12 cleanup tests and two observation tests:
+
+```sh
+cargo test --locked --test cleanup --test cleanup_observation
+```
+
+Executed successfully on the final Rust source, all exit 0:
+
+```sh
+scripts/jig --json doctor
+scripts/jig check
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build --example http_service --features axum --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+scripts/jig check agent-map
+scripts/jig check agent-guides
+scripts/jig check test
+python3 scripts/check_package.py
+git diff --check
+```
+
+Jig's five default targets passed: Clippy, formatting, tests, contract, and
+file-budget. Each Rust verification matrix entry passed 108 core tests, 123
+all-feature tests, one doctest, five example targets, and warning-denied Clippy
+and rustdoc. No failures, ignored tests, or filtered tests occurred in these
+final runs. All three loopback HTTP smoke scenarios passed.
+
+Static package inspection initially rejected relative links in Jig's transient
+adoption backup. It now excludes `.agent/.cache`, `.agent/runtime`, and
+`.agent/tmp`, while retaining durable agent documents. A temporary fixture with
+broken links in all three transient directories and `.agent/plans` verified
+that only the durable-plan link is reported. Final repository inspection finds
+123 authored tests and no lexical/TOML/internal-link failures. Historical archive
+checksums and package-check JSON were not rewritten.
+
+These results are local only. Hosted CI, live PostgreSQL, upstream application
+integrations, other platforms, and the remaining operational hardening work
+remain unverified. Repetition supports test isolation; it does not establish a
+general tracing race or production concurrency guarantee. No further commit,
+push, publication, deployment, or external provisioning occurred in this work.
+
+## Jig footprint and installation policy audit: 2026-09-08
+
+The repository selects the official Jig v0.3.0 release. The command below ran
+in a disposable clone to review the generated changes before transferring the
+release metadata and launcher/installer to this checkout:
+
+```sh
+scripts/jig update /tmp/batter-jig-fresh-e2rj43mj \
+  --template https://github.com/bpcakes/jig-sh.git \
+  --vcs-ref v0.3.0 --no-input --force
+```
+
+Jig resolved the tag to `8629700b92cd9ab8b09f8ff86de4fc1573469c83`, matching the
+upstream tag's peeled commit. The generated launcher and installer were already
+byte-identical to the release templates. Repository customizations were retained.
+This is the accepted interim policy: `update --recopy` retains the revision;
+ordinary `update` advances upstream. Persistent version-only enforcement remains
+a future upstream feature, not a prerequisite for this change.
+
+Removed the generated duplicate Rust and agent-map workflows, the optional
+checkout helper, Swift/TypeScript plugin requests, frontend/SQLite ignore rules,
+and unused proxy/package-manager settings. One Jig workflow checks installation,
+contract, guides, and file budgets alongside the original Rust matrix. The
+deprecated machine-local adoption receipt was removed from the change set;
+append-only work records remain. Workspace bootstrap now uses `cargo fetch --locked`.
+The launcher and installer retain their generated implementations.
+
+Source packaging now includes `scripts/jig` with executable permissions, Git
+attributes, and durable agent records. A temporary fixture executed the actual
+packager and asserted those members were present while sentinel files in all
+three transient Jig directories, the deprecated receipt, environment files,
+build output, and local validation output were absent from ZIP and inventory.
+Historical repository archive checksums were not regenerated.
+
+The following passed locally on the unchanged Rust source and dependency graph:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build --example http_service --features axum --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+scripts/jig doctor
+scripts/jig check contract
+scripts/jig check agent-map
+scripts/jig check agent-guides
+scripts/jig work check --plan-id plan_01M1ZXWMP2P73CEFVJENNG55TN
+scripts/jig work evidence --plan-id plan_01M1ZXWMP2P73CEFVJENNG55TN
+scripts/jig work gates --plan-id plan_01M1ZXWMP2P73CEFVJENNG55TN
+scripts/jig check test
+python3 scripts/check_package.py
+git diff --check HEAD
+```
+
+Each Rust matrix entry passed 108 core tests, 123 all-feature tests, and one
+doctest; Clippy, formatting, documentation, and all three HTTP scenarios passed.
+Cargo.lock still has SHA-256
+`7bcb7ba0d656d0f996ed7c91cc49409c2b75c92ba63749dcc81324ca2eddbca5`.
+The moved cleanup fixture and observation tests were compared byte-for-byte
+against their original bodies. Both workflow YAML files and embedded Bash
+syntax parsed successfully. A local JSON-RPC client launched the exact command
+from `.mcp.json`, initialized server 0.3.0, discovered its four repository tools
+plus 13 agent/work tools, and inspected exactly the seven configured targets.
+
+Fresh installation of the selected release was checked with no repository Jig
+cache or runtime override. Installation and doctor exited 0 without an initialized
+vault; the runtime build disabled default features. The main checkout then reused
+that binary with its original source stamp and passed doctor and MCP checks.
+Local and hosted evidence remain separate: no hosted CI execution, live
+PostgreSQL test, publication, deployment, or commit occurred.
+
+## Jig review fixes: 2026-09-08
+
+Addressed the three accepted review findings. The CI file-budget helper now
+compares manual runs with `origin/master`; pull-request, push, and merge-group
+events keep their exact bases and provenance. A missing exact base remains a
+blocking error. The repository policy workflow caches only
+`.git/jig-tools/*-runtime` with actions/cache v4.3.0, pinned to its verified SHA.
+Its key includes OS, architecture, runtime profile, configuration/source pin,
+contract, toolchain, launcher/installer, and workflow contents. No broad fallback
+key restores an unrelated runtime.
+
+Markdown plans now use the text merge driver. The override follows the Jig
+managed block, so a template refresh that restores its union rule still leaves
+conflicting plan edits visible. Append-only JSONL streams retain union merging.
+
+Added seven standard-library Python regression tests and wired them into the
+Jig policy workflow. They invoke the actual event helper and selected Jig runtime
+in isolated Git repositories containing `origin/master` and no local `master`.
+Each event accepts a small source file and rejects growth past the configured
+budget. Missing event bases block, and an all-zero push-before identity succeeds.
+Assertions inspect structured receipt findings rather than the abbreviated CLI
+display. Merge tests exercise actual Git merges, including a regenerated union
+rule before the plan override. The archive test executes the real packager and
+checks ZIP members, inventory exclusions, and launcher executable permissions.
+
+The cache test blocks Cargo with an executable sentinel: a cold cache fails and
+records the attempted install; restoring the selected runtime and its source
+stamp then passes without invoking Cargo. This establishes local restored-cache
+behavior, not a hosted actions/cache hit. Workflow YAML, embedded shell syntax,
+cache ordering, artifact paths, and key inputs were also inspected locally.
+
+Executed successfully:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+bash -n scripts/check_file_budget.sh
+scripts/jig doctor
+scripts/jig check test
+scripts/jig work check --plan-id plan_01M1ZZF1CVV1XECCP6FKH71QF9
+scripts/jig work evidence --plan-id plan_01M1ZZF1CVV1XECCP6FKH71QF9
+scripts/jig work gates --plan-id plan_01M1ZZF1CVV1XECCP6FKH71QF9
+python3 scripts/check_package.py
+git diff --check
+```
+
+The Python suite passes seven tests. Jig's locked test command passes 108 core
+tests, 123 all-feature tests, and one doctest. Rust source and Cargo.lock are
+unchanged by this follow-up, so the earlier two-toolchain and HTTP evidence
+continues to apply. No hosted CI/cache operation, PostgreSQL provisioning,
+commit, push, or publication occurred.

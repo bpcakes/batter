@@ -5,20 +5,35 @@ must update implementation status, tests, and validation evidence when complete.
 
 ## BTR-001: Validate the source snapshot
 
-**Priority P0. Status LOCALLY VALIDATED; no commit/publication authorized.**
+**Priority P0. Status LOCALLY VALIDATED; initial commit created; publication not authorized.**
 
 2026-09-07: the original graph passed on Rust 1.88.0 after two diagnostic fixes.
 All nine direct dependency requirements were then updated to their latest stable
 releases, including SQLx 0.9.0. The minimum is now 1.94; the default toolchain is
 1.98.1. The upgraded graph passes the full verification matrix on both versions.
 HTTP SIGTERM smoke and exact evidence are recorded in [validation](validation.md).
-The directory now has a Git repository; no commit or publication is authorized.
+The initial snapshot was committed as `3e64cb2` at the owner's request.
+Further commits and publication require a separate request.
 Hosted CI has not been executed.
 
 2026-09-08: enable workspace Clippy cognitive-complexity (20) and function-length
-(250) limits. Extract private cleanup/shutdown helpers and retain existing
+(100) limits. Extract private cleanup/shutdown helpers and retain existing
 failure assertions; add a regression for shutdown-future lifetime through cleanup
 following component failure. Validation is recorded in [validation](validation.md).
+
+Jig adoption verification: remove inferred database gates for the optional SQLx
+example, run locked core/all-feature/doctests through Jig, satisfy the 100-line
+and module-layout lints, and isolate cleanup log-capture tests. Local checks and
+remaining limitations are recorded in [validation](validation.md).
+The commit-readiness audit selects the official Jig v0.3.0 release, removes
+unused language configuration and duplicate CI/helper files, and checks fresh
+installation, MCP startup, and source-archive contents. Use `update --recopy` to
+retain the release. Future adoption can use a persistent version pin once Jig
+supports it; harness updates must preserve the repository customizations.
+Review follow-up fixes manual CI comparison against `origin/master`, caches the
+installed runtime, and restores conflict reporting for edited Markdown plans.
+Seven standard-library Python regression tests exercise the CI, cache, merge,
+and archive boundaries. Hosted CI/cache execution remains external evidence.
 
 Scope: run scripts/verify.sh --bootstrap on 1.88.0, fix compiler/lint/test issues,
 commit rustfmt output and a real Cargo.lock, then verify stable. Run the HTTP

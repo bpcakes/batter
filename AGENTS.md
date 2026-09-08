@@ -124,3 +124,74 @@ BTR-040: per-attempt budgets and retry-token policy beyond injected jitter.
 Detailed scopes, dependencies, and acceptance criteria are in the roadmap.
 Publication and deployment require a separate user decision; do not infer it
 from a request to implement or test this ZIP.
+
+<!-- BEGIN JIG MANAGED BLOCK -->
+This repository uses the shared `jig.sh` workflow. Keep repo-local business rules and ownership guidance in backend-level guides; keep generic agent workflow and repo policy here.
+
+## Start Here
+
+- Use this file for repo-wide defaults.
+- Open [agent-map.md](./agent-map.md) before backend work.
+- Read the nearest backend-level `AGENTS.md` before changing a package or crate when one exists.
+- Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
+- Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
+- On a fresh machine, run `scripts/jig doctor`; follow its next step, including `scripts/jig agent bootstrap` when Jig Codex skills are missing.
+- For substantial work, use `scripts/jig work start`, `scripts/jig work check`, `scripts/jig work evidence`, `scripts/jig work gates`, and `scripts/jig work finish` to keep plans, receipts, and required gates connected.
+- A plan captures an exact Git baseline. Default `work check` runs required gates whose configured path policy applies and records explicit not-applicable evidence for the rest; use `--gate <id>` only when deliberately force-running one gate.
+- `jig-contract` validates Jig harness wiring, not the application's API contract.
+- Treat `.agent/state/*.jsonl` as append-only repo memory.
+
+## Compatibility And Cutovers
+
+- Prefer direct cutovers only for internal code-only changes that can ship in one coordinated deploy.
+- Preserve compatibility or stage rollouts for persisted database state, queued job types, public API contracts, bookmarked routes, webhook boundaries, or source-of-truth moves that can straddle deploys.
+
+- Never overwrite an existing database migration; add a new forward-only migration instead.
+
+## Backend Defaults
+
+- Treat `.`, `crates` as Rust crate roots.
+- Add crate-level `AGENTS.md` files when a crate has meaningful ownership, entrypoint, or invariant guidance that should travel with that crate.
+
+- Keep transport logic thin and business logic in the owning crate.
+
+- Keep transaction boundaries explicit and deterministic.
+
+## Frontend Defaults
+
+No web apps or development proxy are configured in `.jig.toml`.
+
+Jig database tooling is disabled: SQLx is currently an optional example only.
+
+## Preferred Commands
+
+- `scripts/jig bootstrap`
+- `scripts/jig doctor`
+
+- `scripts/jig check test`
+- `scripts/jig check fmt`
+
+- `scripts/jig check clippy`
+
+- `scripts/jig work status`
+- `scripts/jig work evidence`
+
+- `scripts/jig check contract`
+
+## Done Means
+
+- Run the relevant local verification for the area you changed.
+- For backend changes, finish with `scripts/jig check test`.
+
+- Review the generated diff for stale docs, policy drift, or missing dependent updates.
+
+## Backend Guide Conventions
+
+When a backend package or crate has an `AGENTS.md`, use these sections:
+
+- `## Purpose`
+- `## Key entrypoints`
+- `## Edit here for X`
+- `## Invariants`
+- `## Common commands`
+<!-- END JIG MANAGED BLOCK -->

@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-- Enable workspace Clippy complexity/length limits of 20/250. Extract private
+- Adopt Jig with locked core/all-feature/doctest gates and example-only SQLx
+  database tooling disabled. Keep the existing two-toolchain and HTTP checks.
+- Move shared example support to `support.rs`, extract HTTP event assertions,
+  and isolate cleanup log-capture tests without changing failure assertions.
+- Exclude transient Jig backups from static package link inspection.
+- Select the official Jig v0.3.0 release and document revision-preserving updates.
+- Fix manual CI file-budget comparisons, cache the selected Jig runtime, and
+  surface conflicting Markdown plan edits. Add CI/cache/merge/archive regressions.
+- Retain Rust/ExecPlan tooling and one Jig policy workflow alongside the
+  existing Rust matrix. Remove unused
+  frontend/proxy settings, duplicate workflows, and the checkout helper.
+- Include Jig's launcher and durable records in source archives while excluding
+  local runtime/cache data and the deprecated adoption receipt.
+
+- Enable workspace Clippy complexity/length limits of 20/100. Extract private
   cleanup/shutdown helpers while preserving behavior, including shutdown-future
   ownership through cleanup after component failure.
 

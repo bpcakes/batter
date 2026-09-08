@@ -22,3 +22,14 @@ __pycache__/
 
 # OS metadata.
 .DS_Store
+
+# BEGIN JIG MANAGED BLOCK
+# Jig local runtime data. Keep durable agent memory tracked.
+.agent/.cache/*
+!.agent/.cache/.gitignore
+.agent/runtime/
+.agent/tmp/
+.agent/plans/*.md.lock
+# Deprecated machine-local adoption receipt; canonical copy lives in the cache.
+.agent/state/adopt-last.json
+# END JIG MANAGED BLOCK

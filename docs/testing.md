@@ -24,8 +24,79 @@ actual results; the YAML file has not itself run on a hosted runner here.
 
 The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
 at warning level in both packages. Root `clippy.toml` sets their thresholds to
-20 and 250 respectively. The existing `-D warnings` verification step enforces
+20 and 100 respectively. The existing `-D warnings` verification step enforces
 both limits across libraries, examples, and tests.
+
+## Jig verification
+
+The repository selects the official Jig `v0.3.0` release. Jig resolves that tag
+and records its SHA in `_commit`; this is source installation metadata, not a
+persistent product-version constraint. Use `scripts/jig update --recopy` to
+retain the selected revision, or `scripts/jig update --vcs-ref v0.3.0` to select
+the release explicitly. Plain `scripts/jig update` advances to the upstream
+default branch. A future first-class version pin can replace this policy when
+Jig supports it; `jig_version` is legacy in modern contracts.
+
+On a fresh checkout, run `scripts/jig doctor` before starting an MCP client.
+The first invocation builds the repository-local runtime using Cargo, Git,
+Bash, and Python 3. The runtime profile disables Jig's optional dev proxy.
+MCP startup requires an already installed runtime.
+
+`scripts/jig doctor` checks harness readiness; `scripts/jig check` runs the
+configured Clippy, formatting, locked core/all-feature/doctest, contract, and
+file-budget gates. Both test aliases run the same locked test matrix. The
+existing verification script additionally checks core compilation and rustdoc;
+its two-toolchain matrix and HTTP smoke remain required.
+
+Jig's database tooling is disabled because SQLx currently appears only in an
+optional example. There are no migration or prepared-query metadata gates.
+The example remains compiled by all-feature checks; live PostgreSQL is unverified.
+Agent bootstrap requests only the Rust and ExecPlan plugins. No frontend,
+development app, or external status provider is configured. Vault scope metadata
+is retained for Jig compatibility; these checks do not need a vault passphrase.
+
+The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
+adds Jig installation, contract, guide, file-budget, and integration regression
+checks. It caches only the installed runtime directories, keyed by runner OS and
+architecture plus the source/configuration, contract, toolchain, installer, and
+workflow contents. A cache miss builds the selected release; a hit still passes
+Jig's compatibility and source-stamp checks. Cache reuse on hosted runners has
+not yet been exercised.
+
+`scripts/check_file_budget.sh` retains the exact event base for pull requests,
+pushes, and merge groups. Manual dispatch compares against `origin/master`,
+which exists in GitHub's full checkout even when local `master` does not.
+Missing exact bases remain errors; push-before zero SHAs retain Jig's explicit
+empty-tree handling.
+
+Run the seven Python regression tests after installing the Jig runtime:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+```
+
+They execute the CI helper with the real Jig runtime in disposable Git repositories,
+verify budget enforcement and missing-base behavior, exercise a restored runtime
+with Cargo blocked, check actual Git merges, and inspect generated ZIP contents.
+They use Python's standard library and do not run or provision PostgreSQL.
+Markdown plans use normal text merging so contradictory edits conflict;
+append-only JSONL records retain union merging.
+
+Repository customizations omit the generated duplicate Rust/agent-map workflows and the
+checkout helper. Review `jig update` output before accepting it: a full template
+refresh can restore these defaults and replace managed guide/ignore blocks.
+Keep the two-workflow split, regression checks, runtime cache, and Rust-only
+settings when refreshing the harness. The plan merge override sits outside the
+managed attributes block so a regenerated union rule cannot silently replace it.
+
+The two budget-exhaustion observation tests run in their own integration-test
+executable, isolating scoped log capture from concurrent subscriber-free cleanup
+tests. Their report, event, invocation, and capture-order assertions are unchanged.
+Static package inspection excludes Jig's transient cache/runtime/tmp directories,
+while continuing to inspect durable agent guides and plans.
+Source archives include the executable Jig launcher, contract, and durable work
+records; local caches, runtime data, scratch files, and the deprecated adoption
+receipt are excluded.
 
 ## Authored coverage map
 
@@ -42,7 +113,7 @@ both limits across libraries, examples, and tests.
 | Permit exhaustion/release, deadline wait, close/cancellation | [admission.rs](../tests/admission.rs) |
 | LIFO, all errors, async and synchronous-factory panic observation | [cleanup.rs](../tests/cleanup.rs) |
 | Timeout/reap before dependent hook, total budget, explicit skips | [cleanup.rs](../tests/cleanup.rs) |
-| Every budget-skipped hook logged/reported once; native capture-drop LIFO | [cleanup.rs](../tests/cleanup.rs) |
+| Every budget-skipped hook logged/reported once; native capture-drop LIFO | [cleanup_observation.rs](../tests/cleanup_observation.rs) |
 | Dropping an active cleanup driver aborts its hook and does not start dependencies | [cleanup.rs](../tests/cleanup.rs) |
 | Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../tests/lifecycle.rs) |
 | Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../tests/lifecycle.rs) |

@@ -354,6 +354,23 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
     .with_subscriber(subscriber)
     .await;
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert_http_completion_events(&text);
+    for line in text
+        .lines()
+        .filter(|line| line.contains("nested dependency called"))
+    {
+        assert!(line.contains("application.request"), "{line}");
+        assert!(line.contains("batter.http"), "{line}");
+        assert!(line.contains("domain.load"), "{line}");
+    }
+    assert_eq!(text.matches("nested dependency called").count(), 2);
+    for secret in ["secret-", "SECRET-CUSTOM-METHOD"] {
+        assert!(!text.contains(secret), "{text}");
+    }
+}
+
+#[cfg(feature = "axum")]
+fn assert_http_completion_events(text: &str) {
     let completions: Vec<_> = text
         .lines()
         .filter(|line| line.contains("HTTP response boundary finished"))
@@ -373,18 +390,6 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
     assert!(completions[2].contains("status=404"));
     assert!(completions[2].contains("http_outcome=\"client_error\""));
     assert!(completions[2].contains("INFO"));
-    for line in text
-        .lines()
-        .filter(|line| line.contains("nested dependency called"))
-    {
-        assert!(line.contains("application.request"), "{line}");
-        assert!(line.contains("batter.http"), "{line}");
-        assert!(line.contains("domain.load"), "{line}");
-    }
-    assert_eq!(text.matches("nested dependency called").count(), 2);
-    for secret in ["secret-", "SECRET-CUSTOM-METHOD"] {
-        assert!(!text.contains(secret), "{text}");
-    }
 }
 
 #[cfg(feature = "axum")]

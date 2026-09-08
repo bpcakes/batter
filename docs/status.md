@@ -7,7 +7,8 @@ and limits; local checks do not establish production or hosted CI validation.
 
 | Concern | Source status | Evidence / boundary |
 | --- | --- | --- |
-| Clippy complexity and length limits | Enabled | Both workspace packages inherit warning-level lints; thresholds 20 / 250, enforced by `-D warnings`. |
+| Jig harness | Locally validated | Official v0.3.0 installation, MCP, five configured targets, and guide checks; CI comparison, cache reuse, plan merging, and archive regression tests. Hosted cache reuse remains unverified. Use `update --recopy` to retain the selected release. See [validation](validation.md). |
+| Clippy complexity and length limits | Enabled | Both workspace packages inherit warning-level lints; thresholds 20 / 100, enforced by `-D warnings`. |
 | Dependency/toolchain refresh | Locally validated | Latest stable direct dependencies, SQLx 0.9.0, Rust 1.94 minimum, default toolchain 1.98.1; [versions](references.md#dependency-refresh-2026-09-07). |
 | Typed execution errors | Implemented | `operation` preserves E; interruption is separate. Tests authored in [operation](../tests/operation.rs). |
 | Total deadline and child deadline clamp | Implemented | Tokio Instant, no serialization; cancellation-first boundary precedence. |

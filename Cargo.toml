@@ -22,6 +22,8 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 readme = "README.md"
+# Shared example support is a module, not a standalone executable.
+autoexamples = false
 
 [lints]
 workspace = true
@@ -55,3 +57,12 @@ required-features = ["axum"]
 [[example]]
 name = "postgres_lifecycle"
 required-features = ["postgres-example"]
+
+[[example]]
+name = "worker"
+
+[[example]]
+name = "process_owned"
+
+[[example]]
+name = "operation_budget"

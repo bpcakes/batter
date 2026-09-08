@@ -1,0 +1,271 @@
+# Runtime source selected with jig update --vcs-ref v0.3.0.
+# Use update --recopy to retain it; plain update advances the upstream branch.
+_commit = "8629700b92cd9ab8b09f8ff86de4fc1573469c83"
+_src_path = "https://github.com/bpcakes/jig-sh.git"
+repo_name = "batter"
+default_branch = "master"
+ci_github_runner = "ubuntu-latest"
+template_source_url = ""
+harness_footprint = "full"
+
+sqlx_enabled = false
+rust_crate_roots = [".", "crates"]
+
+schema_dump_enabled = false
+
+# Commands are owned by this Rust workspace; all dependency operations are locked.
+
+application_contracts_enabled = false
+frontend_workspace_roots = []
+
+frontend_apps = []
+
+[repository]
+default_check_profile = "verify"
+affected_ignore = [".env", ".env.*", "**/.env", "**/.env.*", "README.md", "**/README.md", "AGENTS.md", "**/AGENTS.md", "agent-map.md", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "docs/**", "LICENSE", "LICENSE.*", ".github/**"]
+
+[[repository.components]]
+id = "api"
+root = "."
+description = "Rust library workspace and examples."
+tags = ["backend"]
+propagate_affected_to_dependents = true
+adapters = ["rust"]
+
+[repository.components.provenance]
+adapters = "inferred"
+id = "inferred"
+root = "inferred"
+
+[[repository.components]]
+id = "repo"
+root = "."
+description = "Repository-wide Jig policy and compatibility actions."
+tags = ["repository"]
+adapters = ["jig"]
+
+[repository.components.provenance]
+adapters = "inherited"
+id = "inferred"
+root = "inferred"
+
+[[repository.actions]]
+description = "Run Rust Clippy with repository policy."
+intent = "check"
+effects = ["read_only", "process"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+legacy_aliases = ["jig.clippy"]
+
+[repository.actions.target]
+component = "api"
+action = "clippy"
+
+[repository.actions.runner]
+kind = "command"
+command = "api_clippy_command"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Check Rust formatting."
+intent = "check"
+effects = ["read_only", "process"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+legacy_aliases = ["jig.fmt_check"]
+
+[repository.actions.target]
+component = "api"
+action = "fmt"
+
+[repository.actions.runner]
+kind = "command"
+command = "api_fmt_command"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Run Rust tests."
+intent = "check"
+effects = ["read_only", "process"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+legacy_aliases = ["jig.test"]
+
+[repository.actions.target]
+component = "api"
+action = "test"
+
+[repository.actions.runner]
+kind = "command"
+command = "api_test_command"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Run Rust tests using the locked dependency graph."
+intent = "check"
+effects = ["read_only", "process"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+legacy_aliases = ["jig.test_locked"]
+
+[repository.actions.target]
+component = "api"
+action = "test-locked"
+
+[repository.actions.runner]
+kind = "command"
+command = "api_test_locked_command"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Prepare repository dependencies and local tooling."
+intent = "operate"
+effects = ["worktree", "process", "external"]
+legacy_aliases = ["jig.bootstrap"]
+
+[repository.actions.target]
+component = "repo"
+action = "bootstrap"
+
+[repository.actions.runner]
+kind = "command"
+command = "repo_bootstrap_command"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Validate the checked-in Jig repository contract."
+intent = "check"
+effects = ["read_only", "process"]
+inputs = [".jig.toml", "scripts/jig"]
+legacy_aliases = ["jig.contract_check"]
+
+[repository.actions.target]
+component = "repo"
+action = "contract"
+
+[repository.actions.runner]
+kind = "native"
+operation = "jig.contract_check"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+description = "Enforce repository-owned source file budgets."
+intent = "check"
+effects = ["read_only"]
+inputs = ["**"]
+legacy_aliases = ["jig.file_budget"]
+
+[repository.actions.target]
+component = "repo"
+action = "file-budget"
+
+[repository.actions.runner]
+kind = "native"
+operation = "jig.file_budget"
+
+[repository.actions.runner.configuration]
+kind = "file_budget"
+max_candidates = 10000
+max_total_bytes = 268435456
+missing_comparison = "block"
+
+[repository.actions.provenance]
+effects = "inherited"
+inputs = "inherited"
+intent = "inherited"
+legacy_aliases = "inherited"
+runner = "inherited"
+target = "inherited"
+
+[[repository.profiles]]
+id = "verify"
+description = "Default repository verification targets."
+
+[[repository.profiles.targets]]
+component = "api"
+action = "clippy"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "fmt"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "test"
+
+[[repository.profiles.targets]]
+component = "repo"
+action = "contract"
+
+[[repository.profiles.targets]]
+component = "repo"
+action = "file-budget"
+
+[repository.profiles.provenance]
+id = "inferred"
+targets = "inherited"
+
+[vault]
+scope = "repo"
+scope_id = "01M1ZXBGBDQFCZ1JJ032N3T028"
+allow_global = false
+
+[commands]
+api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files"
+api_fmt_command = "cargo fmt --all -- --check"
+api_test_command = "cargo test --workspace --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
+api_test_locked_command = "cargo test --workspace --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
+repo_bootstrap_command = "cargo fetch --locked"
+
+[execution]
+command_timeout_seconds = 1800
+command_output_limit_bytes = 67108864
+
+[[work.gates]]
+id = "verify"
+kind = "evidence"
+profile = "verify"
+conclusion = "success"
+
+[[agent_tooling.codex.marketplaces]]
+id = "jig-skills"
+source = "bpcakes/jig-skills"
+plugins = ["jig-rust@jig-skills", "jig-exec-plans@jig-skills"]

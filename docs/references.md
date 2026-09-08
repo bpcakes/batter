@@ -116,6 +116,52 @@ summary of the requested architecture and ownership decisions.
 
 [Clippy's configuration reference](https://doc.rust-lang.org/clippy/lint_configuration.html)
 defines `cognitive-complexity-threshold` and `too-many-lines-threshold`.
-Batter sets these to 20 and 250 and explicitly enables the corresponding
+Batter sets these to 20 and 100 and explicitly enables the corresponding
 `cognitive_complexity` and `too_many_lines` lints in the workspace manifest;
 both packages opt into the shared lint settings.
+
+
+## Tracing callsite test isolation: 2026-09-08
+
+The [upstream callsite source](https://docs.rs/tracing-core/latest/src/tracing_core/callsite.rs.html)
+describes process-wide callsite registration and cached subscriber interest.
+The resolved local `tracing-core` 0.1.36 source additionally has a `JustOne`
+rebuild path using the current thread's default dispatcher. A subscriber-free
+thread first registering a cleanup callsite while another thread captures logs
+can therefore interfere with that capture; this is the working diagnosis from
+source inspection and the reproduced empty-log failure, not a deterministic
+upstream race proof. The two observation tests now run in a separate executable.
+No library subscriber installation or dependency change was introduced.
+
+## Jig installation policy: 2026-09-08
+
+The upstream [`v0.3.0` configuration documentation](https://github.com/bpcakes/jig-sh/blob/v0.3.0/docs/configuration.md)
+and [installer](https://github.com/bpcakes/jig-sh/blob/v0.3.0/templates/project/scripts/install-jig.sh.jinja)
+require an immutable hexadecimal `_commit` for remote automatic installation.
+The [runtime configuration implementation](https://github.com/bpcakes/jig-sh/blob/v0.3.0/crates/jig/src/context.rs)
+limits product-version matching to legacy contracts through version 3; this
+repository uses contract 7. Selecting release `v0.3.0` resolves to commit metadata
+internally. A version-only 0.3.0 runtime requirement is not a supported replacement
+for the source pin. On 2026-09-08, `jig update --vcs-ref v0.3.0` resolved the
+official tag to `8629700b92cd9ab8b09f8ff86de4fc1573469c83`, also checked against
+the remote Git tag. `update --recopy` preserves this revision; an ordinary
+`update` advances to the remote default branch.
+
+Repository-specific workflow/ignore customizations must be reviewed after
+regeneration; the full template has no per-file opt-out for all omitted helpers.
+
+## Jig CI cache and comparison sources: 2026-09-08
+
+The pinned [checkout v4.2.2 ref helper](https://github.com/actions/checkout/blob/11bd71901bbe5b1630ceea73d27597364c9af683/src/ref-helper.ts)
+fetches branch refs under `refs/remotes/origin/*`; manual feature-branch runs
+therefore use `origin/master` as their comparison base. The
+[Jig v0.3.0 comparison implementation](https://github.com/bpcakes/jig-sh/blob/v0.3.0/crates/jig/src/git_receipts/comparison.rs)
+recognizes all-zero push-before identities as empty-tree comparisons.
+
+The [cache v4.3.0 action](https://github.com/actions/cache/tree/0057852bfaa89a56745cba8c7296529d2fc39830)
+supports path globs and explicit keys. The v4.3.0 tag was verified against the
+remote before adding it. GitHub's
+[cache reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+describes key matching, branch scope, and eviction; a configured cache does not
+guarantee a hit. This repository caches `.git/jig-tools/*-runtime` only and
+continues to run Jig's normal source/profile compatibility checks after restore.

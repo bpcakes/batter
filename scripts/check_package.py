@@ -9,10 +9,19 @@ import re
 import tomllib
 
 EXCLUDED = {"target", ".git", "__pycache__"}
+AGENT_TRANSIENT = {".cache", "runtime", "tmp"}
 
 
 def files(root: Path, suffix: str) -> list[Path]:
-    return sorted(p for p in root.rglob(f"*{suffix}") if not EXCLUDED.intersection(p.relative_to(root).parts))
+    candidates = []
+    for path in root.rglob(f"*{suffix}"):
+        parts = path.relative_to(root).parts
+        if EXCLUDED.intersection(parts):
+            continue
+        if len(parts) > 1 and parts[0] == ".agent" and parts[1] in AGENT_TRANSIENT:
+            continue
+        candidates.append(path)
+    return sorted(candidates)
 
 
 def rust_delimiters(text: str) -> str | None:
