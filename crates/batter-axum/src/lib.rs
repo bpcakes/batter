@@ -1,4 +1,5 @@
 //! Axum admission and request-operation boundary for Batter.
+//! The workspace targets Unix backends. Windows is unsupported and not planned.
 //!
 //! This bounds obtaining a response, NOT streaming its body or a WebSocket
 //! session. It does not detect disconnects that the transport does not surface

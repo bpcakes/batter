@@ -5,6 +5,9 @@
 Demonstrate native SQLx resource ownership with the foundation. This is an
 unpublished executable package, not a database adapter API.
 
+Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
+Windows support and non-Unix fallbacks are out of scope.
+
 ## Key entrypoints
 
 - `src/main.rs` acquires the pool, registers its close, and observes startup.

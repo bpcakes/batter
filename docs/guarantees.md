@@ -5,6 +5,11 @@ retain Rust 1.94 as their minimum, with development pinned to Rust 1.98.1.
 SQLx 0.9.0 belongs only to the unpublished PostgreSQL example package. See [validation](validation.md)
 for executed checks. Passing tests do not establish guarantees beyond their scope.
 
+The workspace's platform scope is Unix-only. Windows is unsupported and not
+planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
+macOS arm64 have execution evidence on both supported toolchains. The updated
+macOS CI job and other Unix targets remain unverified. See [ADR-007](adr/007-unix-platform-scope.md).
+
 ## Execution boundary
 
 OperationContext uses a Tokio monotonic deadline. Children clamp their deadline
@@ -136,6 +141,58 @@ Total configured allowance is drain + cancel + abort observation + cleanup work
 non-yielding task bodies/destructors, and OS suspension can exceed it. This is
 not a hard wall-clock SLA. Nonpreemptible blocking work requires its own owner
 and shutdown strategy; Batter has no spawn_blocking wrapper.
+
+The [subprocess tests](testing.md#non-yielding-subprocess-tests) exercise these
+limits with a direct task whose poll never returns. When another worker can
+drive shutdown, the report retains its name in `abort_requested` and `unjoined`,
+contains no joined task outcome for it, and skips dependent finalizers without
+invoking them. `Readiness::Stopped` means the coordinator finished; the direct
+task can still be live and native Tokio runtime destruction can still block.
+On a blocked current-thread runtime, even a previously polled timer and the
+shutdown report cannot progress. An external process kill supplies containment
+for these tests. The fixture also exits on parent-pipe closure or its independent
+emergency deadline, without releasing the blocked task or running its Rust
+destructors. These are private test-process controls, with no claim of library
+preemption or application finalization after process termination.
+The blocked-runtime test watchdog bounds startup separately from observation:
+five seconds from spawn to capture a complete drain record, then the fixture's two-second
+observation plus one second of margin. Startup cannot consume that observation
+window; missing startup evidence fails and triggers kill/reap. The combined
+eight-second allowance precedes the ten-second emergency exit, subject to OS
+scheduling/process-control limits. Watchdog evidence requires the selected
+deadline to have elapsed when the first kill is requested, including when it
+extends past five seconds. A live regression pins the selected wait deadline to
+captured drain time plus observation for both blocked scenarios. Elapsed time
+after reaping/capture is diagnostic only.
+The delayed-panic control derives its synchronization bound from the scenario's
+maximum wait, including observation after the latest accepted startup. It does
+not impose a second, shorter startup deadline. Live wiring controls also reject
+kill requests delayed by a full observation allowance past the selected deadline;
+this is an executed scheduling check, not an OS latency guarantee.
+Startup and final validation share one exact, complete-line protocol parser.
+Capture timestamps and deadline decisions use the same mutex: an on-time record
+survives late polling, while a late record fails and polling cannot reset the
+observation allowance. Later panic diagnostics cannot erase an on-time startup
+record: that record establishes timing, not a clean outcome. Final validation
+still rejects every captured child panic. A known panic without a startup record
+fails promptly, and capture overflow always invalidates startup evidence.
+Capture retains 64 KiB of raw diagnostics and metadata
+for at most 64 distinct events. Either overflow, or an unfinished protocol
+record at final validation, prevents a successful evidence claim. These controls
+measure parent-side capture time, not the child's unobservable exact write time.
+The capture reader retries interrupted reads. An I/O error or reader panic makes
+its explicit finish fail after joining the reader; partial bytes are diagnostics,
+not proof of complete capture.
+An event wait that observes child exit joins the reader before judging final
+startup evidence. Byte and event limits report distinct causes; the first
+detected cause survives later overflow. Live controls require natural exit after
+flooding output beyond each limit, proving that overflow does not stop draining.
+The Linux parent-death probe must reject incorrect termination and forbidden
+cleanup evidence even when Python optimization is enabled; its checks do not
+depend on Python's removable `assert` statements.
+The fixture-owner unwind control must finish within its five-second startup
+budget, before the child's ten-second emergency exit; waiting for that fallback
+does not establish prompt kill/reap behavior.
 
 A direct task join says nothing about descendants it detached. Component authors
 must preserve ownership themselves. After any requested abort, observed panic,

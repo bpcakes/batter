@@ -3,6 +3,10 @@
 This is a runbook for the intended contract, not a claim that the examples have
 been load-tested or deployed. Validate the package and your application first.
 
+The project targets Unix systems; Windows is unsupported and not planned.
+Example shutdown listeners register SIGINT and SIGTERM directly. See
+[platform scope](adr/007-unix-platform-scope.md) and [validation](validation.md).
+
 ## Startup
 
 Parse and validate configuration without logging secrets. Acquire dependencies,

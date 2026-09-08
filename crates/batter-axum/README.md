@@ -5,6 +5,9 @@ Axum 0.8 integration for the `batter` Tokio foundation. Import its API from
 policy, operation context extensions, sanitized infrastructure failure rendering,
 HTTP observations, and liveness/readiness handlers.
 
+This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
+Windows is unsupported and not planned.
+
 Use `RequestPolicy` with Axum's `middleware::from_fn_with_state(policy, request_scope)`.
 Put business routes behind the policy and merge probe routes separately. The
 policy retains its existing combined readiness and deadline behavior; it is not

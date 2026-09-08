@@ -1,7 +1,13 @@
 # Testing and failure-contract coverage
 
-There are **127 tests plus two doctests**: 106 foundation tests, 16 Axum adapter
-tests, five generic test-support tests, and two foundation doctests. [Validation](validation.md) records
+On Linux, Cargo discovers **175 test entries plus two doctests**: 154 foundation entries,
+16 Axum adapter tests, five generic test-support tests, and two foundation doctests.
+One foundation entry dispatches child fixtures and is inert in the parent run;
+the same executable has 25 process controls, 19 deterministic evidence/policy
+tests, and three capture-reader thread tests. The two Linux orphan-probe entries are excluded on other Unix targets
+(173 entries, including 46 in the focused executable).
+Windows is unsupported and not planned; see [platform scope](adr/007-unix-platform-scope.md).
+[Validation](validation.md) records
 the current local results and historical dependency/toolchain refresh evidence.
 Source presence and package-integrity checks are not type checking.
 
@@ -126,6 +132,7 @@ receipt are excluded.
 | Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
+| Non-yielding direct work, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter/tests/non_yielding.rs) and its [fixture](../crates/batter/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter/tests/non_yielding/watchdog.rs) |
 | Axum context/probes/gate/deadline/sanitized responses; budget validation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Configured envelope/status/headers, original trusted metadata on timeout/cancellation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Ordinary INFO completion, scoped context and error redaction | [core telemetry](../crates/batter/tests/telemetry.rs) |
@@ -140,6 +147,153 @@ Timer tests use Tokio's paused time. This controls the Tokio clock, not system
 wall time or a PostgreSQL server's clock. Paused time is appropriate for the
 retry and lifecycle timing model; it cannot prove real transport cancellation,
 database transaction behavior, or non-yielding task preemption.
+
+## Non-yielding subprocess tests
+
+Run the focused suite with:
+
+```sh
+cargo test -p batter --test non_yielding --locked -- --nocapture
+```
+
+These tests also run in the ordinary isolated-core and workspace matrices. Each
+synchronous parent launches this test executable's exact `child_fixture` entry,
+then sends a private stdin record containing the new child's actual PID and
+scenario. Ambient environment variables cannot activate the fixture. The parent
+retains the pipe writer through process waiting. A child OS thread observes EOF
+when that owner disappears and terminates the whole child with exit code 74.
+A separate OS thread, armed before launch input is read, exits with code 75
+after ten seconds even if the pipe remains open or launch never completes.
+Neither emergency path runs Rust destructors or claims application cleanup.
+
+The parent uses `std::time::Instant` and polls process status every 10 ms.
+Ordinary scenarios request a kill and wait for a child still alive after five
+seconds. The blocked current-thread scenarios instead allow five seconds from
+spawn to observe `drain-requested`, then a separate three-second window: the
+fixture's two-second observation plus one second for scheduling/capture. Missing
+startup evidence fails at the startup deadline and unwinds through kill/reap.
+Only complete, exact protocol records count. The reader timestamps each record
+under the capture mutex; startup evaluates the evidence and clock under that
+same mutex. A record captured at or before the deadline remains valid if the
+parent polls late, including after later child-panic diagnostics arrive. A
+captured startup event establishes timing only; final validation still rejects
+the panic. With no startup record, a known panic fails promptly. Capture
+overflow fails every startup decision. A genuinely late record fails. The observation window starts
+at the captured drain timestamp, so late polling cannot extend it. A real-process
+regression exercises both blocked scenarios and compares the deadline actually
+passed to `wait()` with captured drain time plus the observation allowance;
+fast startup cannot conceal reverting to a fixed spawn deadline. A second live
+control waits for the deliberate panic to be captured before its first startup
+resolution, then requires the original observation deadline and final panic
+rejection. Deterministic cases cover the same ordering before and after the
+startup deadline, plus missing/late startup and overflow accompanied by panic.
+The synchronization bound comes from the scenario policy's maximum wait;
+an exact-instant regression includes panic after the latest accepted startup.
+The live wiring control rejects a kill delayed by a full observation allowance
+past its recorded deadline. This tolerance does not guarantee OS scheduling.
+Event waits join capture when the child exits before evaluating its final
+evidence; exited-child controls cover both present and absent events.
+Both phases fit within eight seconds, before the independent ten-second child
+emergency exit, subject to the OS timing limits below. The kill request and
+observed exit status are separate facts. Watchdog assertions
+require SIGKILL; a natural exit before the kill cannot masquerade as that signal.
+They also require the recorded first kill-request time to reach the selected deadline and the scenario's
+complete milestones. There is no alternate numeric-exit-code fallback.
+Emergency codes 74/75 and ordinary failures cannot satisfy watchdog assertions.
+
+A dedicated reader continuously drains merged stdout/stderr, retaining at most
+64 KiB of diagnostic bytes and metadata for at most 64 distinct protocol events.
+Event names reference those retained bytes; duplicate records keep their first
+timestamp. It keeps draining after either limit is exceeded, preventing pipe
+backpressure. Overflow fails startup and final validation because a preview
+cannot prove absence of later failures. An unfinished protocol record also fails
+final validation: termination may have interrupted forbidden evidence mid-write.
+Diagnostics include the scenario, actual status, first kill-request time,
+elapsed time and selected deadline. Capture joining cannot turn an early kill
+into valid deadline evidence. No temporary capture files exist. On errors or parent unwinding,
+the guard kills/reaps the child before joining the capture reader. Scripted
+`Read` inputs exercise this same reader loop: an interrupted read must retry,
+EOF must preserve the evidence, and I/O errors or panics after partial output
+must make `finish()` fail after joining reader destruction. The I/O error kind
+and message survive; a reader panic becomes the fixed harness I/O diagnostic.
+Partial output remains available for diagnosis, without becoming a successful
+finish result.
+Overflow diagnostics retain the first detected cause and the captured event
+count. The event-overflow fixture emits more than 64 distinct records before
+flooding the pipe and exiting: ordinary exit proves continued draining, while
+validation must still reject it for event overflow even after the byte cap.
+
+The cooperative control waits for forced cancellation, drops its direct task,
+runs the dependency finalizer, and exits normally. The non-yielding task parks
+its OS thread forever inside one Tokio poll; it has no self-release. With two
+runtime workers, an external OS thread requests drain after confirmed task
+entry. The owned driver must retain exactly that task in both `abort_requested`
+and `unjoined`, record no invented joined outcome, and skip dependency cleanup
+without invoking its factory. The child verifies the task is still live, then
+blocks in runtime destruction until the parent kills it.
+
+The current-thread case arms and polls a one-second Tokio timer before starting
+the direct task. After the task enters and the external thread requests drain,
+neither the timer nor shutdown report can finish on the blocked runtime. The
+external thread also records two seconds elapsed after requesting drain,
+exceeding both the timer and the total configured shutdown allowance. The parent
+requires those milestones and rejects completion/cleanup markers. An expected
+timeout without its required milestones or with a captured default panic-hook
+diagnostic fails the test. Controls also exercise natural success/failure before
+a later kill, an early kill, forbidden cleanup evidence, output beyond the
+preview, spawn failure, ambient scenario state, a mismatched launch PID,
+incomplete launch, parent-pipe closure, and both kinds of child panic.
+Deterministic tests exercise the same parser and wait policy used by the process
+watchdog with explicit monotonic instants: delayed startup, exact deadline
+arrival, late polling, genuinely late/missing evidence, split and unterminated
+records, misleading substrings, duplicates, overflow and panic evidence. They
+replace the four-second launch sleep and its narrow scheduling margin. Additional
+controls reject a kill that precedes its selected deadline even if output capture
+finishes much later, other signal statuses, and overflow on the watchdog-kill
+path. Real subprocess controls still cover startup that never completes,
+extended-deadline early kills, natural-exit races and the actual blocked runtime.
+
+The Linux parent-death regression requires Python 3; absence is a test failure.
+Its isolated [probe](../crates/batter/tests/non_yielding/parent_death.py) becomes
+a Linux child subreaper, waits for a blocked fixture's report and runtime-drop
+entry, then sends SIGKILL only to the owner PID. It adopts and waits for the
+orphan's exit code 74, rejecting cleanup/destruction evidence. Its own timeout
+and failure cleanup contain the probe processes. Cargo's process-wide reaping
+state is untouched. Evidence checks use explicit failures that remain active
+under Python optimization. Both the real fixture test and a negative control run
+the probe with `PYTHONOPTIMIZE=1`; the control supplies children that complete the
+launch/EOF protocol but exit with code 7 or emit forbidden cleanup evidence
+before exiting 74. Each must fail with its specific diagnostic and without the
+success marker.
+The probe's single five-second startup budget covers both owner PID discovery
+and fixture readiness. Its hard SIGALRM is a last-resort bound and can bypass
+`finally`; owner/child fallback deadlines and the OS adopting reaper then own
+containment. This is not a guarantee of Python cleanup after hard termination.
+
+The lifecycle fixtures themselves spawn only runtime/OS
+threads; the parent-death probe adds an owner process. The unwind control
+requires cleanup and capture-reader joining to finish within five seconds of
+child startup, before the child's ten-second emergency exit. This detects a
+destructor that merely waits instead of killing. On Linux it also checks
+`/proc/<pid>` is absent, including absence of an unreaped zombie.
+
+`--nocapture` exposes the deliberately caught parent assertion panic through
+Rust's default panic hook. It is expected in the passing unwind test. No panic
+hook or global tracing subscriber is replaced. OS process termination contains
+these fixtures; it does not prove application cleanup or give Batter preemption.
+OS scheduling delays/suspension and OS process-control failures remain outside
+the test's timing model. If the real parent dies, the OS's adopting reaper owns
+the terminated child's wait; only a surviving owner can explicitly reap it.
+The macOS CI job compiles all workspace targets and runs the focused subprocess
+suite on Rust 1.94.0 and 1.98.1. Separately, both full verification matrices and
+the rebuilt HTTP smoke modes passed on a macOS arm64 host over SSH. The updated
+CI job has not run yet. [Validation](validation.md) records the exact host,
+source snapshot, commands and limits.
+This focused hosted job is intentional; it does not claim a full macOS hosted
+matrix. The environment-variable control is also intentional: it protects the
+previously removed ambient launch path. Only the emergency fallback control
+deliberately waits ten seconds; the parent-death probes return on evidence.
+Keeping that control in ordinary matrices validates the real configured fallback.
 
 ## HTTP process smoke test
 

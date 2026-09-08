@@ -4,6 +4,9 @@
 a readiness query, explicit pool-close registration, and error-preserving
 partial-startup cleanup with `batter`. Its executable is `postgres_lifecycle`.
 
+This executable follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
+Windows is unsupported and not planned. Shutdown uses native SIGINT/SIGTERM listeners.
+
 Run from the workspace root with a local test database:
 
 ```sh

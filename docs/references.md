@@ -6,6 +6,17 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Python probe optimization: 2026-09-08
+
+The [Python 3.12 assert reference](https://docs.python.org/3.12/reference/simple_stmts.html#the-assert-statement)
+states that optimized compilation omits assertion statements. The
+[command-line/environment reference](https://docs.python.org/3.12/using/cmdline.html#envvar-PYTHONOPTIMIZE)
+defines `PYTHONOPTIMIZE` as enabling optimization like `-O` (or repeated `-O`
+for integer levels). Checked against the 3.12 documentation for the locally
+installed Python 3.12.3. The parent-death probe therefore uses explicit failure
+branches, with real-process positive and negative controls under optimization;
+executed results are recorded in [validation](validation.md).
+
 ## Workspace packaging: reviewed 2026-09-08
 
 The package split in [ADR-006](adr/006-workspace-packages.md) follows Cargo's
@@ -181,6 +192,125 @@ The resolved registry sources were inspected locally before these fixes:
   A pinned `Option<F>` is cleared with safe `Pin::set` under the saved dispatcher.
   This existing transitive package is now a direct dependency; no resolved
   package version changed.
+
+## Non-yielding subprocess evidence: 2026-09-08
+
+Checked the resolved Tokio 1.53.1 registry source and primary documentation
+before implementing the test fixtures. No dependency version changed.
+
+- [Tokio 1.53.1 Runtime shutdown](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Runtime.html#shutdown):
+  spawned async work stops only once it yields; runtime Drop can wait indefinitely.
+  `shutdown_timeout` can release the caller while leaving work running, so the
+  fixture uses ordinary Drop and lets the OS parent observe/kill the stuck child.
+- [Tokio 1.53.1 timeout](https://docs.rs/tokio/1.53.1/tokio/time/fn.timeout.html):
+  timeouts cannot interrupt a future that fails to yield during execution.
+- [Tokio 1.53.1 scheduling](https://docs.rs/tokio/1.53.1/tokio/runtime/#multi-threaded-runtime-behavior-at-the-time-of-writing):
+  a worker's LIFO wake slot cannot be stolen by another worker. The resolved
+  `src/runtime/mod.rs` documents this detail. An initial fixture stalled after
+  requesting drain from the blocking task, consistent with that wake-slot
+  behavior. The final fixture requests drain from an OS thread after receiving
+  explicit task-entry acknowledgement.
+- [Rust Child ownership](https://doc.rust-lang.org/std/process/struct.Child.html):
+  dropping Child does not kill or wait. `kill` alone does not reap; the parent
+  explicitly waits, and keeps the same ownership guard active through errors
+  and unwinding. The lifecycle fixtures create no descendant OS processes;
+  the separate parent-death probe creates an owner process and adopts its child.
+
+## Subprocess review follow-up: 2026-09-08
+
+The review's CI cancellation question was researched before the follow-up fix.
+The checked-in Rust workflow uses GitHub-hosted Ubuntu runners and does not
+pin the runner program version. No hosted execution was observed here.
+
+- [GitHub cancellation reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation)
+  describes SIGINT, then SIGTERM, then process-tree termination when the step
+  entry process remains alive. This is not an unconditional parent-death link.
+- [Runner v2.337.0 process handling](https://github.com/actions/runner/blob/397b032cbf865e9c3ddfab89d533ec19325e1273/src/Runner.Sdk/ProcessInvoker.cs)
+  sends Unix signals to one PID; `NixKillProcessTree` calls `Process.Kill()`
+  without its tree argument. The inspected release was published 2026-08-26.
+  [Job finalization](https://github.com/actions/runner/blob/397b032cbf865e9c3ddfab89d533ec19325e1273/src/Runner.Worker/JobExtension.cs)
+  separately scans inherited `RUNNER_TRACKING_ID` values and kills matching
+  orphan processes. The inference for this harness is to provide its own
+  containment when the owner dies, rather than depend on finalization running.
+- [Rust anonymous pipes](https://doc.rust-lang.org/std/io/fn.pipe.html), stable
+  since 1.87: reads observe EOF after all writers close; writers can block when
+  buffers fill. The parent retains the launch writer and concurrently drains
+  output. Dropping Command's retained writers is necessary before awaiting EOF.
+- [Rust process exit](https://doc.rust-lang.org/std/process/fn.exit.html) ends
+  the process without unwinding Rust stacks. The fixture's parent-disconnect
+  and emergency-deadline exits deliberately provide no finalization evidence.
+- [Rust Child::kill](https://doc.rust-lang.org/std/process/struct.Child.html#method.kill)
+  may return success for an already-exited process. The harness retains actual
+  wait status and separately records its kill request. The Unix-only harness
+  checks SIGKILL, rejecting numeric exit codes as evidence of that signal.
+- [Linux child subreapers](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html)
+  adopt orphaned descendants and can wait for their termination. Only the
+  isolated Python regression process enables this setting; it allows the test
+  to prove reaping without assuming PID 1's behavior or changing Cargo's state.
+
+## Subprocess evidence clocks and platform research: 2026-09-08
+
+Research preceded the evidence/policy refactor. No dependency version changed.
+
+- [Rust 1.98.1 thread sleep](https://doc.rust-lang.org/std/thread/fn.sleep.html)
+  promises a minimum duration, with possible scheduling overshoot. A sleep near
+  a startup deadline is therefore an unsuitable way to test deadline arithmetic.
+  The real blocked-task observation still uses an OS sleep because elapsed wall
+  time is itself the behavior being demonstrated.
+- [Rust 1.94 Unix process implementation](https://github.com/rust-lang/rust/blob/1.94.0/library/std/src/sys/process/unix/unix.rs#L918)
+  checks cached reaped status before signalling and before later wait/try_wait
+  calls. This path covers Linux and macOS; a later kill call cannot replace a
+  cached natural exit with SIGKILL. This source fact is distinct from executing
+  the harness on either platform.
+- [GitHub runner labels](https://github.com/actions/runner-images#available-images)
+  map `macos-latest` to macOS 26 ARM64 at this research date.
+  Its [software inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md#rust-tools)
+  lists Rustup 1.29.0. The review claim that the job necessarily lacked rustup
+  was incorrect. The existing install command needs no replacement action.
+- Read-only inspection of [hosted baseline run 34209833620](https://github.com/bpcakes/batter/actions/runs/34209833620)
+  found successful Linux jobs for Rust 1.94.0, 1.98.1 and stable at
+  `e5f2f04b2dbb349d08085caf177f662fcbc89812`, with no macOS job. It cannot validate
+  this working-tree diff. Execution of the current source on the user-provided
+  macOS host is recorded separately in [validation](validation.md).
+
+The resulting design separates bounded diagnostic capture and timestamped
+protocol evidence from pure fixed/after-event deadline decisions. The reader
+records timestamps and the watchdog samples evidence/time under one mutex.
+This gives a consistent parent observation; it does not claim the child emitted
+a line at that exact instant or guarantee scheduling during OS suspension.
+
+## Synchronization review research: 2026-09-08
+
+Research preceded this follow-up. The latest read-only GitHub run query still
+reports successful runs at `e5f2f04b2dbb349d08085caf177f662fcbc89812`, not this
+working tree. Prior execution plans record intentional focused macOS CI and
+the removal of environment-based launch authority. Neither requires changing
+platform policy or removing its regression control.
+
+- [Rust Child::try_wait](https://doc.rust-lang.org/std/process/struct.Child.html#method.try_wait)
+  reports process status; it does not join this harness's independent pipe
+  reader. Therefore the harness must join capture before rejecting final
+  startup evidence after an observed exit.
+- [Python signal behavior](https://docs.python.org/3/library/signal.html#signal.alarm)
+  schedules SIGALRM, while Python handlers themselves run later in the main
+  interpreter thread. The probe deliberately keeps a hard default alarm rather
+  than introducing asynchronously raised exceptions. It can bypass `finally`;
+  that fallback is process containment, not cleanup evidence. Python versions
+  exercised here are recorded in validation; no Python dependency was added.
+- [Python subprocess pipes](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.wait)
+  can deadlock waits if output fills an undrained pipe. Both overflow controls
+  require natural child exit after flooding output, independently of rejecting
+  truncated evidence. Event and byte limits keep distinct diagnostics.
+- [GitHub manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+  requires `workflow_dispatch` and selects a branch. This Rust workflow has only
+  push/pull-request triggers; local uncommitted source cannot be dispatched as
+  hosted evidence. Existing authorized SSH access allows full macOS host checks
+  without a commit or push.
+
+No finite scheduling margin proves progress on a suspended or starved OS.
+The two-second gap between the maximum normal wait and the emergency fallback
+is an explicit ordering constraint, with host execution evidence and fail-closed
+status checks; it is not a hosted-runner performance claim.
 
 ## User-owned upstream libraries
 

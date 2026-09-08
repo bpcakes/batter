@@ -2,6 +2,10 @@
 
 ## A foundation of operational contracts
 
+The workspace targets Unix backends. Windows is unsupported and not planned;
+process and signal boundaries use native Unix semantics without non-Unix
+fallbacks. [ADR-007](adr/007-unix-platform-scope.md) records this platform policy.
+
 Batter's unit of reuse is an invariant: who owns this work, which deadline bounds
 it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.

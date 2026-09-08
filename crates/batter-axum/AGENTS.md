@@ -6,6 +6,9 @@ Translate the foundation's operational contracts into Axum request and probe
 behavior. Keep application security, business logic, and wire-envelope policy
 at the composition root.
 
+Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
+Windows support and non-Unix fallbacks are out of scope.
+
 ## Key entrypoints
 
 - `src/lib.rs` contains `RequestPolicy`, `request_scope`, probes, and failures.

@@ -11,6 +11,17 @@ the latest stable direct releases on 2026-09-07, including SQLx 0.9.0, with a
 Cargo-generated lockfile. See [validation](docs/validation.md) for executed
 checks and remaining gaps, and [current status](docs/status.md).
 
+## Platform support
+
+Batter targets Unix backends, including Linux and macOS. **Windows is unsupported,
+and there are no plans to support it.** This applies to all workspace packages,
+examples, tests and tooling. There are no Windows implementation branches or CI targets.
+
+Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
+The updated macOS CI job has not run yet. Other Unix targets remain unverified.
+See [ADR-007](docs/adr/007-unix-platform-scope.md) and
+[validation](docs/validation.md) for the policy and its tested scope.
+
 ## What is implemented
 
 | Module | Responsibility |
@@ -47,7 +58,9 @@ delivery tasks live in the [Beads backlog](docs/roadmap.md).
 The default toolchain is pinned to Rust 1.98.1. All four packages retain Rust
 1.94 as their minimum. SQLx 0.9.0 requires it in the example package; extracting
 that dependency does not establish a lower minimum for the libraries.
-The CI definition covers 1.94.0, 1.98.1, and current stable.
+The Linux CI definition covers 1.94.0, 1.98.1, and current stable; the focused
+macOS job compiles all workspace targets and runs the subprocess tests on both
+1.94.0 and 1.98.1.
 Network access is required to download dependencies on the first run.
 
 ```sh
@@ -74,8 +87,7 @@ curl -i http://127.0.0.1:3000/work
 2000. `/work` performs a simulated 25 ms read under a concurrency bound. This is
 an integration example, not a business API. `/fail` demonstrates the same application
 error envelope used by middleware failures, with a server-generated request ID.
-SIGINT and SIGTERM trigger shutdown
-on Unix. The non-Unix example uses Ctrl-C.
+SIGINT and SIGTERM trigger shutdown through native Unix signal listeners.
 
 ```sh
 cargo run -p batter --example worker

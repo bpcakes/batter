@@ -5,6 +5,9 @@
 Own native Tokio operational contracts. Read the root guide and
 [guarantees](../../docs/guarantees.md) before changing failure behavior.
 
+Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
+Windows support and non-Unix fallbacks are out of scope.
+
 ## Key entrypoints
 
 - `src/lib.rs` defines the public modules and boundary error aliases.

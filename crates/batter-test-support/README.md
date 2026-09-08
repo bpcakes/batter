@@ -5,6 +5,9 @@ sequence of expected results and records call counts. `finish` combines a body
 result with an already completed cleanup result, preserving both failures in
 `TestFailure`.
 
+This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
+Windows is unsupported and not planned.
+
 ```rust
 use batter_test_support::{finish, TestFailure};
 

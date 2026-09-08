@@ -1,5 +1,6 @@
 //! Small test utilities, not an alternate database harness or mocking framework.
 //! PostgreSQL provisioning remains owned by postgres-test-harness.
+//! The workspace targets Unix backends. Windows is unsupported and not planned.
 #![forbid(unsafe_code)]
 
 use std::{

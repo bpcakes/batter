@@ -5,6 +5,9 @@ cleanup, deadlines, cancellation, retries, concurrency admission, and tracing.
 Application futures and errors stay concrete. HTTP support is a separate
 `batter-axum` dependency; this crate has no Axum or SQLx dependency.
 
+This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
+Windows is unsupported and not planned.
+
 ```rust
 use batter::operation::OperationContext;
 use std::time::Duration;

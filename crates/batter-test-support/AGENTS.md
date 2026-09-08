@@ -5,6 +5,9 @@
 Provide finite scripted results and error-preserving result combination for
 tests. Keep the crate independent of the runtime foundation and its adapters.
 
+Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
+Windows support and non-Unix fallbacks are out of scope.
+
 ## Key entrypoints
 
 - `src/lib.rs`: `Script`, `ScriptError`, `TestFailure`, and `finish`.

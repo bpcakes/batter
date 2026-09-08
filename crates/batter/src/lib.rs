@@ -2,6 +2,7 @@
 //!
 //! The core uses ordinary futures, typed application errors, and Tokio.
 //! The separate `batter-axum` crate provides a thin HTTP boundary.
+//! The workspace targets Unix backends. Windows is unsupported and not planned.
 //!
 //! # Important limits
 //!
