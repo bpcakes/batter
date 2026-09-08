@@ -1,7 +1,9 @@
 # Implementation status
 
-Updated: 2026-09-08. The Rust verification matrix passes on 1.94.0 and
-1.98.1 on Linux x86_64 and macOS arm64 with the refreshed lockfile. There are no hidden implemented adapters
+Updated: 2026-09-08. The baseline Rust verification matrix has execution evidence
+on 1.94.0 and 1.98.1 on Linux x86_64 and macOS arm64 with the refreshed lockfile.
+The added scheduling suite has Linux execution evidence; macOS execution of that
+suite remains unverified. There are no hidden implemented adapters
 behind the capability rows. See [validation](validation.md) for execution evidence
 and limits; local checks do not establish production or hosted CI validation.
 The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains current
@@ -29,6 +31,7 @@ priorities, acceptance and dependencies.
 | Generic async resource acquisition scope | Not implemented | No Effect-style interruption mask or acquire/register atomic protocol. |
 | Partial-startup cleanup | Pattern implemented | `take_cleanup`; [SQLx example](../examples/postgres-lifecycle/src/main.rs). Must be explicitly driven. |
 | Concurrency admission | Implemented | Native semaphore permits; no waiter-count or memory bound. |
+| Seeded scheduling exploration | Implemented; execution evidence in [validation](validation.md) | Two/four-worker corpora cover 32 seeds, 64 workload lifecycles and 4,096 finite completions each, plus admission/cancellation/readiness/error/ownership/escalation cases. Controlled capacity replay, independent accounting, bounded watchdogs, unjoined finite receipts and a rejected capacity mutation strengthen the oracle. The test subprocess protocol uses explicit launch authorization, ordered deadlines, shared bounded process outcomes and preserved failure evidence, with Python controls enumerated in the [test inventory](testing.md), including partial selector setup failures and interruption. Scoped SIGINT ownership covers acquisition through resource release, preserves cleanup deadlines under repeated signals, restores the exact prior disposition, preserves inherited ignored SIGINT in the owner and child, and rejects custom/unknown signal owners before launch. Background-shell controls verify real signal delivery and Rust replay. The process owner retains its leader until pipe completion or group termination, and never signals after reaping; controls include startup margin and delayed-start coverage. Unjoined fixtures budget startup, the complete case and hang observation; a two-second startup delay must retain the report checkpoint. Both unjoined tests independently check the twelve-second watchdog and twenty-one-second outer elapsed bound; a late-duration control rejects fallback to the full profile deadline. The outside-group pipe writer stays directly owned through bounded cleanup, including observation errors. Live escalation reconciles deadline-dependent completion or abort; two paused-clock regressions prove exact cooperative outcomes. Descendant closure separately reconciles receipts, retained errors and dependent cleanup, with two paused-clock regressions covering prompt and deadline-delayed observation under both closure causes. Seeds reproduce scenario choices, not Tokio scheduling; success is non-exhaustive. macOS/hosted scheduling execution remains unverified. |
 | Retry classification and replay authorization | Implemented | No timeout retries; provider lower bound; last error retained. |
 | Finalization reserves and injected jitter | Implemented | Sibling phase contexts, deterministic samples, provider floor; neither masking nor fleet coordination. |
 | Attempt deadlines and retry tokens | Not implemented | Current retry execution has one total budget. |

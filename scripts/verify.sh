@@ -8,12 +8,13 @@ case "${1:-}" in
   ""|--bootstrap) ;;
   *) printf 'Usage: %s [--bootstrap]\n' "$0" >&2; exit 2 ;;
 esac
-for tool in cargo rustc rustfmt; do
+for tool in cargo rustc rustfmt python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'Required tool missing: %s. No Rust checks were run.\n' "$tool" >&2
     exit 127
   fi
 done
+python3 -c 'import sys; sys.exit("Python 3.9 or newer is required; no Rust checks were run." if sys.version_info < (3, 9) else 0)'
 rustc --version --verbose
 cargo --version
 if [[ "${1:-}" == --bootstrap ]]; then

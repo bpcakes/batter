@@ -199,6 +199,51 @@ must preserve ownership themselves. After any requested abort, observed panic,
 or unjoined direct task, dependent finalizers are conservatively skipped.
 The report is unsuccessful even if the immediate wrapper was joined afterward.
 
+The [seeded scheduling suite](testing.md#seeded-scheduling-exploration) exercises
+these contracts with bounded two/four-worker workloads, controlled action orders
+and independent result accounting. A replay seed reconstructs test choices, not
+Tokio or OS scheduling. Delayed-coordinator regression cases establish completion
+before escalation; eventual success by itself does not make a racing abort false.
+Cooperative work can legitimately miss a live shutdown deadline. The scheduling
+oracle reconciles either its successful completion or its observed abort with the
+report and cleanup decision, including skipped cleanup after an abort request
+that races with successful completion. Paused-clock regressions preserve exact
+cooperative-success and late-completion assertions without an OS latency premise.
+Descendant closure cases keep post-closure admission rejection strict while
+reconciling each admitted receipt with completed or named aborted work. They
+preserve the original closing-task error and verify actual finalizer execution
+versus explicit skipping. Controlled force- and task-failure cases exercise both
+prompt completion and observation delayed beyond the cancellation allowance.
+Process watchdogs contain hung tests and preserve bounded diagnostics, without
+establishing application finalization. Scheduling child launch requires explicit
+arguments and a PID-bound record; ambient flags leave ordinary discovery inert.
+The test process owner distinguishes direct-child exit from pipe EOF, preserves
+partial evidence on failed observation, and reports escaped pipe owners as
+incomplete output rather than successful cleanup. Its 140-second maximum watchdog
+and five-second cleanup observation precede the 149-second emergency backstop.
+The test owner retains the direct child, alive or unreaped, until pipe EOF or the
+group-termination decision; a reaped child never authorizes a later group signal.
+Partial capture construction closes its selector before propagating an exception,
+including interruption; descriptor release does not depend on garbage collection. The private process
+owner requires the main thread, default SIGCHLD and a standard SIGINT disposition
+before launch; custom or unknown SIGINT handlers are rejected. An inherited
+ignored SIGINT stays ignored in the owner and its children. For Python-default or
+Unix-default SIGINT, it temporarily records a stop request across acquisition,
+observation and cleanup, then restores the exact prior disposition after resource
+release. Repeated signals do not reset cleanup deadlines, and interruption remains failed evidence.
+Descriptor closure runs even when settlement exits exceptionally. This does not
+shield unrelated raising signal handlers, process death or arbitrary Python code.
+The outside-group pipe-writer control retains its own direct-child handle through
+bounded cleanup, including exceptional observation paths. The finite non-yielding
+fixture checks that unjoined work can retain a pending receipt after the report
+is published. Its watchdog allows startup, the entire bounded case, and hang
+observation before termination; a delayed-start regression requires the same
+report evidence. Both unjoined fixture tests independently require the twelve-second
+watchdog observation and termination/reaping before twenty-one seconds, including
+cleanup and interpreter/startup margins. These elapsed checks do not establish an
+OS scheduling guarantee.
+Passing this corpus is not exhaustive proof or a stronger runtime-death guarantee.
+
 `start` explicitly launches an owned coordinator and completion monitor.
 `RunningSupervisor::wait`/`shutdown` and `SupervisorObserver::wait` may be cancelled
 without cancelling the driver or finalizers. Last-owner drop requests graceful

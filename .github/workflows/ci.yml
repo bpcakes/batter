@@ -21,8 +21,8 @@ jobs:
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
       - name: Compile all workspace targets, including Unix signal examples
         run: cargo check --workspace --all-features --all-targets --locked
-      - name: Exercise Unix subprocess contracts
-        run: cargo test -p batter --test non_yielding --locked
+      - name: Exercise Unix subprocess and scheduling contracts
+        run: cargo test -p batter --test non_yielding --test scheduling --locked
 
   verify:
     runs-on: ubuntu-latest

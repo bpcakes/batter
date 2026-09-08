@@ -6,6 +6,115 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Scheduling process ownership: 2026-09-08
+
+The [Python 3.12 subprocess contract](https://docs.python.org/3.12/library/subprocess.html)
+distinguishes child waiting from pipe communication, documents partial output on
+timeout, and says a Popen context exit waits for its child. Inspection of the
+installed Python 3.12.3 source and the [matching CPython source](https://github.com/python/cpython/blob/v3.12.3/Lib/subprocess.py)
+confirmed the unbounded context-exit wait and the ECHILD path that can substitute
+return code zero when child status is unavailable. The scheduling process owner
+therefore uses bounded polling, preserves output as result data and requires the
+default SIGCHLD disposition without installing a handler.
+
+Python's [Unix process-group operations](https://docs.python.org/3.12/library/os.html#os.killpg)
+and `Popen(start_new_session=True)` support a separately owned group. The
+[POSIX read contract](https://pubs.opengroup.org/onlinepubs/009604599/functions/read.html)
+requires all pipe writers to close before EOF; reaping one child is insufficient.
+Group termination cannot cover a descendant that starts another session. The
+runner records incomplete EOF after its cleanup allowance instead of discarding
+checkpoints or claiming that escaped work stopped. These source checks do not
+establish an OS scheduling or process-creation latency guarantee.
+
+Follow-up checks of [Linux wait semantics](https://man7.org/linux/man-pages/man2/wait.2.html)
+and Apple's [wait documentation](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/wait.2.html)
+confirm that waiting reclaims a terminated child's resources. CPython's `poll()`
+performs that wait; cached `returncode` is therefore also an ownership boundary.
+The runner defers polling while either output pipe remains open, sends any needed
+group signal before reaping, and forbids signalling a cached reaped child. This
+keeps the numeric group identifier reserved through cleanup without another wait
+API. Python documents that process creation cannot always be interrupted by a
+timeout, so control tests include explicit startup overhead instead of treating
+their observation and cleanup budgets as the complete outer elapsed-time bound.
+
+The fixture-ownership correction rechecked the same Python 3.12 subprocess
+contract and [pipe descriptor API](https://docs.python.org/3.12/library/os.html#os.pipe).
+Popen accepts an existing file descriptor for stdout. The escaped-pipe control
+therefore shares a test-created pipe between two directly owned children in
+separate sessions, retaining the outside-group writer's handle until bounded
+termination and reaping. This exercises incomplete EOF without relying on an
+orphan's stale PID file. The unjoined fixture's watchdog now budgets startup plus
+the complete case allowance before its hang-observation allowance; a two-second
+startup regression checks that required report evidence survives.
+
+The [Cargo resolver contract](https://doc.rust-lang.org/cargo/reference/resolver.html#lock-file)
+prioritizes compatible lockfile entries; `--locked` refuses changes. Omission of
+resolver fallback was not a demonstrated cause of failure in the already compatible
+locked graph. The mutation copy now retains and records the repository Cargo
+configuration for fidelity. No dependency refresh accompanies this correction.
+
+## SIGINT ownership in process tools: 2026-09-08
+
+Research preceded the correction. Python's [3.12 signal guidance](https://docs.python.org/3.12/library/signal.html#note-on-signal-handlers-and-exceptions)
+explains that exceptions raised by signal handlers can appear between arbitrary
+instructions, including resource acquisition and context-manager entry. It
+recommends non-raising SIGINT handling for orderly shutdown. The [signal API](https://docs.python.org/3.12/library/signal.html#signal.signal)
+allows handler installation only from the main interpreter's main thread and
+returns the previous handler. The initial correction checked default handler
+ownership before launch. The inherited-policy correction below distinguishes
+standard signal dispositions from competing handlers.
+
+The installed Python 3.12.3 `subprocess.py` was inspected alongside the
+[versioned source](https://github.com/python/cpython/blob/v3.12.3/Lib/subprocess.py).
+Its KeyboardInterrupt waiting behavior assumes an interactive child may also
+have received the interrupt; that does not establish ownership of a child in
+another session. Its `poll()` remains the explicit child-status/reaping operation.
+The existing bounded selector polling can observe a non-raising stop request
+without an extra signal thread or wakeup pipe. Cleanup deliberately does not use
+that stop request and retains its one absolute deadline. Explicitly raised callback
+exceptions still follow ordinary cleanup; no general asynchronous-exception safety
+or hard process-creation/scheduling latency guarantee is claimed.
+
+## Inherited SIGINT policy in scheduling tools: 2026-09-08
+
+Research preceded implementation. The [Python 3.12 signal API](https://docs.python.org/3.12/library/signal.html#signal.getsignal)
+distinguishes ignored and default dispositions from callable or unknown native
+handlers. Inspection of [CPython 3.12.3 signal initialization](https://github.com/python/cpython/blob/v3.12.3/Modules/signalmodule.c)
+confirmed that Python installs its raising SIGINT handler only over SIG_DFL,
+preserving inherited SIG_IGN. The [subprocess contract](https://docs.python.org/3.12/library/subprocess.html#subprocess.Popen)
+lists the signals reset by `restore_signals`; SIGINT is not among them.
+The [GNU Bash signal rules](https://www.gnu.org/s/bash/manual/html_node/Signals.html)
+document ignored SIGINT for asynchronous commands without job control. Local
+`/bin/sh` and Cargo background-launch probes reproduced this inherited disposition.
+The POSIX shell page returned HTTP 403 during this check; its contents were not
+used as retrieved evidence.
+
+The resulting tool policy accepts standard SIGINT dispositions. SIG_IGN stays
+ignored, including across child execution; Python-default and SIG_DFL use the
+existing non-raising stop recorder. The exact prior disposition is restored after
+resource release. Main-thread and default-SIGCHLD requirements remain, and custom
+or unknown SIGINT handlers still fail before launch. Real background-shell tests
+verify both successful child launch and ignored signal delivery; this is distinct
+from tests that explicitly choose an active SIGINT handler.
+
+## Closure and partial capture setup: 2026-09-08
+
+Research preceded this correction. Python's [3.12 selector contract](https://docs.python.org/3.12/library/selectors.html#selectors.BaseSelector.close)
+requires explicit close to release the underlying resources. The installed
+[CPython 3.12.3 selector implementation](https://github.com/python/cpython/blob/v3.12.3/Lib/selectors.py)
+exposes the underlying epoll/kqueue descriptor through `fileno()`. A regression
+retains that selector object and checks descriptor closure after either stream
+setup or registration raises, so collection cannot conceal a missing close.
+Only Linux/Python 3.12.3 execution is established here.
+
+Rechecked the pinned [Tokio 1.53.1 task cancellation contract](https://raw.githubusercontent.com/tokio-rs/tokio/tokio-1.53.1/tokio/src/task/mod.rs)
+and [paused clock implementation](https://raw.githubusercontent.com/tokio-rs/tokio/tokio-1.53.1/tokio/src/time/clock.rs).
+An abort request can race normal completion. Paused time advances idle timers,
+including while a task awaits a channel; it can exercise cancellation expiry
+without a wall-clock sleep. The closure oracle therefore accepts permitted
+completion/termination while checking exact report outcomes and conservative
+cleanup after every abort request. Post-closure admission remains forbidden.
+
 ## Python probe optimization: 2026-09-08
 
 The [Python 3.12 assert reference](https://docs.python.org/3.12/reference/simple_stmts.html#the-assert-statement)
@@ -217,6 +326,20 @@ before implementing the test fixtures. No dependency version changed.
   the separate parent-death probe creates an owner process and adopts its child.
 
 ## Subprocess review follow-up: 2026-09-08
+
+The scheduling escalation correction also checked the resolved Tokio 1.53.1
+`src/time/clock.rs` and primary versioned documentation. [Paused time](https://docs.rs/tokio/1.53.1/tokio/time/fn.pause.html)
+requires the current-thread runtime, leaves `std::time::Instant` unchanged, and
+automatically advances when no runnable work remains. [Time advancement](https://docs.rs/tokio/1.53.1/tokio/time/fn.advance.html)
+does not ensure every expired timer has been processed before returning; the
+regression uses ordinary Tokio sleep under paused time to order the completion
+deadline after the shutdown deadlines. A separate real thread sleep demonstrates
+that wall-clock delay does not consume a paused phase allowance. These are
+controlled test conditions, not a multi-threaded scheduler latency guarantee.
+The pinned [Tokio cancellation documentation](https://raw.githubusercontent.com/tokio-rs/tokio/tokio-1.53.1/tokio/src/task/mod.rs)
+also allows a task to complete normally after an abort request if it does not
+yield again. The live oracle therefore preserves successful completion counts
+while still requiring conservative cleanup after any recorded abort request.
 
 The review's CI cancellation question was researched before the follow-up fix.
 The checked-in Rust workflow uses GitHub-hosted Ubuntu runners and does not

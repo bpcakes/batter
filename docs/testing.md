@@ -1,11 +1,16 @@
 # Testing and failure-contract coverage
 
-On Linux, Cargo discovers **175 test entries plus two doctests**: 154 foundation entries,
+On Linux, Cargo discovers **190 test entries plus two doctests**: 169 foundation entries,
 16 Axum adapter tests, five generic test-support tests, and two foundation doctests.
-One foundation entry dispatches child fixtures and is inert in the parent run;
-the same executable has 25 process controls, 19 deterministic evidence/policy
-tests, and three capture-reader thread tests. The two Linux orphan-probe entries are excluded on other Unix targets
-(173 entries, including 46 in the focused executable).
+Two foundation entries dispatch child fixtures and are inert in the parent run.
+The non-yielding executable has 25 process controls, 19 deterministic evidence/policy
+tests, and three capture-reader thread tests. The scheduling executable has fifteen
+entries, including two full corpora, two controlled-clock escalation regressions,
+two controlled-clock descendant closure regressions,
+process/replay controls and a Python
+subprocess regression suite with 30 controls. The two Linux
+orphan-probe entries are excluded on other Unix targets (188 entries, including
+46 in the non-yielding executable).
 Windows is unsupported and not planned; see [platform scope](adr/007-unix-platform-scope.md).
 [Validation](validation.md) records
 the current local results and historical dependency/toolchain refresh evidence.
@@ -17,6 +22,9 @@ Source presence and package-integrity checks are not type checking.
 bash scripts/verify.sh --bootstrap  # Initial formatter + dependency lock + checks.
 bash scripts/verify.sh             # Subsequent locked checks.
 ```
+
+Python 3.9 or newer is required by the scheduling subprocess tests, including plain
+`cargo test`; the verification script checks that prerequisite before running Rust.
 
 The script checks isolated `-p batter --no-default-features` library compilation
 and core tests, all workspace targets, doctests, Clippy with warnings denied,
@@ -77,16 +85,19 @@ which exists in GitHub's full checkout even when local `master` does not.
 Missing exact bases remain errors; push-before zero SHAs retain Jig's explicit
 empty-tree handling.
 
-Run the seven Python regression tests after installing the Jig runtime:
+Run the Jig integration and scheduling process regressions
+after installing the Jig runtime:
 
 ```sh
 python3 -m unittest discover -s scripts -p 'test_*.py' -v
 ```
 
-They execute the CI helper with the real Jig runtime in disposable Git repositories,
+The Jig tests execute the CI helper with the real Jig runtime in disposable Git repositories,
 verify budget enforcement and missing-base behavior, exercise a restored runtime
 with Cargo blocked, check actual Git merges, and inspect generated ZIP contents.
-They use Python's standard library and do not run or provision PostgreSQL.
+The Python tests use the standard library and do not run or provision PostgreSQL.
+The scheduling target additionally supplies its compiled Rust binary to run six
+launch-protocol controls; standalone Python discovery runs the process controls.
 Markdown plans use normal text merging so contradictory edits conflict;
 append-only JSONL records retain union merging.
 
@@ -131,6 +142,7 @@ receipt are excluded.
 | Startup ack/failure, last-owner and waiter drop, retained driver failure | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
+| Seeded root/descendant contention, cancellation/readiness/drop schedules, complete failure accounting, replay and watchdog controls | [scheduling.rs](../crates/batter/tests/scheduling.rs) and its [profile](../crates/batter/tests/scheduling/profile.rs) |
 | Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Non-yielding direct work, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter/tests/non_yielding.rs) and its [fixture](../crates/batter/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter/tests/non_yielding/watchdog.rs) |
 | Axum context/probes/gate/deadline/sanitized responses; budget validation | [http.rs](../crates/batter-axum/tests/http.rs) |
@@ -147,6 +159,207 @@ Timer tests use Tokio's paused time. This controls the Tokio clock, not system
 wall time or a PostgreSQL server's clock. Paused time is appropriate for the
 retry and lifecycle timing model; it cannot prove real transport cancellation,
 database transaction behavior, or non-yielding task preemption.
+
+## Seeded scheduling exploration
+
+Run the discoverable target with `cargo test -p batter --test scheduling --locked`.
+It launches separate two- and four-worker Tokio profiles, each with seeds 0–31,
+64 workload supervisor lifecycles and 4,096 completed finite tasks. Every seed
+also runs all eight required families: shared capacity, admission closure,
+operation boundaries, readiness, failure retention, ownership, escalation and
+the sustained workload. Missing families or workload minima fail the profile.
+
+Each workload cycle has eight rounds of four roots and four descendants. All
+eight are held at a gate while root and descendant over-capacity submissions are
+rejected, then released so capacity can be reused. A test-owned ledger records
+acceptance, factory invocation and returned numeric IDs, including dropped
+receipts, and reconciles all 64 results with the shutdown report. Factory-return
+accounting is not a join: a later submission may still see Full until the wrapper
+releases its actual permit. The held gates establish exact saturation checkpoints;
+a separate held-driver scenario checks queued, never-polled work. The deterministic
+capacity-one ancestor/descendant rejection closes the gap found in the task audit.
+
+Controlled orderings check allowed and forbidden admission, simultaneous operation
+branches, readiness prerequisites and every driver/receipt ownership distinction.
+Seeded yields explore competing submissions, scope expiry, drain, force, failures,
+completion and cancellation without changing Tokio. Concurrent task and cleanup
+errors are compared by complete identity/name sets; a scoped subscriber must
+exclude synthetic returned-error contents. Panic fixtures use generic messages
+and retain Rust's default panic hook. Existing paused-time delayed-coordinator
+regressions in `process_ownership.rs` remain the deterministic false-abort oracle.
+
+Live cooperative escalation cases may complete or miss a phase deadline. Success
+must reconcile the completed-task count; any recorded abort request still skips
+dependent cleanup, even when completion wins the race. With no abort request,
+success requires finalized cleanup. Termination must retain the named abort and
+JoinError and skip dependent cleanup. Two additional
+current-thread tests use paused Tokio time to prove the precise outcomes: a real
+thread stall beyond the 25 ms allowance preserves cooperative success, while a
+Tokio sleep beyond the phase deadlines produces an observed abort. Exact phase
+assertions therefore do not depend on live workers running within 25 ms. The live
+two/four-worker cases keep their original deadlines and generated choices.
+
+The [runner](../scripts/stress_scheduling.py) accepts the compiled test executable.
+Resolve it without relying on Cargo's changing filename hash:
+
+```sh
+cargo test -p batter --test scheduling --no-run --locked --message-format=json > /tmp/batter-scheduling-build.jsonl
+scheduling_binary="$(python3 -c 'import json; print(next(r["executable"] for line in open("/tmp/batter-scheduling-build.jsonl") if (r := json.loads(line)).get("executable") and r.get("target", {}).get("name") == "scheduling"))')"
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 4 --seed 17
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2 --seed 17 --schedule capacity-after-drain
+```
+
+A single seed runs two workload cycles and all families; it does not claim the
+full-corpus minima. Named schedules `capacity-before-drain` and
+`capacity-after-drain` replay an acknowledged sequence: ancestor holds the only
+permit, optional drain returns, then a descendant must be Full. Repeat a full
+corpus in at least three fresh invocations per worker count when validating
+changes to these tests. A failure is evidence to investigate, not a reason to
+retry until the command turns green.
+
+`SCHEDULE` records include version, seed, workers, family, case and action. The
+version-1 generator uses a fixed SplitMix64 stream for yield counts and receipt
+choices. A seed reconstructs these choices, **not the Tokio/OS scheduler**.
+Concurrent event records establish only their observed checkpoint order. Use
+named controlled schedules for exact action replay, and reduce any newly found
+race defect to a deterministic regression before claiming reproduction or repair.
+Changing generator consumption or schedule meanings requires a version change.
+
+Every family is bounded by an independent five-second Tokio timeout and the whole
+profile by 120 seconds. An external Python watchdog requests process termination
+at 140 seconds by default and maximum, with one five-second reap/output
+EOF allowance. These observed process deadlines are not an OS scheduling SLA.
+The workload ledger has 128 slots, shared finite capacity eight, and bounded
+channels; each case discards its data before the next. Capture retains at most
+1 MiB of raw stdout/stderr combined and continues draining after overflow, which
+fails validation. The [process owner](../scripts/scheduling_process.py) separately
+records direct-child status, pipe EOF, overflow and I/O failures. It kills the
+owned Unix process group on a deadline, then observes exit and output under one
+cleanup allowance. While either pipe remains open, it defers polling/reaping the
+leader so that its numeric process-group identifier stays reserved until the
+signal decision. Cached reaped status forbids a later group signal. An escaped
+process may retain a pipe after the direct child
+was reaped; the outcome then explicitly records incomplete EOF and preserves the
+captured checkpoints. No implicit context-manager wait can extend that allowance.
+Process creation and OS scheduling are not preemptible by this Python deadline.
+The tool requires the default SIGCHLD disposition so another handler or ignored
+child status cannot be mistaken for observed success; it leaves SIGCHLD unchanged.
+
+Ordinary Cargo discovery stays inert even with an ambient fixture flag. Exact
+child arguments plus a PID-bound launch record authorize the profile. The native
+five-second startup timeout and the 149-second emergency thread are armed before
+reading stdin. Launch records are capped at 128 bytes. The watchdog maximum plus
+reap allowance finishes before the emergency backstop. Parent-stdin EOF is another
+fallback process exit; neither fallback runs application finalizers. The previous
+149–150-second watchdog settings now fail argument validation, preventing those
+settings from being preempted by the emergency exit.
+
+Process controls reject exit zero without a completed profile oracle, output
+overflow even with a success marker, and a blocked runtime that cannot repoll an
+already-armed 50 ms timer. The blocked fixture uses a three-second external
+watchdog; its test requires observed SIGKILL/reap no earlier than three seconds.
+The outer bound is twelve seconds: three for observation, five for cleanup and
+four for Python/process startup overhead. This margin changes no exit-status,
+checkpoint, missing-success-marker or runtime-timer assertion.
+A separate finite non-yielding fixture checks the unjoined task name, absence of
+a fabricated joined outcome, a still-pending receipt and skipped finalizer before
+the watchdog terminates its blocked runtime destruction. Its deadline includes
+four seconds of startup slack, the complete five-second case allowance, and three
+seconds of hang observation: twelve seconds total. Both unjoined parent tests
+measure elapsed time independently of the configured watchdog: at least twelve
+seconds and less than twenty-one, including five seconds for cleanup and four for
+Python/startup overhead. A synthetic late-duration control rejects the default
+140-second profile deadline without waiting for it. The `unjoined-delayed-start`
+replay delays runtime creation by two seconds and requires the same report,
+pending-receipt and skipped-cleanup checkpoint before the kill. This regression
+rejects the former shared three-second deadline. These negative
+fixtures intentionally exit unsuccessfully; their parent tests pass only when
+the required rejection evidence is present.
+
+Replay the delayed startup directly with
+`python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2 --seed 17 --schedule unjoined-delayed-start --watchdog 12`.
+Expect runner exit 1, the reconciled unjoined report checkpoint, and child status
+`-9`; run its Cargo parent test to validate those expected failure facts.
+
+Challenge the actual admission oracle in a disposable copy:
+
+```sh
+python3 scripts/check_scheduling_mutation.py --output-dir validation/local/scheduling-mutation
+```
+
+Use a new output directory for each run. The command builds the unchanged source
+and a variant giving descendants independent permits. For each variant it runs
+the recorded `capacity-after-drain` schedule three times per worker count. All six
+original runs must pass; all six mutant runs must fail the specific shared-capacity
+assertion, with neither a compiler failure nor a watchdog timeout accepted as
+mutation evidence. Logs, the patch, compiler/lock identity and exact commands are
+retained in the output directory. Build/version commands share the same process
+owner: builds allow 180 seconds with 16 MiB capture, version inspection 10 seconds
+with 64 KiB capture, each followed by at most five seconds of cleanup observation.
+The copied subject includes the repository Cargo configuration. Build and replay
+outcomes are saved before classification, including partial timeout/error logs.
+The mutation checker consumes structured scheduling outcomes directly. The CLI
+still emits a standalone `WATCHDOG_RESULT` JSON line after its bounded diagnostics,
+even when the final captured line was truncated. Production sources are never
+edited in place.
+
+Two paused-clock descendant closure tests exercise forced cancellation and a
+returned task failure. Prompt observation requires clean completion; a 1.25-second
+observation delay must terminate the held ancestor after its one-second cancellation
+allowance. Both retain strict post-closure admission rejection and reconcile named
+receipt/report outcomes, original error identity and dependent cleanup. Ordinary
+seeded cases retain the same generated choices and accept either permitted outcome.
+
+The scheduling target runs 30 Python controls: real children cover normal exit,
+blocked work, EOF before exit, inherited and escaped pipe writers, output overflow,
+spawn failure, partial build/replay evidence and invalid child-status ownership.
+An exited leader with an inherited pipe must remain unreaped at the group signal;
+a separate real-child control rejects any signal after reaping. The
+escaped-pipe fixture uses two directly owned children in separate process groups
+sharing a test-created pipe. The outer test retains the writer's process handle
+through bounded kill/reap, including observation exceptions; no orphan or PID
+file is needed to demonstrate incomplete EOF from an outside-group writer. The
+ordinary Python controls allow three seconds for startup and fixture work, with cleanup
+and scheduling slack included in their elapsed-time bounds. A one-second delay
+before the first checkpoint exercises startup slower than the former 300 ms
+budget. These margins are not OS scheduling guarantees.
+Narrow injected read/close failures and an unobserved-exit wrapper exercise paths
+that cannot be induced deterministically through an ordinary child. A partial
+capture setup control injects an I/O error or interruption at the second stream's
+nonblocking setup or selector registration. It retains a real selector and requires
+its underlying descriptor to be closed before garbage collection, while also
+requiring child termination, reaping and the original error category. Six controls
+use the real Rust fixture for ambient flags, missing/malformed records, parent EOF
+and the watchdog ceiling, plus a real replay through a non-interactive background
+shell. The process owner requires the main thread, default Unix SIGCHLD and one
+of Python-default, SIG_DFL or SIG_IGN for SIGINT; custom or unknown ownership
+fails before launch. Inherited SIG_IGN stays ignored in both owner and child,
+preserving background-job policy. Either default uses a scoped SIGINT handler
+that records a request instead of raising between arbitrary instructions.
+Normal observation stops at its next polling checkpoint, while cleanup continues
+under its original deadline. Signals during setup, observation, cleanup and close
+retain interrupted evidence and descriptor/reap checks; repeated cleanup signals
+cannot restart its deadline. The exact prior SIGINT disposition is restored after
+resource release, including callback exceptions. Controls cover all three standard
+dispositions across success, spawn failure, callback failure and watchdog expiry;
+a background-shell control sends real SIGINT to both owner and child while ignored.
+Tests that require active interruption explicitly establish and restore their own
+signal policy, so the full controls also run from a background shell. This is a private synchronous tool
+contract, not a library-global handler or a general Python exception guarantee.
+The standalone control command has a separate 60-second
+emergency exit so a regression in the process owner fails its Cargo parent visibly.
+Run it directly with:
+
+```sh
+python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"
+```
+
+This suite explores bounded schedules and rejects selected faults; it does not
+prove exhaustive concurrency correctness, task preemption, detached-descendant
+termination or cleanup after a watchdog kill. [Validation](validation.md) records
+executed platforms and toolchains; the macOS/hosted scheduling job remains
+unverified until it actually runs.
 
 ## Non-yielding subprocess tests
 

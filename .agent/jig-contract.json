@@ -228,7 +228,11 @@
         "clippy.toml",
         ".clippy.toml",
         "**/clippy.toml",
-        "**/.clippy.toml"
+        "**/.clippy.toml",
+        "scripts/scheduling_process.py",
+        "scripts/stress_scheduling.py",
+        "scripts/check_scheduling_mutation.py",
+        "scripts/test_scheduling_process.py"
       ],
       "intent": "check",
       "legacy_aliases": [
@@ -236,7 +240,7 @@
       ],
       "provenance": {
         "effects": "inherited",
-        "inputs": "inherited",
+        "inputs": "overridden",
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
@@ -276,7 +280,11 @@
         "clippy.toml",
         ".clippy.toml",
         "**/clippy.toml",
-        "**/.clippy.toml"
+        "**/.clippy.toml",
+        "scripts/scheduling_process.py",
+        "scripts/stress_scheduling.py",
+        "scripts/check_scheduling_mutation.py",
+        "scripts/test_scheduling_process.py"
       ],
       "intent": "check",
       "legacy_aliases": [
@@ -284,7 +292,7 @@
       ],
       "provenance": {
         "effects": "inherited",
-        "inputs": "inherited",
+        "inputs": "overridden",
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",

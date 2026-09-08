@@ -99,7 +99,7 @@ target = "inherited"
 description = "Run Rust tests."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py"]
 legacy_aliases = ["jig.test"]
 
 [repository.actions.target]
@@ -112,7 +112,7 @@ command = "api_test_command"
 
 [repository.actions.provenance]
 effects = "inherited"
-inputs = "inherited"
+inputs = "overridden"
 intent = "inherited"
 legacy_aliases = "inherited"
 runner = "overridden"
@@ -122,7 +122,7 @@ target = "inherited"
 description = "Run Rust tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py"]
 legacy_aliases = ["jig.test_locked"]
 
 [repository.actions.target]
@@ -135,7 +135,7 @@ command = "api_test_locked_command"
 
 [repository.actions.provenance]
 effects = "inherited"
-inputs = "inherited"
+inputs = "overridden"
 intent = "inherited"
 legacy_aliases = "inherited"
 runner = "overridden"

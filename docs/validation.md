@@ -1286,3 +1286,592 @@ relaxed.
 Local logs are retained under ignored `.agent/tmp/workspace-refactor/`.
 Live PostgreSQL, external library integrations, hosted CI, production, and
 performance tests were not run. No commit, publication, or deployment occurred.
+
+## Seeded cancellation and admission exploration: 2026-09-08
+
+Owning task: `batter-953`. This extends Git baseline
+`5db16f6f18fd918d3d3558a68843120bf9a13b79` with test-local scheduling exploration,
+process containment and oracle challenges. No production source, public API,
+dependency or lockfile change was needed. The library's current capacity behavior
+was correct; the audit exposed a missing rejecting test.
+
+Executed on Linux x86_64 with Python **3.12.3**, default Rust **1.98.1** and MSRV
+**1.94.0**. Lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+The final source includes the readiness observation refinement: an acknowledged
+component remains alive until Draining is checked, so a later Stopped state cannot
+hide an invalid readiness revival. The initial matrix also passed; the matrix
+and corpus repeats were rerun after this test refinement.
+
+| Executed check | Outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS, exit 0 on 1.98.1; final run 37.349 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, exit 0; final run 39.043 s. |
+| Full scheduling corpus, two workers, three fresh processes | PASS, 32 seeds / 64 workload lifecycles / 4,096 finite completions per invocation, all eight families 32 times each; commands took 6.276–6.331 s. |
+| Full scheduling corpus, four workers, three fresh processes | PASS, identical required counts; commands took 6.277–6.278 s. |
+| Capacity mutation challenge, each toolchain | PASS: six original controlled replays passed and six mutant replays failed the intended shared-capacity assertion with Rust exit 101. Neither compile failure nor watchdog timeout counted as rejection evidence. |
+| Blocked-runtime negative control, direct recorded run | Expected FAIL, runner exit 1 / child SIGKILL (`-9`), reaped at 3.001 s; timer-armed and runtime-blocked records retained, no profile success. |
+| Unjoined finite-work negative control, direct recorded run | Expected FAIL, runner exit 1 / child SIGKILL (`-9`), reaped at 3.012 s; unjoined report, pending receipt and skipped-cleanup assertions completed before runtime destruction blocked. |
+| Early-exit, capture-overflow and controlled-schedule Cargo tests | PASS in both verification matrices. Exit zero without an oracle and overflow with an early success marker were rejected. |
+| `cargo build -p batter-axum --example http_service --locked` | PASS, rebuilt with 1.98.1 after the MSRV matrix. |
+| `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` | PASS, exit 0; SIGTERM mode. |
+| Same smoke command with `--signal SIGINT` | PASS, exit 0. |
+| Same smoke command with `--deadline` | PASS, exit 0. |
+
+Each complete Rust verification ran 162 foundation entries in the isolated core
+pass, 183 workspace entries in the all-feature pass, and two doctests, plus core
+compilation, Clippy and rustdoc with warnings denied. The eight scheduling entries
+include two full subprocess profiles, one test of two capacity orderings, the
+inert child entry and four process controls. There were no ignored tests or silent prerequisite
+skips. The six explicit fresh-process repetitions account for **24,576** successful
+finite workload completions; those counts exclude additional matrix runs and do
+not stand in for the behavioral assertions.
+
+The new test-owned ledger checks accepted, started and returned numeric task IDs,
+including lost receipts, then reconciles the complete successful result set with
+the report. Separate held gates check queued work and eight simultaneous roots
+and descendants. Failure scenarios retain four concurrent task causes and two
+cleanup causes by identity and name, including the exact shared typed cause;
+scoped capture rejects synthetic error contents. Completion, cancellation,
+readiness, scope expiry, task failure, forced closure, ownership drop and real
+panic/abort cases use explicit orderings plus seeded yields. Existing deterministic
+paused-time delayed-result regressions remain unchanged and ran in both matrices.
+
+Reproduction commands, from the repository root:
+
+```sh
+cargo test -p batter --test scheduling --locked
+# Resolve the executable using the JSON command in docs/testing.md, then:
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 4
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2 --seed 17 --schedule capacity-after-drain
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2 --seed 17 --schedule stuck --watchdog 3
+python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2 --seed 17 --schedule unjoined --watchdog 3
+python3 scripts/check_scheduling_mutation.py --output-dir validation/local/scheduling-mutation-1.98.1
+RUSTUP_TOOLCHAIN=1.94.0 python3 scripts/check_scheduling_mutation.py --output-dir validation/local/scheduling-mutation-1.94.0
+```
+
+The two negative-control commands intentionally return 1. Choose a new mutation
+output directory on repetition; existing evidence is not overwritten. The final
+full-matrix and repetition command ledger/logs are under
+`validation/local/batter-953-final/`, with `controls.json` retaining negative-control
+command/status/timing records. Mutation output directories retain the exact patch,
+commands, build logs and outcome records. These ignored local artifacts are not
+hosted-CI evidence. The structured Jig `verify` profile passed all five targets (Clippy, formatting,
+tests, contract and file budget), and `work evidence` / `work gates` reported fresh
+required evidence. Receipts are associated with `plan_01M20R9776KRBS3TBW7QGPDM38`.
+The final backend command `scripts/jig check test` passed (exit 0, 35.2 s); its
+receipt is retained alongside the work-profile evidence. Jig receipts are refreshed
+after final documentation/tracker updates so the closing work snapshot has fresh
+required gate evidence.
+
+During implementation, initial lifetime/move compilation errors and two Clippy
+complexity failures were repaired by correcting captures and separating report
+assertions; no contract assertion was weakened. Inspection also distinguished
+factory return from wrapper permit release: transient Full is handled as an inert
+submission rejection within the family timeout. It is not a failed test retried
+until green. No production race defect was found, so no production fix is claimed.
+
+Limits: seeds reproduce scenario choices, not Tokio/OS scheduling. Fixed action
+replay demonstrates the rejecting capacity oracle, not arbitrary scheduler replay.
+Five-second family and 120-second profile timers rely on Tokio polling; the external
+watchdog provides a separate termination deadline and bounded output, subject to
+OS scheduling/reaping. A killed fixture does not demonstrate application cleanup.
+macOS and hosted execution of the scheduling suite remain unverified; the macOS CI
+command now includes it. These results do not establish exhaustive concurrency
+correctness, detached-task termination, real HTTP load/streaming behavior or any
+PostgreSQL/upstream integration.
+
+
+## Scheduling subprocess ownership corrections: 2026-09-08
+
+Owning task: `batter-953`, reopened after review. The scheduling workload and
+library behavior above are unchanged; this follow-up corrects the test subprocess
+protocol. The root cause was fragmented ownership of launch, process exit, pipe
+completion and evidence reporting. Exceptions bypassed the evidence object, and
+the mutation checker parsed console text to recover control data. The newline
+omission was a local manifestation of that reporting boundary.
+
+Before the fix, an inherited fixture flag changed inert discovery from exit 0 to
+exit 101 on stdin EOF; a pipe held open could block before the emergency timer
+was armed. A descendant retaining stdout caused the runner to raise after
+5.106 seconds without its captured checkpoint or result summary. The overflow
+fixture produced one summary marker but zero standalone summary lines. A timeout
+in the build helper skipped its log write. Follow-up inspection and a live probe
+also found that ignored SIGCHLD could make CPython report a child exiting 7 as
+status 0 and accepted success. These were harness defects, not evidence of a
+production admission/cancellation defect.
+
+The corrected tools use explicit child arguments and a bounded PID-bound record,
+a native startup deadline armed before input, one shared bounded process owner,
+and structured outcomes consumed directly by the mutation checker. Direct-child
+exit and pipe EOF remain separate facts. Partial output and failure metadata are
+saved before classification. A non-default SIGCHLD disposition is rejected without
+changing the caller's signal handler. The maximum external watchdog is now
+140 seconds, followed by at most five seconds of cleanup observation, before the
+149-second emergency backstop. This resolves the previous overlapping limits
+without extending the task's external-deadline ceiling.
+
+Executed on Linux x86_64 (kernel `7.0.11-76070011-generic`, glibc 2.39), Python
+**3.12.3**, Rust **1.98.1** and **1.94.0**. Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+No production source, public API or dependency change accompanies the correction.
+The complete command ledger, logs, environment and source hashes are in
+`validation/local/batter-953-containment/` (ignored local evidence).
+
+| Executed check | Outcome |
+| --- | --- |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 18 controls, 7.528 s. |
+| Same control command with `PYTHONOPTIMIZE=1` | PASS, all 18 controls, 8.279 s; optimization did not bypass rejection checks. |
+| `python3 -m unittest discover -s scripts -p 'test_*.py' -v` | PASS, 20 tests, 73.207 s: 13 scheduling process controls plus seven Jig integration regressions. The five real Rust launch controls are supplied by Cargo/the explicit binary command. |
+| Two-worker corpus, three fresh processes | PASS, each 32 seeds, 64 workload lifecycles, 4,096 completed tasks and all eight families 32 times; 6.277–6.327 s. |
+| Four-worker corpus, three fresh processes | PASS, same counts; 6.226–6.276 s. |
+| `bash scripts/verify.sh` | PASS on 1.98.1, 42.948 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 41.694 s. |
+| `python3 scripts/check_scheduling_mutation.py --output-dir validation/local/batter-953-containment/mutation-1.98.1` | PASS, 10.637 s: six originals passed and six mutants failed the expected capacity assertion with status 101, complete output and no watchdog/overflow/I/O failure. |
+| Same mutation command with `RUSTUP_TOOLCHAIN=1.94.0` and output directory `mutation-1.94.0` | PASS, identical rejecting evidence, 10.485 s. |
+| `cargo build -p batter-axum --example http_service --locked` | PASS, rebuilt with 1.98.1 after the MSRV matrix. |
+| `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` | PASS, SIGTERM mode. |
+| Same HTTP smoke command with `--signal SIGINT` and with `--deadline` | PASS in both modes. |
+
+Each Rust verification executed 163 foundation entries in the isolated pass,
+184 workspace entries in the all-feature pass, and two doctests: 349 successful
+entries total, with zero failures or ignored tests. Both matrices also passed
+formatting, isolated core compilation, Clippy and rustdoc with warnings denied.
+The six explicit corpus repetitions account for 24,576 finite task completions;
+these counts supplement the contract assertions rather than replacing them.
+
+The process controls cover real timeout/output retention, EOF before process
+exit, inherited and escaped pipe writers, overflow framing, spawn failure,
+partial build/replay evidence, ignored child status, inert ambient flags,
+missing/malformed launch records, parent EOF and the watchdog ceiling. Read/close
+I/O failures and inability to observe reaping use narrow fault injection around
+real children; no claim is made that an OS-unreapable process was created. The
+escaped-pipe control explicitly reports incomplete EOF and separately terminates
+its test-owned escaped fixture. Killing a group never proves arbitrary detached
+work stopped or application cleanup ran.
+
+An initial Jig contract edit accidentally included a profile entry when selecting
+the two test actions, broadening the file-budget action's inputs. Contract checks
+rejected it. The edit was corrected without weakening policy; native regeneration
+in a disposable Git copy produced a contract exactly equal to the working one,
+and `scripts/jig check contract` passed. Both Rust test targets now include their
+four Python dependencies so Python-only changes invalidate their test evidence.
+The required Jig verify profile passed all five targets (Clippy, formatting, tests,
+contract and file budget). The final explicit `scripts/jig check test` passed
+(exit 0, 40.234 s). Work receipts belong to
+`plan_01M20XAG6XNY8GDQXMGJ4NJG7M`; command logs are retained with the other local
+evidence.
+
+Limits: macOS and hosted execution of these corrections remain unverified. Local
+Python execution was 3.12.3; the documented 3.9 minimum follows the tool's language
+features, not an executed lower-version matrix. A Python deadline cannot preempt
+OS process creation or guarantee scheduling/reaping latency. Escaped pipe writers
+produce explicit incomplete-output evidence; abrupt parent death has no general
+application-finalization guarantee. Seeds still reproduce scenario generation,
+not Tokio scheduling, and these tests do not establish exhaustive concurrency
+correctness or live database/HTTP-load behavior.
+
+## Scheduling group identity and timing margins: 2026-09-08
+
+Owning task: `batter-953`, reopened for the next independent review's three
+findings. The observation loop now defers reaping while output pipes remain open,
+retaining the leader's numeric identity through the last group-signal decision.
+Cached reaped status independently forbids signalling. Python control budgets
+now allow three seconds for startup/work; the outer Rust watchdog assertion uses
+three seconds of observation, five of cleanup and four of startup overhead.
+Exit-status, checkpoint, overflow, failure classification and cleanup assertions
+are preserved. No production source, public API or dependency changed.
+
+Before the fix, `python3 -m unittest discover -s scripts -p
+test_scheduling_process.py -k reaped_child -v` failed because `killpg` was called
+after an explicit wait. The same command with `-k descendant_pipe` failed because
+the leader already had cached exit status 0 at the group signal. After the fix,
+both controls pass. A real one-second pre-checkpoint delay was killed at 0.303 s
+under the former 0.3-second budget, retaining no checkpoint; the new delayed-start
+control completes successfully. These probes do not claim an actual unrelated
+process was killed or that macOS startup latency was measured.
+
+Executed on Linux x86_64, Python **3.12.3**, Rust **1.98.1** and **1.94.0**.
+Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+The exact command/environment ledger, logs and final source hashes are retained
+under ignored `validation/local/batter-953-reap-order/`.
+
+| Executed check | Outcome |
+| --- | --- |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 20 controls, 27.635 s. |
+| Same controls with `PYTHONOPTIMIZE=1` | PASS, 20 controls, 28.517 s. |
+| Full corpus, three fresh processes per worker count | PASS, each 32 seeds, 64 workload lifecycles, 4,096 finite completions and all eight families 32 times; 6.223–6.274 s per run. |
+| `bash scripts/verify.sh` | PASS, 1.98.1, 79.776 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 79.846 s. |
+| Capacity mutation challenge on each toolchain | PASS, 10.494 / 10.485 s; each six originals passed and six mutants failed the expected capacity assertion with status 101. No timeout or build failure counted as oracle evidence. |
+| `cargo build -p batter-axum --example http_service --locked` | PASS, rebuilt with 1.98.1. |
+| HTTP smoke in default, `--signal SIGINT` and `--deadline` modes | PASS, all three. |
+
+Each full Rust verification executed 163 isolated foundation entries, 184
+workspace entries and two doctests, with zero failures or ignored tests; both
+also passed formatting, Clippy and rustdoc. The standalone Python suite now has
+15 process controls; Cargo supplies the five additional Rust launch controls.
+The six corpus repetitions account for 24,576 finite completions. Work receipts
+belong to `plan_01M210XR2A7PWP4E540FHQK4GW`.
+The required Jig profile passed Clippy, formatting, tests, contract and file-budget
+checks; closing checks and their receipts are retained with the same work record.
+
+Limits: macOS/hosted execution and Python 3.9 execution remain unverified. Finite
+startup margins do not guarantee progress during OS suspension or starvation.
+Pipe EOF, child reaping and application finalization remain separate facts; an
+escaped writer still produces explicit incomplete-output evidence. The earlier
+dated sections describe their respective pre-correction worktrees.
+
+## Scheduling escalation oracle correction: 2026-09-08
+
+Owning task: `batter-953`. Independent review identified a test assumption that
+cooperative work always finishes inside a live 25 ms shutdown phase. The actual
+contract allows a delayed worker to miss that deadline. The live oracle now
+reconciles completion, observed abort and a recorded abort request racing with
+completion or panic. It retains exact task counts, names, error categories and
+conservative cleanup decisions. Production source, public APIs, dependencies,
+phase allowances and seeded scenario choices are unchanged.
+
+Two current-thread paused-clock regressions retain precise assertions. A real
+thread sleep of 100 ms does not consume the paused 25 ms phase allowance; drain
+and forced-cancellation modes must complete successfully with their exact phase
+flags. A Tokio sleep of 100 ms crosses the shutdown deadlines and must yield the
+named abort, retained JoinError, incomplete task count and skipped cleanup. Before
+the oracle correction, the delayed-completion regression failed the former
+`result.is_ok()` assertion. After correction both regressions pass. This is
+negative evidence against the old test oracle, not a production defect.
+
+The implementation also checked pinned Tokio 1.53.1 cancellation semantics:
+normal completion or panic in the final poll can race with an abort request.
+Any recorded request still requires skipped cleanup. The exact abort/completion
+race is not claimed as a deterministically replayed interleaving. Existing
+delayed-coordinator tests continue to prove already-finished work is not aborted.
+
+Executed on Linux x86_64, Python **3.12.3**, Rust **1.98.1** and **1.94.0**.
+Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Final command logs, environment and source hashes are retained under ignored
+`validation/local/batter-953-escalation-oracle/`. The preliminary run is retained
+separately under `batter-953-escalation-oracle-preliminary/`; it preceded the
+additional abort/completion reconciliation and is not final-source evidence.
+
+| Executed check | Outcome |
+| --- | --- |
+| `cargo test -p batter --test scheduling cooperative_escalation --locked -- --nocapture` | PASS, two paused-clock regressions, 0.314 s. |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 20 controls, 27.712 s. |
+| Same controls with `PYTHONOPTIMIZE=1` | PASS, 20 controls, 28.487 s. |
+| Full corpus, three fresh processes per worker count | PASS, each 32 seeds, 64 workload lifecycles and 4,096 finite completions; 6.276–6.583 s per run. |
+| Scheduling target with two-CPU affinity and two competing CPU workers | PASS, all 11 Cargo entries, including the 20 Python controls, 31.637 s. The exact local Linux driver is retained as `contended-driver.py` with the command ledger. |
+| `bash scripts/verify.sh` | PASS, Rust 1.98.1, 79.475 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 80.926 s. |
+| Capacity mutation challenge on both toolchains | PASS, 10.639 / 10.536 s; each six originals passed and six mutants failed the intended capacity assertion with status 101. |
+| `cargo build -p batter-axum --example http_service --locked` | PASS, rebuilt with 1.98.1. |
+| HTTP smoke in default, `--signal SIGINT` and `--deadline` modes | PASS, all three. |
+
+Each Rust matrix executed 165 isolated foundation entries, 186 workspace entries
+and two doctests: 353 successful entries, zero failures and zero ignored tests.
+Both also passed formatting, Clippy and rustdoc. The six explicit corpora account
+for 24,576 finite completions. The final source-hash audit matched the recorded
+files. No failed build, timeout or preliminary run counted as mutation evidence.
+Work receipts belong to `plan_01M2134C2JK2J3YBB8X4JFK4KR`.
+
+Limits: macOS/hosted execution and Python 3.9 execution remain unverified. The
+paused-clock tests prove controlled current-thread outcomes; the live corpora
+and CPU-contention run do not establish exhaustive concurrency correctness or
+an OS latency guarantee. Seeds reproduce generated choices, not Tokio scheduling.
+
+The first Jig work check passed tests, Clippy, formatting and contract validation,
+but file-budget scope capture rejected Git intent-to-add entries. Staging the
+new Rust test files provided stable index contents; the standalone file-budget
+check then passed. This changed index metadata, not source or budget policy.
+Closing work-profile checks and the explicit backend check are recorded with the
+same work receipts. The test files are staged; no commit or publication was made.
+
+## Scheduling fixture lifetime correction: 2026-09-08
+
+Owning task: `batter-953`. The remaining review findings exposed two harness
+lifetime errors. The unjoined fixture reused the stuck fixture's three-second
+watchdog despite needing to complete shutdown and pending-receipt checks before
+its intentional hang. The escaped pipe writer became an orphan whose later
+cleanup used a saved numeric process-group ID without retained child ownership.
+No unrelated process was observed being signalled; that finding concerned lost
+identity protection. Production source, public APIs and dependencies are unchanged.
+
+The unjoined deadline now derives from four seconds of startup slack, the complete
+five-second case allowance and three seconds of hang observation. A new replay
+delays runtime creation by two seconds. With the former deadline, its Cargo parent
+failed for missing report evidence after a watchdog kill at 3.001 seconds. The
+fixed parent requires the startup checkpoint, reconciled unjoined report, pending
+receipt, skipped cleanup, SIGKILL and absent success marker. The separate pipe
+writer is now a direct child in its own session sharing a test-created pipe with
+the observed child; its owner retains the handle through bounded kill/reap.
+Controls cover incomplete EOF while that writer runs, cleanup after observation
+raises and refusal to signal an already-reaped child. No PID-file cleanup remains.
+
+Executed on Linux x86_64, Python **3.12.3**, Rust **1.98.1** and **1.94.0**.
+Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Exact command ledgers, logs, the old-deadline failure, environment, matrix and
+contention drivers, and source hashes are retained under ignored
+`validation/local/batter-953-fixture-lifetimes/`.
+
+| Executed check | Outcome |
+| --- | --- |
+| `cargo test -p batter --test scheduling delayed_unjoined_start_preserves_report_evidence --locked -- --exact --nocapture` | PASS, 12.147 s; the same regression rejected the old deadline. |
+| `cargo test -p batter --test scheduling cooperative_escalation --locked -- --nocapture` | PASS, both paused-clock regressions, 0.321 s. |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 21 controls, 27.634 s. |
+| Same controls with `PYTHONOPTIMIZE=1` | PASS, 21 controls, 28.470 s. |
+| Full corpus, three fresh processes per worker count | PASS, each 32 seeds, 64 workload lifecycles, 4,096 finite completions and all eight families 32 times; 6.226–6.280 s per run. |
+| Scheduling target with two-CPU affinity and two competing CPU workers | PASS, all 12 Cargo entries, including the 21 Python controls, 39.358 s. |
+| `bash scripts/verify.sh` | PASS, Rust 1.98.1, 80.829 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 81.926 s. |
+| Capacity mutation challenge on both toolchains | PASS, 10.736 / 10.439 s; each six originals passed and six mutants failed the intended capacity assertion. |
+| Rebuilt HTTP example and smoke in default, `--signal SIGINT` and `--deadline` modes | PASS, all three. |
+
+Each Rust matrix executed 166 isolated foundation entries, 187 workspace entries
+and two doctests: 355 successful entries, zero failures and zero ignored tests.
+Both also passed formatting, Clippy and rustdoc. All 20 recorded test/tool source
+hashes matched during the matrix, at completion and in the current worktree.
+Work-gate and completion receipts use `plan_01M216ACYSQ3P9R1GX02JPVAX0`;
+the final backend command is `scripts/jig check test`.
+
+Limits: macOS/hosted and Python 3.9 execution remain unverified. Fixed startup
+allowances and the CPU-contention run do not establish OS latency guarantees.
+The outside-group writer control proves retained test ownership and incomplete
+EOF; it does not prove arbitrary detached descendants terminate. Stress remains
+non-exhaustive, and watchdog kills do not establish application finalization.
+
+## Descendant closure and partial capture correction: 2026-09-08
+
+Owning task: `batter-953`. Two further confirmed review findings concerned the
+scheduling harness. The closure scenario held an admitted ancestor until after
+observing closure but unconditionally required successful completion, even when
+its one-second cancellation allowance expired inside the five-second case budget.
+A partial `Capture` constructor failure left its selector without an owner able
+to close it; selector reference cycles deferred descriptor release until garbage
+collection. Both corrections preserve production APIs and the dependency graph.
+
+The closure scenario now reconciles each admitted receipt with named report
+outcomes and completed counts, preserves the original closing-task error, and
+checks actual dependent cleanup against recorded abort requests. Post-closure
+admission still must return `Closed`. Two paused-clock regressions exercise both
+force- and task-failure closure with prompt observation and with a 1.25-second
+delay. The latter rejected the previous implementation when cancellation dropped
+the held ancestor's release receiver; the fixed test requires its named abort,
+no unjoined work and skipped dependent cleanup. The prompt case still requires
+no abort request. The ordinary corpus keeps its generated choices unchanged.
+
+Capture construction now explicitly closes the selector on any setup exception,
+including interruption, before propagating it to the process owner. The regression
+uses real selectors and children, failing the second nonblocking setup or second
+registration with either `OSError(EIO)` or `KeyboardInterrupt`. All four subcases
+rejected the previous code because the retained selector's descriptor stayed open.
+All now require descriptor closure before garbage collection, child SIGKILL,
+reaping and preservation of the error category. Focused commands were:
+
+```sh
+python3 -m unittest discover -s scripts -p test_scheduling_process.py -k partial_capture -v
+cargo test -p batter --test scheduling descendant_closure_ --locked -- --nocapture
+```
+
+Executed on Linux x86_64, Python **3.12.3**, Rust **1.98.1** and **1.94.0**.
+Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Exact commands, before/after failures and successes, full logs, environment,
+contention/matrix drivers and source hashes are retained under ignored
+`validation/local/batter-953-closure-capture/`.
+
+| Executed check | Outcome |
+| --- | --- |
+| Focused Python partial-construction control | PASS, all four subcases, 0.086 s; all four failed before the fix. |
+| `cargo test -p batter --test scheduling descendant_closure_ --locked -- --nocapture` | PASS, both regressions and both closure causes, 0.115 s. |
+| Existing paused-clock escalation regressions | PASS, both, 0.315 s. |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 22 controls, 27.726 s. |
+| Same controls with `PYTHONOPTIMIZE=1` | PASS, 22 controls, 28.526 s. |
+| Full corpus, three fresh processes per worker count | PASS, each 32 seeds, 64 workload lifecycles, 4,096 finite completions and all eight families 32 times; 6.225–6.325 s per run. |
+| Scheduling target with two-CPU affinity and two competing CPU workers | PASS, all 14 Cargo entries including the 22 Python controls, 39.288 s. |
+| `bash scripts/verify.sh` | PASS, Rust 1.98.1, 81.575 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 83.090 s. |
+| Capacity mutation challenge on both toolchains | PASS, 10.689 / 11.489 s; each six originals passed and six mutants failed the intended capacity assertion. |
+| Rebuilt HTTP example and smoke in default, `--signal SIGINT` and `--deadline` modes | PASS, all three. |
+
+Each Rust matrix executed 168 isolated foundation entries, 189 workspace entries
+and two doctests: 359 successful entries, zero failures and zero ignored tests.
+Both also passed formatting, Clippy and rustdoc. All 24 mutation replay records
+retained expected exit status, complete EOF and reaping, with no watchdog,
+overflow or observation errors. All 20 recorded test/tool source hashes matched
+before and after the matrix and in the current worktree. Work-gate and completion
+receipts use `plan_01M218ETNJTVXHS4TS8S885QX5`; the final backend command is
+`scripts/jig check test`.
+
+Limits: macOS/hosted and Python 3.9 execution remain unverified. Paused time checks
+logical ordering, not live scheduler latency. The live oracle still rejects
+unexpected errors, panics, unjoined work and inconsistent cleanup. Corpus success
+is non-exhaustive, and watchdog kills do not establish application finalization.
+
+Final repository checks also passed: all five Jig work targets (Clippy, formatting,
+tests, contract and file budget), followed by `scripts/jig check test` with all
+359 entries passing. The source hashes still matched after that final command.
+
+## Scoped SIGINT ownership correction: 2026-09-08
+
+Owning task: `batter-953`. The cleanup-interruption defect was a structural
+boundary error in the private Python process owner. Catching `KeyboardInterrupt`
+around observation left settlement and descriptor release exposed, and another
+catch around one wait would still leave arbitrary Python instructions exposed to
+signal exceptions. Python's signal guidance was researched before changing the
+implementation; the source references are recorded in [references](references.md).
+The stale standalone counts were a separate documentation omission caused by
+repeating the same number in multiple instructions.
+
+The private helper now owns a scoped, non-raising SIGINT handler from before child
+acquisition through resource release. The handler records a stop request; normal
+observation checks it, while settlement keeps its original absolute deadline.
+After release, the default handler is restored and interrupted outcomes remain
+failed evidence. A non-main thread or non-default SIGINT owner is rejected before
+launch, alongside the existing SIGCHLD ownership check. All existing call sites
+are standalone main-thread tools. Descriptor release is protected by nested
+finally blocks, and simultaneous selector/stream close errors both survive.
+Production Rust source, APIs and dependencies are unchanged.
+
+The new cleanup regression uses real, directly owned children and a real retained
+selector. An outside-group writer keeps a pipe open while one or three real
+SIGINTs are delivered after cleanup's selector polls. Both subcases rejected the
+old code with `SIGINT escaped cleanup without an outcome`. They now require the
+original cleanup deadline, retained checkpoint, interrupted error category,
+SIGKILL/reaping of the observed child, incomplete EOF and closed descriptors.
+Other controls deliver SIGINT during setup, observation and close, verify handler
+restoration after callback failure, and reject incompatible handlers/threads
+without starting a child. The two stale numeric instructions now refer to process
+controls without duplicating their count; executable discovery and the coverage
+summary retain the actual current totals.
+
+Focused commands:
+
+```sh
+python3 -m unittest discover -s scripts -p test_scheduling_process.py -k sigint -v
+python3 -m unittest discover -s scripts -p test_scheduling_process.py -k close_failure -v
+```
+
+Executed on Linux x86_64, Python **3.12.3**, Rust **1.98.1** and **1.94.0**.
+Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Exact command ledgers, before/after failure evidence, full logs, environment,
+contention/matrix drivers and source hashes are retained under ignored
+`validation/local/batter-953-sigint-ownership/`.
+
+| Executed check | Outcome |
+| --- | --- |
+| Focused SIGINT controls | PASS, four controls covering real signals and ownership/restoration, 1.017 s. Both cleanup subcases failed before the fix. |
+| Simultaneous selector/stream close-error control | PASS, both error categories and descriptor release retained, 0.165 s. |
+| Existing paused-clock escalation controls | PASS, both, 0.316 s. |
+| `python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"` | PASS, 26 controls, 28.629 s. |
+| Same controls with `PYTHONOPTIMIZE=1` | PASS, 26 controls, 31.291 s. |
+| Full corpus, three fresh processes per worker count | PASS, each 32 seeds, 64 workload lifecycles, 4,096 finite completions and all eight families 32 times; 6.276–7.229 s per run. |
+| Scheduling target with two-CPU affinity and two competing CPU workers | PASS, all 14 Cargo entries including the 26 Python controls, 40.247 s. |
+| `bash scripts/verify.sh` | PASS, Rust 1.98.1, 81.528 s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS, 80.477 s. |
+| Capacity mutation challenge on both toolchains | PASS, 11.638 / 11.034 s; each six originals passed and six mutants failed the intended capacity assertion. |
+| Rebuilt HTTP example and smoke in default, `--signal SIGINT` and `--deadline` modes | PASS, all three. |
+
+Each Rust matrix executed 168 isolated foundation entries, 189 workspace entries
+and two doctests: 359 successful entries, zero failures and zero ignored tests.
+Both also passed formatting, Clippy and rustdoc. All 24 mutation replay records
+retained their expected statuses, complete EOF and reaping, with no watchdog,
+overflow or observation errors. All 20 recorded test/tool source hashes matched
+before and after the matrix and in the current worktree. Work-gate and completion
+receipts use `plan_01M21AB7YKJ8HDRC8SVB1S1ETQ`; the final backend command is
+`scripts/jig check test`.
+
+Limits: macOS/hosted and Python 3.9 execution remain unverified. Signal handling
+belongs to these synchronous private tools; it is not a new library handler or
+support for arbitrary custom signal owners, interpreter threads, asynchronous
+exceptions or process death. Process creation, OS scheduling and non-yielding
+work can still exceed cooperative deadlines. Stress remains non-exhaustive, and
+watchdog kills do not establish application finalization.
+
+
+## Inherited SIGINT policy and unjoined elapsed checks: 2026-09-08
+
+The review found a local signal-policy design error: the private process owner
+classified every non-Python-default SIGINT disposition as competing ownership.
+A non-interactive background Cargo run inherited SIG_IGN and failed
+`two_worker_scheduling_corpus` before child creation with
+`unsupported-sigint-owner`, despite the foreground scheduling target passing.
+The missing elapsed assertion on the unjoined fixtures was a separate test
+omission: eventual SIGKILL could satisfy their oracle even after fallback to the
+140-second full-profile watchdog.
+
+Primary Python 3.12 documentation, CPython 3.12.3 initialization and GNU Bash
+signal documentation were checked before implementation; see
+[references](references.md#inherited-sigint-policy-in-scheduling-tools-2026-09-08).
+The correction distinguishes inherited policy from a competing callback. Ignored
+SIGINT stays ignored in both owner and child. Python-default and SIG_DFL retain
+the scoped non-raising recorder, and every path restores the exact prior
+disposition after resource release. The main-thread/default-SIGCHLD prerequisites,
+custom/unknown-handler rejection, output evidence, child identity and cleanup
+deadlines remain enforced.
+
+Three new standalone controls exercise background signal inheritance/delivery,
+all compatible dispositions over success/spawn failure/callback failure/timeout,
+and real SIGINT under SIG_DFL. Before the helper changed, these produced ten
+failed subcases; afterward all seven focused SIGINT controls passed. A fourth
+new control runs the real Rust replay through a background shell. Existing tests
+that intentionally send active SIGINT explicitly establish their signal policy
+and restore the launcher's disposition afterward. Both unjoined parent tests now
+require elapsed time from twelve to less than twenty-one seconds; a synthetic
+140-second result must fail the same elapsed oracle without sleeping for it.
+
+The final matrix ran on Linux x86_64 (kernel `7.0.11-76070011-generic`, glibc
+2.39), Python 3.12.3 and Rust 1.98.1/1.94.0. All 23 recorded commands succeeded.
+Evidence is retained under ignored
+`validation/local/batter-953-inherited-sigint/`: exact argument vectors,
+environment, wall-clock durations, before/after logs, the matrix driver, source
+hashes, corpus output and mutation records. Cargo.lock remained unchanged at
+SHA-256 `3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+| Executed check | Observed result |
+| --- | --- |
+| Focused SIGINT controls (`python3 -m unittest discover -s scripts -p test_scheduling_process.py -k sigint -v`) | Seven passed; 1.367 seconds. |
+| Synthetic unjoined elapsed oracle (`cargo test -p batter --test scheduling unjoined_elapsed_oracle --locked`) | Expected late-duration rejection passed; 0.114 seconds. |
+| Complete scheduling target (`cargo test -p batter --test scheduling --locked`) in foreground and through a `/bin/sh` background command with explicit child-status propagation | Fifteen tests passed in each context. Background command took 29.134 seconds; the foreground test target reported 29.01 seconds. |
+| Existing controlled escalation regressions | Both passed; 0.315 seconds. |
+| Python controls with the built Rust fixture, normal/background/`PYTHONOPTIMIZE=1` | Thirty passed in each mode; command durations 29.029 / 29.029 / 30.292 seconds. |
+| Three fresh full corpora for each of two/four workers | All six passed in 6.276–6.582 seconds each; every run recorded 64 workload cycles, 4,096 completions and all eight families at 32 cases each. |
+| Scheduling target restricted to two CPUs with two competing CPU workers | Fifteen passed; 41.773 seconds, including both unjoined elapsed assertions. |
+| `bash scripts/verify.sh` on Rust 1.98.1 | 361 test executions passed, zero failed/ignored; formatting, Clippy and rustdoc passed; 88.960 seconds. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | 361 test executions passed, zero failed/ignored; formatting, Clippy and rustdoc passed; 86.801 seconds. |
+| Capacity mutation challenge on each toolchain | Each passed six originals and rejected six mutants with status 101 at the intended shared-capacity assertion; 12.994 / 12.091 seconds. |
+| Rebuilt HTTP example and default, SIGINT, deadline smoke modes | All three passed with the expected telemetry/response checks and exit zero. |
+
+All 20 implementation/test/script hashes matched before and after the matrix and
+when audited afterward. All 24 mutation replay records showed reaped children,
+complete EOF and no watchdog, overflow or I/O errors. Mutant logs contained the
+intended capacity assertion and no completed-profile marker. Corpus outcomes
+were also audited for counts, markers, successful status and complete observation.
+
+The closing Jig gate/backend logs and evidence are retained beside the matrix
+logs; plan `plan_01M21CBBH20FMCC3Q6FP0PQDBP` connects `work check`, the final
+`scripts/jig check test`, `work evidence`, `work gates` and `work finish` receipts.
+These are local results. macOS/hosted scheduling and Python 3.9 execution remain
+unverified, and no PostgreSQL service was provisioned. The corpus is not exhaustive;
+process creation and OS scheduling remain outside hard preemption guarantees.
+No production API, dependency graph or publication change accompanies this fix.
+
+### Test inventory correction (2026-09-08)
+
+The review follow-up for `batter-953` corrected stale discovery counts in
+`docs/testing.md`. On Linux with Rust 1.98.1,
+`cargo test --workspace --all-features --locked -- --list` succeeded and listed
+190 test entries: 169 foundation, 16 Axum adapter and five test-support entries,
+plus two foundation doctests. The scheduling executable listed fifteen entries.
+Python 3.12.3 `unittest.TestLoader().loadTestsFromTestCase(...).countTestCases()`
+reported 24 `ProcessTests` and six `FixtureLaunchTests` in
+`scripts/test_scheduling_process.py`, matching the documented 30 controls.
+The other-Unix total of 188 is derived by excluding the two Linux-only probes;
+this correction adds no macOS execution evidence. These were discovery checks,
+not another runtime test pass; the implementation and preceding matrix evidence
+are unchanged. The implemented-status row now links to the test inventory
+instead of duplicating its Python count.
