@@ -1,0 +1,24 @@
+# Rust build output, including builds in workspace members. Keep Cargo.lock tracked.
+target/
+**/*.rs.bk
+
+# Local environment files; sanitized examples belong in version control.
+.env
+.env.*
+!.env.example
+
+# Local logs and validation artifacts.
+*.log
+/validation/local/
+
+# Python helper scripts.
+__pycache__/
+*.py[co]
+.venv/
+
+# Source archives generated in the repository root.
+/*.zip
+/*.zip.sha256
+
+# OS metadata.
+.DS_Store

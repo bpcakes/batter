@@ -1,0 +1,14 @@
+{
+  "kind": "static-package-inspection-not-rust-validation",
+  "snapshot_date": "2026-09-07",
+  "rust_files": 22,
+  "rust_lines": 2571,
+  "authored_test_cases": 67,
+  "parsed_toml_files": 4,
+  "markdown_files": 21,
+  "checked_internal_file_links": 64,
+  "rust_delimiter_check": "lexical-only-not-grammar-or-types",
+  "cargo_or_rustc_executed": false,
+  "rust_tests_executed": false,
+  "failures": []
+}

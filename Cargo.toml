@@ -1,0 +1,57 @@
+[workspace]
+members = [".", "crates/batter-test-support"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+publish = false
+
+[workspace.lints.clippy]
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+
+[package]
+name = "batter"
+description = "Small operational foundation for Tokio services: lifecycle, deadlines, and explicit retries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+axum = ["dep:axum", "dep:serde"]
+# Example-only integration, not a pool/transaction abstraction.
+postgres-example = ["dep:sqlx"]
+
+[dependencies]
+pin-project-lite = "0.2.17"
+tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+tracing = "0.1.44"
+thiserror = "2.0.20"
+axum = { version = "0.8.9", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres"], optional = true }
+
+[dev-dependencies]
+batter-test-support = { path = "crates/batter-test-support" }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "test-util", "signal", "net"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower = { version = "0.5.3", features = ["util"] }
+
+[[example]]
+name = "http_service"
+required-features = ["axum"]
+
+[[example]]
+name = "postgres_lifecycle"
+required-features = ["postgres-example"]
