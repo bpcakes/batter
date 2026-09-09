@@ -113,6 +113,14 @@ Layer graph or acquireRelease masking protocol.
 
 ## Shutdown state machine
 
+`lifecycle/state.rs` owns readiness and admission facts. Every transition uses
+the same mutex as finite-work admission, including the final Stopped transition.
+Only a private method taking that mutex guard can publish the atomic readiness
+snapshot. This keeps reads independent of an in-progress enqueue while making
+Stopped irreversible. Other modules receive operations and a restricted enqueue
+guard, never mutable fields. Startup history is named `driver_started`; it does
+not claim that a completed driver is still running.
+
 ```text
 Starting --driver + mark_ready + all mark_started--> Ready
     \                     |
@@ -147,8 +155,12 @@ coordinator and publishes a retained report or JoinError. The lower-level
 `run_until` and `CleanupStack::close` remain cancellation-fragile when driven
 directly by callers. No guarantee survives termination of their Tokio runtime.
 
-Caller-owned driver cancellation is armed when `run_until` takes ownership,
-including before its first poll. Actual startup stays lazy. Shutdown distinguishes
+The supervisor holds a synchronous abandonment guard from construction, before
+its application captures. Dropping an unstarted supervisor signals drain and
+cancellation and wakes readiness waiters with Draining, without running any
+factories/finalizers or publishing a report. `run_until` transfers that guard
+into the caller-owned driver, including before its first poll. Actual startup
+stays lazy. Shutdown distinguishes
 unobserved task results from unfinished tasks: ready joins are harvested at phase
 boundaries, and only unfinished tasks receive abort requests.
 

@@ -6,6 +6,9 @@
 
 mod driver;
 mod process;
+mod state;
+
+use state::Shared;
 
 pub use driver::{DriverOutcome, RunningSupervisor, SupervisorObserver};
 pub use process::{
@@ -21,24 +24,17 @@ use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
-    sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, AtomicU8, Ordering},
-    },
+    sync::{Arc, atomic::AtomicBool},
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
-    sync::{Notify, mpsc, watch},
+    sync::mpsc,
     task::{AbortHandle, Id, JoinError, JoinSet},
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-
-const STARTING: u8 = 0;
-const READY: u8 = 1;
-const DRAINING: u8 = 2;
-const STOPPED: u8 = 3;
 
 /// Process admission state, not an automatic dependency-health assessment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,47 +45,9 @@ pub enum Readiness {
     Ready,
     /// Shutdown requested; stop admitting new work.
     Draining,
-    /// The coordinator finished. Check its report for incomplete termination.
+    /// The coordinator finished. This state is irreversible; check its report
+    /// for incomplete termination.
     Stopped,
-}
-
-struct Shared {
-    state: AtomicU8,
-    drain: CancellationToken,
-    cancel: CancellationToken,
-    admission: Mutex<AdmissionState>,
-    changed: Notify,
-    completion: watch::Sender<Option<DriverOutcome>>,
-}
-
-struct AdmissionState {
-    supervised: bool,
-    running: bool,
-    ready_requested: bool,
-    pending_startups: usize,
-    finite_active: usize,
-    forced: bool,
-    failed: bool,
-}
-
-impl Shared {
-    fn admission(&self) -> MutexGuard<'_, AdmissionState> {
-        self.admission
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-    }
-
-    fn publish_ready(&self, admission: &AdmissionState) {
-        if admission.ready_requested
-            && (!admission.supervised || admission.running)
-            && admission.pending_startups == 0
-        {
-            let _ =
-                self.state
-                    .compare_exchange(STARTING, READY, Ordering::AcqRel, Ordering::Acquire);
-            self.changed.notify_waiters();
-        }
-    }
 }
 
 /// External lifecycle control; clones refer to the same process lifecycle.
@@ -101,22 +59,7 @@ pub struct ShutdownHandle {
 impl Default for ShutdownHandle {
     fn default() -> Self {
         Self {
-            shared: Arc::new(Shared {
-                state: AtomicU8::new(STARTING),
-                drain: CancellationToken::new(),
-                cancel: CancellationToken::new(),
-                admission: Mutex::new(AdmissionState {
-                    supervised: false,
-                    running: false,
-                    ready_requested: false,
-                    pending_startups: 0,
-                    finite_active: 0,
-                    forced: false,
-                    failed: false,
-                }),
-                changed: Notify::new(),
-                completion: watch::channel(None).0,
-            }),
+            shared: Arc::new(Shared::new(false)),
         }
     }
 }
@@ -132,54 +75,34 @@ impl ShutdownHandle {
     /// [`ShutdownSignal::mark_started`]. Returns true only for the first accepted
     /// declaration; never revives a draining/stopped service.
     pub fn mark_ready(&self) -> bool {
-        let mut admission = self.shared.admission();
-        if admission.ready_requested || self.shared.state.load(Ordering::Acquire) >= DRAINING {
-            return false;
-        }
-        admission.ready_requested = true;
-        self.shared.publish_ready(&admission);
-        true
+        self.shared.mark_ready()
     }
 
     /// Current admission state.
     pub fn readiness(&self) -> Readiness {
-        match self.shared.state.load(Ordering::Acquire) {
-            STARTING => Readiness::Starting,
-            READY => Readiness::Ready,
-            DRAINING => Readiness::Draining,
-            _ => Readiness::Stopped,
-        }
+        self.shared.readiness()
     }
 
     /// Atomically withdraw readiness and signal drain. Does not immediately
     /// cancel admitted operation contexts.
     pub fn request(&self) {
-        {
-            // Root process admission uses this same lock: enqueue and drain are
-            // ordered, including work accepted but not yet polled by the driver.
-            let _admission = self.shared.admission();
-            if self.shared.state.load(Ordering::Acquire) != STOPPED {
-                self.shared.state.store(DRAINING, Ordering::Release);
-            }
-        }
-        self.shared.drain.cancel();
-        self.shared.changed.notify_waiters();
+        self.shared.request();
     }
 
     /// Whether draining has been requested.
     pub fn is_draining(&self) -> bool {
-        self.shared.state.load(Ordering::Acquire) >= DRAINING
+        matches!(self.readiness(), Readiness::Draining | Readiness::Stopped)
     }
 
     /// Wait for the stop-admission/drain signal.
     pub async fn draining(&self) {
-        self.shared.drain.cancelled().await;
+        self.shared.draining().await;
     }
 
     /// Child token for admitted operations. Cancelling it cannot cancel the
     /// process. It is signalled at forced cancellation, not initial drain.
     pub fn operation_token(&self) -> CancellationToken {
-        self.shared.cancel.child_token()
+        self.shared.operation_token()
     }
 
     /// Read-only signals for a managed component.
@@ -192,28 +115,19 @@ impl ShutdownHandle {
 
     /// Wait until readiness is acknowledged, or return the drain/stopped state
     /// if startup cannot become ready. Cancelling this waiter changes no state.
+    /// Dropping an unstarted supervisor wakes this waiter with `Draining`.
     pub async fn wait_ready(&self) -> Result<(), Readiness> {
-        loop {
-            let notified = self.shared.changed.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            match self.readiness() {
-                Readiness::Ready => return Ok(()),
-                Readiness::Starting => notified.await,
-                state => return Err(state),
-            }
-        }
+        self.shared.wait_ready().await
     }
 
     /// Observe the retained completion of an owned [`Supervisor::start`] driver.
     /// `run_until` does not publish into this observer.
     pub fn observer(&self) -> SupervisorObserver {
-        SupervisorObserver::new(self.shared.completion.subscribe())
+        self.shared.observer()
     }
 
     fn force_cancel(&self) {
-        self.shared.admission().forced = true;
-        self.shared.cancel.cancel();
+        self.shared.force_cancel();
     }
 }
 
@@ -232,14 +146,9 @@ impl ShutdownSignal {
         let Some(startup) = &self.startup else {
             return false;
         };
-        let mut admission = self.handle.shared.admission();
-        if startup.swap(true, Ordering::AcqRel) {
-            return false;
-        }
-        admission.pending_startups -= 1;
-        self.handle.shared.publish_ready(&admission);
-        true
+        self.handle.shared.mark_started(startup)
     }
+
     /// Stop accepting/claiming new work, then drain admitted work.
     pub async fn draining(&self) {
         self.handle.draining().await;
@@ -247,7 +156,7 @@ impl ShutdownSignal {
 
     /// Cooperative interruption after the drain allowance is exhausted.
     pub async fn cancelled(&self) {
-        self.handle.shared.cancel.cancelled().await;
+        self.handle.shared.cancelled().await;
     }
 
     /// Whether drain has already been requested.
@@ -257,7 +166,7 @@ impl ShutdownSignal {
 
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
-        self.handle.shared.cancel.is_cancelled()
+        self.handle.shared.is_cancelled()
     }
 }
 
@@ -421,7 +330,13 @@ struct Component {
 /// Registration is inert: factories start only when run_until is polled.
 /// Application readiness must be declared explicitly through the handle.
 /// Registered tasks must own and account for their own asynchronous children.
+/// Dropping an unstarted supervisor signals drain and cancellation before
+/// dropping its captures. It wakes readiness waiters but invokes no factories
+/// or finalizers and publishes no completion report.
 pub struct Supervisor {
+    // First field: signal abandonment before dropping any application captures.
+    // run_until transfers this guard into the outer driver future.
+    ownership: Option<EmergencyShutdown>,
     components: Vec<Component>,
     cleanup: CleanupStack,
     handle: ShutdownHandle,
@@ -433,9 +348,11 @@ pub struct Supervisor {
 impl Supervisor {
     /// Build an initially unready supervisor, without spawning anything.
     pub fn new(budget: ShutdownBudget) -> Self {
-        let handle = ShutdownHandle::new();
-        handle.shared.admission().supervised = true;
+        let handle = ShutdownHandle {
+            shared: Arc::new(Shared::new(true)),
+        };
         Self {
+            ownership: Some(EmergencyShutdown(handle.clone())),
             components: Vec::new(),
             cleanup: CleanupStack::new(),
             handle,
@@ -492,7 +409,7 @@ impl Supervisor {
             name,
             factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
         });
-        self.handle.shared.admission().pending_startups += 1;
+        self.handle.shared.register_component();
         Ok(())
     }
 
@@ -525,14 +442,17 @@ impl Supervisor {
     /// drain and cancellation. Once polled, JoinSet also requests abortion, but
     /// Drop cannot await children or finalizers. Use the normal shutdown protocol
     /// or [`Supervisor::start`] for awaited cleanup; a hard kill cannot run it.
-    pub fn run_until<F>(self, shutdown: F) -> impl Future<Output = ShutdownReport>
+    pub fn run_until<F>(mut self, shutdown: F) -> impl Future<Output = ShutdownReport>
     where
         F: Future<Output = ()>,
     {
-        let emergency = EmergencyShutdown(self.handle.clone());
-        async move {
-            let _emergency = emergency;
-            scoped_dispatch::scope(self.drive_until(shutdown)).await
+        let emergency = self
+            .ownership
+            .take()
+            .expect("supervisor owns shutdown signaling before driver transfer");
+        CallerOwnedDriver {
+            _ownership: emergency,
+            future: async move { scoped_dispatch::scope(self.drive_until(shutdown)).await },
         }
     }
 
@@ -540,11 +460,7 @@ impl Supervisor {
     where
         F: Future<Output = ()>,
     {
-        {
-            let mut admission = self.handle.shared.admission();
-            admission.running = true;
-            self.handle.shared.publish_ready(&admission);
-        }
+        self.handle.shared.start_driver();
         let mut tasks = TaskSet::default();
         for component in self.components.drain(..) {
             tasks.spawn_component(component, &self.handle);
@@ -604,8 +520,7 @@ impl Supervisor {
         } else {
             self.cleanup.close(self.budget.cleanup).await
         };
-        self.handle.shared.state.store(STOPPED, Ordering::Release);
-        self.handle.shared.changed.notify_waiters();
+        self.handle.shared.stop_driver();
         ShutdownReport {
             cause,
             tasks: records,
@@ -633,7 +548,7 @@ impl Supervisor {
                     _ = &mut shutdown => break ShutdownCause::Requested,
                     Some(result) = tasks.set.join_next_with_id(), if !tasks.set.is_empty() => {
                         if let Some(name) = tasks.record(result) {
-                            self.handle.shared.admission().failed = true;
+                            self.handle.shared.fail_task();
                             break ShutdownCause::ComponentExit(name);
                         }
                     }
@@ -647,8 +562,25 @@ impl Supervisor {
 struct EmergencyShutdown(ShutdownHandle);
 impl Drop for EmergencyShutdown {
     fn drop(&mut self) {
-        self.0.request();
         self.0.force_cancel();
+    }
+}
+
+pin_project_lite::pin_project! {
+    // Struct field order makes signaling precede inner-future destruction,
+    // including before the first poll; async capture drop order is not needed.
+    struct CallerOwnedDriver<F> {
+        _ownership: EmergencyShutdown,
+        #[pin]
+        future: F,
+    }
+}
+
+impl<F: Future> Future for CallerOwnedDriver<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().future.poll(cx)
     }
 }
 
@@ -721,12 +653,12 @@ impl TaskSet {
     }
 
     fn pending(&self, handle: &ShutdownHandle) -> bool {
-        !self.set.is_empty() || handle.shared.admission().finite_active != 0
+        !self.set.is_empty() || handle.shared.has_finite_tasks()
     }
 
     fn unfinished(&self, handle: &ShutdownHandle) -> bool {
         self.names.values().any(|task| !task.abort.is_finished())
-            || handle.shared.admission().finite_active != 0
+            || handle.shared.has_finite_tasks()
     }
 
     // Membership means a result remains unobserved, not necessarily that the
@@ -769,7 +701,7 @@ impl TaskSet {
 
     fn record_during_shutdown(&mut self, result: TaskResult, handle: &ShutdownHandle) {
         if self.record(result).is_some() {
-            handle.shared.admission().failed = true;
+            handle.shared.fail_task();
         }
     }
 

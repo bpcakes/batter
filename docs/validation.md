@@ -1,5 +1,188 @@
 # Validation evidence
 
+Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
+
+## Upstream and local lifecycle reconciliation: 2026-09-09
+
+Local `master` was advanced from `19aa9ff` to upstream `37888ff` while retaining
+the uncommitted lifecycle work for `batter-8ot` and `batter-7dm`. The three
+documentation conflicts were reconciled by preserving both validation histories,
+combining platform evidence, and retaining the upstream behavior-focused testing
+guide with the local lifecycle coverage rows. Local crate changes and upstream
+adapter/script changes were each verified byte-for-byte against their original
+trees. Append-only Jig records and both sides' changed Beads records were retained;
+the merged Beads export was imported into the local database.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, with Python 3.14.7:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 421 test/doctest
+executions, including repeated foundation execution and live loopback readiness
+tests. Formatting, compilation, Clippy and rustdoc passed on both toolchains.
+All 38 Python controls and all five HTTP smoke profiles passed. The HTTP example
+was rebuilt with Rust 1.98.1. Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+Local logs are `/tmp/batter-reconcile-verify-1.98.1.log`,
+`/tmp/batter-reconcile-verify-1.94.0.log`, `/tmp/batter-reconcile-python.log`
+and `/tmp/batter-reconcile-http.log`. This adds macOS evidence for the combined
+source, without changing earlier results' historical scope. Linux execution of
+the combined source, hosted CI and live PostgreSQL remain unverified.
+
+## Lifecycle transition ownership and startup abandonment: 2026-09-09
+
+Bead `batter-7dm` centralizes readiness/admission facts in the private
+`lifecycle/state.rs` module. All readiness transitions, including coordinator
+completion, and atomic snapshot publication now require the same mutex guard.
+No caller can directly mutate those fields. The published snapshot retains
+nonblocking readiness reads while native enqueue holds admission. Explicit
+readiness/drain/cancellation wakeups run after releasing the guard.
+
+Supervisor construction owns synchronous abandonment signaling, transferred
+into the caller-owned driver. Both structs place that guard before captured
+application values/the inner future. Abandonment reports Draining, signals
+cancellation and wakes readiness waiters without invoking factories/finalizers
+or fabricating a completion report. The private driver wrapper uses the existing
+pin-project-lite dependency without allocation or public signature changes.
+
+On macOS 26.6.2 (`25G83`), arm64, Rust 1.98.1, the new public ownership tests were
+run before the implementation:
+
+```sh
+cargo test -p batter --locked --test lifecycle_state
+```
+
+It exited 101: the registered readiness waiter remained at Starting and captured
+value destruction observed no abandonment signal. The owned-unpolled-driver
+control passed. The initial all-mutex implementation then failed
+`cargo test -p batter --locked --lib readiness_reads_remain_available_while_admission_is_held`
+with Timeout; retaining a privately published atomic snapshot fixed that regression.
+The test releases admission and joins the reader even on failure, using a
+two-second scheduling watchdog rather than claiming a wall-clock latency bound.
+
+The final focused command passed 58 tests:
+
+```sh
+cargo test -p batter --locked --lib --test lifecycle --test process_ownership --test lifecycle_state
+```
+
+Seven new unit tests cover all six driver/approval/component-ack startup orders,
+the 20-entry readiness transition table, late acknowledgements, concurrent
+request/completion, root/active/expired-scope admission with open/closed queues,
+readiness reads during admission and three wakers checking the mutex is unlocked.
+Four public tests cover abandoned-owner notification/no fabricated report, direct
+and unpolled-owner capture destruction, ownership transfer, and invalid-name,
+startup, capacity and terminal rejection precedence with inert factories.
+The concurrent test releases request and completion together; deterministic
+serialized transition cases cover their possible orders under the shared mutex.
+This is not exhaustive exploration of the Tokio scheduler.
+
+A temporary mutation making drain unconditional was rejected by the transition
+table with `Stopped, event 2`: actual Draining, expected Stopped (exit 101).
+The source was restored byte-for-byte before full verification.
+
+Both complete verification matrices passed on the same macOS arm64 host with
+Python 3.14.7:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+```
+
+Each matrix passed 184 foundation / 205 workspace entries and two doctests,
+including all 15 scheduling and 46 macOS non-yielding entries. Formatting,
+compilation, Clippy and rustdoc passed. The HTTP example was rebuilt with
+Rust 1.98.1 (`48a229cea`, 2026-09-01); all three smoke modes exited 0.
+Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+The first Jig profile passed Clippy, formatting, tests and the contract check,
+but failed file-budget: the six earlier admission regressions pushed
+`process_ownership.rs` above 800 lines. Those tests and their helper were moved
+unchanged into `process_ownership/terminal_admission.rs`; no limit or assertion
+was relaxed. Both matrices and HTTP smoke modes were repeated after this move.
+Linux execution of this follow-up, hosted CI and live PostgreSQL remain
+unverified. Final Jig gate receipts and closure are recorded under plan
+`plan_01M22KZAHKTX0287A51AW4GHH0` in the append-only `.agent/state` records.
+
+## Terminal process admission precedence: 2026-09-09
+
+Bead `batter-8ot` corrects rejection classification when permanent closure
+precedes the coordinator's first poll. Admission now checks forced cancellation,
+task failure, expired ancestors, root drain and a closed coordinator queue before
+startup errors. Name validation still runs first; active descendants retain their
+drain exception and the shared capacity bound. No dependency or public signature
+changed.
+
+On macOS 26.6.2 (`25G83`), arm64, Rust 1.98.1, the six new tests were run before
+the repair:
+
+```sh
+cargo test -p batter --locked --test process_ownership admission_is_closed
+```
+
+It exited 101: shutdown before startup, unpolled driver drop, abort before first
+poll, and direct unstarted supervisor drop each returned `NotRunning` instead
+of `Closed`. The normal completed shutdown and post-start abort controls passed.
+After the repair, this focused command passed all 46 entries:
+
+```sh
+cargo test -p batter --locked --test process_ownership --test lifecycle
+```
+
+All six closure tests check that rejected factories remain inert. Existing
+startup/readiness, capacity, active-descendant drain, forced cancellation and
+admission/drain race assertions also passed.
+
+Both complete verification matrices exited 0 on the same macOS arm64 host with
+Python 3.14.7:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+```
+
+The default toolchain was Rust 1.98.1 (`48a229cea`, 2026-09-01). Each matrix
+passed 173 foundation / 194 workspace entries and two doctests, including all
+15 scheduling entries and 46 macOS non-yielding entries. Formatting, compilation,
+Clippy and rustdoc passed. The HTTP example was rebuilt with 1.98.1; all three
+smoke modes exited 0. `scripts/jig doctor` reported ready and
+`scripts/jig check contract` passed.
+
+The first `scripts/jig check test` ran every test successfully (command exit 0),
+but Jig rejected the result because validation documentation changed during its
+read-only run. The receipt retains the `effect_policy` worktree-fingerprint
+failure; it is not a passing Jig check.
+The same `scripts/jig check test` was rerun with the worktree unchanged for its
+entire execution and passed (Jig exit 0), including the locked foundation,
+workspace and doctest matrix. Only evidence and tracker records were updated
+after that final check; the tested Rust sources are unchanged.
+
+Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+This adds local macOS scheduling evidence; Linux execution of this repair and
+hosted execution remain unverified. Historical Linux results below retain their
+original scope. No live PostgreSQL, runtime-death finalization, or exhaustive
+scheduling guarantee is established.
+
 ## HTTP redaction and filtered-operation assertions: 2026-09-09
 
 Bead `batter-faj.7` addresses the two accepted review gaps. The nested-observer
@@ -248,8 +431,6 @@ panics, damaged shared-state recovery, streaming/body panics after headers,
 disconnect handling or transitive connection shutdown. The corresponding broader
 transport and metadata/exporter tasks remain open.
 
-Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
-
 ## HTTP completion fields independent of spans: 2026-09-09
 
 Bead `batter-faj.3` corrects the dependency of HTTP completion fields on an enabled
@@ -315,8 +496,6 @@ macOS and hosted CI execution of this change remain unverified. These checks do
 not establish streaming-body, disconnect or panic recovery behavior, or delivery
 by an arbitrary subscriber/exporter. The standard network smoke still does not
 force requests into the example's Starting/Draining readiness window.
-
-Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
 ## Explicit HTTP observation severity: 2026-09-09
 

@@ -91,7 +91,7 @@ impl Supervisor {
     pub fn start(self) -> RunningSupervisor {
         let handle = self.handle();
         let observer = handle.observer();
-        let sender = handle.shared.completion.clone();
+        let sender = handle.shared.completion_sender();
         let coordinator = tokio::spawn(scoped_dispatch::scope(
             self.run_until(pending()).in_current_span(),
         ));

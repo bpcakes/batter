@@ -6,6 +6,30 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Terminal process admission: 2026-09-09
+
+The [Rust destructor reference](https://doc.rust-lang.org/reference/destructors.html#destructors.operation)
+specifies struct field destruction in declaration order. The supervisor and its
+private caller-owned driver wrapper put the abandonment guard before application
+captures/the inner future. The wrapper uses the existing pin-project-lite 0.2.17
+dependency for safe projection, with no new allocation or dependency. This avoids
+relying on async capture destruction order for abandonment-before-capture signaling.
+
+Cargo.lock resolves Tokio 1.53.1. Its locally cached source and rustdoc for
+[`mpsc::Sender::is_closed`](https://docs.rs/tokio/1.53.1/tokio/sync/mpsc/struct.Sender.html#method.is_closed)
+confirm that receiver drop or explicit receiver closure closes the channel.
+Process admission checks this before startup errors so a retained handle cannot
+mistake a dropped unstarted supervisor for one that may still start. The enqueue
+operation retains its own closed-channel error handling for concurrent closure;
+the preliminary check is not a reservation or a guarantee that the receiver stays alive.
+
+The same cached Tokio version's `sync/mpsc/chan.rs` calls the receiver waker
+from its send path. Readiness therefore retains an atomic read snapshot while
+enqueue holds admission. Its sole writer is private and takes the same mutex
+guard as state transitions; explicit notification/cancellation runs after release.
+Abandoned supervisors now signal lifecycle closure explicitly as well as dropping
+the queue. The closed-channel check remains a defensive admission condition.
+
 ## Scheduling process ownership: 2026-09-08
 
 The [Python 3.12 subprocess contract](https://docs.python.org/3.12/library/subprocess.html)

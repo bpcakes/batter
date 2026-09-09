@@ -12,6 +12,8 @@ Windows support and non-Unix fallbacks are out of scope.
 
 - `src/lib.rs` defines the public modules and boundary error aliases.
 - `src/lifecycle.rs` and `src/lifecycle/` own process tasks and shutdown reports.
+- `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
+  its private snapshot writer requires the admission mutex guard.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
 - `src/cleanup.rs` drives explicit LIFO finalizers.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
@@ -28,6 +30,12 @@ Update the root contracts, implemented status, owning Bead, and validation for b
 
 Preserve child deadline clamping, downward cancellation, inert factories,
 explicit replay permission, bounded process admission, and retained failures.
+Keep all state mutations inside `lifecycle/state.rs`. Publish the readiness
+snapshot while holding its transition guard; `Stopped` cannot move backward.
+Explicit notification and cancellation happen after releasing the guard.
+Readiness reads must remain available while native enqueue holds admission.
+Supervisor abandonment signaling is owned from construction and transferred to
+the driver; it precedes captured-value destruction and never runs finalizers.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or

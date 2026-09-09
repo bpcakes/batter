@@ -40,3 +40,15 @@ construction, the point of ownership transfer, while startup remains first-poll
 lazy. Shutdown harvests ready joins at phase boundaries and distinguishes
 unobserved results from unfinished tasks before requesting abort. A delayed
 observation of successful termination must not suppress dependent finalizers.
+
+State ownership hardening, 2026-09-09: a private lifecycle state module owns all
+readiness/admission mutations. Every readiness transition and snapshot publication
+requires the same admission mutex; Stopped is irreversible. The published atomic
+snapshot preserves readiness reads while enqueue holds that mutex. Explicit
+readiness and cancellation notifications occur after releasing it.
+
+Supervisor construction now owns synchronous abandonment signaling and transfers
+it into `run_until`. Dropping an unstarted owner withdraws readiness, signals drain
+and cancellation and wakes readiness waiters before dropping application captures.
+Abandonment reports Draining, invokes no finalizer, and creates no completion
+report. This does not extend cleanup guarantees or change observer ownership.

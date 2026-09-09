@@ -155,6 +155,9 @@ receipt are excluded.
 | Never-polled driver drop notifies readiness/cancellation; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Startup ack/failure, last-owner and waiter drop, retained driver failure | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
+| Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter/tests/process_ownership/terminal_admission.rs) |
+| Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and wakeups outside the transition lock | [state/tests.rs](../crates/batter/src/lifecycle/state/tests.rs) |
+| Abandoned-startup waiter notification, no fabricated completion, guard transfer and capture destruction order, inert factories and invalid-name/startup/capacity/closure precedence | [lifecycle_state.rs](../crates/batter/tests/lifecycle_state.rs) |
 | Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Seeded root/descendant contention, cancellation/readiness/drop schedules, complete failure accounting, replay and watchdog controls | [scheduling.rs](../crates/batter/tests/scheduling.rs) and its [profile](../crates/batter/tests/scheduling/profile.rs) |
 | Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |

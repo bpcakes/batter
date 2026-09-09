@@ -105,12 +105,30 @@ every registered critical component's `mark_started` acknowledgement after
 actual initialization. Acknowledgement is an application assertion, not an
 inspection of its internal descendants. Forgotten acknowledgement leaves Starting.
 
+Readiness only moves forward: Starting may become Ready or Draining, Ready may
+become Draining, and coordinator completion publishes Stopped. Stopped cannot
+be reverted by a concurrent shutdown request or late startup acknowledgement.
+The private lifecycle state module serializes all transitions with admission;
+its atomic readiness snapshot is published under the same mutex guard. Reads
+remain available while admission is held. Explicit readiness/drain/cancellation
+wakeups happen after releasing the guard; native queue enqueue can wake its
+receiver while retaining admission.
+
 `with_process_capacity` adds finite process-owned admission. `try_spawn` rejects
 synchronously before startup/readiness, after root drain, or at capacity; it
-creates no queue of permit waiters and never invokes rejected factories. Queued
-plus executing tasks hold capacity until termination, not until their receipt is
-dropped. Payload sizes and detached work are not bounded by the task count.
-Active `ProcessScope` descendants may enter during drain and use the same bound;
+creates no queue of permit waiters and never invokes rejected factories.
+
+Admission errors are classified after name validation: permanent closure
+(`Closed`) takes precedence over startup (`NotRunning` / `NotReady`) and
+capacity (`Full`). Root drain, forced cancellation, task failure, an expired
+ancestor, or a closed coordinator queue permanently closes the affected
+admission path. This includes shutdown before startup, dropping/aborting an
+unpolled driver, and dropping an unstarted supervisor. A fresh supervisor still
+returns `NotRunning`.
+
+Queued plus executing tasks hold capacity until termination, not until their
+receipt is dropped. Payload sizes and detached work are not bounded by the task
+count. Active `ProcessScope` descendants may enter during drain and use the same bound;
 escaped inactive scopes and forced cancellation cannot admit them. Parent/child
 capacity is shared: awaiting a child at full capacity requires handling rejection,
 not creating an unbounded waiter. Finite work remains in-memory, not durable.
@@ -251,10 +269,18 @@ shutdown; observers and admission/control handles do not prolong ownership.
 Observers share the retained report or coordinator JoinError. The Tokio runtime
 must remain alive; process/runtime termination cannot be shielded.
 
+An unstarted `Supervisor` owns abandonment signaling from construction. Dropping
+it withdraws readiness, signals drain and forced cancellation, and wakes
+`wait_ready` with `Err(Readiness::Draining)` before dropping captured values.
+It invokes no component or finalizer factory and publishes no completion report;
+Stopped still means coordinator completion. Extracted cleanup must be explicitly
+awaited. An observer created without `start` still has no completion protocol.
+
 The lower-level `run_until` remains caller-owned. Constructing its future transfers
-ownership and arms emergency cancellation without starting factories or publishing
-readiness. Dropping it, even before its first poll, withdraws readiness, wakes
-readiness waiters, and signals drain and forced cancellation. After startup,
+the abandonment guard without starting factories or publishing readiness. Keeping
+that future unpolled leaves startup pending. Dropping it, even before its first
+poll, withdraws readiness, wakes readiness waiters, and signals drain and forced
+cancellation. After startup,
 JoinSet also requests abortion of owned tasks, but Drop cannot await them or run
 asynchronous finalizers. Never put an outer timeout
 around run_until and then describe the result as completed graceful shutdown.

@@ -1,14 +1,11 @@
-use super::{DRAINING, READY, ShutdownHandle, ShutdownSignal, TaskExit};
+use super::{ShutdownHandle, ShutdownSignal, TaskExit};
 use crate::{ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{
     error::Error,
     fmt,
     future::Future,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, atomic::AtomicBool},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tracing::Instrument;
@@ -17,13 +14,14 @@ use tracing::Instrument;
 /// created on rejection, and the application factory is never invoked.
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessAdmissionError {
-    /// The coordinator has not started.
+    /// The coordinator has not started and admission is not permanently closed.
     #[error("process driver has not started")]
     NotRunning,
     /// Application/component readiness has not been acknowledged.
     #[error("process is not ready")]
     NotReady,
-    /// Draining, forced cancellation, task failure, or an expired parent scope.
+    /// Root drain, forced cancellation, task failure, an expired parent scope,
+    /// or a closed coordinator queue. Takes precedence over startup errors.
     #[error("process admission is closed")]
     Closed,
     /// Queued plus executing work already consumes the configured capacity.
@@ -172,24 +170,7 @@ impl ProcessHandle {
         let span = tracing::info_span!(target: "batter", "batter.process_task", task = name);
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
         let mut admission = self.handle.shared.admission();
-        let state = self.handle.shared.state.load(Ordering::Acquire);
-        if !admission.running {
-            return Err(ProcessAdmissionError::NotRunning);
-        }
-        if admission.forced
-            || admission.failed
-            || ancestor.is_some_and(|active| !active.load(Ordering::Acquire))
-        {
-            return Err(ProcessAdmissionError::Closed);
-        }
-        if ancestor.is_none() {
-            if state >= DRAINING {
-                return Err(ProcessAdmissionError::Closed);
-            }
-            if state != READY {
-                return Err(ProcessAdmissionError::NotReady);
-            }
-        }
+        admission.check(ancestor.map(Arc::as_ref), self.sender.is_closed())?;
         let permit = self
             .permits
             .clone()
@@ -220,7 +201,7 @@ impl ProcessHandle {
                         }
                     }
                     Err(error) => {
-                        handle.shared.admission().failed = true;
+                        handle.shared.fail_task();
                         let error = Arc::new(error);
                         drop(lease);
                         let _ = sender.send(Err(error.clone()));
@@ -244,7 +225,7 @@ impl ProcessHandle {
                 mpsc::error::TrySendError::Closed(_) => ProcessAdmissionError::Closed,
             });
         }
-        admission.finite_active += 1;
+        admission.admit_finite();
         drop(admission);
         let lease = ActiveTask {
             handle: self.handle.clone(),
@@ -266,11 +247,7 @@ struct ActiveTask {
 
 impl Drop for ActiveTask {
     fn drop(&mut self) {
-        let mut admission = self.handle.shared.admission();
-        self.active.store(false, Ordering::Release);
-        admission.finite_active -= 1;
-        drop(admission);
-        self.handle.shared.changed.notify_waiters();
+        self.handle.shared.finish_finite(&self.active);
     }
 }
 

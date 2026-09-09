@@ -1,3 +1,6 @@
+#[path = "process_ownership/terminal_admission.rs"]
+mod terminal_admission;
+
 use batter::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
