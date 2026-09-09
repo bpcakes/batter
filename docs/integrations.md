@@ -1,7 +1,9 @@
 # Integration ownership contracts
 
-The `batter-axum` and `batter-sqlx` adapter packages and native SQLx example
-exist in this snapshot.
+The `batter-axum` and `batter-sqlx` adapters, native SQLx lifecycle example and
+unpublished reference compatibility package exist in this snapshot. The latter
+composes pinned native upstream APIs in explicit live probes; see the
+[compatibility manifest](reference-compatibility.md).
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
 APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.md).
@@ -123,8 +125,9 @@ Batter error. Implement application idempotency/reconciliation separately.
 
 Reviewed baseline from the preceding brief: runledger-core, runledger-postgres,
 and runledger-runtime 0.12.0, with a PostgreSQL 18 requirement in its published
-README. Re-check the exact release/API before implementation; Batter has not
-compiled against any Runledger version.
+README. The reference compatibility package now compiles and exercises the Git
+revision selected in the [manifest](reference-compatibility.md). The registry
+release uses a different SQLx version and is not interchangeable with that pin.
 
 Runledger retains internal supervision, heartbeat/lease logic, claim behavior,
 schedules, workflows, retries, durable intents, schema compatibility, and
@@ -171,16 +174,17 @@ not charge a new user quota automatically for each internal retry attempt.
 Layer ordering depends on trusted metadata, authentication and which identity
 is being limited. No single order is a universal security claim.
 
-## postgres-test-harness: future application test adapter
+## postgres-test-harness: reference probes and future reusable fixtures
 
 Reviewed baseline: postgres-test-harness 0.2.0 provisions/connects to PostgreSQL
 18, caches fingerprinted templates, and clones isolated test databases. Its
-public API is independent of SQLx. Re-check the actual release before coding.
+public API is independent of SQLx. The reference probes select the exact Git
+revision in the [manifest](reference-compatibility.md), with containers disabled.
 
 The future fixture belongs beside the application/example integration tests,
 with no production container dependency. Generic `batter-test-support` remains
 independent of the harness, foundation, and adapters. The harness itself remains
-external; this workspace split imports neither its source nor its dependency.
+external; only the reference example selects it as a development dependency.
 Cache a harness and stable templates once per
 test process. Fingerprint every ordered application and dependency migration
 bundle plus a revision for setup behavior not represented by SQL bytes.
@@ -206,7 +210,7 @@ Tokio's time::advance. Do not silently pass tests when the database is unavailab
 Use explicitly selected live test targets and report prerequisites or failures.
 The workspace checks enable all features and targets: feature gating alone
 cannot keep database-dependent cases out of ordinary verification. The reference
-will compile ignored live cases during those checks and run them through an
+compiles ignored live cases during those checks and runs them through an
 explicit prerequisite-checking runner; skipped cases are not executed evidence.
 
 ## Dependency direction and extraction criteria

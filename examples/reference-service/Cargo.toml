@@ -1,0 +1,23 @@
+[package]
+name = "batter-example-reference-service"
+description = "Executable native SQLx, Runledger and PostgreSQL harness compatibility probes"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+runledger-core = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
+runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
+runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
+
+[dev-dependencies]
+postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde_json = "1"
+batter-test-support.workspace = true

@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains four library packages and one SQLx example package,
+This workspace contains four library packages and two SQLx example packages,
 with failure-contract tests, doctests, and five runnable demonstrations.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification passed on Rust 1.94.0 and 1.98.1 after upgrading the dependencies;
@@ -35,7 +35,7 @@ not broaden this repository's platform support.
 ## Verification
 
 The default toolchain is pinned to Rust 1.98.1. All packages retain Rust 1.94
-as their minimum; SQLx 0.9.0 requires it in the example package. No lower library
+as their minimum; SQLx 0.9.0 requires it in the adapter and examples. No lower library
 minimum is claimed after extraction. Run `bash scripts/verify.sh` and
 `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`, then build and execute the HTTP
 smoke test described in `docs/testing.md`. Repair failures without relaxing
@@ -70,6 +70,7 @@ bounded probes and pool-close registration; server-session termination remains s
 `crates/batter/examples` contains worker and operation/process ownership examples.
 `crates/batter-axum/examples` contains the HTTP composition root.
 `examples/postgres-lifecycle` is an unpublished native SQLx executable package.
+`examples/reference-service` owns pinned upstream compatibility and ignored live probes.
 There is no root package, root source tree, or root integration-test target.
 
 ## Preserve these invariants
@@ -189,7 +190,8 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 No web apps or development proxy are configured in `.jig.toml`.
 
-Jig database tooling is disabled: SQLx is currently an example package only.
+Jig database tooling is disabled: database provisioning remains external to the
+optional SQLx adapter and example packages.
 
 ## Preferred Commands
 

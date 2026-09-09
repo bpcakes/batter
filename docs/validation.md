@@ -2,6 +2,143 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Reference and operational-helper reconciliation: 2026-09-09
+
+User-requested integration follow-up to `batter-4t6`, on main commit
+`5bf943526274ff349561648133f4ed06fb17837d` plus the reconciled working changes.
+Main's SQLx, startup, health and executable Rust implementations are unchanged.
+The reference package/probes are retained alongside them. Shared matrix wiring
+now runs four prerequisites: core compilation, process-runner controls,
+PostgreSQL-smoke controls and reference-runner controls. Failure in any one
+prevents later batches; both runtime profiles remain separately checked.
+
+Cargo regenerated the lockfile; SHA-256 is
+`99abe5d8ef161c7193f40dffaf249e066f08490d55bafccfdbc9d5ae09b38472`.
+`cargo metadata --locked --format-version 1` resolves SQLx/core/PostgreSQL 0.9.0
+only. All six workspace packages are unpublished and retain Rust 1.94.
+
+On Linux x86_64, both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed: 548 Rust test/doctest
+executions, zero failures, 17 explicitly ignored live cases across 62 summaries,
+plus 22 process controls, 13 PostgreSQL-smoke controls and three reference-runner
+controls. Counts include repeated profiles, not 548 distinct tests. Formatting,
+Clippy and warning-denied rustdoc passed.
+
+A dedicated disposable PostgreSQL 18.6 Debian server listened on
+`127.0.0.1:33049`, with a local administrative role and no TLS. The following
+live commands passed on both Rust 1.98.1 and 1.94.0 (set
+`RUSTUP_TOOLCHAIN=1.94.0` for the second run):
+
+```sh
+POSTGRES_TEST_ADMIN_URL=postgres://postgres@127.0.0.1:33049/postgres bash scripts/test_reference_live.sh
+DATABASE_URL=postgres://postgres@127.0.0.1:33049/postgres bash scripts/test_sqlx_live.sh
+```
+
+Each run executed all four reference and all ten SQLx-adapter cases with no
+failures or ignored cases. On default Rust 1.98.1, the three selected
+`postgres_lifecycle` live cases also passed. Rebuilt `http_service` passed
+default, SIGINT, deadline, WARN and WARN/deadline smokes; rebuilt
+`postgres_lifecycle` passed SIGTERM and SIGINT smokes. The commands and flags
+are listed in [testing](testing.md). The server contained no remaining harness
+databases after the live runs.
+
+Logs are retained in ignored `.agent/tmp/reconcile-5bf9435/`. Final Jig
+check/evidence/gates and session closure belong to
+`plan_01M23TBC9TJ6S2G7XQTDVDYP9Q`; its append-only records carry final receipt
+identities. Earlier receipts below retain their original source scope and are
+not reused as evidence for this combined tree. No new macOS or hosted execution,
+Runledger adapter, commit, publication or deployment is claimed.
+
+## Native reference compatibility: 2026-09-09
+
+Bead `batter-4t6`, baseline `e518b6b52a88a460edfb6f7c41107e71932b6c70` plus
+the working-tree change. Linux 7.0.11-76070011-generic x86_64; local execution,
+not hosted CI. The new reference package uses the exact upstream Git sources and
+contracts in [the compatibility manifest](reference-compatibility.md).
+
+Cargo-generated lockfile SHA-256:
+`b9ababa4b3955c6c7c850080e687484b893c2be6c2e311343a779cfc89e73a0d`.
+Cargo added the selected upstream graph; metadata resolves one SQLx/core/PostgreSQL
+version, 0.9.0. All five workspace packages retain Rust 1.94 and `publish = false`.
+Only the reference package depends on Runledger or the external-only harness.
+
+| Toolchain | rustc / Cargo | Executed result |
+| --- | --- | --- |
+| 1.98.1 | rustc `48a229cea` (2026-09-01); Cargo `797e8a9bc` (2026-08-05) | Full `verify.sh` passed: 455 Rust test/doctest executions, zero failed, four intentionally ignored live cases across 53 result summaries; Clippy and rustdoc passed with warnings denied |
+| 1.94.0 | rustc `4a4ef493e` (2026-03-02); Cargo `85eff7c80` (2026-01-15) | Same full verification outcome and counts |
+
+These counts include repeated foundation profiles, not 455 distinct tests.
+Each matrix also passed 22 existing process/matrix runner controls and three
+new reference-runner controls. The latter reject missing/remote/TLS-required
+endpoints, incomplete inventories, zero executed cases, skipped cases and
+filtered results. Ordinary matrix invocation supplied no live database URL;
+the four live cases were compiled and explicitly reported as ignored.
+
+```sh
+cargo metadata --locked --format-version 1
+cargo tree -p batter-example-reference-service --duplicates
+cargo check -p batter-example-reference-service --all-targets --all-features --locked
+RUSTUP_TOOLCHAIN=1.94.0 cargo check -p batter-example-reference-service --all-targets --all-features --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+```
+
+Live probes used a dedicated disposable PostgreSQL **18.6** Debian server on
+loopback, with a local administrative role and no TLS. The external harness
+created and deleted its leases; cleanup-on-start was disabled. No existing
+application database or upstream repository was changed.
+
+```sh
+POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:33006/postgres' bash scripts/test_reference_live.sh
+RUSTUP_TOOLCHAIN=1.94.0 POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:33006/postgres' bash scripts/test_reference_live.sh
+```
+
+Both explicit invocations passed all four required cases, with zero failures,
+ignored or filtered cases: initialized-schema upgrade; fresh migrations and
+transactional enqueue; controlled worker startup/shutdown; lease cleanup/defer/Drop.
+This includes dropping a never-polled consuming cleanup future, exact conflict
+and isolation codes, original request snapshot readback, owner identity,
+rollback of application/job changes, shared migration history and preservation
+of an application row during upgrade. Polled cleanup-waiter cancellation is
+source-inspected only, with broader fixture failure delivery owned by `batter-kjl`.
+
+The following five HTTP profiles all passed with process exit 0 after rebuilding
+the example on default Rust 1.98.1:
+
+```sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Development failures were repaired without dropping assertions: a harness project
+name exceeded its 16-character limit; the status readback needed the PostgreSQL
+enum cast and uppercase value; SQLx 0.9 migration fixture methods require an
+explicit history-table argument; four probe functions needed smaller helpers to
+meet the existing complexity limit. The initial matrix also caught its exact
+batch-layout test needing to include the newly added third control command; the
+test now asserts that command's identity as well as retaining both Rust profiles.
+
+Jig initially rejected authored/resolved test-input drift. A regular recopy
+reported customized managed-file conflicts and made no changes. The same pinned
+Jig release rendered in a disposable Git worktree; only its generated contract
+input changes were transferred back, preserving all repository customizations.
+Contract, agent-map and all five package-guide checks passed. Final
+`scripts/jig work check --plan-id plan_01M23KB4PN20JRGB7DJA5M12VB --json`
+passed all five targets in `run_01M23N5PHMDW9GBPY27H9FT1XF`. Its successful
+`api:test` receipt is `receipt_01M23N6K8WMJVQN882T48SNTH0`. Subsequent work
+evidence reports the required verify gate passed with fresh target receipts.
+No Rust/test/configuration change followed this run. An independent final server
+query found zero remaining disposable databases; `max_connections` was 100.
+
+Scratch command logs are in `/tmp/batter-4t6-validation-5lZJ0W/`; the durable
+evidence is this section and the plan/receipts. No macOS or hosted execution of
+the new graph is claimed. No business reference service, stable adapter,
+publication or deployment is established by these compatibility probes.
+
 ## Smoke deadline review fix and upstream reconciliation: 2026-09-09
 
 Bead `batter-a63`; baseline `e518b6b52a88a460edfb6f7c41107e71932b6c70`.

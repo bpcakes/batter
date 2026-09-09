@@ -303,6 +303,7 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "CORE_CHECK", command), \
                 mock.patch.object(matrix, "RUNNER_TESTS", python("print('peer completed')")), \
                 mock.patch.object(matrix, "SMOKE_TESTS", python("print('smoke peer completed')")), \
+                mock.patch.object(matrix, "REFERENCE_RUNNER_TESTS", python("print('reference controls completed')")), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             self.assertEqual(matrix.main(), 1)
         rendered = stdout.getvalue()
@@ -311,6 +312,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("failure details\n", rendered)
         self.assertIn("peer completed\n", rendered)
         self.assertIn("smoke peer completed\n", rendered)
+        self.assertIn("reference controls completed\n", rendered)
         self.assertIn(parallel.Capture.OMITTED.decode(), rendered)
         self.assertIn('"overflow": true', stderr.getvalue())
         self.assertIn('"status": 7', stderr.getvalue())
@@ -328,7 +330,9 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "run_parallel", execute), \
                 mock.patch.object(matrix, "render_outcomes"):
             self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [3, 2, 1])
+        self.assertEqual([len(batch) for batch in batches], [4, 2, 1])
+        self.assertEqual(batches[0][1], matrix.RUNNER_TESTS)
+        self.assertEqual(batches[0][3], matrix.REFERENCE_RUNNER_TESTS)
         self.assertIn("--no-default-features", batches[0][0])
         self.assertIn("test_parallel_process.py", batches[0][1])
         self.assertIn("scripts/test_smoke_postgres.py", batches[0][2])
@@ -343,11 +347,12 @@ class MatrixTests(unittest.TestCase):
         success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
         failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
         batches = [
-            [[failure, success, success]],
-            [[success, failure, success]],
-            [[success, success, failure]],
-            [[success, success, success], [failure, success]],
-            [[success, success, success], [success, failure]],
+            [[failure, success, success, success]],
+            [[success, failure, success, success]],
+            [[success, success, failure, success]],
+            [[success, success, success, failure]],
+            [[success, success, success, success], [failure, success]],
+            [[success, success, success, success], [success, failure]],
         ]
         for results in batches:
             with self.subTest(results=results), \

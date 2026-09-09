@@ -2,7 +2,8 @@
 
 These describe the implemented contract and its limits. All workspace packages
 retain Rust 1.94 as their minimum, with development pinned to Rust 1.98.1.
-SQLx 0.9.0 belongs only to the unpublished PostgreSQL example package. See [validation](validation.md)
+SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
+packages, not the foundation or generic test support. See [validation](validation.md)
 for executed checks. Passing tests do not establish guarantees beyond their scope.
 
 The workspace's platform scope is Unix-only. Windows is unsupported and not

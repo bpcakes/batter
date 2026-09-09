@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-test-support", "examples/postgres-lifecycle"]
+members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
 default-members = ["crates/batter", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 

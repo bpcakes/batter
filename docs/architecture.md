@@ -12,7 +12,8 @@ collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` foundation,
 `batter-axum` and `batter-sqlx` adapters, and `batter-test-support` utilities are separate libraries;
-`batter-example-postgres-lifecycle` is an unpublished executable package.
+`batter-example-postgres-lifecycle` is an unpublished executable package;
+`batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
 primitives. Only process/cleanup boundaries erase errors into BoxError, because
 those boundaries aggregate heterogeneous component results.
@@ -26,23 +27,24 @@ application composition root
   |-- optional batter-axum -> batter + Axum / Tower
   |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
   |-- Runlimit, Runledger (future thin adapters)
-  `-- tests -> batter-test-support + postgres-test-harness (future composition)
+  `-- reference tests -> batter-test-support + external postgres-test-harness
 ```
 
 The foundation graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.
 The latter provides safe pin projection for a private, allocation-free tracing
 context wrapper; it was already a transitive dependency. Axum/Serde belong to
-the HTTP adapter package. SQLx belongs to the optional PostgreSQL adapter and example. There is no TypeScript runtime,
+the HTTP adapter package. SQLx belongs to the optional PostgreSQL adapter and examples. There is no TypeScript runtime,
 algebraic-effect datatype, service locator, runtime-neutral abstraction, or
 cyclic dependency on the user's reusable libraries.
 
 `batter-test-support` depends on neither the foundation nor an adapter. Core
 tests can use its generic scripts without pulling higher layers back into the
 foundation. Cross-package fixtures belong in their application/example test
-targets. The external PostgreSQL harness is not moved or made a dependency by
-this reorganization. The optional SQLx adapter shares the observed connection
-disposition mechanism while preserving native transactions and application policy.
-Runlimit and Runledger adapters still require proven shared mechanics. See [ADR-006](adr/006-workspace-packages.md).
+targets. The external PostgreSQL harness is a development dependency of reference
+probes, with its source/provisioning ownership kept upstream. The optional SQLx
+adapter shares the observed connection disposition mechanism while preserving
+native transactions and application policy. Runlimit and Runledger adapters still
+require proven shared mechanics. See [ADR-006](adr/006-workspace-packages.md).
 
 Each package declares its version, Rust minimum, and publication policy. All
 currently retain version 0.1.0, Rust 1.94, and `publish = false`; a shared

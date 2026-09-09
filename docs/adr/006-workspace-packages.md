@@ -49,3 +49,10 @@ consumer. The original example-only SQLx restriction is superseded for proven
 connection-disposition mechanics. Core and generic test-support dependency
 directions remain unchanged. The adapter keeps Rust 1.94, version 0.1.0 and
 publishing disabled; consumers select their own native SQLx TLS features.
+
+Reference amendment, 2026-09-09 (`batter-4t6`): add the second unpublished example,
+`batter-example-reference-service`, for executed SQLx/Runledger/harness compatibility
+probes. The harness is an external-only development dependency of that package;
+its provisioning implementation remains upstream. The workspace now has four
+libraries and two examples, with one native SQLx graph and unchanged core/leaf
+dependency direction. These probes do not implement a Runledger adapter.

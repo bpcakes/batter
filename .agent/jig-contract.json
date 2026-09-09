@@ -239,7 +239,11 @@
         "scripts/test_parallel_process.py",
         "scripts/smoke_postgres.py",
         "scripts/test_smoke_postgres.py",
-        "examples/postgres-lifecycle/tests/diagnostics.py"
+        "examples/postgres-lifecycle/tests/diagnostics.py",
+        "scripts/reference_live.py",
+        "scripts/test_reference_live.py",
+        "scripts/test_reference_live.sh",
+        "**/*.sql"
       ],
       "intent": "check",
       "legacy_aliases": [
@@ -298,7 +302,11 @@
         "scripts/test_parallel_process.py",
         "scripts/smoke_postgres.py",
         "scripts/test_smoke_postgres.py",
-        "examples/postgres-lifecycle/tests/diagnostics.py"
+        "examples/postgres-lifecycle/tests/diagnostics.py",
+        "scripts/reference_live.py",
+        "scripts/test_reference_live.py",
+        "scripts/test_reference_live.sh",
+        "**/*.sql"
       ],
       "intent": "check",
       "legacy_aliases": [

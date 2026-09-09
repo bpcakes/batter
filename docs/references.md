@@ -799,7 +799,8 @@ continues to run Jig's normal source/profile compatibility checks after restore.
 
 ## Integration readiness source inspection: 2026-09-09
 
-These are clean local repository candidates inspected for planning, not claims
+Historical planning inspection (before the executable selection below): these
+were clean local repository candidates, not claims
 that released crate archives match those checkouts. Batter has not compiled or
 executed these integrations. Selection and executable compatibility remain open
 in Beads; recheck the eventual source and generated Cargo graph.
@@ -844,6 +845,42 @@ in Beads; recheck the eventual source and generated Cargo graph.
   has workspace/core/axum version 0.3.0 and postgres package version 0.3.1,
   using SQLx 0.9.0 and Rust 1.94. It is a source-inspection candidate only;
   policy/backend selection remains part of the future admission integration.
+
+## Executable reference selection: 2026-09-09
+
+`batter-4t6` subsequently fetched the inspected revisions through Cargo and
+compiled public native type probes. The [compatibility manifest](reference-compatibility.md)
+and [validation](validation.md) supersede the preceding planning-only status for
+the selected graph and tested paths. Local checkouts remained unchanged.
+
+- [Runledger manifest at the selected revision](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/Cargo.toml)
+  requires SQLx 0.9.0 and Rust 1.94. In contrast, `cargo info
+  runledger-postgres@0.12.0` and the downloaded crates.io manifest establish that
+  the [published 0.12.0 archive](https://docs.rs/crate/runledger-postgres/0.12.0/source/Cargo.toml)
+  requires SQLx 0.8.6 and Rust 1.88. Full Git pins are intentional.
+- [Migration entrypoints and raw-migrator restrictions](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/migrations.rs)
+  govern fresh/upgrade startup, filtered shared history, cutover validation and
+  lock/session disposition. The upgrade fixture only reads the bundled migration
+  metadata/SQL to initialize the older schema using a disposable connection;
+  the actual upgrade calls the supported entrypoint.
+- [Canonical transactional enqueue](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/enqueue.rs)
+  checks READ COMMITTED and stored initial request fields. The live probe reads
+  back the snapshot and asserts the exact conflict/isolation codes.
+- [Worker loop ownership](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker.rs)
+  checks shutdown before claiming, then dispatches an already returned claim;
+  cooperative drain awaits job and terminal-observer tasks.
+  [Task-group shutdown](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/task_group.rs)
+  retains the first error and logs later failures; abort drain adds at most
+  `min(timeout, 1 second)` under cooperative scheduling.
+- [Harness lease/cleanup contract](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs)
+  and [connection-budget configuration](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/config.rs)
+  distinguish awaited cleanup, queue acceptance, Drop fallback, per-lease permits
+  and the external shutdown no-op. Live cases verify successful cleanup/defer/Drop
+  ownership; cancelled-polled-waiter failure delivery remains source-inspected.
+- The resolved SQLx 0.9.0 `sqlx-core/src/migrate/migrate.rs` API takes the history
+  table name in `ensure_migrations_table` and `apply`; the initial fixture compile
+  caught the older one-argument assumption. The disposable upgrade setup uses
+  `_sqlx_migrations` explicitly.
 
 ## Concurrent local test runners: 2026-09-09
 

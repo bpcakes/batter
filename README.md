@@ -38,7 +38,7 @@ See [ADR-007](docs/adr/007-unix-platform-scope.md) and
 | `batter-sqlx` | Default-retiring PostgreSQL leases, bounded probe, redacted native errors and explicit pool-close registration. |
 | `batter-test-support` | Scripted dependency results and preservation of both test-body and cleanup errors. |
 
-The virtual workspace has four library packages and one unpublished example:
+The virtual workspace has four library packages and two unpublished examples:
 
 | Package | Location | Adoption boundary |
 | --- | --- | --- |
@@ -47,20 +47,25 @@ The virtual workspace has four library packages and one unpublished example:
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Independently selected native PostgreSQL connection disposition. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
+| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Pinned native SQLx/Runledger/harness compatibility probes; explicit live test target. |
 
 Depending on `batter` does not bring in Axum, SQLx, or test utilities. HTTP APIs
 are imported from `batter_axum`; there is no `batter::http`, `axum` feature, or
 `postgres-example` feature. Package versions and Rust minimums are declared
 individually. PostgreSQL provisioning remains in the external
-`postgres-test-harness` repository; it is not a workspace member or dependency.
+`postgres-test-harness` repository; it is an external-only test dependency of the
+reference example, not a workspace member.
 Runlimit, Runledger, and postgres-test-harness adapters are **not implemented**.
 Their ownership boundaries are documented in [integrations](docs/integrations.md);
-delivery tasks live in the [Beads backlog](docs/roadmap.md).
+delivery tasks live in the [Beads backlog](docs/roadmap.md). The
+[compatibility manifest](docs/reference-compatibility.md) records the reference
+package's compiled graph and executed live probes; it does not establish a
+complete durable service or reusable adapter.
 
 ## Verification
 
-The default toolchain is pinned to Rust 1.98.1. All five packages retain Rust
-1.94 as their minimum. SQLx 0.9.0 requires it in the adapter and example; extracting
+The default toolchain is pinned to Rust 1.98.1. All six packages retain Rust
+1.94 as their minimum. SQLx 0.9.0 requires it in the adapter and examples; extracting
 that dependency does not establish a lower minimum for the libraries.
 The Linux CI definition covers 1.94.0, 1.98.1, and current stable; the focused
 macOS job compiles all workspace targets and runs the subprocess tests on both
