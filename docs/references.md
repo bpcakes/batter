@@ -724,3 +724,23 @@ in Beads; recheck the eventual source and generated Cargo graph.
   has workspace/core/axum version 0.3.0 and postgres package version 0.3.1,
   using SQLx 0.9.0 and Rust 1.94. It is a source-inspection candidate only;
   policy/backend selection remains part of the future admission integration.
+
+## Concurrent local test runners: 2026-09-09
+
+The installed Python is 3.14.7. Its local `subprocess.Popen` signature and the
+[Python 3.14 subprocess contract](https://docs.python.org/3.14/library/subprocess.html#subprocess.Popen)
+were rechecked for argument-array execution, session creation, signal restoration,
+pipe observation and return codes. `poll()` can reap an exited child; retain the
+leader until output EOF or the process-group termination decision, and never
+signal a reaped numeric identity. Process creation remains outside hard timeout
+preemption. The new parallel runner reuses the existing bounded capture/settlement
+helpers instead of adding another pipe reader.
+
+The [Python 3.14 signal API](https://docs.python.org/3.14/library/signal.html#signal.signal)
+requires main-thread handler installation. Non-raising scoped SIGINT/SIGTERM
+handlers request cancellation while cleanup keeps its original allowance; inherited
+ignored signals are preserved. Separate shard processes isolate the controls'
+signal changes and mocks. The [unittest result API](https://docs.python.org/3.14/library/unittest.html#unittest.TestResult)
+supplies `startTest` and success/skip results. Each shard records actually started
+test IDs and the parent compares them with its complete assigned discovery, so a
+zero exit alone cannot supply coverage evidence. No fixture deadline was changed.

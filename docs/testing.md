@@ -74,9 +74,41 @@ MCP startup requires an already installed runtime.
 
 `scripts/jig doctor` checks harness readiness; `scripts/jig check` runs the
 configured Clippy, formatting, locked core/all-feature/doctest, contract, and
-file-budget gates. Both test aliases run the same locked test matrix. The
-existing verification script additionally checks core compilation and rustdoc;
-its two-toolchain matrix and HTTP smoke remain required.
+file-budget gates. Both test aliases and `verify.sh` use `python3
+scripts/test_matrix.py`. It checks minimal core compilation and the process-runner
+regressions first, then overlaps the core and workspace runtime test commands,
+then runs doctests if both passed. Both dependency feature configurations remain
+covered. The verification script additionally checks rustdoc; its two-toolchain
+matrix and HTTP smoke remain required.
+
+For final backend verification, a fresh passing `api:test` receipt from the current
+plan's gate/profile run also satisfies the final-test requirement. Inspect
+`scripts/jig work evidence --plan-id <id>` and `scripts/jig work gates --plan-id <id>`
+before deciding to run `scripts/jig check test` again. Reuse requires unchanged
+worktree, command/configuration, toolchain and relevant environment/prerequisites,
+and no later unresolved failure. Toolchain and external-state identity are not
+established by Jig's fingerprint alone. A plain `verify.sh` invocation does not
+produce a Jig receipt, and this rule does not replace either supported-toolchain
+check, rustdoc or HTTP smokes.
+
+The private `parallel_process.py` runner owns at most four direct command groups,
+keeps bounded output while continuing to drain overflow, and returns all outcomes
+in command order. Any unsuccessful, incomplete, overflowing or interrupted outcome
+fails verification. SIGINT/SIGTERM stop further launches and request SIGINT in
+owned groups; repeated signals do not reset the grace period before kill/reap.
+Inherited ignored signals remain ignored. An exited group leader is retained
+until pipe EOF or termination; a reaped leader never authorizes another group
+signal. Matrix commands have a 1,500-second per-command watchdog, ten seconds of
+grace and five seconds per final reap/output observation. These are local process
+bounds, subject to OS scheduling and process creation; they do not establish
+cleanup of arbitrary detached descendants. Test output appears in grouped logs
+when commands finish, with each outcome and elapsed time. Each matrix command
+retains at most 8 MiB of source output: half for the initial reads and half for
+rolling tails, shared fairly between stdout and stderr with unused tail space
+available to the other stream. Truncated streams receive explicit omission markers
+(at most two additional marker lines); overflow still fails verification. Logs
+within the limit remain exact. Machine-readable scheduling and mutation capture
+keeps its prefix-only policy.
 
 Jig's database tooling is disabled because SQLx currently appears only in an
 example package. There are no migration or prepared-query metadata gates.
@@ -325,7 +357,9 @@ mutation evidence. Logs, the patch, compiler/lock identity and exact commands ar
 retained in the output directory. Build/version commands share the same process
 owner: builds allow 180 seconds with 16 MiB capture, version inspection 10 seconds
 with 64 KiB capture, each followed by at most five seconds of cleanup observation.
-The copied subject includes the repository Cargo configuration. Build and replay
+The copied subject includes the repository Cargo configuration and the scheduling
+control entrypoint with its sharding and parallel-process dependencies. An isolated
+entrypoint regression checks this production copy list. Build and replay
 outcomes are saved before classification, including partial timeout/error logs.
 The mutation checker consumes structured scheduling outcomes directly. The CLI
 still emits a standalone `WATCHDOG_RESULT` JSON line after its bounded diagnostics,
@@ -375,7 +409,22 @@ a background-shell control sends real SIGINT to both owner and child while ignor
 Tests that require active interruption explicitly establish and restore their own
 signal policy, so the full controls also run from a background shell. This is a private synchronous tool
 contract, not a library-global handler or a general Python exception guarantee.
-The standalone control command has a separate 60-second
+Direct full-suite execution uses four separate Python processes by default;
+`--jobs 1` selects one serial worker. Every worker discovers the same selected
+suite and runs its deterministic partition. Parent-side validation requires one
+successful completion record with exactly the assigned executed test IDs; a
+zero exit without that record, duplicate or missing IDs, a skip, partial output
+or failed worker cannot pass. Scheduling cost hints only balance partitions;
+newly discovered tests are always assigned, even without a hint. Ordinary
+`unittest discover` and explicit unittest selectors retain serial behavior.
+Each shard gets a 45-second watchdog, five seconds of graceful interruption and
+one second of final reap/output observation. At most four final observations
+precede the unchanged outer backstop; all individual fixture deadlines and
+assertions remain unchanged. Run `python3 scripts/test_scheduling_process.py`
+for the faster standalone process controls, or add `--binary <scheduling-test>`
+to include the six launch controls.
+
+The standalone control command and each shard have a separate 60-second
 emergency exit so a regression in the process owner fails its Cargo parent visibly.
 Run it directly with:
 

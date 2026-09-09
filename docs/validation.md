@@ -2,6 +2,113 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Local verification review fixes: 2026-09-09
+
+Bead `batter-o5f` addresses the two actionable Claude findings on `batter-tip`.
+Matrix output now retains a bounded prefix and fair per-stream rolling tails,
+with explicit omission markers. The 8 MiB source-byte budget, continued draining,
+and rejection of overflow remain intact. Scheduling and mutation machine evidence
+keeps prefix-only capture. The mutation subject copy now includes both
+`scheduling_controls.py` and `parallel_process.py`.
+
+On macOS 26.6.2 arm64 with Python 3.14.7, all **60 Python discovery tests** passed
+in 36.362 seconds. The **22 runner regressions** include five new controls for
+exact under-limit output, separate streams at the shared limit, both streams'
+final failures after overflow, actual matrix rendering above its 8 MiB limit,
+and isolated execution of the production mutation copy's control entrypoint.
+An initial global-tail implementation failed the two-stream regression because
+pipe read order could evict the other stream's failure details. Fair per-stream
+tails fixed the reproduced failure without changing the test's assertions.
+
+A separate temporary mutation-script copy ran its full binary-independent control
+entrypoint in Python isolated mode: all **24 controls across four shards** passed
+in 6.353 seconds. Only the copied script directory was added to the import path;
+repository imports could not supply missing dependencies.
+
+Both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed **445 Rust test/doctest
+executions**, 22 runner regressions, minimal core compilation, formatting, Clippy
+and rustdoc. Their wall times were **28.394 / 27.307 seconds** respectively with
+warm Cargo caches. The Rust 1.98.1 HTTP example rebuilt successfully and all five
+smoke commands listed in the next section passed. Agent-map and all four package
+guides also passed their Jig checks. Exact commands, statuses, timings and logs
+are retained in `/tmp/batter-o5f-validation/` (`timings.jsonl`); these are local
+measurements, not statistical or cold-build benchmarks.
+
+Plan `plan_01M23DDBZWFRVWZ9WYTJYT0QYX` connects final Jig profile receipts and
+completion. No fixture deadline, assertion, dependency graph or application API
+changed. Linux and Python 3.9 execution of the new capture mode remain unverified;
+previous platform evidence retains its original scope.
+
+## Concurrent local verification: 2026-09-09
+
+Bead `batter-tip` preserves the two runtime test configurations while overlapping
+core and workspace passes. Jig's two test aliases and `verify.sh` use the same
+`test_matrix.py` entrypoint. The scheduling target's 30 Python controls run in
+four separate processes with exact assigned/executed-ID checks. Fixture assertions,
+individual deadlines and the independent 60-second emergency backstop are unchanged.
+The final backend policy accepts fresh passing test evidence from a gate/profile
+run under the documented source/configuration/toolchain/environment conditions;
+it no longer requires an automatic duplicate invocation.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7, Rust 1.98.1 and 1.94.0:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+All 55 Python discovery regressions passed in 32.025 seconds. This includes 17
+new runner/partition controls: real command overlap, peer and spawn failures,
+output overflow with continued draining, timeout/kill/reap, partial capture setup,
+interruption before a second launch, repeated signals without deadline reset,
+preserved ignored SIGINT, partial-output read failure, and rejection of signalling
+a reaped group. Discovery controls cover both binary-independent and binary-dependent
+suites, new test inclusion without cost hints, duplicate discovery, invalid bounds,
+custom signal-owner rejection and missing/duplicate/partial/failed completion.
+Matrix wiring controls preserve both feature configurations, prerequisite ordering,
+locked commands and failed-peer propagation. Each matrix invocation also runs these
+17 regressions before its Rust runtime passes.
+
+Both toolchains passed all **445 Rust test/doctest executions**, plus formatting,
+minimal core compilation, Clippy and rustdoc. All five HTTP smoke profiles passed
+against the rebuilt Rust 1.98.1 example. Full logs and per-command wall times are
+in `/tmp/batter-tip-validation/`; `timings.jsonl` records exact commands and statuses.
+
+The Rust 1.98.1 verification script took **24.723 seconds** with warm Cargo caches.
+Its concurrent core/workspace runtime passes took 22.263/22.305 seconds, compared
+with the previously measured serial pair's combined 78.897 seconds: about **72% less
+runtime-matrix waiting**. Both scheduling targets took about 12.1 seconds, with the
+unchanged twelve-second unjoined-work controls now determining their duration;
+previously each scheduling target took about 29.2 seconds. Rust 1.94 verification
+took 33.576 seconds and included compilation after switching toolchains. These are
+single local measurements, not idle-host statistical benchmarks or cold-build claims.
+The pre-change full Jig profile took 81.718 seconds; final Jig receipts remain the
+authority for this change's complete profile outcome and timing.
+
+The temporary investigation and production runner preserve both dependency graphs:
+workspace feature unification additionally enables Tokio bytes/fs/io-util and tracing
+log features. Dropping a runtime pass would discard distinct coverage. Ordinary
+Python discovery remains serial; sharding applies to direct full-suite execution,
+including invocation from the Rust scheduling tests. Per-shard output is capped
+at 128 KiB and matrix command output at 8 MiB; overflow fails evidence.
+
+Plan `plan_01M23B60659DFS30Q2JMSQVDKE` connects final Jig checks/evidence/gates and
+completion. The passing test receipt from that profile is sufficient for backend
+completion when fresh; there is no additional automatic full-test invocation.
+No dependency graph, application API, remote CI configuration, or publication change
+was made. New runner execution on Linux, other Unix systems and Python 3.9 is
+unverified; Python 3.9 syntax parsing alone is not runtime validation. Process
+creation/scheduling and arbitrary detached descendants remain outside the runner's
+containment claims. Earlier platform evidence below retains its original scope.
+
 ## Finite shutdown cause review follow-up: 2026-09-09
 
 The `batter-299` review follow-up corrects the abort-trigger documentation and adds

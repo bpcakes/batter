@@ -203,7 +203,17 @@ Jig database tooling is disabled: SQLx is currently an example package only.
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, finish with `scripts/jig check test`.
+- For backend changes, require a successful final `api:test` receipt from
+  `scripts/jig work check`, the `verify` profile, or `scripts/jig check test`.
+  Inspect `scripts/jig work evidence` and `scripts/jig work gates` first. A fresh
+  passing receipt for the current plan and worktree satisfies this requirement;
+  do not automatically rerun tests after a profile that already passed them.
+  Reuse also requires unchanged test commands/configuration, toolchain, relevant
+  environment and prerequisites, with no later unresolved failure. Jig freshness
+  alone does not prove external environment or toolchain identity. Rerun when
+  these conditions cannot be established. The separate two-toolchain verification,
+  rustdoc and HTTP smoke requirements still apply; a plain `verify.sh` execution
+  does not automatically create Jig evidence.
 
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 

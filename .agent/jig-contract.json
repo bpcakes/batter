@@ -232,7 +232,11 @@
         "scripts/scheduling_process.py",
         "scripts/stress_scheduling.py",
         "scripts/check_scheduling_mutation.py",
-        "scripts/test_scheduling_process.py"
+        "scripts/test_scheduling_process.py",
+        "scripts/parallel_process.py",
+        "scripts/scheduling_controls.py",
+        "scripts/test_matrix.py",
+        "scripts/test_parallel_process.py"
       ],
       "intent": "check",
       "legacy_aliases": [
@@ -284,7 +288,11 @@
         "scripts/scheduling_process.py",
         "scripts/stress_scheduling.py",
         "scripts/check_scheduling_mutation.py",
-        "scripts/test_scheduling_process.py"
+        "scripts/test_scheduling_process.py",
+        "scripts/parallel_process.py",
+        "scripts/scheduling_controls.py",
+        "scripts/test_matrix.py",
+        "scripts/test_parallel_process.py"
       ],
       "intent": "check",
       "legacy_aliases": [

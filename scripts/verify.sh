@@ -29,11 +29,8 @@ if [[ ! -f Cargo.lock ]]; then
   exit 2
 fi
 cargo fmt --all -- --check
-cargo check -p batter --lib --no-default-features --locked
 printf 'Workspace tests require loopback TCP sockets and Unix subprocess permissions.\n'
-cargo test -p batter --no-default-features --lib --tests --locked
-cargo test --workspace --all-features --all-targets --locked
-cargo test --workspace --all-features --doc --locked
+python3 scripts/test_matrix.py
 cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc --workspace --all-features --no-deps --locked
 printf 'Rust verification, including live loopback readiness tests, completed successfully. HTTP process smokes and live PostgreSQL checks are separate.\n'

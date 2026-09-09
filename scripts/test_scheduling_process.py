@@ -714,12 +714,23 @@ def load_tests(loader, tests, pattern):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--jobs", type=int, choices=range(1, 5), default=4,
+                        help="isolated processes for the full suite (default: 4)")
+    parser.add_argument("--shard", type=int, help=argparse.SUPPRESS)
     options, remaining = parser.parse_known_args()
     BINARY = options.binary.resolve() if options.binary else None
+    if options.shard is not None and (remaining or not 0 <= options.shard < options.jobs):
+        parser.error("--shard requires a valid index and no unittest selectors")
     # This deadline is outside the process owner being tested. A regression in
     # that owner must fail Cargo visibly rather than hang its parent test.
     def emergency_exit():
         time.sleep(60)
         os._exit(89)
     threading.Thread(target=emergency_exit, daemon=True).start()
-    unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)
+    if remaining:
+        # Explicit unittest selection remains serial; ordinary discovery is unchanged.
+        unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)
+    else:
+        from scheduling_controls import run_shards
+        suite = load_tests(unittest.defaultTestLoader, None, None)
+        sys.exit(run_shards(suite, binary=BINARY, count=options.jobs, shard=options.shard))

@@ -277,6 +277,18 @@ cleanup and interpreter/startup margins. These elapsed checks do not establish a
 OS scheduling guarantee.
 Passing this corpus is not exhaustive proof or a stronger runtime-death guarantee.
 
+Local verification overlaps the core and workspace test configurations and runs
+the Python scheduling controls in isolated processes. Both configurations and
+every discovered control remain required; sharding changes neither assertions
+nor fixture deadlines. The parent rejects incomplete/duplicate shard completion,
+failed or missing child outcomes, output overflow and interruption. Matrix logs
+retain bounded initial output and separate stdout/stderr tails, marking omitted
+bytes explicitly; retained final diagnostics do not make overflow valid evidence. Its bounded
+process-group settlement retains leader identity until output EOF or termination,
+and never signals after reaping. This is test-runner containment, not a new
+application guarantee for detached descendants. See [testing](testing.md#jig-verification)
+for execution bounds and the final-evidence reuse conditions.
+
 `start` explicitly launches an owned coordinator and completion monitor, creating
 their completion channel at that boundary. Obtain a `SupervisorObserver` only
 from `RunningSupervisor::observer`, available immediately after `start` even

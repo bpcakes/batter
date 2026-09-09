@@ -99,7 +99,7 @@ target = "inherited"
 description = "Run Rust tests."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py"]
 legacy_aliases = ["jig.test"]
 
 [repository.actions.target]
@@ -122,7 +122,7 @@ target = "inherited"
 description = "Run Rust tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py"]
 legacy_aliases = ["jig.test_locked"]
 
 [repository.actions.target]
@@ -251,8 +251,8 @@ allow_global = false
 [commands]
 api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files"
 api_fmt_command = "cargo fmt --all -- --check"
-api_test_command = "cargo check -p batter --lib --no-default-features --locked && cargo test -p batter --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
-api_test_locked_command = "cargo check -p batter --lib --no-default-features --locked && cargo test -p batter --no-default-features --lib --tests --locked && cargo test --workspace --all-features --all-targets --locked && cargo test --workspace --all-features --doc --locked"
+api_test_command = "python3 scripts/test_matrix.py"
+api_test_locked_command = "python3 scripts/test_matrix.py"
 repo_bootstrap_command = "cargo fetch --locked"
 
 [execution]

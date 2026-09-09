@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, replace
 import os
 import selectors
@@ -50,9 +51,15 @@ class ProcessOutcome:
 
 
 class Capture:
-    def __init__(self, child, limit):
+    OMITTED = b"\n[... output omitted ...]\n"
+
+    def __init__(self, child, limit, *, retain_tail=False):
         self.buffers = [bytearray(), bytearray()]
-        self.remaining = limit
+        self.remaining = limit // 2 if retain_tail else limit
+        self.tail_limit = limit - self.remaining
+        self.tails = [deque(), deque()]
+        self.tail_sizes = [0, 0]
+        self.omitted = [False, False]
         self.overflow = False
         self.selector = selectors.DefaultSelector()
         try:
@@ -75,6 +82,45 @@ class Capture:
         # termination. Only reap after EOF or after _settle has sent its signal.
         return self.eof and child.poll() is not None
 
+    def retain(self, index, data):
+        kept = data[:self.remaining]
+        self.buffers[index].extend(kept)
+        self.remaining -= len(kept)
+        rest = data[len(kept):]
+        if not rest:
+            return
+        if not self.tail_limit:
+            self.overflow = True
+            return
+        self.tails[index].append(rest)
+        self.tail_sizes[index] += len(rest)
+        if sum(self.tail_sizes) <= self.tail_limit:
+            return
+        # Reserve half the tail for each stream, lending unused space to the
+        # other. A noisy stdout must not evict stderr's final failure details.
+        first = min(self.tail_sizes[0], max(self.tail_limit // 2,
+                                           self.tail_limit - self.tail_sizes[1]))
+        for stream, keep in enumerate((first, self.tail_limit - first)):
+            while self.tail_sizes[stream] > keep:
+                chunk = self.tails[stream].popleft()
+                dropped = min(len(chunk), self.tail_sizes[stream] - keep)
+                self.tail_sizes[stream] -= dropped
+                self.omitted[stream] = self.overflow = True
+                if dropped < len(chunk):
+                    self.tails[stream].appendleft(chunk[dropped:])
+
+    def retained_buffers(self):
+        """Source bytes stay within the limit; at most two gap markers are added.
+
+        Prefix-only remains the default for machine-readable evidence. Tail mode
+        shares half the limit for the prefix and divides the rolling tail fairly
+        between streams, lending unused tail space to the other stream. It does
+        not infer ordering between stdout and stderr.
+        """
+        tails = [b"".join(chunks) for chunks in self.tails]
+        return [bytes(head) + (self.OMITTED if omitted else b"") + bytes(tail)
+                for head, omitted, tail in zip(self.buffers, self.omitted, tails)]
+
     def observe_until(self, child, deadline, *, stop=None):
         while True:
             if stop is not None and stop.requested:
@@ -92,10 +138,7 @@ class Capture:
                 if not data:
                     self.selector.unregister(key.fileobj)
                     continue
-                kept = data[:self.remaining]
-                self.buffers[key.data].extend(kept)
-                self.remaining -= len(kept)
-                self.overflow |= len(data) > len(kept)
+                self.retain(key.data, data)
 
 
 def _kill_group(child, errors):

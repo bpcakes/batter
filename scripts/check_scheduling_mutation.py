@@ -17,6 +17,14 @@ BUILD_LIMIT = 180
 BUILD_OUTPUT_LIMIT = 16 * 1024 * 1024
 
 
+def copy_scripts(root, subject):
+    """Include the control entrypoint's dependencies in the isolated subject."""
+    (subject / "scripts").mkdir()
+    for name in ("stress_scheduling.py", "scheduling_process.py", "test_scheduling_process.py",
+                 "check_scheduling_mutation.py", "scheduling_controls.py", "parallel_process.py"):
+        shutil.copy2(root / "scripts" / name, subject / "scripts")
+
+
 def build(subject, log):
     command = ["cargo", "test", "-p", "batter", "--test", "scheduling", "--no-run",
                "--locked", "--offline", "--message-format=json"]
@@ -89,10 +97,7 @@ def main():
         for name in ("crates", "examples"):
             shutil.copytree(root / name, subject / name,
                             ignore=shutil.ignore_patterns("target", "__pycache__"))
-        (subject / "scripts").mkdir()
-        for name in ("stress_scheduling.py", "scheduling_process.py",
-                     "test_scheduling_process.py", "check_scheduling_mutation.py"):
-            shutil.copy2(root / "scripts" / name, subject / "scripts")
+        copy_scripts(root, subject)
         source = subject / "crates/batter/src/lifecycle/process.rs"
         original = source.read_text()
         old = """let permit = self
