@@ -52,3 +52,11 @@ it into `run_until`. Dropping an unstarted owner withdraws readiness, signals dr
 and cancellation and wakes readiness waiters before dropping application captures.
 Abandonment reports Draining, invokes no finalizer, and creates no completion
 report. This does not extend cleanup guarantees or change observer ownership.
+
+Completion observer boundary, 2026-09-09: observers can be obtained only from
+`RunningSupervisor` after `start`. The owned driver creates the completion channel
+and its monitor owns the sender. Remove `ShutdownHandle::observer`: standalone
+control handles, abandoned startup and caller-owned drivers have no completion
+publisher. This deliberate source API change makes those invalid waits
+unrepresentable without inventing a shutdown report or coordinator error.
+Observer cloning and waiter cancellation still confer no process ownership.

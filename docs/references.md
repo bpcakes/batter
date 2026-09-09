@@ -6,6 +6,31 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Owned completion observers: 2026-09-09
+
+Rechecked Cargo.lock, cached Tokio 1.53.1 source and its pinned documentation.
+[`watch::Receiver::changed`](https://docs.rs/tokio/1.53.1/tokio/sync/watch/struct.Receiver.html#method.changed)
+returns a receive error when all senders have been dropped and the current value
+has been seen. Keeping a control handle alive previously retained a sender even
+when no driver could publish; dropping that handle exposed the observer panic.
+The completion channel now exists only inside `Supervisor::start`, with its
+sender transferred to the owned monitor before returning `RunningSupervisor`.
+
+[`tokio::spawn`](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn.html) never polls
+the spawned future synchronously. The current-thread observer regression drops
+the last driver owner without awaiting after `start`, then observes cleanup and
+the retained report. This proves the pre-first-poll ownership case without a
+scheduler timing assumption; the runtime must still remain alive.
+
+The same version's cached runtime source and
+[`Runtime` shutdown documentation](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Runtime.html#shutdown)
+confirm that spawned tasks need not run to completion when the runtime shuts
+down. The observer runtime-loss regression enters a current-thread runtime
+without driving it, then drops that runtime and observes the closed sender on a
+second runtime. A separate control publishes a report first and retains it after
+runtime destruction. These cases document the existing panic boundary, without
+claiming that runtime destruction can preempt non-yielding work or run finalizers.
+
 ## Terminal process admission: 2026-09-09
 
 The [Rust destructor reference](https://doc.rust-lang.org/reference/destructors.html#destructors.operation)

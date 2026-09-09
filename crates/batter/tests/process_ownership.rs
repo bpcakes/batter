@@ -572,7 +572,7 @@ async fn cancelling_shutdown_waiter_cannot_cancel_started_cleanup() {
     let running = supervisor.start();
     let handle = running.handle();
     handle.wait_ready().await.unwrap();
-    let observer = handle.observer();
+    let observer = running.observer();
     let other_owner = running.clone();
     drop(running);
     assert!(

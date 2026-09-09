@@ -2,6 +2,105 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Observer review follow-up: 2026-09-09
+
+Bead `batter-w3o` addresses the observer review's documentation findings and test
+gaps. Rustdoc now names the panic when runtime destruction drops an unpublished
+completion monitor; the forwarding wait/shutdown methods link to that boundary.
+Unreleased records the removed shutdown-handle observer API and its replacement.
+Production behavior, dependencies and the retained outcome type are unchanged.
+
+Three new regressions cover the missing boundaries. A current-thread paused test
+drops the last owner before first poll, then retains the coordinator panic caused
+by a skipped cleanup capture. It verifies one capture drop, no finalizer-factory
+call and identical retained JoinError Arcs across observers. Another test creates
+an observer from an owner clone after successful publication, drops all owners
+and the owning runtime, and reads the identical report on a second runtime. The
+runtime-loss test destroys an unpolled monitor while retaining its driver owner,
+then requires the documented panic when observing elsewhere. New observation
+waits have five-second watchdogs; a timeout has a different panic message and
+cannot satisfy the expected library-panic assertion.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7:
+
+```sh
+cargo test -p batter --locked --test driver_observer --test process_ownership
+cargo test -p batter --doc --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Focused validation passed 31 integration tests and three foundation doctests.
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 432 test/doctest
+executions, with formatting, compilation, Clippy and rustdoc passing. All five
+HTTP smoke profiles passed against the example rebuilt with Rust 1.98.1.
+Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Logs are `/tmp/batter-w3o-verify-1.98.1.log`,
+`/tmp/batter-w3o-verify-1.94.0.log` and `/tmp/batter-w3o-http.log`.
+Jig gate and final backend-test receipts are tracked under
+`plan_01M2343T3C1G7MAGHKWCQT4N0V` in the append-only `.agent/state` records.
+Linux execution of this follow-up, hosted CI and live PostgreSQL remain unverified.
+
+## Completion observers require owned drivers: 2026-09-09
+
+Bead `batter-50z` removes `ShutdownHandle::observer` and creates the completion
+channel only in `Supervisor::start`, with the sender owned by its monitor.
+Observers are obtained from `RunningSupervisor`; migrate former control-handle
+calls after startup. Unstarted supervisors and caller-owned drivers no longer
+offer an observer whose missing publisher could cause a pending wait or panic.
+The retained result type, waiter cancellation and shutdown protocol are unchanged.
+
+Before removing the old method, the new `ShutdownHandle` compile-fail doctest
+failed with exit 101 because the invalid observer construction compiled:
+
+```sh
+cargo test -p batter --doc --locked lifecycle::ShutdownHandle
+```
+
+After the change, that doctest passes. The new current-thread runtime test
+obtains and clones an observer immediately after `start`, drops the final owner
+without yielding, then proves the component and finalizer each ran once and
+both observers retain the same successful report. The old abandonment test's
+observer assertion is replaced by the compile-time API restriction; its readiness
+and cancellation assertions remain. The existing tests still retain coordinator
+panics and prove that cancelling a shutdown waiter does not cancel cleanup.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7:
+
+```sh
+cargo test -p batter --locked --test driver_observer --test lifecycle_state --test process_ownership
+cargo test -p batter --doc --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+The focused commands passed 33 integration tests and three foundation doctests.
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 426 test/doctest
+executions, including repeated foundation execution, the scheduling/subprocess
+corpora and live loopback readiness tests. Formatting, compilation, Clippy and
+rustdoc passed on both toolchains. The HTTP example was rebuilt with Rust 1.98.1;
+all five smoke profiles exited 0. Cargo.lock is unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+Local logs are `/tmp/batter-50z-verify-1.98.1.log`,
+`/tmp/batter-50z-verify-1.94.0.log` and `/tmp/batter-50z-http.log`.
+Jig gate and final backend-test receipts are tracked under
+`plan_01M2337YZR5WE7DC7SP2RZ6BX8` in the append-only `.agent/state` records.
+Linux execution of this change, hosted CI and live PostgreSQL remain unverified.
+
 ## Extracted cleanup and abandonment review follow-up: 2026-09-09
 
 Bead `batter-vtx` clarifies that extracting finalizers does not detach their

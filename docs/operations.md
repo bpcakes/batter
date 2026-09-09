@@ -47,7 +47,8 @@ not recycle it as a clean instance with possibly live hidden work.
 
 Use `Supervisor::start` and retain its `RunningSupervisor` while the service is
 intended to run. `shutdown` requests drain; cancelling that waiter does not stop
-cleanup. Keep an observer when another owner may disappear. Dropping the last
+cleanup. Obtain an observer with `running.observer()` after `start` when another
+owner may disappear; a shutdown control handle cannot create one. Dropping the last
 owner requests drain automatically; keep the runtime alive to receive the report.
 
 No shutdown contract can promise arbitrary async cleanup after SIGKILL, host

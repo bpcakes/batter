@@ -262,12 +262,23 @@ cleanup and interpreter/startup margins. These elapsed checks do not establish a
 OS scheduling guarantee.
 Passing this corpus is not exhaustive proof or a stronger runtime-death guarantee.
 
-`start` explicitly launches an owned coordinator and completion monitor.
+`start` explicitly launches an owned coordinator and completion monitor, creating
+their completion channel at that boundary. Obtain a `SupervisorObserver` only
+from `RunningSupervisor::observer`, available immediately after `start` even
+before the coordinator's first poll. `ShutdownHandle` provides lifecycle control
+and readiness signals, not completion observation. Migrate former
+`handle.observer()` calls to `running.observer()` after starting the supervisor.
 `RunningSupervisor::wait`/`shutdown` and `SupervisorObserver::wait` may be cancelled
 without cancelling the driver or finalizers. Last-owner drop requests graceful
 shutdown; observers and admission/control handles do not prolong ownership.
 Observers share the retained report or coordinator JoinError. The Tokio runtime
 must remain alive; process/runtime termination cannot be shielded.
+If runtime shutdown drops the completion monitor before publication, awaiting
+the observer on another runtime panics rather than returning a fabricated report
+or coordinator error. The same applies to `RunningSupervisor::wait`/`shutdown`.
+An outcome published before runtime shutdown remains readable. Tests cover both
+the unpublished-monitor failure and a late observer retaining a published report;
+they do not establish cleanup or task termination after arbitrary runtime loss.
 
 An unstarted `Supervisor` owns abandonment signaling from construction. Dropping
 it withdraws readiness, signals drain and forced cancellation, and wakes
@@ -279,8 +290,9 @@ dropping the supervisor cancels those tokens before the extracted stack runs.
 Finalizers must perform teardown independently of process operation cancellation,
 using the stack's cleanup budget and, if needed, a fresh `OperationContext::new`
 rather than a context derived from `operation_token`. This also applies to normal
-shutdown, which cancels process operations before closing resources. An observer
-created without `start` still has no completion protocol.
+shutdown, which cancels process operations before closing resources. Unstarted
+supervisors, standalone shutdown handles and caller-owned `run_until` drivers
+cannot construct completion observers; await `run_until` directly for its report.
 
 The lower-level `run_until` remains caller-owned. Constructing its future transfers
 the abandonment guard without starting factories or publishing readiness. Keeping

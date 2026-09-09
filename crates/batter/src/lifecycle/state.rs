@@ -7,12 +7,12 @@
 #[cfg(test)]
 mod tests;
 
-use super::{DriverOutcome, ProcessAdmissionError, Readiness, SupervisorObserver};
+use super::{ProcessAdmissionError, Readiness};
 use std::sync::{
     Mutex, MutexGuard,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
-use tokio::sync::{Notify, watch};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Shared {
@@ -21,7 +21,6 @@ pub(super) struct Shared {
     drain: CancellationToken,
     cancel: CancellationToken,
     changed: Notify,
-    completion: watch::Sender<Option<DriverOutcome>>,
 }
 
 struct AdmissionState {
@@ -70,7 +69,6 @@ impl Shared {
             drain: CancellationToken::new(),
             cancel: CancellationToken::new(),
             changed: Notify::new(),
-            completion: watch::channel(None).0,
         }
     }
 
@@ -222,14 +220,6 @@ impl Shared {
 
     pub(super) fn operation_token(&self) -> CancellationToken {
         self.cancel.child_token()
-    }
-
-    pub(super) fn observer(&self) -> SupervisorObserver {
-        SupervisorObserver::new(self.completion.subscribe())
-    }
-
-    pub(super) fn completion_sender(&self) -> watch::Sender<Option<DriverOutcome>> {
-        self.completion.clone()
     }
 }
 

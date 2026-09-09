@@ -36,6 +36,8 @@ Explicit notification and cancellation happen after releasing the guard.
 Readiness reads must remain available while native enqueue holds admission.
 Supervisor abandonment signaling is owned from construction and transferred to
 the driver; it precedes captured-value destruction and never runs finalizers.
+Completion channels belong to owned drivers: create them only in `start` and
+expose observers only through `RunningSupervisor`, never shutdown control handles.
 Extracted finalizers remain explicitly awaited and must not inherit process
 operation cancellation; extraction does not detach captured tokens.
 Stop admission before cancellation. Harvest ready tasks before escalation;

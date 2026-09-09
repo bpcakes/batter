@@ -8,6 +8,9 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Remove `ShutdownHandle::observer`; obtain completion observers through
+  `RunningSupervisor::observer` after `Supervisor::start` so every observer has
+  an owned completion publisher.
 - Split the virtual workspace into `batter`, `batter-axum`, independent generic
   test support, and an unpublished SQLx example package. HTTP imports move to
   `batter_axum`; the old `axum` and `postgres-example` features are removed.

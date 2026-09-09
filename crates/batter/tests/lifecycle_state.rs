@@ -46,8 +46,6 @@ fn abandoned_startup_wakes_registered_readiness_waiter() {
     let waker = Waker::from(wake.clone());
     let mut cx = Context::from_waker(&waker);
     let mut waiter = Box::pin(handle.wait_ready());
-    let observer = handle.observer();
-    let mut completion = Box::pin(observer.wait());
     assert_eq!(waiter.as_mut().poll(&mut cx), Poll::Pending);
 
     drop(supervisor);
@@ -60,10 +58,6 @@ fn abandoned_startup_wakes_registered_readiness_waiter() {
         Poll::Ready(Err(Readiness::Draining))
     );
     assert!(!handle.mark_ready());
-    assert!(
-        completion.as_mut().poll(&mut cx).is_pending(),
-        "abandonment must not fabricate a completion report"
-    );
 }
 
 struct ObserveAbandonment(ShutdownHandle);

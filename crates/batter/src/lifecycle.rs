@@ -51,6 +51,16 @@ pub enum Readiness {
 }
 
 /// External lifecycle control; clones refer to the same process lifecycle.
+/// Completion observation requires an owned driver: call
+/// [`RunningSupervisor::observer`] after [`Supervisor::start`]. A control handle
+/// can exist without a driver, so it cannot construct a completion observer.
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::ShutdownHandle;
+///
+/// let handle = ShutdownHandle::new();
+/// let observer = handle.observer();
+/// ```
 #[derive(Clone)]
 pub struct ShutdownHandle {
     shared: Arc<Shared>,
@@ -118,12 +128,6 @@ impl ShutdownHandle {
     /// Dropping an unstarted supervisor wakes this waiter with `Draining`.
     pub async fn wait_ready(&self) -> Result<(), Readiness> {
         self.shared.wait_ready().await
-    }
-
-    /// Observe the retained completion of an owned [`Supervisor::start`] driver.
-    /// `run_until` does not publish into this observer.
-    pub fn observer(&self) -> SupervisorObserver {
-        self.shared.observer()
     }
 
     fn force_cancel(&self) {

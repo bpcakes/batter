@@ -151,8 +151,11 @@ return cleanly. External process exit policy belongs to the binary.
 
 The owned driver separates work ownership from waiting. Last-owner drop requests
 drain; cancelling an observer does not cancel cleanup. Its monitor observes the
-coordinator and publishes a retained report or JoinError. The lower-level
-`run_until` and `CleanupStack::close` remain cancellation-fragile when driven
+coordinator and publishes a retained report or JoinError. `start` creates the
+completion channel; only the monitor owns its sender. Completion observers come
+from `RunningSupervisor`, so every observer has an owned driver publisher.
+Shared readiness/admission state and `ShutdownHandle` carry no completion channel.
+The lower-level `run_until` and `CleanupStack::close` remain cancellation-fragile when driven
 directly by callers. No guarantee survives termination of their Tokio runtime.
 
 The supervisor holds a synchronous abandonment guard from construction, before
