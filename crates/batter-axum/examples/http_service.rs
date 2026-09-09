@@ -1,10 +1,13 @@
 //! A runnable Axum composition root with probes and bounded operations.
 mod support;
+#[cfg(test)]
+#[path = "http_service/tests.rs"]
+mod tests;
 
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::{HeaderValue, header},
+    http::{HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -12,10 +15,12 @@ use axum::{
 use batter::{
     BoxError,
     admission::{Admission, AdmissionError, Bulkhead},
-    lifecycle::Supervisor,
+    lifecycle::{Readiness, ShutdownHandle, Supervisor},
     operation::{Interruption, OperationContext, OperationError},
 };
-use batter_axum::{HttpFailure, RequestPolicy, liveness, readiness, request_scope};
+use batter_axum::{
+    HttpFailure, HttpObservationLevel, RequestPolicy, liveness, observe_http, request_admission,
+};
 use serde::Serialize;
 use std::{
     convert::Infallible,
@@ -59,22 +64,39 @@ fn render_failure(failure: HttpFailure, id: &RequestId) -> Response {
 }
 
 async fn request_identity(mut request: axum::extract::Request, next: Next) -> Response {
-    let id = RequestId(format!(
-        "example-{}",
-        NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let span = tracing::info_span!("request", request_id = %id.0);
-    request.extensions_mut().insert(id.clone());
-    let mut response = next.run(request).instrument(span).await;
-    response.headers_mut().insert(
-        "x-request-id",
-        HeaderValue::from_str(&id.0).expect("generated ASCII request ID"),
-    );
-    response
+    batter::telemetry::with_current_dispatch(async move {
+        let id = RequestId(format!(
+            "example-{}",
+            NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let span = tracing::info_span!("request", request_id = %id.0);
+        request.extensions_mut().insert(id.clone());
+        let mut response = next.run(request).instrument(span).await;
+        response.headers_mut().insert(
+            "x-request-id",
+            HeaderValue::from_str(&id.0).expect("generated ASCII request ID"),
+        );
+        response
+    })
+    .await
 }
 
 async fn fail(Extension(id): Extension<RequestId>) -> Response {
     render_failure(HttpFailure::Internal, &id)
+}
+
+async fn readiness_response(State(handle): State<ShutdownHandle>) -> Response {
+    // This application's probe reports lifecycle state. Task failures still have
+    // their own diagnostics; routine starting/draining probes need no warning.
+    match handle.readiness() {
+        Readiness::Ready => StatusCode::OK.into_response(),
+        Readiness::Starting | Readiness::Draining => (
+            Extension(HttpObservationLevel(tracing::Level::INFO)),
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+            .into_response(),
+        Readiness::Stopped => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 struct Config {
@@ -141,18 +163,11 @@ async fn work(
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), BoxError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "batter=info,http_service=info".into()),
-        )
-        .try_init()?;
-    let config = Config::load()?;
-    let mut supervisor = Supervisor::new(support::shutdown_budget());
-    let handle = supervisor.handle();
-    let policy = RequestPolicy::new(handle.clone(), config.request_budget)?.with_failure_renderer(
+fn router(
+    handle: batter::lifecycle::ShutdownHandle,
+    request_budget: Duration,
+) -> Result<Router, batter::ConfigurationError> {
+    let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_failure_renderer(
         |failure, parts| {
             // request_identity is outside this layer and supplies trusted data.
             let id = parts
@@ -168,15 +183,30 @@ async fn main() -> Result<(), BoxError> {
         .with_state(AppState {
             outbound: Bulkhead::new(32)?,
         })
-        .layer(middleware::from_fn_with_state(policy, request_scope));
+        .route_layer(middleware::from_fn_with_state(policy, request_admission));
     // Health endpoints must remain outside the admission gate.
     let probes = Router::new()
         .route("/live", get(liveness))
-        .route("/ready", get(readiness))
+        .route("/ready", get(readiness_response))
         .with_state(handle.clone());
-    let application = application
+    Ok(application
         .merge(probes)
-        .layer(middleware::from_fn(request_identity));
+        .layer(middleware::from_fn(observe_http))
+        .layer(middleware::from_fn(request_identity)))
+}
+
+#[tokio::main]
+async fn main() -> Result<(), BoxError> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "batter=info,http_service=info".into()),
+        )
+        .try_init()?;
+    let config = Config::load()?;
+    let mut supervisor = Supervisor::new(support::shutdown_budget());
+    let handle = supervisor.handle();
+    let application = router(handle.clone(), config.request_budget)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
     supervisor.register("http", move |shutdown| async move {

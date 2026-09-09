@@ -8,11 +8,21 @@ APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.
 
 ## Axum: implemented, with a deliberately small boundary
 
-Import `RequestPolicy` and `request_scope` from `batter_axum` and use
-middleware::from_fn_with_state. Put the guarded business
-router behind it and merge unguarded liveness/readiness routes separately. Domain
+Import `RequestPolicy`, `request_admission` and `observe_http` from `batter_axum`.
+Apply `middleware::from_fn_with_state(policy, request_admission)` with
+`route_layer` to guarded business routes, merge unguarded liveness/readiness and
+fallback, then apply `middleware::from_fn(observe_http)` using `Router::layer`.
+Install trusted server request identity outermost. Observation now covers probes,
+fallback and rejection responses without imposing admission on them. Domain
 services receive their own dependencies through State/FromRef/constructors;
 request operation context arrives through Extension<OperationContext>.
+
+Apply observation after every route/fallback is assembled: Axum's router layer
+runs after routing and only covers existing routes. A later-added route bypasses
+it; a service wrapper outside routing has no matched route template at entry.
+Place rejecting/status-changing middleware inside observation so its response
+is covered. See the [compiling composition example](../crates/batter-axum/src/lib.rs)
+and [HTTP example](../crates/batter-axum/examples/http_service.rs).
 
 `with_failure_renderer` maps middleware failures into an application-owned
 envelope using a snapshot of request parts. Trusted correlation middleware must
@@ -21,11 +31,30 @@ handlers must use their own renderer too. The HTTP example demonstrates both
 paths with matching generated request-ID headers/body fields. Readiness requires
 all registered components to acknowledge startup before traffic is admitted.
 
-The separate package retains one combined readiness/deadline policy. It does
-not split request lifetime from process readiness or introduce a new policy
-interface. Its tracing boundary uses `batter::telemetry::with_current_dispatch`
-inside the async entrypoint to preserve capture at first poll and destruction
-under the captured dispatcher.
+`RequestPolicy` retains one combined readiness/deadline policy. The independent
+observer requires neither that policy nor lifecycle state. `request_scope` keeps
+the combined observation/admission behavior for compatibility; replace it with
+`request_admission` when installing outer observation. There is no automatic
+observer deduplication. All entry points use
+`batter::telemetry::with_current_dispatch` inside their async bodies to preserve
+first-poll capture and full future/span destruction under the captured dispatcher.
+The response-construction boundary excludes later body polling and destruction.
+Observation also retains the enabled HTTP span or available application span at
+first poll. It reuses that context for execution and completion parenting even
+when later polling/destruction occurs under another request. For example,
+`RUST_LOG=info,batter=warn` retains identity from an enabled outer application INFO
+span while disabling the HTTP INFO span. Sink-specific filters still control
+visible context; HTTP field recording never modifies application span fields.
+
+Severity policy is also independent of admission. Return an Axum
+`Extension(HttpObservationLevel(tracing::Level::INFO))` alongside a response to
+select INFO for an application-identified expected readiness failure. Inner
+middleware can insert, replace or remove this response extension. Keep the actual
+503 and `server_error` outcome; alert rules must distinguish probe traffic if
+those fields drive alerts. Built-in probes and unannotated responses retain the
+WARN-for-5xx/INFO-otherwise defaults. No response means no override: dropped
+futures retain WARN. The HTTP example selects INFO for Starting/Draining probe
+responses, leaving stopped-process probes and application errors at defaults.
 
 Keep authentication, authorization, request body limits, CORS, TLS, proxy trust,
 trace-header validation, tenant resolution, and user admission policy external.

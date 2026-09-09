@@ -1,6 +1,466 @@
 # Validation evidence
 
-Latest evidence: 2026-09-08. Earlier sections retain their historical scope.
+## HTTP redaction and filtered-operation assertions: 2026-09-09
+
+Bead `batter-faj.7` addresses the two accepted review gaps. The nested-observer
+test now checks its full captured output for secrets before inspecting individual
+completion events. The WARN-filtered process smoke rejects INFO operation
+completions, while allowing WARN deadline completions and application INFO events.
+Three additional Python control entries cover rejected INFO events with and
+without the example formatter's timestamp, permitted WARN/application output,
+and absent operation events. The timestamped negative control failed against
+the first parser version and passed after its timestamp handling was corrected.
+
+Executed on Linux x86_64 with Python 3.12.3:
+
+```sh
+python3 -m unittest discover -s scripts -p test_smoke_http.py -v
+cargo test -p batter-axum --test observation composition_edges --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+The seven focused Python controls and three middleware-edge tests passed.
+Rust 1.98.1 and 1.94.0 each passed the full verification script, including 391
+test/doctest executions, formatting, Clippy and rustdoc. All five rebuilt-example
+smoke profiles passed. The first full Python discovery attempt failed in existing
+Jig subprocess controls because the sandbox denied signal-handler writes with
+EPERM; the rerun outside that sandbox passed all 38 entries. The first Jig work
+check ran its tests successfully but rejected all target receipts because this
+validation document changed during the read-only run. A repeat must keep the
+checkout unchanged; final gate/test outcomes are recorded in the task plan and
+Jig receipts using these commands:
+
+```sh
+scripts/jig work check --plan-id plan_01M22SNAMJ0FC0BT7A3NX9M11X
+scripts/jig check test
+scripts/jig work evidence --plan-id plan_01M22SNAMJ0FC0BT7A3NX9M11X --json
+scripts/jig work gates --plan-id plan_01M22SNAMJ0FC0BT7A3NX9M11X --json
+```
+
+Logs are under `.agent/tmp/batter-faj.7`; tracked work uses
+`plan_01M22SNAMJ0FC0BT7A3NX9M11X`. Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Runtime APIs and dependencies are unchanged. macOS/hosted execution, live
+concurrent-connection correlation and sink-specific exporter behavior remain
+unverified by this follow-up.
+
+## HTTP smoke oracles and test diagnostics: 2026-09-09
+
+Bead `batter-faj.6` addresses the two accepted review findings. Every HTTP process
+smoke now checks method, route, status, outcome and latency after the completion
+message, independently of fields printed on its spans. The shared Rust text
+assertion and live readiness assertions use the same event boundary. Four Python
+negative-control entries cover successful events, missing/conflicting event fields
+despite correct span fields, and a missing completion message. Existing Python CI
+discovery includes them without a workflow change.
+
+The live readiness fixture still awaits teardown before assertions. One assertion
+now checks and reports the saved request, supervisor and server outcomes together.
+A task-local fault-injection control drove real teardown with request, supervisor
+and server failures: the old assertions hid the request error, while the revised
+assertion included all three injected messages. The fixture was restored
+byte-for-byte after each control, including a first injector compile error from an
+unconstrained Result type. That injector annotation was corrected; both expected
+failure controls then passed. The initial Python control also caught and rejected
+an overly broad latency substring match before it was corrected.
+
+Executed on Linux x86_64 with Python 3.12.3:
+
+```sh
+python3 -m unittest discover -s scripts -p test_smoke_http.py -v
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+cargo test -p batter-axum --all-targets --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+python3 .agent/tmp/batter-faj.6/check_diagnostics.py
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Python discovery passed 35 entries. The focused adapter run passed 44 entries.
+Rust 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02)
+each passed 391 test/doctest executions: 169 foundation, 218 workspace and four
+doctests. Formatting, compilation, Clippy and rustdoc passed on both toolchains.
+All five rebuilt-example HTTP smokes passed with shutdown status zero. No ordinary
+test was failed or ignored in the final runs; the diagnostic controls deliberately
+required failure and checked the resulting messages.
+
+Logs and the one-off diagnostic control are under ignored `.agent/tmp/batter-faj.6/`.
+Tracked gate and final backend evidence belong to
+[the owning plan](../.agent/plans/plan_01M22Q37MQG1B1Z3533Y7PQMZV.md).
+No runtime implementation, public API or dependency changed. Cargo.lock remains
+SHA-256 `3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Hosted/macOS execution, live concurrent-connection correlation and broader
+transport lifetime coverage remain unverified by this follow-up.
+
+## HTTP verification wiring and composition edges: 2026-09-09
+
+Bead `batter-faj.5` addresses the completed review's CI and prerequisite findings
+and its bounded observation test gaps. Linux CI now includes both WARN-filtered
+HTTP process smoke profiles. macOS CI adds adapter integration/live example tests
+and all five HTTP smoke modes. The required all-targets gate continues to run the
+live readiness tests; `scripts/verify.sh` and the testing guide now state their
+loopback socket and Unix subprocess prerequisites. No test was ignored or removed.
+
+Three new integration test entries cover DEBUG/TRACE overrides filtered under an
+INFO subscriber (with a WARN positive control), outer status/severity rewriting
+after observation, and retained overrides through nested observers. The existing
+complete-router scenario now checks newly added routes and unsupported methods
+while Starting/Ready/Draining, including admission 503 before method fallback.
+The unwind test additionally requires the original identity on resource destruction.
+The live example adds a mixed-filter profile over all four readiness phases: INFO
+events are absent and the Stopped WARN event retains its generated response ID.
+Both live profiles check unique response IDs and per-response event counts.
+Contracts and primary-source notes describe these existing behaviors; no runtime
+implementation, public API or dependency changed in this follow-up.
+
+Executed on Linux x86_64 with Python 3.12.3 and unchanged Cargo.lock SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`:
+
+```sh
+bash -n scripts/verify.sh
+cargo test -p batter-axum --locked
+cargo test -p batter-axum --all-targets --locked
+cargo clippy -p batter-axum --all-targets --locked -- -D warnings -D clippy::mod_module_files
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Rust 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02)
+each passed 391 test/doctest executions: 169 foundation, 218 workspace (including
+42 adapter integration tests and two live example tests) and four doctests. No
+test failed or was ignored. Formatting, compilation, Clippy and rustdoc passed
+on both toolchains. The example was rebuilt with 1.98.1; all five process smokes
+passed with shutdown status zero. A Python/PyYAML check parsed the workflow and
+confirmed both filtered profiles in each CI job. Shell syntax passed.
+
+Focused checks and both matrices are retained under ignored `.agent/tmp/batter-faj.5/`
+as `adapter-tests.log`, `adapter-all-targets.log`, `adapter-clippy.log`,
+`verify-1.98.1.log`, `verify-1.94.0.log`, `http-build.log` and five `http-*.log`
+smoke results. Required Jig evidence/gates and final backend results are recorded
+with [the owning plan](../.agent/plans/plan_01M22ND6VP41F0KQ8FVQJ0HZFH.md).
+
+The updated CI workflows were not run on hosted runners, and macOS runtime
+execution of these changes remains unverified. Broader streaming, disconnect,
+connection shutdown and exporter delivery remain outside this task's evidence.
+
+## HTTP context ownership and handler unwinds: 2026-09-09
+
+Beads `batter-faj.4` and `batter-4qc` address a local ownership error: the optional
+HTTP INFO span was also the observer's correlation parent. With
+`RUST_LOG=info,batter=warn`, an explicit disabled HTTP parent made the WARN event
+rooted even when the application's request span remained enabled. Looking up a
+fallback only during destruction could instead attach another request's identity.
+Research against resolved primary sources and related consumer tasks preceded
+implementation; decisions and filtering limits are in [references](references.md).
+
+The observer now selects and retains its HTTP span or available application span
+at first poll, reusing it for inner execution/destruction and explicit completion
+parenting. The original HTTP span remains the only target of HTTP field recording.
+Public APIs, response severity policy, dependencies and the foundation's dispatch
+wrapper remain unchanged. The example exposes a private router constructor used
+by both main and its readiness test, preserving the runtime composition.
+
+Three correlation regression entries cover standalone/split/combined observation,
+enabled/disabled HTTP spans, interleaved requests, completion/drop under another
+span and subscriber, retained parent lifetime, untouched application fields and
+an absent/filtered original parent. The handler-unwind case verifies a Tokio task
+panic, cancelled admitted context and exactly one WARN dropped observation without
+an HTTP status or panic payload in tracing. Rust's default panic hook is unchanged.
+Two of these tests compiled and failed before the fix; the absent-parent test
+already passed. A second compiled mutation, selecting `or_current` at event
+emission, failed both the retained-parent and absent-parent assertions. The mutation
+was removed before successful final verification.
+
+A live loopback test executes the example's actual readiness router during
+Starting, Ready, Draining and Stopped. It checks 503/200/503/503, respectively,
+INFO/INFO/INFO/WARN event levels, outcome, route, generated request identity and
+one HTTP event per response. A separately owned listener deliberately remains
+available through Stopped; this proves response policy, not the binary's connection
+shutdown window. Client I/O and teardown have bounds; lifecycle transitions use
+acknowledgements and an explicit release channel rather than startup sleeps.
+The initial sandboxed attempt failed at socket bind with EPERM. Its approved
+rerun passed without changing the test.
+
+Executed on Linux x86_64, kernel `7.0.11-76070011-generic`, Python 3.12.3, with
+unchanged Cargo.lock SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`:
+
+```sh
+cargo test -p batter-axum --locked
+cargo test -p batter-axum --example http_service --locked
+cargo clippy -p batter-axum --all-targets --locked -- -D warnings -D clippy::mod_module_files
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 -m py_compile scripts/smoke_http.py
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Rust 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02)
+each passed 387 test/doctest executions: 169 foundation, 214 workspace (including
+39 adapter integration tests and the live example test) and four doctests. No
+tests failed or were ignored. Both scripts passed formatting, compilation, Clippy
+and rustdoc. The example was rebuilt with 1.98.1; all five process smoke commands
+passed with signal exit zero. The new `--warn-filter` profile verifies that each
+5xx WARN event retains its application request ID and its own HTTP fields with
+the HTTP INFO span disabled, while INFO HTTP events are absent.
+
+Ignored logs under `.agent/tmp/batter-faj.4/` retain `context-before.log`,
+`late-parent-mutation.log`, `adapter-tests.log`, `adapter-clippy.log`,
+`readiness-http.log` (the socket denial), `verify-1.98.1-tail.log`,
+`verify-1.94.0.log`, `http-build.log` and five `http-*.log` smoke results. The
+1.98.1 tail starts after the initial 39 successful executions; its initial output
+and the focused approved live-test success remain in the tool transcript.
+Required Jig gate outcomes and the final backend test receipt are recorded with
+[the owning plan](../.agent/plans/plan_01M22JCBCPYZWQRDZSBPKQ6CZZ.md).
+The first final backend run passed all 387 Rust executions and exited zero, but
+Jig rejected its receipt because an independently added `.reviewignore` changed
+the worktree fingerprint during execution. That file was preserved; the rejected
+receipt and output remain in `jig-final-test-first.log`. This was an evidence
+freshness failure, not a Rust test failure.
+
+macOS and hosted CI execution of this change remain unverified. These checks do
+not establish arbitrary per-layer/exporter delivery, panic recovery, aborting
+panics, damaged shared-state recovery, streaming/body panics after headers,
+disconnect handling or transitive connection shutdown. The corresponding broader
+transport and metadata/exporter tasks remain open.
+
+Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
+
+## HTTP completion fields independent of spans: 2026-09-09
+
+Bead `batter-faj.3` corrects the dependency of HTTP completion fields on an enabled
+INFO span. The observer retains normalized method and the cloned matched route
+template and emits method, route, optional numeric status, outcome and latency
+on the completion event itself at every severity. Existing span fields remain
+for nested context. This does not change response construction lifetime,
+admission, response severity policy or the number of completion events. Filtering
+of application correlation spans and event delivery remains application-owned.
+
+Three new regressions use an event visitor that never reads span fields. They
+cover every severity across standalone/split/combined observers, disabled INFO
+parents for WARN/ERROR, success/client/server outcomes, normalized custom methods,
+matched and unmatched routes, admission rejection, and dropped futures under a
+different ambient subscriber. Paused time checks exactly 25 ms on completed
+events. Dropped futures retain WARN, omit status, and reach the first-poll
+subscriber. All three tests compiled and failed on the original implementation
+because the event contained only a message; the fix made them pass. The initial
+test build needed an explicit response return type on the unreachable handler;
+that compile error is retained separately and is not regression evidence.
+The testing guide now describes coverage and commands rather than duplicating
+aggregate inventories; dated executed counts remain here.
+
+Executed on Linux x86_64, kernel `7.0.11-76070011-generic`, Python 3.12.3, with
+unchanged Cargo.lock SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`:
+
+```sh
+cargo test -p batter-axum --locked
+cargo clippy -p batter-axum --all-targets --locked -- -D warnings -D clippy::mod_module_files
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 .agent/tmp/batter-faj.3/smoke_warn.py
+```
+
+Rust 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02)
+each passed 383 test/doctest executions: 169 foundation, 210 workspace (including
+36 adapter tests) and four doctests. No tests failed or were ignored. Formatting,
+compilation, Clippy and rustdoc passed on both toolchains. The example was rebuilt
+with 1.98.1 and all three standard HTTP smoke modes passed. An additional live
+check with `RUST_LOG=warn` requested `/fail`, asserted one 500 completion with all
+HTTP fields and no INFO span context, checked query redaction and exited through
+SIGTERM with status zero. The first network attempt was blocked by sandbox socket
+permissions before starting a server; the network checks then ran with approval
+outside that sandbox.
+
+Logs and the additional smoke script are under ignored `.agent/tmp/batter-faj.3/`:
+`regression-before.log`, `test-initial-compile.log`, `adapter-tests.log`,
+`adapter-clippy.log`, `event-fields.log`, `verify-1.98.1.log`, `verify-1.94.0.log`,
+`http-build.log`, `http-default.log`, `http-sigint.log`, `http-deadline.log`,
+`http-warn.log` and `http-sandbox-denial.log`. The final full scripts include the
+later status-class and exact-latency assertions. Required repository gate results
+and final backend test results belong to
+[the owning plan](../.agent/plans/plan_01M22FQT8J3TFN9T5K1XVZQKRB.md), with
+`jig-work-check.log`, `jig-final-test.log`, `jig-evidence.json` and `jig-gates.json`
+in that log directory.
+
+macOS and hosted CI execution of this change remain unverified. These checks do
+not establish streaming-body, disconnect or panic recovery behavior, or delivery
+by an arbitrary subscriber/exporter. The standard network smoke still does not
+force requests into the example's Starting/Draining readiness window.
+
+Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
+
+## Explicit HTTP observation severity: 2026-09-09
+
+Bead `batter-faj.2` adds `HttpObservationLevel(tracing::Level)` as application-owned
+response metadata. Standalone observation and the combined compatibility wrapper
+read it through their shared helper. Unannotated responses retain WARN for 5xx
+and INFO otherwise; futures dropped without returning a response retain WARN.
+The level does not change status, outcome, fields, correlation, response headers
+or body. Request extensions and client level headers do not select severity.
+The runnable example explicitly marks Starting/Draining readiness responses INFO;
+other application failures and stopped-process probes retain their defaults.
+
+Five new test entries exercise all five tracing levels across standalone/split/
+combined observation, default status classes, ignored request-side hints, explicit
+readiness policy versus unrelated unguarded 503s, failure-renderer overrides,
+and inner middleware replacing/removing an override. Existing rendering tests
+now also assert an ERROR override on 429 after admission rejection, timeout and
+forced cancellation, retaining the original response/correlation assertions.
+Abort tests assert WARN despite an annotated response constructed but never
+returned, with nested resource destruction under the first-poll subscriber.
+Unpolled and body-lifetime tests remain intact. Focused verification passed
+33 adapter tests and two doctests.
+
+A temporary mutation that ignored the response extension compiled and failed
+the event-level assertion with exit 101. The source was restored byte-for-byte.
+An initial test compilation rejected incorrect Axum response tuple ordering;
+that was corrected. The initial full 1.98.1 run passed its tests but failed
+Clippy's complexity limit in the expanded tracing branches. Selecting separate
+noncapturing emitters resolved the lint without an exemption. Both full scripts
+were then executed successfully on the final Rust source.
+
+Executed on Linux x86_64 with unchanged Cargo.lock SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+```
+
+Rust 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02)
+each passed 380 test/doctest executions: 169 foundation, 207 workspace and four
+doctests, with zero failures or ignored tests. Formatting, compilation, Clippy
+and rustdoc also passed on both. The HTTP example was rebuilt with 1.98.1;
+all three smoke modes passed their existing response, correlation, redaction,
+one-completion-per-request and signal assertions. Smoke does not force requests
+into the example's startup/drain window; readiness severity is exercised in the
+router tests, not established by these network smoke cases.
+
+Logs are under ignored `.agent/tmp/batter-faj.2/`: `verify-1.98.1.log`,
+`verify-1.94.0.log`, `verify-1.98.1-initial.log`, `mutation-ignore-level.log`,
+`http-build.log`, `http-default.log`, `http-sigint.log`, and `http-deadline.log`.
+Final repository gate receipts belong to
+[the owning plan](../.agent/plans/plan_01M22AY02A7BBJJHCNFX3RDQNN.md):
+`scripts/jig work check --plan-id plan_01M22AY02A7BBJJHCNFX3RDQNN` and the final
+backend `scripts/jig check test`, with `jig-work-check.log` and
+`jig-final-test.log` in that log directory. Jig/Beads closure records retain
+their outcomes without changing the source snapshot after verification.
+
+macOS and hosted CI execution of this change remain unverified. No new body
+streaming, real disconnect, handler panic recovery or log-delivery guarantee is
+established. DEBUG/TRACE observations remain subject to subscriber filtering.
+
+## Independent HTTP observation: 2026-09-08
+
+Bead `batter-faj.1` adds stateless `observe_http` and policy-driven
+`request_admission`, retaining `request_scope` as the combined compatibility
+entry point. Both paths share the private observation/admission implementations;
+`RequestPolicy` still couples lifecycle readiness and deadlines. The runnable
+HTTP example assembles guarded routes, probes and fallback before observation,
+with server identity outermost. Its identity future now also protects full
+instrumented-future destruction with the public dispatch helper.
+
+The new 12-test observation executable checks full-router event counts and
+sanitized fields through startup, readiness and drain; application errors and
+short-circuit/status-changing middleware; probe/fallback coverage; an added
+application route; custom rendering after timeout/forced cancellation; retained
+original correlation; context cancellation; standalone observation without an
+execution policy; and subscriber retention during abort and nested destruction.
+Directly discarded unpolled entry points emit no completion or application work.
+Dropping a response body after construction produces no second HTTP event. This
+last check uses an ordinary unconsumed body and does not establish streaming or
+real disconnect behavior.
+
+Placement tests make two Axum limits executable: routes appended after
+`Router::layer` bypass observation, and a wrapper outside routing records
+`<unmatched>` before matched metadata exists. Nesting outer observation around
+legacy `request_scope` deliberately produces two HTTP observations; the supported
+split composition emits one. There is no automatic deduplication. All 16 existing
+adapter tests remain, with their assertions intact. The existing scoped-dispatch
+capture helper is shared with the new executable; no global subscriber is installed.
+
+Two targeted mutations failed event-count assertions with exit 101: removing
+standalone observation, and having `request_admission` call the combined wrapper.
+The middleware source was restored byte-for-byte after each mutation. Neither
+failure was a compile error or a missing prerequisite.
+
+Executed on Linux x86_64, kernel `7.0.11-76070011-generic`, Python 3.12.3:
+
+```sh
+cargo test -p batter-axum --locked
+cargo clippy -p batter-axum --all-targets --locked -- -D warnings -D clippy::mod_module_files
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+```
+
+All commands exited 0. Each full Rust 1.98.1 / 1.94.0 matrix passed 169 foundation
+entries in isolation, 202 workspace entries and three doctests: 374 successful
+entries including repeated foundation execution, zero failed and zero ignored.
+The workspace counts 28 Axum tests, 169 foundation tests and five generic support
+tests; the added doctest compiles the split router composition. Formatting,
+Clippy, compilation and rustdoc also passed on both toolchains.
+
+The normal executable was rebuilt with Rust 1.98.1. All three HTTP smoke modes
+passed, now requiring exactly one HTTP completion with matching server-generated
+request ID, route and status for each tested request, including probes and
+unmatched fallback. Polling readiness may generate additional requests with their
+own IDs; the assertions do not confuse them with the explicit test requests.
+Untrusted IDs and raw unmatched path/query sentinels must be absent from output.
+The application envelope, deadline and both native signal checks remain intact.
+
+Logs are in ignored `.agent/tmp/batter-faj.1/`: `verify-1.98.1.log`,
+`verify-1.94.0.log`, `http-build.log`, `http-default.log`, `http-sigint.log`,
+`http-deadline.log`, `mutation-missing-observation.log` and
+`mutation-duplicate-observation.log`. The owning
+[execution plan](../.agent/plans/plan_01M21E97EVPQTVPJ6DDC79SR40.md) records Jig
+receipts and final backend verification. `scripts/jig work check --plan-id
+plan_01M21E97EVPQTVPJ6DDC79SR40` passed Clippy, formatting, tests, contract and
+file-budget checks. Work evidence/gates reported fresh and passed. The final
+`scripts/jig check test` also exited 0. Logs are `jig-work-check.log` and
+`jig-final-test.log` in the same directory.
+
+Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+There are no dependency or minimum-version changes. macOS and hosted CI execution
+of this change remain unverified. No downstream repository was modified, and no
+commit, push or publication was performed.
 
 ## Scenario-derived synchronization and overflow controls: 2026-09-08
 

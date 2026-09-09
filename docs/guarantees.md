@@ -291,15 +291,80 @@ contracts. Resource values must not require an unavailable runtime after shutdow
 
 ## HTTP boundary
 
+`request_admission` applies the combined readiness/deadline `RequestPolicy` and
+inserts `OperationContext`. `observe_http` independently observes response
+construction without lifecycle state, a deadline or a context extension. The
+existing `request_scope` combines those behaviors for compatibility. Each
+installed observer emits its own HTTP completion event; use outer `observe_http`
+with inner `request_admission` to avoid duplicate observations. Operation events
+remain separate. Subscriber filtering and transport delivery are application-owned.
+
+HTTP completion events carry normalized method, matched route template (or
+`<unmatched>`), actual numeric status when a response exists, HTTP outcome and
+construction latency as event fields. The observer retains these facts separately
+from its INFO span, so disabling that span does not remove fields from an enabled
+completion event. The span still carries the same fields for nested context;
+formatters may show them in both places. Application-owned correlation in other
+spans remains subject to those spans' filtering.
+
+At first poll, observation retains its enabled HTTP span or the current enabled
+application span for execution and completion parenting. Later ambient spans
+cannot replace the completion event's parent; if neither was available, that
+event remains a root event. HTTP fields are never recorded into the inherited
+application span. Per-layer subscriber filters can still hide retained context
+from an individual sink; this is not an exporter delivery guarantee.
+
+Completion events default to WARN for 5xx responses and INFO otherwise, including
+probes. `HttpObservationLevel(tracing::Level)` in response extensions selects a
+different event level in both observers. It does not change response status,
+HTTP outcome, field sanitization, the INFO span level, or event count. A 503 at
+INFO still has `http_outcome="server_error"`; status/outcome alerts need their own
+probe policy. DEBUG/TRACE events require subscriber configuration that enables
+them. This is event severity selection, not guaranteed delivery or suppression.
+
+Handlers, failure renderers or middleware inside observation must explicitly
+attach the override to the returned response. It remains in the response's
+extensions for other middleware and is not serialized as a header. Middleware
+replacing a response/status owns retaining, replacing or removing its override.
+Nested observers each read that retained override. An observer records the status
+and override returned by its inner service; middleware outside it can subsequently
+rewrite the response without changing that already completed observation.
+Request extensions, client headers, route names and missing OperationContext do
+not infer severity. Built-in probes do not add overrides. A future destroyed
+without returning a response remains WARN, even if the handler constructed an
+annotated response internally. No policy callback runs from the guard's Drop.
+
+Assemble guarded routes, unguarded probes and fallback before applying observation
+with `Router::layer`. Axum runs that layer after routing, so matched route
+**templates** are available; raw paths, queries, headers, bodies and error contents
+are not recorded. Nonstandard methods normalize to `OTHER`; absent route metadata
+uses `<unmatched>`. A wrapper outside routing lacks that metadata at entry even
+for a matching route. Routes appended after `Router::layer` bypass it. Place
+trusted identity outside observation and rejecting/status-changing middleware
+inside it to observe their returned status.
+
+A polled response future emits its actual response status/outcome and construction
+latency on completion, or `dropped` without a status if destroyed before a response.
+The first-poll subscriber protects full future destruction, including the
+observation guard and nested instrumented spans. Never-polled entry points do no
+application work and emit no completion. Dropping the returned body afterward
+emits no second HTTP completion and is not classified as a dropped request.
+
 Handler panics propagate through this middleware; `HttpFailure::Internal` is not
 an automatic panic catcher. Process-task and cleanup-hook panic observation does
 not establish HTTP recovery or redact Rust's default panic-hook output.
-This is source-inspected behavior, unverified by a dedicated HTTP handler-panic test.
+Dedicated tests verify an unwind before a response propagates as a Tokio task
+panic, cancels admitted context, and emits one WARN `dropped` HTTP event without
+a status or panic payload. This covers Rust unwinding, not aborting panics.
 
 The admission point is the readiness read. A request racing drain may be admitted
 when that read sees Ready. It receives an OperationContext extension tied to
 forced process cancellation, not immediate drain. Server-side duration is fixed
 by RequestPolicy; the middleware trusts no client deadline or proxy metadata.
+With the documented `Router::route_layer` composition, admission also wraps the
+method fallback of a matched business path: an unsupported method returns 503
+while Starting/Draining, and 405 while Ready. An unmatched path still reaches the
+unguarded fallback and is observed separately.
 
 The timeout ends when Next returns a Response. It does not bound streaming body
 polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring

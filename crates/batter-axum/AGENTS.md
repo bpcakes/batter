@@ -11,10 +11,13 @@ Windows support and non-Unix fallbacks are out of scope.
 
 ## Key entrypoints
 
-- `src/lib.rs` contains `RequestPolicy`, `request_scope`, probes, and failures.
+- `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
+  `HttpObservationLevel`, the combined `request_scope` compatibility entry point,
+  probes, and failures.
 - `examples/http_service.rs` demonstrates router/lifecycle composition.
-- `tests/http.rs`, `tests/telemetry.rs`, and `tests/scoped_dispatch.rs` cover HTTP
-  failure behavior, sanitized observations, and future destruction.
+- `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
+  `tests/scoped_dispatch.rs` cover failures, complete-router observations,
+  middleware placement, and future destruction.
 
 ## Edit here for X
 
@@ -31,7 +34,20 @@ retain first-poll capture and protect full future destruction. Keep observation
 guards and nested spans inside the wrapped future. Do not duplicate its private
 pin/drop implementation. Bound response construction without claiming body
 streaming or detached connection-task shutdown. Keep probe routes separate from
-guarded business routes. Do not log cause contents or untrusted request fields.
+guarded business routes. Apply `observe_http` after assembling routes/fallback;
+use `request_admission` inside it. Nesting observation around `request_scope`
+intentionally emits twice; no request-extension deduplication is provided.
+Do not log cause contents or untrusted request fields.
+Observation severity overrides are explicit response extensions, independent of
+admission. Preserve actual status/outcome and the default WARN for dropped
+futures. No application callback belongs in the observation guard's destructor.
+Keep sanitized HTTP completion fields on the event independently of span filtering.
+The all-targets test gate includes the example's live readiness tests and requires
+loopback socket permission. Preserve both enabled-event and filtered-event assertions.
+Select execution/event context once at first poll, retaining the HTTP span or its
+available application parent. Never discover a fallback parent at Drop or record
+HTTP fields into the application span. Handler panics propagate; an unwind before
+a response is observed as dropped, with no invented status or logged panic payload.
 
 ## Common commands
 

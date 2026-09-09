@@ -1,19 +1,13 @@
 # Testing and failure-contract coverage
 
-On Linux, Cargo discovers **190 test entries plus two doctests**: 169 foundation entries,
-16 Axum adapter tests, five generic test-support tests, and two foundation doctests.
-Two foundation entries dispatch child fixtures and are inert in the parent run.
-The non-yielding executable has 25 process controls, 19 deterministic evidence/policy
-tests, and three capture-reader thread tests. The scheduling executable has fifteen
-entries, including two full corpora, two controlled-clock escalation regressions,
-two controlled-clock descendant closure regressions,
-process/replay controls and a Python
-subprocess regression suite with 30 controls. The two Linux
-orphan-probe entries are excluded on other Unix targets (188 entries, including
-46 in the non-yielding executable).
+Cargo discovers foundation, Axum adapter and generic test-support tests, plus
+library doctests. [Validation](validation.md) records dated execution counts,
+toolchains and outcomes; this guide describes behaviors and verification commands.
+Foundation fixture-dispatch entries are inert in the parent run. The non-yielding
+and scheduling suites cover native process controls, deterministic policy checks,
+controlled-clock regressions and Python subprocess ownership. Linux orphan-probe
+entries are excluded on other Unix targets.
 Windows is unsupported and not planned; see [platform scope](adr/007-unix-platform-scope.md).
-[Validation](validation.md) records
-the current local results and historical dependency/toolchain refresh evidence.
 Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
@@ -25,6 +19,22 @@ bash scripts/verify.sh             # Subsequent locked checks.
 
 Python 3.9 or newer is required by the scheduling subprocess tests, including plain
 `cargo test`; the verification script checks that prerequisite before running Rust.
+Workspace tests also require permission to create Unix subprocesses and bind and
+connect IPv4 loopback TCP sockets. The example readiness tests run automatically
+under `--all-targets`; they are not ignored and contact only test-owned listeners
+on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
+HTTP process smoke commands remain a separate required step.
+
+HTTP text assertions check completion fields after the completion message; span
+fields cannot satisfy the event-field oracle. `scripts/test_smoke_http.py` includes
+negative controls for missing and conflicting event fields even when the span
+contains every expected value. It runs in the existing Python discovery command.
+Its operation-filter controls reject INFO completions with or without the
+example formatter's timestamp, while allowing WARN deadline completions and
+application INFO events. Nested-observer redaction checks cover the full capture,
+including lines outside the HTTP completions.
+The live readiness fixture awaits teardown before checking results and reports
+the saved request, supervisor and server outcomes together if any failed.
 
 The script checks isolated `-p batter --no-default-features` library compilation
 and core tests, all workspace targets, doctests, Clippy with warnings denied,
@@ -37,6 +47,10 @@ CI targets MSRV 1.94.0, the pinned 1.98.1 toolchain, and stable. Until a lockfil
 bootstrap path explicitly generates one and formats in the checkout. Once the
 validated lockfile is committed, CI uses the strict nonmutating path. Record
 actual results; the YAML file has not itself run on a hosted runner here.
+Both Linux and macOS workflows run the five HTTP smoke modes, including the two
+WARN-filtered profiles. The macOS workflow additionally runs the adapter's
+integration and live example tests. This configuration does not establish a
+successful macOS or hosted execution of the changes.
 
 The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
 at warning level in all four packages. Root `clippy.toml` sets their thresholds to
@@ -149,6 +163,14 @@ receipt are excluded.
 | Configured envelope/status/headers, original trusted metadata on timeout/cancellation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Ordinary INFO completion, scoped context and error redaction | [core telemetry](../crates/batter/tests/telemetry.rs) |
 | Actual HTTP status and request/error redaction | [HTTP telemetry](../crates/batter-axum/tests/telemetry.rs) |
+| Independent HTTP observation and complete-router coverage | [Composition](../crates/batter-axum/tests/observation/composition.rs): startup/ready/drain, probes, fallback, rejection, application errors, new routes, trusted correlation and redaction. |
+| HTTP event fields independent of span filtering | [Event fields](../crates/batter-axum/tests/observation/event_fields.rs): direct event visitors check typed fields at all severities, WARN/ERROR with INFO spans disabled, admission rejection, unmatched routes and future destruction under another ambient subscriber. |
+| Observation filtering and middleware order | [Composition edges](../crates/batter-axum/tests/observation/composition_edges.rs): DEBUG/TRACE overrides suppressed by INFO with a WARN positive control, outer status/severity rewriting after observation, and retained overrides read by each nested observer. |
+| HTTP context ownership and handler unwinds | [Correlation](../crates/batter-axum/tests/observation/correlation.rs): mixed target filters, interleaved completion/drop under other spans/subscribers, retained parent lifetime, untouched application fields, no replacement of an absent parent, propagated task panic, cancelled admitted context and sanitized dropped observations. |
+| Example readiness policy over real HTTP | [Example tests](../crates/batter-axum/examples/http_service/tests.rs): the actual router's Starting/Ready/Draining/Stopped statuses and event levels with generated request correlation. A separately owned listener stays available through all phases; this does not prove the binary's connection shutdown timing. |
+| Explicit HTTP observation severity | [Severity](../crates/batter-axum/tests/observation/severity.rs): all five event levels, preserved defaults/status/outcome/identity/response data, expected readiness vs unrelated unguarded failure, custom rendering, middleware override replacement/removal and ignored request-side hints. Rendering tests include forced cancellation with an ERROR override on a 429; lifetime tests keep dropped futures at WARN despite an annotated response constructed but never returned. |
+| Split/legacy rendering and request lifetime | [Rendering](../crates/batter-axum/tests/observation/rendering.rs) and [lifetime](../crates/batter-axum/tests/observation/lifetime.rs): actual custom status, original metadata, timeout, forced cancellation, inert unpolled futures, cross-subscriber abort/destruction, context cancellation and post-response body drop. |
+| Axum middleware placement and observation ownership | [Placement](../crates/batter-axum/tests/observation/placement.rs): existing vs late-added routes, pre-routing missing metadata, observation-free admission and explicit duplicate observations when wrapping the legacy middleware. |
 | Operation abort; public wrapper capture at call, unpolled destruction, borrowed/non-Send work | [core dispatch](../crates/batter/tests/scoped_dispatch.rs) |
 | HTTP abort under another subscriber, including nested span destruction | [HTTP dispatch](../crates/batter-axum/tests/scoped_dispatch.rs) |
 | Unpolled !Unpin future capture and nested span destruction under its saved dispatcher | [private wrapper](../crates/batter/src/scoped_dispatch.rs) |
@@ -517,15 +539,28 @@ cargo build -p batter-axum --example http_service --locked
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+cargo test -p batter-axum --example http_service --locked
 cargo run -p batter --locked --example process_owned
 cargo run -p batter --locked --example operation_budget
 ```
 
-The smoke script starts its own local process and probes `/live`, `/ready`, and
-`/work`. Normal mode verifies an application 500; deadline mode verifies the
+The smoke script starts its own local process and probes `/live`, `/ready`,
+`/work`, and an unmatched fallback. It requires exactly one HTTP completion with
+the correct route/status for each tested server-generated request ID, including
+probes and fallback; raw unmatched paths/queries must not appear in telemetry. Normal mode verifies an application 500; deadline mode verifies the
 middleware 503. Both check the shared error envelope, nonempty generated
 correlation ID/header, rejection of untrusted correlation input, and default INFO
 completion/status/latency logs. It sends the selected signal and requires exit 0.
+The `--warn-filter` profile sets `RUST_LOG=info,batter=warn`, requires INFO HTTP
+and operation completion events to be absent (WARN operation failures remain
+allowed), and requires each 5xx WARN event to retain its request ID
+and all HTTP fields with the HTTP span disabled. The example test separately
+drives acknowledged lifecycle transitions over a live loopback listener to prove
+the exact Starting/Draining INFO and Stopped WARN readiness policy under both INFO
+and mixed-target filtering. It checks generated identities per response, expected
+absence of filtered INFO events, and the retained identity on Stopped WARN events.
 Readiness now acknowledges installed signal listeners, so there is no extra
 sleep before signalling. It is intentionally
 not a streaming/disconnect/load suite. It never contacts a user deployment.

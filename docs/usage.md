@@ -122,7 +122,12 @@ production. Provider-directed delays remain a lower bound after jitter. Existing
 
 ## Application HTTP envelopes
 
-Import `RequestPolicy`, `HttpFailure`, and `request_scope` from `batter_axum`.
+Import `RequestPolicy`, `HttpFailure`, `request_admission` and `observe_http`
+from `batter_axum`. Apply admission to business routes and observation to the
+complete router after merging probes and fallback. Keep trusted identity outside
+observation. Routes added after the observer layer bypass it; assemble first.
+`request_scope` remains the combined compatibility middleware. Replace it with
+`request_admission` when adding outer observation to avoid two HTTP events.
 Select the separate `batter-axum` dependency; the foundation has no HTTP feature.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
@@ -134,8 +139,20 @@ Applications remain responsible for ID uniqueness requirements and trust policy.
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their
 own contract. Keep HTTP status/outcome observations separate from whether the
-handler successfully constructed a response. An ordinary INFO fmt subscriber
-receives completion events without enabling span events or logging raw causes.
+handler successfully constructed a response. With default severity, an ordinary
+INFO fmt subscriber receives completion events without enabling span events or
+logging raw causes.
+
+To select severity for a specific response, import `HttpObservationLevel` and
+return `(axum::Extension(HttpObservationLevel(tracing::Level::INFO)), response)`.
+Set this in a handler, failure renderer or middleware inside observation. This
+can make an expected readiness failure informational while preserving 503,
+`http_outcome="server_error"`, sanitized fields and one completion event. Both
+observers honor it; `RequestPolicy` needs no severity configuration. Unannotated
+5xx and dropped futures remain WARN, other unannotated responses remain INFO.
+The span stays INFO. If selecting DEBUG/TRACE, enable those levels on the
+subscriber. Status/outcome-based alert rules still need application-owned probe
+filtering; lowering severity does not reclassify an HTTP result.
 
 ## Adapter tracing context
 

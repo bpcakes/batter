@@ -32,7 +32,7 @@ See [ADR-007](docs/adr/007-unix-platform-scope.md) and
 | `retry` | Fresh attempts, explicit replay authorization, capped backoff with optional injected jitter, provider delay lower bounds, retained last error. |
 | `admission` | Native Tokio semaphore permits with reject-or-wait policy; waiting uses the existing deadline. |
 | `telemetry` | Stable operation outcomes, elapsed time, attempt/task/cleanup events through `tracing`; no global subscriber installation. |
-| `batter-axum` | Readiness gate, request deadline/context, configurable sanitized error rendering, HTTP status/latency events, separate probes. |
+| `batter-axum` | Readiness gate, request deadline/context, configurable sanitized error rendering, independent HTTP observation covering probes/fallback with explicit response severity, combined compatibility middleware. |
 | `batter-test-support` | Scripted dependency results and preservation of both test-body and cleanup errors. |
 
 The virtual workspace has three library packages and one unpublished example:

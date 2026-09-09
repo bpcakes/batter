@@ -1,15 +1,23 @@
 # Implementation status
 
-Updated: 2026-09-08. The baseline Rust verification matrix has execution evidence
+Updated: 2026-09-09. The baseline Rust verification matrix has execution evidence
 on 1.94.0 and 1.98.1 on Linux x86_64 and macOS arm64 with the refreshed lockfile.
-The added scheduling suite has Linux execution evidence; macOS execution of that
-suite remains unverified. There are no hidden implemented adapters
+The added scheduling suite has Linux execution evidence; its macOS execution
+remains unverified. The independent HTTP observation APIs and response severity
+overrides, retained correlation context and handler-unwind contract have Linux
+two-toolchain and smoke evidence; macOS execution of those changes remains
+unverified. There are no hidden implemented adapters
 behind the capability rows. See [validation](validation.md) for execution evidence
 and limits; local checks do not establish production or hosted CI validation.
 The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains current
 capabilities and deliberate differences from the broader proposal. This page
 records implemented facts and limits; [Beads](roadmap.md) owns delivery status,
 priorities, acceptance and dependencies.
+
+CI now configures adapter runtime tests and all five HTTP process smoke profiles
+on macOS, and includes both WARN-filtered profiles on Linux. The added filtering,
+middleware-order and readiness-phase regressions have Linux execution evidence;
+the updated hosted/macOS workflow remains unexecuted.
 
 | Concern | Source status | Evidence / boundary |
 | --- | --- | --- |
@@ -36,11 +44,11 @@ priorities, acceptance and dependencies.
 | Finalization reserves and injected jitter | Implemented | Sibling phase contexts, deterministic samples, provider floor; neither masking nor fleet coordination. |
 | Attempt deadlines and retry tokens | Not implemented | Current retry execution has one total budget. |
 | Circuit breaking and fallback | Not implemented | No measured consumer requirement has established a shared abstraction. |
-| Tracing conventions | Implemented | INFO/WARN completion events, HTTP status/outcome/latency; scoped dispatch survives owned-future destruction and nested spans. No exporter or metric backend. |
+| Tracing conventions | Implemented | Default INFO/WARN completion events, HTTP status/outcome/latency; explicit `HttpObservationLevel` response extensions select HTTP event severity while retaining actual status/outcome and event count. Dropped futures remain WARN. HTTP events retain their own sanitized fields when INFO spans are disabled ([event-field tests](../crates/batter-axum/tests/observation/event_fields.rs)). Observation retains its first-poll available parent through execution/destruction without overwriting application fields or adopting later ambient identity ([correlation tests](../crates/batter-axum/tests/observation/correlation.rs)). [Severity tests](../crates/batter-axum/tests/observation/severity.rs). Scoped dispatch survives owned-future destruction and nested spans. No exporter or metric backend. |
 | Public adapter dispatch seam | Implemented | `telemetry::with_current_dispatch` captures the current subscriber at the call, preserves polling/destruction, and accepts borrowed/non-Send work; [direct tests](../crates/batter/tests/scoped_dispatch.rs). It does not capture the current span or own a task. |
-| Axum middleware/probes | Implemented, separate package | `batter_axum` retains combined readiness/deadline policy. Bounds response construction, not streaming; fixed server budget. |
+| Axum middleware/probes | Implemented, separate package | `observe_http` independently covers assembled probes/fallback and rejections; `request_admission` retains the combined readiness/deadline policy. `request_scope` preserves combined behavior. Each observer emits its own event; late-added routes bypass a router layer. [Composition/destruction tests](../crates/batter-axum/tests/observation.rs). Bounds response construction, not streaming; fixed server budget. Filtering, nested overrides, outer response rewriting and unavailable-phase route/method behavior have regression coverage. The actual example readiness router is tested over loopback under INFO and mixed filters. Text oracles require event-local HTTP fields; nested-observer redaction covers the full capture, and filtered process smokes reject INFO operation completions while allowing WARN failures. Readiness test failures retain request and teardown diagnostics together. Execution evidence in [validation](validation.md). |
 | Typed HTTP infrastructure errors | Implemented | Stable codes and basic Problem JSON or a configured application renderer; no app-wide domain taxonomy or comprehensive RFC conformance test. |
-| HTTP handler panic recovery | Not implemented | Owned task/cleanup panic observation does not convert handler panics into HTTP 500s. Default panic-hook output remains separate. |
+| HTTP handler panic contract | Propagation tested; recovery not implemented | Handler unwinds propagate as task panics, cancel admitted context and emit one sanitized WARN dropped observation without a status. No automatic HTTP 500 or catcher. Default panic-hook output remains separate. [Tests](../crates/batter-axum/tests/observation/correlation.rs). |
 | Request metadata / ambient context | Partial example only | Explicit deadline/cancellation extension plus example-generated request IDs; no task-local tenant/principal context or inbound trace-parent handling. |
 | Configuration framework / secret types | Not implemented | Only operational argument validation and example env parsing. |
 | SQLx native pool integration | Example package only | `batter-example-postgres-lifecycle`: connection, probe, pool close, partial-startup pattern; no pool wrapper or SQLx dependency in the foundation. |

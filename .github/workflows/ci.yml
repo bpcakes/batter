@@ -23,6 +23,16 @@ jobs:
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
         run: cargo test -p batter --test non_yielding --test scheduling --locked
+      - name: Exercise HTTP adapter and live readiness contracts
+        run: cargo test -p batter-axum --all-targets --locked
+      - name: Build and smoke-test the HTTP example
+        run: |
+          cargo build -p batter-axum --example http_service --locked
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
 
   verify:
     runs-on: ubuntu-latest
@@ -51,3 +61,5 @@ jobs:
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
           python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+          python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline

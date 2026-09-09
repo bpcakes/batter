@@ -251,6 +251,127 @@ See [validation](validation.md) for executed checks and remaining limitations.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
 
+## Independent HTTP observation reviewed: 2026-09-08
+
+Resolved and checked Axum 0.8.9 in Cargo.lock and the local Cargo source.
+The current primary documentation also identifies 0.8.9:
+
+- [Router::layer source documentation](https://docs.rs/crate/axum/latest/source/src/docs/routing/layer.md):
+  middleware covers previously assembled routes/fallback and runs after routing.
+  Routes added afterward are not covered.
+- [Router::route_layer source documentation](https://docs.rs/crate/axum/latest/source/src/docs/routing/route_layer.md):
+  middleware runs on matching routes, allowing unmatched fallback to retain its
+  response instead of receiving an admission rejection.
+- `axum-0.8.9/src/routing/path_router.rs`, `call_with_state`, inserts MatchedPath
+  for a matched non-fallback route before invoking its endpoint. Inspection and
+  the local [placement tests](../crates/batter-axum/tests/observation/placement.rs)
+  establish that a service wrapper outside routing has no matched template at
+  observer entry. It records `<unmatched>` without substituting a raw URI.
+
+These semantics determine the assembled-router observer placement. Public
+`observe_http` and `request_admission` are additive; `request_scope` remains a
+combined wrapper and nested observers are not deduplicated. No upstream version
+or Cargo.lock change is required. Destruction and event-count evidence belongs
+in [validation](validation.md), not in upstream documentation claims.
+
+## HTTP observation severity reviewed: 2026-09-09
+
+Resolved Axum 0.8.9 and tracing 0.1.44 remain unchanged in Cargo.lock.
+[Axum Extension response documentation](https://docs.rs/axum/latest/axum/struct.Extension.html#as-response)
+identifies 0.8.9 and describes response extensions as application-to-middleware
+metadata. The local `axum-0.8.9/src/extension.rs` implements IntoResponseParts by
+inserting T into the response extensions; its Layer implementation instead
+inserts into request extensions. Batter uses only the response-side value.
+
+[Tower HTTP failure classification](https://docs.rs/tower-http/latest/tower_http/classify/struct.ServerErrorsAsFailures.html)
+and [DefaultOnFailure::level](https://docs.rs/tower-http/latest/tower_http/trace/struct.DefaultOnFailure.html#method.level),
+identifying 0.7.1 when reviewed, provide a comparison: 5xx responses are failures,
+while event severity is configurable (default ERROR). Tower HTTP is not a
+dependency of Batter; this comparison does not claim equivalent lifetimes.
+
+[OpenTelemetry HTTP span status](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status)
+(semantic conventions 1.44.0 when reviewed) generally recommends Error for 5xx
+and permits more precise classification with additional request context.
+[Log severity](https://opentelemetry.io/docs/specs/otel/logs/data-model/#field-severitynumber)
+is a separate field; these specifications do not prescribe WARN for a readiness
+503. Batter retains its existing HTTP status-class outcome and makes only event
+severity explicit. This is not a claim of OpenTelemetry instrumentation.
+
+[Kubernetes probes](https://kubernetes.io/docs/concepts/workloads/pods/probes/)
+describe readiness for initialization, maintenance and temporary unavailability;
+readiness failure controls traffic and need not require restarting the process.
+The observer cannot infer whether a particular failure is expected. Application
+policy supplies `HttpObservationLevel` on the completed response. The runnable
+example treats Starting/Draining readiness responses as INFO, leaving Stopped at
+the normal 503/WARN default. HTTP status/outcome alerts still need probe policy.
+
+[EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+selects enabled events by level and other directives; it does not rewrite event
+severity. The resolved tracing-subscriber 0.3.23 test fixture captures all five
+selected levels; the default INFO subscriber remains the ordinary test baseline.
+
+## HTTP event fields and span filtering: 2026-09-09
+
+Rechecked Cargo.lock and installed sources: tracing 0.1.44, tracing-core 0.1.36,
+tracing-subscriber 0.3.23 and Axum 0.8.9 are unchanged. The versioned
+[Span documentation](https://docs.rs/tracing/0.1.44/tracing/struct.Span.html#method.new_disabled)
+says recording on a disabled span does not notify the subscriber. Therefore an
+enabled completion event cannot rely on a separately filtered span for its fields.
+Local tracing-core 0.1.36 `event.rs` exposes event fields through `Event::record`;
+`field.rs` implements `Value for Option<T>` by recording only `Some` values. The
+HTTP event uses that behavior to omit status when no response exists. Local Axum
+0.8.9 `extract/matched_path.rs` stores the cloneable route template in `Arc<str>`,
+so retaining `MatchedPath` does not retain the raw request or add a copied path.
+Direct event-visitor regressions exercise these semantics without span formatting.
+
+## HTTP context ownership and panic policy: 2026-09-09
+
+Before implementation, rechecked the unchanged resolved Axum 0.8.9, Tower 0.5.3,
+tracing 0.1.44, tracing-core 0.1.36 and tracing-subscriber 0.3.23 sources and
+primary documentation:
+
+- [`Span::or_current`](https://docs.rs/tracing/0.1.44/tracing/struct.Span.html#method.or_current)
+  explicitly supports retaining the current span when a child span is disabled.
+  `Span::current` clones its span handle and subscriber. Batter selects this
+  context at first poll, not from whichever request is current at completion or
+  destruction. The HTTP field span remains separate to avoid recording into the
+  inherited application's fields.
+- [`Event::new_child_of`](https://docs.rs/tracing-core/0.1.36/tracing_core/struct.Event.html#method.new_child_of)
+  and local `event.rs` distinguish an explicit absent parent (`Parent::Root`)
+  from contextual parenting. Thus using a disabled HTTP span as an explicit
+  parent loses an enabled application parent; removing the explicit parent or
+  finding a fallback at Drop can instead adopt another request's identity.
+- [`Instrument`](https://docs.rs/tracing/0.1.44/tracing/trait.Instrument.html)
+  and local `instrument.rs` enter the retained span during polling and inner
+  destruction. Batter's existing dispatcher wrapper additionally protects full
+  destruction. No second pin/drop mechanism or foundation API change is needed.
+- [`EnvFilter`](https://docs.rs/tracing-subscriber/0.3.23/tracing_subscriber/filter/struct.EnvFilter.html)
+  supports target directives and per-layer filtering. Local `layer/context.rs`
+  resolves explicit event parents through the layer's span visibility. Retaining
+  globally available context does not force every sink to display it. Event
+  fields and HTTP span fields remain intentionally duplicated for their distinct
+  uses; flattening/exporter conventions remain application-owned.
+- [Tower HTTP 0.7.0 panic middleware](https://docs.rs/tower-http/0.7.0/tower_http/catch_panic/index.html)
+  provides opt-in conversion of handler panics to responses. It was inspected,
+  not added as a dependency. Batter keeps Axum/Tower's existing propagation:
+  an unwind before a response emits a sanitized dropped observation and cancels
+  admitted context, without inventing an HTTP status. The default panic hook can
+  still print the payload, and aborting panics are outside unwinding guarantees.
+
+The consumer composition and related metadata/exporter tasks confirm that trusted
+identity and sink policy belong to applications. Native `tracing::Level` and all
+five explicit response levels remain appropriate; no severity floor, duplicate
+level type, panic catcher or ambient identity abstraction is introduced. Tests
+exercise both independent observation and the retained combined entry point.
+The broader connection/streaming work stays with its owning transport task.
+
+The follow-up composition tests rechecked resolved Axum 0.8.9's local
+`routing/path_router.rs` and `routing/method_routing.rs`: `Router::route_layer`
+maps each matched path endpoint through `layer`, including its method fallback.
+This differs from `MethodRouter::route_layer`, which wraps only registered methods.
+The tested router therefore rejects a matched unsupported method through admission
+while unavailable, and returns 405 while Ready. No package version changed.
+
 ## HTTP, SQL, and observability
 
 - [Axum middleware from_fn_with_state](https://docs.rs/axum/latest/axum/middleware/fn.from_fn_with_state.html).

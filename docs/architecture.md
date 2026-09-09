@@ -77,6 +77,22 @@ an expiring HTTP cancellation token or serialize a Tokio Instant. Persist safe
 correlation metadata and give each job its own policy. Runledger owns leasing,
 retries, scheduling, recovery, and its own internal supervisor.
 
+## HTTP observation ownership
+
+The adapter separates response observation from admission/deadline policy, since
+probes and rejected or unmatched requests still need observations. The observer
+owns response facts, the first-poll dispatcher and a retained context span. Its
+INFO span is optional diagnostics: filtering it must not erase event fields or
+an available application parent. At first poll, `Span::or_current` selects the
+HTTP span or current application span for execution and event parenting. A later
+poll or destructor cannot substitute another request's ambient identity. HTTP
+field recording targets only the original HTTP span, leaving application fields
+untouched. Sink-specific filtering and formatting remain application-owned.
+
+This uses native tracing handles and the foundation's existing dispatcher wrapper;
+it introduces no identity service or second async ownership mechanism. Handler
+unwinds follow the same dropped-response observation path and propagate normally.
+
 ## Composition and readiness
 
 Acquire dependencies in an explicit composition root. Register each resource's
