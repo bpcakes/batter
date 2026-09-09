@@ -302,6 +302,7 @@ class MatrixTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["test_matrix.py"]), \
                 mock.patch.object(matrix, "CORE_CHECK", command), \
                 mock.patch.object(matrix, "RUNNER_TESTS", python("print('peer completed')")), \
+                mock.patch.object(matrix, "SMOKE_TESTS", python("print('smoke peer completed')")), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             self.assertEqual(matrix.main(), 1)
         rendered = stdout.getvalue()
@@ -309,6 +310,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("FINAL_TEST_FAILURE\n", rendered)
         self.assertIn("failure details\n", rendered)
         self.assertIn("peer completed\n", rendered)
+        self.assertIn("smoke peer completed\n", rendered)
         self.assertIn(parallel.Capture.OMITTED.decode(), rendered)
         self.assertIn('"overflow": true', stderr.getvalue())
         self.assertIn('"status": 7', stderr.getvalue())
@@ -326,8 +328,10 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "run_parallel", execute), \
                 mock.patch.object(matrix, "render_outcomes"):
             self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [2, 2, 1])
+        self.assertEqual([len(batch) for batch in batches], [3, 2, 1])
         self.assertIn("--no-default-features", batches[0][0])
+        self.assertIn("test_parallel_process.py", batches[0][1])
+        self.assertIn("scripts/test_smoke_postgres.py", batches[0][2])
         self.assertIn("--no-default-features", batches[1][0])
         self.assertIn("--all-targets", batches[1][1])
         self.assertIn("--workspace", batches[1][1])
@@ -335,16 +339,24 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(all("--locked" in command for batch in batches for command in batch
                             if command[0] == "cargo"))
 
-    def test_failure_of_either_runtime_configuration_stops_doctests(self):
+    def test_failure_of_any_prerequisite_or_runtime_pass_stops_later_batches(self):
         success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
         failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
-        for results in ([failure, success], [success, failure]):
-            with mock.patch.object(sys, "argv", ["test_matrix.py"]), \
+        batches = [
+            [[failure, success, success]],
+            [[success, failure, success]],
+            [[success, success, failure]],
+            [[success, success, success], [failure, success]],
+            [[success, success, success], [success, failure]],
+        ]
+        for results in batches:
+            with self.subTest(results=results), \
+                    mock.patch.object(sys, "argv", ["test_matrix.py"]), \
                     mock.patch.object(matrix, "run_parallel",
-                                      side_effect=[[success, success], results]) as execute, \
+                                      side_effect=results) as execute, \
                     mock.patch.object(matrix, "render_outcomes"):
                 self.assertEqual(matrix.main(), 1)
-                self.assertEqual(execute.call_count, 2)
+                self.assertEqual(execute.call_count, len(results))
 
 
 class MutationCopyTests(unittest.TestCase):

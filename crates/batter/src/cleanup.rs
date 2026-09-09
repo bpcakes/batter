@@ -107,7 +107,17 @@ pub struct SkippedCleanup {
 }
 
 /// All teardown outcomes; a first error does not conceal later errors.
+/// Inspect the report even after awaiting cleanup: completion can contain failures.
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter::cleanup::{CleanupBudget, CleanupStack};
+/// async fn ignored(stack: CleanupStack, budget: CleanupBudget) {
+///     stack.close(budget).await;
+/// }
+/// ```
 #[derive(Debug, Default)]
+#[must_use = "inspect the report for failures and incomplete cleanup"]
 pub struct CleanupReport {
     /// Attempted hooks in LIFO order.
     pub records: Vec<CleanupRecord>,

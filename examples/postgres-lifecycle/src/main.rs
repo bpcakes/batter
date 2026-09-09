@@ -1,15 +1,17 @@
 //! Native SQLx pool lifecycle and error-preserving partial-startup cleanup.
 //! No Runledger schema is created here. No business transaction is retried.
 mod support;
+#[cfg(test)]
+mod tests;
 
 use batter::{
     BoxError,
     cleanup::CleanupReport,
-    lifecycle::{ShutdownReport, Supervisor},
+    lifecycle::{SharedShutdownReport, Supervisor},
     operation::OperationContext,
 };
-use sqlx::postgres::PgPoolOptions;
-use std::{fmt, sync::Arc, time::Duration};
+use sqlx::{PgPool, postgres::PgPoolOptions};
+use std::{fmt, io::Write, process::ExitCode, time::Duration};
 
 #[derive(thiserror::Error)]
 #[error("process failed")]
@@ -39,7 +41,7 @@ impl fmt::Debug for StartupFailure {
 }
 
 struct ShutdownFailure {
-    report: Arc<ShutdownReport>,
+    report: SharedShutdownReport,
 }
 
 impl fmt::Debug for ShutdownFailure {
@@ -50,13 +52,13 @@ impl fmt::Debug for ShutdownFailure {
 
 impl fmt::Display for ShutdownFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "shutdown failed; {}", self.report)
+        write!(f, "shutdown failed; {}", *self.report)
     }
 }
 
 impl std::error::Error for ShutdownFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.report.as_ref())
+        Some(&*self.report)
     }
 }
 
@@ -64,23 +66,7 @@ fn process_result(result: Result<(), BoxError>) -> Result<(), ProcessFailure> {
     result.map_err(|cause| ProcessFailure { cause })
 }
 
-async fn complete_startup(
-    mut supervisor: Supervisor,
-    startup: Result<(), BoxError>,
-) -> Result<Supervisor, BoxError> {
-    match startup {
-        Ok(()) => Ok(supervisor),
-        Err(cause) => {
-            let cleanup = supervisor
-                .take_cleanup()
-                .close(support::cleanup_budget())
-                .await;
-            Err(Box::new(StartupFailure { cause, cleanup }))
-        }
-    }
-}
-
-fn complete_shutdown(report: Arc<ShutdownReport>) -> Result<(), BoxError> {
+fn complete_shutdown(report: SharedShutdownReport) -> Result<(), BoxError> {
     if report.is_success() {
         Ok(())
     } else {
@@ -89,8 +75,21 @@ fn complete_shutdown(report: Arc<ShutdownReport>) -> Result<(), BoxError> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), ProcessFailure> {
-    process_result(run().await)
+async fn main() -> ExitCode {
+    report_exit(run().await, &mut std::io::stderr().lock())
+}
+
+fn report_exit(result: Result<(), BoxError>, diagnostics: &mut impl Write) -> ExitCode {
+    match process_result(result) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => {
+            // Retain the complete failure for an application-selected trusted
+            // sink. Only this known wrapper's fixed Display reaches stderr.
+            // A failed diagnostic write must not turn a failure into success.
+            let _ = writeln!(diagnostics, "Error: {failure}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 async fn run() -> Result<(), BoxError> {
@@ -102,11 +101,7 @@ async fn run() -> Result<(), BoxError> {
         .acquire_timeout(Duration::from_secs(3))
         .connect(&database_url)
         .await?;
-    let closing_pool = pool.clone();
-    supervisor.on_cleanup("postgres.pool", move || async move {
-        closing_pool.close().await;
-        Ok(())
-    })?;
+    register_pool_close(&mut supervisor, &pool)?;
 
     let startup: Result<(), BoxError> = async {
         // Schema compatibility/migrations are application-owned and explicit.
@@ -131,160 +126,34 @@ async fn run() -> Result<(), BoxError> {
         Ok(())
     }
     .await;
-    let supervisor = complete_startup(supervisor, startup).await?;
-    supervisor.handle().mark_ready();
-    let running = supervisor.start();
-    let report = running.wait().await?;
-    complete_shutdown(report)
+    complete_startup(supervisor, startup).await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use batter::{
-        cleanup::CleanupOutcome,
-        lifecycle::{ShutdownCause, TaskOutcome},
-    };
+fn register_pool_close(supervisor: &mut Supervisor, pool: &PgPool) -> Result<(), BoxError> {
+    let closing_pool = pool.clone();
+    supervisor.on_cleanup("postgres.pool", move || async move {
+        closing_pool.close().await;
+        Ok(())
+    })?;
+    Ok(())
+}
 
-    const STARTUP_DETAIL: &str = "sensitive startup detail";
-    const CLEANUP_DETAIL: &str = "sensitive cleanup detail";
-    const SHUTDOWN_DETAIL: &str = "sensitive shutdown detail";
-    const SHUTDOWN_CLEANUP_DETAIL: &str = "sensitive shutdown cleanup detail";
-
-    fn assert_process_error_is_redacted(error: &ProcessFailure, details: &[&str]) {
-        assert_eq!(error.to_string(), "process failed");
-        let debug = format!("{error:?}");
-        assert_eq!(debug, "process failed");
-        for detail in details {
-            assert!(!debug.contains(detail));
-        }
+async fn complete_startup(
+    mut supervisor: Supervisor,
+    startup: Result<(), BoxError>,
+) -> Result<(), BoxError> {
+    if let Err(cause) = startup {
+        let cleanup = supervisor
+            .take_cleanup()
+            .close(support::cleanup_budget())
+            .await;
+        return Err(Box::new(StartupFailure { cause, cleanup }));
     }
-
-    #[test]
-    fn process_boundary_retains_and_redacts_an_early_failure() {
-        let result: Result<(), BoxError> = Err(std::io::Error::other(STARTUP_DETAIL).into());
-        let error = process_result(result).expect_err("early failure must reach the boundary");
-        let source = std::error::Error::source(&error)
-            .expect("the concrete early failure must remain the source");
-
-        assert!(std::ptr::addr_eq(source, error.cause.as_ref()));
-        assert_eq!(source.to_string(), STARTUP_DETAIL);
-        assert_process_error_is_redacted(&error, &[STARTUP_DETAIL]);
+    supervisor.handle().mark_ready();
+    let running = supervisor.start();
+    if running.handle().wait_ready().await.is_ok() {
+        tracing::info!("PostgreSQL lifecycle ready");
     }
-
-    #[tokio::test]
-    async fn startup_failure_path_retains_real_cleanup_diagnostics() {
-        let mut supervisor = Supervisor::new(support::shutdown_budget());
-        supervisor
-            .on_cleanup("dependency", || async { Ok(()) })
-            .unwrap();
-        supervisor
-            .on_cleanup("resource", || async {
-                Err(std::io::Error::other(CLEANUP_DETAIL).into())
-            })
-            .unwrap();
-
-        let result = complete_startup(
-            supervisor,
-            Err(std::io::Error::other(STARTUP_DETAIL).into()),
-        )
-        .await
-        .map(|_| ());
-        let error = process_result(result).expect_err("startup failure must reach the boundary");
-        let failure = std::error::Error::source(&error)
-            .expect("typed startup failure must remain the process source")
-            .downcast_ref::<StartupFailure>()
-            .expect("typed startup failure must survive BoxError conversion");
-
-        let source = std::error::Error::source(failure)
-            .expect("startup cause must remain in the error source chain");
-        assert!(std::ptr::addr_eq(source, failure.cause.as_ref()));
-        assert_eq!(source.to_string(), STARTUP_DETAIL);
-        assert_eq!(failure.cleanup.records.len(), 2);
-        assert_eq!(failure.cleanup.records[0].name, "resource");
-        assert_eq!(failure.cleanup.records[0].outcome, CleanupOutcome::Failed);
-        assert_eq!(
-            failure.cleanup.records[0]
-                .error
-                .as_deref()
-                .expect("cleanup error must be retained")
-                .to_string(),
-            CLEANUP_DETAIL
-        );
-        assert_eq!(failure.cleanup.records[1].name, "dependency");
-        assert_eq!(
-            failure.cleanup.records[1].outcome,
-            CleanupOutcome::Succeeded
-        );
-        assert!(failure.cleanup.skipped.is_empty());
-
-        let diagnostic = format!("{failure:?}");
-        assert_eq!(
-            diagnostic,
-            "startup failed; cleanup: 1 unsuccessful, 0 skipped"
-        );
-        assert!(!diagnostic.contains(STARTUP_DETAIL));
-        assert!(!diagnostic.contains(CLEANUP_DETAIL));
-        assert_process_error_is_redacted(&error, &[STARTUP_DETAIL, CLEANUP_DETAIL]);
-    }
-
-    #[tokio::test]
-    async fn shutdown_failure_path_retains_the_complete_report() {
-        let mut supervisor = Supervisor::new(support::shutdown_budget());
-        supervisor
-            .on_cleanup("resource", || async {
-                Err(std::io::Error::other(SHUTDOWN_CLEANUP_DETAIL).into())
-            })
-            .unwrap();
-        supervisor
-            .register("component", |shutdown| async move {
-                shutdown.mark_started();
-                Err(std::io::Error::other(SHUTDOWN_DETAIL).into())
-            })
-            .unwrap();
-
-        let running = supervisor.start();
-        let report = running
-            .wait()
-            .await
-            .expect("component failure must still publish a shutdown report");
-        let error = process_result(complete_shutdown(report))
-            .expect_err("unsuccessful shutdown must reach the process boundary");
-        let failure = std::error::Error::source(&error)
-            .expect("typed shutdown failure must remain the process source")
-            .downcast_ref::<ShutdownFailure>()
-            .expect("typed shutdown failure must survive BoxError conversion");
-        let report_source = std::error::Error::source(failure)
-            .expect("shutdown report must remain in the error source chain");
-
-        assert!(std::ptr::addr_eq(report_source, failure.report.as_ref()));
-        assert_eq!(
-            failure.report.cause,
-            ShutdownCause::ComponentExit("component")
-        );
-        assert_eq!(failure.report.tasks.len(), 1);
-        assert_eq!(failure.report.tasks[0].outcome, TaskOutcome::Failed);
-        assert_eq!(
-            failure.report.tasks[0]
-                .error
-                .as_deref()
-                .expect("task error must be retained")
-                .to_string(),
-            SHUTDOWN_DETAIL
-        );
-        assert_eq!(failure.report.cleanup.records.len(), 1);
-        assert_eq!(
-            failure.report.cleanup.records[0]
-                .error
-                .as_deref()
-                .expect("shutdown cleanup error must be retained")
-                .to_string(),
-            SHUTDOWN_CLEANUP_DETAIL
-        );
-
-        let diagnostic = format!("{failure:?}");
-        assert!(!diagnostic.contains(SHUTDOWN_DETAIL));
-        assert!(!diagnostic.contains(SHUTDOWN_CLEANUP_DETAIL));
-        assert_process_error_is_redacted(&error, &[SHUTDOWN_DETAIL, SHUTDOWN_CLEANUP_DETAIL]);
-    }
+    let report = running.wait().await?;
+    complete_shutdown(report)
 }

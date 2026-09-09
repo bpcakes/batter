@@ -6,6 +6,88 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Exit boundaries and subprocess controls: 2026-09-09
+
+Rechecked Rust 1.98.1's
+[`Termination` implementation for `Result`](https://doc.rust-lang.org/src/std/process.rs.html#2718-2727):
+an error returned from `main` is formatted through Debug. Sanitizing a report's
+Display does not sanitize this path or an arbitrary retained domain error.
+The shared-report example now includes the outer `ExitCode` boundary and fixed
+output. Internal error propagation and concrete source identity are unchanged.
+
+The [rustdoc attribute contract](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html#attributes)
+only requires a `compile_fail` example to fail compilation. The
+[`expect` attribute](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-expect-attribute)
+supports a stronger companion check: require the precise `unused_must_use`
+diagnostic and deny unfulfilled expectations. That check now covers raw cleanup
+and shutdown reports as well as shared owned reports.
+
+Python's [subprocess documentation](https://docs.python.org/3.12/library/subprocess.html#subprocess.Popen.communicate)
+distinguishes output collection, timeout, killing and waiting; a timeout from
+`communicate` does not itself kill a child. Rust's
+[`Child` documentation](https://doc.rust-lang.org/std/process/struct.Child.html)
+likewise states that dropping the handle does not wait for the child. The SQLx
+smoke and configuration tests therefore share the existing Unix process owner
+in `scripts/scheduling_process.py`, including bounded output, process-group
+cleanup and direct-child reaping. A readiness phase selects when to signal and
+starts a separate shutdown deadline. The local Python version is 3.12.3.
+These deadlines cannot preempt process creation, OS scheduling, or destruction
+of the watchdog parent. Synthetic protocol tests do not establish database
+cleanup; live SQLx checks remain separately selected.
+
+## Database lifecycle exit coverage: 2026-09-09
+
+SQLx remains locked to 0.9.0. Its locally cached `sqlx-core/src/pool/mod.rs`
+documents that awaiting `Pool::close` closes idle connections and waits for
+checked-out connections, while later acquisition returns `Error::PoolClosed`.
+The versioned [Pool documentation](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+could not be retrieved; these semantics were checked in the resolved source.
+The live tests use PostgreSQL's documented
+[`22012` division-by-zero SQLSTATE](https://www.postgresql.org/docs/18/errcodes-appendix.html),
+rather than matching a localized server message, to verify concrete cause
+retention. Test provisioning is external and no schema changes are made.
+
+The shared shutdown wrapper retains the concrete report through
+[`Error::source`](https://doc.rust-lang.org/std/error/trait.Error.html#method.source)
+and displays distinct owner context, avoiding a duplicate report summary when
+a diagnostic sink walks that chain. Neither the library nor the example exit
+handler automatically prints that chain.
+
+## Shared shutdown report lint: 2026-09-09
+
+The [Rust must_use reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute)
+defines diagnostics for discarded values of an attributed type; wrapping that
+type does not generally propagate the attribute. The owned driver now returns
+an attributed `SharedShutdownReport` instead of a raw `Arc<ShutdownReport>`.
+Binding or explicitly discarding the wrapper still bypasses the warning.
+The [lint expectation reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-expect-attribute)
+supports controls that fail if the expected lint is absent. Repository tests
+use `expect(unused_must_use)` with `deny(unfulfilled_lint_expectations)` to check
+the actual owned-driver expressions, alongside compile-fail doctests. Executed
+Rust 1.98.1 and 1.94.0 evidence is recorded in [validation](validation.md).
+
+## Error handling corrections: 2026-09-09
+
+Rust 1.98.1's [Result termination implementation](https://doc.rust-lang.org/src/std/process.rs.html#2718-2727)
+prints an Err through Debug. A non-Unicode DATABASE_URL therefore exposes its
+original OsString when propagated directly out of main. The SQLx example now
+returns ExitCode through an explicit sanitized handler, retaining the failure
+object until that boundary. Rust's default panic hook is unaffected.
+
+Checked the resolved thiserror 2.0.20 implementation (`src/aserror.rs` and
+`thiserror-impl/src/expand.rs`) against the [source attribute contract](https://docs.rs/thiserror/2.0.20/thiserror/).
+Marking Arc<E> as the source exposes that wrapper; its delegated source skips E
+itself. The receipt now implements [Error::source](https://doc.rust-lang.org/std/error/trait.Error.html#method.source)
+manually to return E, matching the existing heterogeneous report wrapper.
+
+The locally cached tracing-subscriber 0.3.23 `filter/env/mod.rs` and
+`filter/env/builder.rs` distinguish environment and parse failures in FromEnvError.
+The example uses `EnvFilter::try_new` after explicit environment handling, and
+preserves both kinds of failure while redacting Debug/Display. Only NotPresent
+selects the default. The versioned docs.rs EnvFilter page could not be retrieved;
+these details were checked in the resolved source, not inferred from latest docs.
+No dependency or lockfile changes were needed.
+
 ## Owned completion observers: 2026-09-09
 
 Rechecked Cargo.lock, cached Tokio 1.53.1 source and its pinned documentation.

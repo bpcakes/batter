@@ -16,11 +16,13 @@ RUNTIME_TESTS = [
 DOC_TESTS = ["cargo", "test", "--workspace", "--all-features", "--doc", "--locked"]
 RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                 "-p", "test_parallel_process.py", "-v"]
+SMOKE_TESTS = [sys.executable, "scripts/test_smoke_postgres.py", "-v"]
 
 
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
-    for labels, commands in [(["core-library", "runner-controls"], [CORE_CHECK, RUNNER_TESTS]),
+    for labels, commands in [(["core-library", "runner-controls", "smoke-controls"],
+                              [CORE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
                              (["core-tests", "workspace-tests"], RUNTIME_TESTS),
                              (["doctests"], [DOC_TESTS])]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)

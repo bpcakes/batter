@@ -99,7 +99,7 @@ target = "inherited"
 description = "Run Rust tests."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py", "scripts/smoke_postgres.py", "scripts/test_smoke_postgres.py", "examples/postgres-lifecycle/tests/diagnostics.py"]
 legacy_aliases = ["jig.test"]
 
 [repository.actions.target]
@@ -122,7 +122,7 @@ target = "inherited"
 description = "Run Rust tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py"]
+inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml", "scripts/scheduling_process.py", "scripts/stress_scheduling.py", "scripts/check_scheduling_mutation.py", "scripts/test_scheduling_process.py", "scripts/parallel_process.py", "scripts/scheduling_controls.py", "scripts/test_matrix.py", "scripts/test_parallel_process.py", "scripts/smoke_postgres.py", "scripts/test_smoke_postgres.py", "examples/postgres-lifecycle/tests/diagnostics.py"]
 legacy_aliases = ["jig.test_locked"]
 
 [repository.actions.target]

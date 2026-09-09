@@ -1,13 +1,16 @@
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 #[test]
 fn missing_configuration_exits_with_a_redacted_process_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_postgres_lifecycle"))
-        .env_remove("DATABASE_URL")
-        .output()
-        .expect("example process must start");
-
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert_eq!(output.stderr, b"Error: process failed\n");
+    // Keep the exact stderr/stdout assertions under an external child watchdog.
+    let status = Command::new("python3")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics.py"))
+        .arg("missing-configuration")
+        .arg(env!("CARGO_BIN_EXE_postgres_lifecycle"))
+        .status()
+        .expect("external diagnostic watchdog must execute");
+    assert!(
+        status.success(),
+        "missing-configuration exit control failed"
+    );
 }

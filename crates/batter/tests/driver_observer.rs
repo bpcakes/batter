@@ -64,7 +64,7 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
     assert_eq!(finalized.load(Ordering::SeqCst), 1);
     drop(observer);
     let retained = another_observer.wait().await.unwrap();
-    assert!(Arc::ptr_eq(&report, &retained));
+    assert!(std::ptr::eq(&*report, &*retained));
 }
 
 #[tokio::test(start_paused = true)]
@@ -148,7 +148,7 @@ fn observer_created_after_completion_retains_report_after_owners_and_runtime_dro
             .expect("the late observer must retain the published report")
             .unwrap()
     });
-    assert!(Arc::ptr_eq(&report, &retained));
+    assert!(std::ptr::eq(&*report, &*retained));
 }
 
 #[test]

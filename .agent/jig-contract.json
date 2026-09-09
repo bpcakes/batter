@@ -236,7 +236,10 @@
         "scripts/parallel_process.py",
         "scripts/scheduling_controls.py",
         "scripts/test_matrix.py",
-        "scripts/test_parallel_process.py"
+        "scripts/test_parallel_process.py",
+        "scripts/smoke_postgres.py",
+        "scripts/test_smoke_postgres.py",
+        "examples/postgres-lifecycle/tests/diagnostics.py"
       ],
       "intent": "check",
       "legacy_aliases": [
@@ -292,7 +295,10 @@
         "scripts/parallel_process.py",
         "scripts/scheduling_controls.py",
         "scripts/test_matrix.py",
-        "scripts/test_parallel_process.py"
+        "scripts/test_parallel_process.py",
+        "scripts/smoke_postgres.py",
+        "scripts/test_smoke_postgres.py",
+        "examples/postgres-lifecycle/tests/diagnostics.py"
       ],
       "intent": "check",
       "legacy_aliases": [

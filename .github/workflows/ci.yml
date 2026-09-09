@@ -22,7 +22,12 @@ jobs:
       - name: Compile all workspace targets, including Unix signal examples
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
-        run: cargo test -p batter --test non_yielding --test scheduling --locked
+        run: cargo test -p batter --test non_yielding --test scheduling --test process_ownership --locked
+      - name: Exercise report doctests and database-independent lifecycle exits
+        run: |
+          cargo test -p batter --doc --locked
+          cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --test diagnostics --locked
+          python3 scripts/test_smoke_postgres.py -v
       - name: Exercise HTTP adapter and live readiness contracts
         run: cargo test -p batter-axum --all-targets --locked
       - name: Build and smoke-test the HTTP example

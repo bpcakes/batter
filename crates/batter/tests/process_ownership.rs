@@ -1,3 +1,9 @@
+#[path = "process_ownership/error_sources.rs"]
+mod error_sources;
+
+#[path = "process_ownership/report_usage.rs"]
+mod report_usage;
+
 #[path = "process_ownership/terminal_admission.rs"]
 mod terminal_admission;
 
@@ -401,33 +407,6 @@ async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
 }
 
 #[tokio::test]
-async fn typed_task_failure_and_report_share_the_same_error() {
-    let supervisor = finite_supervisor(1);
-    let process = supervisor.process_handle().unwrap();
-    let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
-    let receipt = process
-        .try_spawn("shared-error", |_| async {
-            Err::<(), _>(std::io::Error::other("retained"))
-        })
-        .unwrap();
-    let ProcessTaskError::Failed(error) = receipt.wait().await.unwrap_err() else {
-        panic!("typed failure must survive")
-    };
-    let report = running.wait().await.unwrap();
-    assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("shared-error"));
-    let source = report.tasks[0]
-        .error
-        .as_ref()
-        .unwrap()
-        .source()
-        .unwrap()
-        .downcast_ref::<std::io::Error>()
-        .unwrap();
-    assert!(std::ptr::eq(error.as_ref(), source));
-}
-
-#[tokio::test]
 async fn finite_factory_panic_is_observed_and_skips_dependent_cleanup() {
     let mut supervisor = finite_supervisor(1);
     supervisor
@@ -591,7 +570,7 @@ async fn cancelling_shutdown_waiter_cannot_cancel_started_cleanup() {
     let first_report = observer.wait().await.unwrap();
     let second_report = observer.clone().wait().await.unwrap();
     assert!(first_report.is_success());
-    assert!(Arc::ptr_eq(&first_report, &second_report));
+    assert!(std::ptr::eq(&*first_report, &*second_report));
     assert!(finalized.load(Ordering::SeqCst));
     assert_eq!(handle.readiness(), Readiness::Stopped);
 }

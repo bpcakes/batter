@@ -2,7 +2,10 @@ use super::support::Case;
 use batter::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
-    lifecycle::{ProcessTaskError, ShutdownBudget, ShutdownReport, Supervisor, TaskOutcome},
+    lifecycle::{
+        ProcessTaskError, SharedShutdownReport, ShutdownBudget, ShutdownReport, Supervisor,
+        TaskOutcome,
+    },
 };
 use std::{
     convert::Infallible,
@@ -43,7 +46,7 @@ pub async fn outcomes(
     case: Case,
     mode: usize,
     completion: impl Future<Output = ()> + Send + 'static,
-) -> Arc<ShutdownReport> {
+) -> SharedShutdownReport {
     let mut supervisor = supervisor();
     let finalized = Arc::new(AtomicBool::new(false));
     let cleanup_flag = finalized.clone();

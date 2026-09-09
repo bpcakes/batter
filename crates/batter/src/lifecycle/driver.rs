@@ -1,12 +1,101 @@
 use super::{ShutdownHandle, ShutdownReport, Supervisor};
 use crate::scoped_dispatch;
-use std::{future::pending, sync::Arc};
+use std::{future::pending, ops::Deref, sync::Arc};
 use tokio::{sync::watch, task::JoinError};
 use tracing::Instrument;
 
 /// An owned driver's retained result, including a coordinator panic/abort.
 /// A JoinError does not establish that asynchronous cleanup completed.
-pub type DriverOutcome = Result<Arc<ShutdownReport>, Arc<JoinError>>;
+/// An Ok report must still be inspected for task and cleanup failures.
+pub type DriverOutcome = Result<SharedShutdownReport, Arc<JoinError>>;
+
+/// A cheaply cloneable reference to an owned driver's completed report.
+///
+/// All observers and clones retain the same report and original failures.
+/// Dereferencing borrows the [`ShutdownReport`]; it does not clone its contents
+/// or extend ownership of the running process. Display identifies the shared
+/// owner; its error source is the concrete report, which displays the summary.
+/// Debug may contain application error contents and is not automatically logged.
+/// In particular, do not let this error escape a `main` returning `Result`:
+/// Rust's [`std::process::Termination`] prints its Debug representation to stderr.
+/// Keep rich errors inside the application and choose output at an explicit
+/// [`std::process::ExitCode`] boundary, as in the PostgreSQL lifecycle example.
+///
+/// `must_use` warns when this value is discarded as an expression, including
+/// after `?` or `unwrap()`. Binding or explicitly dropping it bypasses the lint;
+/// the compiler cannot prove that a caller inspected the outcomes.
+///
+/// ```no_run
+/// #![deny(unused_must_use)]
+/// use batter::{BoxError, lifecycle::RunningSupervisor};
+/// use std::{io::Write, process::ExitCode};
+///
+/// // Internal propagation preserves the original failures for a trusted sink.
+/// async fn stop(running: RunningSupervisor) -> Result<(), BoxError> {
+///     let report = running.shutdown().await?;
+///     if !report.is_success() {
+///         // Retain the complete report for an application-selected error sink.
+///         return Err(Box::new(report));
+///     }
+///     Ok(())
+/// }
+///
+/// #[tokio::main(flavor = "current_thread")]
+/// async fn main() -> ExitCode {
+///     match run().await {
+///         Ok(()) => ExitCode::SUCCESS,
+///         Err(_failure) => {
+///             // Inspect _failure only through an application-selected trusted sink.
+///             // Do not format it here; even Display is not universally sanitized.
+///             let _ = writeln!(std::io::stderr().lock(), "service failed");
+///             ExitCode::FAILURE
+///         }
+///     }
+/// }
+/// # async fn run() -> Result<(), BoxError> { Ok(()) }
+/// ```
+///
+/// Checking only coordinator completion discards task/cleanup failures:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter::lifecycle::RunningSupervisor;
+/// async fn ignored(running: RunningSupervisor) {
+///     running.wait().await.unwrap();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter::{BoxError, lifecycle::RunningSupervisor};
+/// async fn ignored(running: RunningSupervisor) -> Result<(), BoxError> {
+///     running.wait().await?;
+///     Ok(())
+/// }
+/// ```
+#[derive(Debug, Clone)]
+#[must_use = "inspect the report for failures and incomplete cleanup"]
+pub struct SharedShutdownReport(Arc<ShutdownReport>);
+
+impl Deref for SharedShutdownReport {
+    type Target = ShutdownReport;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for SharedShutdownReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("owned shutdown report")
+    }
+}
+
+impl std::error::Error for SharedShutdownReport {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
+}
 
 /// A cloneable completion observer. It does not extend ownership of the running
 /// process, and cancelling a waiter cannot cancel its driver or finalizers.
@@ -113,7 +202,10 @@ impl Supervisor {
             self.run_until(pending()).in_current_span(),
         ));
         let monitor = async move {
-            let outcome = coordinator.await.map(Arc::new).map_err(Arc::new);
+            let outcome = coordinator
+                .await
+                .map(|report| SharedShutdownReport(Arc::new(report)))
+                .map_err(Arc::new);
             let failed = outcome.is_err();
             // Publish before diagnostics: an application subscriber that panics
             // cannot prevent observers from receiving the coordinator failure.

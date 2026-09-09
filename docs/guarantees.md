@@ -95,6 +95,28 @@ Rate limiting, concurrency limiting, and retry accounting are separate policies.
 
 ## Process ownership and shutdown
 
+`run_until` returns a `#[must_use] ShutdownReport`. Owned-driver `wait`,
+`shutdown`, and observer `wait` return `Result<SharedShutdownReport, Arc<JoinError>>`.
+The shared wrapper is also `#[must_use]`, so discarding it after `?` or `unwrap()`
+warns; coordinator completion alone does not establish successful shutdown.
+Inspect the report's task and cleanup outcomes. Cloning the shared wrapper
+retains the same report and errors; dereferencing borrows `ShutdownReport`.
+The wrapper displays `owned shutdown report`; its `Error::source()` exposes the
+concrete report and its summary. Chain-walking diagnostics therefore show the
+task/cleanup summary once, while allowing a concrete report downcast.
+Debug retains application error contents. Propagating such an error out of a
+`main` returning `Result` lets Rust print it through Debug; a sanitized Display
+does not protect that boundary. Applications must select their exit output,
+as shown by the complete `ExitCode` example on `SharedShutdownReport` and the
+SQLx executable. Neither the foundation nor a report wrapper defines a
+universal redaction policy for arbitrary domain errors.
+These lints are advisory: binding, explicit dropping, or allowing the lint can
+bypass the warning. They do not prove inspection or successful shutdown.
+
+A finite receipt's
+`ProcessTaskError::Failed` shares its `Arc<E>` with the report while exposing
+the concrete E through `Error::source()`, so downcasts preserve domain identity.
+
 Every registered component is long-lived and critical. Registration itself does
 not start work. All direct JoinSet completions are observed by name, including
 factory panics and early successful exits. Errors continue to be collected during
@@ -333,6 +355,9 @@ Drive its own phased protocol and inspect the report. A process watchdog may
 terminate an unresponsive binary, but no cleanup guarantee survives that action.
 
 ## Cleanup contract
+
+`CleanupReport` is `#[must_use]`. Awaited completion can still contain failed,
+skipped or unjoined finalizers; callers must inspect the retained report.
 
 Finalizers are owned Send factories, invoked inside directly owned Tokio tasks.
 They run sequentially in LIFO order. Per-hook work is capped by a shared work

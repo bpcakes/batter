@@ -12,6 +12,8 @@ Windows support and non-Unix fallbacks are out of scope.
 
 - `src/lib.rs` defines the public modules and boundary error aliases.
 - `src/lifecycle.rs` and `src/lifecycle/` own process tasks and shutdown reports.
+- `src/lifecycle/report.rs` owns the shutdown report type and retained-outcome summary;
+  its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.

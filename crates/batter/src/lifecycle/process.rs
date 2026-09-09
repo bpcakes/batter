@@ -34,15 +34,32 @@ pub enum ProcessAdmissionError {
 
 /// A finite task's typed result. A task-level failure initiates process shutdown;
 /// put ordinary business rejection inside T (for example T = Result<Value, Denial>).
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ProcessTaskError<E: Error + 'static> {
     /// The original error is shared with the process shutdown report.
-    #[error("process task failed")]
-    Failed(#[source] Arc<E>),
+    /// `Error::source()` exposes E itself, retaining concrete downcasts.
+    Failed(Arc<E>),
     /// Panic, abort, or coordinator cancellation prevented a typed result. The
     /// lifecycle report retains the observed JoinError when the driver completes.
-    #[error("process task terminated without a typed result")]
     Terminated,
+}
+
+impl<E: Error + 'static> fmt::Display for ProcessTaskError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Failed(_) => "process task failed",
+            Self::Terminated => "process task terminated without a typed result",
+        })
+    }
+}
+
+impl<E: Error + 'static> Error for ProcessTaskError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Failed(error) => Some(error.as_ref()),
+            Self::Terminated => None,
+        }
+    }
 }
 
 /// Ownership of a result waiter only. Dropping this value or cancelling `wait`

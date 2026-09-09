@@ -16,7 +16,7 @@ pub async fn admission(case: Case, choices: &mut Choices) {
     transitions::scope_expiry(Case { index: 2, ..case }, choices.next()).await;
     transitions::forced_descendant(Case { index: 3, ..case }).await;
     for (index, failure) in [false, true].into_iter().enumerate() {
-        closure_races::descendant_closure(
+        let verified_report = closure_races::descendant_closure(
             Case {
                 index: index + 4,
                 ..case
@@ -26,6 +26,8 @@ pub async fn admission(case: Case, choices: &mut Choices) {
             std::future::ready(()),
         )
         .await;
+        // The helper reconciles every receipt, task outcome and cleanup record.
+        drop(verified_report);
     }
 }
 
@@ -80,7 +82,7 @@ pub async fn ownership(case: Case, choices: &mut Choices) {
 
 pub async fn escalation(case: Case, choices: &mut Choices) {
     for mode in 0..4 {
-        escalation::outcomes(
+        let verified_report = escalation::outcomes(
             Case {
                 index: mode,
                 ..case
@@ -89,5 +91,7 @@ pub async fn escalation(case: Case, choices: &mut Choices) {
             yields(choices.next()),
         )
         .await;
+        // The helper has asserted the report against the observed exit path.
+        drop(verified_report);
     }
 }

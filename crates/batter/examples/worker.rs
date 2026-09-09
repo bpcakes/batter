@@ -26,8 +26,8 @@ async fn main() -> Result<(), BoxError> {
     let running = supervisor.start();
     let report = running.wait().await?;
     if !report.is_success() {
-        // Display summarizes counts; do not automatically Debug raw causes.
-        return Err(std::io::Error::other(report.to_string()).into());
+        // Borrow the count summary; do not automatically Debug raw causes.
+        return Err(std::io::Error::other((*report).to_string()).into());
     }
     Ok(())
 }

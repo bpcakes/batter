@@ -1,4 +1,6 @@
 //! A runnable Axum composition root with probes and bounded operations.
+#[path = "http_service/logging.rs"]
+mod logging;
 mod support;
 #[cfg(test)]
 #[path = "http_service/tests.rs"]
@@ -198,10 +200,7 @@ fn router(
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "batter=info,http_service=info".into()),
-        )
+        .with_env_filter(logging::filter(std::env::var("RUST_LOG"))?)
         .try_init()?;
     let config = Config::load()?;
     let mut supervisor = Supervisor::new(support::shutdown_budget());
@@ -221,7 +220,7 @@ async fn main() -> Result<(), BoxError> {
     let running = supervisor.start();
     let report = running.wait().await?;
     if !report.is_success() {
-        return Err(std::io::Error::other(report.to_string()).into());
+        return Err(std::io::Error::other((*report).to_string()).into());
     }
     Ok(())
 }

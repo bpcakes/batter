@@ -73,7 +73,7 @@ pub async fn cleanup_waiter(case: Case, delay: u64) {
     release.send(()).unwrap();
     let first = observer.wait().await.unwrap();
     let second = observer.clone().wait().await.unwrap();
-    assert!(Arc::ptr_eq(&first, &second));
+    assert!(std::ptr::eq(&*first, &*second));
     assert!(first.is_success());
     assert_eq!(first.cleanup.records.len(), 1);
     assert!(finished.load(Ordering::SeqCst));

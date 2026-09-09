@@ -1,10 +1,11 @@
-"""Bounded Unix process observation for the scheduling tools, not application work."""
+"""Bounded Unix process observation for repository test tools, not application work."""
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, replace
 import os
+import re
 import selectors
 import signal
 import subprocess
@@ -48,6 +49,21 @@ class ProcessOutcome:
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "captured_bytes": len(self.stdout) + len(self.stderr),
         }
+
+
+@dataclass(frozen=True)
+class SignalAfterReady:
+    """Send one signal after a complete output line ends with the marker."""
+
+    marker: bytes
+    signum: int
+    shutdown_timeout: float
+
+    def __post_init__(self):
+        if (not self.marker or b"\n" in self.marker or b"\r" in self.marker
+                or self.signum not in (signal.SIGINT, signal.SIGTERM)
+                or not 0 < self.shutdown_timeout < float("inf")):
+            raise ValueError("invalid readiness/signal policy")
 
 
 class Capture:
@@ -130,15 +146,39 @@ class Capture:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            for key, _ in self.selector.select(min(0.02, remaining)):
-                try:
-                    data = os.read(key.fd, 8192)
-                except BlockingIOError:
-                    continue
-                if not data:
-                    self.selector.unregister(key.fileobj)
-                    continue
-                self.retain(key.data, data)
+            self.read_available(min(0.02, remaining))
+
+    def read_available(self, timeout):
+        for key, _ in self.selector.select(timeout):
+            try:
+                data = os.read(key.fd, 8192)
+            except BlockingIOError:
+                continue
+            if not data:
+                self.selector.unregister(key.fileobj)
+                continue
+            self.retain(key.data, data)
+
+    def signal_when_ready(self, child, deadline, policy, stop):
+        while True:
+            if stop.requested:
+                return "interrupted"
+            if self.overflow:
+                return "readiness-output-overflow"
+            if self.complete(child):
+                return "exited-before-readiness"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "readiness-timeout"
+            if any(re.sub(rb"\x1b\[[0-9;]*m", b"", line).rstrip(b"\r").endswith(policy.marker)
+                   for buffer in self.buffers for line in buffer.split(b"\n")[:-1]):
+                # Popen.send_signal polls/reaps first. Keep our exclusive child
+                # identity until EOF or group cleanup, even if the leader exits
+                # while a descendant still holds a pipe. A signal request alone
+                # is not proof of application cleanup; callers check its output.
+                os.kill(child.pid, policy.signum)
+                return None
+            self.read_available(min(0.02, remaining))
 
 
 def _kill_group(child, errors):
@@ -187,7 +227,8 @@ def _unstarted(error):
 
 
 def run_process(command, *, timeout, output_limit, cwd=None, env=None,
-                launch_record=None, keep_stdin=False, reap_allowance=5):
+                launch_record=None, keep_stdin=False, reap_allowance=5,
+                ready_signal=None):
     """Observe a child with scoped SIGINT ownership and bounded cleanup.
 
     Requires the main thread, default SIGCHLD, and Python-default, SIG_DFL or
@@ -198,6 +239,9 @@ def run_process(command, *, timeout, output_limit, cwd=None, env=None,
     A launch_record(pid) callback may provide at most 256 bytes. The stdin writer
     stays open until observation ends so a fixture can detect parent death.
     Process creation and OS scheduling cannot be preempted by a Python deadline.
+    With SignalAfterReady, timeout bounds startup; a separate shutdown timeout
+    starts after the selected signal. Capture and kill/reap ownership are shared
+    with ordinary runs. Output overflow or missing readiness cannot pass.
     """
     if timeout <= 0 or reap_allowance <= 0 or output_limit <= 0:
         raise ValueError("process bounds must be positive")
@@ -220,6 +264,7 @@ def run_process(command, *, timeout, output_limit, cwd=None, env=None,
             command, timeout=timeout, output_limit=output_limit, cwd=cwd, env=env,
             launch_record=launch_record, keep_stdin=keep_stdin,
             reap_allowance=reap_allowance, interrupt=interrupt,
+            ready_signal=ready_signal,
         )
     finally:
         signal.signal(signal.SIGINT, previous)
@@ -245,7 +290,8 @@ def _close_resources(child, capture, errors):
 
 
 def _run_owned_process(command, *, timeout, output_limit, cwd, env,
-                       launch_record, keep_stdin, reap_allowance, interrupt):
+                       launch_record, keep_stdin, reap_allowance, interrupt,
+                       ready_signal):
     if interrupt.requested:
         return _unstarted("interrupted")
     started = time.monotonic()
@@ -268,8 +314,19 @@ def _run_owned_process(command, *, timeout, output_limit, cwd, env,
             os.set_blocking(child.stdin.fileno(), False)
             if os.write(child.stdin.fileno(), record) != len(record):
                 raise OSError("incomplete launch record")
-        capture.observe_until(child, started + timeout, stop=interrupt)
-        watchdog = not interrupt.requested and not capture.complete(child)
+        deadline = started + timeout
+        failure = None
+        if ready_signal is not None:
+            failure = capture.signal_when_ready(child, deadline, ready_signal, interrupt)
+            if failure:
+                errors.append(failure)
+            else:
+                deadline = time.monotonic() + ready_signal.shutdown_timeout
+                capture.observe_until(child, deadline, stop=interrupt)
+        else:
+            capture.observe_until(child, deadline, stop=interrupt)
+        watchdog = (failure == "readiness-timeout" if failure else
+                    not interrupt.requested and not capture.complete(child))
     except OSError as error:
         errors.append(f"{'spawn' if child is None else 'io'}:{error.errno}")
     except ValueError:

@@ -75,8 +75,9 @@ query_scalar, and Pool::close. It registers close as a dependency finalizer and
 shows startup-error cleanup. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain. No database abstraction or generic transaction retry is introduced.
-The example compiles with SQLx 0.9.0; it has not been run against PostgreSQL here.
-This dependency requires Rust 1.94 or newer.
+The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Portable checks
+and separately provisioned live executions have distinct evidence in
+[validation](validation.md); compiling the example does not establish pool closure.
 
 Application-owned migration/schema checks happen before readiness. There is no
 automatic migration during a health probe. Size pool capacity alongside admitted

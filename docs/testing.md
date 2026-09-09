@@ -75,8 +75,8 @@ MCP startup requires an already installed runtime.
 `scripts/jig doctor` checks harness readiness; `scripts/jig check` runs the
 configured Clippy, formatting, locked core/all-feature/doctest, contract, and
 file-budget gates. Both test aliases and `verify.sh` use `python3
-scripts/test_matrix.py`. It checks minimal core compilation and the process-runner
-regressions first, then overlaps the core and workspace runtime test commands,
+scripts/test_matrix.py`. It checks minimal core compilation, the process-runner
+regressions and SQLx smoke controls first, then overlaps the core and workspace runtime test commands,
 then runs doctests if both passed. Both dependency feature configurations remain
 covered. The verification script additionally checks rustdoc; its two-toolchain
 matrix and HTTP smoke remain required.
@@ -112,9 +112,10 @@ keeps its prefix-only policy.
 
 Jig's database tooling is disabled because SQLx currently appears only in an
 example package. There are no migration or prepared-query metadata gates.
-Workspace checks execute its startup/shutdown error-retention unit tests and a
-subprocess check of the redacted missing-configuration exit. Live PostgreSQL is
-unverified.
+Workspace checks execute the startup/shutdown error-retention unit tests and
+bounded subprocess checks of portable exit paths and redacted configuration
+failures. Explicit live query and pool-closure checks are separate; see
+[validation](validation.md).
 Agent bootstrap requests only the Rust and ExecPlan plugins. No frontend,
 development app, or external status provider is configured. Vault scope metadata
 is retained for Jig compatibility; these checks do not need a vault passphrase.
@@ -589,6 +590,11 @@ Keeping that control in ordinary matrices validates the real configured fallback
 
 ## HTTP process smoke test
 
+The example defaults its logging filter only when `RUST_LOG` is absent.
+Malformed or non-Unicode filters fail startup with a sanitized configuration
+message. Example unit tests check default/explicit selection, rejection and
+retention of the original error without printing environment contents.
+
 After verification builds the example:
 
 ```sh
@@ -626,8 +632,81 @@ that port reservation, in which case the smoke test should fail visibly.
 
 ## Limits of current coverage
 
+The SQLx example's `tests/diagnostics.rs` launches the actual executable with
+missing, non-Unicode and malformed database URLs, requiring a nonzero exit and
+sanitized stderr. Its example-local Python parent uses the shared process owner
+with a 10-second observation budget, 64 KiB combined capture and a 2-second
+kill/reap allowance. A hung-child control requires watchdog expiry, SIGKILL,
+reaping and output EOF. The watchdog runs outside the example runtime; process
+creation, OS scheduling and watchdog-parent destruction remain outside its
+deadline guarantee. These cases do not connect to a database. Receipt regressions
+in `process_ownership/error_sources.rs` check concrete error identity through
+both receipt and report source chains. Compile-fail doctests on `CleanupReport`
+and `ShutdownReport` deny ignored awaited reports using `unused_must_use`.
+`SharedShutdownReport` adds compile-fail examples for discarded owned reports
+after `?` and `unwrap()`, plus a compiling inspection/propagation example.
+`process_ownership/report_usage.rs` requires the precise `unused_must_use` lint
+on raw `CleanupStack::close` and `Supervisor::run_until`, and all six combinations
+of owner wait, shutdown and observer wait with `?` or `unwrap()`: denying
+unfulfilled lint expectations prevents unrelated compiler
+errors from satisfying these controls. Its runtime regression retains both
+task and cleanup failures through clones and observers after driver-owner drop,
+checks report/source identity, and verifies Display omits error contents.
+It also renders the error chain and requires one task/cleanup summary, with a
+distinct shared-owner context and the same concrete report source.
+
+The SQLx example's portable unit tests execute its production completion and
+exit functions: success waits for cleanup, startup failures retain both causes,
+and task or finalizer failures remain nonzero exits after coordination. A failed
+diagnostic writer cannot convert a failure into exit success. Another control
+passes an error whose Debug, Display and source access panic, proving the exit
+handler does not implicitly inspect unknown failures. The subprocess
+credential checks require exactly `Error: process failed` on stderr and exclude
+the marker from both output streams. The missing-configuration control also
+requires empty stdout. The process wrapper retains concrete sources and prints
+only its known, redacted Display; the exit handler never formats unknown causes.
+
+Three live tests are explicitly ignored during ordinary runs, because database
+provisioning is external. With `DATABASE_URL` configured for a test database:
+
+```sh
+cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored
+cargo build -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --signal SIGINT
+```
+
+The selected live target fails when configuration is absent or connection fails;
+it never silently returns success. Tests execute real `SELECT 1` and
+division-by-zero failures, then verify that startup failure and unsuccessful
+shutdown retain their causes and await native pool close. Pool size becomes
+zero and later acquisitions return `PoolClosed`. The executable smokes wait for
+actual initialization acknowledgement before signalling and require successful
+pool-cleanup evidence plus exit 0. Both the smoke and configuration checks reuse
+`scripts/scheduling_process.py`; the smoke bounds startup to 15 seconds,
+shutdown after signalling to 25 seconds, combined capture to 64 KiB, and
+kill/reap cleanup to 5 seconds. Only a complete line ending in the readiness
+marker permits SIGTERM or SIGINT; overflow, incomplete observation and missing
+cleanup cannot pass.
+
+Run `python3 scripts/test_smoke_postgres.py -v` without a database. Its thirteen
+tests include real child processes for both signals, inherited SIGINT ignore,
+split/ANSI readiness, absent or partial readiness, early exit, output overflow
+before/after readiness, ignored shutdown signals, nonzero exits and missing
+cleanup. Forced shutdown is checked with both a runnable child and one stopped
+by SIGSTOP after readiness: it requires the real SIGTERM request and watchdog
+kill/reap, without depending on a child callback before the short deadline.
+Other controls interrupt the parent during readiness and reject a complete line
+whose marker is followed by extra fields. Controls require reaping and output EOF; captured direct-child PIDs
+also require `waitpid` to report no remaining child. Synthetic cleanup text
+tests the smoke's acceptance protocol, not SQLx pool closure. These controls
+run through `scripts/verify.sh` and Jig's test actions; their Python inputs are
+part of the Jig receipt digest. macOS CI includes the portable
+example exits, report tests/doctests, and smoke controls; live checks remain a
+separate externally provisioned invocation.
+
 The suite does not establish full real-transport behavior, non-yielding task
-termination, live PostgreSQL/upstream compatibility, or HTTP handler-panic
+termination, transaction commit/cancellation or upstream worker compatibility, or HTTP handler-panic
 recovery. Basic Problem JSON tests do not establish comprehensive route-contract
 or RFC conformance. Bounded multi-thread regressions are not exhaustive race
 exploration. Compiler/lint/doc and HTTP smoke results remain recorded in

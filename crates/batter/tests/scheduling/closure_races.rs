@@ -2,8 +2,8 @@ use super::support::{Case, yields};
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome, SkipReason},
     lifecycle::{
-        ProcessAdmissionError, ProcessHandle, ProcessTaskError, ShutdownBudget, ShutdownHandle,
-        ShutdownReport, Supervisor, TaskOutcome,
+        ProcessAdmissionError, ProcessHandle, ProcessTaskError, SharedShutdownReport,
+        ShutdownBudget, ShutdownHandle, ShutdownReport, Supervisor, TaskOutcome,
     },
 };
 use std::{
@@ -22,7 +22,7 @@ pub async fn descendant_closure(
     failure: bool,
     delay: u64,
     after_closure: impl Future<Output = ()> + Send + 'static,
-) -> Arc<ShutdownReport> {
+) -> SharedShutdownReport {
     let second = Duration::from_secs(1);
     let budget = ShutdownBudget::new(
         Duration::ZERO,

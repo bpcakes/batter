@@ -86,6 +86,34 @@ driver publishes Ready only once all components acknowledge. Prefer
 ownership. `running.shutdown().await` is cancel-safe as a waiter; the separately
 driven cleanup still requires the runtime to remain alive.
 
+An owned-driver `Ok` contains `SharedShutdownReport`; call `is_success()` and
+handle retained task/cleanup failures before treating shutdown as successful.
+The wrapper cheaply clones the same completed report, dereferences to
+`ShutdownReport`, and can be retained as an application error through `BoxError`.
+Its `must_use` warning catches a bare `running.wait().await?;` or
+`running.wait().await.unwrap();`, but cannot require inspection after binding
+or explicit disposal. See its rustdoc example for awaited shutdown and failure
+propagation followed by an explicit process exit boundary. A `main` returning
+`Result<(), BoxError>` uses Rust's `Termination` implementation, which prints an
+error's **Debug** representation, including retained task and cleanup errors.
+Keep rich errors inside `run`/`stop` and return `ExitCode` from `main`, as in the
+[SQLx example](../examples/postgres-lifecycle/src/main.rs). Choose a trusted sink
+before that boundary; only application-selected sanitized output belongs on the
+default CLI path. Changing a report's Display does not sanitize Debug or arbitrary
+errors propagated through `?`.
+
+Migration from the earlier owned-driver API: replace explicit
+`Arc<ShutdownReport>` return annotations with `SharedShutdownReport` and
+`Arc::clone(&report)` with `report.clone()`. Borrow `&*report` where a
+`&ShutdownReport` is required. The wrapper does not expose its internal Arc;
+identity checks can compare borrowed reports with `std::ptr::eq`. Method and
+field access continue through dereferencing. Coordinator failures still use
+`Arc<JoinError>`.
+For a standalone count summary, format the borrowed `ShutdownReport` (for
+example, `(*report).to_string()`). Formatting the wrapper itself gives
+`owned shutdown report`; an error-chain renderer obtains the summary from its
+concrete report source, so the summary appears once.
+
 ## Finite process-owned work
 
 The [process-owned example](../crates/batter/examples/process_owned.rs) configures a finite
@@ -189,8 +217,9 @@ original startup cause, and its owned `CleanupReport` retains each cleanup outco
 and error. Its shutdown completion path similarly retains the owned
 `ShutdownReport`, including task and cleanup errors. The outer `ProcessFailure`
 keeps either typed failure, or an earlier concrete startup error, as its source
-while exposing fixed `Display` and `Debug` text to Rust's `Result` termination
-path. A trusted sink can traverse or downcast that source chain. Choose that sink
+while exposing fixed `Display` and `Debug` text. The explicit `ExitCode` handler
+prints only that known wrapper's `Display`. A trusted sink can traverse or
+downcast the retained source chain. Choose that sink
 deliberately instead of dropping diagnostics or printing the reports' derived
 `Debug` output.
 

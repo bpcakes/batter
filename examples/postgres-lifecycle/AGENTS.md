@@ -11,7 +11,14 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Key entrypoints
 
 - `src/main.rs` acquires the pool, registers its close, and observes startup.
+- Its private `complete_startup` and `report_exit` functions retain failures and
+  determine the executable outcome; `src/tests.rs` tests those same paths.
+- `src/tests/live.rs` contains explicitly selected tests against an externally
+  provisioned database. Missing configuration must fail that selected target.
 - `src/support.rs` holds example-owned signal and shutdown-budget policy.
+- `tests/diagnostics.rs` runs `tests/diagnostics.py`, an external watchdog for
+  actual executable configuration failures. It reuses the repository's bounded
+  Unix process owner; keep credential fixtures and assertions in this example.
 
 ## Edit here for X
 
@@ -34,9 +41,16 @@ Run from the workspace root:
 
 ```sh
 cargo check -p batter-example-postgres-lifecycle --all-targets --locked
+cargo test -p batter-example-postgres-lifecycle --test diagnostics --locked
+python3 scripts/test_smoke_postgres.py -v
 cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 scripts/jig check test
 ```
+
+Select the live checks with `cargo test -p batter-example-postgres-lifecycle
+--bin postgres_lifecycle --locked tests::live:: -- --ignored`, with `DATABASE_URL`
+already configured. `scripts/smoke_postgres.py` exercises the built executable's
+readiness, signal exit and pool cleanup; it never provisions PostgreSQL.
 
 Running requires `DATABASE_URL` for an existing local test database. Record a
 live execution separately from compilation in the root validation document.

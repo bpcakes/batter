@@ -2,6 +2,69 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Smoke deadline review fix and upstream reconciliation: 2026-09-09
+
+Bead `batter-a63`; baseline `e518b6b52a88a460edfb6f7c41107e71932b6c70`.
+The shutdown-deadline control previously required a Python signal callback to
+print within 150 ms. It now installs OS-level signal ignore before readiness,
+records the actual SIGTERM request, and requires shutdown watchdog expiry,
+SIGKILL, reaping and output EOF. Both a runnable child and a child paused by
+SIGSTOP after readiness pass. Dedicated signal-delivery controls still require
+handler output. Two further controls cover parent interruption while waiting
+for readiness and rejection of a complete marker line followed by extra fields.
+All thirteen smoke controls use synthetic children; they do not prove pool close.
+
+Before committing, origin/master had advanced through `f367bc2` and `e518b6b`.
+The combined source preserves the upstream bounded concurrent matrix runner,
+rolling failure-output tails and typed redacted SQLx errors. Readiness observation
+uses the same byte-retention path as ordinary capture. Smoke controls join the
+matrix's prerequisite phase, with all three failures preventing later phases.
+The SQLx executable retains an explicit ExitCode boundary and now renders the
+known process wrapper as exactly `Error: process failed`. All upstream source
+identity, cleanup-order and redaction assertions remain in a sibling test module;
+the original missing-configuration subprocess assertions now run under the
+external watchdog. Tracker reconciliation retained both sets of issues, and
+both validation histories and append-only work records remain present.
+
+Executed on Linux x86_64, Python 3.12.3, Rust 1.98.1 (`48a229cea`) and
+Rust 1.94.0 (`4a4ef493e`):
+
+```sh
+python3 scripts/test_smoke_postgres.py -v
+python3 -m unittest discover -s scripts -p test_parallel_process.py -v
+cargo test -p batter-example-postgres-lifecycle --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+# Run the build and all five following smokes once per toolchain.
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Each full verification passed **473 Rust test/doctest executions**, zero failures
+and three explicitly ignored live database tests, plus **22 runner controls and
+13 smoke controls**. Both runs passed formatting, minimal-core compilation,
+Clippy and warning-denied rustdoc. All five HTTP smoke profiles passed on each
+separately rebuilt binary. An initial compile caught a redundant dereference
+introduced during conflict resolution; fixing it restored the concrete source
+borrow. The first matrix run caught two outdated wiring assumptions: the old
+two-command prerequisite count and an overflow fixture accidentally running the
+new smoke suite. The corrected fixtures include the third prerequisite and its
+failure propagation, while retaining the original output-size bound. Final runs
+passed without weakening the process or output assertions.
+
+Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Logs are retained under ignored `.agent/tmp/batter-a63/`. Plan
+`plan_01M23JFB7A1AJ7Y5EEWEZ727QM` owns the final Jig check/evidence/gates and
+completion records. This combined source has new local Linux evidence only;
+prior macOS and PostgreSQL evidence below retains its original source scope.
+Hosted CI has not been executed here. OS scheduling, process creation and
+watchdog-parent destruction remain outside the subprocess deadline guarantee.
+
 ## Lifecycle error-boundary review fixes: 2026-09-09
 
 Bead `batter-7r3.3.2` addresses the three low-severity findings from the
@@ -196,6 +259,140 @@ unverified; Python 3.9 syntax parsing alone is not runtime validation. Process
 creation/scheduling and arbitrary detached descendants remain outside the runner's
 containment claims. Earlier platform evidence below retains its original scope.
 
+## Report exit boundaries and bounded subprocess coverage: 2026-09-09
+
+Owning Bead: `batter-xzq`; baseline `fbe77addaafc8709c95d7ecf4982dd3ceea3f41d`
+with the existing working changes preserved. The report abstraction retains its
+concrete errors: the defect was incomplete guidance at the application exit
+boundary. Rust's Result termination path prints Debug, so the shared-report
+rustdoc now includes an explicit ExitCode main. A portable example regression
+passes an error whose Debug, Display and source access panic, verifying that
+production exit reporting emits only the selected fixed diagnostic.
+
+The raw-report compile-fail examples lacked an exact diagnostic oracle.
+`process_ownership/report_usage.rs` now pairs the ignored raw cleanup/shutdown
+expressions with `expect(unused_must_use)` and denies unfulfilled expectations.
+In a disposable source snapshot, `cargo check -p batter --test process_ownership
+--locked` passed unchanged on Rust 1.98.1. Removing only CleanupReport's
+must-use attribute failed with exit 101 and an unfulfilled expectation at line
+16; restoring it and removing only ShutdownReport's attribute failed identically
+at line 18. Neither mutation was applied to the working checkout.
+
+The subprocess gap was duplicated ownership and missing orchestration tests.
+The SQLx smoke and executable configuration tests now reuse the existing bounded
+Unix process owner. Eleven Python controls exercise the smoke's output checks
+and real readiness/signal/overflow/timeout/exit paths. Direct-child PIDs retained
+in capture also require `waitpid` to return ECHILD after observation. Two Rust
+configuration tests exercise the real executable's three invalid-input cases
+and a deliberately hung child under an external watchdog. These controls are
+database-independent and cannot establish pool closure. The shared process
+owner's 24 standalone controls also passed after the readiness-phase addition.
+
+Executed on Linux x86_64 with Python 3.12.3; Cargo.lock SHA-256 remains
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+```sh
+python3 scripts/test_smoke_postgres.py -v
+python3 -m unittest discover -s scripts -p test_scheduling_process.py -v
+cargo test -p batter-example-postgres-lifecycle --test diagnostics --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+```
+
+Rust 1.98.1 (`48a229cea`, 2026-09-01; Cargo `797e8a9bc`) and Rust 1.94.0
+(`4a4ef493e`, 2026-03-02; Cargo `85eff7c80`) verification each passed: 469
+Rust test executions, including repeated feature configurations, zero failures,
+and three explicitly ignored live database tests; the eleven Python smoke
+controls also passed on each run. Formatting, no-default-feature compilation, Clippy and warning-denied
+rustdoc passed. The initial sandboxed attempt reached the HTTP example tests
+and failed because loopback binding returned EPERM. The complete rerun with
+loopback permissions passed; no test or assertion was relaxed.
+
+Rebuilt `http_service` separately with each Rust toolchain and passed all five
+HTTP smoke profiles on each: default SIGTERM, SIGINT, deadline, WARN filter, and
+WARN filter plus deadline. Exact invocations:
+
+```sh
+# Repeat the build with RUSTUP_TOOLCHAIN=1.94.0, then run the same five smokes.
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Jig work check passed all five required targets: Clippy, formatting, tests,
+contract and file budget. It retained the existing file-size warnings for
+`lifecycle.rs` (746 lines) and `process_ownership.rs` (779 lines); there were no
+file-budget errors or waivers. Command:
+
+```sh
+scripts/jig work check --plan-id plan_01M23D8KGX9YHDSCGHV9H9QKFD --json
+```
+
+Jig's test actions now execute the smoke controls and include both smoke files
+and the configuration Python helper in their input digests. The contract was
+regenerated with `scripts/jig update --recopy --no-input --force` in a disposable
+Git checkout; only the generated contract's test-input changes were retained,
+preserving the repository's customized managed guides. Logs and disposable
+snapshot locations are under ignored `.agent/tmp/batter-xzq/`.
+
+This change has no new macOS, hosted CI or live PostgreSQL execution evidence.
+The CI definition includes the controls but is not execution evidence. OS
+scheduling, process creation and loss of the watchdog parent are outside the
+subprocess deadline guarantee. No dependencies, public Rust APIs, process
+lifecycle contracts or database schema changed in this follow-up.
+
+## Finite-cause and shared-report reconciliation: 2026-09-09
+
+Owning Bead: `batter-bzr`. Local `master` fast-forwarded from `61a025f` to
+`fbe77addaafc8709c95d7ecf4982dd3ceea3f41d`, then restored the existing working
+changes from recovery stash `7bbb97f910fc24ee9d5356a77d5fb18c2d36480c`.
+The expanded concrete-source test in `process_ownership/error_sources.rs`
+retains the upstream `FiniteTaskExit("shared-error")` assertion alongside
+receipt/report error identity. Both documentation histories and every original
+local/upstream Beads and append-only work record were retained. Additive tracker
+reconciliation imported `batter-299` without updating or deleting existing issues.
+
+The first direct file-budget check rejected the combined `lifecycle.rs` at 811
+lines. Moving the unchanged `ShutdownReport` type and implementations to private
+`lifecycle/report.rs` reduced it to 746 lines and passed the existing gate.
+Its public path, fields, methods, error/display behavior, must-use diagnostic and
+compile-fail example remain available. No source limit or semantic assertion
+was relaxed.
+
+Executed on Linux x86_64 (kernel `7.0.11-76070011-generic`), Python 3.12.3:
+
+```sh
+cargo test -p batter --locked --test process_ownership --test shutdown_causes --test lifecycle
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+python3 -m unittest discover -s scripts -p test_smoke_postgres.py -v
+```
+
+Both Rust 1.98.1 and 1.94.0 full matrices passed 467 test/doctest executions,
+with zero failures and three explicitly live database tests ignored per run.
+Formatting, isolated core compilation, Clippy and rustdoc passed. After each
+toolchain's `cargo build -p batter-axum --example http_service --locked`, all
+five `python3 scripts/smoke_http.py --binary target/debug/examples/http_service`
+profiles passed: default SIGTERM, `--signal SIGINT`, `--deadline`,
+`--warn-filter`, and `--warn-filter --deadline`. All four PostgreSQL smoke
+evidence controls passed without a database connection. Cargo.lock is unchanged
+at SHA-256 `3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+Logs are `/tmp/batter-finite-reconcile-focused.log`,
+`/tmp/batter-finite-reconcile-verify-{1.98.1,1.94.0}.log` and
+`/tmp/batter-finite-reconcile-http-{1.98.1,1.94.0}.log`. Final Jig receipts belong
+to `plan_01M23AKCPCYF368ZTE28XH9PT3`. This reconciliation adds no macOS, hosted
+CI or live PostgreSQL execution evidence. Earlier evidence retains its original
+scope. All working changes remain uncommitted; the recovery stash is retained.
+
+All five Jig work gates and the final `scripts/jig check test` passed. Their
+logs are `/tmp/batter-finite-reconcile-jig-check.json` and
+`/tmp/batter-finite-reconcile-final-backend.log`. Bead closure changes Jig's
+input digest; refreshed completion receipts retain the same validated source.
+
 ## Finite shutdown cause review follow-up: 2026-09-09
 
 The `batter-299` review follow-up corrects the abort-trigger documentation and adds
@@ -295,6 +492,220 @@ executions on the final code and fixture layout. The subprocess failure did not
 recur in either successful full run. Final logs are
 `/tmp/batter-299-jig-final-check.json` and
 `/tmp/batter-299-final-backend-test.log`.
+
+## Owned-observer and shared-report reconciliation: 2026-09-09
+
+Owning Bead: `batter-qgu`. Local `master` fast-forwarded from `9aa2f80` to
+`61a025f5ed3699405034c1407942cdb4c280297c`, preserving all uncommitted report,
+diagnostic and SQLx exit changes. Documentation conflicts retain both histories;
+the tracker and append-only work records retain every local and upstream record.
+Importing the merged Beads export added three upstream issues without updating
+or removing the existing records.
+
+Upstream constructs completion channels only in `Supervisor::start` and exposes
+observers through `RunningSupervisor`. The merged driver retains that boundary
+and the local `SharedShutdownReport` result. Initial compilation rejected two
+upstream `Arc::ptr_eq` assertions on shared reports. They now compare borrowed
+`ShutdownReport` pointers with `std::ptr::eq`, preserving the identity oracle.
+Coordinator-error assertions still compare their `Arc<JoinError>` values.
+The focused observer, lifecycle-state and process-ownership suites passed all
+38 tests; the four PostgreSQL smoke-evidence controls also passed.
+
+On Linux x86_64, both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed with 454 test/doctest
+executions, zero failures, three explicitly live database tests ignored, and no
+compiler warnings per run. Formatting, core compilation, Clippy and rustdoc
+passed. After each version's HTTP example rebuild, all five smoke profiles
+passed: SIGTERM, SIGINT, deadline, WARN filter and WARN filter with deadline.
+Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+The first final Jig run passed functional checks but rejected the combined
+rustdoc additions at 801 lines in `lifecycle.rs`, one over its existing budget.
+The report paragraph was tightened without changing its meaning or the limit.
+Formatting and all eight foundation doctests passed again on both toolchains;
+no executable code changed after the full matrix and HTTP smoke runs.
+
+Logs are `/tmp/batter-reconcile-focused.log`,
+`/tmp/batter-reconcile-verify-{1.98.1,1.94.0}.log` and
+`/tmp/batter-reconcile-http-{1.98.1,1.94.0}.log`. Final Jig receipts belong to
+`plan_01M239QGHN0FFTW7H3A8TX62QY`. This reconciliation adds no new macOS, hosted
+CI or live PostgreSQL execution evidence; earlier sections retain the exact
+scope of those runs. No application commit or publication was performed.
+
+## Distinct report chains and lifecycle exits: 2026-09-09
+
+Owning Bead: `batter-9s6`. Baseline: `9aa2f8006000d460011638a7c9f12ace75e907ca`.
+Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+The rendered-chain regression failed before the Display correction. It now
+requires distinct owner context, one task/cleanup summary, no error markers,
+and the same concrete report source. Five portable SQLx example tests exercise
+the production completion and exit helpers, covering awaited successful cleanup,
+startup plus cleanup failure, task failure, finalizer failure, and an unavailable
+diagnostic writer. Configuration subprocess tests still exclude credential
+markers from both streams. Four Python smoke-evidence controls passed.
+
+Executed `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` on both hosts:
+
+| Host | Rust versions | Passed per full run | Failed | Explicit live tests ignored in ordinary run |
+| --- | --- | --- | --- | --- |
+| Linux x86_64, Python 3.12.3 | 1.98.1, 1.94.0 | 443 | 0 | 3 |
+| macOS 26.6.2 (`25G83`), arm64, Python 3.14.7 | 1.98.1, 1.94.0 | 439 | 0 | 3 |
+
+Both versions passed formatting, core compilation, Clippy and rustdoc with no
+warnings. Linux includes two extra subprocess cases in each foundation profile.
+The ignored cases are separately selected live database tests, not missing
+portable execution. All five HTTP smoke profiles passed after each host/version
+build: SIGTERM, SIGINT, deadline, WARN filter, and WARN filter with deadline.
+
+Three live tests passed on each host/version against a dedicated, externally
+provisioned PostgreSQL 18.3 server: success, startup database error plus failed
+cleanup, and database-task failure during shutdown. They retain SQLSTATE `22012`
+and await actual pool closure; size reaches zero and acquisition returns
+`PoolClosed`. Selecting these tests with DATABASE_URL absent failed all three
+with a prerequisite diagnostic, rather than silently passing.
+
+```sh
+cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored
+cargo build -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle
+python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --signal SIGINT
+python3 -m unittest discover -s scripts -p test_smoke_postgres.py -v
+```
+
+The actual SQLx executable passed both signal smokes on each host/version,
+requiring initialized components, successful pool cleanup and exit 0. macOS used
+a loopback SSH forward to the dedicated test database. The forward closed when
+the run finished, and the task-owned container was stopped and removed. No
+database provisioning code or schema changes were added to the repository.
+
+The first macOS attempt reused the existing build directory and received
+SIGKILL on the scheduling binary before its tests started. Subsequent signature
+verification and test listing succeeded; the cause of that kill is not established.
+Complete reruns passed with a fresh isolated target directory and four Cargo
+build jobs, without changing test assertions or test-thread settings.
+
+After the full runs, the worker and HTTP example's direct summary formatting
+was adjusted to borrow the underlying report. Focused worker/HTTP example tests,
+HTTP rebuilds and all five HTTP profiles passed again on both versions/hosts.
+All 111 Rust, Python, shell and Cargo/CI configuration files matched between the
+final local tree and remote snapshot; manifest SHA-256
+`28a3a8fc05bada7cff82ab6d419cc47567e8ee2300d448187a4cc5ab286b7f8e`.
+
+Logs use `/tmp/batter-exit-verify-linux-{1.98.1,1.94.0}.log`,
+`/tmp/batter-exit-verify-macos-{1.98.1,1.94.0}.log`, corresponding
+`live-*`, `http-*`, and `final-examples-*` files. Jig completion receipts belong
+to `plan_01M237XW8BBGZSC5DW4QN7MN8W`. The macOS CI definition now includes these
+portable report/exit tests, but hosted CI execution remains unverified. Live
+tests establish query failure and pool-close behavior, not transaction commit
+ambiguity, cancellation rollback, or external worker compatibility.
+
+## Shared owned shutdown reports: 2026-09-09
+
+Owning Bead: `batter-66g`. Baseline: `9aa2f8006000d460011638a7c9f12ace75e907ca`.
+Executed on Linux x86_64 with Python 3.12.3. Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+Before the wrapper change, `cargo check -p batter --test process_ownership --locked`
+failed on six unfulfilled `unused_must_use` expectations: owner wait, shutdown
+and observer wait, each followed by `?` or `unwrap()`. These compile controls
+now pass. The targeted process-ownership suite passed 29 tests; foundation
+rustdoc passed seven examples, including two new compile-fail examples and a
+compiling inspection/propagation example. The runtime regression verifies
+shared report/source identity and retained task/cleanup failures after owner
+drop, plus Display that omits the original error contents.
+
+Initial full verification identified remaining explicit Arc references and
+two implicit report disposals in scheduling fixtures. The callers now borrow
+reports for identity checks and explicitly drop reports already checked by
+their helpers. Their existing outcome and cleanup assertions were retained.
+
+Fresh complete runs of both commands passed:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+```
+
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 438 test/doctest
+executions, including repeated foundation profiles, with zero failures,
+ignored tests or warnings. Formatting, isolated core compilation, workspace
+Clippy and rustdoc also passed on both toolchains.
+
+After each toolchain's explicit `cargo build -p batter-axum --example http_service --locked`,
+all five `python3 scripts/smoke_http.py --binary target/debug/examples/http_service`
+profiles passed: default SIGTERM, `--signal SIGINT`, `--deadline`, `--warn-filter`,
+and `--warn-filter --deadline`. The 1.94.0 build used `RUSTUP_TOOLCHAIN=1.94.0`.
+
+Local logs use `/tmp/batter-shared-report-verify-1.98.1.log`,
+`/tmp/batter-shared-report-verify-1.94.0.log`, and
+`/tmp/batter-shared-report-http-{1.98.1,1.94.0}.log`. Jig gate receipts belong to
+`plan_01M236778ZMDZ5JBTBPB87WDVE`.
+
+Jig verification run `run_01M236QXDC3G3BKKF696QDZBJ0` passed Clippy, formatting,
+tests, contract and file-budget gates. The final `scripts/jig check test` also
+passed (1/1 target, exit 0). The file-budget gate retains its nonblocking size
+advisories for `lifecycle.rs` and `process_ownership.rs`. Tracker closure changes
+Jig's input digest; the plan retains the refreshed completion receipts.
+
+The public owned-driver success type changed from `Arc<ShutdownReport>` to
+`SharedShutdownReport`; [usage](usage.md) records the source migration. The lint
+is an advisory diagnostic, not evidence of inspection. There is no new macOS,
+hosted CI or live PostgreSQL execution evidence and no dependency change.
+
+## Error handling review corrections: 2026-09-09
+
+Owning Bead: `batter-ey0`. Baseline: `9aa2f8006000d460011638a7c9f12ace75e907ca`.
+Executed on Linux x86_64 with Python 3.12.3. Cargo.lock is unchanged, SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+
+The concrete receipt source regression failed before the manual Error
+implementation: downcasting its source to `std::io::Error` returned None. It
+now proves that receipt, shared Arc and report all point at the same error.
+The SQLx executable regression also failed before the exit-handler change;
+it now checks absent, non-Unicode and malformed URLs without a database.
+A prior synthetic non-Unicode URL reproduced credential output on stderr.
+
+Targeted commands passed:
+
+```sh
+cargo test -p batter --locked --test process_ownership error_sources
+cargo test -p batter-example-postgres-lifecycle --locked --test diagnostics
+cargo test -p batter-axum --example http_service --locked
+cargo test -p batter --doc --locked
+```
+
+The HTTP example tests include absent/explicit logging configuration, rejected
+invalid directives, non-Unicode input, retained native sources and redacted
+Display/Debug. Both report types have compile-fail doctests for ignored awaited
+results under `deny(unused_must_use)`. Existing shutdown, cleanup, replay and
+HTTP behavior assertions were retained.
+
+`bash scripts/verify.sh` passed on Rust 1.98.1: 433 test/doctest executions,
+zero failed or ignored, zero warnings, including repeated core profiles.
+Formatting, isolated core compilation, workspace Clippy and rustdoc also passed.
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` also passed all 433 executions,
+formatting, core compilation, Clippy and rustdoc with no warnings.
+
+After the Rust 1.98.1 build, all five `scripts/smoke_http.py` profiles passed:
+default SIGTERM, SIGINT, deadline, WARN filter, and WARN filter with deadline.
+All five also passed after rebuilding with
+`RUSTUP_TOOLCHAIN=1.94.0 cargo build -p batter-axum --example http_service --locked`.
+Additional executable checks supplied invalid and non-Unicode RUST_LOG values
+and required exit code 1, empty stdout and exactly the sanitized configuration
+message on stderr. Each subprocess had a ten-second external timeout.
+
+Jig work verification passed Clippy, formatting, tests, contract and file-budget
+gates in `run_01M2351BAY8CXNTR50TGVYX97J`. The required final
+`scripts/jig check test` also passed (1/1 target, exit 0).
+
+These changes have no new macOS or hosted execution evidence. No live PostgreSQL
+server was contacted, no dependency was upgraded, and no commit, deployment or
+publication was performed. Default panic-hook output remains outside the
+sanitized returned-error exit path.
 
 ## Observer review follow-up: 2026-09-09
 
