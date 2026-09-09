@@ -259,6 +259,19 @@ repo_bootstrap_command = "cargo fetch --locked"
 command_timeout_seconds = 1800
 command_output_limit_bytes = 67108864
 
+[loop]
+lease_ttl_seconds = 3600
+
+[[loop.workflows]]
+id = "daily-bug-scan"
+kind = "codex_task"
+schedule = "0 20 * * *"
+timezone = "Europe/Prague"
+prompt_file = ".agent/tasks/daily-bug-scan.md"
+codex_home = "codex"
+sandbox = "workspace-write"
+checkout = "repo"
+
 [[work.gates]]
 id = "verify"
 kind = "evidence"
