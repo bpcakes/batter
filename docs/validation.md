@@ -2,6 +2,93 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Lifecycle error-boundary review fixes: 2026-09-09
+
+Bead `batter-7r3.3.2` addresses the three low-severity findings from the
+Claude/Codex comprehensive review of the preceding change. The executable now
+wraps every returned error in a fixed `ProcessFailure` diagnostic while retaining
+the concrete error as its source. Startup failure drives a real cleanup stack and
+retains its `CleanupReport`; unsuccessful owned shutdown retains the complete
+`Arc<ShutdownReport>` instead of its text. Source-identity assertions compare
+addresses without trait-object metadata.
+
+Three unit regressions cover an early concrete error, a failed startup with two
+real LIFO cleanup outcomes, and a component plus cleanup failure in a real owned
+shutdown report. A separate subprocess test removes `DATABASE_URL` and asserts
+the executable exits unsuccessfully with exactly `Error: process failed` on
+stderr and no stdout.
+
+Executed against Git baseline `f367bc2425d395f4aa9127eb188681680ab7538b` plus
+the working-tree changes on macOS 26.6.2 (`25G83`) arm64 with Python 3.14.7:
+
+```sh
+cargo test -p batter-example-postgres-lifecycle --all-targets --locked
+cargo clippy -p batter-example-postgres-lifecycle --all-targets --locked -- -D warnings
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+scripts/jig check test
+```
+
+The first focused run passed two tests and failed the shutdown source-identity
+assertion: the derived error exposed its `Arc` wrapper rather than the retained
+report allocation. An explicit `Error::source` implementation corrected that
+mapping; the final focused run passed all three unit tests and the subprocess
+test. Focused Clippy passed with warnings denied.
+
+Both full verification commands passed on Rust 1.98.1 (`48a229cea`) and 1.94.0
+(`4a4ef493e`), including both runtime configurations, 22 runner controls,
+doctests, formatting, workspace Clippy and rustdoc. The rebuilt HTTP example
+passed all five smoke profiles, and the final Jig `api:test` target passed its
+runtime and doctest matrix. Cargo.lock remained unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+`DATABASE_URL` remained absent, so these tests exercise owned report construction
+and process rendering without claiming a live PostgreSQL connection or cleanup.
+
+## Initial partial-startup error retention: 2026-09-09
+
+Bead `batter-7r3.3.1` corrects the SQLx example's startup-error boundary. The
+example now returns its typed `StartupFailure` through `BoxError`, so the original
+startup cause remains its error source and the complete `CleanupReport` remains
+available to a trusted sink. Its own `Display` and `Debug` projections contain
+only fixed text and the cleanup outcome counts. The focused regression retained
+a failed cleanup record, its concrete error, a skipped record and the original
+startup cause while rejecting both sensitive test details from those projections.
+
+Executed against Git baseline `f367bc2425d395f4aa9127eb188681680ab7538b` plus
+the working-tree fix on macOS 26.6.2 (`25G83`) arm64 with Python 3.14.7:
+
+```sh
+cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked
+cargo check -p batter-example-postgres-lifecycle --all-targets --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+scripts/jig check test
+```
+
+The focused command passed its single regression on Rust 1.98.1. Both full
+verification commands also exercised it and passed on Rust 1.98.1 (`48a229cea`)
+and 1.94.0 (`4a4ef493e`), including both runtime configurations, 22 runner
+controls, doctests, formatting, Clippy with warnings denied and rustdoc. The
+rebuilt HTTP example passed all five smoke profiles.
+The final Jig `api:test` target passed the same configured runtime and doctest
+matrix. Cargo.lock remained unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+`DATABASE_URL` was absent, so no live PostgreSQL connection or cleanup was
+executed; the new regression covers the error-object boundary without claiming
+database integration evidence.
+
 ## Local verification review fixes: 2026-09-09
 
 Bead `batter-o5f` addresses the two actionable Claude findings on `batter-tip`.

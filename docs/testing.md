@@ -112,7 +112,9 @@ keeps its prefix-only policy.
 
 Jig's database tooling is disabled because SQLx currently appears only in an
 example package. There are no migration or prepared-query metadata gates.
-The executable remains compiled by workspace checks; live PostgreSQL is unverified.
+Workspace checks execute its startup/shutdown error-retention unit tests and a
+subprocess check of the redacted missing-configuration exit. Live PostgreSQL is
+unverified.
 Agent bootstrap requests only the Rust and ExecPlan plugins. No frontend,
 development app, or external status provider is configured. Vault scope metadata
 is retained for Jig compatibility; these checks do not need a vault passphrase.

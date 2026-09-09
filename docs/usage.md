@@ -183,10 +183,16 @@ an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
 still applies. The [extracted-cleanup test](../crates/batter/tests/lifecycle_state.rs)
 demonstrates independent teardown after the owner is dropped.
 
-The example's outer CLI error is sanitized; its StartupFailure object has the
-original cause plus cleanup report available for a trusted error sink. In a
-real application, choose that sink deliberately rather than dropping valuable
-diagnostics or printing Debug on a report containing secrets.
+The example's startup completion path returns `StartupFailure` inside `BoxError`
+rather than rebuilding an `io::Error` from text. Its error source remains the
+original startup cause, and its owned `CleanupReport` retains each cleanup outcome
+and error. Its shutdown completion path similarly retains the owned
+`ShutdownReport`, including task and cleanup errors. The outer `ProcessFailure`
+keeps either typed failure, or an earlier concrete startup error, as its source
+while exposing fixed `Display` and `Debug` text to Rust's `Result` termination
+path. A trusted sink can traverse or downcast that source chain. Choose that sink
+deliberately instead of dropping diagnostics or printing the reports' derived
+`Debug` output.
 
 Do not wrap an entire transaction/commit in a blanket retry. Continue to use
 native SQLx transaction parameters where application writes and Runledger enqueue

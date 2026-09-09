@@ -107,9 +107,16 @@ Batter cannot prove an acknowledgement is truthful or inspect hidden children.
 The signal example acknowledges only after installing its listeners.
 
 If startup fails, extract the cleanup stack and await it. Preserve the startup
-error and the cleanup report separately. Cancellation/panic during unprotected
-startup can still skip explicit asynchronous cleanup. This is not an Effect
-Layer graph or acquireRelease masking protocol.
+error and the cleanup report separately; returning a trait-object error must not
+stringify either retained object. Cancellation/panic during unprotected startup
+can still skip explicit asynchronous cleanup. This is not an Effect Layer graph
+or acquireRelease masking protocol.
+
+At an executable boundary, use a redacted outer error whose source remains the
+concrete inner failure. This keeps early startup errors inspectable without
+printing their contents through `Result` termination. An unsuccessful owned
+driver report must likewise remain an owned `ShutdownReport`; rebuilding an
+`io::Error` from its `Display` text discards task and cleanup errors.
 
 ## Shutdown state machine
 

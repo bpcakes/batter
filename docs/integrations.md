@@ -72,9 +72,11 @@ The existing smoke test does not establish full connection/body lifetime behavio
 The [example](../examples/postgres-lifecycle/src/main.rs), packaged as
 `batter-example-postgres-lifecycle`, uses native PgPoolOptions,
 query_scalar, and Pool::close. It registers close as a dependency finalizer and
-shows startup-error cleanup. No database abstraction or generic transaction retry
-is introduced. The example compiles with SQLx 0.9.0; it has not been run against
-PostgreSQL here. This dependency requires Rust 1.94 or newer.
+shows startup-error cleanup. Its fixed process diagnostic retains concrete early
+errors, the startup cleanup report, or the complete failed shutdown report in its
+source chain. No database abstraction or generic transaction retry is introduced.
+The example compiles with SQLx 0.9.0; it has not been run against PostgreSQL here.
+This dependency requires Rust 1.94 or newer.
 
 Application-owned migration/schema checks happen before readiness. There is no
 automatic migration during a health probe. Size pool capacity alongside admitted
