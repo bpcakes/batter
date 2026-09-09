@@ -9,6 +9,53 @@ use tracing::Instrument;
 /// An Ok report must still be inspected for task and cleanup failures.
 pub type DriverOutcome = Result<SharedShutdownReport, Arc<JoinError>>;
 
+/// An unsuccessful shutdown, retaining every task and cleanup outcome.
+/// Default diagnostics never print native task, cleanup or panic contents.
+#[derive(Clone)]
+pub enum ShutdownFailure {
+    /// The driver completed, but its report contains unsuccessful outcomes.
+    Report(SharedShutdownReport),
+    /// The coordinator terminated without producing a shutdown report.
+    Coordinator(Arc<JoinError>),
+}
+
+impl std::fmt::Display for ShutdownFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Report(report) => write!(f, "shutdown failed; {}", **report),
+            Self::Coordinator(_) => f.write_str("shutdown coordinator terminated without a report"),
+        }
+    }
+}
+impl std::fmt::Debug for ShutdownFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl std::error::Error for ShutdownFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Report(report) => Some(&**report),
+            Self::Coordinator(error) => Some(&**error),
+        }
+    }
+}
+
+/// Interpret a driver outcome without discarding unsuccessful report contents.
+///
+/// ```no_run
+/// # async fn example(running: batter::lifecycle::RunningSupervisor) -> Result<(), batter::lifecycle::ShutdownFailure> {
+/// batter::lifecycle::check_shutdown(running.wait().await)
+/// # }
+/// ```
+pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
+    match outcome {
+        Ok(report) if report.is_success() => Ok(()),
+        Ok(report) => Err(ShutdownFailure::Report(report)),
+        Err(error) => Err(ShutdownFailure::Coordinator(error)),
+    }
+}
+
 /// A cheaply cloneable reference to an owned driver's completed report.
 ///
 /// All observers and clones retain the same report and original failures.

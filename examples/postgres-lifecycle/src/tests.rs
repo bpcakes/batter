@@ -1,4 +1,46 @@
 use super::*;
+use batter::{
+    lifecycle::ShutdownFailure,
+    startup::{StartupCause, StartupError, StartupFailure},
+};
+use sqlx::PgPool;
+
+async fn complete_startup(
+    supervisor: Supervisor,
+    result: Result<(), BoxError>,
+) -> Result<(), BoxError> {
+    serve(supervisor, move |_| {
+        Box::pin(async move { process_result(result) })
+    })
+    .await
+}
+
+fn startup_failure(error: &BoxError) -> &StartupFailure<ProcessFailure> {
+    match error
+        .downcast_ref::<StartupError<ProcessFailure>>()
+        .unwrap()
+    {
+        StartupError::Failed(failure) => failure,
+        StartupError::Coordinator(_) => panic!("expected startup report"),
+    }
+}
+fn application_cause(failure: &StartupFailure<ProcessFailure>) -> &BoxError {
+    match &failure.cause {
+        StartupCause::Failed(error) => &error.cause,
+        _ => panic!("expected application failure"),
+    }
+}
+fn shutdown_report(failure: &ShutdownFailure) -> &batter::lifecycle::SharedShutdownReport {
+    match failure {
+        ShutdownFailure::Report(report) => report,
+        ShutdownFailure::Coordinator(_) => panic!("expected shutdown report"),
+    }
+}
+fn register_pool_close(supervisor: &mut Supervisor, pool: &PgPool) -> Result<(), BoxError> {
+    batter_sqlx::register_pool_close(supervisor, "postgres.pool", pool)?;
+    Ok(())
+}
+
 use batter::{cleanup::CleanupOutcome, lifecycle::TaskOutcome};
 use std::sync::{
     Arc,
@@ -67,14 +109,9 @@ async fn startup_failure_retains_cause_and_failed_cleanup_before_exit() {
         Err(std::io::Error::other("startup-credential-marker").into()),
     )
     .await;
-    let failure = result
-        .as_ref()
-        .unwrap_err()
-        .downcast_ref::<StartupFailure>()
-        .unwrap();
+    let failure = startup_failure(result.as_ref().unwrap_err());
     assert_eq!(
-        failure
-            .cause
+        application_cause(failure)
             .downcast_ref::<std::io::Error>()
             .unwrap()
             .to_string(),
@@ -100,7 +137,7 @@ async fn task_failure_survives_successful_coordination_and_exits_failure() {
         .as_ref()
         .unwrap_err()
         .downcast_ref::<ShutdownFailure>()
-        .map(|failure| &failure.report)
+        .map(shutdown_report)
         .unwrap();
     assert!(!report.is_success());
     assert_eq!(report.tasks.len(), 1);
@@ -125,7 +162,7 @@ async fn cleanup_failure_survives_successful_tasks_and_exits_failure() {
         .as_ref()
         .unwrap_err()
         .downcast_ref::<ShutdownFailure>()
-        .map(|failure| &failure.report)
+        .map(shutdown_report)
         .unwrap();
     assert!(!report.is_success());
     assert!(

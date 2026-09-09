@@ -6,6 +6,44 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## SQLx PostgreSQL disposition, reviewed 2026-09-09
+
+For `batter-7r3.2`, inspected the Cargo registry sources for `sqlx-core` and
+`sqlx-postgres` **0.9.0**, the exact workspace lock resolution, and these primary
+versioned sources. This is independent of the larger durable-runtime/harness
+compatibility graph.
+
+- [PoolConnection 0.9.0 API](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolConnection.html)
+  and [pool implementation](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/pool/connection.rs):
+  `detach` removes pool accounting and allows replacement; `close` retains its
+  permit while awaiting closure. Ordinary Drop spawns return work, whose ping
+  precedes slot release. `close_on_drop` uses a bounded asynchronous close path,
+  not the synchronous capacity-release contract selected here. Nonzero minimum
+  connections can spawn replacement work after detachment.
+- [PostgreSQL connection implementation](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-postgres/src/connection/mod.rs):
+  `ping` writes Sync and awaits readiness. Graceful close sends Terminate; the
+  adapter instead detaches and drops client ownership without claiming a remote
+  acknowledgement. Live evidence, not source inspection, establishes observed
+  residual locked sessions and their later disappearance.
+- [Native transaction implementation](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/transaction.rs):
+  commit/rollback await the native transaction manager; dropping an open
+  transaction starts rollback without awaiting acknowledgement. The adapter
+  therefore requires explicit completion before ordinary pool return.
+- [Native error variants](https://github.com/transact-rs/sqlx/blob/v0.9.0/sqlx-core/src/error.rs):
+  native pool timeout differs from operation interruption. Database and transport
+  failures retain their original causes. Neither the native enum nor this
+  adapter's diagnostic categories establish safe replay of an uncertain commit.
+- [PostgreSQL 18 activity observation](https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW)
+  and [advisory locks](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS):
+  session locks support explicit unlock; own-session activity is visible to its
+  role. Test observers use independent autocommit queries to avoid retaining an
+  activity snapshot inside a transaction. PID observations distinguish local
+  capacity release from backend termination; they do not imply remote cancellation.
+
+The package retains Rust 1.94 and SQLx runtime-tokio/PostgreSQL features; consumers
+select TLS. No upstream external package or checksum changed in the Cargo-generated
+lockfile. Linux execution and unverified platforms are recorded in [validation](validation.md).
+
 ## Exit boundaries and subprocess controls: 2026-09-09
 
 Rechecked Rust 1.98.1's
@@ -826,3 +864,43 @@ signal changes and mocks. The [unittest result API](https://docs.python.org/3.14
 supplies `startTest` and success/skip results. Each shard records actually started
 test IDs and the parent compares them with its complete assigned discovery, so a
 zero exit alone cannot supply coverage evidence. No fixture deadline was changed.
+
+## Owned startup native semantics (2026-09-09)
+
+The locked Tokio version remains 1.53.1. Its [one-shot receiver contract](https://docs.rs/tokio/1.53.1/tokio/sync/oneshot/struct.Receiver.html#cancel-safety)
+confirms borrowed receiver waits are cancellation-safe. The running handoff uses
+that receiver while observers carry no service ownership. The [Rust unwind API](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html)
+catches unwinding panics, leaves the hook in place, and cannot catch aborting
+panics. Initializer construction, polling and destruction have separate catch
+boundaries so an application failure is retained alongside a destructor panic.
+
+Tokio 1.53.1's [Unix signal source](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/tokio/src/signal/unix.rs)
+was inspected in the downloaded Cargo registry because the web page could not
+be fetched. `signal` installs listeners immediately; Tokio's process-wide handler
+is not restored when listeners are dropped. The helper registers consumption as
+a critical component, so signals are consumed once that driver starts. Linux
+process smoke evidence is recorded in validation; no new macOS run is claimed.
+
+## Owned dependency health semantics (2026-09-09)
+
+Locked Tokio remains 1.53.1. Its [select contract](https://docs.rs/tokio/1.53.1/tokio/macro.select.html)
+explains same-task concurrent polling and biased branch order. Health puts drain
+and cancellation before deadline and work, keeps factory invocation inside the
+work future, and destroys it before publishing. Its [timeout contract](https://docs.rs/tokio/1.53.1/tokio/time/fn.timeout.html)
+notes that inner work is polled first and non-yielding work can overrun. The health
+monitor instead selects explicitly and rechecks elapsed time on completion, so
+late success is unready without claiming preemption. Timed-out results do not
+preserve a concurrently returned late application value.
+
+The exact downloaded Tokio 1.53.1 `src/time/sleep.rs` was inspected after the
+versioned `sleep_until` web page could not be fetched. Sleep uses an absolute
+instant and has no work while pending; drop cancels it. Completion-to-next-probe
+sleep creates no interval catch-up behavior. Native timer granularity and scheduler
+stalls remain relevant despite policy validation.
+
+The [standard mutex contract](https://doc.rust-lang.org/std/sync/struct.Mutex.html)
+provides exclusive publication of outcome, timestamp and writer liveness. Locks
+are short and private; application error destruction occurs after unlocking.
+This is synchronous observation, not a lock-free or wait-free guarantee. Tests
+exercise readers while a replaced error's destructor runs, and paused-clock
+checks keep the writer unscheduled while its cached success expires.

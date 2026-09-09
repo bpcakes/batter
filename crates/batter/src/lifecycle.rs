@@ -8,15 +8,20 @@ mod driver;
 mod process;
 mod report;
 mod state;
+mod unix;
 
 use state::Shared;
 
-pub use driver::{DriverOutcome, RunningSupervisor, SharedShutdownReport, SupervisorObserver};
+pub use driver::{
+    DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
+    check_shutdown,
+};
 pub use process::{
     ProcessAdmissionError, ProcessHandle, ProcessReceipt, ProcessScope, ProcessTaskError,
 };
 
 pub use report::ShutdownReport;
+pub use unix::{SignalRegistrationError, register_signals};
 
 use crate::{
     BoxError, ConfigurationError, RegistrationError,
@@ -352,6 +357,16 @@ impl Supervisor {
         F: FnOnce(ShutdownSignal) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
+        self.check_component_name(name)?;
+        self.components.push(Component {
+            name,
+            factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
+        });
+        self.handle.shared.register_component();
+        Ok(())
+    }
+
+    fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
         validation::name(name)?;
         if self
             .components
@@ -360,11 +375,6 @@ impl Supervisor {
         {
             return Err(RegistrationError::Duplicate(name));
         }
-        self.components.push(Component {
-            name,
-            factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
-        });
-        self.handle.shared.register_component();
         Ok(())
     }
 
@@ -380,6 +390,16 @@ impl Supervisor {
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         self.cleanup.push(name, action)
+    }
+
+    /// Reserve a validated cleanup name before acquiring a resource.
+    /// Registration through the returned slot cannot reject ownership afterward.
+    /// See [`crate::cleanup::CleanupSlot`] for the acquisition pattern and limits.
+    pub fn reserve_cleanup(
+        &mut self,
+        name: &'static str,
+    ) -> Result<crate::cleanup::CleanupSlot<'_>, RegistrationError> {
+        self.cleanup.reserve(name)
     }
 
     /// Extract pending finalizers if application startup fails before running.

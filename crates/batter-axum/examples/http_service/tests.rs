@@ -1,7 +1,7 @@
 #[path = "../../tests/support/capture.rs"]
 mod capture;
 
-use super::{router, support};
+use super::{register_dependency_health, router, support};
 use batter::lifecycle::Supervisor;
 use capture::Capture;
 use std::{
@@ -57,7 +57,8 @@ async fn readiness_responses() -> [String; 4] {
             Ok(())
         })
         .unwrap();
-    let app = router(handle.clone(), Duration::from_secs(1)).unwrap();
+    let health = register_dependency_health(&mut supervisor).unwrap();
+    let app = router(handle.clone(), Duration::from_secs(1), health.clone()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -73,6 +74,12 @@ async fn readiness_responses() -> [String; 4] {
     let running = supervisor.start();
     let result: Result<_, Box<dyn std::error::Error + Send + Sync>> = async {
         timeout(Duration::from_secs(2), started_rx).await??;
+        timeout(Duration::from_secs(2), async {
+            while !health.is_healthy() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
         let starting = get(address).await?;
         handle.mark_ready();
         let ready = get(address).await?;
@@ -148,4 +155,82 @@ fn assert_readiness(capture: Capture, levels: [Option<&str>; 4]) {
         );
         assert!(fields.contains("route=\"/ready\""), "{text}");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_observations() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use batter::{
+        health::{HealthMonitor, HealthPolicy},
+        lifecycle::{Readiness, ShutdownHandle},
+    };
+    use std::{
+        future::{Future, poll_fn},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::Poll,
+    };
+    use tower::ServiceExt;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let attempts = calls.clone();
+    let policy = HealthPolicy::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        Duration::from_secs(4),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let monitor = HealthMonitor::new(policy, move || {
+        let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+        async move {
+            if attempt == 0 {
+                Err(io::Error::other("private dependency failure"))
+            } else {
+                Ok(())
+            }
+        }
+    });
+    let health = monitor.reader();
+    let handle = ShutdownHandle::new();
+    handle.mark_ready();
+    let app = router(handle.clone(), Duration::from_secs(1), health).unwrap();
+    let status = || async {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    };
+    let mut run = Box::pin(monitor.run(handle.signal()));
+    assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // unknown
+    assert!(
+        poll_fn(|cx| Poll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // failed
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(
+        poll_fn(|cx| Poll::Ready(run.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    assert_eq!(status().await, StatusCode::OK); // recovered
+    tokio::time::advance(Duration::from_secs(4)).await;
+    assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // stalled writer, stale
+    drop(run);
+    assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // stopped writer
+    assert_eq!(handle.readiness(), Readiness::Ready); // health did not drain the process
+    assert_eq!(calls.load(Ordering::SeqCst), 2); // reads did no dependency work
 }

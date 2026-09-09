@@ -11,7 +11,7 @@ it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` foundation,
-`batter-axum` adapter, and `batter-test-support` utilities are separate libraries;
+`batter-axum` and `batter-sqlx` adapters, and `batter-test-support` utilities are separate libraries;
 `batter-example-postgres-lifecycle` is an unpublished executable package.
 Public functions accept native futures, concrete errors, and runtime
 primitives. Only process/cleanup boundaries erase errors into BoxError, because
@@ -24,7 +24,7 @@ application composition root
   |-- batter operation + retry + admission
   |-- native tracing subscriber and exporters (application-owned)
   |-- optional batter-axum -> batter + Axum / Tower
-  |-- native SQLx PgPool / Transaction
+  |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
   |-- Runlimit, Runledger (future thin adapters)
   `-- tests -> batter-test-support + postgres-test-harness (future composition)
 ```
@@ -32,7 +32,7 @@ application composition root
 The foundation graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.
 The latter provides safe pin projection for a private, allocation-free tracing
 context wrapper; it was already a transitive dependency. Axum/Serde belong to
-the adapter package. SQLx belongs to the example package. There is no TypeScript runtime,
+the HTTP adapter package. SQLx belongs to the optional PostgreSQL adapter and example. There is no TypeScript runtime,
 algebraic-effect datatype, service locator, runtime-neutral abstraction, or
 cyclic dependency on the user's reusable libraries.
 
@@ -40,9 +40,9 @@ cyclic dependency on the user's reusable libraries.
 tests can use its generic scripts without pulling higher layers back into the
 foundation. Cross-package fixtures belong in their application/example test
 targets. The external PostgreSQL harness is not moved or made a dependency by
-this reorganization. New SQLx, Runlimit, or Runledger adapter crates require
-proven shared mechanics; the current SQLx composition remains native application
-code. See [ADR-006](adr/006-workspace-packages.md).
+this reorganization. The optional SQLx adapter shares the observed connection
+disposition mechanism while preserving native transactions and application policy.
+Runlimit and Runledger adapters still require proven shared mechanics. See [ADR-006](adr/006-workspace-packages.md).
 
 Each package declares its version, Rust minimum, and publication policy. All
 currently retain version 0.1.0, Rust 1.94, and `publish = false`; a shared
@@ -95,28 +95,58 @@ unwinds follow the same dropped-response observation path and propagate normally
 
 ## Composition and readiness
 
-Acquire dependencies in an explicit composition root. Register each resource's
-cleanup immediately after successful acquisition. Register dependencies before
-dependents so teardown reverses the order. Run application-specific migration
-compatibility and readiness checks before calling handle.mark_ready().
+`startup::Startup` owns an explicit native initializer from `start` through
+failure cleanup or transfer to `RunningSupervisor`. Its boxed future borrows a
+`StartupScope`; no service registry or dependency graph is introduced. Reserve a
+cleanup name before acquisition, then register the finalizer synchronously after
+success. Register dependencies before dependents so teardown reverses the order.
+Application stages and initialization/cleanup budgets remain explicit inputs.
 
-Each registered component acknowledges actual initialization with
-`ShutdownSignal::mark_started`. `mark_ready` only arms publication: the driver
-must be running and every component must acknowledge before Ready is visible.
-Batter cannot prove an acknowledgement is truthful or inspect hidden children.
-The signal example acknowledges only after installing its listeners.
+The sole `StartingSupervisor` owns the running handoff. Cancelling its borrowed
+waiter leaves initialization running; dropping it requests drain. The startup
+coordinator retains registered finalizers through failed-startup cleanup.
+Observers retain outcomes without keeping a running owner alive. Initializer
+construction, polling and destructor unwinds are caught separately; original
+application failures and destructor panics coexist in the startup report.
 
-If startup fails, extract the cleanup stack and await it. Preserve the startup
-error and the cleanup report separately; returning a trait-object error must not
-stringify either retained object. Cancellation/panic during unprotected startup
-can still skip explicit asynchronous cleanup. This is not an Effect Layer graph
-or acquireRelease masking protocol.
+Successful initialization arms readiness and starts the existing owned driver.
+Each registered component must still acknowledge actual initialization with
+`ShutdownSignal::mark_started`. Drain cannot be reversed by late approval.
+`register_signals` installs native SIGTERM/SIGINT listeners during initialization;
+installation errors enter startup cleanup before readiness. Their component
+receives signals once the running driver starts. Tokio's process-wide signal
+handlers remain installed after listeners are dropped.
+
+The lower-level `take_cleanup` pattern remains explicitly caller-driven. Its
+caller cancellation can abandon asynchronous cleanup. Resources not yet
+registered retain native Drop behavior even inside owned startup: reserve before
+acquisition and avoid suspension between acquisition success and registration.
+No async Drop, detached-child ownership or runtime-death guarantee is added.
 
 At an executable boundary, use a redacted outer error whose source remains the
 concrete inner failure. This keeps early startup errors inspectable without
 printing their contents through `Result` termination. An unsuccessful owned
 driver report must likewise remain an owned `ShutdownReport`; rebuilding an
 `io::Error` from its `Display` text discards task and cleanup errors.
+`check_shutdown` returns a redacted `ShutdownFailure` retaining the original
+unsuccessful report or coordinator JoinError. Both service examples use it.
+
+## Dependency observation
+
+`health::HealthMonitor` is one non-cloneable owner, driven by an ordinary
+supervised run future. `HealthReader` clones retain the latest concrete result
+and monotonic completion time without retaining writer ownership. A short private
+mutex makes publication coherent; error destruction occurs outside it. Readers
+compute freshness at each call, so an unscheduled owner cannot extend success.
+The owner stops on drain, destroys its active future and invalidates readers.
+Probe errors/timeouts are recoverable dependency states, while panics remain
+critical component failures. There is no hidden task or service registry.
+
+The HTTP composition registers a monitor during owned startup and passes only
+its reader to the readiness route. The route combines process state and cached
+dependency status; it never queries a dependency. Acknowledging the monitor's
+initialization does not make an unknown dependency healthy. Application timing
+policy and actual probe implementation stay in the composition root.
 
 ## Shutdown state machine
 

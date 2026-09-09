@@ -59,12 +59,8 @@ async fn startup_database_error_retains_failed_cleanup_and_closes_the_pool() {
         .await
         .unwrap_err();
     let result = complete_startup(supervisor, Err(cause.into())).await;
-    let failure = result
-        .as_ref()
-        .unwrap_err()
-        .downcast_ref::<StartupFailure>()
-        .unwrap();
-    assert_division_error(&failure.cause);
+    let failure = startup_failure(result.as_ref().unwrap_err());
+    assert_division_error(application_cause(failure));
     assert_eq!(failure.cleanup.records.len(), 2);
     assert_eq!(failure.cleanup.records[0].name, "failed-finalizer");
     assert_eq!(failure.cleanup.records[0].outcome, CleanupOutcome::Failed);
@@ -96,7 +92,7 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
         .as_ref()
         .unwrap_err()
         .downcast_ref::<ShutdownFailure>()
-        .map(|failure| &failure.report)
+        .map(shutdown_report)
         .unwrap();
     assert_eq!(report.tasks.len(), 1);
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);

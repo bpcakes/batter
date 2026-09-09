@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains three library packages and one SQLx example package,
+This workspace contains four library packages and one SQLx example package,
 with failure-contract tests, doctests, and five runnable demonstrations.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification passed on Rust 1.94.0 and 1.98.1 after upgrading the dependencies;
@@ -51,7 +51,11 @@ definition is not evidence of a hosted CI execution.
 
 `crates/batter/src/lifecycle.rs` and `crates/batter/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.
-`crates/batter/src/cleanup.rs` owns explicit LIFO finalizers.
+`crates/batter/src/startup.rs` and `startup/` own initialization, failure cleanup
+and transfer to the running driver.
+`crates/batter/src/health.rs` and `health/` own sequential dependency sampling,
+read-only freshness snapshots and writer lifetime.
+`crates/batter/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
 `crates/batter/src/operation.rs` owns deadline/cancellation boundaries and typed failures.
 `crates/batter/src/retry.rs` owns replay policy, bounded attempts, and backoff.
 `crates/batter/src/admission.rs` owns process-local concurrency permits.
@@ -60,6 +64,8 @@ and exposes `with_current_dispatch` for adapter-owned futures.
 `crates/batter/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
 full inner-future destruction, without heap allocation.
 `crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter.
+`crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
+bounded probes and pool-close registration; server-session termination remains separate.
 `crates/batter-test-support` contains dependency scripts and error combination.
 `crates/batter/examples` contains worker and operation/process ownership examples.
 `crates/batter-axum/examples` contains the HTTP composition root.

@@ -1,0 +1,28 @@
+[package]
+name = "batter-sqlx"
+description = "Explicit PostgreSQL connection disposition for native SQLx operations"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+readme = "README.md"
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+batter.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+sqlx = { workspace = true, features = ["tls-rustls-ring"] }
+batter-test-support.workspace = true
+
+[[test]]
+name = "offline"
+
+[[test]]
+name = "postgres_live"

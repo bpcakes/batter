@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 pin-project-lite.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 thiserror.workspace = true

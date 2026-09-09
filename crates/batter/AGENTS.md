@@ -17,7 +17,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
-- `src/cleanup.rs` drives explicit LIFO finalizers.
+- `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
+- `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
+- `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation.
 
@@ -39,9 +41,15 @@ Readiness reads must remain available while native enqueue holds admission.
 Supervisor abandonment signaling is owned from construction and transferred to
 the driver; it precedes captured-value destruction and never runs finalizers.
 Completion channels belong to owned drivers: create them only in `start` and
-expose observers only through `RunningSupervisor`, never shutdown control handles.
+expose shutdown observers through `RunningSupervisor`, never shutdown control handles.
+`StartingSupervisor` exposes startup observation without retaining running ownership.
+Reserve cleanup names before acquisition and register immediately after success.
 Extracted finalizers remain explicitly awaited and must not inherit process
 operation cancellation; extraction does not detach captured tokens.
+Health readers create no work; the sole monitor owns and destroys its active
+probe on drain. Probe failure permits recovery and does not drain the process.
+Freshness is evaluated from the observation timestamp on each read; readers
+never prolong writer ownership or refresh a successful timestamp.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or

@@ -17,6 +17,7 @@ use axum::{
 use batter::{
     BoxError,
     admission::{Admission, AdmissionError, Bulkhead},
+    health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::{Readiness, ShutdownHandle, Supervisor},
     operation::{Interruption, OperationContext, OperationError},
 };
@@ -87,18 +88,47 @@ async fn fail(Extension(id): Extension<RequestId>) -> Response {
     render_failure(HttpFailure::Internal, &id)
 }
 
-async fn readiness_response(State(handle): State<ShutdownHandle>) -> Response {
-    // This application's probe reports lifecycle state. Task failures still have
-    // their own diagnostics; routine starting/draining probes need no warning.
-    match handle.readiness() {
-        Readiness::Ready => StatusCode::OK.into_response(),
-        Readiness::Starting | Readiness::Draining => (
+#[derive(Clone)]
+struct ReadinessState {
+    lifecycle: ShutdownHandle,
+    dependency: HealthReader<std::io::Error>,
+}
+
+async fn readiness_response(State(state): State<ReadinessState>) -> Response {
+    // Both checks are read-only. Process drain always overrides cached success;
+    // dependency failure does not permanently drain the process.
+    match state.lifecycle.readiness() {
+        Readiness::Ready if state.dependency.is_healthy() => StatusCode::OK.into_response(),
+        Readiness::Ready | Readiness::Starting | Readiness::Draining => (
             Extension(HttpObservationLevel(tracing::Level::INFO)),
             StatusCode::SERVICE_UNAVAILABLE,
         )
             .into_response(),
         Readiness::Stopped => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+fn register_dependency_health(
+    supervisor: &mut Supervisor,
+) -> Result<HealthReader<std::io::Error>, BoxError> {
+    let policy = HealthPolicy::new(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+        Duration::from_secs(4),
+        Duration::from_secs(1),
+    )?;
+    let monitor = HealthMonitor::new(policy, || async {
+        // Demonstration only, like the read in /work. Replace the whole future
+        // with a native dependency probe, including connection acquisition.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        Ok::<_, std::io::Error>(())
+    });
+    let health = monitor.reader();
+    supervisor.register("dependency.health", move |shutdown| async move {
+        monitor.run(shutdown).await;
+        Ok(())
+    })?;
+    Ok(health)
 }
 
 struct Config {
@@ -168,6 +198,7 @@ async fn work(
 fn router(
     handle: batter::lifecycle::ShutdownHandle,
     request_budget: Duration,
+    dependency: HealthReader<std::io::Error>,
 ) -> Result<Router, batter::ConfigurationError> {
     let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_failure_renderer(
         |failure, parts| {
@@ -190,7 +221,10 @@ fn router(
     let probes = Router::new()
         .route("/live", get(liveness))
         .route("/ready", get(readiness_response))
-        .with_state(handle.clone());
+        .with_state(ReadinessState {
+            lifecycle: handle,
+            dependency,
+        });
     Ok(application
         .merge(probes)
         .layer(middleware::from_fn(observe_http))
@@ -198,29 +232,73 @@ fn router(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), BoxError> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(_) => {
+            eprintln!("Error: process failed");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+struct InitializationFailure(BoxError);
+impl std::fmt::Display for InitializationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("initialization failed")
+    }
+}
+impl std::error::Error for InitializationFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+impl std::fmt::Debug for InitializationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+async fn run() -> Result<(), BoxError> {
     tracing_subscriber::fmt()
         .with_env_filter(logging::filter(std::env::var("RUST_LOG"))?)
         .try_init()?;
     let config = Config::load()?;
-    let mut supervisor = Supervisor::new(support::shutdown_budget());
-    let handle = supervisor.handle();
-    let application = router(handle.clone(), config.request_budget)?;
-    let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
-    supervisor.register("http", move |shutdown| async move {
-        shutdown.mark_started();
-        axum::serve(listener, application)
-            .with_graceful_shutdown(async move { shutdown.draining().await })
-            .await?;
-        Ok(())
-    })?;
-    support::register_signals(&mut supervisor)?;
-    handle.mark_ready();
-    let running = supervisor.start();
-    let report = running.wait().await?;
-    if !report.is_success() {
-        return Err(std::io::Error::other((*report).to_string()).into());
-    }
+    let supervisor = Supervisor::new(support::shutdown_budget());
+    let mut starting = batter::startup::Startup::new(
+        supervisor,
+        OperationContext::new(Duration::from_secs(15))?,
+        support::cleanup_budget(),
+        move |scope| {
+            Box::pin(async move {
+                let result: Result<(), BoxError> = async {
+                    scope.stage("dependency.health")?;
+                    let health = register_dependency_health(scope.supervisor())?;
+                    scope.stage("http.bind")?;
+                    let handle = scope.supervisor().handle();
+                    let application = router(handle, config.request_budget, health)?;
+                    let listener = tokio::net::TcpListener::bind(config.bind).await?;
+                    tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
+                    scope
+                        .supervisor()
+                        .register("http", move |shutdown| async move {
+                            shutdown.mark_started();
+                            axum::serve(listener, application)
+                                .with_graceful_shutdown(async move { shutdown.draining().await })
+                                .await?;
+                            Ok(())
+                        })?;
+                    scope.stage("signals")?;
+                    support::register_signals(scope.supervisor())?;
+                    Ok(())
+                }
+                .await;
+                result.map_err(InitializationFailure)
+            })
+        },
+    )
+    .start();
+    let running = starting.wait().await?;
+    batter::lifecycle::check_shutdown(running.wait().await)?;
     Ok(())
 }

@@ -4,7 +4,6 @@ use batter::{
     lifecycle::{ShutdownBudget, Supervisor},
 };
 use std::time::Duration;
-use tokio::signal::unix::{SignalKind, signal};
 
 pub fn cleanup_budget() -> CleanupBudget {
     CleanupBudget::new(
@@ -26,18 +25,6 @@ pub fn shutdown_budget() -> ShutdownBudget {
 }
 
 pub fn register_signals(supervisor: &mut Supervisor) -> Result<(), BoxError> {
-    let handle = supervisor.handle();
-    supervisor.register("signals", move |shutdown| async move {
-        // Failure to install a listener is an observed critical-task error.
-        let mut term = signal(SignalKind::terminate())?;
-        let mut interrupt = signal(SignalKind::interrupt())?;
-        shutdown.mark_started();
-        tokio::select! {
-            _ = shutdown.draining() => {},
-            _ = term.recv() => handle.request(),
-            _ = interrupt.recv() => handle.request(),
-        }
-        Ok(())
-    })?;
+    batter::lifecycle::register_signals(supervisor, "signals")?;
     Ok(())
 }

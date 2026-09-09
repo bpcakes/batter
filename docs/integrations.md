@@ -1,6 +1,6 @@
 # Integration ownership contracts
 
-Only the `batter-axum` adapter package and the native SQLx **example package**
+The `batter-axum` and `batter-sqlx` adapter packages and native SQLx example
 exist in this snapshot.
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
@@ -69,10 +69,39 @@ The existing smoke test does not establish full connection/body lifetime behavio
 
 ## SQLx: keep transactions visible
 
+`batter-sqlx` is independently selected. `PgLease::acquire` bounds acquisition
+under an existing OperationContext. Move the lease into the operation future;
+native queries and transactions borrow `lease.connection()`. Explicitly call
+`return_to_pool` only after fully awaited successful query, commit or rollback.
+Dropping a transaction/stream does not acknowledge completion. Every other lease
+drop detaches and drops the native client, including errors, unwinding and
+interruption when the operation owns the lease. A lease retained outside a
+cancelled future remains the caller's responsibility.
+
+SQLx 0.9 ordinary pool return pings before releasing capacity and can wait behind
+interrupted SQL. Retirement releases that local accounting immediately, but the
+server can keep executing or waiting on a lock. Detached sessions can exceed
+`max_connections` and survive completed `Pool::close`; neither is a remote
+concurrency bound or termination witness. Reconcile uncertain writes and manage
+server-side resource policy in the application. The ignored live regressions
+hold an advisory lock, prove replacement work and local close before unlocking,
+then independently observe every retired backend disappear.
+
+`SqlxFailure` keeps native causes under fixed Debug/Display. Its conservative
+`FailureClass` uses native variants and never authorizes replay. Interruption
+remains `OperationError::Interrupted`, separate from native pool timeout or commit
+errors. Trusted source-chain inspection and SQLx's own logging can expose native
+contents. This adapter adds no database creation/recheck, migration, transaction
+manager or retry policy. `register_pool_close` retains caller ownership on
+registration failure; the caller must explicitly close that pool.
+
 The [example](../examples/postgres-lifecycle/src/main.rs), packaged as
-`batter-example-postgres-lifecycle`, uses native PgPoolOptions,
-query_scalar, and Pool::close. It registers close as a dependency finalizer and
-shows startup-error cleanup. Its fixed process diagnostic retains concrete early
+`batter-example-postgres-lifecycle`, uses native PgPoolOptions and the optional
+`batter-sqlx` bounded probe and Pool::close registration. It registers close as a dependency finalizer and
+uses `Startup` for owned initialization and startup-error cleanup. It reserves the
+pool finalizer name before connecting and registers closure immediately after
+acquisition. `register_signals` and `check_shutdown` are shared with the HTTP
+composition; pool sizing, probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain. No database abstraction or generic transaction retry is introduced.
 The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Portable checks

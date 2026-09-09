@@ -42,3 +42,10 @@ execution. Existing lifecycle, HTTP, tracing, and cleanup failure contracts
 must pass after relocation, and the public dispatch seam needs direct tests.
 Publication remains a separate decision. See [Cargo references](../references.md#workspace-packaging-reviewed-2026-09-08)
 and [validation](../validation.md) for external semantics and execution evidence.
+
+SQLx amendment, 2026-09-09 (`batter-7r3.2`): add a fourth library, independently
+selected `batter-sqlx`, and retain the native lifecycle executable as its runnable
+consumer. The original example-only SQLx restriction is superseded for proven
+connection-disposition mechanics. Core and generic test-support dependency
+directions remain unchanged. The adapter keeps Rust 1.94, version 0.1.0 and
+publishing disabled; consumers select their own native SQLx TLS features.

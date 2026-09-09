@@ -244,3 +244,49 @@ assert!(matches!(
 The helper combines results; it does not magically run teardown after panic or
 cancellation. A test that needs that behavior must drive the body in an owned
 task, observe its JoinError, and explicitly perform teardown afterward.
+
+## Sample health independently of HTTP traffic
+
+```rust
+use batter::{
+    health::{HealthMonitor, HealthPolicy},
+    lifecycle::{Readiness, Supervisor},
+};
+use std::{io, time::Duration};
+
+fn register_health(supervisor: &mut Supervisor) -> Result<batter::health::HealthReader<io::Error>, batter::BoxError> {
+    let policy = HealthPolicy::new(
+        Duration::from_secs(1), // whole probe, including acquisition
+        Duration::from_secs(2), // delay after completion/destruction
+        Duration::from_secs(4), // maximum observation age
+        Duration::from_secs(1), // scheduling margin
+    )?;
+    let monitor = HealthMonitor::new(policy, || async {
+        // Replace with the complete native dependency probe.
+        Ok::<_, io::Error>(())
+    });
+    let reader = monitor.reader();
+    supervisor.register("dependency.health", move |shutdown| async move {
+        monitor.run(shutdown).await;
+        Ok(())
+    })?;
+    Ok(reader)
+}
+```
+
+For each readiness request, evaluate
+`handle.readiness() == Readiness::Ready && reader.is_healthy()`.
+This does no dependency I/O. To inspect why it is unready, call `reader.snapshot()`
+and inspect `status()` and `last_probe()`; original errors require deliberate
+trusted access through `ProbeOutcome::Failed`. Do not cache a healthy snapshot
+as permanent approval. Readers report expired success as Stale and writer loss
+as Stopped. Recovered probes can restore health without restarting the process.
+
+The [HTTP example](../crates/batter-axum/examples/http_service.rs) runs a simulated
+probe every completion-plus-delay interval and combines its reader with lifecycle
+state. Its real loopback tests preserve process-phase/telemetry behavior, and a
+controlled router test exercises unknown, failure, recovery, staleness and writer
+loss without extra probes. Actual dependency work must remain in the supplied
+future; dropping that future does not establish remote cancellation or cleanup
+of unregistered resources. Health does not automatically change business-route
+admission policy or process readiness approval.

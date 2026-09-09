@@ -1,4 +1,4 @@
-use super::super::*;
+use super::*;
 use batter::{
     cleanup::CleanupOutcome,
     lifecycle::{ShutdownCause, TaskOutcome},
@@ -49,15 +49,14 @@ async fn startup_failure_path_retains_real_cleanup_diagnostics() {
     .await
     .map(|_| ());
     let error = process_result(result).expect_err("startup failure must reach the boundary");
-    let failure = std::error::Error::source(&error)
-        .expect("typed startup failure must remain the process source")
-        .downcast_ref::<StartupFailure>()
-        .expect("typed startup failure must survive BoxError conversion");
-
-    let source = std::error::Error::source(failure)
-        .expect("startup cause must remain in the error source chain");
-    assert!(std::ptr::addr_eq(source, failure.cause.as_ref()));
-    assert_eq!(source.to_string(), STARTUP_DETAIL);
+    let failure = startup_failure(&error.cause);
+    let source = std::error::Error::source(failure).unwrap();
+    let wrapped = source.downcast_ref::<ProcessFailure>().unwrap();
+    assert!(std::ptr::addr_eq(
+        wrapped.cause.as_ref(),
+        application_cause(failure).as_ref()
+    ));
+    assert_eq!(wrapped.cause.to_string(), STARTUP_DETAIL);
     assert_eq!(failure.cleanup.records.len(), 2);
     assert_eq!(failure.cleanup.records[0].name, "resource");
     assert_eq!(failure.cleanup.records[0].outcome, CleanupOutcome::Failed);
@@ -79,7 +78,7 @@ async fn startup_failure_path_retains_real_cleanup_diagnostics() {
     let diagnostic = format!("{failure:?}");
     assert_eq!(
         diagnostic,
-        "startup failed; cleanup: 1 unsuccessful, 0 skipped"
+        "startup failed at startup; cleanup: 1 unsuccessful, 0 skipped"
     );
     assert!(!diagnostic.contains(STARTUP_DETAIL));
     assert!(!diagnostic.contains(CLEANUP_DETAIL));
@@ -106,8 +105,9 @@ async fn shutdown_failure_path_retains_the_complete_report() {
         .wait()
         .await
         .expect("component failure must still publish a shutdown report");
-    let error = process_result(complete_shutdown(report))
-        .expect_err("unsuccessful shutdown must reach the process boundary");
+    let error =
+        process_result(check_shutdown(Ok(report)).map_err(|error| Box::new(error) as BoxError))
+            .expect_err("unsuccessful shutdown must reach the process boundary");
     let failure = std::error::Error::source(&error)
         .expect("typed shutdown failure must remain the process source")
         .downcast_ref::<ShutdownFailure>()
@@ -115,24 +115,22 @@ async fn shutdown_failure_path_retains_the_complete_report() {
     let report_source = std::error::Error::source(failure)
         .expect("shutdown report must remain in the error source chain");
 
-    assert!(std::ptr::addr_eq(report_source, &*failure.report));
+    let report = shutdown_report(failure);
+    assert!(std::ptr::addr_eq(report_source, &**report));
+    assert_eq!(report.cause, ShutdownCause::ComponentExit("component"));
+    assert_eq!(report.tasks.len(), 1);
+    assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
     assert_eq!(
-        failure.report.cause,
-        ShutdownCause::ComponentExit("component")
-    );
-    assert_eq!(failure.report.tasks.len(), 1);
-    assert_eq!(failure.report.tasks[0].outcome, TaskOutcome::Failed);
-    assert_eq!(
-        failure.report.tasks[0]
+        report.tasks[0]
             .error
             .as_deref()
             .expect("task error must be retained")
             .to_string(),
         SHUTDOWN_DETAIL
     );
-    assert_eq!(failure.report.cleanup.records.len(), 1);
+    assert_eq!(report.cleanup.records.len(), 1);
     assert_eq!(
-        failure.report.cleanup.records[0]
+        report.cleanup.records[0]
             .error
             .as_deref()
             .expect("shutdown cleanup error must be retained")

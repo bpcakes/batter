@@ -2,7 +2,9 @@
 
 `batter-example-postgres-lifecycle` demonstrates native SQLx pool acquisition,
 a readiness query, explicit pool-close registration, and error-preserving
-partial-startup cleanup with `batter`. Its executable is `postgres_lifecycle`.
+owned startup cleanup with `batter`. The optional `batter-sqlx` adapter supplies
+the bounded probe. Startup reserves the finalizer name before pool acquisition
+and immediately registers native pool closure. Its executable is `postgres_lifecycle`.
 The executable keeps concrete startup and shutdown reports behind a fixed,
 redacted process diagnostic so a trusted sink can inspect the source chain.
 
@@ -35,7 +37,7 @@ without contacting PostgreSQL. Rust's default panic hook remains unchanged.
 
 The normal test run also covers successful completion, startup plus cleanup
 failure, failed tasks, and failed shutdown cleanup through the same private
-completion and exit functions used by main. No database is needed for those
+owned startup and exit functions used by main. No database is needed for those
 control-flow tests. The example emits `PostgreSQL lifecycle ready` only after
 the application and signal components have acknowledged initialization.
 

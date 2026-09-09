@@ -16,6 +16,9 @@ pub enum ConfigurationError {
     /// A finalization reserve must leave positive time for the work phase.
     #[error("finalization reserve must leave positive work time")]
     InvalidReserve,
+    /// Health observations must outlive delay, probe budget and scheduling margin.
+    #[error("health maximum age must cover delay, probe budget and scheduling margin")]
+    InvalidHealthTiming,
 }
 
 /// Stable, unique names make managed work identifiable without dynamic labels.

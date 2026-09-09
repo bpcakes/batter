@@ -12,6 +12,29 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+The optional SQLx adapter's offline contracts run with ordinary workspace gates.
+Its live tests are explicitly ignored even with all features/targets. With
+`DATABASE_URL` identifying an externally provisioned disposable PostgreSQL
+database, run `bash scripts/test_sqlx_live.sh`. The runner rejects missing
+configuration and case-inventory mismatches, then executes all ignored cases
+under the existing Unix process watchdog. It requires up to six simultaneous
+server sessions, visibility of its own `pg_stat_activity` rows, advisory locks
+and TEMP-table privilege. It does not create databases or persistent objects.
+
+Each interrupted-case observer first witnesses the acquired backend waiting for
+a lock. Cancellation, deadline, application error, panic and outer-future drop
+must retire the client. Independent SQL and pool close each have a two-second
+local allowance before unlocking; all tracked backends must still be blocked.
+After unlock, a separate five-second observation requires their disappearance
+before test-control connections close. Three repeated interruptions must retain
+three distinct server identities despite a one-slot pool. Successful query and
+acknowledged commit/rollback reuse the same backend; a rejected deferred-constraint
+commit preserves its SQLSTATE and retires. The ordinary SQLx return control
+demonstrates the blocked-capacity failure mechanism. These checks do not establish
+remote cancellation acknowledgement, ambiguous-commit rollback or a server-side
+concurrency bound. The full process has a 180-second watchdog; OS scheduling and
+process death do not establish cleanup guarantees.
+
 ```sh
 bash scripts/verify.sh --bootstrap  # Initial formatter + dependency lock + checks.
 bash scripts/verify.sh             # Subsequent locked checks.
@@ -53,7 +76,7 @@ integration and live example tests. This configuration does not establish a
 successful macOS or hosted execution of the changes.
 
 The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
-at warning level in all four packages. Root `clippy.toml` sets their thresholds to
+at warning level in all workspace packages. Root `clippy.toml` sets their thresholds to
 20 and 100 respectively. The existing `-D warnings` verification step enforces
 both limits across libraries, examples, and tests.
 
@@ -185,6 +208,8 @@ receipt are excluded.
 | Dropping an active cleanup driver aborts its hook and does not start dependencies | [cleanup.rs](../crates/batter/tests/cleanup.rs) |
 | Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
+| Dependency health freshness, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter/tests/health.rs) and [ownership](../crates/batter/tests/health/ownership.rs), [publication](../crates/batter/tests/health/publication.rs) |
+| Owned startup waiter/owner loss, acquisition-registration barriers, LIFO failures, initialization deadline, panic and readiness/handoff | [startup.rs](../crates/batter/tests/startup.rs); injected signal installation failure in [unix.rs](../crates/batter/src/lifecycle/unix.rs) |
 | Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Completion/drain classification regression | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Never-polled driver drop notifies readiness/cancellation; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
@@ -624,6 +649,10 @@ drives acknowledged lifecycle transitions over a live loopback listener to prove
 the exact Starting/Draining INFO and Stopped WARN readiness policy under both INFO
 and mixed-target filtering. It checks generated identities per response, expected
 absence of filtered INFO events, and the retained identity on Stopped WARN events.
+The readiness route also requires a fresh successful cached dependency sample.
+A controlled router test covers unknown, failed, recovered, expired and stopped
+observations without additional probe calls. The runnable monitor uses an explicit
+simulated dependency, not a real database availability check.
 Readiness now acknowledges installed signal listeners, so there is no extra
 sleep before signalling. It is intentionally
 not a streaming/disconnect/load suite. It never contacts a user deployment.

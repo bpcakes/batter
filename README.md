@@ -1,7 +1,7 @@
 # batter
 
 A small operational foundation for Rust backends built on Tokio, with a separate
-Axum adapter. Keep your normal futures, application error enums, SQLx pools,
+Axum adapter and optional SQLx PostgreSQL adapter. Keep your normal futures, application error enums, SQLx pools,
 transactions, and routers. Standardize how work is owned, bounded, observed, and
 stopped—not how every business operation is written.
 
@@ -26,6 +26,8 @@ See [ADR-007](docs/adr/007-unix-platform-scope.md) and
 
 | Module | Responsibility |
 | --- | --- |
+| `health` | Owned non-overlapping dependency probes and fresh, read-only observations; no probe per request. |
+| `startup` | Owned native initialization, cleanup reservations, retained failures and running-driver handoff. |
 | `lifecycle` | Startup-acknowledged critical tasks, bounded finite process work, owned shutdown driver, retained reports, drain/cancel/abort/reap and cleanup. |
 | `cleanup` | Explicit asynchronous LIFO finalizers, shared/per-hook budgets, panic observation, retained errors, and reported skipped work. |
 | `operation` | Total deadlines, explicit finalization reserves, one-way cancellation, typed application failures, child cancellation on scope completion/drop. |
@@ -33,14 +35,16 @@ See [ADR-007](docs/adr/007-unix-platform-scope.md) and
 | `admission` | Native Tokio semaphore permits with reject-or-wait policy; waiting uses the existing deadline. |
 | `telemetry` | Stable operation outcomes, elapsed time, attempt/task/cleanup events through `tracing`; no global subscriber installation. |
 | `batter-axum` | Readiness gate, request deadline/context, configurable sanitized error rendering, independent HTTP observation covering probes/fallback with explicit response severity, combined compatibility middleware. |
+| `batter-sqlx` | Default-retiring PostgreSQL leases, bounded probe, redacted native errors and explicit pool-close registration. |
 | `batter-test-support` | Scripted dependency results and preservation of both test-body and cleanup errors. |
 
-The virtual workspace has three library packages and one unpublished example:
+The virtual workspace has four library packages and one unpublished example:
 
 | Package | Location | Adoption boundary |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Tokio lifecycle, operations, retry, admission, cleanup, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | Add alongside `batter` when using the HTTP adapter. |
+| `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Independently selected native PostgreSQL connection disposition. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
 
@@ -55,8 +59,8 @@ delivery tasks live in the [Beads backlog](docs/roadmap.md).
 
 ## Verification
 
-The default toolchain is pinned to Rust 1.98.1. All four packages retain Rust
-1.94 as their minimum. SQLx 0.9.0 requires it in the example package; extracting
+The default toolchain is pinned to Rust 1.98.1. All five packages retain Rust
+1.94 as their minimum. SQLx 0.9.0 requires it in the adapter and example; extracting
 that dependency does not establish a lower minimum for the libraries.
 The Linux CI definition covers 1.94.0, 1.98.1, and current stable; the focused
 macOS job compiles all workspace targets and runs the subprocess tests on both
@@ -112,6 +116,8 @@ been reserved and no publishing action has been taken.
 batter = { path = "../batter/crates/batter" }
 # Add this dependency for the HTTP adapter.
 batter-axum = { path = "../batter/crates/batter-axum" }
+# Add for explicit SQLx PostgreSQL connection disposition.
+batter-sqlx = { path = "../batter/crates/batter-sqlx" }
 
 [dev-dependencies]
 batter-test-support = { path = "../batter/crates/batter-test-support" }

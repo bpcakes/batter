@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter", "crates/batter-axum", "crates/batter-test-support", "examples/postgres-lifecycle"]
+members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-test-support", "examples/postgres-lifecycle"]
 default-members = ["crates/batter", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
@@ -13,6 +13,7 @@ too_many_lines = "warn"
 
 [workspace.dependencies]
 batter = { path = "crates/batter" }
+batter-sqlx = { path = "crates/batter-sqlx" }
 batter-test-support = { path = "crates/batter-test-support" }
 pin-project-lite = "0.2.17"
 tokio = { version = "1.53.1", default-features = false }

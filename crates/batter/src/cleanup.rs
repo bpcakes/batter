@@ -168,6 +168,43 @@ pub struct CleanupStack {
     hooks: Vec<Hook>,
 }
 
+/// A validated name and exclusive registration slot, reserved before acquisition.
+///
+/// Dropping an unused slot registers nothing. After acquisition succeeds, call
+/// [`Self::register`] without an intervening await. It cannot reject the name.
+/// This does not own an acquisition future or finalize an unregistered resource.
+///
+/// ```
+/// use batter::cleanup::CleanupStack;
+/// # async fn example() -> Result<(), batter::RegistrationError> {
+/// let mut cleanup = CleanupStack::new();
+/// let slot = cleanup.reserve("resource")?;
+/// let resource = String::from("acquired");
+/// slot.register(move || async move { drop(resource); Ok(()) });
+/// # let budget = batter::cleanup::CleanupBudget::new(std::time::Duration::from_secs(1), std::time::Duration::from_secs(1), std::time::Duration::from_secs(1)).unwrap();
+/// # assert!(cleanup.close(budget).await.is_success());
+/// # Ok(()) }
+/// ```
+#[must_use = "register acquired cleanup, or drop the unused reservation"]
+pub struct CleanupSlot<'a> {
+    stack: &'a mut CleanupStack,
+    name: &'static str,
+}
+
+impl CleanupSlot<'_> {
+    /// Register an owned finalizer under the already validated name.
+    pub fn register<F, Fut>(self, action: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+    {
+        self.stack.hooks.push(Hook {
+            name: self.name,
+            action: Box::new(move || Box::pin(action()) as CleanupFuture),
+        });
+    }
+}
+
 impl CleanupStack {
     /// An empty stack, with no background tasks.
     pub fn new() -> Self {
@@ -180,15 +217,21 @@ impl CleanupStack {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
+        self.reserve(name)?.register(action);
+        Ok(())
+    }
+
+    /// Validate before acquisition and hold exclusive registration authority.
+    ///
+    /// A rejected reservation consumes no finalizer or resource. Existing
+    /// [`Self::push`] retains its original consume-on-error behavior; use this
+    /// method when acquisition must not precede a possible registration failure.
+    pub fn reserve(&mut self, name: &'static str) -> Result<CleanupSlot<'_>, RegistrationError> {
         validation::name(name)?;
         if self.hooks.iter().any(|hook| hook.name == name) {
             return Err(RegistrationError::Duplicate(name));
         }
-        self.hooks.push(Hook {
-            name,
-            action: Box::new(move || Box::pin(action()) as CleanupFuture),
-        });
-        Ok(())
+        Ok(CleanupSlot { stack: self, name })
     }
 
     /// Number of pending hooks.

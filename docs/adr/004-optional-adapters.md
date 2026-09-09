@@ -31,3 +31,10 @@ separate `batter-axum` package instead of a foundation feature and moves SQLx
 to its own unpublished example package. This leaves upstream ownership and
 the combined request-policy contract unchanged. The PostgreSQL harness remains
 external and is not a workspace dependency.
+
+SQLx amendment, 2026-09-09 (`batter-7r3.2`): observed downstream pool starvation
+after interrupted SQL justifies an independent `batter-sqlx` adapter. It shares
+default-retiring leases, bounded probes and explicit pool-close registration;
+native PgConnection/Transaction boundaries remain visible. SQLx is no longer
+example-only. Client retirement does not prove remote execution stopped, and
+classification grants no replay authority. Provisioning and setup stay external.

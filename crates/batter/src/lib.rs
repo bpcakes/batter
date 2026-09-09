@@ -29,9 +29,11 @@
 
 pub mod admission;
 pub mod cleanup;
+pub mod health;
 pub mod lifecycle;
 pub mod operation;
 pub mod retry;
+pub mod startup;
 pub mod telemetry;
 
 mod scoped_dispatch;

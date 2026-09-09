@@ -127,11 +127,22 @@ name = "batter-example-postgres-lifecycle"
 version = "0.1.0"
 dependencies = [
  "batter",
+ "batter-sqlx",
  "sqlx",
  "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "batter-sqlx"
+version = "0.1.0"
+dependencies = [
+ "batter",
+ "batter-test-support",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

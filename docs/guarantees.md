@@ -354,6 +354,95 @@ around run_until and then describe the result as completed graceful shutdown.
 Drive its own phased protocol and inspect the report. A process watchdog may
 terminate an unresponsive binary, but no cleanup guarantee survives that action.
 
+## Owned startup contract
+
+`Startup::new` invokes no initializer. `start` launches the owner on a live Tokio
+runtime. Dropping the inert builder only abandons its unstarted supervisor;
+no asynchronous cleanup is implied. Once started, dropping `StartingSupervisor`
+requests drain while the coordinator drives registered cleanup independently.
+Cancelling `wait(&mut self)` leaves ownership and the pending handoff intact.
+After its first completed result, that one-shot waiter must not be polled again.
+`StartupObserver` retains a startup failure or a shutdown observer, never a
+running owner. Dropping an unclaimed handoff requests running-driver drain.
+
+Initialization checks the operation deadline/cancellation and process drain,
+including before factory invocation and after successful future destruction.
+Success arms readiness; the running driver and every critical acknowledgement
+are still required. A drain request cannot revive Ready. Failure preserves the
+application's concrete error and static stage, interruption or unwind payload,
+an independent initializer destruction panic, and all cleanup outcomes.
+Stage metadata must be suitable for diagnostics. Default error formatting omits
+cause contents; explicit error sources/panic inspection are trusted operations.
+
+Cleanup has its own budget, independent of the startup operation context.
+`reserve_cleanup` / `CleanupStack::reserve` validate names before acquisition;
+the exclusive `CleanupSlot` registers its finalizer infallibly. An unused slot
+adds no hook. The older `push` still consumes its factory on rejection. Native
+acquisition cancellation may have external effects before yielding ownership;
+resources acquired but not registered have only their native destruction
+semantics. Register immediately after success without another await. No detached
+work, arbitrary destructor, non-yielding initializer, aborting panic, process or
+runtime destruction is covered. The default panic hook may still print secrets.
+Unexpected coordinator termination retains a JoinError without inventing cleanup.
+
+`register_signals` validates the component name and installs SIGTERM/SIGINT
+listeners before returning. Installation errors follow owned startup cleanup.
+Signals are consumed by the registered component after driver start; this is not
+an independent signal driver during earlier initialization. Tokio changes
+process-wide signal disposition and does not restore it on listener drop.
+`check_shutdown` accepts only a successful report; failures retain the complete
+report, including forced abort, skipped cleanup and unjoined work, or the original
+coordinator error. Its redacted formatting does not inspect those causes.
+
+## Dependency health sampling
+
+`HealthMonitor` owns one native probe factory and creates no tasks. Constructing
+it or its consuming `run` future is inert. Register `run` as an ordinary
+supervised component; first poll acknowledges that the sampling loop is usable,
+not that the dependency is healthy. Application startup approval and dependency
+health remain separate. Returned probe errors and timeouts update health and
+allow recovery; panics propagate to the critical task boundary and stop the writer.
+
+`HealthPolicy` requires positive, representable probe budget, completion-to-next
+probe delay, maximum age and scheduling margin. Checked arithmetic requires
+maximum age >= delay + probe budget + margin. Probes never overlap. Each delay
+starts after the previous attempt's completion and destruction; delayed polling
+admits one next attempt, without an interval catch-up queue. The budget covers
+the complete application future, including acquisition and query work. A result
+observed at/past its deadline is classified as timed out. Blocking construction,
+polling or destruction cannot be preempted by that deadline.
+
+Readers synchronously copy one result/timestamp and writer liveness under a short
+private mutex. They perform no probes, create no tasks or per-reader queues, and
+never renew an observation. No application formatting or replaced-error destructor
+runs under the publication mutex. Only the latest probe is retained; a fresh
+in-budget failure retains its concrete E behind Arc without requiring E: Clone.
+Debug omits E's contents. Trusted inspection and normal ownership/destruction of
+retained application values remain application responsibilities.
+
+Unknown, failed, timed-out, stale and stopped states are all unready. At exactly
+maximum age the last result is stale, even if the owner still exists or has
+stalled. A later successful probe restores healthy status. Dropping the sole
+writer invalidates future reads immediately; reader clones and saved snapshots
+do not keep it alive. A snapshot is historical as of `observed_at`, so readiness
+must obtain a fresh read rather than caching a healthy snapshot forever.
+
+On observed drain or forced cancellation the monitor admits no new probe and
+destroys active directly owned work before returning. A completion followed by
+drain during destruction cannot publish success. Unpolled abandonment and outer
+run-task abortion stop the writer too. Retained last-probe details after Stopped
+are diagnostic history, not evidence that the dependency remains healthy or that
+remote work stopped. No detached-child, remote-query cancellation, async Drop,
+runtime-death or non-yielding shutdown guarantee is added.
+
+The HTTP example combines process Ready with a fresh health read at `/ready`.
+Observing lifecycle drain overrides cached success; this is not an atomic joint
+snapshot with concurrent lifecycle transitions. A request racing a later drain
+can still use its earlier Ready observation, as with existing admission.
+Dependency observations do not mutate process state or automatically alter
+`RequestPolicy` business-route admission. The example's probe is an explicit
+simulated dependency read, not evidence of actual database availability.
+
 ## Cleanup contract
 
 `CleanupReport` is `#[must_use]`. Awaited completion can still contain failed,
@@ -384,6 +473,25 @@ Register cleanup immediately after successful acquisition, but do not confuse
 this convention with an atomic acquisition/registration guarantee. The caller
 must handle partial acquisition and initialization according to native resource
 contracts. Resource values must not require an unavailable runtime after shutdown.
+
+## PostgreSQL client disposition
+
+The optional `batter-sqlx` package owns only checked-out client disposition.
+`PgLease` detaches and drops its client unless the application explicitly calls
+`return_to_pool` after acknowledged query/commit/rollback completion. Keep the
+lease inside the future whose interruption should retire it. Panics propagate;
+Rust's default panic hook can still print payloads. No native error contents are
+added to adapter diagnostics, but trusted source inspection and upstream logging
+remain application-owned.
+
+Retirement releases local pool capacity without awaiting interrupted SQL or
+SQLx's pool-return ping. It does not prove remote cancellation, rollback or server
+session termination. Detached sessions may outnumber max_connections and survive
+completed Pool::close. The live regression separately proves local replacement
+and close while locks remain held, then session disappearance after unlock.
+Repeated interruptions record independent residual sessions, not a remote bound.
+Ordinary successful return retains SQLx's asynchronous health-check policy.
+Neither operation interruption nor native failure classification authorizes replay.
 
 ## HTTP boundary
 

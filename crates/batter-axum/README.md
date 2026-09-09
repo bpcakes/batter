@@ -86,3 +86,7 @@ The example binds `127.0.0.1:3000` by default and provides `/live`, `/ready`,
 listener and deadline. SIGINT/SIGTERM initiate shutdown on Unix.
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
+
+The HTTP composition example combines lifecycle readiness with a cached reader
+from the foundation health monitor. Its simulated probe runs independently of
+HTTP traffic; application probe and timing policy remain explicit.

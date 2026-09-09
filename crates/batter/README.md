@@ -45,3 +45,7 @@ cargo run -p batter --example operation_budget
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. This is an early foundation,
 not a production-validated release. MIT licensed.
+
+`health` provides an ordinary supervised monitor with explicit timing policy and
+cloneable read-only observations. Readers do no probes; stale or stopped writers
+are unready. See the [usage example](../../docs/usage.md#sample-health-independently-of-http-traffic).
