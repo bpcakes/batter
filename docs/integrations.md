@@ -100,9 +100,14 @@ operator interfaces. Batter should host the upstream supervisor as one critical
 component and preserve its shutdown result. Do not spawn each of its internal
 loops under a second independent policy.
 
-The host must align budgets: stop new claims during drain, allow the upstream
-runtime enough time to drain, and observe its returned error. The outer grace
-must not casually drop run_until_shutdown before its own cleanup completes.
+The host must align budgets: request upstream stop-claiming during drain, allow
+its full cleanup allowance, and observe its returned error. An already in-flight
+claim may complete after the stop request. The inspected candidate offers no
+linearized stop-claim barrier, and its builder spawns loops without a readiness
+acknowledgement. The host needs an application initialization witness and must
+state what it proves. Upstream join returns its first failure; later internal
+errors are not automatically available to Batter. Dropping the supervisor is
+not join evidence. See the dated source inspection in [references](references.md).
 Do not assume an adapter can mechanically map every inner signal to Batter's
 forced token; inspect upstream behavior and document that translation.
 
@@ -149,14 +154,28 @@ test process. Fingerprint every ordered application and dependency migration
 bundle plus a revision for setup behavior not represented by SQL bytes.
 
 Use native SQLx pools and application migration entrypoints. Close all application
-connections/pools before returning a database lease. Preserve body, pool-close,
-lease-cleanup, and deferred-drain errors; a first question-mark must not skip the
-remaining cleanup. Keep a separate empty-database path for migration-order tests.
+connections before returning a database lease. SQLx 0.9 pool close returns unit;
+its incomplete observation must be distinguished from a returned cleanup error.
+Preserve body failures and the actual lease/deferred-drain failures on their
+respective paths; a first question-mark must not skip independent cleanup.
+
+The inspected harness queues cleanup on lease Drop. Keep the lease in an
+explicitly driven owner while connection shutdown remains incomplete; dropping
+a skipped finalizer or calling defer is not non-destructive retention. External
+harness shutdown is a no-op, so deferred cleanup requires a separate awaited
+drain. If an adapter detaches SQLx connections, pool close alone cannot prove
+those sessions stopped; fixture release needs their separately observed
+termination. No runtime-death or arbitrary async-drop guarantee follows. Keep
+a separate empty-database path for migration-order tests.
 
 Do not issue Docker CLI cleanup, clone databases manually, delete by name prefix,
 reset dirty test databases for reuse, or advance PostgreSQL clocks by calling
 Tokio's time::advance. Do not silently pass tests when the database is unavailable.
-Use explicit feature/test targets and report prerequisites or failures.
+Use explicitly selected live test targets and report prerequisites or failures.
+The workspace checks enable all features and targets: feature gating alone
+cannot keep database-dependent cases out of ordinary verification. The reference
+will compile ignored live cases during those checks and run them through an
+explicit prerequisite-checking runner; skipped cases are not executed evidence.
 
 ## Dependency direction and extraction criteria
 

@@ -13,6 +13,8 @@ The [Effect v4 reconciliation](effect-v4-reconciliation.md) explains current
 capabilities and deliberate differences from the broader proposal. This page
 records implemented facts and limits; [Beads](roadmap.md) owns delivery status,
 priorities, acceptance and dependencies.
+The [backend review evidence assessment](design-evidence.md) records the rationale
+for the intended application composition without adding implemented capabilities.
 
 CI now configures adapter runtime tests and all five HTTP process smoke profiles
 on macOS, and includes both WARN-filtered profiles on Linux. The added filtering,
@@ -76,6 +78,10 @@ after process termination. A real HTTP traffic/streaming/disconnect hardening
 suite and a real PostgreSQL setup remain outstanding. Startup/drop/race and
 HTTP signal/envelope/telemetry checks do not establish database integration or
 detached-descendant shutdown guarantees.
+
+The 2026-09-09 implementation-readiness audit refined open task contracts using
+local upstream source; it did not implement or execute the planned integrations.
+See [references](references.md) for those candidate-source limits.
 
 See [validation](validation.md) for what was actually checked, and
 [Beads](roadmap.md) for delivery work.
