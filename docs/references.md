@@ -675,3 +675,52 @@ remote before adding it. GitHub's
 describes key matching, branch scope, and eviction; a configured cache does not
 guarantee a hit. This repository caches `.git/jig-tools/*-runtime` only and
 continues to run Jig's normal source/profile compatibility checks after restore.
+
+
+## Integration readiness source inspection: 2026-09-09
+
+These are clean local repository candidates inspected for planning, not claims
+that released crate archives match those checkouts. Batter has not compiled or
+executed these integrations. Selection and executable compatibility remain open
+in Beads; recheck the eventual source and generated Cargo graph.
+
+- Runledger candidate
+  [`0f464b4f`](https://github.com/bpcakes/runledger/tree/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4)
+  has core/postgres/runtime manifests at 0.12.0, SQLx 0.9 and Rust 1.94.
+  Its [supervisor](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/supervisor.rs)
+  builder spawns loops without a ready receiver; Drop requests shutdown and
+  detaches. Join returns the first failure; timeout shutdown allows additional
+  abort cleanup of up to the smaller of its timeout and one second. The
+  [worker](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker.rs)
+  may finish an in-flight claim after stop is requested. These limits require
+  a scoped application startup witness and an honest outer shutdown budget.
+- Runledger's
+  [enqueue implementation](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/enqueue.rs)
+  exposes transaction-taking enqueue with outcomes; keyed submission requires
+  READ COMMITTED and compares canonical initial fields. Pool-owned enqueue
+  wrappers commit their own transaction. The
+  [migration implementation](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/migrations.rs)
+  supplies post-idempotency-cutover migration and compatibility entrypoints,
+  including shared SQLx-history handling. Application migration composition must
+  be tested on repeated startup as well as an empty database.
+- postgres-test-harness candidate
+  [`3d525e6f`](https://github.com/bpcakes/postgres-test-harness/tree/3d525e6fc5745ce2e2437c7997de5cccdecff4ac)
+  has manifest version 0.2.0. Its
+  [lease and harness implementation](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs)
+  consumes a lease for awaited cleanup or explicit defer; Drop queues fallback
+  cleanup. Deferral requires closed application connections, and external-mode
+  shutdown does nothing, including no deferred drain. Its
+  [admin checks](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+  require major version 18 and UUIDv7 support. External mode requires suitable
+  CREATE/DROP DATABASE authority and the documented local, non-TLS endpoint.
+- The resolved local SQLx 0.9.0 `sqlx-core/src/pool/mod.rs` defines
+  `Pool::close` as a future returning `()`. Dropping that future does not prove
+  close completed. Native close timeout is not a returned SQLx close error.
+  [PoolConnection::detach](https://docs.rs/sqlx-core/0.9.0/sqlx_core/pool/struct.PoolConnection.html#method.detach)
+  removes a connection from pool accounting; pool closure cannot establish
+  termination of detached server sessions.
+- Runlimit candidate
+  [`b3aaee2b`](https://github.com/bpcakes/runlimit/tree/b3aaee2b3b659a47648336bc633896075cdf5f29)
+  has workspace/core/axum version 0.3.0 and postgres package version 0.3.1,
+  using SQLx 0.9.0 and Rust 1.94. It is a source-inspection candidate only;
+  policy/backend selection remains part of the future admission integration.

@@ -1,6 +1,6 @@
 # Effect v4 analysis reconciled with Batter
 
-Reviewed: 2026-09-08, against Git baseline `5c77593` and the source/test files
+Reviewed: 2026-09-09, against Git baseline `22848ea` and the source/test files
 linked below. This is a design reconciliation, not a new implementation or a
 claim of production validation. Execution evidence lives in [validation](validation.md).
 
@@ -9,6 +9,8 @@ complete application path and some boundary conventions remain unimplemented.
 Delivery outcomes and dependencies are tracked in [Beads](roadmap.md). The central thesis holds: ordinary Rust types,
 futures, constructors, and Tokio should remain the programming model. Uniformity
 is useful where it makes ownership, errors, and boundaries predictable.
+The [backend evidence assessment](design-evidence.md) sharpens that rationale
+using historical review failures and the newly committed implementation.
 
 The eight-item proposal is not an implementation checklist to copy literally.
 Some items already exist, some need narrower contracts, and some belong in
@@ -19,11 +21,11 @@ application composition roots or upstream libraries.
 | Proposed area | Implemented evidence | Current boundary |
 | --- | --- | --- |
 | 1. Error model | [OperationError<E>](../crates/batter/src/operation.rs) and [RetryError<E>](../crates/batter/src/retry.rs) preserve concrete failures and distinguish interruption; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Domain errors remain concrete; wire policy belongs to the application. |
-| 2. Composition root and lifecycle | [Supervisor](../crates/batter/src/lifecycle.rs), [owned driver](../crates/batter/src/lifecycle/driver.rs), [finite work](../crates/batter/src/lifecycle/process.rs), and [CleanupStack](../crates/batter/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Transport and non-yielding behavior lack full execution evidence. |
+| 2. Composition root and lifecycle | [Supervisor](../crates/batter/src/lifecycle.rs), [owned driver](../crates/batter/src/lifecycle/driver.rs), [finite work](../crates/batter/src/lifecycle/process.rs), and [CleanupStack](../crates/batter/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. Private state owns terminal transitions and abandonment. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Non-yielding and scheduling tests have scoped execution evidence; full transport/body and component-descendant lifetime proof remains separate. |
 | 3. Ambient request context | HTTP supplies explicit `Extension<OperationContext>` with deadline/cancellation. The [HTTP example](../crates/batter-axum/examples/http_service.rs) supplies generated request IDs and spans. | No task-local request context, tenant/principal model, inbound trace-parent handling, or durable envelope. Ambient access is optional ergonomics, not an authorization mechanism. |
 | 4. Retry policy | [RetryPolicy](../crates/batter/src/retry.rs) implements fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, and injected jitter. | No `backon` dependency or outbound HTTP/SQLx/job adapter. There are no per-attempt budgets or retry tokens. Share mechanics while retaining one retry owner for each operation. |
 | 5. Config and secrets | [Argument validation](../crates/batter/src/validation.rs) rejects invalid budgets/registration; examples parse their own environment settings. | No typed root configuration or shared secret-container recipe exists. Existing argument validation is not a config framework. |
-| 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; HTTP records actual status and matched route. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library. |
+| 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; independent HTTP observation covers assembled routes, probes/fallback and rejection, with explicit response severity and retained correlation under filtering. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library; arbitrary synchronous subscriber failures are not isolated. |
 | 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. |
 | 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. | No TestApp or PostgreSQL harness adapter. Real database composition is unverified. |
 
@@ -55,7 +57,9 @@ See the [RFC reference](references.md#boundary-conventions-reviewed-2026-09-08).
 **Panic observation and HTTP panic recovery are different.** Owned task and
 cleanup panics are reported. Operation panics propagate, and the HTTP middleware
 does not catch handler panics or turn them into `HttpFailure::Internal`.
-This is source-inspected; a dedicated HTTP handler-panic regression is still absent.
+The [handler-unwind regression](../crates/batter-axum/tests/observation/correlation.rs)
+proves propagation, admitted-context cancellation and a dropped observation with
+no fabricated HTTP status or copied panic payload.
 An opt-in Tower panic boundary would require an explicit application renderer.
 Such a boundary cannot catch aborting panics, sanitize the default panic hook,
 or convert a body panic into a fresh 500 after headers were sent. The application
