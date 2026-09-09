@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `ShutdownCause::FiniteTaskExit` for shutdown initiated by admitted finite
+  task failures. `ComponentExit` remains specific to registered critical
+  components. Downstream exhaustive matches must add the new variant; code that
+  handled finite failures under `ComponentExit` must handle `FiniteTaskExit`.
 - Remove `ShutdownHandle::observer`; obtain completion observers through
   `RunningSupervisor::observer` after `Supervisor::start` so every observer has
   an owned completion publisher.

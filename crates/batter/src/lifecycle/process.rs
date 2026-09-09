@@ -137,6 +137,32 @@ impl ProcessHandle {
     ///
     /// An Err(E) is a process task failure and initiates shutdown. For a normal
     /// domain denial use Ok(Err(denial)) so the task itself completed successfully.
+    ///
+    /// ```
+    /// use batter::lifecycle::{ShutdownCause, Supervisor};
+    /// # use batter::{BoxError, cleanup::CleanupBudget, lifecycle::ShutdownBudget};
+    /// # use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), BoxError> {
+    /// # let second = Duration::from_secs(1);
+    /// # let budget = ShutdownBudget::new(
+    /// #     second, second, second,
+    /// #     CleanupBudget::new(second, second, second)?,
+    /// # )?;
+    /// let supervisor = Supervisor::with_process_capacity(budget, 1)?;
+    /// let process = supervisor.process_handle().unwrap();
+    /// supervisor.handle().mark_ready();
+    /// let running = supervisor.start();
+    /// running.handle().wait_ready().await.unwrap();
+    /// let receipt = process.try_spawn("refresh", |_| async {
+    ///     Err::<(), _>(std::io::Error::other("refresh failed"))
+    /// })?;
+    /// assert!(receipt.wait().await.is_err());
+    /// let report = running.wait().await?;
+    /// assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("refresh"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_spawn<F, Fut, T, E>(
         &self,
         name: &'static str,

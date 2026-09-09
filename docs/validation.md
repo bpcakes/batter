@@ -2,6 +2,106 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Finite shutdown cause review follow-up: 2026-09-09
+
+The `batter-299` review follow-up corrects the abort-trigger documentation and adds
+`shutdown_causes.rs`. Its six paused-clock tests cover finite error/panic causes
+with a healthy critical component, the selected error retained in both task-kind
+orders, a descendant failure's own label, ready requests taking priority over
+unobserved finite/critical errors, and a finite shutdown abort preserving
+`Requested`. Each complete scenario has a ten-second Tokio-time watchdog;
+these tests contain cooperative futures and do not claim wall-clock preemption.
+The classification implementation is unchanged from the preceding section.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7:
+
+```sh
+cargo test -p batter --locked --test shutdown_causes
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 445 test/doctest
+executions plus formatting, compilation, Clippy and rustdoc. All five HTTP smoke
+profiles passed against the rebuilt Rust 1.98.1 example. Full verification output
+is retained in `/tmp/batter-299-precedence-verify-1.98.1.log` and
+`/tmp/batter-299-precedence-verify-1.94.0.log`; the smoke output is
+`/tmp/batter-299-precedence-http.log`. The earlier non-yielding test failure did not
+recur, and its missing original assertion cannot be reconstructed from the saved
+preview. No diagnosis is claimed. Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Jig work and review completion evidence belongs to
+`plan_01M236PZDSB8V98CSH9BH4WW1N`. Linux execution of this change, hosted CI and live
+PostgreSQL remain unverified.
+
+## Finite task shutdown causes: 2026-09-09
+
+Bead `batter-299` adds `ShutdownCause::FiniteTaskExit` for an admitted finite
+task initiating shutdown. `ComponentExit` remains specific to registered critical
+components. The private task-recording helper preserves that distinction when
+selecting the cause; shutdown ordering, error retention and cleanup decisions
+are unchanged. Downstream exhaustive matches need the new variant.
+
+With the variant declared but the old classification still in place, three
+extended finite-failure tests failed with `ComponentExit` instead of
+`FiniteTaskExit`: an unobserved error, a typed receipt error and a factory panic.
+After the fix, all 46 focused lifecycle/process-ownership tests and four foundation
+doctests passed. Existing fixtures now also assert critical-component causes,
+normal finite completion followed by `Requested`, and preservation of `Requested`
+when later finite errors/panics are observed after the shutdown allowance.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7:
+
+```sh
+cargo test -p batter --locked --test lifecycle --test process_ownership
+cargo test -p batter --doc --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Rust 1.98.1 (`48a229cea`) and 1.94.0 (`4a4ef493e`) each passed 433 test/doctest
+executions, formatting, compilation, Clippy and rustdoc. All five HTTP smoke
+profiles passed against the example rebuilt with Rust 1.98.1. Cargo.lock remains
+unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Logs are `/tmp/batter-299-verify-1.98.1.log`,
+`/tmp/batter-299-verify-1.94.0.log` and `/tmp/batter-299-http.log`.
+Jig receipts are tracked under `plan_01M2355C4C45KVAGFESYDE2GNA` in the append-only
+`.agent/state` records. Linux execution of this change, hosted CI and live
+PostgreSQL remain unverified.
+
+The first Jig work check failed its file-size gate and the workspace
+`non_yielding` test target. Its retained stdout preview omits the failing
+assertion, so this run does not establish a diagnosed subprocess defect.
+An isolated `cargo test -p batter --all-features --locked --test non_yielding`
+rerun passed all 46 tests; its log is
+`/tmp/batter-299-non-yielding-recheck.log`. To satisfy the existing file limit,
+the same runnable example moved to `ProcessHandle::try_spawn`, with a link from
+the new variant, and the unobserved-error fixture now binds and drops its receipt
+in separate statements. All regression assertions are retained. The two full
+verification runs above preceded these documentation/fixture-layout changes;
+the relocated example passed doctest rechecks on Rust 1.98.1 and 1.94.0. A second
+Jig work run was invalidated because the agent updated this validation document while
+the read-only checks were running. Its effect-policy rejection is retained in
+the receipts. A subsequent unchanged Jig work check passed all five gates with
+fresh evidence. The final `scripts/jig check test` also passed 433 test/doctest
+executions on the final code and fixture layout. The subprocess failure did not
+recur in either successful full run. Final logs are
+`/tmp/batter-299-jig-final-check.json` and
+`/tmp/batter-299-final-backend-test.log`.
+
 ## Observer review follow-up: 2026-09-09
 
 Bead `batter-w3o` addresses the observer review's documentation findings and test

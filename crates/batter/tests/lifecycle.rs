@@ -83,6 +83,10 @@ async fn all_component_errors_survive_shutdown() {
     let report = supervisor.run_until(pending()).await;
     assert!(!report.is_success());
     assert_eq!(report.tasks.len(), 2);
+    assert_eq!(
+        report.cause,
+        ShutdownCause::ComponentExit(report.tasks[0].name)
+    );
     assert!(
         report
             .tasks
@@ -155,6 +159,7 @@ async fn component_panic_conservatively_skips_resource_finalizers() {
         })
         .unwrap();
     let report = supervisor.run_until(pending()).await;
+    assert_eq!(report.cause, ShutdownCause::ComponentExit("panic"));
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
     assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
     assert!(!report.is_success());
@@ -169,6 +174,7 @@ async fn component_factory_panic_is_observed_by_name() {
         })
         .unwrap();
     let report = supervisor.run_until(pending()).await;
+    assert_eq!(report.cause, ShutdownCause::ComponentExit("factory"));
     assert_eq!(report.tasks[0].name, "factory");
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
 }

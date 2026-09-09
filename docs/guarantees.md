@@ -142,6 +142,21 @@ as an ever-growing history. Failures close admission and are retained for the
 bounded outstanding set. Panics/aborts produce a terminated receipt and an
 observed task failure in the report; they do not fabricate a typed E.
 
+The initial task-triggered shutdown cause distinguishes ownership:
+`ShutdownCause::ComponentExit(name)` identifies a registered critical component;
+`ShutdownCause::FiniteTaskExit(name)` identifies an admitted finite task that
+returned an error or panicked. Finite labels may repeat across invocations;
+the cause carries a label, not a unique invocation ID. Successful finite work
+does not initiate shutdown. The coordinator selects the cause when it begins
+shutdown. A ready explicit request takes priority over task results in the same
+poll, including failures that completed before the request but remain unobserved.
+For task-triggered shutdown, the cause reflects observation order rather than a
+guarantee about chronological failure order. Later observations do not replace
+the selected cause, including after an explicit `Requested` shutdown.
+Shutdown aborts occur after the cause is selected; inspect `abort_requested` and
+`TaskRecord::outcome` for requested and observed aborts, and task/cleanup outcomes
+for all subsequent failures.
+
 On component failure, the caller's shutdown future remains owned by the driver
 through dependency cleanup. Splitting shutdown coordination into private helpers
 does not end that future's lifetime early.

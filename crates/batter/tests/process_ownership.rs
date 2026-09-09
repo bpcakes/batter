@@ -5,8 +5,8 @@ use batter::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{
-        ProcessAdmissionError, ProcessTaskError, Readiness, ShutdownBudget, ShutdownReport,
-        Supervisor, TaskOutcome,
+        ProcessAdmissionError, ProcessTaskError, Readiness, ShutdownBudget, ShutdownCause,
+        ShutdownReport, Supervisor, TaskOutcome,
     },
 };
 use std::{
@@ -168,6 +168,7 @@ async fn completed_failures_retain_causes_when_observed_after_deadline() {
         let failure = receipt.wait().await.unwrap_err();
         tokio::time::advance(Duration::from_secs(2)).await;
         let report = driver.await;
+        assert_eq!(report.cause, ShutdownCause::Requested);
         assert!(report.abort_requested.is_empty());
         assert!(report.unjoined.is_empty());
         assert!(!report.is_success());
@@ -361,6 +362,7 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success());
     assert_eq!(report.completed_process_tasks, 2);
+    assert_eq!(report.cause, ShutdownCause::Requested);
     assert!(
         report.tasks.is_empty(),
         "successful task history must not grow without bound"
@@ -373,14 +375,14 @@ async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
     running.handle().wait_ready().await.unwrap();
-    drop(
-        process
-            .try_spawn("failed-task", |_| async {
-                Err::<(), _>(std::io::Error::other("private failure cause"))
-            })
-            .unwrap(),
-    );
+    let receipt = process
+        .try_spawn("failed-task", |_| async {
+            Err::<(), _>(std::io::Error::other("private failure cause"))
+        })
+        .unwrap();
+    drop(receipt);
     let report = running.wait().await.unwrap();
+    assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("failed-task"));
     assert!(!report.is_success());
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
     let source = report.tasks[0]
@@ -413,6 +415,7 @@ async fn typed_task_failure_and_report_share_the_same_error() {
         panic!("typed failure must survive")
     };
     let report = running.wait().await.unwrap();
+    assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("shared-error"));
     let source = report.tasks[0]
         .error
         .as_ref()
@@ -448,6 +451,7 @@ async fn finite_factory_panic_is_observed_and_skips_dependent_cleanup() {
         Err(ProcessTaskError::Terminated)
     ));
     let report = running.wait().await.unwrap();
+    assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("factory-panic"));
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
     assert!(
         report.tasks[0]

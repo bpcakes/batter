@@ -255,13 +255,18 @@ impl TaskRecord {
     }
 }
 
-/// Event that initiated process shutdown.
+/// Trigger selected when the coordinator starts shutdown; ready requests take priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShutdownCause {
     /// External future or ShutdownHandle requested it.
     Requested,
     /// A registered critical component exited.
     ComponentExit(&'static str),
+    /// An admitted finite task returned an error or panicked.
+    /// Labels may repeat across invocations; success does not initiate shutdown.
+    /// Shutdown aborts appear in [`ShutdownReport::abort_requested`] and task outcomes.
+    /// See [`ProcessHandle::try_spawn`] for a finite-failure example.
+    FiniteTaskExit(&'static str),
     /// No process work was registered; treated as a configuration failure.
     EmptySupervisor,
 }
@@ -269,7 +274,7 @@ pub enum ShutdownCause {
 /// Complete process report, including teardown failures and unreaped work.
 #[derive(Debug)]
 pub struct ShutdownReport {
-    /// Initial trigger, not a substitute for inspecting task/cleanup outcomes.
+    /// Trigger selected by the coordinator; inspect task/cleanup outcomes for all failures.
     pub cause: ShutdownCause,
     /// Directly joined tasks, in observation order.
     pub tasks: Vec<TaskRecord>,
@@ -556,9 +561,9 @@ impl Supervisor {
                     _ = self.handle.draining() => break ShutdownCause::Requested,
                     _ = &mut shutdown => break ShutdownCause::Requested,
                     Some(result) = tasks.set.join_next_with_id(), if !tasks.set.is_empty() => {
-                        if let Some(name) = tasks.record(result) {
+                        if let Some(cause) = tasks.record(result) {
                             self.handle.shared.fail_task();
-                            break ShutdownCause::ComponentExit(name);
+                            break cause;
                         }
                     }
                     Some(task) = receive_process(&mut self.queued) => tasks.spawn_process(task),
@@ -686,7 +691,7 @@ impl TaskSet {
 
     // None means a successful finite completion or expected critical stop.
     // Actual failures are retained and initiate shutdown before drain.
-    fn record(&mut self, result: TaskResult) -> Option<&'static str> {
+    fn record(&mut self, result: TaskResult) -> Option<ShutdownCause> {
         let (id, mut outcome, error) = classify_task_result(result);
         let TaskMetadata { name, finite, .. } = self
             .names
@@ -705,7 +710,13 @@ impl TaskSet {
         };
         record.log_observation();
         self.records.push(record);
-        (outcome != TaskOutcome::Stopped).then_some(name)
+        if outcome == TaskOutcome::Stopped {
+            None
+        } else if finite {
+            Some(ShutdownCause::FiniteTaskExit(name))
+        } else {
+            Some(ShutdownCause::ComponentExit(name))
+        }
     }
 
     fn record_during_shutdown(&mut self, result: TaskResult, handle: &ShutdownHandle) {
