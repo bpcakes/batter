@@ -12,6 +12,15 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+Private-boundary regressions in
+[`lifecycle/tasks/tests.rs`](../crates/batter/src/lifecycle/tasks/tests.rs) cover
+cancelled join waiters, exactly-once recording of early success/error/panic,
+closed admission before returning a failure cause, and conservative unjoined
+summaries. [`observation/tests.rs`](../crates/batter-axum/src/observation/tests.rs)
+checks unchanged failure responses without admission and destruction under the
+saved dispatcher after the observation waiter is cancelled. These complement
+the existing scheduling, shutdown-cause, HTTP composition and dispatch suites.
+
 ```sh
 bash scripts/verify.sh --bootstrap  # Initial formatter + dependency lock + checks.
 bash scripts/verify.sh             # Subsequent locked checks.

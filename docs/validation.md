@@ -2,6 +2,59 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Private task and HTTP observation boundaries: 2026-09-09
+
+Bead `batter-bu2`, baseline `ecfc4aa01dc47564b8b164883a4a373a0a4cbb09`,
+implements the two accepted architecture suggestions. Private lifecycle tasks
+own join recording and task collections; the coordinator uses narrow operations
+and a final owned summary. Private HTTP observation retains its original
+composition function and guard implementation. Public paths, dependency versions,
+factory laziness, shutdown priorities, error retention and conservative cleanup
+policy are unchanged. Tracing targets, levels, fields and context are retained;
+source-file/module metadata follows the moved implementation.
+
+All 87 existing focused integration tests passed before and after extraction.
+Four new unit regressions cover cancelled join waiters and exactly-once failure
+recording, conservative unjoined summaries after releasing the task owner,
+unchanged HTTP failure responses without admission, and observer destruction
+under a saved dispatcher. The first full 1.98.1 run passed runtime tests and
+doctests but Clippy rejected the new fixture returning an awaitable from an
+async block. Storing the pending observation outside that block fixed the
+fixture without changing its assertions. The complete matrix was repeated.
+
+Executed on macOS 26.6.2 (`25G83`) arm64 with Python 3.14.7:
+
+```sh
+cargo check --workspace --all-targets --all-features --locked
+cargo test -p batter --test lifecycle --test shutdown_causes --test process_ownership --test scoped_owned_tasks --locked
+cargo test -p batter-axum --test observation --test scoped_dispatch --locked
+cargo test -p batter --lib lifecycle::tasks::tests --locked
+cargo test -p batter-axum --lib --locked
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Both final verification runs passed on Rust 1.98.1 (`48a229cea`) and 1.94.0
+(`4a4ef493e`), including minimal-core and workspace runtime configurations,
+22 runner controls, 13 SQLx smoke controls, doctests, formatting, Clippy and
+warning-denied rustdoc. All five HTTP smokes passed against the rebuilt 1.98.1
+example. The three live database tests remain explicitly ignored without
+provisioning; this change has no new live PostgreSQL, Linux or hosted CI evidence.
+Cargo.lock is unchanged at SHA-256
+`3a85b3e9dcbf632ab66488f6652638154792511c3c7b351ff6ad6b8ca2958de2`.
+
+`scripts/jig work check --plan-id plan_01M23MY7MS9TP1AZT2R1FN05QY` passed
+the verify profile, including final `api:test` receipt
+`receipt_01M23NEB04BB79RGS6GAW7NXP5`. Documentation and tracker evidence were
+then finalized; no test input, toolchain, configuration or prerequisite changed.
+The final gate status and evidence refresh are recorded on that Jig plan.
+
 ## Filtered-parent push reconciliation: 2026-09-09
 
 Before pushing `batter-cpb` and `batter-cpb.1`, origin/master advanced to

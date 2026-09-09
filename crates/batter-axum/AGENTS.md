@@ -14,6 +14,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
   `HttpObservationLevel`, the combined `request_scope` compatibility entry point,
   probes, and failures.
+- `src/observation.rs` privately owns response observation and tracing lifetime;
+  its single internal composition entry has no admission policy.
 - `examples/http_service.rs` demonstrates router/lifecycle composition.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,

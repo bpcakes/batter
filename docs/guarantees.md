@@ -366,6 +366,12 @@ terminate an unresponsive binary, but no cleanup guarantee survives that action.
 
 ## Cleanup contract
 
+The coordinator receives an owned task summary only after releasing its task
+collection. The private join operation records each consumed result before
+returning; abandoning a pending join waiter neither cancels owned work nor
+discards its later result. Summary extraction retains unjoined names and does
+not promote asynchronous abortion into proof of termination.
+
 `CleanupReport` is `#[must_use]`. Awaited completion can still contain failed,
 skipped or unjoined finalizers; callers must inspect the retained report.
 

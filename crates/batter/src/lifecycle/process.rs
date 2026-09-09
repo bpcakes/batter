@@ -1,4 +1,4 @@
-use super::{ShutdownHandle, ShutdownSignal, TaskExit};
+use super::{ShutdownHandle, ShutdownSignal, tasks::TaskExit};
 use crate::{ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{
     error::Error,

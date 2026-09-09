@@ -9,10 +9,12 @@
 
 #![forbid(unsafe_code)]
 
+mod observation;
+
 use axum::{
     Json,
-    extract::{MatchedPath, Request, State},
-    http::{Method, StatusCode, header, request::Parts},
+    extract::{Request, State},
+    http::{StatusCode, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -22,10 +24,11 @@ use batter::{
     operation::{Interruption, OperationContext, OperationError},
     telemetry::with_current_dispatch,
 };
+use observation::observe_response;
 use serde::Serialize;
-use std::{convert::Infallible, future::Future, sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::time::Instant;
-use tracing::{Instrument, Level};
+use tracing::Level;
 
 type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
 
@@ -295,18 +298,6 @@ pub async fn request_scope(
     .await
 }
 
-async fn observe_response<F: Future<Output = Response>>(
-    request: Request,
-    run: impl FnOnce(Request) -> F,
-) -> Response {
-    let mut observation = HttpObservation::new(&request);
-    let span = observation.context.clone();
-    let response = run(request).instrument(span).await;
-    observation.status = Some(response.status());
-    observation.level = response.extensions().get::<HttpObservationLevel>().copied();
-    response
-}
-
 async fn request_admission_inner(policy: RequestPolicy, request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
     if policy.shutdown.readiness() != Readiness::Ready {
@@ -337,112 +328,6 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     match saved_parts {
         Some(parts) => policy.render_failure(failure, &parts),
         None => failure.into_response(),
-    }
-}
-
-struct HttpObservation {
-    span: tracing::Span,
-    context: tracing::Span,
-    method: &'static str,
-    route: Option<MatchedPath>,
-    started: Instant,
-    status: Option<StatusCode>,
-    level: Option<HttpObservationLevel>,
-}
-
-impl HttpObservation {
-    fn new(request: &Request) -> Self {
-        let method = match *request.method() {
-            Method::GET => "GET",
-            Method::HEAD => "HEAD",
-            Method::POST => "POST",
-            Method::PUT => "PUT",
-            Method::DELETE => "DELETE",
-            Method::CONNECT => "CONNECT",
-            Method::OPTIONS => "OPTIONS",
-            Method::TRACE => "TRACE",
-            Method::PATCH => "PATCH",
-            _ => "OTHER",
-        };
-        let route = request.extensions().get::<MatchedPath>().cloned();
-        let span = tracing::info_span!(
-            target: "batter",
-            "batter.http",
-            method,
-            route = route.as_ref().map(MatchedPath::as_str).unwrap_or("<unmatched>"),
-            status = tracing::field::Empty,
-            http_outcome = tracing::field::Empty,
-            latency_ms = tracing::field::Empty,
-        );
-        // Choose once on first poll. A disabled explicit parent means a root
-        // event, and looking up a fallback at Drop could adopt another request.
-        let context = span.clone().or_current();
-        Self {
-            span,
-            context,
-            method,
-            route,
-            started: Instant::now(),
-            status: None,
-            level: None,
-        }
-    }
-}
-
-impl Drop for HttpObservation {
-    fn drop(&mut self) {
-        let outcome = match self.status {
-            Some(status) if status.is_server_error() => "server_error",
-            Some(status) if status.is_client_error() => "client_error",
-            Some(_) => "completed",
-            None => "dropped",
-        };
-        let latency_ms = self.started.elapsed().as_secs_f64() * 1_000.0;
-        if let Some(status) = self.status {
-            self.span.record("status", status.as_u16());
-        }
-        self.span.record("http_outcome", outcome);
-        self.span.record("latency_ms", latency_ms);
-        let level = self.level.map(|level| level.0).unwrap_or_else(|| {
-            if self.status.is_none_or(|status| status.is_server_error()) {
-                Level::WARN
-            } else {
-                Level::INFO
-            }
-        });
-        self.emit_completion(level, outcome, latency_ms);
-    }
-}
-
-impl HttpObservation {
-    fn emit_completion(&self, level: Level, outcome: &str, latency_ms: f64) {
-        // Keep fields on the event even when filtering disables its INFO span.
-        // Noncapturing emitters retain a static tracing callsite for each level.
-        macro_rules! emitter {
-            ($level:expr) => {
-                |observation: &Self, outcome: &str, latency_ms: f64| {
-                    tracing::event!(
-                        target: "batter",
-                        parent: &observation.context,
-                        $level,
-                        method = observation.method,
-                        route = observation.route.as_ref().map(MatchedPath::as_str).unwrap_or("<unmatched>"),
-                        status = observation.status.map(|status| status.as_u16()),
-                        http_outcome = outcome,
-                        latency_ms,
-                        "HTTP response boundary finished"
-                    );
-                }
-            };
-        }
-        let emit: fn(&Self, &str, f64) = match level {
-            Level::ERROR => emitter!(Level::ERROR),
-            Level::WARN => emitter!(Level::WARN),
-            Level::INFO => emitter!(Level::INFO),
-            Level::DEBUG => emitter!(Level::DEBUG),
-            Level::TRACE => emitter!(Level::TRACE),
-        };
-        emit(self, outcome, latency_ms);
     }
 }
 

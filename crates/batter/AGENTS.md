@@ -12,6 +12,9 @@ Windows support and non-Unix fallbacks are out of scope.
 
 - `src/lib.rs` defines the public modules and boundary error aliases.
 - `src/lifecycle.rs` and `src/lifecycle/` own process tasks and shutdown reports.
+- `src/lifecycle/tasks.rs` privately owns direct-task joins, metadata, outcome
+  recording and escalation bookkeeping. The coordinator uses operations and
+  an owned summary, never the underlying collections.
 - `src/lifecycle/report.rs` owns the shutdown report type and retained-outcome summary;
   its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
