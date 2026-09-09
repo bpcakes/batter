@@ -2,6 +2,128 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Filtered-parent push reconciliation: 2026-09-09
+
+Before pushing `batter-cpb` and `batter-cpb.1`, origin/master advanced to
+`7601916`. The local change was rebased onto that commit; production code
+merged without conflicts. Tracker and validation conflicts were resolved by
+retaining both histories, including all five issues in the conflicting tracker
+block. Existing append-only Jig records were preserved.
+
+On the same macOS arm64 host and toolchain versions recorded below, both
+`bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+passed again on the combined source (`bacf0c2` before this evidence update).
+These runs include the upstream 13 SQLx smoke controls, the 22 runner controls,
+runtime tests, doctests, formatting, Clippy and rustdoc. Live database tests
+remain explicitly ignored without provisioning; no live PostgreSQL run is
+claimed. The Rust 1.98.1 HTTP example was rebuilt with
+`cargo build -p batter-axum --example http_service --locked`; all five
+`scripts/smoke_http.py` commands listed below passed again. The lockfile hash
+remains `3a85b3e9dcbf632ab66488f6652638154792511c3c7b351ff6ad6b8ca2958de2`.
+This is local macOS execution evidence, not a hosted CI result.
+
+The final `scripts/jig check test` passed with receipt
+`receipt_01M23KQ7F6RTHA9P16KJEH01GJ`. Its first attempt failed in the unchanged
+`event_wait_rejects_an_exited_child_without_the_event` watchdog control: the
+panic reported the missing-event deadline instead of the expected exited-child
+diagnostic. Both full matrices and the unchanged full-gate retry passed that
+control. No assertion was relaxed; the intermittent failure's cause remains
+unresolved. Only validation prose and generated receipts changed afterward.
+
+## Subscriber callback lock-order regression: 2026-09-09
+
+Bead `batter-cpb.1` addresses the comprehensive-review coverage finding for the
+filtered task-parent change above Git baseline `e518b6b`. A synchronous test
+submits real finite work with enabled and filtered task spans. Its subscriber
+checks admission mutex availability during `new_span`, `current_span` and
+`clone_span`, and asserts that the expected callbacks actually execute. No
+coordinator competes for the mutex and the application factory must stay
+uncalled. This follow-up does not change production behavior.
+
+The focused regression passed. Deliberately moving `or_current()` beneath the
+admission lock made it fail immediately at `current_span` (exit 101), without
+waiting for a deadlock watchdog. Correct ordering was restored before the
+passing checks below. Focused library/test Clippy also passed with warnings
+denied.
+
+Executed on macOS 26.6.2 (`25G83`) arm64 with Python 3.14.7, against the baseline
+plus the accumulated filtered-parent fix and this follow-up:
+
+```sh
+cargo test -p batter --lib subscriber_callbacks_run_before_finite_admission_lock --locked
+cargo clippy -p batter --lib --tests --locked -- -D warnings
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Both full verification commands passed on Rust 1.98.1 (`48a229cea`) and 1.94.0
+(`4a4ef493e`), including minimal-core and workspace runtime configurations,
+22 runner controls, doctests, formatting, workspace Clippy and rustdoc. All five
+HTTP smoke profiles passed against the rebuilt Rust 1.98.1 example. The final
+`scripts/jig check test` runtime/doctest matrix passed with `api:test` receipt
+`receipt_01M23KDPRE4E8YMYEJEGJ26BXQ`. Only documentation and tracker evidence
+changed afterward; test inputs, configuration, toolchain and environment were
+unchanged.
+
+The test-only direct tracing-core dependency uses the already resolved 0.1.36;
+Cargo generated the added dependency edge without changing package versions.
+Cargo.lock SHA-256 is
+`3a85b3e9dcbf632ab66488f6652638154792511c3c7b351ff6ad6b8ca2958de2`.
+This follow-up has no new Linux, hosted CI, exporter or live PostgreSQL
+execution evidence.
+
+## Filtered task parent retention: 2026-09-09
+
+Bead `batter-cpb` fixes the async concurrency review finding at Git baseline
+`e518b6b`. Critical components, finite process work and cleanup hooks now retain
+the available application parent when their own INFO span is disabled. Finite
+work selects the fallback outside the admission mutex. The existing dispatcher
+wrapper still protects complete future destruction; ownership, budgets and
+dependency versions are unchanged.
+
+Two new runtime regressions exercise `info,batter=warn` on current-thread and
+two-worker Tokio runtimes. They check callback execution, normal destruction,
+critical/finite abortion and destruction of an aborted cleanup hook, retaining
+separate driver/request parents and subscribers despite an unrelated ambient
+context. They also check actual shutdown outcomes and that filtered task spans
+remain absent. Both regressions failed on missing parent context before the
+production fix; all six scoped-owned-task tests passed afterward, including the
+existing enabled-span controls. Focused Clippy passed with warnings denied.
+
+Executed on macOS 26.6.2 (`25G83`) arm64 with Python 3.14.7, against the baseline
+plus this working-tree change:
+
+```sh
+cargo test -p batter --test scoped_owned_tasks --locked
+cargo clippy -p batter --test scoped_owned_tasks --locked -- -D warnings
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+scripts/jig check test
+```
+
+Both full verification commands passed on Rust 1.98.1 (`48a229cea`) and 1.94.0
+(`4a4ef493e`), including minimal-core and workspace runtime configurations,
+22 runner controls, doctests, formatting, workspace Clippy and rustdoc. All five
+HTTP smoke profiles passed using the rebuilt Rust 1.98.1 example. The final Jig
+`api:test` runtime/doctest matrix passed with receipt
+`receipt_01M23HQSW29YERH6KB9Y9P2RE6`. Cargo.lock
+remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+This change has no new Linux, hosted CI, exporter or live PostgreSQL execution
+evidence.
+
 ## Smoke deadline review fix and upstream reconciliation: 2026-09-09
 
 Bead `batter-a63`; baseline `e518b6b52a88a460edfb6f7c41107e71932b6c70`.

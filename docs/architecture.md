@@ -198,6 +198,13 @@ and HTTP boundaries capture it on first poll; admitted finite work captures it
 at submission. This requires no downstream wrapper, global subscriber, extra
 task, or per-operation heap allocation.
 
+Critical components, finite tasks and cleanup hooks use the native
+`Span::or_current` fallback when their INFO task span is disabled. Select this
+context before spawning or enqueueing; retaining the dispatcher alone cannot
+preserve an enabled application parent across a task boundary. Finite admission
+performs both span creation and fallback lookup outside its transition lock,
+since either can call application subscriber code.
+
 `batter::telemetry::with_current_dispatch` exposes this behavior as an opaque
 future for adapter authors. It captures the current dispatcher when called and
 protects both inner polling and destruction. It does not capture or enter the

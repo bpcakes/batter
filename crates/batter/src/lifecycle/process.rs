@@ -207,10 +207,11 @@ impl ProcessHandle {
         E: Error + Send + Sync + 'static,
     {
         validation::name(name)?;
-        // Capture the submitting operation's causality before crossing the
-        // queue. Span creation may invoke application subscriber code, so it
-        // must happen outside the admission lock.
-        let span = tracing::info_span!(target: "batter", "batter.process_task", task = name);
+        // Capture causality even if the task span is filtered out. Creating a
+        // span or looking up its fallback parent may invoke subscriber code,
+        // so both must happen outside the admission lock.
+        let span =
+            tracing::info_span!(target: "batter", "batter.process_task", task = name).or_current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
         let mut admission = self.handle.shared.admission();
         admission.check(ancestor.map(Arc::as_ref), self.sender.is_closed())?;

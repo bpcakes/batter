@@ -15,6 +15,9 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::{Instrument, instrument::WithSubscriber};
 
+#[path = "scoped_owned_tasks/filtered.rs"]
+mod filtered;
+
 #[derive(Clone)]
 struct Buffer(Arc<Mutex<Vec<u8>>>);
 
@@ -36,6 +39,10 @@ struct Logs {
 
 impl Logs {
     fn new() -> Self {
+        Self::with_filter("info")
+    }
+
+    fn with_filter(filter: &str) -> Self {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer = Buffer(output.clone());
         Self {
@@ -44,7 +51,7 @@ impl Logs {
                     .with_writer(move || writer.clone())
                     .with_ansi(false)
                     .without_time()
-                    .with_max_level(tracing::Level::INFO)
+                    .with_env_filter(filter)
                     .finish(),
             ),
             output,

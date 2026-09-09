@@ -46,7 +46,9 @@ Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or
 install a global subscriber/panic hook. Protected dispatch covers full future
-destruction and nested spans. The foundation cannot depend on its adapters;
+destruction and nested spans. Task instrumentation retains the available parent
+when its own span is filtered; create spans and look up fallback parents outside
+the admission mutex. The foundation cannot depend on its adapters;
 generic test support remains a leaf dependency used by tests.
 
 ## Common commands

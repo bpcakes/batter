@@ -571,7 +571,7 @@ impl TaskSet {
         let mut signal = handle.signal();
         signal.startup = Some(Arc::new(AtomicBool::new(false)));
         let handle = handle.clone();
-        let span = tracing::info_span!(target: "batter", "batter.task", task = name);
+        let span = tracing::info_span!(target: "batter", "batter.task", task = name).or_current();
         let abort = self.set.spawn(scoped_dispatch::scope(
             async move {
                 let result = (component.factory)(signal).await;

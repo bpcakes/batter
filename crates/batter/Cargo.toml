@@ -21,6 +21,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 batter-test-support.workspace = true
+tracing-core.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
