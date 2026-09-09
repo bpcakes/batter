@@ -176,6 +176,13 @@ If later startup fails, call supervisor.take_cleanup().close(budget).await and
 retain both the startup failure and the complete cleanup report. The [native
 SQLx example](../examples/postgres-lifecycle/src/main.rs) demonstrates this shape.
 
+An extracted stack may be closed after dropping the supervisor, but that drop
+cancels the supervisor's operation tokens. Cleanup hooks must not use those tokens
+to cancel teardown. Await the resource's native close operation directly, or use
+an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
+still applies. The [extracted-cleanup test](../crates/batter/tests/lifecycle_state.rs)
+demonstrates independent teardown after the owner is dropped.
+
 The example's outer CLI error is sanitized; its StartupFailure object has the
 original cause plus cleanup report available for a trusted error sink. In a
 real application, choose that sink deliberately rather than dropping valuable

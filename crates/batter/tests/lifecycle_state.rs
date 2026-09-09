@@ -4,6 +4,7 @@ use batter::{
     lifecycle::{
         ProcessAdmissionError, ProcessHandle, Readiness, ShutdownBudget, ShutdownHandle, Supervisor,
     },
+    operation::OperationContext,
 };
 use std::{
     convert::Infallible,
@@ -11,7 +12,7 @@ use std::{
     mem::discriminant,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Wake, Waker},
     time::Duration,
@@ -89,8 +90,10 @@ fn abandonment_signals_before_dropping_inert_application_captures() {
                 }
             })
             .unwrap();
+        let cleanup_capture = ObserveAbandonment(supervisor.handle());
         supervisor
-            .on_cleanup("inert-resource", || {
+            .on_cleanup("inert-resource", move || {
+                let _capture = cleanup_capture;
                 panic!("abandonment must not run async cleanup");
                 #[allow(unreachable_code)]
                 async {
@@ -122,6 +125,41 @@ fn unpolled_driver_retains_startup_ownership_until_dropped() {
     drop(driver);
     assert_eq!(handle.readiness(), Readiness::Draining);
     assert!(handle.operation_token().is_cancelled());
+}
+
+#[tokio::test]
+async fn extracted_cleanup_completes_after_supervisor_cancels_operations() {
+    let mut supervisor = supervisor();
+    let operation = supervisor.handle().operation_token();
+    let observed_operation = operation.clone();
+    let closed = Arc::new(AtomicBool::new(false));
+    let closing = closed.clone();
+    supervisor
+        .on_cleanup("resource", move || async move {
+            assert!(observed_operation.is_cancelled());
+            // Teardown has its own context; process cancellation cannot skip it.
+            let cleanup = OperationContext::new(Duration::from_secs(1))?;
+            cleanup
+                .run("resource-close", |_| async move {
+                    tokio::task::yield_now().await;
+                    closing.store(true, Ordering::SeqCst);
+                    Ok::<_, Infallible>(())
+                })
+                .await?;
+            Ok(())
+        })
+        .unwrap();
+    let stack = supervisor.take_cleanup();
+    drop(supervisor);
+    assert!(operation.is_cancelled());
+    assert!(!closed.load(Ordering::SeqCst), "drop must not run teardown");
+
+    let second = Duration::from_secs(1);
+    let report = stack
+        .close(CleanupBudget::new(second, second, second).unwrap())
+        .await;
+    assert!(report.is_success());
+    assert!(closed.load(Ordering::SeqCst));
 }
 
 fn assert_rejections(process: &ProcessHandle, expected: ProcessAdmissionError) {

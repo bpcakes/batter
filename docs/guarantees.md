@@ -274,7 +274,13 @@ it withdraws readiness, signals drain and forced cancellation, and wakes
 `wait_ready` with `Err(Readiness::Draining)` before dropping captured values.
 It invokes no component or finalizer factory and publishes no completion report;
 Stopped still means coordinator completion. Extracted cleanup must be explicitly
-awaited. An observer created without `start` still has no completion protocol.
+awaited. Extraction does not detach any operation tokens captured by its hooks:
+dropping the supervisor cancels those tokens before the extracted stack runs.
+Finalizers must perform teardown independently of process operation cancellation,
+using the stack's cleanup budget and, if needed, a fresh `OperationContext::new`
+rather than a context derived from `operation_token`. This also applies to normal
+shutdown, which cancels process operations before closing resources. An observer
+created without `start` still has no completion protocol.
 
 The lower-level `run_until` remains caller-owned. Constructing its future transfers
 the abandonment guard without starting factories or publishing readiness. Keeping

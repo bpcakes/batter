@@ -2,6 +2,46 @@
 
 Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
 
+## Extracted cleanup and abandonment review follow-up: 2026-09-09
+
+Bead `batter-vtx` clarifies that extracting finalizers does not detach their
+captured operation tokens from process cancellation. The contract and usage
+guidance require independent teardown; production lifecycle behavior and public
+signatures are unchanged.
+
+The new public regression drops the supervisor before closing its extracted
+stack. It proves that the process operation token is cancelled, drop performs no
+teardown, and explicitly awaited cleanup completes with a fresh independent
+`OperationContext`. The capture-order regression now observes both component and
+cleanup captures for direct supervisor drop and unpolled driver drop. Separate
+probes require each readiness/drain/cancellation waiter to be notified outside
+the state lock, permitting redundant wakes and checking each future becomes ready.
+
+Executed on macOS 26.6.2 (`25G83`), arm64, Python 3.14.7:
+
+```sh
+cargo test -p batter --locked --lib --test lifecycle_state
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+The focused run passed 13 tests. Rust 1.98.1 and 1.94.0 each passed 423 test/doctest
+executions, including repeated foundation execution and live loopback readiness
+tests. Formatting, compilation, Clippy and rustdoc passed on both toolchains.
+The HTTP example was rebuilt with 1.98.1; all five smoke profiles passed.
+Logs: `/tmp/batter-vtx-verify-1.98.1.log`, `/tmp/batter-vtx-verify-1.94.0.log`,
+and `/tmp/batter-vtx-http.log`. Cargo.lock remains unchanged at SHA-256
+`3f7596122e7c093dc8af791c6c33bd05b04422ef53206055042103c1e4036d0b`.
+Linux execution of this follow-up, hosted CI and live PostgreSQL remain unverified.
+Final Jig evidence, gates and backend test receipts are recorded in the finish
+resolution for `plan_01M232EEV96Y284FZQYHWWY79H` under `.agent/state`.
+
 ## Upstream and local lifecycle reconciliation: 2026-09-09
 
 Local `master` was advanced from `19aa9ff` to upstream `37888ff` while retaining

@@ -36,6 +36,8 @@ Explicit notification and cancellation happen after releasing the guard.
 Readiness reads must remain available while native enqueue holds admission.
 Supervisor abandonment signaling is owned from construction and transferred to
 the driver; it precedes captured-value destruction and never runs finalizers.
+Extracted finalizers remain explicitly awaited and must not inherit process
+operation cancellation; extraction does not detach captured tokens.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or

@@ -219,21 +219,26 @@ impl Wake for LockProbe {
 #[test]
 fn cancellation_and_readiness_wakers_run_outside_the_transition_lock() {
     let state = Arc::new(Shared::new(true));
-    let probe = Arc::new(LockProbe {
-        state: state.clone(),
-        wakes: AtomicUsize::new(0),
+    let probes: [Arc<LockProbe>; 3] = std::array::from_fn(|_| {
+        Arc::new(LockProbe {
+            state: state.clone(),
+            wakes: AtomicUsize::new(0),
+        })
     });
-    let waker = Waker::from(probe.clone());
-    let mut cx = Context::from_waker(&waker);
+    let wakers = probes.each_ref().map(|probe| Waker::from(probe.clone()));
+    let mut contexts = wakers.each_ref().map(Context::from_waker);
     let mut ready = Box::pin(state.wait_ready());
     let mut drain = Box::pin(state.draining());
     let mut cancel = Box::pin(state.cancelled());
-    assert!(ready.as_mut().poll(&mut cx).is_pending());
-    assert!(drain.as_mut().poll(&mut cx).is_pending());
-    assert!(cancel.as_mut().poll(&mut cx).is_pending());
+    assert!(ready.as_mut().poll(&mut contexts[0]).is_pending());
+    assert!(drain.as_mut().poll(&mut contexts[1]).is_pending());
+    assert!(cancel.as_mut().poll(&mut contexts[2]).is_pending());
     state.force_cancel();
-    assert_eq!(probe.wakes.load(Ordering::SeqCst), 3);
-    assert!(ready.as_mut().poll(&mut cx).is_ready());
-    assert!(drain.as_mut().poll(&mut cx).is_ready());
-    assert!(cancel.as_mut().poll(&mut cx).is_ready());
+    // Every waiter must be notified; redundant wakes are permitted.
+    for (index, probe) in probes.iter().enumerate() {
+        assert!(probe.wakes.load(Ordering::SeqCst) > 0, "waiter {index}");
+    }
+    assert!(ready.as_mut().poll(&mut contexts[0]).is_ready());
+    assert!(drain.as_mut().poll(&mut contexts[1]).is_ready());
+    assert!(cancel.as_mut().poll(&mut contexts[2]).is_ready());
 }

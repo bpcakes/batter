@@ -429,6 +429,11 @@ impl Supervisor {
 
     /// Extract pending finalizers if application startup fails before running.
     /// The application must explicitly close this stack and retain both errors.
+    /// Dropping the supervisor cancels its operation tokens, even after this
+    /// extraction. Finalizers must use cleanup independent of those tokens
+    /// (for example, a fresh [`crate::operation::OperationContext::new`]), not
+    /// a context derived from [`ShutdownHandle::operation_token`]. The stack's
+    /// [`CleanupBudget`] still bounds explicit teardown.
     pub fn take_cleanup(&mut self) -> CleanupStack {
         std::mem::take(&mut self.cleanup)
     }
