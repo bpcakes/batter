@@ -1106,3 +1106,32 @@ Inventory compilation has a separate 300-second bound. No evidence justified
 raising the live watchdog; stalled work must still fail. Warm-cache initialization
 counts deliberately permit zero; fresh-cluster evidence establishes cold startup,
 and repeated same-input suites independently prove persisted reuse.
+
+## Axum operational defaults: exact native APIs (2026-09-10)
+
+Before implementation of batter-7r3.4, inspected the downloaded primary crate
+sources for **Axum 0.8.9** (`src/serve/mod.rs`, `src/routing/mod.rs`) and
+**tower-http 0.6.11** (`src/request_id.rs`, `Cargo.toml`). Cargo subsequently
+resolved tower-http 0.6.11 with only its request-id feature, UUID 1.26.0 and Axum
+0.8.9 in the generated lockfile; it reported tower-http 0.7.1 as available.
+This task selects the audited 0.6 API, not a general dependency refresh. No
+foundation dependency on HTTP libraries was introduced. `http-body` 1.0.1 is an
+adapter test dependency for a controlled native streaming body.
+
+The [Tower HTTP request-ID source](https://docs.rs/crate/tower-http/0.6.11/source/src/request_id.rs)
+shows SetRequestId retaining inbound headers and potentially an existing RequestId
+extension. MakeRequestUuid calls native UUID v4 generation. The opt-in boundary
+therefore uses that generator directly and replaces header/Tower/adapter values;
+it does not deploy the preserving setter at an untrusted boundary.
+
+The [Axum serve source](https://docs.rs/crate/axum/0.8.9/source/src/serve/mod.rs)
+spawns native connection tasks and the graceful-signal listener. Graceful return
+waits on native connection completion; aborting the direct serve future does not
+join those tasks. Native accept errors are retried. This grounds the deliberately
+limited register_http helper and the executed streaming-abort regression.
+
+The [Axum routing source](https://docs.rs/crate/axum/0.8.9/source/src/routing/mod.rs)
+applies layers to already assembled route/fallback services. That determines
+operational_http placement, retained MatchedPath templates and 405/fallback
+coverage. Versioned docs.rs web requests failed in this environment; exact local
+Cargo source inspection, compilation and runtime tests supplied API evidence.

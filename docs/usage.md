@@ -223,8 +223,16 @@ Select the separate `batter-axum` dependency; the foundation has no HTTP feature
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
 render your envelope. Install trusted metadata middleware outside the policy so
 it is available even for readiness/deadline failures. The [HTTP example](../crates/batter-axum/examples/http_service.rs)
-generates a process-local ID rather than trusting an incoming correlation header.
-Applications remain responsible for ID uniqueness requirements and trust policy.
+uses `operational_http` to generate a UUID and replace incoming header/Tower/
+adapter identities. This opt-in wrapper replaces the outer observer/identity
+pair; it emits one HTTP completion with an event-local ID even when INFO spans
+are disabled. Extract `Extension<CorrelationId>` for explicit metadata propagation.
+Applications remain responsible for durable uniqueness requirements and trust policy.
+The example selects `with_infrastructure_json()` and uses
+`render_infrastructure_failure` in handlers; legacy Problem JSON and custom
+rendering remain compatible. Readiness uses `ReadinessPolicy` with a read-only
+HealthReader, and owned startup calls `register_http` after binding the native
+listener. These helpers do not own domain errors, body streaming or authentication.
 
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their

@@ -137,11 +137,17 @@ fn assert_readiness(capture: Capture, levels: [Option<&str>; 4]) {
             .find_map(|line| line.strip_prefix("x-request-id: "))
             .unwrap()
             .trim();
-        assert!(id.starts_with("example-"), "{response}");
+        assert_eq!(id.len(), 36, "{response}");
         assert!(ids.insert(id), "duplicate response identity: {id}");
         let matching: Vec<_> = events
             .iter()
-            .filter(|event| event.contains(&format!("request_id={id}}}")))
+            .filter(|event| {
+                event
+                    .split_once("HTTP response boundary finished")
+                    .unwrap()
+                    .1
+                    .contains(&format!("request_id=\"{id}\""))
+            })
             .collect();
         assert_eq!(matching.len(), usize::from(level.is_some()), "{text}");
         let Some(level) = level else { continue };

@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests;
 
-use super::HttpObservationLevel;
+use super::{CorrelationId, HttpObservationLevel};
 use axum::{
     extract::{MatchedPath, Request},
     http::{Method, StatusCode},
@@ -28,6 +28,7 @@ pub(super) async fn observe_response<F: Future<Output = Response>>(
 struct HttpObservation {
     span: tracing::Span,
     context: tracing::Span,
+    correlation: Option<CorrelationId>,
     method: &'static str,
     route: Option<MatchedPath>,
     started: Instant,
@@ -65,6 +66,7 @@ impl HttpObservation {
         Self {
             span,
             context,
+            correlation: request.extensions().get::<CorrelationId>().cloned(),
             method,
             route,
             started: Instant::now(),
@@ -110,6 +112,7 @@ impl HttpObservation {
                         target: "batter",
                         parent: &observation.context,
                         $level,
+                        request_id = observation.correlation.as_ref().map(CorrelationId::as_str),
                         method = observation.method,
                         route = observation.route.as_ref().map(MatchedPath::as_str).unwrap_or("<unmatched>"),
                         status = observation.status.map(|status| status.as_u16()),

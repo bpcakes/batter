@@ -43,6 +43,17 @@ class CompletionFieldsTests(unittest.TestCase):
                     "/work", 500,
                 )
 
+    def test_correlation_must_belong_to_event_even_when_span_matches(self):
+        with self.assertRaises(RuntimeError):
+            check_completion_fields(self.line(self.fields), "/work", 500, "example-1")
+        check_completion_fields(
+            self.line(self.fields + ('request_id="example-1"',)), "/work", 500, "example-1",
+        )
+        with self.assertRaises(RuntimeError):
+            check_completion_fields(
+                self.line(self.fields + ('request_id="wrong-id"',)), "/work", 500, "example-1",
+            )
+
     def test_rejects_line_without_completion_boundary(self):
         with self.assertRaises(RuntimeError):
             check_completion_fields(" ".join(self.fields), "/work", 500)

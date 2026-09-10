@@ -3,7 +3,8 @@
 Axum 0.8 integration for the `batter` Tokio foundation. Import its API from
 `batter_axum`. This separate dependency provides request readiness/deadline
 policy, operation context extensions, sanitized infrastructure failure rendering,
-HTTP observations, and liveness/readiness handlers.
+HTTP observations, trusted server correlation, dependency readiness and supervised
+native serving.
 
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
@@ -45,9 +46,9 @@ still one event.
 
 Set overrides in handlers, failure renderers or middleware inside observation.
 Middleware changing a response must retain, replace or remove the override to
-match its own policy. Built-in probes retain default severity; the runnable
-example explicitly selects INFO for lifecycle readiness failures while starting
-or draining. Their status remains 503 and outcome remains `server_error`, so
+match its own policy. Status-only probes retain default severity.
+`ReadinessPolicy` selects INFO for Starting/Draining and WARN for Stopped and
+unhealthy dependencies while Ready. Their status remains 503 and outcome remains `server_error`, so
 status/outcome alerts still need application-owned probe filtering.
 
 Axum's `Router::layer` runs after routing and covers only routes/fallback already
@@ -90,3 +91,37 @@ Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
 The HTTP composition example combines lifecycle readiness with a cached reader
 from the foundation health monitor. Its simulated probe runs independently of
 HTTP traffic; application probe and timing policy remain explicit.
+
+## Opt-in operational composition
+
+Use `operational_http` instead of outer `observe_http` to generate a UUID, replace
+incoming x-request-id and Tower/adapter identity extensions, observe once, and
+replace the response ID header. Extract `Extension<CorrelationId>` and propagate
+its string explicitly to nested application metadata. It carries no authority.
+The HTTP completion event has its own `request_id` even with all INFO spans
+disabled, including on drop under another dispatch. Native nested tracing still
+requires enabled spans; no tenant/principal or inbound trace context is inferred.
+
+`RequestPolicy::with_infrastructure_json()` explicitly selects application/json
+with `{code, message, request_id}`, fixed sanitized messages and no-store. The
+request_id is a generated string or null if no typed correlation was installed;
+headers are never fallback identity. Handlers may call
+`render_infrastructure_failure(failure, Some(&id))` for the same infrastructure
+envelope. Default Problem JSON and `with_failure_renderer` remain available;
+the last renderer selection wins. Domain error mappings remain application-owned.
+
+Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle, health)`
+outside admission. Its response has an empty body and 200 only when lifecycle is
+Ready and the latest read-only health snapshot is healthy. `ReadinessReason`
+retains Starting/Draining/Stopped and each unready dependency status in response
+extensions. `with_level` explicitly changes severity only. Decisions do no probe
+I/O and are point-in-time observations, not atomic with future drain.
+
+Inside owned `Startup`, bind a native `TcpListener`, assemble the `Router`, then
+call `register_http(supervisor, "http", listener, router)`. It acknowledges when
+the registered task runs and delegates graceful drain to Axum. Registration
+failure and abandoned startup release the listener. Native accept errors are
+retried by Axum. Streaming bodies can outlive response deadlines and direct
+wrapper abortion; dependent cleanup remains conservatively skipped on forced
+abort. The [operational tests](tests/operational.rs) exercise that limit with a
+real socket and explicitly release the outstanding body afterward.

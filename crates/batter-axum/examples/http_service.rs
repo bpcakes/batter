@@ -7,10 +7,9 @@ mod support;
 mod tests;
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::State,
-    http::{HeaderValue, StatusCode, header},
-    middleware::{self, Next},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -18,94 +17,17 @@ use batter::{
     BoxError,
     admission::{Admission, AdmissionError, Bulkhead},
     health::{HealthMonitor, HealthPolicy, HealthReader},
-    lifecycle::{Readiness, ShutdownHandle, Supervisor},
+    lifecycle::Supervisor,
     operation::{Interruption, OperationContext, OperationError},
 };
 use batter_axum::{
-    HttpFailure, HttpObservationLevel, RequestPolicy, liveness, observe_http, request_admission,
+    CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, dependency_readiness, liveness,
+    operational_http, register_http, render_infrastructure_failure, request_admission,
 };
-use serde::Serialize;
-use std::{
-    convert::Infallible,
-    net::SocketAddr,
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
-use tracing::Instrument;
+use std::{convert::Infallible, net::SocketAddr, time::Duration};
 
-// Application-owned, process-local correlation. Incoming IDs carry no trust.
-static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Clone)]
-struct RequestId(String);
-
-#[derive(Serialize)]
-struct ErrorBody<'a> {
-    code: &'static str,
-    message: &'static str,
-    request_id: &'a str,
-}
-
-fn render_failure(failure: HttpFailure, id: &RequestId) -> Response {
-    let message = match failure {
-        HttpFailure::Unavailable => "The service is unavailable",
-        HttpFailure::Cancelled => "The operation was cancelled",
-        HttpFailure::DeadlineExceeded => "The operation exceeded its time budget",
-        HttpFailure::Overloaded => "The service is at capacity",
-        HttpFailure::Internal => "An internal error occurred",
-    };
-    (
-        failure.status(),
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(ErrorBody {
-            code: failure.code(),
-            message,
-            request_id: &id.0,
-        }),
-    )
-        .into_response()
-}
-
-async fn request_identity(mut request: axum::extract::Request, next: Next) -> Response {
-    batter::telemetry::with_current_dispatch(async move {
-        let id = RequestId(format!(
-            "example-{}",
-            NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let span = tracing::info_span!("request", request_id = %id.0);
-        request.extensions_mut().insert(id.clone());
-        let mut response = next.run(request).instrument(span).await;
-        response.headers_mut().insert(
-            "x-request-id",
-            HeaderValue::from_str(&id.0).expect("generated ASCII request ID"),
-        );
-        response
-    })
-    .await
-}
-
-async fn fail(Extension(id): Extension<RequestId>) -> Response {
-    render_failure(HttpFailure::Internal, &id)
-}
-
-#[derive(Clone)]
-struct ReadinessState {
-    lifecycle: ShutdownHandle,
-    dependency: HealthReader<std::io::Error>,
-}
-
-async fn readiness_response(State(state): State<ReadinessState>) -> Response {
-    // Both checks are read-only. Process drain always overrides cached success;
-    // dependency failure does not permanently drain the process.
-    match state.lifecycle.readiness() {
-        Readiness::Ready if state.dependency.is_healthy() => StatusCode::OK.into_response(),
-        Readiness::Ready | Readiness::Starting | Readiness::Draining => (
-            Extension(HttpObservationLevel(tracing::Level::INFO)),
-            StatusCode::SERVICE_UNAVAILABLE,
-        )
-            .into_response(),
-        Readiness::Stopped => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
+async fn fail(Extension(id): Extension<CorrelationId>) -> Response {
+    render_infrastructure_failure(HttpFailure::Internal, Some(&id))
 }
 
 fn register_dependency_health(
@@ -163,17 +85,21 @@ struct AppState {
 async fn work(
     State(state): State<AppState>,
     Extension(context): Extension<OperationContext>,
-    Extension(id): Extension<RequestId>,
+    Extension(id): Extension<CorrelationId>,
 ) -> Response {
     let _permit = match state.outbound.enter(&context, Admission::Reject).await {
         Ok(permit) => permit,
-        Err(AdmissionError::Overloaded) => return render_failure(HttpFailure::Overloaded, &id),
-        Err(AdmissionError::Closed) => return render_failure(HttpFailure::Unavailable, &id),
+        Err(AdmissionError::Overloaded) => {
+            return render_infrastructure_failure(HttpFailure::Overloaded, Some(&id));
+        }
+        Err(AdmissionError::Closed) => {
+            return render_infrastructure_failure(HttpFailure::Unavailable, Some(&id));
+        }
         Err(AdmissionError::Interrupted(Interruption::Cancelled)) => {
-            return render_failure(HttpFailure::Cancelled, &id);
+            return render_infrastructure_failure(HttpFailure::Cancelled, Some(&id));
         }
         Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded)) => {
-            return render_failure(HttpFailure::DeadlineExceeded, &id);
+            return render_infrastructure_failure(HttpFailure::DeadlineExceeded, Some(&id));
         }
     };
     // Demonstration only: replace this read with a real dependency call.
@@ -186,10 +112,10 @@ async fn work(
     {
         Ok(body) => body.into_response(),
         Err(OperationError::Interrupted(Interruption::Cancelled)) => {
-            render_failure(HttpFailure::Cancelled, &id)
+            render_infrastructure_failure(HttpFailure::Cancelled, Some(&id))
         }
         Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
-            render_failure(HttpFailure::DeadlineExceeded, &id)
+            render_infrastructure_failure(HttpFailure::DeadlineExceeded, Some(&id))
         }
         Err(OperationError::Failed(never)) => match never {},
     }
@@ -200,16 +126,7 @@ fn router(
     request_budget: Duration,
     dependency: HealthReader<std::io::Error>,
 ) -> Result<Router, batter::ConfigurationError> {
-    let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_failure_renderer(
-        |failure, parts| {
-            // request_identity is outside this layer and supplies trusted data.
-            let id = parts
-                .extensions
-                .get::<RequestId>()
-                .expect("request identity middleware is installed");
-            render_failure(failure, id)
-        },
-    );
+    let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_infrastructure_json();
     let application = Router::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
@@ -220,15 +137,11 @@ fn router(
     // Health endpoints must remain outside the admission gate.
     let probes = Router::new()
         .route("/live", get(liveness))
-        .route("/ready", get(readiness_response))
-        .with_state(ReadinessState {
-            lifecycle: handle,
-            dependency,
-        });
+        .route("/ready", get(dependency_readiness::<std::io::Error>))
+        .with_state(ReadinessPolicy::new(handle, dependency));
     Ok(application
         .merge(probes)
-        .layer(middleware::from_fn(observe_http))
-        .layer(middleware::from_fn(request_identity)))
+        .layer(middleware::from_fn(operational_http)))
 }
 
 #[tokio::main]
@@ -279,15 +192,7 @@ async fn run() -> Result<(), BoxError> {
                     let application = router(handle, config.request_budget, health)?;
                     let listener = tokio::net::TcpListener::bind(config.bind).await?;
                     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
-                    scope
-                        .supervisor()
-                        .register("http", move |shutdown| async move {
-                            shutdown.mark_started();
-                            axum::serve(listener, application)
-                                .with_graceful_shutdown(async move { shutdown.draining().await })
-                                .await?;
-                            Ok(())
-                        })?;
+                    register_http(scope.supervisor(), "http", listener, application)?;
                     scope.stage("signals")?;
                     support::register_signals(scope.supervisor())?;
                     Ok(())

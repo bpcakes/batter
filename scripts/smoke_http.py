@@ -17,12 +17,14 @@ import urllib.error
 import urllib.request
 
 
-def check_completion_fields(line: str, route: str, status: int) -> None:
+def check_completion_fields(line: str, route: str, status: int, request_id=None) -> None:
     """Require HTTP facts on the event, independently of its formatted spans."""
     _, boundary, event = line.partition("HTTP response boundary finished")
     outcome = "server_error" if status >= 500 else "client_error" if status >= 400 else "completed"
     fields = ('method="GET"', f'route="{route}"', f"status={status}",
               f'http_outcome="{outcome}"')
+    if request_id is not None:
+        fields += (f'request_id="{request_id}"',)
     if not boundary or re.search(r"(?:^|\s)latency_ms=\S+", event) is None or any(
         re.search(r"(?:^|\s)" + re.escape(field) + r"(?=\s|$)", event) is None
         for field in fields
@@ -98,7 +100,7 @@ def main() -> int:
                     if response.status != expected_status:
                         raise RuntimeError(f"Unexpected response for {path}: {response.status}")
                     request_id = response.headers.get("x-request-id")
-                    if not isinstance(request_id, str) or re.fullmatch(r"example-[0-9]+", request_id) is None:
+                    if not isinstance(request_id, str) or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", request_id) is None:
                         raise RuntimeError(f"Missing generated correlation ID for {path}.")
                     route = "<unmatched>" if expected_status == 404 else path
                     observations.append((request_id, route, expected_status))
@@ -117,7 +119,7 @@ def main() -> int:
                 raise RuntimeError(f"Graceful shutdown returned nonzero status {status}.")
             logs.seek(0)
             output = re.sub(r"\x1b\[[0-9;]*m", "", logs.read().decode("utf-8", errors="replace"))
-            required = ["http_outcome", "latency_ms", "request_id=example-"]
+            required = ["http_outcome", "latency_ms", "request_id="]
             if not args.warn_filter:
                 required += ["operation boundary finished"]
             else:
@@ -131,13 +133,13 @@ def main() -> int:
             for request_id, route, expected_status in observations:
                 events = [line for line in output.splitlines()
                           if "HTTP response boundary finished" in line
-                          and re.search(r"\brequest_id=" + re.escape(request_id) + r"\b", line)]
+                          and re.search(r'\brequest_id="?' + re.escape(request_id) + r"\b", line)]
                 expected_count = 0 if args.warn_filter and expected_status < 500 else 1
                 if len(events) != expected_count:
                     raise RuntimeError(f"Expected {expected_count} HTTP completions for {route}/{request_id}, got {len(events)}.")
                 if not events:
                     continue
-                check_completion_fields(events[0], route, expected_status)
+                check_completion_fields(events[0], route, expected_status, request_id)
                 if args.warn_filter:
                     if re.search(r"\bWARN\b", events[0]) is None or "batter.http" in events[0]:
                         raise RuntimeError(f"Filtered HTTP event depends on its disabled span: {events[0]}")

@@ -29,8 +29,9 @@ and [HTTP example](../crates/batter-axum/examples/http_service.rs).
 `with_failure_renderer` maps middleware failures into an application-owned
 envelope using a snapshot of request parts. Trusted correlation middleware must
 run outside it; never assume raw inbound headers are trusted. Application
-handlers must use their own renderer too. The HTTP example demonstrates both
-paths with matching generated request-ID headers/body fields. Readiness requires
+handlers select their own domain mappings. The HTTP example opts into the
+standard infrastructure renderer for both handler and admission failures, with
+matching generated request-ID headers/body fields. Readiness requires
 all registered components to acknowledge startup before traffic is admitted.
 
 `RequestPolicy` retains one combined readiness/deadline policy. The independent
@@ -53,10 +54,11 @@ Severity policy is also independent of admission. Return an Axum
 select INFO for an application-identified expected readiness failure. Inner
 middleware can insert, replace or remove this response extension. Keep the actual
 503 and `server_error` outcome; alert rules must distinguish probe traffic if
-those fields drive alerts. Built-in probes and unannotated responses retain the
+those fields drive alerts. Status-only probes and unannotated responses retain the
 WARN-for-5xx/INFO-otherwise defaults. No response means no override: dropped
 futures retain WARN. The HTTP example selects INFO for Starting/Draining probe
-responses, leaving stopped-process probes and application errors at defaults.
+responses through `ReadinessPolicy`, leaving Stopped and unhealthy-dependency
+probes while Ready at WARN.
 
 Keep authentication, authorization, request body limits, CORS, TLS, proxy trust,
 trace-header validation, tenant resolution, and user admission policy external.
@@ -64,10 +66,45 @@ Choose middleware order deliberately: Batter's timer starts inside its middlewar
 not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
-The supervised Axum server uses with_graceful_shutdown and waits for it to finish
+`register_http` registers a bound `TcpListener` and initialized `Router` as a
+direct critical component. It acknowledges startup on its first task poll; bind
+errors remain in owned `Startup`. Registration failure and abandoned startup
+release the listener. Native Axum accept errors are retried internally.
+The server uses with_graceful_shutdown and waits for it to finish
 while dependencies remain alive. Aborting that wrapper is not accepted as proof
 of transitive child termination; resource finalizers are conservatively skipped.
 The existing smoke test does not establish full connection/body lifetime behavior.
+
+`operational_http` is an opt-in replacement for outer `observe_http` plus identity
+glue. It composes exactly one existing observer inside server UUID correlation.
+Tower HTTP's native UUID generator is used directly; its header-preserving setter
+is unsuitable at an untrusted boundary. Incoming x-request-id values, Tower
+RequestId and previous CorrelationId extensions are replaced, as is any inner
+response ID. Read `Extension<CorrelationId>` for explicit downstream metadata;
+this is never authentication or authority. HTTP completion fields include the ID
+even with INFO spans disabled; native operation spans retain their normal filter
+semantics. Existing custom identity/observe_http and request_scope remain valid.
+
+`RequestPolicy::with_infrastructure_json` explicitly selects the shared
+code/message/request_id envelope. `render_infrastructure_failure` offers the same
+mapping to handlers. Neither changes legacy Problem JSON; a later custom renderer
+wins. No domain error or schema/codegen dependency moves into the adapter.
+
+`ReadinessPolicy<E>` combines `HealthReader<E>` with `ShutdownHandle` without
+probing. Mount `dependency_readiness::<E>` outside admission. The empty-body
+200/503 response carries a typed reason and a separate severity extension.
+Unknown, failed, timed-out, stale and stopped-writer dependency states are unready;
+Starting/Draining default INFO, Stopped/dependency failures default WARN.
+`with_level` overrides severity only. The final lifecycle read overrides cached
+health on observed drain; this decision is not atomic with subsequent transitions.
+
+The [HTTP composition root](../crates/batter-axum/examples/http_service.rs) deletes
+its local ID, renderer, readiness and serve implementations in favor of these
+helpers. Authentication/metadata policy in the reference consumer remains
+separately owned by batter-in2. [Real socket tests](../crates/batter-axum/tests/operational/serving.rs)
+prove graceful startup/drain and demonstrate an outstanding stream surviving
+wrapper abortion with cleanup skipped; they do not establish a general body,
+WebSocket or disconnect ownership contract.
 
 ## SQLx: keep transactions visible
 

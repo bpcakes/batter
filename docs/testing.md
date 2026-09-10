@@ -698,6 +698,25 @@ previously removed ambient launch path. Only the emergency fallback control
 deliberately waits ten seconds; the parent-death probes return on evidence.
 Keeping that control in ordinary matrices validates the real configured fallback.
 
+## Axum operational defaults
+
+`cargo test -p batter-axum --test operational --locked` exercises the actual
+composition of server identity, observation and guarded-route admission. It
+covers forged headers/Tower/adapter extensions, concurrent IDs and nested
+operations, custom renderer precedence, missing typed identity, probes/fallback/
+unsupported methods, deadline/forced cancellation and drop under another
+dispatch with INFO spans disabled. Capture registries remain strongly owned
+across cases; HTTP field and correlation assertions inspect event-local fields.
+
+Readiness tests use the real HealthMonitor with controlled polling/time to cover
+Unknown, Failed, TimedOut, Healthy, Stale and stopped writer, plus lifecycle
+Starting/Ready/Draining/Stopped. Reads start no probes; custom severity retains
+body/status/reason/outcome. Native loopback tests cover owned Startup handoff,
+registration/abandonment listener release, and a stream retained after request
+budget and direct-wrapper abort. The test explicitly releases and awaits that
+body after observing unsuccessful shutdown and skipped dependency cleanup.
+These tests establish the stated limits, not general streaming ownership.
+
 ## HTTP process smoke test
 
 The example defaults its logging filter only when `RUST_LOG` is absent.
@@ -733,7 +752,8 @@ and all HTTP fields with the HTTP span disabled. The example test separately
 drives acknowledged lifecycle transitions over a live loopback listener to prove
 the exact Starting/Draining INFO and Stopped WARN readiness policy under both INFO
 and mixed-target filtering. It checks generated identities per response, expected
-absence of filtered INFO events, and the retained identity on Stopped WARN events.
+absence of filtered INFO events, and the event-local identity on Stopped WARN events with all adapter INFO spans
+disabled.
 The readiness route also requires a fresh successful cached dependency sample.
 A controlled router test covers unknown, failed, recovered, expired and stopped
 observations without additional probe calls. The runnable monitor uses an explicit

@@ -16,10 +16,15 @@ Windows support and non-Unix fallbacks are out of scope.
   probes, and failures.
 - `src/observation.rs` privately owns response observation and tracing lifetime;
   its single internal composition entry has no admission policy.
-- `examples/http_service.rs` demonstrates router/lifecycle composition.
+- `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
+  and the standard infrastructure renderer; it composes the existing observer once.
+- `src/readiness.rs` owns read-only dependency/lifecycle reasons and severity policy.
+- `src/serving.rs` registers a bound native listener/router with the supervisor.
+- `examples/http_service.rs` demonstrates adoption of these public helpers.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
-  middleware placement, and future destruction.
+  middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
+  all readiness reasons, native startup/drain and a body surviving wrapper abort.
 
 ## Edit here for X
 
@@ -39,7 +44,12 @@ streaming or detached connection-task shutdown. Keep probe routes separate from
 guarded business routes. Apply `observe_http` after assembling routes/fallback;
 use `request_admission` inside it. Nesting observation around `request_scope`
 intentionally emits twice; no request-extension deduplication is provided.
-Do not log cause contents or untrusted request fields.
+Do not log cause contents or untrusted request fields. `operational_http` must
+replace inbound header, Tower and adapter identities before observation and must
+replace inner response IDs. Keep typed server correlation on completion events
+when INFO spans are disabled. Retain test subscriber dispatches across cases.
+Readiness defaults: Starting/Draining INFO; dependency failures while Ready and
+Stopped WARN. Existing status-only probes and Problem JSON remain compatible.
 Observation severity overrides are explicit response extensions, independent of
 admission. Preserve actual status/outcome and the default WARN for dropped
 futures. No application callback belongs in the observation guard's destructor.

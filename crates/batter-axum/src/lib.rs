@@ -3,13 +3,20 @@
 //!
 //! This bounds obtaining a response, NOT streaming its body or a WebSocket
 //! session. It does not detect disconnects that the transport does not surface
-//! by dropping the handler future. Bodies, proxy trust, auth, and request IDs
-//! are deliberately not interpreted. Keep liveness/readiness outside admission;
+//! by dropping the handler future. Bodies, proxy trust and auth remain
+//! application-owned. Trusted request correlation is explicitly opt-in. Keep liveness/readiness outside admission;
 //! apply observation to the assembled router, including probes and fallback.
 
 #![forbid(unsafe_code)]
 
+mod correlation;
 mod observation;
+mod readiness;
+mod serving;
+
+pub use correlation::{CorrelationId, operational_http, render_infrastructure_failure};
+pub use readiness::{ReadinessPolicy, ReadinessReason, dependency_readiness};
+pub use serving::register_http;
 
 use axum::{
     Json,
@@ -47,7 +54,7 @@ type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
 /// observation. The extension is retained on the response and is not an HTTP
 /// header. Request extensions, client headers and route names do not select levels.
 /// Middleware replacing a response or its status must retain, replace or remove
-/// this extension to match its policy. Built-in probes do not set an override.
+/// this extension to match its policy. The status-only probes do not set an override.
 /// Nested observers each read the retained override; an outer response rewrite
 /// does not retroactively change an inner observer's status or event level.
 ///
@@ -104,6 +111,19 @@ impl RequestPolicy {
     {
         self.failure_renderer = Some(Arc::new(renderer));
         self
+    }
+
+    /// Opt into the standard code/message/request_id JSON envelope.
+    ///
+    /// Install [`operational_http`] outside admission to supply the server ID.
+    /// If absent, request_id is null; untrusted headers are never used as fallback.
+    /// This replaces any previously configured renderer. Calling
+    /// [`Self::with_failure_renderer`] afterward selects the custom renderer instead.
+    /// See the runnable `http_service` example for the complete composition.
+    pub fn with_infrastructure_json(self) -> Self {
+        self.with_failure_renderer(|failure, parts| {
+            render_infrastructure_failure(failure, parts.extensions.get::<CorrelationId>())
+        })
     }
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {

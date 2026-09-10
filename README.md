@@ -34,7 +34,7 @@ See [ADR-007](docs/adr/007-unix-platform-scope.md) and
 | `retry` | Fresh attempts, explicit replay authorization, capped backoff with optional injected jitter, provider delay lower bounds, retained last error. |
 | `admission` | Native Tokio semaphore permits with reject-or-wait policy; waiting uses the existing deadline. |
 | `telemetry` | Stable operation outcomes, elapsed time, attempt/task/cleanup events through `tracing`; no global subscriber installation. |
-| `batter-axum` | Readiness gate, request deadline/context, configurable sanitized error rendering, independent HTTP observation covering probes/fallback with explicit response severity, combined compatibility middleware. |
+| `batter-axum` | Opt-in generated correlation, read-only dependency readiness and supervised native serving; request deadlines, configurable sanitized rendering and independent HTTP observation. |
 | `batter-sqlx` | Default-retiring PostgreSQL leases, bounded probe, redacted native errors and explicit pool-close registration. |
 | `batter-test-support` | Scripted dependency results and preservation of both test-body and cleanup errors. |
 

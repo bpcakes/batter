@@ -2,6 +2,70 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Axum operational defaults: 2026-09-10
+
+Bead `batter-7r3.4`, baseline `495e46fdbfd2009edb56d2e00d838407465a0c72`
+plus the task worktree, on Linux x86_64. Audited and updated the Bead before
+implementation. Added opt-in UUID correlation/one-observer composition, standard
+infrastructure JSON, read-only readiness reasons/severity and native supervised
+HTTP registration; the runnable HTTP root deletes its duplicated implementations.
+Legacy request_scope, custom renderer and default Problem JSON behavior remain
+covered by the unchanged adapter suites.
+
+Cargo generated the lockfile after adding tower-http 0.6.11/request-id and the
+http-body 1.0.1 adapter test dependency. UUID remains 1.26.0; no existing package
+version changed. Final Cargo.lock SHA-256:
+`ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+A normal-dependency `cargo tree -p batter --edges normal --locked` inspection
+confirms the foundation still excludes Axum, Tower HTTP and SQLx.
+
+Both required verification commands passed:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+```
+
+Rust 1.98.1 (`48a229cea`, LLVM 22.1.8) and Rust 1.94.0 (`4a4ef493e`, LLVM 21.1.8)
+each ran **606 Rust test/doctest executions**, zero failures and 29 explicitly
+ignored live cases across 70 summaries. Totals include repeated core/workspace
+profiles. Formatting, warning-denied Clippy and rustdoc, process-runner controls,
+PostgreSQL-smoke controls and reference-runner controls passed. The twelve new
+operational tests cover concurrent/forged/replayed IDs and nested operations,
+custom/missing-ID rendering, complete-router 405/fallback/admission coverage,
+INFO-disabled event-local identity on deadline/cancellation/drop, all dependency
+and lifecycle readiness reasons, severity independence, owned startup/registration
+and native streaming through wrapper abort. Test registries remain strongly owned
+across cases. Initial draft compile failures (a never-returning handler type and
+an incorrect skip-reason name) were corrected before these runs; no semantic
+assertions were weakened.
+
+On **each** toolchain, rebuilt the HTTP example and passed all five process modes:
+
+```sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+The minimum-toolchain build used `RUSTUP_TOOLCHAIN=1.94.0`; each smoke immediately
+executed that rebuilt binary. The smoke oracle now requires a generated UUID and
+request_id on the completion event itself, independently of formatted span fields.
+`python3 -m unittest discover -s scripts -p test_smoke_http.py` passed all eight
+negative/positive controls, including missing and conflicting event correlation.
+
+The streaming regression receives real socket bytes before advancing virtual
+time beyond the request budget. After drain/escalation it observes every direct
+task joined but an outstanding body still alive, unsuccessful shutdown and
+`UnsafeTaskExit` cleanup skip; it then releases and awaits body completion. This
+is evidence of the limit, not a new streaming/disconnect/WebSocket ownership
+contract. No live PostgreSQL, new macOS, hosted CI, publication or deployment
+execution is claimed. Prior evidence remains scoped to its recorded snapshots.
+Final Jig gate receipts are recorded with the task's execution plan.
+
 ## Service startup and finite-command guidance: 2026-09-10
 
 Bead `batter-7r3.7`, baseline `188c389790cad4682d31b9d7a4606141c8ed08b4`

@@ -574,7 +574,7 @@ Nested observers each read that retained override. An observer records the statu
 and override returned by its inner service; middleware outside it can subsequently
 rewrite the response without changing that already completed observation.
 Request extensions, client headers, route names and missing OperationContext do
-not infer severity. Built-in probes do not add overrides. A future destroyed
+not infer severity. Status-only probes do not add overrides. A future destroyed
 without returning a response remains WARN, even if the handler constructed an
 annotated response internally. No policy callback runs from the guard's Drop.
 
@@ -627,8 +627,55 @@ Batter does not trust a client correlation header for it. The callback covers
 middleware failures, not application responses or separate health probes.
 Default server execution exhaustion uses 503, not a claim that client
 upload timed out. No automatic Retry-After authorizes write replay. Authentication,
-authorization, trust boundaries, body limits, request IDs, and application errors
-are not supplied. Liveness/readiness must be mounted outside the readiness gate.
+authorization, proxy trust, body limits, and domain error policy remain
+application-owned. Server correlation is separately opt-in. Liveness/readiness must be mounted outside the readiness gate.
+
+### Opt-in operational defaults
+
+`operational_http` generates a new UUID on first poll and composes exactly one
+HTTP observer inside its retained request span. It replaces all x-request-id
+values and both Tower RequestId and adapter CorrelationId extensions before the
+inner service runs. The response header is replaced after the service returns.
+`CorrelationId` is opaque, cloneable and exposes a string for explicit metadata
+propagation; it never selects authority. Inbound trace and proxy trust remain
+uninterpreted. UUIDs are correlation values, not a durable uniqueness constraint.
+
+The observer retains this typed ID as a completion-event field independently of
+INFO spans, including WARN dropped observations under a different ambient
+dispatch. Native nested operation tracing is still filtered normally and carries
+context through enabled request spans. Neither library installs a global
+subscriber. Tests retain their subscriber registries across cases and check
+completion fields after the event message, not only in formatted spans.
+
+`with_infrastructure_json` opts into a fixed application/json envelope containing
+exactly `code`, `message`, and `request_id`, with Cache-Control: no-store and the
+HttpFailure status. Codes and messages are the sanitized literals in
+`render_infrastructure_failure`; request_id is a generated string, or null when
+the typed extension is absent. No inbound header fills that gap. The renderer
+never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
+custom renderer afterward replaces this policy. Domain responses remain owned
+by their handler.
+
+`ReadinessPolicy` reads a fresh dependency snapshot then lifecycle readiness,
+without invoking a probe or retaining the writer. Ready requires both healthy
+and lifecycle Ready; an observed drain overrides cached health. A subsequent
+transition may immediately obsolete the decision. Responses have empty bodies,
+200 for Ready and 503 otherwise, and retain `ReadinessReason` in extensions.
+Starting/Draining default INFO; Stopped and dependency Unknown/Failed/TimedOut/
+Stale/Stopped default WARN. Explicit level policy alters neither status, reason,
+body nor outcome. Old `readiness` and `liveness` keep their status-only contracts.
+
+`register_http` transfers a bound TcpListener and initialized Router into a
+critical component. The factory does no work before supervision starts and
+acknowledges on its task's first poll; application approval and a running driver
+remain necessary. Failed registration or abandoned startup releases the listener.
+Binding and its errors belong to owned Startup. Axum retries native accept errors
+and spawns its own connection and graceful-signal tasks. Native graceful return
+waits for connection completion; wrapper abortion does not join descendants.
+A real streaming regression holds a body beyond the request budget and through
+wrapper abort: the report is unsuccessful and dependent cleanup is skipped even
+though every direct task was joined. The test separately releases the body.
+There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
 
 ## Optional database fixture finish
 
