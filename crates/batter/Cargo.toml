@@ -33,3 +33,7 @@ name = "process_owned"
 
 [[example]]
 name = "operation_budget"
+
+[[example]]
+name = "finite_command"
+test = true

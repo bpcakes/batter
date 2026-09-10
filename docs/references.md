@@ -420,6 +420,22 @@ See [validation](validation.md) for executed checks and remaining limitations.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
 
+### Service and finite-command examples: 2026-09-10
+
+Rechecked Cargo.lock and the cached Tokio 1.53.1 source for the native primitives
+used by `batter-7r3.7`; no version or feature change was needed.
+
+- [Semaphore::acquire_owned](https://docs.rs/tokio/1.53.1/tokio/sync/struct.Semaphore.html#method.acquire_owned)
+  consumes an `Arc` and yields an owned permit. Its native Drop returns capacity;
+  the startup example keeps that permit in a finalizer until the service joins.
+- [UdpSocket](https://docs.rs/tokio/1.53.1/tokio/net/struct.UdpSocket.html)
+  supports native bind/send/receive and shared `Arc` ownership through `&self`
+  methods. The finite command retains a socket owner for explicit cleanup;
+  closing that native socket requires no async close method. This is a local
+  resource-lifetime example, not a database/session termination analogue.
+
+Execution and error/cleanup controls belong in [validation](validation.md).
+
 ## Independent HTTP observation reviewed: 2026-09-08
 
 Resolved and checked Axum 0.8.9 in Cargo.lock and the local Cargo source.

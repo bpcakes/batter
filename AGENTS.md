@@ -6,7 +6,7 @@ Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
 This workspace contains four library packages and two SQLx example packages,
-with failure-contract tests, doctests, and five runnable demonstrations.
+with failure-contract tests, doctests, and six runnable demonstrations.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification passed on Rust 1.94.0 and 1.98.1 after upgrading the dependencies;
 `docs/validation.md` records exact commands, versions, outcomes, and limitations.

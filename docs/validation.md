@@ -2,6 +2,77 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Service startup and finite-command guidance: 2026-09-10
+
+Bead `batter-7r3.7`, baseline `188c389790cad4682d31b9d7a4606141c8ed08b4`
+plus this task's working changes, on Linux x86_64. Library runtime behavior and
+public APIs are unchanged. Cargo.lock remains `ed37786b14f40d59b12b0155889bc2f6d7c191d1a578bf35dc5dca144ec8b2f5`;
+no dependency versions or features changed. The new `finite_command` example is
+explicitly declared with `test = true` so normal Cargo/Jig discovery executes it.
+
+The `Startup` rustdoc is now an executable, self-contained service: native
+capacity acquisition, pre-reserved finalization, actual channel request/reply,
+readiness acknowledgement and awaited shutdown. Two integration controls
+independently prove empty-supervisor failure with successful cleanup and
+successful finite-work-only supervision. Six command example tests cover native
+loopback work, individual/simultaneous failures, and separately awaited cleanup
+after post-acquisition cancellation/deadline. These are composition controls,
+not a new standalone command owner or a changed service success policy.
+
+Initial focused execution passed all eight runtime/example tests. The first
+executable doctest compile caught two mistakes in the new draft: `Readiness`
+does not implement Error for direct `?` conversion, and `check_shutdown` returns
+`()`, not a report. Both were corrected; the doctest passed, and its request
+phase was then explicitly bounded before the final matrix. A documentation patch
+initially failed to match a status row; no partial edits were applied. No semantic
+assertions were weakened.
+
+After the final source changes, both commands passed:
+
+```sh
+bash scripts/verify.sh
+RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+```
+
+Each toolchain (1.98.1 and 1.94.0) ran **591 Rust test/doctest executions**, zero
+failures and 29 explicitly ignored live cases across 69 summaries. Totals include
+repeated core/workspace profiles. Formatting, Clippy with warnings denied,
+warning-denied rustdoc, 22 process-runner controls, 13 PostgreSQL-smoke controls
+and four reference-runner controls passed. No live PostgreSQL cases were executed
+for this non-database composition task; earlier database evidence remains scoped
+to its recorded snapshots. No new macOS or hosted execution is claimed.
+
+On **each** toolchain, built the example and HTTP executable and ran:
+
+```sh
+cargo build -p batter --example finite_command --locked
+target/debug/examples/finite_command
+target/debug/examples/finite_command --fail-work
+target/debug/examples/finite_command --fail-cleanup
+target/debug/examples/finite_command --fail-both
+target/debug/examples/finite_command --cancel
+target/debug/examples/finite_command --deadline
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+The command smoke driver requires default exit 0, all five injected modes exit 1,
+exact work/cleanup count summaries and empty stderr, under an independent ten-second
+process bound. Cancellation/deadline retain successful cleanup; cleanup failures
+remain unsuccessful even after a successful body. All six cases passed on both
+toolchains. All five HTTP profiles also passed on both toolchains.
+
+Commands, logs and machine-readable totals are retained in ignored
+`.agent/tmp/batter-startup-command-20260910/`. Jig completion evidence belongs to
+`plan_01M253XQB5YVPMXR2DRJZKE5Q7`, using `scripts/jig work check --plan-id
+plan_01M253XQB5YVPMXR2DRJZKE5Q7`; its receipts/gates record the final result. The
+examples retain explicit waiter/runtime limits and add no asynchronous Drop,
+remote termination, rollback, detached-child or standalone cleanup-owner claim.
+
 ## Upstream integration with the fixture workspace: 2026-09-10
 
 User-requested pull and complete verification, tracked by `batter-s03`. Fetched

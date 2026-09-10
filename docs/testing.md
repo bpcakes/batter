@@ -12,6 +12,26 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+The startup rustdoc is executable: it acquires a native capacity permit, starts
+a channel service, waits for acknowledged readiness, handles a request, and
+awaits shutdown/resource release. `tests/startup_composition.rs` independently
+checks unsuccessful empty supervision with successful cleanup and successful
+finite-work-only supervision. `finite_command` is explicitly declared with
+`test = true`; its six example tests run in the ordinary all-targets workspace
+matrix. They check native loopback work, separate/simultaneous work and cleanup
+failures, and cleanup after post-acquisition cancellation or deadline.
+
+```sh
+cargo test -p batter --locked --test startup_composition --example finite_command
+cargo test -p batter --doc --locked startup::Startup
+cargo run -p batter --example finite_command --locked
+```
+
+The command's `--fail-work`, `--fail-cleanup`, `--fail-both`, `--cancel` and
+`--deadline` modes must exit nonzero; interruption must still report successful
+cleanup. See [usage](usage.md#finite-commands-and-separately-awaited-cleanup).
+These tests require no database and make no outer-future abandonment guarantee.
+
 The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
 `DATABASE_URL` identifying an externally provisioned disposable PostgreSQL

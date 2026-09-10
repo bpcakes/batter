@@ -367,6 +367,15 @@ terminate an unresponsive binary, but no cleanup guarantee survives that action.
 
 ## Owned startup contract
 
+`Startup` initializes a running supervisor, not a standalone finite command.
+After successful initialization, no critical components **and** no configured
+finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
+can succeed and every finalizer can succeed while the shutdown report remains
+unsuccessful. Configured finite capacity permits a component-free running
+supervisor; root work still requires readiness, submission and explicit shutdown.
+The executable startup rustdoc and `startup_composition` tests cover these
+distinct outcomes without changing the empty-supervisor contract.
+
 `Startup::new` invokes no initializer. `start` launches the owner on a live Tokio
 runtime. Dropping the inert builder only abandons its unstarted supervisor;
 no asynchronous cleanup is implied. Once started, dropping `StartingSupervisor`
@@ -401,9 +410,23 @@ listeners before returning. Installation errors follow owned startup cleanup.
 Signals are consumed by the registered component after driver start; this is not
 an independent signal driver during earlier initialization. Tokio changes
 process-wide signal disposition and does not restore it on listener drop.
-`check_shutdown` accepts only a successful report; failures retain the complete
-report, including forced abort, skipped cleanup and unjoined work, or the original
-coordinator error. Its redacted formatting does not inspect those causes.
+
+Standalone commands can await `OperationContext::run` and then separately await
+`CleanupStack::close`, preserving both outcomes. The `finite_command` example
+covers returned work/cleanup errors and post-acquisition cancellation/deadline.
+Its cleanup budget starts after the operation finishes and adds to that work
+allowance, independent of operation cancellation. Cancellation interrupts command
+work immediately at the cooperative operation boundary, without service drain;
+the caller must continue driving the cleanup phase. Dropping the command or its
+cleanup future, unwinding, or losing the runtime can abandon that phase. Native
+resource Drop is not an awaited finalization report. Cleanup reservation validates
+a name, and `reserve_finalization` partitions time; neither creates a separate
+owner. No remote database termination or rollback guarantee follows.
+
+For supervised services, `check_shutdown` accepts only a successful shutdown
+report; failures retain the complete report, including forced abort, skipped
+cleanup and unjoined work, or the original coordinator error. Its redacted
+formatting does not inspect those causes.
 
 ## Dependency health sampling
 

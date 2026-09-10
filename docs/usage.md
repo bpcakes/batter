@@ -68,6 +68,18 @@ The application must choose and test the intended accounting.
 
 ## Supervising a service
 
+[`Startup`](../crates/batter/src/startup.rs) has an executable rustdoc example
+that constructs its supervisor and budgets, reserves resource cleanup, acquires
+a native capacity permit, and starts a channel request service. It waits for
+readiness, checks an actual reply, and awaits shutdown before checking that the
+permit was released. Run it with `cargo test -p batter --doc --locked startup::Startup`.
+
+Successful initialization transfers ownership to a running supervisor. It does
+not mean a finite command has completed. A `Supervisor::new` with no critical
+components and no finite-work capacity reports `EmptySupervisor`; successful
+resource cleanup does not make that shutdown report successful. Configure
+genuine service work, or use the finite-command composition below.
+
 The [worker example](../crates/batter/examples/worker.rs) shows inert registration and observed
 signal handling. The [HTTP example](../crates/batter-axum/examples/http_service.rs) shows Axum's
 native server future and separate probe/router state. Do not add a bare spawn
@@ -132,6 +144,56 @@ rejection is `Ok(Err(denial))` so it remains a successful finite completion.
 The typed receipt and shutdown report share the original failure cause; a lost
 receipt is not authority to cancel the work. Successful tasks increment a
 counter rather than accumulating one report record per operation forever.
+
+`Supervisor::with_process_capacity` can supervise finite jobs without any
+critical components. It still has a running/readiness phase, explicit submission,
+and explicit shutdown; completing a successful job does not shut down the
+supervisor. Its initializer is not a standalone acquisition/work/finalization
+owner. Do not enable unused capacity or register a dummy service just to avoid
+`EmptySupervisor` in a setup command.
+
+## Finite commands and separately awaited cleanup
+
+The [finite-command example](../crates/batter/examples/finite_command.rs) binds a
+native loopback UDP socket, sends and receives one message, and releases the
+socket through an explicitly awaited cleanup stack. It reserves the cleanup
+name before acquisition and registers immediately after acquisition, before
+another await. Socket close is synchronous; for a dependency with native async
+close/flush, await that method inside the finalizer.
+
+```sh
+cargo run -p batter --example finite_command --locked
+cargo run -p batter --example finite_command --locked -- --fail-work
+cargo run -p batter --example finite_command --locked -- --fail-cleanup
+cargo run -p batter --example finite_command --locked -- --fail-both
+cargo run -p batter --example finite_command --locked -- --cancel
+cargo run -p batter --example finite_command --locked -- --deadline
+```
+
+The default succeeds; each injected failure/interruption exits unsuccessfully.
+`--cancel` and `--deadline` interrupt only after the resource is registered, then
+still await successful cleanup. The application-owned `CommandReport` retains
+the typed work result and full `CleanupReport`, including simultaneous failures.
+Only outcome/count summaries are printed at the `ExitCode` boundary. Returning
+early with `work?` before cleanup would lose finalization; projecting two errors
+into one message would lose their inspectable causes.
+
+Command cancellation interrupts the current operation cooperatively, without a
+service drain phase. A Unix signal handler can call `OperationContext::cancel`
+and continue awaiting the command. Do not race and drop the whole command future
+in `select!`: that also abandons the code responsible for awaiting cleanup.
+Service drain instead withdraws admission before the later forced-cancellation
+phase, letting owned work finish under its configured allowances.
+
+This finite command remains caller-owned throughout both phases. Dropping the
+outer future, cancelling its cleanup waiter, or unwinding past it can abandon
+asynchronous finalization. `Startup` does not own this path, and no asynchronous
+`Drop` or runtime/process-death guarantee is implied. The separate cleanup budget
+starts after work stops and adds to the work allowance; it deliberately does not
+inherit the cancelled or expired operation context. `reserve_finalization`
+partitions a total budget, but neither it nor reserving a cleanup name creates
+an independent cleanup owner. Database/provider interruption still cannot prove
+rollback, remote query termination, or absence of an external effect.
 
 ## Reserve work and finalization budgets
 

@@ -6,7 +6,7 @@ transactions, and routers. Standardize how work is owned, bounded, observed, and
 stopped—not how every business operation is written.
 
 **Status: 0.1.0 MVP, locally validated; not a production-validated release.**
-The workspace includes failure-contract tests and five runnable demonstrations. Dependencies were upgraded to
+The workspace includes failure-contract tests and six runnable demonstrations. Dependencies were upgraded to
 the latest stable direct releases on 2026-09-07, including SQLx 0.9.0, with a
 Cargo-generated lockfile. See [validation](docs/validation.md) for executed
 checks and remaining gaps, and [current status](docs/status.md).
@@ -103,6 +103,7 @@ SIGINT and SIGTERM trigger shutdown through native Unix signal listeners.
 cargo run -p batter --example worker
 cargo run -p batter --example process_owned
 cargo run -p batter --example operation_budget
+cargo run -p batter --example finite_command
 DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
@@ -111,6 +112,12 @@ The PostgreSQL example connects to an existing database, probes it with `SELECT
 1`, demonstrates partial-startup cleanup, and registers native pool closure.
 It does not create/drop databases or migrate a Runledger schema. Use only a local
 test database for initial verification; never commit real connection secrets.
+
+`finite_command` performs one native loopback operation and separately awaits
+cleanup. Its failure/cancellation modes retain both work and cleanup outcomes.
+Service startup and finite-command ownership are distinct; see
+[usage](docs/usage.md#finite-commands-and-separately-awaited-cleanup) and the
+executable [`Startup` example](crates/batter/src/startup.rs).
 
 ## Use as a local dependency
 

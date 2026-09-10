@@ -1,0 +1,25 @@
+# Service startup and finite command composition
+
+Owning Bead: batter-7r3.7. Baseline: 188c389. Implement the vetted documentation/composition scope without changing runtime contracts or introducing a command ownership API.
+
+## Progress
+- [x] Re-read the owning task, core guide, current implementation and verification contract; confirmed task ready.
+- [x] Replace the startup no_run snippet with an executable, self-contained service example doing actual request work.
+- [x] Add a runnable finite-command example with native acquisition, pre-reserved cleanup, bounded work, separately awaited cleanup and retained work/cleanup failures.
+- [x] Add meaningful examples/failure controls, including empty versus finite-capacity-only supervisor behavior and command cancellation/error cleanup.
+- [x] Update usage, guarantees, implemented status, example navigation/counts and testing guidance.
+- [x] Run both required Rust verification matrices, new example executions and all five HTTP smoke profiles; record actual evidence and limitations.
+- [x] Inspect final Jig evidence/gates, close the Bead, flush export and finish the work plan with successful final api:test evidence.
+
+## Surprises & Discoveries
+The working tree initially contains tracker feedback on other tasks; preserve it. Startup success always hands off to a running supervisor. EmptySupervisor applies only with no components AND no finite capacity. Ordinary command cleanup is caller-driven; cleanup budgets/reservations do not create an owner.
+
+## Decision Log
+The service example is the existing Startup rustdoc made executable and self-contained, rather than another binary duplicating that example. The finite example uses a real loopback UDP socket; its synchronous native close is explicitly identified, and tests exercise the same command function as the CLI. No library behavior/API changes. Use existing Tokio primitives and generic scenarios, keep application result and cleanup report together through the exit boundary, and print only known summaries. No fake service component or unused capacity to bypass EmptySupervisor. Keep interrupted-command cleanup independent of the cancelled operation context. A new standalone ownership API is outside this task.
+
+## Outcomes & Retrospective
+Implemented one new finite_command binary and its six example tests, two startup composition controls, and an executable service rustdoc. Initial focused runtime checks passed all eight tests. The first doctest compile identified draft misuse of Readiness as an Error and check_shutdown as a report-returning function; both were corrected and the doctest passed. Added a bound around the documentation request before full verification. Both final Rust matrices passed (591 test/doctest executions each, 29 live cases explicitly ignored), all six command modes passed their exact status/output checks on each toolchain, and all five HTTP smoke profiles passed on each toolchain. Cargo.lock is unchanged. All five initial Jig targets passed, including api:test receipt_01M254RC1V01QEKT46MHZPE6DP. Concurrent external tracker updates (new batter-tmx tasks and batter-7r3.6 evidence) changed .beads/issues.jsonl after that run, making all input digests stale while source/configuration/toolchain remained unchanged. The Bead is now closed on completed implementation and test evidence; Refreshed all five Jig targets after the final tracker mutation; evidence and gates now report fresh success, including api:test receipt_01M254ZDK2ADEZ24RHK3S43BGB. The final requirement audit confirms the executable service example, exact empty/finite-only controls, finite native command/error/cleanup modes, caller/runtime limits, unchanged runtime API/lock graph, both Rust matrices, command/HTTP smokes, documentation/status updates and closed/exported Bead. No required implementation or validation remains; closing this plan through the verified gates. New Linux evidence only; no new macOS/live PostgreSQL/hosted claim.
+
+## Execution and validation
+Edit crates/batter/src/startup.rs, owning example sources and Cargo example discovery, focused startup/command tests, docs/usage.md, docs/guarantees.md, docs/status.md, docs/testing.md and README navigation. The normal scripts/test_matrix.py all-targets pass must discover new example tests; doctests must execute the service snippet. No dependency version update is needed.
+Run focused tests first, then bash scripts/verify.sh and RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh. Build and execute new examples; build batter-axum http_service and run scripts/smoke_http.py in default, --signal SIGINT, --deadline, --warn-filter and --warn-filter --deadline modes on both toolchains. Live database tests remain explicitly ignored and are not required to substantiate these non-database examples. Record commands/results/platform/lock identity in docs/validation.md. Inspect scripts/jig work evidence/gates before final work check and reuse its fresh passing api:test receipt for completion. Repair failures without weakening oracles. Do not commit or push. Update this plan as decisions and evidence become concrete.
