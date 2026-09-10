@@ -2,6 +2,30 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Ownership and operational adapter reconciliation: 2026-09-10
+
+User-authorized rebase of ownership commit `f5449cd` onto upstream `9a49422`
+produced `aa00f77`. The three textual conflicts retained both Axum guide entries,
+workspace ownership of the same `http-body` 1.0.1 dependency, and both independent
+validation histories below. The new ownership tests and shared process sources
+are byte-for-byte unchanged from the reviewed commit. All records from both
+branches remain in the four append-only Jig state files. Upstream operational
+helpers, context-filtering fixes and retained test dispatches remain intact.
+
+On macOS arm64, both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed: 648 test/doctest executions,
+zero failures, 29 ignored live cases and 73 summaries per toolchain. Both runs
+also passed formatting, warning-denied Clippy and rustdoc. Rebuilt `http_service`
+with each compiler and passed all five documented smoke profiles per binary
+(default, SIGINT, deadline, WARN filter, WARN filter plus deadline): ten smokes.
+Agent-map validation and `git diff --check` passed. Cargo.lock matches upstream
+unchanged at SHA-256 `ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+
+Logs are in `/tmp/batter-reconcile-REgraB`. Final Jig gates and completion are
+recorded under `plan_01M25JQW66KYD3QYWX2TK47207`; this pre-gate note does not claim
+those receipts yet. No new Linux or hosted execution is claimed for this combined
+snapshot; previous platform evidence remains tied to its original commits.
+
 ## Review fixes: final verification, 2026-09-10
 
 Reviewed implementation `3f2ba37`, then separate fixes `f0f6669`, `4ec1556`, and
