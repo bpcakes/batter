@@ -2,6 +2,16 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## HTTP ownership review coverage: 2026-09-10
+
+Bead `batter-7r3.11`, parent `4ec1556` plus this slice, Linux x86_64, Rust 1.98.1.
+All 17 operational tests, six adapter doctests and adapter all-target clippy
+passed. New channel-controlled tests exercise real StartingSupervisor waiter
+cancellation/owner drop, listener release before awaited dependent cleanup,
+duplicate-name listener disposition, and supervised health writer stop during
+drain. Existing runtime ownership needed no change. The ConnectInfo rustdoc
+composition compiles. No macOS, hosted CI or live PostgreSQL claim is added.
+
 ## Request context filtering review fix: 2026-09-10
 
 Bead `batter-7r3.10`, parent `f0f6669` plus this slice, Linux x86_64, Rust 1.98.1.

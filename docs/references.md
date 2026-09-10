@@ -1159,3 +1159,18 @@ keeps completion events on `batter`. The supported quiet example filter is
 re-enabling INFO operation completions. The operation fallback described above
 is also necessary: parenting WARN events to disabled operation spans otherwise
 discards the retained HTTP parent.
+
+## Native HTTP composition and policy evolution: 2026-09-10
+
+Axum 0.8.9 [ConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/struct.ConnectInfo.html)
+and [ServiceExt](https://docs.rs/axum/0.8.9/axum/trait.ServiceExt.html) require the
+make-service conversion to supply connection metadata. A plain Router does not
+install that extension. `register_http` intentionally retains its narrow Router
+contract; its rustdoc demonstrates an application-owned supervised native
+`into_make_service_with_connect_info` serve closure.
+
+Cargo's [SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html)
+classifies adding enum variants and adding `non_exhaustive` to an existing
+exhaustive enum as breaking changes. ReadinessReason remains exhaustive by
+design: additional states warrant consumer policy review, rather than a new
+wildcard fallback that can conceal a readiness/severity decision.

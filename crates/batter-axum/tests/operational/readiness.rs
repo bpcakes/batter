@@ -219,3 +219,93 @@ async fn explicit_severity_override_preserves_reason_status_body_and_http_outcom
         assert!(fields.contains("status=503") && fields.contains("http_outcome=\"server_error\""));
     }
 }
+
+#[tokio::test]
+async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
+    let capture = Capture::new();
+    async {
+        let second = Duration::from_secs(1);
+        let mut supervisor = Supervisor::new(
+            ShutdownBudget::new(
+                second,
+                second,
+                second,
+                CleanupBudget::new(second, second, second).unwrap(),
+            )
+            .unwrap(),
+        );
+        let handle = supervisor.handle();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = calls.clone();
+        let monitor = HealthMonitor::new(
+            HealthPolicy::new(
+                second,
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+                second,
+            )
+            .unwrap(),
+            move || {
+                called.fetch_add(1, Ordering::SeqCst);
+                async { Ok::<_, std::io::Error>(()) }
+            },
+        );
+        let reader = monitor.reader();
+        let policy = ReadinessPolicy::new(handle.clone(), reader.clone());
+        let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
+        supervisor
+            .register("health", move |signal| async move {
+                monitor.run(signal).await;
+                stopped_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        supervisor
+            .register("drain-control", move |signal| async move {
+                signal.mark_started();
+                signal.draining().await;
+                release_rx.await.unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let running = supervisor.start();
+        handle.mark_ready();
+        tokio::time::timeout(second, handle.wait_ready())
+            .await
+            .unwrap()
+            .unwrap();
+        // The sole writer has sampled before waiting for its next interval.
+        assert_eq!(reader.snapshot().status(), HealthStatus::Healthy);
+        assert_response(&policy, ReadinessReason::Ready).await;
+        handle.request();
+        tokio::time::timeout(second, stopped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reader.snapshot().status(), HealthStatus::Stopped);
+        assert_response(&policy, ReadinessReason::Draining).await;
+        for _ in 0..100 {
+            assert_eq!(policy.reason(), ReadinessReason::Draining);
+        }
+        release_tx.send(()).unwrap();
+        let report = tokio::time::timeout(second, running.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(report.is_success(), "{report:?}");
+        assert_response(&policy, ReadinessReason::Stopped).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+    .with_subscriber(capture.dispatch.clone())
+    .await;
+    let text = capture.text();
+    let events: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("HTTP response boundary finished"))
+        .collect();
+    assert_eq!(events.len(), 3, "{text}");
+    for (line, level) in events.iter().zip(["INFO", "INFO", "WARN"]) {
+        assert!(line.trim_start().starts_with(level), "{line}");
+    }
+}

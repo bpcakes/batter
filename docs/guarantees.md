@@ -671,12 +671,20 @@ transition may immediately obsolete the decision. Responses have empty bodies,
 200 for Ready and 503 otherwise, and retain `ReadinessReason` in extensions.
 Starting/Draining default INFO; Stopped and dependency Unknown/Failed/TimedOut/
 Stale/Stopped default WARN. Explicit level policy alters neither status, reason,
-body nor outcome. Old `readiness` and `liveness` keep their status-only contracts.
+body nor outcome. During supervised drain, a stopped health writer still yields
+Draining/INFO; after process completion it yields Stopped/WARN. Reading either
+state creates no probes. ReadinessReason is intentionally exhaustive: new states
+require an API compatibility decision and consumer policy review. Old `readiness` and `liveness` keep their status-only contracts.
 
 `register_http` transfers a bound TcpListener and initialized Router into a
 critical component. The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
-remain necessary. Failed registration or abandoned startup releases the listener.
+remain necessary. Invalid or duplicate registration releases only the rejected
+listener. Cancelling a borrowed StartingSupervisor waiter leaves the listener
+owned. Dropping the startup owner requests drain, releases registered listener
+captures before dependent cleanup, and lets observers await the completed report
+on a live runtime. Dropping an unstarted Supervisor releases captures without
+running finalizers.
 Binding and its errors belong to owned Startup. Axum retries native accept errors
 and spawns its own connection and graceful-signal tasks. Native graceful return
 waits for connection completion; wrapper abortion does not join descendants.
@@ -684,6 +692,9 @@ A real streaming regression holds a body beyond the request budget and through
 wrapper abort: the report is unsuccessful and dependent cleanup is skipped even
 though every direct task was joined. The test separately releases the body.
 There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
+The helper accepts a plain Router and supplies no ConnectInfo extension. Native
+`into_make_service_with_connect_info` belongs in an application-owned supervised
+serve closure; the helper rustdoc includes that composition.
 
 ## Optional database fixture finish
 

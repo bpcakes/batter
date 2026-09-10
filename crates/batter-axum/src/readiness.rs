@@ -12,6 +12,9 @@ use batter::{
 use tracing::Level;
 
 /// Sanitized reason for a point-in-time readiness decision, with no cause data.
+///
+/// Intentionally exhaustive: new reason variants require a compatible API release
+/// and review of consumers' readiness/severity policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadinessReason {
     /// Lifecycle Ready and a fresh healthy dependency observation.

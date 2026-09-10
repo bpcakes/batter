@@ -7,7 +7,7 @@ use batter::{
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
-    startup::Startup,
+    startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
 use batter_axum::register_http;
 use std::{
@@ -126,7 +126,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
 }
 
 #[tokio::test]
-async fn failed_registration_and_abandoned_startup_release_the_bound_listener() {
+async fn invalid_registration_and_unstarted_supervisor_drop_release_the_bound_listener() {
     let mut supervisor = supervisor();
     for name in ["", "http"] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -263,4 +263,104 @@ async fn streaming_outlives_response_budget_and_forced_wrapper_abort_skips_clean
     assert_eq!(report.cleanup.skipped[0].name, "dependency");
     assert_eq!(report.cleanup.skipped[0].reason, SkipReason::UnsafeTaskExit);
     assert!(!cleaned.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn borrowed_startup_waiter_is_inert_but_owner_drop_releases_listener_before_cleanup() {
+    use std::future::{Future, poll_fn};
+    let base = supervisor();
+    let handle = base.handle();
+    let (bound_tx, bound_rx) = oneshot::channel();
+    let (cleanup_tx, mut cleanup_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let mut starting = Startup::new(
+        base,
+        OperationContext::new(Duration::from_secs(10)).unwrap(),
+        cleanup_budget(),
+        move |scope| {
+            Box::pin(async move {
+                scope.stage("registered").unwrap();
+                let listener = TcpListener::bind("127.0.0.1:0").await?;
+                let address = listener.local_addr()?;
+                scope
+                    .supervisor()
+                    .on_cleanup("dependency", move || async move {
+                        // This fails if startup retains the registered server capture
+                        // while closing a resource that the server could still use.
+                        let rebound = TcpListener::bind(address).await?;
+                        cleanup_tx.send(()).unwrap();
+                        release_rx.await.unwrap();
+                        drop(rebound);
+                        Ok(())
+                    })
+                    .unwrap();
+                register_http(scope.supervisor(), "http", listener, Router::new()).unwrap();
+                bound_tx.send(address).unwrap();
+                std::future::pending::<Result<(), std::io::Error>>().await
+            })
+        },
+    )
+    .start();
+    let observer = starting.observer();
+    let address = timeout(Duration::from_secs(2), bound_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut waiter = Box::pin(starting.wait());
+    assert!(
+        poll_fn(|cx| Poll::Ready(waiter.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    drop(waiter);
+    tokio::task::yield_now().await;
+    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert!(matches!(
+        cleanup_rx.try_recv(),
+        Err(oneshot::error::TryRecvError::Empty)
+    ));
+    assert!(
+        TcpListener::bind(address).await.is_err(),
+        "borrowed waiter cannot release the listener"
+    );
+
+    drop(starting);
+    timeout(Duration::from_secs(2), &mut cleanup_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut completion = Box::pin(observer.wait());
+    assert!(
+        poll_fn(|cx| Poll::Ready(completion.as_mut().poll(cx)))
+            .await
+            .is_pending(),
+        "report must wait for cleanup"
+    );
+    release_tx.send(()).unwrap();
+    let outcome = timeout(Duration::from_secs(2), completion).await.unwrap();
+    let StartupOutcome::Failed(StartupError::Failed(report)) = outcome else {
+        panic!("expected retained startup drain failure")
+    };
+    assert!(matches!(report.cause, StartupCause::Draining));
+    assert_eq!(report.stage, "registered");
+    assert!(report.cleanup.is_success());
+    assert_eq!(report.cleanup.records.len(), 1);
+    assert_eq!(report.cleanup.records[0].name, "dependency");
+    assert_eq!(handle.readiness(), Readiness::Draining);
+    drop(TcpListener::bind(address).await.unwrap());
+}
+
+#[tokio::test]
+async fn duplicate_http_registration_releases_only_the_rejected_listener() {
+    let mut supervisor = supervisor();
+    let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_address = first.local_addr().unwrap();
+    register_http(&mut supervisor, "http", first, Router::new()).unwrap();
+    let second = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_address = second.local_addr().unwrap();
+    assert!(register_http(&mut supervisor, "http", second, Router::new()).is_err());
+    drop(TcpListener::bind(second_address).await.unwrap());
+    assert!(TcpListener::bind(first_address).await.is_err());
+    drop(supervisor);
+    drop(TcpListener::bind(first_address).await.unwrap());
 }
