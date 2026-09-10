@@ -2,6 +2,48 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Review fixes: final verification, 2026-09-10
+
+Reviewed implementation `3f2ba37`, then separate fixes `f0f6669`, `4ec1556`, and
+`b161d7a`; Beads `batter-7r3.9`, `.10`, `.11` are closed/exported. The correlation
+loss was a structural coupling between filterable diagnostic spans and retained
+execution context, plus a shared request/completion target. The startup concern
+was an omission in composition tests; actual owner/waiter cleanup behavior was
+already correct. Native filtering, ConnectInfo and enum-evolution decisions are
+recorded with primary sources in [references](references.md).
+
+Executed after all implementation slices on Linux x86_64:
+
+| Verification | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | Rust 1.98.1 (`48a229cea`), Cargo 1.98.1 (`797e8a9bc`): passed 617 Rust test executions across 70 successful summaries, zero failures, 29 intentional ignores. Formatting, isolated no-default core check, all-feature workspace Clippy and warning-denied rustdoc passed. Included process-runner, PostgreSQL smoke-oracle and reference-runner Python controls passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Rust 1.94.0 (`4a4ef493e`), Cargo 1.94.0 (`85eff7c80`): same counts and all checks passed. |
+| Rebuild `cargo build -p batter-axum --example http_service --locked` with each toolchain, then `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` with default, `--signal SIGINT`, `--deadline`, `--warn-filter`, `--warn-filter --deadline` | All ten process invocations passed, including response IDs/envelopes, event-local HTTP fields, filtered nested-operation correlation and signal exit zero. |
+| `python3 -m unittest discover -s scripts -p test_smoke_http.py` | Ten positive/negative controls passed, including absent/wrong nested-operation identity and missing deadline completion. |
+
+Cargo.lock SHA-256 remains
+`ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+Logs: `/tmp/batter-review-fixes-verify-1.98.1.log`,
+`/tmp/batter-review-fixes-verify-1.94.0.log`,
+`/tmp/batter-review-fixes-http-1.98.1.log`,
+`/tmp/batter-review-fixes-http-1.94.0.log`, and
+`/tmp/batter-review-fixes-http-controls.log`. Jig gate receipts and closure are
+associated with plan `plan_01M25F5H2GP5V53N74ZC541MX0` in repository evidence.
+The final `scripts/jig work check --plan-id plan_01M25F5H2GP5V53N74ZC541MX0`
+verify profile passed all five targets on the unchanged source with default Rust
+1.98.1. Source-verification `api:test` receipt: `receipt_01M25FY7BMNBWMEZXKE87AGDJY`.
+`work evidence` and `work gates` both reported fresh/passed with no unresolved
+gates before this evidence addition. Updating these Markdown records invalidated
+all five Jig input digests, so the required profile is refreshed for closure;
+the final receipt IDs are retained in the plan closure evidence. File-budget succeeded with a nonblocking 513-line warning for
+`tests/operational/correlation.rs` (500 warning, 800 hard limit); no waiver or
+policy change was used. The CLI's trailing legacy "no checks configured" text
+does not describe the five completed profile targets; retained receipts do.
+
+These executions establish Linux behavior only. Ignored live PostgreSQL probes,
+macOS and hosted CI were not executed in this review-fix run. Streaming and
+native connection-task limits remain as documented in [guarantees](guarantees.md).
+
 ## HTTP ownership review coverage: 2026-09-10
 
 Bead `batter-7r3.11`, parent `4ec1556` plus this slice, Linux x86_64, Rust 1.98.1.
