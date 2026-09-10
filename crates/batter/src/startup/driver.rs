@@ -128,6 +128,10 @@ where
     }
 }
 
+// Keep the full initialization/destruction/cleanup report until the monitor
+// wraps it in Arc. Its native layout exceeds 128 bytes on macOS; boxing here
+// would add an allocation immediately before that existing shared allocation.
+#[allow(clippy::result_large_err)]
 async fn drive<F, E>(startup: Startup<F>) -> Result<RunningSupervisor, StartupFailure<E>>
 where
     F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, E>,

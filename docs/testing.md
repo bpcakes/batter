@@ -12,6 +12,61 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+The component and real HTTP/1.1 ownership suites run in normal Cargo discovery:
+
+```sh
+cargo test -p batter --test component_ownership --locked
+cargo test -p batter-axum --test http_lifetime --locked
+```
+
+The component suite gates initialization and child joining and contrasts a hidden
+child that answers after wrapper completion and cleanup. It also retains task and
+cleanup failures and checks conservative panic/abort cleanup. Every comparison
+has a ten-second paused-Tokio-time bound, with a pending-future rejection control.
+This detects yielding deadlocks, not non-yielding execution; the existing matrix
+process owner also bounds test phases independently of Tokio. Existing
+non-yielding, finite-descendant, abandonment and scheduling regressions remain
+part of the workspace matrix.
+
+The HTTP target has seventeen tests: ten loopback scenarios, a deliberate-runtime-stall
+control, startup-timeout, missing-event and forced-teardown diagnostic controls, lock-poisoning
+and rejection-trace regressions, and its inert dispatch entry. Shared std-only machinery lives in workspace
+`test-support/process/`; the foundation alone attaches runner self-tests and owns
+its non-yielding fixture and Linux Python helper. Each HTTP scenario
+has an eight-second parent deadline, kill/reap on expiry, the existing PID-bound
+stdin authorization, parent-death handling and ten-second emergency exit. A killed
+ordinary case fails even if it emitted partial evidence. The stall control proves
+observed SIGKILL/reaping and rejects success validation. The focused command has
+these bounds even outside `scripts/test_matrix.py`.
+
+Test-owned channels, pending body polls and resource Drop events establish entry
+and ordering. Full client disconnect is SHUT_RDWR followed by socket close;
+destruction must occur before test release within one second. A pending body is
+inspected while the runtime remains alive after wrapper abortion, then released
+and independently reconciled with message framing and socket closure. Exercise
+task errors/panics and teardown errors are retained together. Construction and
+readiness share a one-second startup deadline. The running server owner is
+retained before readiness waiting, so a readiness timeout still drives teardown
+and retains its report; a construction failure before ownership reports that no
+running owner exists, with captured state/trace diagnostics. Yielding exercises
+have a two-second diagnostic timeout followed by separately bounded 3.5-second
+teardown; the failure includes the actual shutdown report, event and trace snapshots.
+The missing-event control uses a 500 ms exercise bound. Shared fixture constants
+assert room for both diagnostic phases plus startup/unwind margin inside the
+parent deadline, which must remain below the emergency exit. The teardown bound
+is checked against the actual shutdown budget's `total_allowance()`, including
+cleanup/reaping, not a parallel phase sum. Event/wait progress is
+also written to the parent's bounded capture, including if a non-yielding runtime
+prevents those inner timeouts. Ordering assertions release the event lock before
+panicking so later destructor evidence remains available. The companion
+admission case withholds graceful notification so a second established-connection
+request must reach admission and return 503 with no handler entry.
+
+The existing matrix includes `--workspace --all-features --all-targets`; no new
+runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inputs
+cover both the new fixtures and reused control modules, so source changes stale
+the test receipt. All five HTTP executable smoke profiles remain separate.
+
 The startup rustdoc is executable: it acquires a native capacity permit, starts
 a channel service, waits for acknowledged readiness, handles a request, and
 awaits shutdown/resource release. `tests/startup_composition.rs` independently

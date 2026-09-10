@@ -22,7 +22,7 @@ jobs:
       - name: Compile all workspace targets, including Unix signal examples
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
-        run: cargo test -p batter --test non_yielding --test scheduling --test process_ownership --locked
+        run: cargo test -p batter --test non_yielding --test scheduling --test process_ownership --test component_ownership --locked
       - name: Exercise report doctests and database-independent lifecycle exits
         run: |
           cargo test -p batter --doc --locked

@@ -132,6 +132,16 @@ every registered critical component's `mark_started` acknowledgement after
 actual initialization. Acknowledgement is an application assertion, not an
 inspection of its internal descendants. Forgotten acknowledgement leaves Starting.
 
+The [component ownership comparisons](../crates/batter/tests/component_ownership.rs)
+gate actual child initialization before acknowledgement, then gate child stopping
+and join before dependent cleanup. A deliberately nonconforming wrapper returns
+Ok during drain without joining its child: the direct report succeeds and cleanup
+runs, yet the independently retained child answers a fresh request afterward.
+The library cannot inspect hidden children or automatically skip cleanup because
+they exist. Joining only the wrapper does not establish transitive termination.
+Separate comparisons retain early-success failure, concrete task and cleanup
+errors together, and native panic/abort JoinErrors with skipped finalizers.
+
 Readiness only moves forward: Starting may become Ready or Draining, Ready may
 become Draining, and coordinator completion publishes Stopped. Stopped cannot
 be reverted by a concurrent shutdown request or late startup acknowledgement.
@@ -621,7 +631,23 @@ construction, so a streaming design needs a distinct owner.
 
 Client disconnect triggers operation drop only when the transport actually drops
 the handler future. There is no promise of immediate universal disconnect
-propagation. Real connection behavior still requires tests.
+propagation. The [HTTP/1.1 lifetime suite](../crates/batter-axum/tests/http_lifetime.rs)
+uses full client socket shutdown and witnesses handler/body destruction before
+test release for the resolved transport, with a one-second observation bound.
+It does not equate write-half closure with full disconnect. Before response
+construction the observer reports dropped without status; after headers it
+retains the original completion and emits no second status or completion.
+
+The same suite separately witnesses complete message framing, socket EOF/error,
+body destruction, direct server outcomes and cleanup. A blocked response body
+survives its escaped request context's cancellation and server-wrapper abortion
+through report inspection. The named abort skips dependency finalizers; releasing
+the body afterward establishes later transmission/connection teardown, not a
+transitive join by the aborted wrapper. Conversely, forced process cancellation
+can drop a pending handler, return 503 and let the direct server join cleanly,
+allowing cleanup. Reaching the cancellation phase alone does not require skipping.
+See [ADR-008](adr/008-http-transport-ownership.md) for exact measured cases and
+exclusions; [validation](validation.md) limits claims to executed platforms.
 
 Default infrastructure responses omit raw errors and use application/problem+json
 with stable codes. `with_failure_renderer` can select an application envelope,

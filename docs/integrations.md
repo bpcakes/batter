@@ -10,6 +10,18 @@ APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.
 
 ## Axum: implemented, with a deliberately small boundary
 
+The real HTTP/1.1 [lifetime suite](../crates/batter-axum/tests/http_lifetime.rs)
+registers the native serving future with lifecycle supervision, as the executable
+does. Ordinary drain directly drives graceful shutdown. Handler admission,
+response construction, body transmission, socket closure and direct server
+completion are separate observations. The serving result does not aggregate
+connection errors, and aborting the serving wrapper does not join spawned
+connections. Pending streaming work can survive that report; dependent cleanup
+is conservatively skipped after the unsafe direct exit. Full-disconnect tests
+cover the resolved transport, not immediate universal propagation or write-half
+closure. [ADR-008](adr/008-http-transport-ownership.md) records the measured
+contracts and [validation](validation.md) records platform-specific evidence.
+
 Import `RequestPolicy`, `request_admission` and `observe_http` from `batter_axum`.
 Apply `middleware::from_fn_with_state(policy, request_admission)` with
 `route_layer` to guarded business routes, merge unguarded liveness/readiness and

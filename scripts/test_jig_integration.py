@@ -171,6 +171,7 @@ class ArchiveTests(unittest.TestCase):
                         ".agent/state/receipts.jsonl", ".agent/plans/.gitkeep",
                         "crates/batter/Cargo.toml", "crates/batter/src/lib.rs",
                         "crates/batter/examples/worker.rs", "crates/batter/tests/lifecycle.rs",
+                        "test-support/process/watchdog.rs",
                         "crates/batter-axum/Cargo.toml", "crates/batter-axum/src/lib.rs",
                         "crates/batter-axum/examples/http_service.rs",
                         "crates/batter-test-support/Cargo.toml", "crates/batter-test-support/src/lib.rs",

@@ -23,6 +23,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
+- `tests/component_ownership.rs` compares acknowledged initialization and joined
+  children with a nonconforming wrapper whose hidden child survives cleanup.
+  `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;
+  private std-only mechanics live in workspace `test-support/process/`.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation.
 

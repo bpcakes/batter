@@ -67,11 +67,17 @@ full inner-future destruction, without heap allocation.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and pool-close registration; server-session termination remains separate.
 `crates/batter-test-support` contains dependency scripts and error combination.
+[`test-support/process/`](test-support/README.md) contains private std-only Unix
+process machinery included by foundation and Axum integration tests. It is not
+the `batter-test-support` crate or a SQLx feature. Preserve its workspace-relative
+layout when moving consuming crates; suite-specific fixtures and self-tests stay
+with their owning suite.
 `crates/batter/examples` contains worker and operation/process ownership examples.
 `crates/batter-axum/examples` contains the HTTP composition root.
 `examples/postgres-lifecycle` is an unpublished native SQLx executable package.
 `examples/reference-service` owns pinned upstream compatibility and ignored live probes.
-There is no root package, root source tree, or root integration-test target.
+There is no root Cargo package, `src/` tree, or integration-test target; the
+private `test-support/` sources compile only through their consuming test targets.
 
 ## Preserve these invariants
 

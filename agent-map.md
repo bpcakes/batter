@@ -22,6 +22,12 @@ Fast jump index for agent-facing guidance in this repository.
 - [Reference compatibility](./examples/reference-service/AGENTS.md): native type
   identity, live migration/job/lease probes and pinned upstream contracts.
 
+## Private shared test sources
+
+- [Repository process machinery](./test-support/README.md): std-only Unix launch,
+  capture and watchdog sources included by foundation and Axum tests. This is
+  not the `batter-test-support` Cargo crate; preserve the documented relative layout.
+
 ## Suggested usage pattern
 
 1. Start with the root [AGENTS.md](./AGENTS.md).

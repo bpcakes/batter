@@ -355,9 +355,46 @@ fn event_wait_accepts_final_output_from_an_exited_child() {
 
 #[test]
 fn event_wait_rejects_an_exited_child_without_the_event() {
+    reject_missing_final_event(false);
+}
+
+#[test]
+fn exited_child_rejection_precedes_an_expired_startup_deadline() {
+    reject_missing_final_event(true);
+}
+
+#[test]
+fn final_capture_failures_are_not_masked_by_missing_startup() {
+    for (scenario, expected) in [
+        ("fixture-failure", "child panicked"),
+        ("event-overflow", "exceeded capture limit"),
+    ] {
+        let mut child = FixtureChild::spawn(scenario).unwrap();
+        child.child.wait().unwrap();
+        let failure = std::thread::spawn(move || child.wait_for_event("absent-event")).join();
+        let panic = failure.expect_err("final capture must fail");
+        let message = panic.downcast_ref::<String>().unwrap();
+        assert!(message.contains(expected), "{message}");
+        assert!(
+            !message.contains("child exited before startup evidence"),
+            "{message}"
+        );
+    }
+}
+
+fn reject_missing_final_event(expired: bool) {
     let mut child = FixtureChild::spawn("exit-success").unwrap();
     child.child.wait().unwrap();
-    let failure = std::thread::spawn(move || child.wait_for_event("absent-event")).join();
+    let failure = std::thread::spawn(move || {
+        // Select the policy clock after reaping; process startup latency cannot
+        // decide which branch this control exercises.
+        child.started = Instant::now();
+        if expired {
+            child.started -= super::super::timing::STARTUP_LIMIT;
+        }
+        child.wait_for_event("absent-event");
+    })
+    .join();
     let panic = failure.expect_err("an exited child cannot supply missing evidence");
     let message = panic.downcast_ref::<String>().unwrap();
     assert!(

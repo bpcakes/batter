@@ -139,6 +139,339 @@ contract. No live PostgreSQL, new macOS, hosted CI, publication or deployment
 execution is claimed. Prior evidence remains scoped to its recorded snapshots.
 Final Jig gate receipts are recorded with the task's execution plan.
 
+## Process-harness review follow-up: 2026-09-10
+
+Comprehensive review of the preceding component/HTTP change found a Linux-only
+test-target defect. The HTTP target imported foundation watchdog self-tests as
+well as mechanics. Two Linux-only controls resolved a Python asset relative to
+the consuming Axum package, where it did not exist. The earlier macOS results
+remain valid for that snapshot; they did not prove Linux gate compatibility.
+`batter-u0m` was reopened for this correction. `batter-zu8`'s component behavior
+was unaffected; its target is now also selected by the hosted macOS definition.
+
+The fix places private std-only process machinery under `test-support/process/`.
+Foundation-local wrappers alone attach fixture-specific timing policy, self-tests
+and the Linux Python asset. HTTP supplies its own dispatcher and explicit deadline
+without importing any foundation test source. At that stage the HTTP target had 12 tests,
+not 51: ten scenarios, its deliberate-stall rejection and an inert dispatcher.
+No controls were deleted: the foundation still owns and executes them. This also
+removes HTTP's dependency on the foundation test relocation in `batter-tmx.1`.
+Isolated scheduling copies and archive tests include the new shared source root.
+The admission companion checks its second observation's 503/server_error, and
+ordinary-drain fixtures retain rejection versus transport-closure evidence.
+
+Both macOS arm64 matrices passed after these changes, using Rust 1.98.1 and
+1.94.0: 611 Rust test/doctest executions each, zero failures, 29 explicitly ignored
+live cases, and 72 summaries. The reduction is removal of 39 duplicated controls
+from the HTTP target, not weaker foundation coverage. Formatting, Clippy,
+warning-denied rustdoc and all runner controls passed. The archive regression
+also passed. Cargo.lock is unchanged from the preceding section.
+
+Linux verification uses an isolated Docker Linux arm64 environment from
+`rust:1.97.0-bookworm`, with explicitly installed 1.98.1 and 1.94.0 toolchains.
+A bind-mount launch stalled before container creation and was terminated; source
+was copied into a fresh disposable container instead. SHA-256 comparison of all
+Rust, Python, shell and manifest/config source files proved the copy matched the
+worktree before execution. This is local container evidence, not hosted CI.
+The first Linux compilation rejected a macOS-generated `._*.sql` metadata sidecar
+copied beside the reference migration. Removing that generated sidecar from the
+disposable container (not changing the repository migration) corrected the copy.
+Both Linux matrices then passed: 615 Rust test/doctest executions each, zero
+failures, 29 ignored live cases and 72 summaries, including the Linux-only
+parent-death controls. Both platforms passed formatting, warning-denied Clippy
+and rustdoc. Commands were `bash scripts/verify.sh` and the same command with
+`RUSTUP_TOOLCHAIN=1.94.0`.
+
+After rebuilding `http_service` separately with each supported toolchain, all
+five documented HTTP smoke profiles passed on each platform/toolchain combination:
+20 executable smokes in total. Linux commands used the container's
+`/tmp/batter-target/debug/examples/http_service`; macOS used
+`target/debug/examples/http_service`. No live database cases were run. The
+independent review and final Jig receipts belong to plan
+`plan_01M25ACNPR6F0SFN17Z180CK4B`; they are pending at this verification snapshot.
+Logs: `/tmp/batter-review-fix-d9d5cW`.
+
+### Second review and diagnostic corrections
+
+Claude Opus and native Codex completed a same-scope review with matching complete
+fingerprint `ccb5838776ccad9c4863ccd2488f0e9c182686872ef191f38b1c2a271e9ce150`.
+Codex found no actionable defects. Claude found two low-severity issues: the
+forced-cancellation case assumed it would resume before a 100 ms timer, and the
+closed component Bead's notes attributed superseded HTTP evidence to itself.
+The cooperative case retains the drain-survival assertion; forced cancellation
+now checks its actual final outcome. Component notes explicitly limit scope and
+point to this correction rather than presenting old Jig receipts as fresh.
+
+Diagnostic follow-ups add three-second exercise/one-second teardown bounds,
+incremental fixed event/wait records, complete failure snapshots, and assertion
+ordering outside the destructor's event lock. HTTP now has 14 tests, including
+missing-event and lock-poisoning controls. Component comparisons now have a
+ten-second virtual-time bound and a seventh pending-future rejection control;
+this is not non-yielding preemption. Linux CI now has the same 30-minute job bound
+as macOS. The test-only http-body requirement moved to workspace ownership with
+no lockfile change. Full-disconnect scope still excludes write-half closure.
+
+Focused controls and the archive regression passed. The isolated scheduling-copy
+check passed six original replays and rejected all six deliberate capacity
+mutants. Initial macOS revalidation exposed two pre-existing controls: an exited
+child could produce the missing-event deadline diagnostic before the exit
+diagnostic, and one enabled-span assertion failed in the library tracing probe.
+The former now accepts only the two valid missing-evidence diagnostics while
+still requiring a panic after observed child exit. The tracing assertion was not
+changed and did not reproduce in 30 consecutive full library-test runs; its exact
+cause remains unconfirmed. Subsequent complete `verify.sh` runs passed on both
+1.98.1 and 1.94.0: macOS 615 executions each and Docker Linux 619 each, zero
+failures, 29 ignored live cases and 72 summaries in each matrix. All twenty
+rebuilt HTTP smoke profiles passed again. Formatting, warning-denied Clippy and
+rustdoc passed; the lock hash is unchanged. These are the current code snapshot's
+results, logged in `*-round3*.log`. Repeated independent review and final Jig
+receipts are pending; the one-off tracing failure is a residual test-stability
+observation, not claimed repaired.
+
+### Third review and strict process-control correction
+
+Both reviewers completed against matching complete fingerprint
+`c5b4a6d40e8551e8423e8f26d59fb71a67070a6258e54c7401e1b8df8d77dca7`.
+Codex found no actionable defects. Claude correctly identified that accepting
+the deadline diagnostic weakened the exited-child control, and that the HTTP
+diagnostic control consumed too much of the five-second parent allowance.
+
+The watchdog now joins final capture and decides missing evidence from an
+observed child exit before consulting the startup clock. The strict exit-message
+assertion is restored; separate live controls cover both an unexpired and already
+expired startup clock. Late *present* events still undergo timestamp validation.
+HTTP now centrally checks its three-second exercise, one-second teardown,
+eight-second parent and ten-second emergency bounds with startup/unwind margin.
+The missing-event control uses 500 ms rather than intentionally consuming three
+seconds. Component cooperative completion explicitly rejects forced cancellation.
+The component Bead's close reason is now component-only; ADR-008 documents the
+explicit compatibility-review workflow when dependency upgrades change disconnect
+behavior. Focused tests and both supported-toolchain matrices passed again:
+macOS 617 executions each, Docker Linux arm64 621 each, zero failures, 29 ignored
+live cases and 72 summaries per matrix. Formatting, warning-denied Clippy/rustdoc
+and all twenty rebuilt HTTP smoke profiles passed. Source hashes matched the
+Linux copy. Logs are `*-round4.log`; another independent review and final Jig
+receipts are pending. The earlier tracing-test observation remains disclosed.
+
+### Fourth review and diagnostic completeness
+
+The complete same-scope fingerprint was
+`806387e8bc9e7c3a2ab904a2f27f20be8bfca3546e7a187565c87b097ffc9704`.
+Codex found no actionable defects; Claude identified weak rejection/trace
+matching, a teardown bound below the server budget, and loss of more precise
+capture diagnoses on the new finalized-exit path.
+
+The rejection oracle now requires a second 503/server_error observation when the
+client actually receives the rejection. Transport closure still permits one or
+two observations: construction may precede lost delivery. A direct control covers
+both valid closure cases and rejects a missing received-response observation.
+The shared evidence owner checks capture limits first, preserves panic-before-event
+diagnosis and still lets present events undergo timestamp checks. Live final-exit
+controls exercise panic and capture overflow; the strict clean-exit controls remain.
+
+All HTTP fixture budgets now share one definition: two-second exercise, 3.5-second
+teardown, eight-second parent and ten-second emergency exit. Server drain/cancel/
+abort/cleanup/reap maxima are asserted below teardown; the fixture's cleanup
+allowance is 500 ms. A yielding unresponsive-server control verifies that an
+elapsed exercise retains the actual aborted-task and skipped-cleanup report,
+not only a timeout label. Snapshot controls inspect the snapshot/report sections
+specifically. Component ordering is asserted after cleanup, not under its event
+lock. The component tracker audit now explicitly explains its metadata-only
+reopen/reclose. Both supported-toolchain matrices passed: macOS arm64 621
+executions each and Docker Linux arm64 625 each, zero failures, 29 ignored live
+cases and 72 summaries per matrix. Formatting, warning-denied Clippy/rustdoc,
+static repository gates and all twenty rebuilt HTTP smokes passed. The Linux
+source copy matched hashes. Logs are `*-round5.log`; the next independent review
+and final Jig work receipts are pending. Hosted CI/load headroom remains unverified.
+
+### Fifth review and bounded startup ownership
+
+Both reviewers completed against complete fingerprint
+`5530d5397d2c0eec8551eec27ccba00bd373aa053051a681b4c3214b2978053b`.
+Codex reran 16 HTTP, seven component and 48 subprocess tests successfully and
+found no actionable defects. Claude identified an unbounded readiness diagnostic
+phase and ambiguous baseline wording for the test-only lockfile edge.
+
+Construction/readiness now share a one-second deadline; the server owner is
+retained before awaiting readiness. A timed-out startup skips exercise but still
+drives and reports teardown. A separate control withholds critical readiness and
+requires that timeout and its actual aborted/skipped-cleanup report before the
+parent kill bound. Construction failure before a running owner exists is reported
+as that boundary, with state/trace diagnostics. Budget relationships now use the
+real `ShutdownBudget::total_allowance()`. Component event assertions take owned
+snapshots before panicking. The references preamble and baseline lockfile-edge
+wording are corrected; resolved versions remain unchanged.
+
+Five focused ordinary-drain samples on each of macOS arm64 and Docker Linux
+arm64, Rust 1.98.1, all reported `transport-closed`. The synchronized admission
+case separately proves 503 routing. This samples the race; it does not establish
+that a platform always closes transport. Logs: `reject-samples-macos.log` and
+`reject-samples-linux.log`, produced by the focused target with `--exact --nocapture`.
+The 30-minute CI cap is a bounded-job policy, not a hosted performance claim;
+each matrix job selects one toolchain, not three serial compiler runs. Hosted cold
+cache and shared-runner timing headroom remain unverified. Both supported-toolchain
+matrices passed: macOS arm64 622 executions each and Docker Linux arm64 626 each,
+zero failures, 29 ignored live cases and 72 summaries per matrix. All twenty
+rebuilt HTTP smokes, formatting, warning-denied Clippy/rustdoc and file-budget
+checks passed. Source hashes matched the Linux copy. Logs: `*-round6.log`.
+Another independent review and final Jig work receipts remain pending.
+
+### Sixth review and CI policy correction
+
+Both reviewers completed against complete fingerprint
+`7eaca4678717e1dc6dd5b3e8a4eb90886db212d9e1c3b7b97b804b1db6e9970d`.
+Codex found no actionable defects; Claude identified one low-severity issue:
+the newly added 30-minute Linux job cap was shorter than the three existing
+sequential matrix phase bounds. The added cap is removed, restoring the prior
+Linux job policy; macOS retains its existing cap. Fixture and matrix bounds are
+unchanged. No hosted timing result is inferred. The nonconforming component
+comparison now also explicitly requires cooperative, non-forced completion.
+
+`scripts/jig check --affected HEAD --explain --json` identifies all five shared
+`test-support/process/*.rs` files as direct inputs for `api:clippy`, `api:fmt`
+and `api:test` (log `affected-round7.json`). The root API component and existing
+`**/*.rs` inputs cover this source; `rust_crate_roots` need not pretend the private
+source directory is a Cargo package. Earlier ownership validation below is marked
+historical to distinguish its superseded counts and platform limitations.
+Revalidation passed on both supported compilers: macOS arm64 622 executions each,
+Docker Linux arm64 626 each, zero failures, 29 ignored live cases and 72 summaries
+per matrix. All twenty rebuilt HTTP smoke profiles passed, along with formatting,
+warning-denied Clippy and rustdoc. Linux source hashes matched. Logs use the
+`-round7` suffix. The next independent review and final Jig receipts are pending.
+
+### Seventh review and root navigation correction
+
+Both reviewers completed against complete fingerprint
+`e9096c2a8a3eb1d88a0d7b9fefb28c1404e7fc04599e23dbe15a59e9d7f4adac`.
+Codex found no actionable defects and reran seven component, 48 process-control
+and 17 HTTP tests successfully. Claude found one low-severity documentation
+omission: the root guide denied a root source tree and neither root guide nor
+agent map identified the private process sources. Both now link their ownership
+README and distinguish the directory from the public test-support crate.
+
+No Rust source, test command, toolchain, dependency or environment changed in this
+correction; the round7 matrices and smokes remain applicable. The parent margin
+is intentional but not a hosted latency guarantee. Disconnect regressions require
+the measured pre-release drop, as specified in ADR-008; a pending checkpoint is a
+failure, not an alternative passing outcome. Shared-source formatting currently
+depends on the HTTP module declarations, as documented in `test-support/README.md`.
+The unseen ordinary-drain 503 branch, hosted timing and one-off tracing cause
+remain disclosed limits, not newly established guarantees.
+
+### Final independent review
+
+Claude Opus (restricted file access, default configuration) and native Codex
+both completed with no actionable findings against complete fingerprint
+`dfb4e38753ad02af95e358887c8d924b942bc6f7b25d0f15fb190c50feeeb607`.
+Parent and reviewer pre/post captures matched. The only exclusion was `.agent`,
+from `495e46fdbfd2009edb56d2e00d838407465a0c72:.reviewignore`.
+Codex independently reran 17 HTTP, seven component and 48 process controls;
+Claude performed a read-only review without executing tests. The agent-map
+check passed with no missing guides or broken links.
+
+Residual limits: no hosted CI, Linux x86_64 or separate CI `stable` run is claimed.
+Hosted timing headroom is unmeasured. Ordinary drain's live samples all closed
+transport; synchronized admission and a synthetic trace control cover 503.
+Write-half closure is excluded, not experimentally contrasted; there is no
+dedicated negative control for the disconnect checkpoint. Direct component tests
+bound yielding deadlocks with virtual time, not non-yielding execution; the matrix
+has an independent phase owner. Context-lock poisoning can add diagnostics after
+an already failing scenario, and shared-source formatting currently depends on
+HTTP module declarations. None was identified as an actionable current defect.
+The previously recorded one-off tracing failure remains unexplained.
+
+Delivery closure and final gate receipts are recorded under
+`plan_01M25ACNPR6F0SFN17Z180CK4B` in Jig's append-only state. Those records, not this
+pre-gate review snapshot, establish final gate success. No commit, push or hosted
+execution is implied.
+
+## Component and HTTP/1.1 ownership: 2026-09-10
+
+Historical pre-review snapshot, superseded by the process-harness follow-up
+sections above. Counts, timeouts and platform limits below describe that earlier
+implementation, not the current test targets or latest verification.
+
+Beads `batter-zu8` and `batter-u0m`, baseline
+`495e46fdbfd2009edb56d2e00d838407465a0c72` plus the working changes for Jig plan
+`plan_01M258E53R0W1F1CF14VB5TBK8`. Host: macOS arm64, Darwin 25.6.0,
+`aarch64-apple-darwin`. These new component/transport cases have no Linux or
+hosted execution evidence. Prior Linux runs below remain historical snapshots.
+
+Cargo regenerated the lockfile after adding a test-only direct http-body edge;
+its SHA-256 is
+`18218c96d01d996eb5bf82efa1f56f23b0eb7d1280dc8a83da830de70d65ce3d`.
+No resolved versions changed: Axum 0.8.9, Hyper 1.11.1, hyper-util 0.1.20,
+Tokio 1.53.1 and http-body 1.1.0. Tokio io-util is explicitly enabled for the
+test client. Primary registry-source inspection is recorded in
+[references](references.md#http11-transport-ownership-reviewed-2026-09-10).
+
+Focused commands passed on Rust 1.98.1:
+
+```sh
+cargo test -p batter --test component_ownership --locked
+cargo test -p batter-axum --test http_lifetime --locked
+```
+
+The component target passed six comparisons. The HTTP target passed 51 tests:
+ten real loopback scenarios, one deliberate-stall rejection control, one inert
+fixture entry and 39 reused Unix runner controls. The latter are re-executed
+controls, not 39 additional HTTP behaviors. Each ordinary HTTP case must exit
+successfully within its independent five-second parent bound; killed/partial
+cases fail. The stall control verifies kill/reap and rejection as successful
+lifetime evidence. Existing parent-death and emergency-exit controls also pass.
+
+The conforming component acknowledges child initialization and joins it before
+cleanup. The nonconforming child answers a fresh request after successful direct
+reporting and cleanup. Other cases retain concrete task/cleanup failures together
+and native panic/abort errors with conservative skipping.
+
+HTTP tests independently witness handler, response, body, framing, socket and
+direct-server events. A blocked body survives server-wrapper abortion through
+report inspection, then finishes after test release while the runtime remains
+alive. Full SHUT_RDWR disconnect drops pending handler/body before release within
+the one-second observation checkpoint. Forced process cancellation yields 503
+`operation_cancelled`, joins the direct server and permits cleanup. Incomplete
+upload yields 503 `deadline_exceeded`. One HTTP completion is retained after
+streaming/disconnect/abort; no replacement status is invented. See
+[ADR-008](adr/008-http-transport-ownership.md) for exact scope and exclusions.
+
+Initial focused Clippy found an existing macOS `StartupFailure` layout above its
+128-byte large-error threshold in the private startup driver. A local documented
+allowance preserves the complete report immediately before the monitor's existing
+Arc allocation; no public type or runtime behavior changed. New test helpers also
+exceeded cognitive-complexity limits and were split without relaxing assertions.
+The subsequent full workspace Clippy command passed with warnings denied.
+
+Both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed. Toolchains were Rust
+1.98.1 (48a229cea, Cargo 1.98.1) and Rust 1.94.0 (4a4ef493e, Cargo 1.94.0).
+Each ran 650 Rust test/doctest executions across 72 summaries, zero failures and 29
+explicitly ignored live cases. Counts include repeated core/workspace runs.
+Formatting, Clippy, warning-denied rustdoc, 22 process-runner controls, 13
+PostgreSQL-smoke controls and four reference-runner controls passed. No live
+PostgreSQL services/cases were invoked for these component/HTTP tasks.
+
+On each toolchain, rebuilt the executable with
+`cargo build -p batter-axum --example http_service --locked` (setting
+`RUSTUP_TOOLCHAIN=1.94.0` for the minimum) and passed all five profiles:
+
+```sh
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+All ten executable smokes passed, including response envelopes, telemetry,
+readiness and signal exit 0. `scripts/jig work check --plan-id
+plan_01M258E53R0W1F1CF14VB5TBK8 --json` passed all five verify targets, including
+the full api:test matrix on the default Rust 1.98.1 toolchain. Crate guide edits
+after that pass invalidated the receipts; the final refresh and gate audit are
+recorded in the owning ExecPlan. No source, dependency, test command, toolchain or
+prerequisite changed after the two full compiler matrices. Logs for this working
+session are in `/tmp/batter-ownership-Z5h9dT`.
+
 ## Service startup and finite-command guidance: 2026-09-10
 
 Bead `batter-7r3.7`, baseline `188c389790cad4682d31b9d7a4606141c8ed08b4`

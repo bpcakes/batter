@@ -94,7 +94,7 @@ def main():
             shutil.copy2(root / name, subject / name)
         (subject / ".cargo").mkdir()
         shutil.copy2(root / ".cargo/config.toml", subject / ".cargo/config.toml")
-        for name in ("crates", "examples"):
+        for name in ("crates", "examples", "test-support"):
             shutil.copytree(root / name, subject / name,
                             ignore=shutil.ignore_patterns("target", "__pycache__"))
         copy_scripts(root, subject)

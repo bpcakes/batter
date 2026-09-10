@@ -25,6 +25,10 @@ Windows support and non-Unix fallbacks are out of scope.
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
   all readiness reasons, native startup/drain and a body surviving wrapper abort.
+- `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
+  handler/body, direct-server and cleanup comparisons. They reuse only private
+  workspace `test-support/process/` mechanics, never another package's fixtures
+  or self-tests; keep report inspection and later body release separate.
 
 ## Edit here for X
 

@@ -21,7 +21,7 @@ tracing.workspace = true
 tower-http = { version = "0.6.11", default-features = false, features = ["request-id"] }
 
 [dev-dependencies]
-http-body = "1.0.1"
+http-body.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros", "signal", "net", "io-util"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tower = { workspace = true, features = ["util"] }

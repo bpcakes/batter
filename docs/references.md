@@ -6,6 +6,67 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## HTTP fixture review follow-up: 2026-09-10
+
+The [Cargo dependency inheritance contract](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#inheriting-a-dependency-from-a-workspace)
+allows a package's dev-dependency to use the workspace version requirement.
+The test-only `http-body` edge now follows that existing repository convention;
+resolved versions are unchanged. Against baseline `495e46f`, the lockfile gains
+a test-only `http-body` dependency edge for `batter-axum`; moving that existing
+edge to workspace inheritance adds no further lockfile change. This is manifest ownership,
+not a transport-version change or prerequisite for the planned facade extraction.
+
+[Tokio 1.53.1 timeout](https://docs.rs/tokio/1.53.1/tokio/time/fn.timeout.html)
+cancels its inner future on elapsed time but cannot bound a non-yielding poll.
+The HTTP fixture therefore uses inner diagnostic timeouts plus its existing
+independent process watchdog. Component comparisons use a paused-time bound only
+for yielding deadlocks. No general preemption guarantee follows.
+
+Ordinary graceful shutdown still permits either a 503 response or transport
+closure before routing. That case records exactly one accepted outcome; the
+separately synchronized admission case is what proves a routed request receives
+503 without business-handler entry. Requiring both outcomes from a race would be
+an unstable test, not stronger evidence. Write-half closure remains explicitly
+outside the full-disconnect contract in ADR-008; no new transport claim is made.
+
+## HTTP/1.1 transport ownership, reviewed 2026-09-10
+
+The follow-up harness review checked the [Cargo environment reference](https://doc.rust-lang.org/cargo/reference/environment-variables.html)
+and [Rust module reference](https://doc.rust-lang.org/reference/items/modules.html).
+`CARGO_MANIFEST_DIR` identifies the consuming package, not the source file's
+original package. Source inclusion also compiles nested test modules in that
+consumer. Therefore generic process mechanics now live in workspace-private
+`test-support/process/`, with fixture assets, scenario policy and self-tests
+attached only by their owning foundation suite. This removes both the Linux
+asset-path failure and HTTP's dependency on the planned foundation test relocation.
+
+For `batter-u0m`, rechecked Cargo.lock and the downloaded primary Cargo registry
+sources: Axum **0.8.9**, Hyper **1.11.1**, hyper-util **0.1.20**, Tokio **1.53.1**,
+and http-body **1.1.0**. The test adds a direct development dependency on the
+already resolved http-body and enables Tokio io-util; no versions changed.
+The browser could not retrieve the pinned docs.rs pages; source inspection used
+the exact locally resolved registry packages, not a different online version.
+
+- [Axum serving source](https://docs.rs/axum/0.8.9/src/axum/serve/mod.rs.html):
+  `WithGracefulShutdown::run` spawns the graceful-signal future, spawns each
+  connection in `handle_connection`, stops accepting on the signal and waits on
+  `close_tx.closed()`. Each connection owns a receiver until its future ends.
+  The serving wrapper does not retain connection JoinHandles. Aborting it drops
+  its wait; it does not join connections. `IntoFuture` returns Ok after run;
+  connection errors are observed separately inside the spawned connection task.
+- [Hyper HTTP/1 builder](https://docs.rs/hyper/1.11.1/hyper/server/conn/http1/struct.Builder.html):
+  the inspected builder defaults keep-alive to true and half-close support to
+  false. `half_close(true)` would permit continued response work after a read
+  EOF during a request. The fixture uses Axum's default transport and explicitly
+  closes both client socket directions; it makes no write-half-only claim.
+- [http-body contract](https://docs.rs/http-body/1.1.0/http_body/trait.Body.html):
+  body frame polling is separate from constructing a Response. The controlled
+  test body acknowledges a pending poll, releases data explicitly, records None
+  and records destruction. Native client framing and EOF are checked separately.
+
+These implementation facts motivate the tests; only the executed loopback
+evidence establishes the observed behavior in [ADR-008](adr/008-http-transport-ownership.md).
+
 ## SQLx PostgreSQL disposition, reviewed 2026-09-09
 
 For `batter-7r3.2`, inspected the Cargo registry sources for `sqlx-core` and

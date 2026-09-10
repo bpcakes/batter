@@ -41,6 +41,8 @@ execution evidence; the updated hosted workflows remain unexecuted.
 | Total deadline and child deadline clamp | Implemented | Tokio Instant, no serialization; cancellation-first boundary precedence. |
 | Child cancellation on operation finish/drop | Implemented | CancellationToken drop guard; does not join spawned children. |
 | Critical process task supervision | Implemented | Registered factories start inside JoinSet tasks; observed early Ok, error, and panic. |
+| Component descendant contract | Tested | [Component comparisons](../crates/batter/tests/component_ownership.rs) prove initialization-before-acknowledgement and child-join-before-cleanup for a conforming owner, and a child answering after successful direct reporting/cleanup for a nonconforming wrapper. Concrete task/cleanup errors and panic/abort outcomes remain retained. No hidden-child detection is claimed. |
+| HTTP/1.1 transport lifetime | Tested; platform scope in [validation](validation.md) | [Loopback cases](../crates/batter-axum/tests/http_lifetime.rs) cover keep-alive admission/drain, incomplete uploads, streaming, full disconnect, forced cancellation and server-wrapper abortion. Body/framing/socket/direct-server/cleanup observations are separate; all cases use independent Unix process bounds with a rejected deliberate stall. [ADR-008](adr/008-http-transport-ownership.md). |
 | Owned dependency-health sampling | Implemented | One supervised monitor, non-overlapping whole-future probes, explicit timing/freshness policy, concrete retained errors and read-only snapshots. 2,000 concurrent reads start no extra probes; expiry, recovery, writer loss, drain/abort/destruction boundaries and HTTP consumer checks are executable. Linux evidence in [validation](validation.md); new macOS execution unverified. |
 | Startup-acknowledged readiness and drain/cancel separation | Implemented | Application approval plus all critical startup acknowledgements; private state operations serialize transitions and snapshot publication with admission, making Stopped irreversible. Deterministic transition/startup/admission tables, concurrent completion/request and wakeup controls; [validation](validation.md). |
 | Finite process-owned work | Implemented | Synchronous bounded admission, active-scope descendants during drain, typed receipts independent of work lifetime, bounded failure retention, and concrete E source-chain identity shared with shutdown reports (`process_ownership/error_sources.rs`). `ShutdownCause::FiniteTaskExit` distinguishes a selected finite-task error/panic from critical-component `ComponentExit`; later observations retain the selected cause. `shutdown_causes.rs` covers mixed task kinds, descendants, ready-request priority and abort outcomes after cause selection. Permanent closure precedes startup/capacity errors, including shutdown before startup and dropped unstarted owners; regressions in `process_ownership.rs`, execution evidence in [validation](validation.md). |
@@ -87,10 +89,14 @@ macOS arm64 hosts on the toolchains recorded in [validation](validation.md).
 The updated hosted macOS CI job remains unexecuted. Abrupt-owner-death adoption
 and reaping probes are Linux-only; macOS covers the shared stdin-EOF path.
 These results imply neither general task preemption nor application finalization
-after process termination. A real HTTP traffic/streaming/disconnect hardening
-suite and a real PostgreSQL setup remain outstanding. Startup/drop/race and
-HTTP signal/envelope/telemetry checks do not establish database integration or
-detached-descendant shutdown guarantees.
+after process termination. The HTTP/1.1 traffic/streaming/disconnect suite now has
+local macOS arm64 and Docker Linux arm64 evidence on both supported toolchains;
+review-follow-up diagnostics and timeout controls are tracked in [validation](validation.md).
+Shared process mechanics are workspace-private; only foundation targets attach
+the runner self-tests and Linux assets. Hosted execution remains unverified. Its measured scope
+is recorded in [ADR-008](adr/008-http-transport-ownership.md). Startup/drop/race and
+HTTP checks do not establish database integration or detached-descendant shutdown
+guarantees; live database evidence remains scoped to its separate validation runs.
 
 The 2026-09-09 implementation-readiness audit refined open task contracts using
 local upstream source; it did not implement or execute the planned integrations.

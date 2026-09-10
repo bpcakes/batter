@@ -12,6 +12,7 @@ establish that the current source has passed validation.
 | [005](005-errors-and-telemetry.md) | Concrete domain errors; aggregate internal reports; sanitized telemetry. |
 | [006](006-workspace-packages.md) | Virtual workspace, separate adoption packages, and a shared dispatch seam. |
 | [007](007-unix-platform-scope.md) | Unix-only platform scope; Windows is unsupported and not planned. |
+| [008](008-http-transport-ownership.md) | Observe response, body, connection and direct server lifetimes separately. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, and an update to the validation/status documents. Do not silently weaken
