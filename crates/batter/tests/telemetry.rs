@@ -1,3 +1,6 @@
+#[path = "telemetry/filtered.rs"]
+mod filtered;
+
 use batter::operation::OperationContext;
 use std::{
     io::{self, Write},

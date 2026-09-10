@@ -74,27 +74,33 @@ impl Outcome {
 
 pub(crate) struct Observation {
     span: Span,
+    context: Span,
     started: Instant,
     outcome: Outcome,
 }
 
 impl Observation {
     pub(crate) fn new(operation: &'static str) -> Self {
+        let span = tracing::info_span!(
+            target: "batter",
+            "batter.operation",
+            operation,
+            outcome = tracing::field::Empty,
+            elapsed_ms = tracing::field::Empty,
+        );
+        // The diagnostic span may be filtered while its application parent is
+        // enabled. Capture once; a later poll/drop must not adopt another parent.
+        let context = span.clone().or_current();
         Self {
-            span: tracing::info_span!(
-                target: "batter",
-                "batter.operation",
-                operation,
-                outcome = tracing::field::Empty,
-                elapsed_ms = tracing::field::Empty,
-            ),
+            span,
+            context,
             started: Instant::now(),
             outcome: Outcome::Dropped,
         }
     }
 
-    pub(crate) fn span(&self) -> Span {
-        self.span.clone()
+    pub(crate) fn context(&self) -> Span {
+        self.context.clone()
     }
 
     pub(crate) fn finish(&mut self, outcome: Outcome) {
@@ -110,7 +116,7 @@ impl Drop for Observation {
         if matches!(self.outcome, Outcome::Succeeded | Outcome::Cancelled) {
             tracing::info!(
                 target: "batter",
-                parent: &self.span,
+                parent: &self.context,
                 outcome = self.outcome.as_str(),
                 elapsed_ms,
                 "operation boundary finished"
@@ -118,7 +124,7 @@ impl Drop for Observation {
         } else {
             tracing::warn!(
                 target: "batter",
-                parent: &self.span,
+                parent: &self.context,
                 outcome = self.outcome.as_str(),
                 elapsed_ms,
                 "operation boundary finished"

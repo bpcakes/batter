@@ -209,7 +209,7 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
     {
         let mut observation = Observation::new(operation);
-        let span = observation.span();
+        let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();
         let _cancel_on_exit = cancellation.clone().drop_guard();

@@ -35,6 +35,10 @@ of its observed futures. Completion/drop events and nested span destruction stay
 with that subscriber when a runtime abort happens outside the original poll.
 Operations and HTTP boundaries capture this context on first poll; this does not
 install global state or supervise application tasks spawned outside Batter.
+When an operation INFO span is filtered, execution and completion retain the
+enabled application parent selected at first poll. Operation fields are recorded
+only on the operation span; later polls and destruction cannot adopt an unrelated
+ambient parent or overwrite inherited application fields.
 
 Adapter authors can use `batter::telemetry::with_current_dispatch` to preserve
 the dispatcher at wrapper construction through inner-future polling and

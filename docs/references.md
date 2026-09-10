@@ -1135,3 +1135,13 @@ applies layers to already assembled route/fallback services. That determines
 operational_http placement, retained MatchedPath templates and 405/fallback
 coverage. Versioned docs.rs web requests failed in this environment; exact local
 Cargo source inspection, compilation and runtime tests supplied API evidence.
+
+## Filtered operation context: 2026-09-10
+
+Checked tracing 0.1.44 [Span::or_current](https://docs.rs/tracing/0.1.44/tracing/struct.Span.html#method.or_current)
+and the selected local source. A disabled span does not preserve its parent as
+an explicit event parent. `or_current` selects the enabled span or current parent.
+Batter therefore retains an operation's execution context separately from its
+diagnostic span, as its HTTP and task boundaries already do. Selection happens
+once on first poll; recording fields still targets only the owned span.
+The existing dispatch wrapper protects full future destruction.

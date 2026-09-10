@@ -2,6 +2,15 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Operation context review fix: 2026-09-10
+
+Bead `batter-7r3.9`, prerequisite `3f2ba37` plus this slice, Linux x86_64,
+Rust 1.98.1. `cargo test -p batter --test telemetry --locked` passed all six tests,
+including two new filtered-parent regressions. `cargo clippy -p batter
+--all-targets --locked -- -D warnings` passed. The first compile identified a
+missing integration-test module path attribute; corrected before passing checks.
+Full two-toolchain and HTTP verification follows all review slices below.
+
 ## Axum operational defaults: 2026-09-10
 
 Bead `batter-7r3.4`, baseline `495e46fdbfd2009edb56d2e00d838407465a0c72`
