@@ -160,6 +160,7 @@ dependencies = [
 name = "batter-example-reference-service"
 version = "0.1.0"
 dependencies = [
+ "batter-sqlx",
  "batter-test-support",
  "postgres-test-harness",
  "runledger-core",
@@ -176,6 +177,8 @@ version = "0.1.0"
 dependencies = [
  "batter",
  "batter-test-support",
+ "futures-util",
+ "postgres-test-harness",
  "sqlx",
  "tokio",
 ]

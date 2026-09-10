@@ -26,6 +26,7 @@ application composition root
   |-- native tracing subscriber and exporters (application-owned)
   |-- optional batter-axum -> batter + Axum / Tower
   |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
+  |     `-- opt-in test-support -> external harness + generic test support
   |-- Runlimit, Runledger (future thin adapters)
   `-- reference tests -> batter-test-support + external postgres-test-harness
 ```
@@ -40,8 +41,9 @@ cyclic dependency on the user's reusable libraries.
 `batter-test-support` depends on neither the foundation nor an adapter. Core
 tests can use its generic scripts without pulling higher layers back into the
 foundation. Cross-package fixtures belong in their application/example test
-targets. The external PostgreSQL harness is a development dependency of reference
-probes, with its source/provisioning ownership kept upstream. The optional SQLx
+targets. Reusable pool/lease/template composition is opt-in under the SQLx
+adapter test-support feature, selected by reference development dependencies.
+The external harness retains provisioning and template-cache ownership. The optional SQLx
 adapter shares the observed connection disposition mechanism while preserving
 native transactions and application policy. Runlimit and Runledger adapters still
 require proven shared mechanics. See [ADR-006](adr/006-workspace-packages.md).

@@ -56,3 +56,11 @@ probes. The harness is an external-only development dependency of that package;
 its provisioning implementation remains upstream. The workspace now has four
 libraries and two examples, with one native SQLx graph and unchanged core/leaf
 dependency direction. These probes do not implement a Runledger adapter.
+
+Fixture amendment, 2026-09-09 (`batter-4jz`): the optional `test-support` feature of
+`batter-sqlx` now selects the pinned external-only harness and generic test support.
+It shares declared native pool/database ownership, ordered fingerprint inputs and
+lock observation. Reference tests consume it through a development dependency;
+application SQL and initializer policy stay there. Default SQLx adapter, core and
+generic leaf graphs exclude the harness. Provisioning and template caching remain
+upstream; no Runledger dependency enters the fixture module.

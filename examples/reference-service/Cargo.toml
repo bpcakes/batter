@@ -17,6 +17,7 @@ runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "
 runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
 
 [dev-dependencies]
+batter-sqlx = { workspace = true, features = ["test-support"] }
 postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 serde_json = "1"

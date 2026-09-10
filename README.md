@@ -53,9 +53,10 @@ Depending on `batter` does not bring in Axum, SQLx, or test utilities. HTTP APIs
 are imported from `batter_axum`; there is no `batter::http`, `axum` feature, or
 `postgres-example` feature. Package versions and Rust minimums are declared
 individually. PostgreSQL provisioning remains in the external
-`postgres-test-harness` repository; it is an external-only test dependency of the
-reference example, not a workspace member.
-Runlimit, Runledger, and postgres-test-harness adapters are **not implemented**.
+`postgres-test-harness` repository. The optional `batter-sqlx/test-support` feature
+composes its leases/templates with native pools and is exercised by reference
+tests; the default adapter graph excludes the harness. It is not a workspace
+member. Runlimit and Runledger adapters are **not implemented**.
 Their ownership boundaries are documented in [integrations](docs/integrations.md);
 delivery tasks live in the [Beads backlog](docs/roadmap.md). The
 [compatibility manifest](docs/reference-compatibility.md) records the reference

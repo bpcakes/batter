@@ -3,7 +3,7 @@
 ## Purpose
 
 Own executable native SQLx, Runledger and external harness compatibility probes
-for batter-4t6. This unpublished Unix-only package will host later reference
+for batter-4t6 and reusable fixture acceptance for batter-4jz. This unpublished Unix-only package will host later reference
 composition; it is not a reusable database framework.
 
 ## Key entrypoints

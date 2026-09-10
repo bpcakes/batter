@@ -93,9 +93,15 @@ both limits across libraries, examples, and tests.
 
 ## Explicit reference compatibility probes
 
-The [reference package](../examples/reference-service/README.md) has four named
-ignored cases in `tests/reference_live.rs`: fresh migrations/transactional enqueue,
-initialized-schema upgrade, controlled worker startup/shutdown, and lease cleanup.
+The [reference package](../examples/reference-service/README.md) has sixteen named
+ignored cases in `tests/reference_live.rs`: four upstream compatibility probes
+and twelve fixture probes. Fixture cases cover template reuse/isolation, acknowledged
+lock operations, returned body errors, partial/sibling acquisition, panic,
+resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
+errors, observer failure, cancelled native creation, abandoned producer errors
+and shared-harness waiting. The owned runner preserves all teardown results;
+independent catalog queries verify absence. Low-level finish controls additionally
+check absence before deferred drain.
 Their [API manifest](reference-compatibility.md) states the exact scope and pins.
 
 ```sh
@@ -105,14 +111,33 @@ POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:5432/postgres?sslmode=dis
   bash scripts/test_reference_live.sh
 ```
 
-Select a disposable local PostgreSQL 18 server with CREATE/DROP DATABASE authority.
+Select a dedicated disposable local PostgreSQL 18 server with CREATE/DROP DATABASE
+authority plus MAINTAIN/UPDATE/DELETE/TRUNCATE on `pg_catalog.pg_shdescription`.
+The runner rejects a CREATEDB-only role before compiling/running fixtures.
+Failure controls briefly lock that shared system catalog;
+keep other workloads off this endpoint. The runner executes cases serially.
 The runner requires `psql`, rejects missing/remote/TLS-required endpoints, verifies
-the server and ignored-case inventory, and requires all four cases to run. It
+the server and ignored-case inventory, and requires all sixteen cases to run. It
 uses the existing Unix process owner with 15-second preflight, 300-second compile
 inventory and 180-second live-run limits, plus bounded signal escalation/reaping.
 Watchdog termination is failure and does not claim application/database cleanup.
+The current serial sixteen-case suite took 5.54–5.61 seconds in the round-one
+Linux measurements after compilation, leaving over thirty times that measured
+duration within the 180-second bound. This is a workload backstop, not a promise
+to complete arbitrary stalled native operations. Slower environments remain
+unverified; compile time has its separate inventory bound.
 `scripts/test_reference_live.py` checks zero-test, skipped, missing-case and endpoint
 rejection behavior in the ordinary test matrix.
+
+Live test failures print only known redacted report counts and combined failure
+branches. Native error contents and arbitrary source chains are never formatted
+automatically. The separate offline `fixture_diagnostics` target verifies actual
+panic output for simultaneous body/observer failures and unknown-error redaction;
+it does not change the exact ignored live inventory. Fixture report doctests
+reject discarded owned and borrowed observations with `unused_must_use` denied.
+Fingerprint controls vary migration identity and kind independently of SQL.
+Warm-cache reuse permits zero initializations; cold initialization is established
+only by the fresh-cluster execution recorded in validation, not by that count alone.
 
 The focused `cargo test -p batter-example-postgres-lifecycle --test native_sqlx
 --locked` target checks native pool/connection/transaction composition without

@@ -966,3 +966,127 @@ are short and private; application error destruction occurs after unlocking.
 This is synchronous observation, not a lock-free or wait-free guarantee. Tests
 exercise readers while a replaced error's destructor runs, and paused-clock
 checks keep the writer unscheduled while its cached success expires.
+
+## PostgreSQL fixture readiness audit (2026-09-09)
+
+For `batter-4jz`, inspected the Cargo-selected postgres-test-harness checkout and
+verified its Git HEAD is `3d525e6fc5745ce2e2437c7997de5cccdecff4ac`. The versioned
+web source could not be fetched; these observations come from that exact local
+upstream source, not a newer release. No live test was executed for this audit.
+
+- [Fingerprint inputs](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/fingerprint.rs):
+  `FingerprintBuilder` frames labels and content in insertion order;
+  `TemplateSpec` accepts the resulting identity. It does not check that a
+  caller's initializer matches its declared inputs.
+- [Template and cleanup ownership](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs):
+  cloned harnesses single-flight template initialization with a weak cache;
+  retaining the template handle retains its shared-lock session. Deferred drain
+  covers cleanup accepted before the barrier begins. External shutdown is a
+  no-op; lease Drop queues destructive cleanup.
+- [Connection limits](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/config.rs):
+  per-database permits model downstream pools and standalone connections.
+  Owner, template-coordination and lifecycle-administration sessions are
+  additional usage. Independent harness instances do not establish a combined
+  server-wide connection bound.
+
+The implementation handoff and executable acceptance remain in the owning Bead.
+These inspected contracts do not establish reusable fixture implementation,
+cancel-safe teardown, or new platform/database execution evidence.
+
+
+## Fixture ownership review corrections (2026-09-09)
+
+Research before this correction inspected the same Cargo-selected harness Git
+revision `3d525e6fc5745ce2e2437c7997de5cccdecff4ac`, SQLx 0.9.0 and Tokio 1.53.1.
+No upstream version or provisioning implementation was changed.
+
+- Upstream [`cleanup.rs`](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/cleanup.rs)
+  starts independent cleanup workers. Omitting drain loses completion/error
+  observation; it does not establish that accepted cleanup never executes.
+- The pinned [`harness.rs`](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs)
+  retains cached template databases beyond handle destruction and external-mode
+  shutdown. Stable content/revision identities therefore replace random revisions.
+  The upstream tests supply the catalog-lock technique used to make actual
+  consuming lease cleanup fail; recovery uses public owner-aware stale cleanup.
+- Native [SQLx pool close](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+  waits for tracked checkouts and returns unit. A retained clone can observe
+  closure; detached connections are outside that completion evidence. Pools are
+  registered before the runner polls acquisition/`after_connect`.
+- [Tokio JoinHandle](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinHandle.html)
+  detaches work on handle Drop, and borrowing its wait supports cancellation
+  without discarding the task result. The fixture driver retains resources outside
+  the body task and returns native join failures separately. Runtime death remains
+  outside its guarantee; no panic hook is installed.
+
+The public error report retains all branches explicitly. `Error::source` provides
+one cause, so callers inspect the typed report fields for simultaneous failures.
+Suite-level catalog/initializer pools have their own one-connection bounds;
+per-lease declarations and independent harnesses do not impose a server-wide cap.
+
+
+## Fixture acquisition ownership loop, round 1 (2026-09-09)
+
+Research preceded this correction and used the same pinned harness revision,
+SQLx 0.9.0 and Tokio 1.53.1. The versioned harness web source was available this
+round and matched the Cargo checkout at
+`3d525e6fc5745ce2e2437c7997de5cccdecff4ac`.
+
+The [Tokio spawn_blocking contract](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn_blocking.html)
+states that started blocking work cannot be aborted. Pinned harness
+[`create_test_database` and template preparation](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs)
+use the `run_blocking` bridge. The same source documents that abandoned template
+preparation can leave initializing databases outside deferred drain. Returned
+initializer errors instead await `initialization.abort()` and retain independent
+initializer/abort errors. The first new panic regression exposed that distinction;
+an owned initializer task now returns its join failure through that abort path.
+
+The [harness server implementation](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/server.rs)
+and public harness source establish shared clone admission, untimed permit waits,
+external shutdown as a no-op, and owned-container shutdown as a shared server
+operation. The adapter therefore joins its own producers but leaves server
+shutdown to the caller. Other owners must release native admission capacity;
+observation cancellation cannot be described as released ownership.
+
+[PostgreSQL 18 LOCK](https://www.postgresql.org/docs/18/sql-lock.html) permits
+ACCESS EXCLUSIVE with MAINTAIN, UPDATE, DELETE or TRUNCATE; SELECT alone is
+insufficient. The [privilege inquiry functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
+accept a comma-separated list and return true if any listed privilege is held.
+Reference preflight checks this actual catalog privilege before any fixtures.
+
+The downloaded SQLx 0.9.0 `pool/options.rs` was inspected with its
+[native PoolOptions contract](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolOptions.html).
+A lazy pool can be retained before explicit acquisition; minimum-connection work
+may run in a native background task. Both manual and owned fixture paths retain
+the pool first, check one connection and leave minimum maintenance to SQLx. Pool
+close remains an awaited tracked-connection boundary, not detached-session proof.
+
+
+## Fixture report observation loop, round 2 (2026-09-09)
+
+Research preceded the second correction. The [Rust must-use reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute)
+describes expression-level diagnostics, not mandatory semantic inspection.
+Executed compile-fail controls confirmed a bare reference does not inherit its
+report's warning. A must-use borrowed view now preserves the warning after a
+successful resumable wait; explicit discard remains possible.
+
+The [Tokio 1.53.1 JoinHandle contract](https://docs.rs/tokio/1.53.1/tokio/task/struct.JoinHandle.html)
+detaches tasks on handle Drop. Inspection of the current producer registry found
+no public abort handle or internal abort path: body cancellation abandons delivery
+only, while the driver joins the registered producer. Hypothetical future producer
+abortion and runtime destruction are outside the completion contract. No
+abort-on-drop wrapper was added; abort would not prove native creation stopped.
+
+The same pinned [harness template implementation](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs)
+awaits abort only on returned initializer errors. The manual adapter path delegates
+this behavior directly; its panic/cancellation limitation is now explicit. The
+owned path converts initializer panic into returned error, but still requires
+initializer-owned pools to be closed and operations joined. Abort with live
+initializer connections remains unverified. Shared-server shutdown remains
+caller-owned; removing an external-server no-op did not remove resource cleanup.
+
+The watchdog question was checked against executed serial case durations
+(5.54 and 5.61 seconds): 180 seconds supplies over thirtyfold measured margin.
+Inventory compilation has a separate 300-second bound. No evidence justified
+raising the live watchdog; stalled work must still fail. Warm-cache initialization
+counts deliberately permit zero; fresh-cluster evidence establishes cold startup,
+and repeated same-input suites independently prove persisted reuse.

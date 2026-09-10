@@ -174,20 +174,73 @@ not charge a new user quota automatically for each internal retry attempt.
 Layer ordering depends on trusted metadata, authentication and which identity
 is being limited. No single order is a universal security claim.
 
-## postgres-test-harness: reference probes and future reusable fixtures
+## postgres-test-harness: optional native fixtures
 
 Reviewed baseline: postgres-test-harness 0.2.0 provisions/connects to PostgreSQL
 18, caches fingerprinted templates, and clones isolated test databases. Its
 public API is independent of SQLx. The reference probes select the exact Git
 revision in the [manifest](reference-compatibility.md), with containers disabled.
 
-The future fixture belongs beside the application/example integration tests,
-with no production container dependency. Generic `batter-test-support` remains
-independent of the harness, foundation, and adapters. The harness itself remains
-external; only the reference example selects it as a development dependency.
-Cache a harness and stable templates once per
-test process. Fingerprint every ordered application and dependency migration
-bundle plus a revision for setup behavior not represented by SQL bytes.
+`batter-sqlx` exposes `test_support` through its opt-in `test-support` feature.
+`FixtureSuite` owns the configured harness and retains upstream template handles
+inside one Tokio runtime; `DatabaseFixture` owns every declared native pool and
+one disposable database lease. Reference tests enable this as a development
+dependency and keep application SQL and migration execution local. The default
+adapter graph excludes the harness. Generic `batter-test-support` stays a leaf.
+
+`template_spec` frames ordered bundle identity, migration identity/type and exact
+SQL bytes plus a setup revision using upstream `FingerprintBuilder`. Initializers
+are trusted to match the inputs and close their pools before returning. No static
+SQLx pool is shared across destroyed runtimes. Empty-database probes stay separate.
+
+`ConnectionPlan` rejects empty, overflowing and over-budget declarations before
+lease/pool acquisition. Pool maxima plus reserved standalone connections must fit
+the selected per-database limit; per-lease admin observers count too. Suite
+initializer/catalog pools are separately bounded in the consumer (normally one
+connection each; the creation-cancellation observer uses two to hold and inspect
+a catalog lock concurrently); upstream owner/template/lifecycle sessions are additional server usage.
+Independent harnesses do not share a server-wide budget. The lock probe declares
+three one-slot pools (operation, blocker, observer), acknowledges an advisory
+lock, observes the exact `pg_blocking_pids` relation, then explicitly releases and
+joins the transaction before independent readback and finish.
+
+`FixtureSuite::start` owns native lease/template producers before their delivery
+waiters can be cancelled. Producers publish acquired leases/templates into the
+run registry before delivering access handles. After body exit the driver joins
+all producers, closes each database's pools before consuming its lease, then
+drains deferred cleanup. Cancelling acquisition, sibling failure and body panic
+cannot move creation beyond that barrier. `FixtureReport` retains the body,
+all acquisition outcomes, all database cleanup results and drain. Native producer
+errors remain failures in the report even if the body handled their delivered
+error. Template initializers are Send and static; their task panics become native
+initializer errors so upstream awaits template abort. Initializer-owned pools and
+operations still require explicit close/join before returning.
+
+A run rejects allocation beyond its own simultaneous-lease capacity. Harness
+clones share native admission: other owners must release leases for waiting
+producers to progress. Cancelling observation does not cancel that wait or free
+another owner's lease. Per-run cleanup does not shut down the server; the caller
+retains server ownership and calls shutdown after all runs and leases finish.
+Deferred drain is the upstream shared-queue barrier and can observe earlier
+submissions from another owner; it is not an exclusive per-run queue.
+
+`PoolAcquire` means registered pools await driver cleanup. Low-level `Connect`
+means all opened pools were closed and lease cleanup was awaited; its absent
+cleanup error means success. Both paths retain lazy pool handles before polling
+connectivity, including the pool whose initialization fails. They check one
+connection per pool; SQLx maintains its configured minimum in the background.
+
+Cancelling `FixtureRun::wait` leaves the same driver available to a later wait.
+It returns a must-use borrowed report view; owned reports also warn on discard.
+Joining the driver only establishes completion: callers inspect report outcomes
+or consume `into_result` to decide fixture success.
+Dropping its handle detaches the driver and loses report observation. Callers
+must join operations and release checkouts before returning; a held checkout can
+keep cleanup pending. Runtime destruction and internal driver failure have no
+completion guarantee. The low-level `DatabaseFixture::finish` remains available
+for caller-managed sequencing; cancelling that future or dropping that owner can
+invoke destructive upstream lease Drop. `batter-kjl` retains the remaining
+owner-loss, deferred-failure and retired-session failure matrix.
 
 Use native SQLx pools and application migration entrypoints. Close all application
 connections before returning a database lease. SQLx 0.9 pool close returns unit;

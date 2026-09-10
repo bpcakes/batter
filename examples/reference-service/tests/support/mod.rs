@@ -1,3 +1,9 @@
+pub mod fixture_acquisition;
+pub mod fixture_cleanup_failure;
+pub mod fixture_diagnostics;
+pub mod fixture_failures;
+pub mod fixture_run;
+pub mod fixtures;
 pub mod leases;
 pub mod migrations;
 pub mod transactions;
@@ -31,38 +37,23 @@ pub async fn pool(url: &str) -> Result<PgPool, sqlx::Error> {
 
 pub async fn with_database<F, Fut>(body: F)
 where
-    F: FnOnce(PgPool) -> Fut,
+    F: FnOnce(PgPool) -> Fut + Send + 'static,
     Fut: Future<Output = ProbeResult> + Send + 'static,
 {
-    let harness_result = harness().await;
-    assert!(
-        harness_result.is_ok(),
-        "external harness prerequisite failed"
-    );
-    let harness = harness_result.unwrap_or_else(|_| unreachable!());
-    let lease_result = harness.empty_database().await;
-    assert!(lease_result.is_ok(), "database lease acquisition failed");
-    let lease = lease_result.unwrap_or_else(|_| unreachable!());
-    let connection = pool(lease.database_url()).await;
-    let body_result = match connection {
-        Ok(pool) => {
-            // Retain pool and lease outside the body task, including on panic.
-            let result = tokio::spawn(body(pool.clone())).await;
-            pool.close().await;
-            result
-                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
-                .and_then(|result| result)
-        }
-        Err(error) => Err(Box::new(error) as Box<dyn std::error::Error + Send + Sync>),
-    };
-    let cleanup = lease.cleanup().await;
-    let drained = harness.drain_deferred_cleanup().await;
-    let shutdown = harness.shutdown().await;
-    let cleanup = batter_test_support::finish(cleanup, drained);
-    let cleanup = batter_test_support::finish(cleanup, shutdown);
-    let result = batter_test_support::finish(body_result, cleanup);
-    assert!(
-        result.is_ok(),
-        "body or awaited lease cleanup failed; causes retained"
-    );
+    let result = fixture_run::run(move |scope, _observer| {
+        Box::pin(async move {
+            let plan = batter_sqlx::test_support::ConnectionPlan::new(
+                vec![
+                    PgPoolOptions::new()
+                        .max_connections(4)
+                        .acquire_timeout(Duration::from_secs(10)),
+                ],
+                0,
+            )?;
+            let fixture = scope.empty(&plan).await?;
+            body(fixture.pools()[0].clone()).await
+        })
+    })
+    .await;
+    fixture_diagnostics::assert_probe(result);
 }

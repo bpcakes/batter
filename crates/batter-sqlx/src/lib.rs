@@ -145,3 +145,6 @@ pub fn register_pool_close(
         Ok(())
     })
 }
+
+#[cfg(feature = "test-support")]
+pub mod test_support;

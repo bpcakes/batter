@@ -12,7 +12,14 @@ autotests = false
 [lints]
 workspace = true
 
+[features]
+test-support = ["dep:postgres-test-harness", "dep:batter-test-support", "dep:tokio", "dep:futures-util"]
+
 [dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["std"], optional = true }
+postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false, optional = true }
+batter-test-support = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt", "time"], optional = true }
 batter.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
 
@@ -26,3 +33,7 @@ name = "offline"
 
 [[test]]
 name = "postgres_live"
+
+[[test]]
+name = "fixture_offline"
+required-features = ["test-support"]

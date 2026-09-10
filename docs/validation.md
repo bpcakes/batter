@@ -1,6 +1,319 @@
 # Validation evidence
 
-Latest evidence: 2026-09-09. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
+
+## Upstream integration with the fixture workspace: 2026-09-10
+
+User-requested pull and complete verification, tracked by `batter-s03`. Fetched
+origin/master through `0f486036ec13d48d760665a8e41997ccd14cf7cd` and integrated
+three upstream commits:
+
+- `33b6e025d7ff68866980afa265ff8112a1365cc8`: retain tracing parents when task spans are filtered.
+- `ecfc4aa01dc47564b8b164883a4a373a0a4cbb09`: record the daily scan configuration.
+- `0f486036ec13d48d760665a8e41997ccd14cf7cd`: extract private lifecycle-task and HTTP-observation ownership.
+
+Local merge commit `fa18aeab96cb84a94b03ba04fd4408222de670eb` has parents
+`662f2ba7271ba332f6ffdab0114d45ab59688569` and the fetched upstream tip. The
+existing two local commits and uncommitted fixture work are preserved. The
+verification below covers that merge **plus the restored fixture working tree**;
+it does not claim that the merge commit alone contains the fixture feature.
+No push or scheduled-scan execution was performed.
+
+The lifecycle conflict retained both the new private `tasks` module and local
+Unix signal registration. Testing and validation conflicts retained both complete
+histories, including the local SQLx/startup/health evidence at the document's end.
+An initial reconciliation helper incorrectly assumed identical history tails;
+the resulting incomplete local merge was immediately corrected and amended
+before restoring the fixture work or running verification. Conflict-marker checks
+passed afterward. Backup hashes confirmed all saved files were restored, and
+all prior append-only workflow records remained present. Tracker import added
+three upstream issues without updating or deleting local issues.
+
+Cargo regenerated workspace resolution with `cargo update --workspace --offline`,
+reporting zero package-version changes. External package identities/checksums
+match the pre-pull lockfile exactly; only the foundation's test-only
+`tracing-core` dependency edge was added. The harness and job-runtime remote
+heads still match their existing pins. Final Cargo.lock SHA-256:
+`ed37786b14f40d59b12b0155889bc2f6d7c191d1a578bf35dc5dca144ec8b2f5`.
+
+Executed locally on Linux 7.0.11-76070011-generic x86_64 with Rust/Cargo 1.98.1
+and 1.94.0. Both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed: **575 test/doctest
+executions, zero failures and 29 explicitly ignored live cases across 65 summaries
+per toolchain**. Totals include repeated profiles. Formatting, Clippy and
+warning-denied rustdoc passed, as did 22 process controls, 13 PostgreSQL-smoke
+controls and four reference-runner controls. This includes upstream filtered-parent,
+subscriber-callback and private-boundary regressions together with local
+startup, health, SQLx and fixture tests. All-target/all-feature compilation also
+passed before the full runs. No semantic assertions were relaxed.
+
+A fresh dedicated UTF-8 PostgreSQL 18.6 cluster
+(`Ubuntu 18.6-1.pgdg24.04+2`, `max_connections=100`) served loopback TCP on
+`127.0.0.1:33449`, role `aa`, without TLS. The following commands passed on each
+toolchain; select the second with `RUSTUP_TOOLCHAIN=1.94.0`. DATABASE_URL was
+scoped to live commands and was absent from the ordinary workspace verification.
+
+```sh
+POSTGRES_TEST_ADMIN_URL='postgresql://aa@127.0.0.1:33449/postgres?sslmode=disable' bash scripts/test_reference_live.sh
+DATABASE_URL='postgresql://aa@127.0.0.1:33449/postgres?sslmode=disable' bash scripts/test_sqlx_live.sh
+DATABASE_URL='postgresql://aa@127.0.0.1:33449/postgres?sslmode=disable' cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+cargo build -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked
+DATABASE_URL='postgresql://aa@127.0.0.1:33449/postgres?sslmode=disable' python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle
+DATABASE_URL='postgresql://aa@127.0.0.1:33449/postgres?sslmode=disable' python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --signal SIGINT
+```
+
+Each reference invocation executed all sixteen cases with zero ignored/filtered
+cases (10.49 and 9.56 seconds). Each SQLx invocation executed all ten cases with
+zero ignored/filtered cases (7.39 and 7.55 seconds). The PostgreSQL executable
+selection ran all three live cases; its nine ordinary cases were deliberately
+filtered from that live selection and already ran in the ordinary matrix.
+All five HTTP and both PostgreSQL signal smokes passed on both toolchains.
+Thus all 29 cases ignored by the ordinary matrix were executed explicitly.
+
+Independent catalog snapshots after each toolchain contained the same three
+retained compatibility templates and no disposable leases or fault-test templates.
+The dedicated server was stopped with awaited fast shutdown. Logs, commands,
+restoration manifest and safety backups are retained in ignored
+`.agent/tmp/batter-upstream-sync-20260910/`. Final Jig evidence/gates and closure
+belong to `plan_01M251A96JMV6KR8AHWGXK6SW8`. This is new Linux execution evidence;
+earlier macOS entries remain scoped to their recorded snapshots. No hosted,
+TLS, runtime-death or detached-session guarantee is added.
+
+## Fixture report observation loop, round 2: 2026-09-09
+
+Bead `batter-4jz`, baseline `662f2ba7271ba332f6ffdab0114d45ab59688569`
+plus working changes, on the same Linux host and dedicated PostgreSQL 18.6
+endpoint described in round 1. Cargo.lock remains
+`81119b89b9789a15d81d14d25a5fdaf0e0ccb12034b565c65ebee998a53ddded`.
+
+After the final round-two source changes, both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed: 563 Rust test/doctest
+executions, zero failures and 29 explicitly ignored live cases across 65 summaries
+per toolchain. These totals include repeated profiles. Formatting, Clippy,
+warning-denied rustdoc, 22 process controls, 13 PostgreSQL-smoke controls and
+four reference-runner controls passed.
+
+The new borrowed-report discard doctest initially compiled successfully despite
+`FixtureReport` being must-use: a bare reference does not inherit that warning.
+Returning `FixtureReportRef` corrected the diagnostic boundary. Both owned and
+borrowed discard controls now fail compilation as required, alongside a passing
+usage example. Two separate offline diagnostic tests exercise actual terminal
+panic text, including combined failure branches, all report failure counts and
+unknown/native-content redaction. Migration identity and kind are independently
+varied in the existing fingerprint test. No failure assertions were weakened.
+
+On Rust 1.98.1 and 1.94.0, the same explicit reference, SQLx, HTTP build and five
+HTTP smoke commands listed in round 1 all passed against port 33349. Each live
+runner executed its exact inventory: sixteen reference cases and ten SQLx cases,
+zero skips/filters. Serial reference durations were 5.68 and 5.63 seconds;
+SQLx durations were 7.41 and 7.45 seconds. The unchanged 180-second reference
+watchdog remains over thirty times the measured serial workload. The catalog
+retained exactly the same three compatibility templates and no disposable leases
+or fault-test templates after the runs.
+
+Logs and the validation script are in ignored `.agent/tmp/batter-fixture-loop-2/`.
+Independent Codex and Cursor (Grok 4.6 xhigh/fast) reviews then both completed
+with no actionable findings and no blocking questions. Initial and final complete
+scope fingerprints matched
+`0563528e8ef9fc7e84786d34119aa3cab3b3ab9567d89032c45bf9d5fde9d3ea`;
+`.agent` was excluded by `662f2ba7271ba332f6ffdab0114d45ab59688569:.reviewignore`.
+The review snapshot precedes this completion record and tracker closure; source,
+tests and dependency inputs are unchanged. Final Jig receipts belong to the plan.
+Residual review limits include explicit owner discard and detached-driver report
+loss, which remain outside the demonstrated failure-observation boundary. The
+live role rejection was executed manually; the retained automated prerequisite
+control mocks the command result. Catalog fault tests require a dedicated server
+and serial invocation, as documented.
+Manual initializer panic/cancellation, initializer-owned live connections, forced
+producer abortion, runtime destruction and detached sessions do not acquire new
+cleanup-completion guarantees. Cold initialization evidence remains the original
+fresh-cluster run; this round verifies reuse on that retained cluster. No macOS
+or hosted execution is claimed.
+
+## Fixture acquisition ownership loop, round 1: 2026-09-09
+
+Bead `batter-4jz`, baseline `662f2ba7271ba332f6ffdab0114d45ab59688569`
+plus the working changes, Linux 7.0.11-76070011-generic x86_64. The Cargo-generated
+lockfile remains `81119b89b9789a15d81d14d25a5fdaf0e0ccb12034b565c65ebee998a53ddded`;
+no upstream pin or dependency edge changed in this correction.
+
+Both `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+passed after the final code/test changes: 558 test/doctest executions, zero
+failures and 29 explicitly ignored live cases across 64 summaries per toolchain.
+These are profile execution totals, not distinct-test counts. Formatting, Clippy,
+warning-denied rustdoc, 22 process controls, 13 PostgreSQL-smoke controls and four
+reference-runner controls passed. Producer unit controls preserve native join
+panic and delivered/report cause identity; a handled producer failure still makes
+a successful-body report fail. Offline fixture controls cover zero pool maxima,
+budget overflow, ordered fingerprints and redacted complete reports. A compile-fail
+doctest requires the low-level owner discard warning.
+
+A dedicated fresh UTF-8 PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2) cluster served
+local non-TLS TCP on `127.0.0.1:33349`, role `aa`. Its first launch needed a
+user-writable Unix socket directory; the successful launch used the cluster's
+private directory. On **both** Rust 1.98.1 and 1.94.0 these commands passed:
+
+```sh
+POSTGRES_TEST_ADMIN_URL='postgresql://aa@127.0.0.1:33349/postgres?sslmode=disable' bash scripts/test_reference_live.sh
+DATABASE_URL='postgresql://aa@127.0.0.1:33349/postgres?sslmode=disable' bash scripts/test_sqlx_live.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Select the second toolchain with `RUSTUP_TOOLCHAIN=1.94.0`. DATABASE_URL was scoped
+to the independent SQLx runner. Every run executed all sixteen reference cases
+and all ten SQLx cases, with zero skipped/filtered cases, plus all five HTTP
+profiles. The native-creation cases cancel acquisition after acknowledged catalog
+blocking and require the report to remain pending until creation completes. Empty
+creation, cloning and template preparation are covered. Disposable database absence
+is checked before fallback recovery. Stable fault-test templates are reclaimed
+through upstream tagged-resource cleanup; repeated complete runs retain only the
+same three compatibility templates.
+
+The new abandoned-initializer panic regression initially failed: an initializing
+template remained outside deferred drain. Passing the initializer task's native
+join failure through upstream's returned-error/awaited-abort path fixed it; both
+returned-error and panic cases now require absence before recovery. Shared
+admission and pending-versus-completed pool-error cases passed. A real temporary
+nonsuperuser CREATEDB role was rejected by the explicit runner with exit 1 and a
+catalog-privilege diagnostic before inventory/fixtures; the role was then removed.
+Offline controls also require prerequisite failure to stop before later commands.
+
+Logs and the validation script are in ignored `.agent/tmp/batter-fixture-loop-1/`.
+This evidence establishes the correction's executed scope; independent review
+convergence and final Jig completion are recorded separately for the active plan.
+Server shutdown is caller-owned, native admission can wait on other lease owners,
+and detached-session/runtime-death guarantees remain outside this delivery. No
+macOS or hosted execution is claimed for this correction.
+
+## Fixture ownership review follow-up: 2026-09-09
+
+Bead `batter-4jz`, baseline `662f2ba7271ba332f6ffdab0114d45ab59688569`
+plus the working changes. Linux 7.0.11-76070011-generic x86_64, local execution.
+Cargo-generated lockfile SHA-256:
+`81119b89b9789a15d81d14d25a5fdaf0e0ccb12034b565c65ebee998a53ddded`.
+Only fixture feature edges changed; upstream pins remain unchanged. Normal
+`cargo tree` checks confirm the default adapter/core/generic leaf exclude the
+harness, while the fixture feature selects the harness without Runledger.
+
+Both `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+passed: 555 Rust test/doctest executions, zero failures and 25 explicitly ignored
+live cases across 64 summaries per toolchain. Counts include repeated profiles,
+not 555 distinct tests. Formatting, Clippy and warning-denied rustdoc passed,
+as did 22 process controls, 13 PostgreSQL-smoke controls and three reference-runner
+controls. The four offline fixture tests include concrete multi-error report
+retention/redaction; rustdoc includes a borrowed-scope escape compile-fail control.
+Runner controls now explicitly reject incorrect success-summary counts.
+
+A fresh dedicated UTF-8 PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2) cluster served
+local non-TLS TCP on `127.0.0.1:33249`, administrative role `aa`. On **both** Rust
+1.98.1 and 1.94.0, these commands passed (select the second with
+`RUSTUP_TOOLCHAIN=1.94.0`; do not globally export DATABASE_URL):
+
+```sh
+POSTGRES_TEST_ADMIN_URL='postgresql://aa@127.0.0.1:33249/postgres?sslmode=disable' bash scripts/test_reference_live.sh
+DATABASE_URL='postgresql://aa@127.0.0.1:33249/postgres?sslmode=disable' bash scripts/test_sqlx_live.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Each toolchain executed all twelve reference cases and all ten independent SQLx
+cases, with zero skipped/filtered cases, and passed all five HTTP profiles.
+Reference tests prove partial multi-pool and sibling acquisition cleanup, panic
+retention, close ordering while a checkout is held, cancelled/resumed waiting,
+actual simultaneous body/consuming-cleanup errors, observer failure retention,
+foreign-template and capacity rejection, and wrong-blocker timeout. The injected
+catalog-lock failure is serialized and its residual is reclaimed through upstream
+owner-aware cleanup after unlock. Low-level finish failure paths remain covered.
+
+Cold and warmed development runs passed. The final two-toolchain runs reused
+exactly the same three template database identities (two schema templates and one
+stable rejection control); independent before/after catalog inventories matched,
+with no disposable databases remaining. This supersedes the prior section's
+per-invocation UUID workaround. SQLx close still does not prove detached-session
+termination; remaining owner-loss/deferred-failure/retired-session cases stay with
+`batter-kjl`. Runtime death is outside the driver guarantee.
+
+The dedicated server was stopped with awaited fast shutdown. Logs and inventory
+comparisons are in ignored `.agent/tmp/batter-fixture-review/`. Final Jig evidence
+is recorded against the follow-up plan; the earlier plan's receipts alone do not
+validate this correction. No macOS or hosted execution is claimed for this change.
+
+## Reusable isolated PostgreSQL fixtures: 2026-09-09
+
+Bead `batter-4jz`, baseline `662f2ba7271ba332f6ffdab0114d45ab59688569`
+plus the working changes. Linux 7.0.11-76070011-generic x86_64, local execution.
+Cargo-generated lockfile SHA-256:
+`71517f9f16b7e57801068b6634154c0d0776d79718af56d205617dc348b275a1`.
+The upstream pins remain unchanged. `cargo tree -p batter-sqlx --edges normal
+--no-default-features --locked` excludes the harness; adding `--features
+test-support` selects it without Runledger. Core and generic leaf normal graphs
+exclude both libraries.
+
+Both `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+passed after the final code changes: 552 Rust test/doctest executions, zero
+failures, 20 explicitly ignored live cases across 63 summaries, plus 22 process
+controls, 13 PostgreSQL-smoke controls and three reference-runner controls.
+Counts include repeated profiles, not 552 distinct tests. Formatting, Clippy and
+warning-denied rustdoc passed. Three new offline fixture tests cover connection
+arithmetic, ordered fingerprints and redacted formatting with native causes.
+
+A dedicated PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2) disposable cluster was
+initialized with `--no-locale --encoding=UTF8` and served local non-TLS TCP on
+`127.0.0.1:33149`, with administrative role `aa`. On **both** Rust 1.98.1 and
+1.94.0, the following passed (set `RUSTUP_TOOLCHAIN=1.94.0` for the second run):
+
+```sh
+POSTGRES_TEST_ADMIN_URL='postgresql://aa@127.0.0.1:33149/postgres?sslmode=disable' bash scripts/test_reference_live.sh
+DATABASE_URL='postgresql://aa@127.0.0.1:33149/postgres?sslmode=disable' bash scripts/test_sqlx_live.sh
+cargo build -p batter-axum --example http_service --locked
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
+python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
+```
+
+Each live run executed all seven reference cases and all ten independent SQLx
+cases, with zero skipped/filtered cases. The three new reference cases demonstrate
+retained template reuse, changed-SQL readback, concurrent isolated writes, an
+observed one-slot lock operation, pre-acquisition budget rejection, and retained
+body error through awaited cleanup. Catalog absence is checked before deferred
+drain; every producer has finished before the drain begins. Five HTTP profiles
+passed on each toolchain. Removing the respective environment variable made each
+explicit live runner fail with exit 1, as required.
+
+Development failures were repaired without weakening assertions: the first
+SQL_ASCII test cluster rejected UTF-8 migration text; a repeat invocation exposed
+persisted templates bypassing the cold initializer-count oracle; and globally
+exporting DATABASE_URL made upstream SQLx macros query an uninitialized admin
+database during the minimum-toolchain build. The final cluster uses UTF-8, the
+count oracle gets a fresh per-invocation revision shared by its comparisons,
+and DATABASE_URL is scoped only to the independent SQLx live runner. A test
+function was split to satisfy the existing cognitive-complexity limit.
+
+The disposable server was stopped after the live runs. Logs are retained in
+ignored `.agent/tmp/batter-4jz/`. Jig verify passed all five configured targets,
+including a successful final `api:test` receipt. Jig completion evidence is
+associated with `plan_01M23V4ZGPRT9FHJQWAZF27RPY`; its append-only records identify
+the final receipts. No new macOS or hosted execution is claimed. Fixture finish
+is explicitly awaited and is not cancellation-shielded; owner-loss and retained
+teardown delivery remain `batter-kjl`. No commit, publication or deployment is
+part of this task.
 
 ## Private task and HTTP observation boundaries: 2026-09-09
 

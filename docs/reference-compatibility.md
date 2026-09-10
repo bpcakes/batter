@@ -1,6 +1,6 @@
 # Native reference compatibility
 
-Owning Bead: `batter-4t6`. This API/evidence manifest accompanies the unpublished
+Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures). This API/evidence manifest accompanies the unpublished
 [reference package](../examples/reference-service/README.md). Beads owns delivery
 acceptance and status.
 
@@ -8,7 +8,8 @@ acceptance and status.
 
 Selection date: 2026-09-09. Both Git revisions were verified against the remotes;
 Cargo fetched them and generated the lockfile. No dependency uses an absolute
-local path. The four libraries have no new Runledger or harness dependency. The
+local path. No library depends on Runledger. The optional SQLx `test-support` feature selects
+the pinned harness; the default adapter graph excludes it. The
 separately selected `batter-sqlx` adapter uses the same SQLx 0.9 graph; its
 connection-disposition contracts are exercised by its own live suite, not by
 these reference probes.
@@ -17,7 +18,7 @@ these reference probes.
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
 | Runledger Git | core/postgres/runtime 0.12.0 at `0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4` | Native `DbPool = PgPool`, `DbTx = Transaction<Postgres>` | Compiled on both toolchains; migration, enqueue and controlled worker path executed |
-| postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; development dependency only | Compiled on both toolchains; external lease cleanup paths executed |
+| postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |
 
 Identical Runledger version numbers do not imply identical registry and Git
@@ -29,7 +30,7 @@ other database backends or non-Unix platforms to Batter's support policy.
 
 Set `POSTGRES_TEST_ADMIN_URL` to a disposable local PostgreSQL 18 endpoint and
 run `bash scripts/test_reference_live.sh` from the root. It preflights the server
-and role, checks an exact inventory of four ignored cases, and invokes
+and role, checks an exact inventory of sixteen ignored cases, and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
 -- --ignored`. Every named case must pass, with zero filtered or ignored cases.
 
@@ -83,8 +84,9 @@ runner checks the major version and role flags; the harness performs its own
 capability and operation checks. Use a disposable server.
 
 Each harness reserves 8 downstream connection permits per lease from a budget
-of 16. Each application pool has a maximum of 4; where present, the independent
-administrative observer pool also has a maximum of 4. Harness lifecycle sessions
+of 16, allowing floor(16 / 8) = 2 simultaneous leases per harness. Original
+compatibility pools have a maximum of 4; their independent administrative
+observer pool also has a maximum of 4. New fixture declarations are listed below. Harness lifecycle sessions
 and concurrent tests additionally consume server connections. These local permit
 limits do not bound server-wide or fleet usage.
 
@@ -107,5 +109,55 @@ server-session quiescence; these probes create no detached connections.
 version, repaired development failures and final gates. New live compatibility
 evidence is Linux-only. Existing macOS evidence does not validate this new graph;
 macOS and hosted execution remain unverified for this change. The package stays
-unpublished. Business commands, provider effects, reusable fixtures and a
+unpublished. Business commands, provider effects and a
 Batter-hosted Runledger adapter remain separate Beads.
+
+## Reusable fixture acceptance
+
+`fixture_template_reuse_and_isolation` uses stable migration/setup inputs and
+retains upstream templates in one runtime. A cache hit may initialize zero times;
+retained reuse adds no initializer calls. Concurrent clones receive distinct
+writes, checked by independent reads. Changed SQL produces a different template
+and default value 20. A second suite checks stable template identities. Repeated
+runs retain two schema templates plus one stable foreign-template rejection control,
+without adding per-invocation identities. Offline tests also check bundle
+order/revision, connection arithmetic and report redaction with concrete causes.
+
+`fixture_one_slot_lock_operation` observes the exact blocker/waiter relation from
+an independent pool and rejects a wrong-blocker observation by timeout. Explicit
+unlock and operation join precede row readback and body return. The runner retains
+all acquired resources, closes each database's pools, cleans its lease, then
+drains deferred cleanup. Server shutdown remains caller-owned. Catalog observers independently check
+absence after the complete report. Suite initializer/catalog pools are separately
+bounded to one connection each except the creation-cancellation observer, which
+uses two for holding and observing its catalog lock; the lock operation declares three one-slot pools
+under the eight-connection per-lease limit. Upstream sessions and independent
+harnesses remain additional server usage.
+
+The sixteen-case inventory preserves the four original compatibility probes and
+adds twelve fixture cases. They cover retained body error, over-budget rejection,
+partial multi-pool and sibling acquisition failure, body panic, batch-capacity
+rejection, held-checkout close ordering, cancelled/resumed waiting, foreign-template
+rejection, simultaneous body and actual lease-cleanup failure, and observer failure
+without replacement of the body report. The real cleanup-failure injection uses an
+acknowledged catalog lock on a dedicated endpoint and explicitly cleans its residual
+through upstream ownership after releasing the lock. No retired-session termination
+claim follows; remaining session/owner-loss cases belong to `batter-kjl`.
+
+
+The acquisition cases cancel delivery only after PostgreSQL acknowledges a
+catalog-blocked native creation, for empty databases, clones and template
+preparation. The report must remain pending until unlock and producer completion.
+Disposable database absence is checked before upstream recovery; retained test
+templates use stable inputs and are pruned through upstream tagged-resource
+cleanup. Abandoned template initializer errors and panic must survive in the
+report and finish native abort before recovery. A shared-harness case holds the
+only native lease slot, cancels a report wait, releases that external lease and
+verifies the run completes without taking server ownership. Pool-error controls
+observe the failed fixture and its first connected pool while cleanup is still
+pending; the low-level counterpart independently requires completed cleanup.
+
+The runner checks major version 18, CREATE DATABASE authority, and one of
+MAINTAIN/UPDATE/DELETE/TRUNCATE on `pg_catalog.pg_shdescription`, required by the
+acknowledged catalog-lock fault injection. A normal CREATEDB-only role is rejected
+before inventory/fixtures. Use a dedicated endpoint, with cases serialized.

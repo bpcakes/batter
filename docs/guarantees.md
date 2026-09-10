@@ -606,3 +606,41 @@ Default server execution exhaustion uses 503, not a claim that client
 upload timed out. No automatic Retry-After authorizes write replay. Authentication,
 authorization, trust boundaries, body limits, request IDs, and application errors
 are not supplied. Liveness/readiness must be mounted outside the readiness gate.
+
+## Optional database fixture finish
+
+`batter-sqlx/test-support` checks declared connection capacity before acquisition.
+`FixtureSuite::start` retains native lease/template producers before their waiters
+can be cancelled. Acquired resources register before delivery and native pools
+register before initialization. Body exit is followed by joining all producers,
+closing each database's pools, awaiting lease cleanup, then draining deferred
+cleanup. Reports retain body, acquisition, database cleanup and drain results.
+Owned reports and the borrowed `FixtureReportRef` returned by `wait` warn on
+accidental discard. A successful driver join does not imply report success;
+inspect it or use `into_result`. Explicit discard can still lose observation.
+A failed producer keeps the report unsuccessful even if its waiter was abandoned
+or the body handled the error. Template initializer panic reaches upstream's
+awaited abort path with its native join cause retained.
+
+The borrowed scope cannot escape into a detached task. A run rejects batches
+exceeding its own simultaneous-lease limit; other harness owners must release
+shared native capacity for waiting acquisitions to progress. Run completion does
+not shut down a shared server. Caller-owned shutdown follows all runs and leases;
+shared deferred drain covers prior accepted submissions, including other owners'.
+
+Cancelling `FixtureRun::wait` permits resumed observation. Dropping the waiter
+loses the report but detaches the driver. Application operations/checkouts and
+initializer-created pools still require explicit join/release/close. Detached
+backend termination, runtime death and internal driver failure have no completion
+guarantee. Low-level `DatabaseFixture` is must-use; its finish remains caller-owned
+and cancellation can trigger destructive lease Drop. Low-level template waiter
+loss can leave initializing templates outside the deferred queue.
+The manual template path also propagates initializer panic without the owned
+path's abort wrapper. Cleanup with initializer-owned live connections and forced
+producer cancellation is unverified; neither is a supported completion claim.
+
+`PoolAcquire` reports pending driver cleanup; low-level `Connect` reports the
+outcome after explicit cleanup. Live probes cover cancelled native creation,
+abandoned initializer error/panic, shared admission, partial/sibling acquisition,
+body panic, simultaneous errors, close ordering and independent catalog absence.
+Remaining ownership/session failure cases belong to `batter-kjl`.

@@ -8,6 +8,20 @@ from urllib.parse import parse_qs, urlsplit
 from parallel_process import run_parallel
 
 CASES = frozenset({
+    "fixture_cancelled_creation_retains_producers",
+    "fixture_abandoned_producer_failure_retained",
+    "fixture_shared_harness_admission",
+    "fixture_pool_error_is_pending_cleanup",
+
+    "fixture_partial_acquisition_and_panic",
+    "fixture_close_order_and_resumable_wait",
+    "fixture_foreign_template_rejected",
+    "fixture_body_and_cleanup_failures_retained",
+    "fixture_observer_failure_preserves_body",
+
+    "fixture_finish_preserves_body_failure",
+    "fixture_template_reuse_and_isolation",
+    "fixture_one_slot_lock_operation",
     "migrations_and_transactional_enqueue",
     "worker_startup_witness_and_shutdown",
     "lease_cleanup_defer_and_drop",
@@ -53,17 +67,21 @@ def main():
     check = run(
         ["psql", "--dbname", value, "-XAt", "-v", "ON_ERROR_STOP=1", "-c",
          "SELECT current_setting('server_version_num')::int / 10000 = 18 "
-         "AND (rolsuper OR rolcreatedb) FROM pg_roles WHERE rolname = current_user"],
+         "AND (rolsuper OR rolcreatedb) AND has_table_privilege(current_user, "
+         "'pg_catalog.pg_shdescription', 'MAINTAIN,UPDATE,DELETE,TRUNCATE') "
+         "FROM pg_roles WHERE rolname = current_user"],
         timeout=15,
     )
     if not check.ok or check.stdout.strip() != b"t":
-        sys.exit("PostgreSQL preflight failed: requires major 18 and CREATE DATABASE authority.")
+        sys.exit("PostgreSQL preflight failed: requires major 18, CREATE DATABASE authority, "
+                 "and MAINTAIN/UPDATE/DELETE/TRUNCATE on pg_catalog.pg_shdescription "
+                 "for catalog-lock fault injection.")
     inventory = run(COMMAND + ["--", "--ignored", "--list"], timeout=300)
     if not inventory.ok or not complete_inventory(inventory.stdout.decode("utf-8", errors="replace")):
         print(inventory.output, file=sys.stderr)
         sys.exit("Live probe inventory failed: required ignored cases must all compile and exist.")
     print(f"PostgreSQL 18 prerequisite passed; executing {len(CASES)} required live cases.", flush=True)
-    result = run(COMMAND + ["--", "--ignored"], timeout=180)
+    result = run(COMMAND + ["--", "--ignored", "--test-threads=1"], timeout=180)
     print(result.output, end="")
     if not result.ok or not complete_execution(result.stdout.decode("utf-8", errors="replace")):
         sys.exit("Live probes did not all execute successfully.")
