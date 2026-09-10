@@ -745,9 +745,10 @@ probes and fallback; raw unmatched paths/queries must not appear in telemetry. N
 middleware 503. Both check the shared error envelope, nonempty generated
 correlation ID/header, rejection of untrusted correlation input, and default INFO
 completion/status/latency logs. It sends the selected signal and requires exit 0.
-The `--warn-filter` profile sets `RUST_LOG=info,batter=warn`, requires INFO HTTP
-and operation completion events to be absent (WARN operation failures remain
-allowed), and requires each 5xx WARN event to retain its request ID
+The `--warn-filter` profile sets `RUST_LOG=info,batter=warn,batter::request=info`,
+requires INFO HTTP and operation completions to be absent, and requires operation
+warnings to correlate to observed response IDs (including the deadline completion
+for `/work` in deadline mode). It requires each 5xx WARN event to retain its request ID
 and all HTTP fields with the HTTP span disabled. The example test separately
 drives acknowledged lifecycle transitions over a live loopback listener to prove
 the exact Starting/Draining INFO and Stopped WARN readiness policy under both INFO

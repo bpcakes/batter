@@ -647,7 +647,11 @@ uninterpreted. UUIDs are correlation values, not a durable uniqueness constraint
 The observer retains this typed ID as a completion-event field independently of
 INFO spans, including WARN dropped observations under a different ambient
 dispatch. Native nested operation tracing is still filtered normally and carries
-context through enabled request spans. Neither library installs a global
+context through enabled request spans. The INFO request span uses target
+`batter::request`: `info,batter=warn,batter::request=info` retains its context
+without enabling Batter INFO operation/HTTP completions. A span-name filter
+can also enable nested events and is not equivalent to this static target policy.
+Neither library installs a global
 subscriber. Tests retain their subscriber registries across cases and check
 completion fields after the event message, not only in formatted spans.
 

@@ -42,6 +42,14 @@ fn actual_router_readiness_filter_keeps_stopped_failure_identity_and_suppresses_
     );
 }
 
+#[test]
+fn actual_router_quiet_filter_retains_request_spans_without_info_completions() {
+    assert_readiness(
+        Capture::with_filter("info,batter=warn,batter::request=info"),
+        [None, None, None, Some("WARN")],
+    );
+}
+
 async fn readiness_responses() -> [String; 4] {
     let mut supervisor = Supervisor::new(support::shutdown_budget());
     let handle = supervisor.handle();

@@ -32,12 +32,22 @@ def check_completion_fields(line: str, route: str, status: int, request_id=None)
         raise RuntimeError(f"HTTP completion event fields mismatch for {route}: {line}")
 
 
-def check_operation_filter(output: str) -> None:
-    """Reject INFO operation completions while allowing WARN failures."""
+def check_operation_filter(output: str, request_ids: set[str], deadline_id=None) -> None:
+    """Require correlated WARN operations without enabling INFO completions."""
+    deadline_seen = False
     for line in output.splitlines():
-        if (re.match(r"\s*(?:\d{4}-\d{2}-\d{2}T\S+\s+)?INFO\b", line)
-                and "operation boundary finished" in line):
+        if "operation boundary finished" not in line:
+            continue
+        if re.match(r"\s*(?:\d{4}-\d{2}-\d{2}T\S+\s+)?INFO\b", line):
             raise RuntimeError(f"INFO operation event escaped the WARN filter: {line}")
+        ids = re.findall(r'\brequest_id="?([A-Za-z0-9-]+)', line)
+        if not ids or any(value not in request_ids for value in ids):
+            raise RuntimeError(f"Operation warning lost request correlation: {line}")
+        event = line.partition("operation boundary finished")[2]
+        if deadline_id in ids and 'outcome="deadline_exceeded"' in event:
+            deadline_seen = True
+    if deadline_id is not None and not deadline_seen:
+        raise RuntimeError("Missing correlated deadline operation completion.")
 
 
 def main() -> int:
@@ -45,7 +55,7 @@ def main() -> int:
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--signal", choices=("SIGTERM", "SIGINT"), default="SIGTERM")
     parser.add_argument("--deadline", action="store_true", help="Exercise the 1 ms middleware deadline and custom error envelope.")
-    parser.add_argument("--warn-filter", action="store_true", help="Use info,batter=warn to verify failure correlation with the HTTP INFO span disabled.")
+    parser.add_argument("--warn-filter", action="store_true", help="Use info,batter=warn,batter::request=info to retain nested correlation with Batter INFO completions disabled.")
     args = parser.parse_args()
     binary = args.binary.resolve()
     if os.name != "posix":
@@ -59,7 +69,7 @@ def main() -> int:
     # Select a known filter profile, independent of ambient verbose logging.
     env.pop("RUST_LOG", None)
     if args.warn_filter:
-        env["RUST_LOG"] = "info,batter=warn"
+        env["RUST_LOG"] = "info,batter=warn,batter::request=info"
     # Bypass unrelated proxy configuration; this test is strictly loopback.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with tempfile.TemporaryFile(mode="w+b") as logs:
@@ -123,7 +133,9 @@ def main() -> int:
             if not args.warn_filter:
                 required += ["operation boundary finished"]
             else:
-                check_operation_filter(output)
+                deadline_id = next((identity for identity, route, _ in observations
+                                    if route == "/work"), None) if args.deadline else None
+                check_operation_filter(output, {identity for identity, _, _ in observations}, deadline_id)
             if args.deadline:
                 required += ["status=503", "deadline_exceeded"]
             else:

@@ -2,6 +2,18 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Request context filtering review fix: 2026-09-10
+
+Bead `batter-7r3.10`, parent `f0f6669` plus this slice, Linux x86_64, Rust 1.98.1.
+The 14 operational tests and seven HTTP example tests passed, as did adapter
+all-target clippy. Ten Python oracle controls passed. Rebuilt the example and
+passed both quiet-filter process smokes (normal and deadline). These now use
+`info,batter=warn,batter::request=info` and require correlated WARN operation
+completions, closing a hole in the prior smoke oracle. Existing all-INFO-disabled
+HTTP field tests remain. An initial new test failed on formatter-leading whitespace;
+its level check now trims that whitespace without weakening correlation assertions.
+Full two-toolchain evidence follows the remaining ownership slice.
+
 ## Operation context review fix: 2026-09-10
 
 Bead `batter-7r3.9`, prerequisite `3f2ba37` plus this slice, Linux x86_64,

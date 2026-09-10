@@ -2,7 +2,7 @@ use crate::capture::Capture;
 use axum::{
     Extension, Router,
     body::{Body, to_bytes},
-    http::{HeaderValue, Request, StatusCode},
+    http::{HeaderMap, HeaderValue, Request, StatusCode},
     middleware,
     response::{IntoResponse, Response},
     routing::get,
@@ -31,6 +31,10 @@ fn request(path: &str) -> Request<Body> {
         .header("authorization", "secret-credential")
         .body(Body::empty())
         .unwrap();
+    request.headers_mut().append(
+        "x-request-id",
+        HeaderValue::from_static("secret-second-header"),
+    );
     request
         .extensions_mut()
         .insert(RequestId::new(HeaderValue::from_static(
@@ -77,12 +81,15 @@ fn concurrent_requests_replace_forged_identity_and_agree_with_body_and_nested_op
         handle.mark_ready();
         let barrier = Arc::new(Barrier::new(16));
         let app = boundary(Router::new().route("/work", get(move |
+            headers: HeaderMap,
             Extension(id): Extension<CorrelationId>,
             Extension(native): Extension<RequestId>,
             Extension(context): Extension<OperationContext>,
         | {
             let barrier = barrier.clone();
             async move {
+                assert_eq!(headers.get_all("x-request-id").iter().count(), 1);
+                assert_eq!(headers["x-request-id"], *native.header_value());
                 assert_eq!(id.as_str(), native.header_value().to_str().unwrap());
                 context.run("nested.read", |_| async {
                     barrier.wait().await;
@@ -102,6 +109,7 @@ fn concurrent_requests_replace_forged_identity_and_agree_with_body_and_nested_op
         let mut ids = HashSet::new();
         while let Some(result) = tasks.join_next().await {
             let response = result.unwrap().unwrap();
+            assert_eq!(response.headers().get_all("x-request-id").iter().count(), 1);
             assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(response.headers()["cache-control"], "no-store");
             let (id, body) = id_and_body(response).await;
@@ -415,4 +423,91 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
     assert_eq!(fields.len(), 1);
     assert!(fields[0].contains(&format!("request_id=\"{id}\"")));
     assert!(fields[0].contains("status=503"));
+}
+
+#[test]
+fn request_context_target_keeps_nested_events_without_enabling_operation_info() {
+    let capture = Capture::with_filter("info,batter=warn,batter::request=info");
+    let id = capture.block_on(async {
+        let handle = ShutdownHandle::new();
+        handle.mark_ready();
+        let app = boundary(
+            Router::new().route(
+                "/work",
+                get(
+                    |Extension(context): Extension<OperationContext>| async move {
+                        context
+                            .run("nested.success", |_| async { Ok::<_, std::io::Error>(()) })
+                            .await
+                            .unwrap();
+                        let result = context
+                            .run("nested.failure", |_| async {
+                                tracing::info!("application progress");
+                                tracing::warn!("application warning");
+                                Err::<(), _>(std::io::Error::other("secret-failure"))
+                            })
+                            .await;
+                        assert!(result.is_err());
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    },
+                ),
+            ),
+            handle,
+        );
+        let response = app.oneshot(request("/work")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        id_and_body(response).await.0
+    });
+    let text = capture.text();
+    for message in [
+        "application progress",
+        "application warning",
+        "operation boundary finished",
+        "HTTP response boundary finished",
+    ] {
+        let events: Vec<_> = text.lines().filter(|line| line.contains(message)).collect();
+        assert_eq!(events.len(), 1, "{text}");
+        assert!(
+            events[0].contains(&format!("request_id={id}")),
+            "{}",
+            events[0]
+        );
+    }
+    assert!(
+        text.lines()
+            .filter(|line| line.contains("operation boundary finished"))
+            .all(|line| line.trim_start().starts_with("WARN") && line.contains("failed")),
+        "{text}"
+    );
+    assert!(
+        !text.contains("batter.operation") && !text.contains("secret-"),
+        "{text}"
+    );
+}
+
+#[test]
+fn never_polled_operational_entry_does_no_application_work_or_observation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    let capture = Capture::new();
+    let status = capture.block_on(async {
+        let app = Router::new()
+            .route(
+                "/work",
+                get(move || {
+                    called.fetch_add(1, Ordering::SeqCst);
+                    async { "work" }
+                }),
+            )
+            .layer(middleware::from_fn(|request, next| async {
+                // Construct the public entry itself, then destroy it without polling.
+                drop(operational_http(request, next));
+                StatusCode::NO_CONTENT
+            }));
+        app.oneshot(request("/work")).await.unwrap().status()
+    });
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(capture.text().is_empty(), "{}", capture.text());
 }

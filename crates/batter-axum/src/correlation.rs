@@ -61,6 +61,10 @@ impl std::fmt::Display for CorrelationId {
 ///     }))
 ///     .layer(middleware::from_fn(operational_http));
 /// ```
+/// The request span has INFO level and target `batter::request`. A filter such as
+/// `info,batter=warn,batter::request=info` retains nested request correlation while
+/// suppressing Batter INFO completion events. HTTP events retain their typed ID
+/// even when all INFO spans are disabled.
 pub async fn operational_http(mut request: Request, next: Next) -> Response {
     with_current_dispatch(async move {
         request.headers_mut().remove("x-request-id");
@@ -76,7 +80,8 @@ pub async fn operational_http(mut request: Request, next: Next) -> Response {
             .insert("x-request-id", id.0.header_value().clone());
         request.extensions_mut().insert(id.0.clone());
         request.extensions_mut().insert(id.clone());
-        let span = tracing::info_span!(target: "batter", "batter.request", request_id = %id);
+        let span =
+            tracing::info_span!(target: "batter::request", "batter.request", request_id = %id);
         let mut response = observe_response(request, |request| next.run(request))
             .instrument(span)
             .await;

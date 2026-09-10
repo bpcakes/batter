@@ -65,21 +65,35 @@ class OperationFilterTests(unittest.TestCase):
             with self.subTest(timestamp=timestamp):
                 output = (
                     f'{timestamp} INFO request{{request_id=example-1}}: http_service: handler finished\n'
-                    f'{timestamp} WARN batter: operation boundary finished outcome="deadline_exceeded"\n'
+                    f'{timestamp} WARN request{{request_id=example-1}}: batter: operation boundary finished outcome="deadline_exceeded"\n'
                     f'{timestamp} INFO request{{request_id=example-2}}: batter: operation boundary finished '
                     'outcome="succeeded"\n'
                 )
                 with self.assertRaisesRegex(RuntimeError, "INFO operation event"):
-                    check_operation_filter(output)
+                    check_operation_filter(output, {"example-1", "example-2"})
 
     def test_accepts_warn_operation_completion_and_application_info(self):
         check_operation_filter(
             '2026-09-09T10:00:00.000000Z  INFO request{request_id=example-1}: http_service: handler finished\n'
-            '2026-09-09T10:00:00.000000Z  WARN batter: operation boundary finished outcome="deadline_exceeded"\n'
+            '2026-09-09T10:00:00.000000Z  WARN request{request_id=example-1}: batter: operation boundary finished outcome="deadline_exceeded"\n',
+            {"example-1"}, "example-1",
         )
 
+    def test_rejects_missing_or_wrong_operation_correlation(self):
+        for parent in ("", "request{request_id=wrong}"):
+            with self.subTest(parent=parent), self.assertRaisesRegex(RuntimeError, "lost request correlation"):
+                check_operation_filter(
+                    f'WARN {parent}: batter: operation boundary finished outcome="deadline_exceeded"',
+                    {"example-1"},
+                )
+
+    def test_requires_deadline_event_for_the_work_response_id(self):
+        for output in ("", 'WARN request{request_id=example-2}: batter: operation boundary finished outcome="deadline_exceeded"'):
+            with self.subTest(output=output), self.assertRaisesRegex(RuntimeError, "Missing correlated deadline"):
+                check_operation_filter(output, {"example-1", "example-2"}, "example-1")
+
     def test_accepts_absent_operation_events(self):
-        check_operation_filter("")
+        check_operation_filter("", set())
 
 
 if __name__ == "__main__":

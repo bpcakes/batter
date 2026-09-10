@@ -1145,3 +1145,17 @@ Batter therefore retains an operation's execution context separately from its
 diagnostic span, as its HTTP and task boundaries already do. Selection happens
 once on first poll; recording fields still targets only the owned span.
 The existing dispatch wrapper protects full future destruction.
+
+## Independently filtered request context: 2026-09-10
+
+Checked [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+and actual selected tracing-subscriber 0.3.23 `filter/directive.rs` and
+`filter/env/mod.rs`. Static target directives prefer the most specific matching
+target. Span-name directives maintain dynamic scope matching and can enable
+events inside that span, including events whose target alone would be filtered.
+The adapter uses static target `batter::request` for its INFO context span and
+keeps completion events on `batter`. The supported quiet example filter is
+`info,batter=warn,batter::request=info`; it retains request context without
+re-enabling INFO operation completions. The operation fallback described above
+is also necessary: parenting WARN events to disabled operation spans otherwise
+discards the retained HTTP parent.
