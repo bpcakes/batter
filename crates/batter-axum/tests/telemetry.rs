@@ -1,3 +1,6 @@
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 use batter::operation::OperationContext;
 use std::{
     io::{self, Write},
@@ -93,7 +96,7 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
-    .with_subscriber(subscriber)
+    .with_subscriber(test_dispatch::new(subscriber))
     .await;
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     assert_http_completion_events(&text);
@@ -162,7 +165,7 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         ));
     let response = router
         .oneshot(Request::builder().uri("/work").body(Body::empty()).unwrap())
-        .with_subscriber(subscriber)
+        .with_subscriber(test_dispatch::new(subscriber))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

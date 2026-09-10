@@ -1,3 +1,6 @@
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 use batter::{operation::OperationContext, telemetry::with_current_dispatch};
 use std::{
     cell::Cell,
@@ -40,7 +43,7 @@ impl Capture {
             .finish();
         Self {
             output,
-            dispatch: tracing::Dispatch::new(subscriber),
+            dispatch: crate::test_dispatch::new(subscriber),
         }
     }
 

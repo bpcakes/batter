@@ -1,3 +1,6 @@
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 // Isolate scoped log capture from cleanup tests that first register the same
 // tracing callsites without a subscriber on other threads.
 use batter::{
@@ -84,7 +87,7 @@ async fn exhaust_budget_before_dependencies(names: &[&'static str]) -> SkippedEv
             )
             .unwrap(),
         )
-        .with_subscriber(subscriber)
+        .with_subscriber(test_dispatch::new(subscriber))
         .await;
     SkippedEvidence {
         report,

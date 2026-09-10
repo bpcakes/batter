@@ -113,7 +113,7 @@ mod tests {
             .without_time()
             .with_max_level(tracing::Level::INFO)
             .finish();
-        let dispatch = tracing::Dispatch::new(subscriber);
+        let dispatch = crate::test_dispatch::new(subscriber);
         let future = tracing::dispatcher::with_default(&dispatch, || {
             let parent = tracing::info_span!("unpolled.parent");
             let child = tracing::info_span!(parent: &parent, "unpolled.child");
@@ -124,7 +124,7 @@ mod tests {
         });
         // The inner future is !Unpin and has never been polled. Dropping it
         // also releases its parent span, which belongs to the original registry.
-        let fallback = tracing::Dispatch::new(tracing_subscriber::registry());
+        let fallback = crate::test_dispatch::new(tracing_subscriber::registry());
         tracing::dispatcher::with_default(&fallback, || drop(future));
         let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         assert_eq!(

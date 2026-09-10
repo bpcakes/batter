@@ -33,7 +33,8 @@ pub struct Access {
     pub state: State,
     pub address: SocketAddr,
     pub handle: ShutdownHandle,
-    pub observer: SupervisorObserver,
+    observer: SupervisorObserver,
+    abort_checkpoint: bool,
 }
 
 async fn boundary(AxumState(state): AxumState<State>, request: Request, next: Next) -> Response {
@@ -72,7 +73,12 @@ impl Server {
         state: State,
     ) -> Result<Self, BoxError> {
         let force = matches!(scenario, "http-cancel" | "http-abort");
-        let mut supervisor = Supervisor::new(limits::shutdown_budget(force));
+        let budget = if scenario == "http-delayed-report" {
+            crate::http_process::delayed_report_budget()
+        } else {
+            limits::shutdown_budget(force)
+        };
+        let mut supervisor = Supervisor::new(budget);
         let handle = supervisor.handle();
         let request_budget = if scenario == "http-upload" {
             Duration::from_millis(150)
@@ -108,7 +114,7 @@ impl Server {
                 if delayed {
                     graceful_state.graceful.notified().await;
                 }
-                graceful_state.record("graceful-delivered");
+                graceful_state.record("graceful-signal-ready");
             });
             // The child scenario uses a current-thread runtime with this dispatcher
             // installed for its entire drive, covering Axum's spawned connections.
@@ -124,7 +130,16 @@ impl Server {
             result.map_err(Into::into)
         })?;
         let cleanup_state = state.clone();
+        let delayed_report = scenario == "http-delayed-report";
+        let late_entry = scenario == "http-late-handler";
         supervisor.on_cleanup("dependency", move || async move {
+            if delayed_report {
+                tokio::time::sleep(crate::http_process::REPORT_DELAY).await;
+            }
+            if late_entry {
+                cleanup_state.wait("exercise-complete").await;
+                cleanup_state.record("handler-entered");
+            }
             cleanup_state.record("cleanup");
             Ok(())
         })?;
@@ -141,6 +156,7 @@ impl Server {
                 address,
                 handle,
                 observer,
+                abort_checkpoint: scenario == "http-abort",
             },
         })
     }
@@ -157,5 +173,12 @@ impl Server {
         // Preserve the actual report, including after an exercise failure. The
         // caller checks direct joins without discarding abort/cleanup details.
         Ok(report)
+    }
+}
+
+impl Access {
+    pub async fn abort_checkpoint_report(&self) -> SharedShutdownReport {
+        assert!(self.abort_checkpoint, "terminal report belongs to teardown");
+        self.observer.wait().await.unwrap()
     }
 }

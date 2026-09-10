@@ -30,6 +30,12 @@ request on an established connection must reach admission and return 503 without
 entering the business handler. This closes the coverage gap where transport
 closure could otherwise satisfy every admission test.
 
+Cooperative handler/body release follows a native connection-task graceful
+milestone and a bounded held-work checkpoint. The shared observation helper
+requires a current-thread runtime and the resolved Axum 0.8.9 trace/call ordering;
+producer and accept-loop events cannot substitute. See [testing](../testing.md)
+and follow-up `batter-mhp` for the repaired synchronization and mutation evidence.
+
 The measured HTTP/1.1 behaviors are:
 
 | Trigger | Independently asserted outcome |
@@ -77,3 +83,10 @@ platforms, not HTTP/2, WebSockets, load capacity, universal disconnect behavior,
 transitive joining after abort, or a new body-lifetime API. Applications requiring
 stronger ownership must design that protocol explicitly. No automatic retry or
 remote side-effect certainty follows from a response, disconnect or timeout.
+
+The follow-up in [ADR-009](009-http-lifetime-observations.md) shares the process
+protocol with instrumented observations. Both require scenario-specific completion
+after exercise and teardown, and reject ordinary zero-test exits. The private
+EventLog owns locking and returns snapshots so failed assertions preserve Drop
+recording. HTTP fixture policy lives with these suites, outside generic process
+mechanics and the public test-support crate.

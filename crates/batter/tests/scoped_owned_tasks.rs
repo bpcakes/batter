@@ -1,3 +1,6 @@
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 use batter::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupStack, SkipReason},
@@ -46,7 +49,7 @@ impl Logs {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer = Buffer(output.clone());
         Self {
-            dispatch: tracing::Dispatch::new(
+            dispatch: crate::test_dispatch::new(
                 tracing_subscriber::fmt()
                     .with_writer(move || writer.clone())
                     .with_ansi(false)

@@ -29,6 +29,20 @@ Windows support and non-Unix fallbacks are out of scope.
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
   or self-tests; keep report inspection and later body release separate.
+- `tests/http_lifetime_observations.rs` and `tests/http_lifetime_observations/` own real HTTP/1.1
+  connection/upload/stream/disconnect milestones through shutdown. Both targets
+  use `tests/support/http_process.rs` for PID-bound launch and scenario completion,
+  plus the shared Unix watchdog, including under focused Cargo discovery. The
+  observation `driver.rs` owns startup/exercise/teardown; both targets use shared
+  complete-phase budgets. Keep report and running ownership outside reconciliation
+  and timeout the exercise future inside its joined task. Terminal report waits
+  and dependent assertions belong to teardown; only the blocked-body abort case
+  exposes a deliberate intermediate observer checkpoint. Retain event/wire wait
+  diagnostics on cancellation without competing private timers; retain capture
+  in the driver and recheck handler-entry counts after terminal shutdown.
+- `tests/support/http_graceful.rs` observes the resolved native connection event
+  for both lifetime targets. Keep its current-thread requirement and fail on
+  missing native evidence; the signal producer is not connection acknowledgement.
 
 ## Edit here for X
 
@@ -51,7 +65,10 @@ intentionally emits twice; no request-extension deduplication is provided.
 Do not log cause contents or untrusted request fields. `operational_http` must
 replace inbound header, Tower and adapter identities before observation and must
 replace inner response IDs. Keep typed server correlation on completion events
-when INFO spans are disabled. Retain test subscriber dispatches across cases.
+when INFO spans are disabled. Construct test dispatches through private
+`test-support/dispatch.rs`; its OFF-filtered inert registration must not enable
+macros before the first real dispatcher rebuild or change thread/global selection.
+This includes raw subscriber arguments converted implicitly by `with_subscriber`.
 Readiness defaults: Starting/Draining INFO; dependency failures while Ready and
 Stopped WARN. Existing status-only probes and Problem JSON remain compatible.
 Observation severity overrides are explicit response extensions, independent of

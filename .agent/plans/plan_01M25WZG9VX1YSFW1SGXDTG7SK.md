@@ -1,0 +1,24 @@
+# Complete HTTP report ownership and dispatcher bootstrap
+
+Owning Bead: batter-rv8, follow-up to batter-88d. Baseline HEAD 486e0b0f9f4c4439077418715843b30042205f7e. Preserve the existing staged patch byte-for-byte against /tmp/batter-report-staged-before.patch. No commits or staging requested.
+
+## Progress
+- [x] Research pinned Tokio/tracing semantics and reproduce the first-sentinel race before implementation.
+- [x] Move terminal shutdown report validation out of HTTP exercises, preserve intermediate blocked-body checkpoints, and add delayed success/missing reconciliation controls.
+- [x] Derive mutation evidence from executable variants; replace sentinel with explicitly OFF-filtered registry and add bootstrap regression; correct capture documentation.
+- [x] Pass both full verification matrices, ten rebuilt HTTP smokes, targeted concurrent-load repeats, mutation controls, and fresh final Jig gates; update contracts/status/references/validation and close Bead.
+
+## Surprises & Discoveries
+The phase owner was introduced without removing terminal observer waits from scenarios. Those waits inherit the two-second exercise deadline instead of the 3.5-second teardown allowance. The blocked-body case deliberately needs an intermediate report before release and must keep it. Mutation descriptions were maintained independently from mutations. NoSubscriber returns no maximum-level hint, so registering the sentinel raises global max level from OFF to TRACE. A deterministic scheduling hook in a private copy of tracing-core 0.1.36 pauses its first unscoped DefaultCallsite Never store; real dispatch registration then rebuilds interest, and resuming the old store makes the scoped span disappear. An explicitly OFF-filtered sentinel keeps macros disabled through this bootstrap and passes the same experiment. Logs /tmp/batter-dispatch-bootstrap-{original,fixed}.log and source /tmp/batter-dispatch-bootstrap-pa3bvlgo. The registry cache is untouched.
+
+## Decision Log
+Keep private native fixtures and their semantic oracles. Move clean report checks and all report-dependent ordering assertions into reconciliation after the separately owned report arrives; keep failure diagnostics independent of success assertions. Terminal report waits cannot be reached through ordinary scenario access. Name the exceptional abort checkpoint explicitly. Add actual delayed cleanup success beyond EXERCISE while staying within TEARDOWN, with enlarged test-specific cleanup allowance validated against total teardown. Preserve watchdog8s/emergency10s and production policies. Use real ordered events to prove exercise completed before delayed cleanup/report. Reconciliation failure must retain observed report. Bootstrap uses registry with LevelFilter::OFF and never installs a global subscriber; verify max level before the first real dispatch rebuild through a test Layer callback. Keep existing isolated cached-interest and capture-release tests. Mutation definitions are a single mapping applied and serialized with source hashes.
+
+## Outcomes & Retrospective
+Implementation complete. Both full matrices passed 689 Rust executions each, ten rebuilt smokes passed, 870 concurrent repetitions passed, all mutation outcomes and per-variant source hashes verified, and the checked-in bootstrap regression rejects the previous sentinel in isolation. Final Jig gates all fresh and passed, including api:test receipt_01M25XQPEJSHD6EJYR9SPYC5TJ. Existing staging preserved byte-for-byte; Bead batter-rv8 closed. No application API or dependency graph changed.
+
+## Context, steps and validation
+Edit adapter tests http_lifetime/{scenarios,server,limits}.rs and http_lifetime_observations/{cases,driver,fixture,limits}.rs; keep capture and transport oracles intact. New controls must fail if report waiting moves back into exercise. Make event wait diagnostics respect the containing phase rather than advertising an unreachable independent three-second allowance. Update scripts/check_http_graceful_mutation.py, test-support/dispatch.rs, isolated tracing_dispatch tests and relevant docs. Run focused targets first, then bash scripts/verify.sh and RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh. Rebuild http_service per compiler and run five smoke profiles. Repeat forced handler, blocked body and disconnect targets concurrently on each compiler. Run mutation runner and inspect per-variant metadata and precise negative outcomes. Update Bead/docs before final Jig work evidence/gates/check/finish. Do not rerun passing unchanged matrices without new evidence requiring it.
+
+## Recovery and limitations
+Keep all earlier staged and unstaged work, unrelated .epicd, generated Cargo.lock and append-only Jig memory. No production subscriber/panic hook, Windows support, dependency provisioning, hosted execution claim or publication. Earlier validation remains historical. Current Linux results do not verify macOS or hosted scheduling.

@@ -108,7 +108,7 @@ fn subscriber_callbacks_run_before_finite_admission_lock() {
             armed: AtomicBool::new(false),
             calls: std::array::from_fn(|_| AtomicUsize::new(0)),
         });
-        let dispatch = tracing::Dispatch::new(probe.clone());
+        let dispatch = crate::test_dispatch::new(probe.clone());
         tracing::dispatcher::with_default(&dispatch, || {
             let parent = tracing::info_span!("application.parent");
             let _entered = parent.enter();

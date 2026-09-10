@@ -1,6 +1,6 @@
 use super::{
     client::Client,
-    limits,
+    http_graceful, limits,
     server::{Access, Server},
     state::State,
     trace_capture::Capture,
@@ -8,7 +8,7 @@ use super::{
 use batter::{
     BoxError,
     cleanup::SkipReason,
-    lifecycle::{Readiness, ShutdownCause, TaskOutcome},
+    lifecycle::{Readiness, SharedShutdownReport, ShutdownCause, TaskOutcome},
 };
 use std::{io::Write, sync::Arc, time::Duration};
 
@@ -32,7 +32,7 @@ pub fn run(scenario: &str) {
             });
         return;
     }
-    let capture = Arc::new(Capture::new());
+    let capture = Arc::new(Capture::with_filter(http_graceful::FILTER));
     capture.block_on(async {
         let state = State::default();
         let deadline = tokio::time::Instant::now() + limits::STARTUP;
@@ -66,6 +66,9 @@ pub fn run(scenario: &str) {
         } else {
             None
         };
+        if matches!(exercise, Some(Ok(Ok(Ok(()))))) {
+            server.access.state.record("exercise-complete");
+        }
         let teardown = tokio::time::timeout(limits::TEARDOWN, server.teardown()).await;
         assert!(
             matches!(startup, Ok(Ok(())))
@@ -75,9 +78,11 @@ pub fn run(scenario: &str) {
             server.access.state.snapshot(),
             capture.text(),
         );
+        let report = teardown.unwrap().unwrap();
+        server.access.state.record("terminal-report");
+        reconcile(scenario, &server.access, &report);
         check_observation(scenario, &server.access.state, &capture.text());
     });
-    emit("http-case-complete");
 }
 
 fn check_observation(scenario: &str, state: &State, text: &str) {
@@ -157,9 +162,11 @@ async fn exercise(scenario: &str, access: Access) -> Result<(), BoxError> {
             access.state.wait("never-emitted").await;
             Ok(())
         }
-        "http-idle" | "http-reject" | "http-admission" => {
-            keep_alive(scenario, access, client).await
-        }
+        "http-idle"
+        | "http-reject"
+        | "http-admission"
+        | "http-delayed-report"
+        | "http-late-handler" => keep_alive(scenario, access, client).await,
         "http-handler" | "http-cancel" | "http-upload" => handler(scenario, access, client).await,
         "http-stream" | "http-abort" => streaming(scenario, access, client).await,
         "http-disconnect-handler" | "http-disconnect-body" => {
@@ -169,12 +176,7 @@ async fn exercise(scenario: &str, access: Access) -> Result<(), BoxError> {
     }
 }
 
-async fn clean_report(access: &Access) -> Result<(), BoxError> {
-    let report = access
-        .observer
-        .wait()
-        .await
-        .map_err(|_| std::io::Error::other("coordinator failed"))?;
+fn clean_report(access: &Access, report: &SharedShutdownReport) {
     assert!(report.is_success(), "{report:?}");
     assert_eq!(report.cause, ShutdownCause::Requested);
     assert_eq!(report.tasks.len(), 1);
@@ -186,7 +188,6 @@ async fn clean_report(access: &Access) -> Result<(), BoxError> {
     assert_eq!(access.state.count("cleanup"), 1);
     access.state.before("server-ok", "cleanup");
     access.state.before("server-dropped", "cleanup");
-    Ok(())
 }
 
 async fn keep_alive(scenario: &str, access: Access, mut client: Client) -> Result<(), BoxError> {
@@ -201,7 +202,7 @@ async fn keep_alive(scenario: &str, access: Access, mut client: Client) -> Resul
         assert_eq!(client.response().await?.0, 503);
         assert_eq!(access.state.count("admission-reached"), 2);
         assert_eq!(access.state.count("handler-entered"), 1);
-        assert_eq!(access.state.count("graceful-delivered"), 0);
+        assert_eq!(access.state.count("graceful-signal-ready"), 0);
         access.state.graceful.notify_one();
     } else if scenario == "http-reject" {
         rejected_or_closed(&mut client).await;
@@ -212,7 +213,6 @@ async fn keep_alive(scenario: &str, access: Access, mut client: Client) -> Resul
         );
     }
     client.eof().await?;
-    clean_report(&access).await?;
     assert_eq!(access.state.count("handler-entered"), 1);
     Ok(())
 }
@@ -262,6 +262,7 @@ async fn handler(scenario: &str, access: Access, mut client: Client) -> Result<(
         drain_handler(scenario, &access).await;
     }
     if scenario == "http-handler" {
+        access.state.record("handler-release");
         access.state.release.notify_one();
     }
     check_handler_response(scenario, &mut client).await?;
@@ -271,14 +272,10 @@ async fn handler(scenario: &str, access: Access, mut client: Client) -> Result<(
         access.handle.request();
     }
     client.eof().await?;
-    clean_report(&access).await?;
-    let report = access.observer.wait().await.unwrap();
-    assert_eq!(report.forced_cancellation, scenario == "http-cancel");
     assert_eq!(
         access.state.count("response-constructed"),
         usize::from(scenario == "http-handler")
     );
-    access.state.before("handler-dropped", "cleanup");
     Ok(())
 }
 
@@ -287,10 +284,19 @@ async fn drain_handler(scenario: &str, access: &Access) {
     access.handle.request();
     access.state.wait("drain-observed").await;
     if scenario == "http-handler" {
-        // Cooperative drain proves survival. Forced cancellation may already
-        // have run when this task resumes; assert its final outcome separately.
-        assert_eq!(access.state.count("handler-dropped"), 0);
+        http_graceful::wait_for_connection(|| access.trace.text()).await;
+        access.state.record("connection-graceful");
+        tokio::time::sleep(http_graceful::PENDING_WINDOW).await;
+        assert_eq!(
+            access.state.count("handler-dropped"),
+            0,
+            "handler must survive native graceful shutdown before release"
+        );
         assert!(!access.state.context_cancelled());
+        assert_eq!(access.state.count("response-constructed"), 0);
+        assert_eq!(access.state.count("server-ok"), 0);
+        assert_eq!(access.state.count("cleanup"), 0);
+        access.state.record("graceful-pending");
     }
 }
 
@@ -310,6 +316,19 @@ async fn check_handler_response(scenario: &str, client: &mut Client) -> Result<(
     Ok(())
 }
 
+async fn pending_stream_checkpoint(access: &Access) {
+    tokio::time::sleep(http_graceful::PENDING_WINDOW).await;
+    assert_eq!(
+        access.state.count("body-dropped"),
+        0,
+        "body must survive native graceful shutdown before release"
+    );
+    assert_eq!(access.state.count("body-complete"), 0);
+    assert_eq!(access.state.count("server-ok"), 0);
+    assert_eq!(access.state.count("cleanup"), 0);
+    access.state.record("graceful-pending");
+}
+
 async fn streaming(scenario: &str, access: Access, mut client: Client) -> Result<(), BoxError> {
     client.send("/stream").await?;
     let head = client.head().await?;
@@ -320,12 +339,12 @@ async fn streaming(scenario: &str, access: Access, mut client: Client) -> Result
     assert_eq!(access.state.count("body-dropped"), 0);
     assert_eq!(access.state.count("body-complete"), 0);
     access.handle.request();
-    access.state.wait("graceful-delivered").await;
+    http_graceful::wait_for_connection(|| access.trace.text()).await;
+    access.state.record("connection-graceful");
     if scenario == "http-abort" {
         aborted_report(&access).await;
     } else {
-        assert_eq!(access.state.count("server-ok"), 0);
-        assert_eq!(access.state.count("cleanup"), 0);
+        pending_stream_checkpoint(&access).await;
     }
     access.state.record("body-release");
     access.state.release.notify_one();
@@ -337,10 +356,7 @@ async fn streaming(scenario: &str, access: Access, mut client: Client) -> Result
         .before("response-constructed", "headers-received");
     access.state.before("body-release", "body-complete");
     access.state.before("body-complete", "body-dropped");
-    if scenario == "http-stream" {
-        clean_report(&access).await?;
-        access.state.before("body-dropped", "server-ok");
-    } else {
+    if scenario == "http-abort" {
         access
             .state
             .before("abort-report-inspected", "body-dropped");
@@ -350,7 +366,7 @@ async fn streaming(scenario: &str, access: Access, mut client: Client) -> Result
 }
 
 async fn aborted_report(access: &Access) {
-    let report = access.observer.wait().await.unwrap();
+    let report = access.abort_checkpoint_report().await;
     assert!(!report.is_success());
     assert_eq!(report.abort_requested, ["http.server"]);
     assert!(report.unjoined.is_empty());
@@ -402,6 +418,40 @@ async fn disconnect(scenario: &str, access: Access, mut client: Client) -> Resul
         usize::from(streaming)
     );
     access.handle.request();
-    clean_report(&access).await?;
     Ok(())
+}
+
+fn reconcile(scenario: &str, access: &Access, report: &SharedShutdownReport) {
+    if scenario == "http-abort" {
+        // The exercise already inspected the intentional report before body release.
+        assert_eq!(report.abort_requested, ["http.server"]);
+        return;
+    }
+    clean_report(access, report);
+    if matches!(
+        scenario,
+        "http-idle"
+            | "http-reject"
+            | "http-admission"
+            | "http-delayed-report"
+            | "http-late-handler"
+    ) {
+        assert_eq!(
+            access.state.count("handler-entered"),
+            1,
+            "terminal handler entry count"
+        );
+    }
+    match scenario {
+        "http-handler" | "http-cancel" | "http-upload" => {
+            assert_eq!(report.forced_cancellation, scenario == "http-cancel");
+            access.state.before("handler-dropped", "cleanup");
+        }
+        "http-stream" => access.state.before("body-dropped", "server-ok"),
+        "http-delayed-report" => {
+            access.state.before("exercise-complete", "cleanup");
+            access.state.before("cleanup", "terminal-report");
+        }
+        _ => {}
+    }
 }

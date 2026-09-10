@@ -1,22 +1,9 @@
 //! Real HTTP/1.1 ownership cases, each bounded outside its Tokio runtime.
 
-// Private shared mechanics only. The foundation owns its fixture and white-box
-// controls; importing those here would compile package-relative assets twice.
-// Different suites exercise different parts of this private helper surface.
-#[allow(dead_code)]
-#[path = "../../../test-support/process/capture.rs"]
-mod capture;
-#[allow(dead_code)]
-#[path = "../../../test-support/process/evidence.rs"]
-mod evidence;
-#[path = "../../../test-support/process/launch.rs"]
-mod launch;
-#[allow(dead_code)]
-#[path = "../../../test-support/process/timing.rs"]
-mod timing;
-#[allow(dead_code)]
-#[path = "../../../test-support/process/watchdog.rs"]
-mod watchdog;
+#[path = "../../../test-support/events.rs"]
+mod events;
+#[path = "support/http_process.rs"]
+mod http_process;
 
 #[path = "http_lifetime/client.rs"]
 mod client;
@@ -32,17 +19,19 @@ mod state;
 #[path = "support/capture.rs"]
 mod trace_capture;
 
-use watchdog::{ChildRun, ExpectedExit};
+#[path = "support/http_graceful.rs"]
+mod http_graceful;
+
+use http_process::{ChildRun, ExpectedExit};
 
 fn run(name: &str) -> ChildRun {
     limits::validate();
-    ChildRun::run_with_policy(name, timing::WaitPolicy::ExitAfter(limits::PARENT))
+    http_process::run(name)
 }
 
 fn case(name: &str) {
     let run = run(name);
-    run.validate(ExpectedExit::Success, &["http-case-complete"], &[])
-        .unwrap();
+    http_process::success(&run, name).unwrap();
     if name == "http-reject" {
         let branch = if run
             .validate(ExpectedExit::Success, &["drain-request-rejected"], &[])
@@ -62,6 +51,10 @@ fn case(name: &str) {
     }
 }
 
+#[test]
+fn delayed_shutdown_report_uses_teardown_allowance() {
+    case("http-delayed-report");
+}
 #[test]
 fn idle_keep_alive_closes_on_drain() {
     case("http-idle");
@@ -109,10 +102,7 @@ fn runtime_stall_is_reaped_and_rejected_as_lifetime_success() {
     assert!(run.kill_requested());
     run.validate(ExpectedExit::WatchdogKill, &["http-runtime-stalled"], &[])
         .unwrap();
-    assert!(
-        run.validate(ExpectedExit::Success, &["http-case-complete"], &[])
-            .is_err()
-    );
+    assert!(http_process::success(&run, "http-stall").is_err());
 }
 
 #[test]
@@ -120,9 +110,7 @@ fn missing_event_retains_progress_and_teardown_diagnostics() {
     let run = run("http-missing-event");
     assert!(!run.kill_requested());
     assert_eq!(run.status.code(), Some(101));
-    let error = run
-        .validate(ExpectedExit::Success, &["http-case-complete"], &[])
-        .unwrap_err();
+    let error = http_process::success(&run, "http-missing-event").unwrap_err();
     for evidence in [
         "batter-http-wait:never-emitted",
         "Elapsed(())",
@@ -147,9 +135,7 @@ fn timed_out_exercise_retains_forced_teardown_report() {
     let run = run("http-teardown-stuck");
     assert!(!run.kill_requested());
     assert_eq!(run.status.code(), Some(101));
-    let error = run
-        .validate(ExpectedExit::Success, &["http-case-complete"], &[])
-        .unwrap_err();
+    let error = http_process::success(&run, "http-teardown-stuck").unwrap_err();
     let report = error
         .split_once("teardown: ")
         .unwrap()
@@ -176,9 +162,7 @@ fn readiness_timeout_retains_owned_server_teardown() {
     let run = run("http-startup-stuck");
     assert!(!run.kill_requested());
     assert_eq!(run.status.code(), Some(101));
-    let error = run
-        .validate(ExpectedExit::Success, &["http-case-complete"], &[])
-        .unwrap_err();
+    let error = http_process::success(&run, "http-startup-stuck").unwrap_err();
     for evidence in [
         "startup: Err(Elapsed(()))",
         "exercise: None",
@@ -193,7 +177,14 @@ fn readiness_timeout_retains_owned_server_teardown() {
 
 #[test]
 fn child_fixture() {
-    if let Some(scenario) = launch::scenario() {
-        scenarios::run(&scenario);
-    }
+    http_process::fixture(scenarios::run);
+}
+
+#[test]
+fn terminal_report_rechecks_handler_entry_count() {
+    let run = run("http-late-handler");
+    assert!(!run.kill_requested(), "{run:?}");
+    assert_eq!(run.status.code(), Some(101));
+    let text = http_process::success(&run, "http-late-handler").unwrap_err();
+    assert!(text.contains("terminal handler entry count"), "{text}");
 }

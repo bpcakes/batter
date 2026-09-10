@@ -44,3 +44,8 @@ pub use validation::{ConfigurationError, RegistrationError};
 /// Type erasure is confined to process and cleanup boundaries.
 /// Domain and operation APIs retain their concrete error types.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+// Private shared test machinery; excluded from the library API and production build.
+#[cfg(test)]
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;

@@ -24,6 +24,8 @@ mod profile;
 mod readiness;
 #[path = "scheduling/support.rs"]
 mod support;
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
 #[path = "scheduling/transitions.rs"]
 mod transitions;
 #[path = "scheduling/workload.rs"]

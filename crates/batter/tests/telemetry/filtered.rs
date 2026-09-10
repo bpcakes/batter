@@ -2,7 +2,7 @@ use super::{Buffer, OperationContext};
 use std::{
     future::{Future, poll_fn},
     io,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     task::Poll,
     time::Duration,
 };
@@ -16,7 +16,7 @@ impl Capture {
     fn new() -> Self {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer = Buffer(output.clone());
-        let dispatch = tracing::Dispatch::new(
+        let dispatch = crate::test_dispatch::new(
             tracing_subscriber::fmt()
                 .with_writer(move || writer.clone())
                 .with_ansi(false)
@@ -24,13 +24,6 @@ impl Capture {
                 .with_env_filter("info,batter=warn")
                 .finish(),
         );
-        // Retain registries so callsite-cache teardown cannot affect other cases.
-        static DISPATCHES: OnceLock<Mutex<Vec<tracing::Dispatch>>> = OnceLock::new();
-        DISPATCHES
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap()
-            .push(dispatch.clone());
         Self { output, dispatch }
     }
 
@@ -167,4 +160,21 @@ async fn filtered_operation_without_initial_parent_does_not_adopt_drop_context()
         "{text}"
     );
     assert!(text.contains("dropped") && !text.contains("late"), "{text}");
+}
+
+#[test]
+fn unused_capture_releases_subscriber_storage() {
+    let capture = Capture::new();
+    let output = Arc::downgrade(&capture.output);
+    drop(capture);
+    // Concurrent interest-cache rebuilds can briefly borrow a registered
+    // dispatch. Require release after those borrowers finish, not instant drop.
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while output.strong_count() != 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        output.upgrade().is_none(),
+        "capture subscriber leaked its output buffer"
+    );
 }

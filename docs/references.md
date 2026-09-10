@@ -67,6 +67,41 @@ the exact locally resolved registry packages, not a different online version.
 These implementation facts motivate the tests; only the executed loopback
 evidence establishes the observed behavior in [ADR-008](adr/008-http-transport-ownership.md).
 
+## HTTP/1.1 lifetimes, reviewed 2026-09-10
+
+For `batter-u0m`, rechecked the actual Cargo.lock and locally cached upstream
+registry source: **Axum 0.8.9**, **Hyper 1.11.1**, **hyper-util 0.1.20** and
+**Tokio 1.53.1**. Versioned docs.rs retrieval failed in this session; these
+semantics were verified directly in the exact resolved upstream source rather
+than inferred from another version's documentation.
+
+- [Axum serving source](https://docs.rs/axum/0.8.9/src/axum/serve/mod.rs.html):
+  `WithGracefulShutdown::run` spawns the signal task, stops accepting after the
+  signal, drops its listener, and awaits `close_tx.closed()`. `handle_connection`
+  spawns native connection tasks, passes graceful shutdown to their futures and
+  drops a completion receiver after they finish. Connection errors do not become
+  the outer serving result. Aborting the wrapper is not a join of these tasks.
+- [Hyper HTTP/1 builder](https://docs.rs/hyper/1.11.1/hyper/server/conn/http1/struct.Builder.html#method.half_close)
+  and resolved `src/server/conn/http1.rs`: the native default is `half_close = false`.
+  Supporting a client that closes its write side while awaiting a response is a
+  distinct configuration. `src/proto/h1/dispatch.rs` polls reads/keep-alive while
+  managing pending response futures/bodies; actual disconnect timing is tested,
+  not inferred as a universal property from the builder option.
+- [hyper-util connection shutdown](https://docs.rs/hyper-util/0.1.20/hyper_util/server/conn/auto/struct.UpgradeableConnection.html#method.graceful_shutdown)
+  and resolved `src/server/conn/auto/mod.rs`: graceful shutdown delegates to the
+  selected native protocol connection. The connection future must continue to
+  be polled. Axum's connection task, rather than Batter's request context, owns it.
+- [Tokio TCP stream](https://docs.rs/tokio/1.53.1/tokio/net/struct.TcpStream.html)
+  and resolved `src/net/tcp/stream.rs`: `AsyncWrite::poll_shutdown` shuts down the
+  write direction. The fixture separately uses native `Shutdown::Both` and drops
+  its client socket for a full local close, retaining reads for the half-close
+  control. Local close is not proof of peer receipt or body-message completion.
+
+The fixture reports terminal chunk/Content-Length framing, body destruction,
+socket destruction/EOF and direct wrapper outcome separately. See
+[ADR-009](adr/009-http-lifetime-observations.md) for the measured ownership decisions.
+No dependency or Cargo.lock change was needed.
+
 ## SQLx PostgreSQL disposition, reviewed 2026-09-09
 
 For `batter-7r3.2`, inspected the Cargo registry sources for `sqlx-core` and
@@ -1541,3 +1576,118 @@ its validated administrative URL with an encoded disposable database path, so a
 malformed raw URL is not directly injectable through FixtureScope. Parser-specific
 option disagreement remains a narrower unisolated failure path; no additional
 coverage is claimed for it. No test-only production injection seam was added.
+
+## Native connection graceful acknowledgement: 2026-09-10
+
+For `batter-mhp`, rechecked the resolved Cargo source and the tagged
+[Axum 0.8.9 serve implementation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/serve/mod.rs#L386-L415).
+The signal task first awaits the supplied future, then closes its watch receiver.
+Each separately spawned connection selects that notification and emits
+`signal received in task, starting graceful shutdown` immediately before calling
+synchronous `conn.as_mut().graceful_shutdown()`, without an intervening await.
+Graceful server completion separately awaits connection-completion receivers.
+
+The two HTTP fixture runtimes are current-thread and contain one connection per
+case. Their shared helper rejects other runtime flavors and requires the exact
+native TRACE target/message. Therefore a test resuming after observing that event
+runs after the synchronous call. It records `connection-graceful`, holds work for
+a finite pending checkpoint, then releases it. The producer event is named
+`graceful-signal-ready` to describe only its own boundary. The trace is a
+version-specific compatibility observation, not a stable Axum callback contract;
+a missing/filtered/changed event must fail the regression and prompt upstream
+source review. No production tracing filter or serving API changes follow.
+
+## Test dispatcher interest cache, 2026-09-10
+
+Resolved tracing 0.1.44, tracing-core 0.1.36 and tracing-subscriber 0.3.23.
+[Upstream issue #2874](https://github.com/tokio-rs/tracing/issues/2874) documents
+first callsite registration on a thread without a default caching disabled
+interest when only one dispatch is registered. The
+[tagged callsite implementation](https://github.com/tokio-rs/tracing/blob/tracing-core-0.1.36/tracing-core/src/callsite.rs)
+uses the thread default in `Rebuilder::JustOne`; the
+[callsite documentation](https://docs.rs/tracing-core/0.1.36/tracing_core/callsite/index.html)
+describes cached interest and dispatcher registration. The issue remained open at
+inspection. Our deterministic isolated reproduction failed with a bare dispatch
+and passed with an inert registration created before the real subscriber.
+
+Private test-support construction uses that workaround. It neither installs a
+global default nor changes production tracing behavior, and real subscribers no
+longer need indefinite retention. Removal requires passing the isolated
+`tracing_dispatch` regression with the actual replacement graph. This finding is
+not evidence of a callback running under the foundation admission mutex.
+
+## Fixture phase cancellation and subscriber retention, 2026-09-10
+
+The resolved graph uses Tokio 1.53.1. Its
+[timeout contract](https://docs.rs/tokio/1.53.1/tokio/time/fn.timeout.html) cancels by
+dropping the owned inner future and cannot preempt non-yielding execution. The
+[tagged JoinHandle contract](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/tokio/src/runtime/task/join.rs)
+states that dropping a handle detaches its task and that an observed join follows
+task destruction. Therefore the fixture puts timeout inside its joined exercise
+task and preserves a separately owned running supervisor for teardown. A single
+absolute teardown deadline covers report acquisition and resource reconciliation.
+
+The remaining real-dispatch retention vector in filtered telemetry tests was
+obsolete after the shared inert-dispatch constructor. Removing it preserves the
+single-dispatch workaround while allowing capture storage to be released; a Weak
+storage regression allows temporary borrows by concurrent interest-cache rebuilds.
+Inspection of the actual
+[tracing-core 0.1.36 callsite implementation](https://github.com/tokio-rs/tracing/blob/tracing-core-0.1.36/tracing-core/src/callsite.rs)
+confirmed that DefaultCallsite enters the global list before rebuilding interest.
+The review's memory-based hypothesis about the opposite registration order does
+not describe this macro path. This inspection is not a proof that upstream tracing
+has no other concurrency bugs; the existing isolated regression covers the
+specific reproduced interest-cache failure.
+
+
+## Dispatcher bootstrap and terminal report phases, 2026-09-10
+
+Bead `batter-rv8` rechecked the actual tracing 0.1.44, tracing-core 0.1.36,
+tracing-subscriber 0.3.23 and Tokio 1.53.1 graph before implementation.
+[tracing-core's tagged callsite source](https://github.com/tokio-rs/tracing/blob/tracing-core-0.1.36/tracing-core/src/callsite.rs)
+shows that registration rebuilds interest before updating the global maximum;
+the single-dispatch path can compute interest without the dispatcher-list lock.
+[NoSubscriber](https://github.com/tokio-rs/tracing/blob/tracing-core-0.1.36/tracing-core/src/subscriber.rs)
+does not override the default absent maximum-level hint. An inert NoSubscriber
+therefore raises the initial global maximum from OFF to TRACE. An unscoped macro
+can begin registration then and store stale Never after a later rebuild.
+
+A scheduling hook in a private dependency copy paused DefaultCallsite immediately
+before that store: the old sentinel failed, while a registry with
+[LevelFilter::OFF](https://docs.rs/tracing-subscriber/0.3.23/tracing_subscriber/filter/struct.LevelFilter.html)
+passed. The latter keeps macros disabled until the real subscriber has registered
+and rebuilt interest with two dispatchers. The checked-in bootstrap probe asserts
+OFF during the real subscriber's registration callback; the earlier first-hit
+regression remains. This is evidence for these macro paths with the shared test
+constructor, not arbitrary external callsite registration or all upstream races.
+[Issue 2874](https://github.com/tokio-rs/tracing/issues/2874) remains open.
+
+[Tokio's tagged Timeout::poll](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/tokio/src/time/timeout.rs)
+polls its inner future before checking elapsed time, contrary to the review's
+unpolled-reconciliation hypothesis for this version. A near-exhausted teardown
+can still time out pending reconciliation; the report remains separately owned.
+Moving terminal report waits out of exercise removes the actual success-path
+budget overlap. Delayed cleanup and failed event reconciliation are tested through
+the real supervisor; the intentional blocked-body report checkpoint stays in exercise.
+
+
+## Implicit dispatch construction and cancelled waits, 2026-09-10
+
+Before implementing `batter-538`, the resolved tracing 0.1.44 `instrument.rs`
+confirmed that [`WithSubscriber::with_subscriber`](https://docs.rs/tracing/0.1.44/tracing/instrument/trait.WithSubscriber.html#method.with_subscriber)
+accepts `Into<Dispatch>` and executes `subscriber.into()`. Raw subscriber arguments
+therefore bypassed the test bootstrap helper even without a visible `Dispatch::new`.
+Already-constructed dispatcher arguments are unaffected.
+
+The resolved Tokio 1.53.1 timeout implementation owns and drops its inner future;
+its poll order is recorded in the preceding section. Retaining diagnostic evidence
+in private pending-wait destructors works for exercise, disconnect and teardown
+cancellation regardless of remaining phase time. These bounds still require
+polling/yielding; the Unix process watchdog owns non-yielding containment.
+
+Tokio's [`Notify`](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/tokio/src/sync/notify.rs)
+retains one permit for `notify_one`; a check followed by a single wait was not a
+proven lost wakeup here. Event history plus `notify_waiters` and creation of the
+notification future before checking history supports multiple event waiters
+without consuming another waiter's sole permit. Fixture history remains the
+predicate; a notification alone never proves the required event occurred.

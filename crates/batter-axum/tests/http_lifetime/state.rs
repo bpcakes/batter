@@ -1,3 +1,4 @@
+use crate::events::EventLog;
 use axum::body::{Bytes, HttpBody};
 use batter::operation::{Interruption, OperationContext};
 use http_body::Frame;
@@ -13,7 +14,7 @@ use tokio::sync::Notify;
 
 #[derive(Clone, Default)]
 pub struct State {
-    events: Arc<Mutex<Vec<&'static str>>>,
+    events: EventLog,
     changed: Arc<Notify>,
     pub release: Arc<Notify>,
     pub graceful: Arc<Notify>,
@@ -22,7 +23,7 @@ pub struct State {
 
 impl State {
     pub fn record(&self, event: &'static str) {
-        self.events.lock().unwrap().push(event);
+        self.events.record(event);
         // Fixed fixture names only. Preserve progress even if the parent must kill
         // a stuck runtime; never panic from diagnostic I/O in resource Drop.
         let _ = writeln!(std::io::stdout().lock(), "batter-http-event:{event}");
@@ -30,12 +31,7 @@ impl State {
     }
 
     pub fn count(&self, event: &str) -> usize {
-        self.events
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|item| **item == event)
-            .count()
+        self.events.count(event)
     }
 
     pub async fn wait(&self, event: &str) {
@@ -50,21 +46,11 @@ impl State {
     }
 
     pub fn before(&self, first: &str, second: &str) {
-        // Assertions must not poison storage used by resource destructors.
-        let events = self.snapshot();
-        let first = events
-            .iter()
-            .position(|event| *event == first)
-            .expect(first);
-        let second = events
-            .iter()
-            .position(|event| *event == second)
-            .expect(second);
-        assert!(first < second, "{events:?}");
+        self.events.before(first, second);
     }
 
     pub fn snapshot(&self) -> Vec<&'static str> {
-        self.events.lock().unwrap().clone()
+        self.events.snapshot()
     }
 
     pub fn context_cancelled(&self) -> bool {

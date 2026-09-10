@@ -646,6 +646,323 @@ retained in the append-only plan records; receipt freshness is rechecked after
 this note. No commit, push, publication or
 deployment was performed.
 
+
+
+## Cancelled wait diagnostics and terminal assertions, 2026-09-10
+
+Owning Bead `batter-538`, following `batter-rv8`; baseline `486e0b0` plus the
+existing working changes. Research preceded implementation. The deadline finding
+was structural: private three-second wait timers competed with their containing
+phase and could lose missing-event/wire details. Private pending-wait guards now
+retain names, partial bytes and event snapshots on destruction. The driver retains
+capture and any actual report after joining cancelled exercise/reconciliation.
+
+Final handler counts were omitted when report checks moved out of exercise; both
+suites now recheck after terminal shutdown, with late-entry injection controls.
+Delayed-report drain now has 400 ms rather than 100 ms; the complete 3.4 s shutdown
+allowance fits 3.5 s teardown. This reduces an avoidable scheduling risk, without
+claiming the former timing had caused an observed failure. Remaining raw
+`with_subscriber` arguments used implicit `Into<Dispatch>` construction; all seven
+sites now use the shared test helper. [Primary research](references.md#implicit-dispatch-construction-and-cancelled-waits-2026-09-10)
+records pinned tracing/Tokio semantics. No production API or dependency changed.
+
+Linux x86_64, Rust 1.98.1/1.94.0, Python 3.12.3:
+
+| Executed verification | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | Passed: 693 Rust test/doctest executions, 76 successful summaries, zero failures, 29 intentional ignores; Python controls, formatting, Clippy and warning-denied rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed the same complete matrix and verification phases. |
+| HTTP lifetime targets | 23 ownership and 27 observation tests passed. Fast/delayed missing reconciliation requires the same governing timeout and retained report/Drop evidence; exercise event/partial-wire, shorter disconnect and terminal-count negative controls pass. |
+| Four concurrent workers, both compilers | 470 invocations passed: 70 selected HTTP deadline/delayed-report/terminal-count controls, and 400 complete foundation telemetry, adapter telemetry, cleanup-observation and isolated tracing-dispatch binaries (50 per target per compiler). Builds were copied before switching compilers; evidence records binary hashes and commands. |
+| Rebuilt `http_service` per compiler, five profiles each | All ten smokes passed: default, SIGINT, deadline, WARN and WARN plus deadline. |
+| Portable HTTP mutation runner | Four baseline cases passed; premature-close and producer-only variants each failed all four at their required assertions. All builds succeeded; independently replaying recorded replacements reproduced every source hash. |
+
+The initial complete run found an unused capture clone in the reconciliation task;
+removing it restored warning-denied Clippy. The final complete runs above include
+that correction. A temporary repetition script initially keyed both telemetry
+binaries by version; its six-binary inventory assertion rejected setup before any
+repetitions. Package-specific keys and immutable copies produced the successful
+470-run evidence. No semantic test was relaxed.
+
+Full logs: `/tmp/batter-diagnostics-verify-{1.98.1,1.94.0}.log`.
+Repetition commands, hashes and logs: `/tmp/batter-diagnostics-stress.json`.
+Smoke commands/logs: `/tmp/batter-diagnostics-smokes.json`.
+Mutation evidence: `/tmp/batter-http-graceful-mutation-0errvs_p/evidence.json`.
+The checked-in tests/mutation runner remain reproducible; temporary logs are local
+evidence. Final Jig receipts attach to `plan_01M25Z56CQT7SJZG20CMX0HP65` after the
+source/tracker update. Existing staging is preserved byte-for-byte, with follow-up
+changes unstaged. Current macOS/hosted execution remains unverified; live PostgreSQL
+checks remain opt-in. Non-yielding work still requires the Unix watchdog.
+
+
+## Terminal report ownership and dispatcher bootstrap, 2026-09-10
+
+Owning Bead `batter-rv8`, following `batter-88d`. Research preceded implementation.
+
+| Review issue | Root cause and implemented correction |
+| --- | --- |
+| Terminal report waits used the exercise deadline | Incomplete fixture ownership split: the driver owned teardown but scenarios still awaited completion. Both suites now validate terminal reports after exercise. Scenario observers expose only a restricted intermediate abort checkpoint, preserving the blocked-body ownership proof. |
+| Mutation evidence described only one variant | Executable edits and descriptive metadata had separate definitions. One variant mapping now drives edits and records exact replacements and patched-source SHA-256 for baseline and both mutations. |
+| Capture documentation retained the old lifetime rule | A documentation omission after removing the retention vector. The current testing guide describes per-case capture release and the shared dispatcher constructor. |
+| Concurrent first-sentinel registration | Reproduced upstream bootstrap window: NoSubscriber has no maximum-level hint and raises global filtering to TRACE before the real subscriber rebuild. An OFF-filtered inert registry keeps macros disabled until registration/rebuild finishes. |
+
+The tracing experiment used a private tracing-core 0.1.36 copy with a scheduling
+hook immediately before the first unscoped DefaultCallsite Never store. Pausing
+there, registering the real dispatcher and then resuming made the old sentinel
+lose the later scoped span (exit 101); the OFF-filtered sentinel passed (exit 0).
+The registry cache and workspace dependency graph were not modified. A separate
+isolated copy of the checked-in `tracing_dispatch` test passes with the fixed helper
+and fails at the maximum-level assertion when restored to the previous sentinel.
+[Primary sources and scope](references.md#dispatcher-bootstrap-and-terminal-report-phases-2026-09-10)
+also resolve the timeout question: pinned Tokio polls the inner future before
+checking elapsed time. Pending reconciliation can still expire, while the report
+remains separately owned. No claim covers every possible upstream tracing race.
+
+Linux x86_64, Rust 1.98.1/1.94.0, Python 3.12.3:
+
+| Executed verification | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | Passed: 689 Rust test/doctest executions, 76 successful summaries, zero failures, 29 intentional ignores; Python controls, formatting, Clippy and warning-denied rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed the same complete matrix and phases. |
+| HTTP lifetime targets | 22 ownership and 24 observation tests passed. Each suite proves a real 2.2 s finalizer can complete after exercise under teardown's allowance. The observation suite also retains a report across a failed reconciliation event wait and subsequent resource Drop. |
+| Four concurrent workers, both compilers | 870 runs passed: 450 forced-handler/blocked-body/full-disconnect/write-half-close cases (25 of each selected case per compiler), 20 delayed-report successes, 200 complete core-unit binaries and 200 complete tracing-dispatch binaries. |
+| Observed repeat durations | Largest end-to-end forced/disconnect run 0.4765 s; delayed-success run 2.2189 s; core/dispatch run 0.0210 s. These are local process durations, not individual cancellation timings or hosted bounds. |
+| Rebuilt `http_service` per compiler, five smoke profiles each | All ten passed: default, SIGINT, deadline, WARN, WARN plus deadline. |
+| Portable HTTP mutation runner | Four baseline cases passed; premature-close and producer-only variants each failed all four at the required assertions, with every build successful. Applying each evidence record's replacements independently reproduced its source hash. |
+
+Full logs: `/tmp/batter-report-verify-1.98.1.log` and
+`/tmp/batter-report-verify-1.94.0.log`. Repeat builds, compiler identities, immutable
+binary hashes, selected commands and individual logs are indexed by
+`/tmp/batter-report-stress.json`; smoke commands/logs by
+`/tmp/batter-report-smokes.json`. Mutation evidence is
+`/tmp/batter-http-graceful-mutation-zt0ckmin/evidence.json`.
+Research sources/logs: `/tmp/batter-dispatch-bootstrap-pa3bvlgo`,
+`/tmp/batter-dispatch-bootstrap-original.log`, `/tmp/batter-dispatch-bootstrap-fixed.log`,
+`/tmp/batter-bootstrap-regression-original.log`, and
+`/tmp/batter-bootstrap-regression-fixed.log`. The checked-in regression and mutation
+runner remain reproducible entry points; temporary logs are local execution evidence.
+
+Final Jig receipts attach to `plan_01M25WZG9VX1YSFW1SGXDTG7SK` after these
+source/tracker updates. Existing staging is preserved byte-for-byte; follow-up
+changes remain unstaged. Cargo manifests/lock and production behavior are unchanged.
+The one-second disconnect checkpoint applies after close/EOF and before release or
+drain, within exercise. The dedicated delayed-report policy has 3.1 s total allowance
+below 3.5 s teardown; ordinary fixture budgets and the eight-second watchdog remain.
+Current macOS/hosted runs remain unverified and live PostgreSQL tests remain opt-in.
+
+
+## HTTP phase-budget repair, 2026-09-10
+
+Owning Bead `batter-88d`, follow-up to `batter-27t`. Research confirmed a fixture
+composition omission: individually bounded waits could exceed the shared watchdog.
+Both HTTP drivers now share startup/exercise/teardown limits of 1/2/3.5 seconds,
+with a one-second reserve checked below the unchanged eight-second parent limit.
+Observation shutdown allowances fit the teardown limit. The running owner is
+retained before readiness waiting; the exercise timeout is inside its joined task.
+Report waiting and reconciliation use one absolute deadline, with any observed
+report retained outside reconciliation. Production policy and Cargo.lock are unchanged.
+
+The remaining filtered-test dispatch-retention vector was obsolete and removed.
+A Weak-storage regression proves release after temporary concurrent cache borrowers
+finish. Actual tracing-core source was checked before resolving the review question;
+[primary references](references.md#fixture-phase-cancellation-and-subscriber-retention-2026-09-10)
+record the verified Tokio 1.53.1 ownership semantics and callsite registration order.
+
+Linux x86_64, Rust 1.98.1/1.94.0, Python 3.12.3:
+
+| Executed verification | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | Passed: 684 Rust test/doctest executions across 76 successful summaries, zero failures, 29 intentional ignores; Python controls, formatting, Clippy and warning-denied rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed the same complete matrix and verification phases. |
+| HTTP lifetime targets | 21 ownership and 22 observation tests passed. New controls retain both exercise/reconciliation timeouts plus the actual shutdown report, ordered resource Drop/finalizer evidence, and startup-timeout teardown, without watchdog termination. |
+| Complete telemetry target repeated with four processes | 100 runs per compiler, 200 total; all seven tests passed each run, including capture-storage release and filtered observations. |
+| Rebuild `http_service` on each compiler; default/SIGINT/deadline/WARN/WARN-plus-deadline profiles | All ten smokes passed. |
+| Portable HTTP mutation runner | All four original cases passed; premature-close and missing-native-event variants each failed all four cases at their intended assertions. All builds succeeded. |
+
+Logs: `/tmp/batter-budget-verify-1.98.1.log`,
+`/tmp/batter-budget-verify-1.94.0.log`, `/tmp/batter-budget-smokes.json`,
+`/tmp/batter-budget-repeat.json`. Mutation evidence:
+`/tmp/batter-http-graceful-mutation-zd52jea4/evidence.json`.
+An initial focused run caught the old dual-failure output matcher after the driver
+introduced explicit optional exercise/reconciliation results. The matcher was
+updated to require the new error structure and both original failure payloads;
+all subsequent focused/full checks passed. No semantic assertion was relaxed.
+
+Final Jig receipts are attached to `plan_01M25V0FY8F7JAH8P0JAY6GFFK` after this
+source/tracker update. Existing staging is preserved; follow-up edits are unstaged.
+New macOS/hosted execution remains unverified; live PostgreSQL tests remain opt-in.
+These bounds apply to yielding diagnostic work. Non-yielding work and runtime
+shutdown still require the independent watchdog and imply no async-drop cleanup.
+
+
+
+## Test infrastructure hardening, 2026-09-10
+
+Owning Beads: `batter-27t` and `batter-gg4`; exact baseline `486e0b0`, retaining
+prior uncommitted HTTP work. Research preceded implementation. The review's two
+runner omissions had a structural cause: the observation suite forked launch and
+success policy from an existing native harness. Both HTTP targets now share the
+PID-bound launcher, eight-second parent watchdog and scenario-specific completion.
+The old Python wrapper and its Jig inputs are removed. Controls reject zero-test
+success, absent/wrong completion and an ambient `stall` setting during discovery.
+
+The event-log failure was a guard-lifetime mistake made possible by exposing
+storage locking to assertion code. Both fixtures now use private EventLog storage;
+owned snapshots keep panics outside its lock. Regressions exercise resource Drop
+during unwinding from missing/wrong ordering and a timed-out missing event.
+Notifications and async fixture ownership remain suite-local.
+
+The intermittent core failure has a separate, deterministic upstream cause:
+tracing-core 0.1.36's single-dispatch interest cache can disable a callsite first
+visited by an unsubscribed thread ([primary sources](references.md#test-dispatcher-interest-cache-2026-09-10)).
+A private test constructor registers one inert dispatch before real subscribers.
+It installs no global default, keeps enabled/filtered assertions intact and
+replaces indefinite retention of actual capture subscribers. Removing this
+workaround in an isolated copy makes the new `tracing_dispatch` regression fail
+at “registered subscriber lost callsite interest”; restoring it passes. No
+production runtime behavior, public API, dependency version or root lock changed.
+
+The raw-wire and instrumented-IO scenarios remain separate because they observe
+different boundaries; launch/evidence machinery, event storage and current contract
+and status summaries are shared. This preserves startup/teardown diagnostics,
+upload polls, post-response body ownership and write-half-close coverage without
+maintaining two process protocols. Current native acknowledgement still depends
+on the verified Axum 0.8.9 event ordering and enforced current-thread runtimes.
+
+Linux x86_64, Rust 1.98.1 and 1.94.0, Python 3.12.3. Cargo.lock SHA-256:
+`ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+
+| Executed evidence | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | Passed: 680 Rust test/doctest executions, 76 successful summaries, zero failures and 29 intentional live/ignored cases. Python controls, formatting, Clippy and warning-denied rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed the same complete matrix and all verification phases. The earlier missing-span failure is now repaired, rather than waived. |
+| Both HTTP targets through focused discovery and workspace matrix | 21 ownership tests and 20 instrumented observation tests passed, including launch/completion, unwind/Drop, stall, dual-failure and native acknowledgement controls. |
+| Repeated actual core test binaries, four concurrent processes | 250 complete unit-binary runs per compiler per workspace-all-feature/core-no-default profile: 1,000 runs, all passed. Every run retained all 12 unit tests and their original enabled/filtered callback assertions. |
+| Cooperative HTTP cases under four concurrent processes | Four cases repeated 25 times on each compiler: 200 runs, all passed; each selected exactly one outer test. Maximum observed process duration 0.277 s. Native acknowledgement's one-second timeout and held-work assertions were unchanged. This local result does not predict loaded hosted CI. |
+| Rebuilt `http_service`, default/SIGINT/deadline/WARN/WARN-plus-deadline on each compiler | All ten process smokes passed. |
+| `python3 scripts/check_http_graceful_mutation.py` | Original Axum passed all four cooperative cases; immediate native connection exit failed all four at pending-work assertions after acknowledgement; removing only the connection event failed all four at missing acknowledgement with the producer event present. All three builds succeeded and each negative case exited 101 at the expected assertion. |
+| Mutation launch controls | `--output .` and optimized Python (`-O`) rejected with exit 2 before creating artifacts. |
+
+The reviewable [mutation runner](../scripts/check_http_graceful_mutation.py) resolves
+Axum with locked offline Cargo metadata and makes private workspace/dependency/build
+copies. Python 3.11+ is needed only for this optional reproduction. Its final logs
+and `evidence.json` are in `/tmp/batter-http-graceful-mutation-3d8isc38/`; the copied
+lock differs only in Axum's path-source identity. Earlier valid run
+`/tmp/batter-http-graceful-mutation-g6gn71jb/` also hosted the bare-dispatch mutation;
+that expected regression failure is in `/tmp/batter-hardening-tracing-mutation.log`.
+The portable runner and assertions survive independently of temporary output files.
+
+Full verification logs are `/tmp/batter-hardening-verify-1.98.1.log` and
+`/tmp/batter-hardening-verify-1.94.0.log`; smoke commands/results are in
+`/tmp/batter-hardening-smokes.json`, repetition results in
+`/tmp/batter-hardening-repeat.json`. Repetition builds used workspace all-feature
+selection and core no-default selection, then copied executable artifacts before
+later builds. An initial setup assumed feature selections always produced distinct
+artifact paths; that assertion stopped before any repetition. It was corrected
+rather than counted as profile evidence. The final repeat run passed all 1,200
+process invocations. No test failure was retried into a claimed repair.
+
+Jig completion receipts belong to `plan_01M25PRSMPNS0V3ZW6VWD44M6F` in append-only
+`.agent/state/`; final gate evidence is recorded after this source/tracker update.
+These local runs do not establish new macOS or hosted execution. External live
+PostgreSQL cases remain intentionally opt-in; no database was provisioned here.
+Earlier qualified failures and synchronization-gap notes below remain historical,
+superseded for the current tree by this repair and the preceding `batter-mhp` fix.
+
+
+
+## Native graceful acknowledgement repair, 2026-09-10
+
+Owning Bead: `batter-mhp`, follow-up to `batter-u0m`; baseline master `486e0b0`
+with the reconciled observation target present. Both HTTP suites now wait for the
+resolved Axum 0.8.9 connection-task event before releasing cooperative work, then
+check pending/live resources and absent server completion/cleanup. The shared
+helper enforces a current-thread runtime, rejects producer/accept-loop messages,
+and fails after one second if the native event is unavailable. The producer
+marker is now `graceful-signal-ready`. The 50 ms held-work observation is after
+the native milestone; it is not used to infer that shutdown delivery occurred.
+No production Rust API, serving behavior, dependency version or lockfile changed.
+
+Linux x86_64; default Rust 1.98.1 and minimum Rust 1.94.0, Python 3.12.3.
+Cargo.lock SHA-256 remains
+`ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+
+| Executed evidence | Result |
+| --- | --- |
+| Focused `cargo test -p batter-axum --test http_lifetime --test http_lifetime_observations --locked` and both final workspace passes | 18 native-suite and 15 observation-suite tests passed; includes the shared producer/accept-loop rejection control in each target. |
+| Final `bash scripts/verify.sh` / Rust 1.98.1 | Passed 668 Rust test/doctest executions across 74 successful summaries, 29 intentional ignores; Python controls, formatting, Clippy and warning-denied rustdoc passed. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Workspace all-feature/all-target tests passed, including both repaired suites. The independent no-default core pass failed the unchanged subscriber callback test at `subscriber.rs:136` (“enabled task span must be created”), the known intermittent `batter-gg4` failure. Full verification did not pass. |
+| Rust 1.94.0 separate workspace/all-feature doctests, Clippy and warning-denied rustdoc | All passed. These complete the phases prevented by the core failure; they do not repair or override it. |
+| Rebuild `http_service` with each compiler and run default, SIGINT, deadline, WARN, WARN-plus-deadline smoke profiles | All ten invocations passed. |
+| Isolated native-source controls | All four cooperative cases passed with original Axum. Replacing native `graceful_shutdown()` with immediate connection exit made all four fail at the held-resource/pending-wire assertions. Keeping graceful behavior but removing only the connection event made all four fail for missing native acknowledgement despite the producer marker. All builds succeeded; negative cases executed exactly one test and exited 101 at the expected assertion. |
+
+The twelve-run mutation evidence is
+`/tmp/batter-http-graceful-mutation-xzq44i7b/evidence.json`, with per-case logs beside
+it. The exact executed [mutation runner](../.agent/plans/plan_01M25MJHFHKRKTZXF2PNHCG6DG-mutation.py)
+is retained with its plan. It copies the workspace and selected Axum source,
+changes only the disposable manifest/lock/source, and uses a fresh private build
+directory. Its lock comparison permits only the Axum path-source identity change.
+A repeated setup initially reused a stale patched artifact in a shared build
+cache; that baseline failed and is excluded. The private-directory run above is
+the final evidence. Initial complexity/dead-code lint failures were repaired by
+extracting named assertions and matching the existing shared-capture module policy;
+no semantic assertion was relaxed.
+
+Source checks and smoke commands/results are retained in
+`/tmp/batter-http-graceful-verification.json`, with individual logs named there.
+Separate minimum-toolchain outcomes are in
+`/tmp/batter-http-graceful-minimum-supplement.json`. Earlier lint-failing runs are
+archived under `/tmp/batter-http-graceful-before-refactor`.
+Plan `plan_01M25MJHFHKRKTZXF2PNHCG6DG` owns final archival Jig gate receipts.
+The prior HTTP synchronization finding is repaired; the independent tracing issue
+remains open, now also reproduced on the minimum compiler. No new macOS or hosted
+execution is claimed.
+
+## Master reconciliation and lifetime finding recheck, 2026-09-10
+
+Fast-forwarded master from `9a49422` to `486e0b0`. Upstream independently added
+`http_lifetime` and private Unix process machinery. Its source remains intact.
+The independent local suite is retained as `http_lifetime_observations`, with
+its own socket/upload resource acknowledgements, post-deadline stream checks,
+write-half-close case and Python watchdog. Its ADR is now 009; upstream ADR-008
+is unchanged. Older evidence below retains the commands used before this rename.
+Both append-only Jig histories were retained and the owning Bead records both
+implementations. The recovery stash is `5b9d85b2a6bccf155b2fd8701771206a9d828c29`.
+
+Rechecked the review finding against both current implementations and the resolved
+Axum 0.8.9 source. Each `graceful-delivered` marker is emitted from the graceful
+signal future; native connection tasks handle the signal on their own polls.
+Cooperative cases can release the pending handler/body before that handling.
+The synchronization coverage gap therefore remains; this integration does not
+fix it. Upstream's success-marker validation already prevents zero-test child
+runs for its own target; the separate Python runner retains its prior limitation.
+
+`cargo test -p batter-axum --test http_lifetime --test http_lifetime_observations
+--locked` passed 17 upstream and 14 observation tests on Linux x86_64 / Rust
+1.98.1. `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` passed 666 Rust
+executions across 74 successful summaries, with zero failures and 29 intentional
+ignores, plus formatting, Python controls, Clippy and warning-denied rustdoc.
+Rebuilt `http_service` under each compiler and passed all five documented smoke
+profiles per compiler (ten invocations).
+The initial Rust 1.98.1 `bash scripts/verify.sh` **failed** in unchanged core test
+`lifecycle::state::tests::subscriber::subscriber_callbacks_run_before_finite_admission_lock`
+at `subscriber.rs:136`: “enabled task span must be created”. A direct rerun passed,
+but repeated executions of the actual all-feature library binary reproduced the
+same failure on iteration 30. This unresolved intermittent failure is tracked in
+`batter-gg4`; subsequent passing checks do not establish its remediation. No core
+source or semantic assertion was changed during reconciliation. The failed script
+stopped before Clippy/rustdoc; default-toolchain rustdoc was executed separately,
+and the final Jig checks record their own Clippy and test outcomes.
+
+Logs: `/tmp/batter-u0m-reconcile-focused.log`,
+`/tmp/batter-u0m-reconcile-verify-1.98.1.log`,
+`/tmp/batter-u0m-reconcile-verify-1.94.0.log`,
+`/tmp/batter-reconcile-core-repro.log`, `/tmp/batter-u0m-reconcile-smokes.log`,
+and `/tmp/batter-u0m-reconcile-rustdoc-1.98.1.log`.
+Reconciliation plan: `plan_01M25KX657HQZ1632GVNTKB247`; final gate results are recorded
+in its append-only receipts. Full verification is qualified by `batter-gg4`, even
+if that gate invocation passes. New macOS/hosted execution remains unverified.
+
 ## Ownership and operational adapter reconciliation: 2026-09-10
 
 User-authorized rebase of ownership commit `f5449cd` onto upstream `9a49422`
@@ -669,6 +986,86 @@ Logs are in `/tmp/batter-reconcile-REgraB`. Final Jig gates and completion are
 recorded under `plan_01M25JQW66KYD3QYWX2TK47207`; this pre-gate note does not claim
 those receipts yet. No new Linux or hosted execution is claimed for this combined
 snapshot; previous platform evidence remains tied to its original commits.
+
+## HTTP/1.1 connection lifetimes, 2026-09-10
+
+Owning Bead: `batter-u0m`; baseline `9a49422308e662461524d62132cc81cbbc937c53`.
+The new `crates/batter-axum/tests/http_lifetime_observations.rs` target contains eleven loopback
+cases, a private child entry point and two negative runner controls. It uses the
+native Axum serving/graceful composition with test-owned socket acknowledgements.
+No production Rust API, example, dependency or Cargo.lock change was made.
+
+Local platform: Linux x86_64, Python 3.12.3. Rust 1.98.1 (`48a229cea`) / Cargo
+1.98.1 (`797e8a9bc`); minimum Rust 1.94.0 (`4a4ef493e`) / Cargo 1.94.0 (`85eff7c80`).
+Cargo.lock SHA-256:
+`ff50d56c475cf3b043a9c55ad6873d7dafec82582019ef312613dc0ec0e6b23a`.
+
+| Command / evidence | Result |
+| --- | --- |
+| `cargo test -p batter-axum --test http_lifetime --locked` | Passed 14 tests on Rust 1.98.1. The final upload-during-drain case is also exercised by the full matrices below. |
+| `cargo clippy -p batter-axum --test http_lifetime --locked -- -D warnings` | Passed; initial fixture complexity warnings were repaired by extracting named assertions, with no lint waiver. |
+| `bash scripts/verify.sh` | Final Rust 1.98.1 run passed: 631 Rust test executions across 71 successful summaries, zero failures, 29 intentional ignores; formatting, Python runner controls, core check, all-target/all-feature Clippy and warning-denied rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed with the same 631 executions, 71 successful summaries, zero failures and 29 intentional ignores; all other verification phases passed. |
+| Rebuild `cargo build -p batter-axum --example http_service --locked`, then `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` with default, `--signal SIGINT`, `--deadline`, `--warn-filter`, `--warn-filter --deadline`, for each toolchain | All ten process invocations passed, including signal exit zero, envelopes, correlation and filtered deadline observations. |
+| `scripts/jig work check --plan-id plan_01M25HA1BB22RN328GHN7681PY` | Passed all five targets: Clippy, formatting, tests, contract and file budget. The source-validation `api:test` receipt is `receipt_01M25JDQ3RVBZHXG2KXV016AE0` on default Rust 1.98.1. No source, test-command, configuration, toolchain or prerequisite changes followed this test run. Documentation/tracker finalization changed Jig input digests, so archival gate checks are refreshed on the final worktree and retained under the same plan. |
+
+The suite positively witnesses rejection on an established connection with graceful
+delivery temporarily withheld, while preserving ordinary drain-driven graceful
+shutdown in the companion case. Pending upload and admitted handler resources are
+observed before interruption/release. Complete response framing, body destruction,
+client EOF/reset and server socket destruction have separate assertions. The
+blocked stream survives request-context cancellation and the elapsed response
+budget. Forced request cancellation returns 503 `operation_cancelled` and permits
+clean direct completion/finalization; wrapper abortion instead retains an aborted
+`http` task and cancelled JoinError, no unjoined direct task, and `UnsafeTaskExit`
+cleanup skipping while the body/socket remain owned at report inspection. Later
+body release and native teardown are recorded separately, with cleanup still absent.
+
+Full client closes before response and during streaming require resource/socket
+drop acknowledgements before any test release, within a three-second observation
+bound. Write-half closure is a separate pending-handler case: the native default
+closes the server connection and the retained client read side sees EOF. These
+explicit regressions do not allow either outcome merely because it was logged.
+The 50 ms pending read used for blocked streams is a finite checkpoint, not a
+promise of indefinite survival. Body destruction after headers emits no second
+HTTP completion. The server wrapper's successful result remains separate from
+connection errors.
+
+Every public case uses the independent 20 s Unix process watchdog even under
+focused Cargo discovery. The deliberate runtime stall is rejected after three
+seconds and must report direct-child reaping and output EOF. The dual-failure
+control requires both exercise and cleanup diagnostics. Normal Cargo discovery
+already includes the target in `scripts/test_matrix.py`; `.jig.toml` and its
+resolved contract now include `scripts/http_lifetime.py` for both test aliases.
+The generated contract was produced with `scripts/jig update --recopy --no-input
+--force` in a disposable checkout, then normalized to the existing JSON format.
+Only the two intended input additions were retained; customized managed guides
+were preserved. `scripts/jig doctor` reports ready.
+
+Logs: `/tmp/batter-u0m-focused.log`, `/tmp/batter-u0m-clippy.log`,
+`/tmp/batter-u0m-verify-1.98.1.log`, `/tmp/batter-u0m-verify-1.94.0.log`,
+`/tmp/batter-u0m-http-1.98.1.log`, `/tmp/batter-u0m-http-1.94.0.log`, and final
+Jig evidence for plan `plan_01M25HA1BB22RN328GHN7681PY`.
+
+One archival gate refresh (`receipt_01M25JK2ZP3ZT7A5DPKS42QEA1`) failed in
+`core-tests` (exit 101), while `workspace-tests`, including all HTTP lifetime
+cases, passed. Jig retained only the beginning of stdout, so the exact failing
+assertion is unavailable; no cause or fix is inferred. A direct repeat of
+`cargo test -p batter --no-default-features --lib --tests --locked` passed, as did
+100 executions of its unchanged twelve-test library binary. A separately captured
+full `python3 scripts/test_matrix.py` run also passed. The final archive
+requires a new passing full matrix/Jig test receipt; the failed run is preserved
+in repository evidence. This test-only Axum change does not alter the core library.
+Investigation output is in `/tmp/batter-u0m-core-investigation.log` and
+`/tmp/batter-u0m-matrix-investigation.log`.
+
+New macOS and hosted execution remain **unverified**. The existing macOS
+all-targets job discovers the new suite, but configuration is not execution.
+No HTTP/2, WebSocket, TLS, load-capacity, universal disconnect propagation,
+transitive task joining, live database, or runtime-death claim is made.
+[ADR-009](adr/009-http-lifetime-observations.md) records the measured boundaries;
+[references](references.md#http11-lifetimes-reviewed-2026-09-10) records actual
+resolved upstream source inspection and failed versioned web retrieval.
 
 ## Review fixes: final verification, 2026-09-10
 

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "coordinator": {
+    "model": "gpt-6-astra",
+    "reasoningEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "autonomousWorkerSettings": [],
+  "requiredChecks": [],
+  "writableScratch": [],
+  "fixtures": [],
+  "fixtureValidation": [],
+  "validationServices": [],
+  "budgets": {
+    "maxWorkers": 4,
+    "taskDecisions": 64,
+    "epicDecisions": 128,
+    "failedRecoveriesPerTask": 12,
+    "identicalFailures": 3,
+    "artifactBytes": 104857600
+  }
+}

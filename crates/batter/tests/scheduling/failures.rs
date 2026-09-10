@@ -59,7 +59,9 @@ pub async fn retained_errors(case: Case, delay: u64) {
         .without_time()
         .with_max_level(tracing::Level::INFO)
         .finish();
-    errors_inner(case, delay).with_subscriber(subscriber).await;
+    errors_inner(case, delay)
+        .with_subscriber(crate::test_dispatch::new(subscriber))
+        .await;
     let bytes = output.0.lock().unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     assert!(text.contains("task"));

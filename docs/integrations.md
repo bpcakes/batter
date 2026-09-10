@@ -85,7 +85,14 @@ release the listener. Native Axum accept errors are retried internally.
 The server uses with_graceful_shutdown and waits for it to finish
 while dependencies remain alive. Aborting that wrapper is not accepted as proof
 of transitive child termination; resource finalizers are conservatively skipped.
-The existing smoke test does not establish full connection/body lifetime behavior.
+The process smoke remains a startup/signal/response check. The separate
+[HTTP/1.1 lifetime suite](../crates/batter-axum/tests/http_lifetime_observations.rs) observes
+uploads, response streaming, established keep-alive connections and disconnects
+through drain/cancellation/abort. Its test-owned socket instrumentation and held
+shutdown signal are fixture controls, not adapter API. [ADR-009](adr/009-http-lifetime-observations.md)
+records why a normally returned server can permit cleanup after forced request
+cancellation, while an aborted wrapper leaves body/socket ownership uncertain and
+requires skipped cleanup. The direct result does not aggregate connection errors.
 
 `operational_http` is an opt-in replacement for outer `observe_http` plus identity
 glue. It composes exactly one existing observer inside server UUID correlation.

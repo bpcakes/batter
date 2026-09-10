@@ -1,7 +1,10 @@
+#[path = "../../../../test-support/dispatch.rs"]
+pub mod test_dispatch;
+
 use std::{
     future::Future,
     io::{self, Write},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone)]
@@ -43,7 +46,7 @@ impl Capture {
             .finish();
         Self {
             output,
-            dispatch: retain_dispatch(tracing::Dispatch::new(subscriber)),
+            dispatch: test_dispatch::new(subscriber),
         }
     }
 
@@ -62,17 +65,4 @@ impl Capture {
                 .block_on(future)
         })
     }
-}
-
-// Keep registries alive across cases: tracing caches per-subscriber callsite
-// interest. Fixture destruction must not become the subject of adapter tests.
-// This is test-only ownership, not a global default subscriber installation.
-pub fn retain_dispatch(dispatch: tracing::Dispatch) -> tracing::Dispatch {
-    static DISPATCHES: OnceLock<Mutex<Vec<tracing::Dispatch>>> = OnceLock::new();
-    DISPATCHES
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap()
-        .push(dispatch.clone());
-    dispatch
 }

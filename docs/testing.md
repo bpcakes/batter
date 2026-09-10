@@ -28,10 +28,11 @@ process owner also bounds test phases independently of Tokio. Existing
 non-yielding, finite-descendant, abandonment and scheduling regressions remain
 part of the workspace matrix.
 
-The HTTP target has seventeen tests: ten loopback scenarios, a deliberate-runtime-stall
-control, startup-timeout, missing-event and forced-teardown diagnostic controls, lock-poisoning
-and rejection-trace regressions, and its inert dispatch entry. Shared std-only machinery lives in workspace
-`test-support/process/`; the foundation alone attaches runner self-tests and owns
+The HTTP ownership target has 23 tests: eleven loopback scenarios, a deliberate-runtime-stall
+control, startup-timeout, missing-event and forced-teardown diagnostic controls, a terminal
+handler-count control, lock-poisoning and rejection-trace regressions, a native
+acknowledgement parser control, three launch/completion controls, and its inert dispatch entry. Shared std-only machinery lives in workspace
+`test-support/process/`; HTTP wrappers attach launch/completion controls while the foundation owns
 its non-yielding fixture and Linux Python helper. Each HTTP scenario
 has an eight-second parent deadline, kill/reap on expiry, the existing PID-bound
 stdin authorization, parent-death handling and ten-second emergency exit. A killed
@@ -61,6 +62,19 @@ prevents those inner timeouts. Ordering assertions release the event lock before
 panicking so later destructor evidence remains available. The companion
 admission case withholds graceful notification so a second established-connection
 request must reach admission and return 503 with no handler entry.
+
+Both HTTP lifetime targets use `tests/support/http_graceful.rs` to wait for the
+exact Axum 0.8.9 native connection-task event with `info,axum::serve=trace` capture.
+The helper requires a current-thread runtime: the native event immediately precedes
+synchronous `graceful_shutdown()`, which returns before the test can resume.
+The producer's `graceful-signal-ready` and the accept-loop event are insufficient;
+a parser control rejects them, and a missing native event fails after one second.
+Cooperative handler/body cases keep release withheld for a further 50 ms, assert
+live resources and unfinished server/cleanup, then release explicitly. The
+instrumented target additionally checks that the wire read remains pending.
+The native event establishes ordering; the subsequent finite observation window
+does not establish indefinite survival. See the [versioned source rationale](references.md#native-connection-graceful-acknowledgement-2026-09-10)
+and [mutation evidence](validation.md#native-graceful-acknowledgement-repair-2026-09-10).
 
 The existing matrix includes `--workspace --all-features --all-targets`; no new
 runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inputs
@@ -851,8 +865,9 @@ composition of server identity, observation and guarded-route admission. It
 covers forged headers/Tower/adapter extensions, concurrent IDs and nested
 operations, custom renderer precedence, missing typed identity, probes/fallback/
 unsupported methods, deadline/forced cancellation and drop under another
-dispatch with INFO spans disabled. Capture registries remain strongly owned
-across cases; HTTP field and correlation assertions inspect event-local fields.
+dispatch with INFO spans disabled. Captures use `test-support/dispatch.rs` and may
+be dropped per case; only tests explicitly comparing multiple captures retain them
+together. HTTP field and correlation assertions inspect event-local fields.
 
 Readiness tests use the real HealthMonitor with controlled polling/time to cover
 Unknown, Failed, TimedOut, Healthy, Stale and stopped writer, plus lifecycle
@@ -862,6 +877,126 @@ registration/abandonment listener release, and a stream retained after request
 budget and direct-wrapper abort. The test explicitly releases and awaits that
 body after observing unsuccessful shutdown and skipped dependency cleanup.
 These tests establish the stated limits, not general streaming ownership.
+
+## HTTP/1.1 instrumented lifetime observations
+
+Run `cargo test -p batter-axum --test http_lifetime_observations --locked` from the root.
+The 27 discovered tests comprise twelve real loopback cases, an inert child entry,
+eight failure controls, three launch/completion controls, two unwind/Drop evidence
+regressions and the native acknowledgement parser control. The normal workspace
+all-targets pass in `scripts/test_matrix.py` and both Jig test aliases include it;
+no ignored-test switch or external wrapper invocation is required. The configured
+macOS adapter all-targets job also includes it, without implying hosted execution.
+
+Both HTTP targets use `tests/support/http_process.rs` and the existing native Unix
+launcher/watchdog in `test-support/process/`. Every case has an eight-second parent
+bound with kill/reap and captured output EOF; child launch requires exact argv and
+a PID-bound stdin record. A ten-second emergency thread and parent-pipe EOF also
+contain non-yielding fixture work. Ordinary discovery ignores ambient scenario
+settings. Successful exit additionally requires a complete event naming the exact
+case, emitted after exercise, teardown and runtime destruction. Controls reject
+zero selected tests, exit without completion, a wrong case, and ambient `stall`
+launches. The deliberate runtime stall requires observed SIGKILL/reaping and
+cannot pass ordinary success validation. Process creation, OS scheduling and
+hard termination of the watchdog are not general software-time guarantees.
+
+The driver owns the running supervisor before awaiting readiness. Both HTTP
+targets now import complete-phase limits from `tests/support/http_process.rs`:
+
+| Phase | Allowance and ownership |
+| --- | --- |
+| Startup | 1 s shared by construction and readiness; a readiness failure retains the running owner for teardown. |
+| Exercise | 2 s for wire/resource checkpoints, inside its spawned task; the driver joins that task before teardown. Terminal report waits are not part of exercise. |
+| Teardown | 3.5 s shared by report waiting and subsequent body/socket reconciliation through one absolute deadline. |
+| Parent reserve | 1 s startup/unwind/scheduling margin; the sum is 7.5 s, checked below the unchanged 8 s watchdog. |
+
+Observation event and wire reads have no private timer. Their owned wait guards
+retain missing names or markers, partial bytes and event snapshots on cancellation;
+the driver retains those diagnostics and tracing capture after joining the task. The
+observation fixture's shutdown allowances are also checked against the complete
+teardown budget, including cleanup and abort observation. Its normal drain is
+2 s; forced drain remains 100 ms, blocked-body cancellation remains 100 ms, other
+cancellation is 300 ms, abort observation 300 ms, and cleanup total/reap 500/100 ms.
+These are test fixture policies; runnable service defaults are unchanged.
+
+Both suites move terminal report checks and report-dependent ordering assertions
+into teardown. Scenario access exposes only the deliberately named abort-report
+checkpoint, restricted to the blocked-body case; that checkpoint must remain in
+exercise to prove body ownership after wrapper abort and before release. The old
+independent four-second report timeout is removed. A delayed-success control in
+each suite uses a real 2.2 s finalizer, proves exercise completion precedes cleanup,
+and validates the report in teardown. Its dedicated cleanup allowance is 2.7 s;
+drain is 400 ms, cancellation and abort observation are 100 ms each, and cleanup
+reap is 100 ms. The complete 3.4 s shutdown allowance still fits teardown. Production policies and
+ordinary case allowances are unchanged.
+
+Missing-reconciliation controls with fast and delayed reports require the governing
+teardown timeout, the actual report, the named interrupted wait and subsequent
+resource Drop. Exercise event/wire and shorter disconnect controls also require
+retained diagnostics. Both suites recheck handler-entry counts after the terminal
+report; late-entry injection controls prove an EOF-only assertion cannot pass. A slow-failure control times out an exercise and then reconciliation after a real
+shutdown report. It requires both timeout results, the retained report, and
+exercise destruction before finalizer completion before reconciliation destruction,
+with exit 101 and no watchdog kill. A startup control withholds component readiness
+acknowledgement and requires timeout, skipped exercise and owned shutdown/cleanup.
+The existing dual-failure control still retains an exercise panic and cleanup error.
+A report remains outside reconciliation, so later assertions/timeouts cannot erase
+it. Timing out a JoinHandle would detach its task; here the timeout owns the
+exercise future inside the task, and the handle is awaited. These diagnostic bounds
+require yielding work; the independent stalled-runtime control remains necessary.
+
+Shared event storage releases its mutex before assertions and timeout diagnostics; regressions
+drop resources during unwinding after failed ordering and missing-event waits.
+These paths require loopback and Unix process permissions, with no Python wrapper.
+
+Fixtures acknowledge handler entry, pending upload/body polls, response construction
+and observation, headers, body completion/destruction, complete Content-Length or
+chunk framing, client EOF/error, native server socket destruction, direct task
+outcome and cleanup. The client uses raw HTTP/1.1 on ephemeral native loopback
+sockets. A test-owned listener forwards native IO; server success is retained
+independently of client/body errors. Exercise-task errors are retained while the
+fixture releases its controls and awaits/inspects the running supervisor.
+
+[ADR-009](adr/009-http-lifetime-observations.md) maps every case to its expected
+outcome. The ordinary second-request case permits 503 or transport closure; its
+companion withholds graceful delivery until an actual 503 admission rejection is
+witnessed. The blocked-body abort case inspects the report while the body, socket,
+and runtime remain live, then releases the body and separately reconciles framing,
+EOF and destruction. It tests a 50 ms pending-read checkpoint, not indefinite
+survival. Disconnect cases require positive body/handler and socket destruction
+within one shared second after the close/EOF checkpoint, before any release/drain; full `Shutdown::Both` plus socket
+drop differs from write-side shutdown followed by reading EOF. No test invents
+another HTTP completion after response headers. New Linux/macOS execution is
+recorded separately in [validation](validation.md#http11-connection-lifetimes-2026-09-10).
+
+## Fixture infrastructure regression and mutation checks
+
+`cargo test -p batter --test tracing_dispatch --locked` isolates first callsite
+registration in a fresh process. An unsubscribed thread first creates a disabled
+span; the registered subscriber must subsequently create an enabled span at that
+same callsite. A filtered-capture regression also requires output storage to be
+released after the capture is dropped (allowing brief concurrent cache borrowers).
+The obsolete static vector of real dispatchers has been removed. The private test
+constructor uses an explicitly OFF-filtered inert registry. A separate bootstrap
+regression checks that global maximum filtering remains OFF before the real
+dispatch rebuild, so concurrent macros cannot seed stale interest in the first
+registration window. This works around the reproduced pinned upstream cache paths without installing a global subscriber or weakening
+admission-lock callbacks or filtered-event assertions. Raw subscriber arguments to
+`WithSubscriber::with_subscriber` also construct a dispatcher implicitly and must
+use this helper; already-built dispatcher clones need no second construction.
+
+`python3 scripts/check_http_graceful_mutation.py --output /tmp/http-mutation-evidence`
+requires Python 3.11+, cached locked dependencies and a new output directory
+outside the checkout. Optimized Python is rejected so assertions cannot disappear. It
+resolves Axum 0.8.9 through Cargo metadata, copies the workspace and dependency,
+and uses a private build directory. Original native behavior must pass all four
+cooperative cases. Immediate native connection exit must fail their pending-work
+assertions; removing the connection event alone must fail acknowledgement despite
+the producer event. Build failures, zero-test runs and unrelated assertions do not
+count. The same per-variant replacement definitions drive source edits and
+`evidence.json`; each variant records its exact replacements and patched-source
+SHA-256, including the unchanged baseline. Logs and evidence go in the selected directory. Root/registry sources
+remain unchanged, and the copied lock may change only Axum's path identity.
 
 ## HTTP process smoke test
 

@@ -1,6 +1,9 @@
 #[path = "telemetry/filtered.rs"]
 mod filtered;
 
+#[path = "../../../test-support/dispatch.rs"]
+mod test_dispatch;
+
 use batter::operation::OperationContext;
 use std::{
     io::{self, Write},
@@ -37,7 +40,7 @@ async fn outcome_is_recorded_without_logging_application_error_text() {
         .run("telemetry.failure", |_| async {
             Err(std::io::Error::other("secret-that-must-not-be-logged"))
         })
-        .with_subscriber(subscriber)
+        .with_subscriber(test_dispatch::new(subscriber))
         .await;
     assert!(result.is_err());
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
@@ -92,7 +95,7 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
             _ = tokio::task::yield_now() => {},
         }
     }
-    .with_subscriber(subscriber)
+    .with_subscriber(test_dispatch::new(subscriber))
     .await;
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     for (operation, outcome, level) in [
@@ -150,7 +153,7 @@ async fn cleanup_events_preserve_parent_context_and_hide_error_contents_with_inf
         assert_eq!(report.records[0].outcome, CleanupOutcome::Failed);
         assert_eq!(report.records[1].outcome, CleanupOutcome::Succeeded);
     }
-    .with_subscriber(subscriber)
+    .with_subscriber(test_dispatch::new(subscriber))
     .await;
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     for (name, outcome, level) in [
@@ -187,7 +190,7 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
     let request_output = Arc::new(Mutex::new(Vec::new()));
     let dispatch = |output: Arc<Mutex<Vec<u8>>>| {
         let writer = Buffer(output);
-        tracing::Dispatch::new(
+        crate::test_dispatch::new(
             tracing_subscriber::fmt()
                 .with_writer(move || writer.clone())
                 .with_ansi(false)

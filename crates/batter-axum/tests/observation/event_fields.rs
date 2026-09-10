@@ -86,11 +86,11 @@ impl<S: Subscriber> Layer<S> for Events {
 
 impl Events {
     fn dispatch(&self, max_level: Level) -> Dispatch {
-        super::capture::retain_dispatch(Dispatch::new(
+        super::capture::test_dispatch::new(
             tracing_subscriber::registry()
                 .with(LevelFilter::from_level(max_level))
                 .with(self.clone()),
-        ))
+        )
     }
 
     fn assert_completion(

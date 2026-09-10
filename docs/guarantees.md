@@ -629,25 +629,48 @@ polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring
 outside this layer. An escaped request context is cancelled at response
 construction, so a streaming design needs a distinct owner.
 
-Client disconnect triggers operation drop only when the transport actually drops
-the handler future. There is no promise of immediate universal disconnect
-propagation. The [HTTP/1.1 lifetime suite](../crates/batter-axum/tests/http_lifetime.rs)
-uses full client socket shutdown and witnesses handler/body destruction before
-test release for the resolved transport, with a one-second observation bound.
-It does not equate write-half closure with full disconnect. Before response
-construction the observer reports dropped without status; after headers it
-retains the original completion and emits no second status or completion.
+The two HTTP/1.1 lifetime targets share launch/completion evidence but retain
+separate raw-wire and instrumented-IO fixtures ([ADR-008](adr/008-http-transport-ownership.md),
+[ADR-009](adr/009-http-lifetime-observations.md)). They independently observe
+handler/upload destruction, response observation, complete message framing, body
+destruction, client EOF, native socket destruction, direct server outcomes and
+cleanup. Incomplete upload reads inside a guarded handler consume the response
+budget. A blocked response body remains outside it after the escaped request
+context is cancelled. Ordinary drain lets admitted handlers finish; a later
+keep-alive request may receive 503 or encounter connection closure. A separate
+withheld-graceful case must witness admission rejection.
 
-The same suite separately witnesses complete message framing, socket EOF/error,
-body destruction, direct server outcomes and cleanup. A blocked response body
-survives its escaped request context's cancellation and server-wrapper abortion
-through report inspection. The named abort skips dependency finalizers; releasing
-the body afterward establishes later transmission/connection teardown, not a
-transitive join by the aborted wrapper. Conversely, forced process cancellation
-can drop a pending handler, return 503 and let the direct server join cleanly,
-allowing cleanup. Reaching the cancellation phase alone does not require skipping.
-See [ADR-008](adr/008-http-transport-ownership.md) for exact measured cases and
-exclusions; [validation](validation.md) limits claims to executed platforms.
+Both suites require native connection graceful acknowledgement before releasing
+cooperative work, then retain live resources and absent server completion/cleanup
+at a 50 ms held-work checkpoint. The instrumented suite additionally requires a
+pending wire read. This ordering depends on resolved Axum 0.8.9 and the enforced
+current-thread runtime ([testing](testing.md)); the producer signal alone is
+insufficient. These are bounded observations, not indefinite survival guarantees.
+
+Forced cancellation can drop a handler, return 503 and allow clean direct-server
+joining and cleanup. Aborting the direct wrapper instead leaves a blocked body
+pending through report inspection and skips cleanup for the unsafe exit. Later
+body release establishes separate transmission/destruction, not a transitive join.
+Full client shutdown plus socket close drops pending handler/body work in these
+fixtures before test release: both suites bound their post-close resource
+observations by one second. Write-half-close is a separate native-default
+case. No immediate or universal disconnect propagation follows. Before response
+construction the observer reports dropped without status; after headers it keeps
+the original completion with no second status/event.
+
+Both targets require scenario-specific successful completion from a PID-authorized
+child; ordinary successful process exit is insufficient. Independent Unix bounds
+reject deliberate stalls. Failed event assertions retain destructor evidence.
+Their shared startup/exercise/teardown phase budgets fit below the parent watchdog.
+Terminal report waits belong to teardown; only the intentional blocked-body abort
+checkpoint observes a report during exercise. Delayed real finalizers prove that
+successful teardown can outlast exercise's allowance without failing that phase.
+The observation driver joins timed-out exercise work before teardown and retains
+any observed shutdown report independently of later reconciliation failures.
+Slow combined-phase and readiness-timeout controls test these diagnostic paths.
+These are test-infrastructure contracts, not runtime-death or general async-drop
+promises. No HTTP/2, WebSocket, capacity or detached-descendant joining claim follows.
+Current Linux evidence and unexecuted macOS/hosted scope are in [validation](validation.md).
 
 Default infrastructure responses omit raw errors and use application/problem+json
 with stable codes. `with_failure_renderer` can select an application envelope,
@@ -659,6 +682,15 @@ Default server execution exhaustion uses 503, not a claim that client
 upload timed out. No automatic Retry-After authorizes write replay. Authentication,
 authorization, proxy trust, body limits, and domain error policy remain
 application-owned. Server correlation is separately opt-in. Liveness/readiness must be mounted outside the readiness gate.
+
+HTTP fixture diagnostic deadlines belong to the startup, exercise and teardown
+owners. Observation event/wire waits retain interrupted names, partial bytes and
+event snapshots on destruction; the driver retains tracing capture and any
+observed report. Fast and delayed-report negative controls require the same
+teardown timeout result. Keep-alive handler counts are rechecked after terminal
+shutdown, with late-entry controls proving the final checkpoint. These are test
+harness contracts, not production deadline or async-drop guarantees.
+
 
 ### Opt-in operational defaults
 
