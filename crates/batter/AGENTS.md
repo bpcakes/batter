@@ -12,6 +12,9 @@ Windows support and non-Unix fallbacks are out of scope.
 
 - `src/lib.rs` defines the public modules and boundary error aliases.
 - `src/lifecycle.rs` and `src/lifecycle/` own process tasks and shutdown reports.
+- `src/lifecycle/tasks.rs` privately owns direct-task joins, metadata, outcome
+  recording and escalation bookkeeping. The coordinator uses operations and
+  an owned summary, never the underlying collections.
 - `src/lifecycle/report.rs` owns the shutdown report type and retained-outcome summary;
   its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
@@ -54,7 +57,9 @@ Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or
 install a global subscriber/panic hook. Protected dispatch covers full future
-destruction and nested spans. The foundation cannot depend on its adapters;
+destruction and nested spans. Task instrumentation retains the available parent
+when its own span is filtered; create spans and look up fallback parents outside
+the admission mutex. The foundation cannot depend on its adapters;
 generic test support remains a leaf dependency used by tests.
 
 ## Common commands

@@ -8,9 +8,11 @@ mod driver;
 mod process;
 mod report;
 mod state;
+mod tasks;
 mod unix;
 
 use state::Shared;
+use tasks::TaskSet;
 
 pub use driver::{
     DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
@@ -29,20 +31,14 @@ use crate::{
     scoped_dispatch, validation,
 };
 use std::{
-    collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{Arc, atomic::AtomicBool},
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{
-    sync::mpsc,
-    task::{AbortHandle, Id, JoinError, JoinSet},
-    time::Instant,
-};
+use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::Instrument;
 
 /// Process admission state, not an automatic dependency-health assessment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,7 +470,7 @@ impl Supervisor {
         }
         tasks.collect_ready(&self.handle);
         let abort_requested = tasks.abort_unfinished();
-        if !tasks.set.is_empty() {
+        if !tasks.is_empty() {
             tasks
                 .collect_until(
                     &mut self.queued,
@@ -483,18 +479,10 @@ impl Supervisor {
                 )
                 .await;
         }
-        let unjoined = tasks.sorted_names();
+        let summary = tasks.finish();
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.
-        let unsafe_exit = !abort_requested.is_empty()
-            || !unjoined.is_empty()
-            || tasks
-                .records
-                .iter()
-                .any(|r| matches!(r.outcome, TaskOutcome::Panicked | TaskOutcome::Aborted));
-        let records = std::mem::take(&mut tasks.records);
-        let completed_process_tasks = tasks.completed;
-        drop(tasks);
+        let unsafe_exit = !abort_requested.is_empty() || summary.unsafe_exit;
         let cleanup = if unsafe_exit {
             self.cleanup.skip(SkipReason::UnsafeTaskExit)
         } else {
@@ -503,11 +491,11 @@ impl Supervisor {
         self.handle.shared.stop_driver();
         ShutdownReport {
             cause,
-            tasks: records,
-            completed_process_tasks,
+            tasks: summary.records,
+            completed_process_tasks: summary.completed,
             forced_cancellation,
             abort_requested,
-            unjoined,
+            unjoined: summary.unjoined,
             cleanup,
         }
     }
@@ -517,7 +505,7 @@ impl Supervisor {
         F: Future<Output = ()>,
     {
         tokio::pin!(shutdown);
-        if tasks.set.is_empty() && self.process.is_none() {
+        if tasks.is_empty() && self.process.is_none() {
             ShutdownCause::EmptySupervisor
         } else {
             loop {
@@ -526,9 +514,8 @@ impl Supervisor {
                     // Draining cannot be starved by a stream of finite success.
                     _ = self.handle.draining() => break ShutdownCause::Requested,
                     _ = &mut shutdown => break ShutdownCause::Requested,
-                    Some(result) = tasks.set.join_next_with_id(), if !tasks.set.is_empty() => {
-                        if let Some(cause) = tasks.record(result) {
-                            self.handle.shared.fail_task();
+                    cause = tasks.next_exit(&self.handle), if !tasks.is_empty() => {
+                        if let Some(cause) = cause {
                             break cause;
                         }
                     }
@@ -561,198 +548,6 @@ impl<F: Future> Future for CallerOwnedDriver<F> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.project().future.poll(cx)
-    }
-}
-
-struct TaskExit {
-    result: Result<(), BoxError>,
-    expected: bool,
-}
-
-struct TaskMetadata {
-    name: &'static str,
-    finite: bool,
-    abort: AbortHandle,
-}
-
-type TaskResult = Result<(Id, TaskExit), JoinError>;
-
-#[derive(Default)]
-struct TaskSet {
-    set: JoinSet<TaskExit>,
-    names: HashMap<Id, TaskMetadata>,
-    records: Vec<TaskRecord>,
-    completed: u64,
-}
-
-impl TaskSet {
-    fn spawn_component(&mut self, component: Component, handle: &ShutdownHandle) {
-        let name = component.name;
-        let mut signal = handle.signal();
-        signal.startup = Some(Arc::new(AtomicBool::new(false)));
-        let handle = handle.clone();
-        let span = tracing::info_span!(target: "batter", "batter.task", task = name);
-        let abort = self.set.spawn(scoped_dispatch::scope(
-            async move {
-                let result = (component.factory)(signal).await;
-                // Capture the state at completion, never at delayed observation.
-                let expected = handle.is_draining();
-                TaskExit { result, expected }
-            }
-            .instrument(span),
-        ));
-        self.names.insert(
-            abort.id(),
-            TaskMetadata {
-                name,
-                finite: false,
-                abort,
-            },
-        );
-    }
-
-    fn spawn_process(&mut self, task: process::QueuedProcess) {
-        let name = task.name;
-        // The future already carries the submitting operation's span and
-        // subscriber, independent of the coordinator's tracing context.
-        let abort = self.set.spawn(task.future);
-        self.names.insert(
-            abort.id(),
-            TaskMetadata {
-                name,
-                finite: true,
-                abort,
-            },
-        );
-    }
-
-    fn sorted_names(&self) -> Vec<&'static str> {
-        let mut values: Vec<_> = self.names.values().map(|entry| entry.name).collect();
-        values.sort_unstable();
-        values
-    }
-
-    fn pending(&self, handle: &ShutdownHandle) -> bool {
-        !self.set.is_empty() || handle.shared.has_finite_tasks()
-    }
-
-    fn unfinished(&self, handle: &ShutdownHandle) -> bool {
-        self.names.values().any(|task| !task.abort.is_finished())
-            || handle.shared.has_finite_tasks()
-    }
-
-    // Membership means a result remains unobserved, not necessarily that the
-    // task is still running. Preserve uncertainty only for actual abort requests.
-    fn abort_unfinished(&self) -> Vec<&'static str> {
-        let mut requested = Vec::new();
-        for task in self.names.values() {
-            if !task.abort.is_finished() {
-                task.abort.abort();
-                requested.push(task.name);
-            }
-        }
-        requested.sort_unstable();
-        requested
-    }
-
-    // None means a successful finite completion or expected critical stop.
-    // Actual failures are retained and initiate shutdown before drain.
-    fn record(&mut self, result: TaskResult) -> Option<ShutdownCause> {
-        let (id, mut outcome, error) = classify_task_result(result);
-        let TaskMetadata { name, finite, .. } = self
-            .names
-            .remove(&id)
-            .expect("every owned task has metadata");
-        if finite && outcome == TaskOutcome::Stopped {
-            outcome = TaskOutcome::Completed;
-            self.completed = self.completed.saturating_add(1);
-            tracing::debug!(target: "batter", task = name, ?outcome, "process task exit observed");
-            return None;
-        }
-        let record = TaskRecord {
-            name,
-            outcome,
-            error,
-        };
-        record.log_observation();
-        self.records.push(record);
-        if outcome == TaskOutcome::Stopped {
-            None
-        } else if finite {
-            Some(ShutdownCause::FiniteTaskExit(name))
-        } else {
-            Some(ShutdownCause::ComponentExit(name))
-        }
-    }
-
-    fn record_during_shutdown(&mut self, result: TaskResult, handle: &ShutdownHandle) {
-        if self.record(result).is_some() {
-            handle.shared.fail_task();
-        }
-    }
-
-    fn collect_ready(&mut self, handle: &ShutdownHandle) {
-        // This nonblocking API can observe completed tasks even when Tokio's
-        // cooperative poll budget is exhausted. Only this coordinator adds to
-        // the JoinSet, so harvesting the currently spawned set is bounded.
-        while let Some(result) = self.set.try_join_next_with_id() {
-            self.record_during_shutdown(result, handle);
-        }
-    }
-
-    async fn collect_until(
-        &mut self,
-        queued: &mut Option<mpsc::Receiver<process::QueuedProcess>>,
-        handle: &ShutdownHandle,
-        deadline: Instant,
-    ) {
-        while self.pending(handle) {
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep_until(deadline) => break,
-                Some(result) = self.set.join_next_with_id(), if !self.set.is_empty() => {
-                    self.record_during_shutdown(result, handle);
-                }
-                Some(task) = receive_process(queued) => self.spawn_process(task),
-            }
-        }
-        // Expired allowances stop waiting, not observation of results that are
-        // already available. Reconcile before escalation or final reporting.
-        self.collect_ready(handle);
-    }
-}
-
-fn classify_task_result(result: TaskResult) -> (Id, TaskOutcome, Option<BoxError>) {
-    match result {
-        Ok((
-            id,
-            TaskExit {
-                result: Ok(()),
-                expected,
-            },
-        )) => (
-            id,
-            if expected {
-                TaskOutcome::Stopped
-            } else {
-                TaskOutcome::UnexpectedExit
-            },
-            None,
-        ),
-        Ok((
-            id,
-            TaskExit {
-                result: Err(error), ..
-            },
-        )) => (id, TaskOutcome::Failed, Some(error)),
-        Err(error) => {
-            let outcome = if error.is_panic() {
-                TaskOutcome::Panicked
-            } else {
-                TaskOutcome::Aborted
-            };
-            (error.id(), outcome, Some(Box::new(error) as BoxError))
-        }
     }
 }
 

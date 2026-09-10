@@ -1,4 +1,7 @@
 use super::*;
+
+mod subscriber;
+
 use std::{
     future::Future,
     mem::discriminant,

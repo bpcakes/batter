@@ -291,7 +291,8 @@ impl CleanupStack {
             let name = hook.name;
             let deadline = work_deadline.min(Instant::now() + budget.per_hook);
             let mut running = JoinSet::new();
-            let span = tracing::info_span!(target: "batter", "batter.cleanup", cleanup = name);
+            let span = tracing::info_span!(target: "batter", "batter.cleanup", cleanup = name)
+                .or_current();
             // The factory is called INSIDE the task so its panic is observable.
             running.spawn(scoped_dispatch::scope(
                 async move { (hook.action)().await }.instrument(span),

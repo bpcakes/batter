@@ -35,6 +35,16 @@ remote cancellation acknowledgement, ambiguous-commit rollback or a server-side
 concurrency bound. The full process has a 180-second watchdog; OS scheduling and
 process death do not establish cleanup guarantees.
 
+Private-boundary regressions in
+[`lifecycle/tasks/tests.rs`](../crates/batter/src/lifecycle/tasks/tests.rs) cover
+cancelled join waiters, exactly-once recording of early success/error/panic,
+closed admission before returning a failure cause, and conservative unjoined
+summaries. [`observation/tests.rs`](../crates/batter-axum/src/observation/tests.rs)
+checks unchanged failure responses without admission and destruction under the
+saved dispatcher after the observation waiter is cancelled. These complement
+the existing scheduling, shutdown-cause, HTTP composition and dispatch suites.
+
+
 ```sh
 bash scripts/verify.sh --bootstrap  # Initial formatter + dependency lock + checks.
 bash scripts/verify.sh             # Subsequent locked checks.
@@ -269,6 +279,8 @@ receipt are excluded.
 | HTTP abort under another subscriber, including nested span destruction | [HTTP dispatch](../crates/batter-axum/tests/scoped_dispatch.rs) |
 | Unpolled !Unpin future capture and nested span destruction under its saved dispatcher | [private wrapper](../crates/batter/src/scoped_dispatch.rs) |
 | Critical/finite abort, dropped cleanup driver, hook timeout; submitter vs driver diagnostics | [scoped_owned_tasks.rs](../crates/batter/tests/scoped_owned_tasks.rs) |
+| Filtered task spans retain enabled application parents during execution and normal/aborted destruction | [filtered.rs](../crates/batter/tests/scoped_owned_tasks/filtered.rs): critical components, finite tasks and cleanup hooks under `info,batter=warn`, on current-thread and two-worker runtimes, with a separate ambient subscriber and parent. |
+| Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
 
 Timer tests use Tokio's paused time. This controls the Tokio clock, not system

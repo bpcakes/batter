@@ -493,6 +493,31 @@ HTTP event uses that behavior to omit status when no response exists. Local Axum
 so retaining `MatchedPath` does not retain the raw request or add a copied path.
 Direct event-visitor regressions exercise these semantics without span formatting.
 
+## Filtered process-task and cleanup context: 2026-09-09
+
+For `batter-cpb`, rechecked resolved tracing 0.1.44 and tracing-subscriber 0.3.23
+against Cargo.lock and their installed sources. The versioned
+[`Instrument` documentation](https://docs.rs/tracing/0.1.44/tracing/trait.Instrument.html#method.instrument)
+explicitly describes loss of the current parent when spawning with a disabled
+span, and recommends `Span::or_current` before the handoff. `instrument.rs`
+enters the retained span on polling and inner-future destruction. The existing
+Batter dispatch wrapper remains outside instrumentation to protect complete
+future/span destruction. No dependency or public API changes are needed.
+
+The finite admission path selects the fallback before taking its mutex:
+[`Span::current`](https://docs.rs/tracing/0.1.44/tracing/struct.Span.html#method.current)
+queries the application subscriber and must not execute under the admission
+lock. Mixed-target-filter regressions cover all three task boundaries on both
+current-thread and multi-thread Tokio runtimes; this does not guarantee delivery
+through every subscriber layer or exporter.
+
+The follow-up `batter-cpb.1` test implements the native `Subscriber` callbacks
+and delegates span bookkeeping to `tracing_subscriber::Registry`. Its test-only
+direct dependency on the already resolved tracing-core 0.1.36 names
+`tracing_core::span::Current`, the return type of `Subscriber::current_span`
+which tracing 0.1.44 does not re-export. Cargo adds only that dev-dependency edge
+to the lockfile; no resolved package version or production dependency changes.
+
 ## HTTP context ownership and panic policy: 2026-09-09
 
 Before implementation, rechecked the unchanged resolved Axum 0.8.9, Tower 0.5.3,

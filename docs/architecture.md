@@ -81,6 +81,11 @@ retries, scheduling, recovery, and its own internal supervisor.
 
 ## HTTP observation ownership
 
+The private `batter-axum/src/observation.rs` module owns the observation guard,
+response facts and completion events. Its closure-based `observe_response`
+entry composes with admission without importing `RequestPolicy` or lifecycle
+state. Public middleware and `HttpObservationLevel` retain their crate-root paths.
+
 The adapter separates response observation from admission/deadline policy, since
 probes and rejected or unmatched requests still need observations. The observer
 owns response facts, the first-poll dispatcher and a retained context span. Its
@@ -151,6 +156,14 @@ initialization does not make an unknown dependency healthy. Application timing
 policy and actual probe implementation stay in the composition root.
 
 ## Shutdown state machine
+
+The private `lifecycle/tasks.rs` module owns direct tasks and all join accounting.
+The coordinator selects phases through narrow operations, never a raw `JoinSet`
+or mutable record collection. Waiting for an exit consumes and records its join
+in one poll before returning a shutdown cause; cancelling a pending wait cannot
+lose a consumed result. Finishing transfers an owned summary and releases the
+task collection before dependency cleanup, without claiming unjoined tasks have
+terminated. Phase deadlines and conservative cleanup policy remain coordinator-owned.
 
 `lifecycle/state.rs` owns readiness and admission facts. Every transition uses
 the same mutex as finite-work admission, including the final Stopped transition.
@@ -229,6 +242,13 @@ destruction of Batter-owned futures, including their nested spans. Operations
 and HTTP boundaries capture it on first poll; admitted finite work captures it
 at submission. This requires no downstream wrapper, global subscriber, extra
 task, or per-operation heap allocation.
+
+Critical components, finite tasks and cleanup hooks use the native
+`Span::or_current` fallback when their INFO task span is disabled. Select this
+context before spawning or enqueueing; retaining the dispatcher alone cannot
+preserve an enabled application parent across a task boundary. Finite admission
+performs both span creation and fallback lookup outside its transition lock,
+since either can call application subscriber code.
 
 `batter::telemetry::with_current_dispatch` exposes this behavior as an opaque
 future for adapter authors. It captures the current dispatcher when called and

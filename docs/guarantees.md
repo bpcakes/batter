@@ -157,6 +157,16 @@ capacity is shared: awaiting a child at full capacity requires handling rejectio
 not creating an unbounded waiter. Finite work remains in-memory, not durable.
 Its callback carries the submitting span/subscriber, while process supervision
 and dependency cleanup retain the driver's diagnostic context.
+Critical components, finite tasks and cleanup hooks retain the available
+application parent when filtering disables their Batter INFO span. The context
+is selected before spawning (before enqueueing for finite work) and covers
+polling and destruction, including abortion. Parent lookup for finite work
+happens outside the admission lock. Subscriber and per-layer filters still own
+which spans and events reach a sink.
+A synchronous subscriber regression checks mutex availability during span
+creation, current-parent lookup and parent cloning. It exercises real finite
+submission without a competing coordinator, so a callback moved under the lock
+fails immediately instead of relying on an async timeout to detect a deadlock.
 
 A finite task's `Err(E)` initiates process drain. Expected business denial should
 be `Ok(Err(denial))`, not a fatal task error. Original failure E is shared with the
@@ -445,6 +455,12 @@ Dependency observations do not mutate process state or automatically alter
 simulated dependency read, not evidence of actual database availability.
 
 ## Cleanup contract
+
+The coordinator receives an owned task summary only after releasing its task
+collection. The private join operation records each consumed result before
+returning; abandoning a pending join waiter neither cancels owned work nor
+discards its later result. Summary extraction retains unjoined names and does
+not promote asynchronous abortion into proof of termination.
 
 `CleanupReport` is `#[must_use]`. Awaited completion can still contain failed,
 skipped or unjoined finalizers; callers must inspect the retained report.
