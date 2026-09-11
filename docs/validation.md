@@ -2,6 +2,246 @@
 
 Latest evidence: 2026-09-11. Earlier sections retain their historical scope.
 
+## Complete preparation ownership (batter-2zw), 2026-09-11
+
+The cancellation repair retains preparation independently of its waiter, settles
+its dedicated control session before dependency cleanup, and publishes typed
+unlock and client-close results alongside preparation/native failures. It validates
+deadline arithmetic before acquisition or native build. The shared worker shutdown
+allowance is fourteen seconds: ten native stop, one abort drain, two lease release,
+and one scheduling margin. Early initialization now installs and polls Unix signals
+before pool acquisition; completed signal reception survives registration.
+
+A live cancellation regression exposed an additional SQLx 0.9 behavior: returning
+a connection with an interrupted query could block its reuse ping and delay shared
+pool closure. Native preparation helpers now use a temporary one-slot pool that
+closes returned connections before that ping. Preparation explicitly closes this
+pool before starting the native supervisor. Application pool capacity excludes one
+control session during normal operation and up to two sessions during preparation.
+This is documented capacity, not a total-session limit.
+
+Regression evidence covers cancelled/aborted preparation waiters, immediate
+successor acquisition after confirmed unlock, `Duration::MAX` before side effects,
+owned-task panic publication, late nested cleanup failures, completed Unix signal
+handoff, SIGTERM during actual pool/schema/control initialization, native LEASED
+cancellation and an orchestrated concurrent terminal transition. Release fault
+tests independently retain unlock/close errors and timeouts and exercise the
+composed native-stop/abort-drain/release deadline with Tokio's paused clock.
+Those fault tests inject the release operations; they do not claim live network
+fault coverage. Client closure is explicitly not PostgreSQL backend-exit proof.
+
+Linux x86_64; Rust/Cargo 1.98.1 (`48a229cea` / `797e8a9bc`) and 1.94.0
+(`4a4ef493e` / `85eff7c80`). Git baseline remains
+`d82f5bfac71d47fc429b381bc61f42350b301764`, with existing uncommitted work
+preserved. Cargo.lock remains unchanged at SHA-256
+`848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+Two task-owned `postgres:18` containers, `batter-2zw-primary` and
+`batter-2zw-observer`, run PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2), SCRAM host
+authentication, `autovacuum_naptime=1s`, and `max_connections=100`, on loopback
+33395/33396. Both task-owned containers were removed after verification.
+Provisioning is external to Batter. `DATABASE_URL` is unset.
+
+| Command | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete Rust/Python matrix, formatting, warning-denied Clippy and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix on the minimum toolchain. |
+| Build `batter-axum` example `http_service` with `--locked` on each toolchain, then run `scripts/smoke_http.py --binary target/debug/examples/http_service` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten process smokes, including readiness, deadline/correlation behavior and exit 0. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` with both task-owned endpoints | PASS: native preflight, exact 54-entry inventory, 54 passed, 0 failed, 0 ignored, 0 filtered; 78.58s. Includes 52 database cases and two offline signal entries. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` with the same endpoints | PASS: identical preflight and inventory; 54 passed, 0 failed, 0 ignored, 0 filtered; 78.59s. |
+
+The first full database execution passed all 52 live cases but the strict runner
+correctly rejected two filtered offline entries. Its repaired command now executes
+all 54 entries with `--include-ignored`, preserving the exact-name and zero-filtered
+oracle. The initial Python control retained the former `--ignored` command and
+failed; its expected command was updated and both full verification runs passed.
+The lease-loss test was updated to assert both the retained native failure and
+the new release uncertainty. The trailing deferred-cleanup diagnostic in the live
+log belongs to the deliberate `fixture_cleanup_failure` scenario.
+
+The first Jig check rejected every receipt because documentation was edited while
+its read-only verification layer ran. This was an agent sequencing error: direct
+checks passed, but the mixed-snapshot receipts are invalid and cannot be reused.
+The stationary-worktree rerun passed all five targets. Its Rust receipts are
+Clippy `receipt_01M28GP4CG2FYNR292TYCH5YZK`, formatting
+`receipt_01M28GP4RA8DKE1VHBKCCA0YKJ`, and tests
+`receipt_01M28GP546TXHQ6Z3E5BXD90C9`, for plan
+`plan_01M28EQQEM2E9XNGVMS3ED78F6`. Final documentation/tracker edits refresh
+only the repository policy checks and reuse these unchanged Rust inputs. A
+default two-second freshness inspection reached `collection_limit`; the required
+follow-up uses `--freshness-timeout-ms 30000` to inspect existing evidence.
+
+The prior 49-case run below was executed only on Rust 1.98.1; its Rust 1.94.0
+follow-up was Clippy/compile evidence. Its claim of confirmed release on every
+preparation exit was disproved by cancellation and is superseded by this section's
+owned preparation and typed outcomes. No general async-drop/runtime-death guarantee
+or new macOS, TLS, hosted CI, publication or deployment evidence is claimed.
+
+## Worker-host lease and witness follow-up, 2026-09-11
+
+A fourth review pass over the staged worker found five follow-up gaps: the
+control witness carried a two-attempt budget that overlapping predecessor
+generation mismatches could exhaust and dead-letter; the advisory lease was
+dropped rather than released before driver completion was published; the
+lease-loss live case terminated any advisory-lock backend and did not wait for
+its exit before successor acquisition; early post-start failures in that case
+could drop the running Batter supervisor without awaiting shutdown; and a native
+driver failure during startup witnessing was classified twice. The repaired
+source gives the control an unbounded attempt budget (the witness remains bounded
+by its deadline and stale controls are canceled by the next owner), awaits a
+bounded server-confirmed `pg_advisory_unlock` and session closure before every
+completion publication and before every preparation or build failure returns,
+exports the two-key lock identity so live cases target only that lock, waits for
+the terminated backend to leave `pg_stat_activity` and for the lock to be free
+before preparing the successor, keeps the started supervisor awaited on every
+failure path, and returns the single driver classification directly.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; Rust/Cargo 1.98.1
+(`48a229cea` / `797e8a9bc`) and minimum 1.94.0 for the package Clippy check.
+Audited Git baseline `d82f5bfac71d47fc429b381bc61f42350b301764` with the
+uncommitted worker-host tree; Cargo.lock remained unchanged at SHA-256
+`848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`. Two
+task-owned disposable containers `batter-goal-db` and `batter-goal-other` ran
+`postgres:18` (**PostgreSQL 18.6 Debian x86_64**, `-c autovacuum_naptime=1s -c
+max_connections=100`, SCRAM host authentication) on loopback ports 33393 and
+33394 as `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL`; both were
+removed after the run. `DATABASE_URL` was unset.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` | PASS: 18 library tests, 20 configuration tests, three plus one further offline integration tests, nine doctests, 49 ordinary live ignores. |
+| `cargo clippy --workspace --all-targets --locked`, `cargo fmt --all -- --check`, `RUSTDOCFLAGS="-D warnings" cargo doc -p batter-example-reference-service --no-deps --locked` | PASS with no warnings on 1.98.1. |
+| `RUSTUP_TOOLCHAIN=1.94.0 cargo clippy -p batter-example-reference-service --all-targets --locked -- -D warnings` | PASS on minimum Rust 1.94.0. |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --ignored --test-threads=1 hosted_worker worker_startup` | PASS: all eight hosted-worker and startup-witness live cases, including the rewritten lease-loss takeover; 33.03s. |
+| `bash scripts/test_reference_live.sh` with both endpoints | PASS: PostgreSQL 18 preflight; exact 49-case inventory; 49 passed, 0 failed, 0 ignored, 0 filtered; 71.49s. The trailing deferred-cleanup message is the intentional `fixture_cleanup_failure` scenario. |
+| Three further sequential executions of `hosted_worker_lease_loss_stops_host` and `hosted_worker_probe_registry_and_normal_drain` | PASS each time (3.34s, 3.31s, 3.23s); no flake observed in the targeted backend termination, awaited exit or successor acquisition. |
+
+This is the first complete execution of the 49-case live inventory: the
+database-exclusive probe ownership, forced lease loss, successor takeover,
+unstarted-supervisor cleanup and dropped-wrapper driver observation cases now
+have live evidence on this machine. The complete `scripts/verify.sh` matrix and
+HTTP smokes were not rerun for this follow-up; the changed files are confined to
+the reference package and documentation. No macOS, arm64, TLS, hosted CI,
+publication or deployment claim is added.
+
+## Worker-host review repairs, 2026-09-11
+
+A comprehensive three-reviewer pass over the staged Runledger worker found
+unsafe shared-pool cleanup after another direct component exit, process-global
+startup-control claim collisions, cancellation-sensitive native driver ownership,
+an unreserved parent startup deadline, delayed signal consumption and fixture
+failure paths that could abandon the driver. The repaired source retains the
+native join independently, waits for observed completion before dependency
+cleanup, applies the final Batter unsafe-exit decision, fences the probe host with
+a PostgreSQL session advisory lock, reconciles stale control rows, clamps the
+witness before a 12-second shutdown reserve, polls installed Unix signals during
+initialization and explicitly stops unregistered test hosts.
+
+A fresh three-reviewer pass over those repairs found five follow-up gaps. The
+second repair round now checks the dedicated lock session every second with a
+two-second query bound and session-local ten-second idle timeout, requests native
+shutdown on lease loss, and releases the connection before publishing driver
+observation. Pending/leased startup controls are canceled under that ownership
+before enqueue; registration rejection retains an awaitable host. Process-level
+cleanup veto inspects direct panic/abort, abort-request and unjoined evidence even
+when the outer cleanup stack is empty. The real-child signal readiness reader now
+accepts libtest-prefixed output and has a three-second watchdog.
+
+A third three-reviewer pass found an unstarted-registration owner gap, a lease
+liveness gap during database preparation, successor-witness exposure to a stopping
+predecessor, two incomplete cleanup/error classifications and one over-broad
+readiness sentence. The final repair round retains a drop guard in the registered
+factory, monitors the lease throughout preparation, binds each handler to its
+unique witness generation with one delayed takeover retry, treats unjoined process
+cleanup as unsafe for retained dependencies, preserves registration and native
+shutdown failures together, and documents explicit readiness-approval opt-out.
+The lease-loss live case now begins successor preparation before awaiting the
+predecessor; the normal live case drops a successfully registered but unstarted
+Batter supervisor and waits for native stop and lease release.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; audited Git baseline
+`d82f5bfac71d47fc429b381bc61f42350b301764`. Cargo.lock remained unchanged at
+SHA-256 `848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+
+| Command | Result |
+| --- | --- |
+| Focused reference package check, 18 library tests, nine doctests, warning-denied Clippy and runner-control tests | PASS on Rust 1.98.1. Added unit controls reject a predecessor/successor witness mismatch and classify unjoined process cleanup as unsafe. The earlier cleanup and Unix-signal regressions remain passing. |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --ignored --list` after the final repair | PASS: exact 49-case inventory, 49 unique names. No live case executed. The lease-loss case now compiles concurrent successor preparation plus retained predecessor failure; the normal case compiles unstarted-supervisor stop observation and lease release. |
+| `bash scripts/verify.sh` | PASS on Rust/Cargo 1.98.1 (`48a229cea` / `797e8a9bc`): complete Rust/Python matrix, formatting, warning-denied Clippy and rustdoc, 12 foundation doctests and nine reference-service doctests. Ordinary discovery found all 49 reference live cases and intentionally ignored them. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on minimum Rust/Cargo 1.94.0 (`4a4ef493e` / `85eff7c80`) with the same verification scope and 49 ordinary live ignores. |
+| Build `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes, once per toolchain | PASS: all ten process smokes retained readiness/probes/fallback, request identity, completion telemetry, deadline behavior, both signal choices and exit 0. |
+
+`POSTGRES_TEST_ADMIN_URL`, `POSTGRES_TEST_OBSERVER_URL` and `DATABASE_URL` were
+unset. PostgreSQL provisioning remains external, so the expanded 49-case live
+suite was not executed and this section does not extend the prior 47-case live
+claim. In particular, database-exclusive probe ownership, forced lease loss,
+successor takeover, unstarted-supervisor cleanup and dropped-wrapper driver
+observation have current compile/offline coverage but await live execution.
+No macOS, TLS, hosted CI, publication or deployment claim is added.
+
+## Staged Runledger worker acceptance (batter-0cp), 2026-09-11
+
+The expanded 47-case reference inventory passed against two dedicated temporary
+PostgreSQL 18.6 clusters on both supported Rust toolchains. Both clusters used
+SCRAM-SHA-256 host authentication; the primary used superuser authority,
+`track_counts=on`, and `autovacuum_naptime=1s`. Native preflight verified the
+versions, required privileges and distinct signed cluster identifiers before
+fixture creation. These local clusters were verification infrastructure, not
+application provisioning or deployment evidence.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; PostgreSQL
+`18.6 (Ubuntu 18.6-1.pgdg24.04+2)`; Rust/Cargo 1.98.1
+(`48a229cea` / `797e8a9bc`) and 1.94.0
+(`4a4ef493e` / `85eff7c80`). The audited Git baseline is
+`d82f5bfac71d47fc429b381bc61f42350b301764`; the implementation remains an
+uncommitted working-tree change as required. Cargo.lock was unchanged, with
+SHA-256 `848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+
+| Command | Result |
+| --- | --- |
+| `POSTGRES_TEST_ADMIN_URL=<temporary-primary> POSTGRES_TEST_OBSERVER_URL=<temporary-observer> RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS: PostgreSQL 18 preflight; 47 passed, 0 failed, 0 ignored, 0 filtered; 68.36s. |
+| `POSTGRES_TEST_ADMIN_URL=<temporary-primary> POSTGRES_TEST_OBSERVER_URL=<temporary-observer> RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS: the same preflight and exact inventory; 47 passed, 0 failed, 0 ignored, 0 filtered; 66.48s. |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 14 library tests, including exact probe-registry contents and cancellation-independent nested cleanup. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings` | PASS. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete Rust/Python matrix, formatting, warning-denied Clippy, five reference doctests and warning-denied rustdoc. Ordinary discovery found all 47 live cases and intentionally ignored them. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete verification scope on the minimum toolchain. |
+| Rebuild `batter-axum` example `http_service` on each toolchain, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten process smokes, including readiness/probes/fallback, custom envelopes, work/deadline, filtered correlation, both signals and exit 0. |
+| `scripts/jig work check --plan-id plan_01M27YA6NV07SYD5NGKDWS1WXH` | PASS: Clippy, formatting, tests, contract and file-budget targets. Source-validation receipts are Clippy `receipt_01M2812PDYF745JX00TM3P0ZVK`, formatting `receipt_01M2812PSYWDC3P6VRF9761PA7`, tests `receipt_01M2812Q6MYKP25G6WW4ZH35D6`, contract `receipt_01M2812QJZT2J9NPTCYGC2783C`, and file budget `receipt_01M2812QYK6CPJJR5XR2VKR5W8`. `work evidence` and `work gates` report the required verify gate fresh and passing. |
+
+The staged root now continuously owns the pinned Runledger supervisor and
+acknowledges its Batter component only after `jobs.startup.control` reaches its
+actual typed handler and persisted `SUCCEEDED` state. The registry contains no
+delivery handler: a delivery submitted through the production command path stays
+PENDING with zero attempts, and application readiness deliberately remains
+unapproved until `batter-8q8.2` supplies the real provider. Each control attempt
+creates a fresh operation context from its native attempt deadline rather than
+inheriting request cancellation.
+
+Live controls also prove that a claimed handler can finish after the drain
+request, configured concurrency 1/2 changes actual hosted execution, controlled
+retry produces two handler invocations and exactly two durable attempts, and
+local replay adds neither. A PostgreSQL trigger rejects only the startup control
+job's success persistence after its real handler invocation; no handoff becomes
+ready, and owned partial-startup cleanup runs. A held handler crosses the actual
+ten-second native shutdown bound: the component retains
+`RuntimeError::ShutdownTimeout`, no dependent finalizer runs, and the nested
+report records `UnsafeTaskExit` while the termination gate stays Unproven.
+
+The async/concurrency audit exposed two defects before final validation. First,
+requesting Runledger's cloneable shutdown handle did not resolve the external
+future that starts `run_until_shutdown`'s timeout; the host now owns both signals,
+requests stop-claiming first, then resolves the bounded-driver trigger. Second,
+the first cleanup waiter initially owned the nested cleanup future; the final
+owner drives cleanup independently and publishes one retained report, so waiter
+cancellation cannot abandon finalization. Focused regressions failed or hung on
+the earlier designs and pass after both corrections.
+
+An initial full verification attempt found one broken shorthand rustdoc link
+after all executable tests and doctests had passed. The link was fully qualified;
+a focused warning-denied rustdoc run and both complete final matrices pass. The
+runner's intentional deferred-cleanup diagnostic appeared during both successful
+live inventories, as designed. No macOS, TLS, hosted CI, delivery-provider,
+publication or deployment claim is added.
+
 ## Atomic reference command live acceptance (batter-kpd), 2026-09-11
 
 The current 42-case reference inventory passed against two dedicated temporary

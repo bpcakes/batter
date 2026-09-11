@@ -193,7 +193,7 @@ absence during settlement is not rollback evidence. This initial command has no
 automatic transaction replay, worker handler, provider effect, or exactly-once
 claim. The later controlled concurrency/fault suite owns stronger proof.
 
-## Runledger: native producer implemented; host remains future work
+## Runledger: native producer and staged host implemented
 
 Reviewed baseline from the preceding brief: runledger-core, runledger-postgres,
 and runledger-runtime 0.12.0, with a PostgreSQL 18 requirement in its published
@@ -203,20 +203,48 @@ release uses a different SQLx version and is not interchangeable with that pin.
 
 Runledger retains internal supervision, heartbeat/lease logic, claim behavior,
 schedules, workflows, retries, durable intents, schema compatibility, and
-operator interfaces. Batter should host the upstream supervisor as one critical
-component and preserve its shutdown result. Do not spawn each of its internal
-loops under a second independent policy.
+operator interfaces. The staged reference host wraps the complete upstream
+supervisor as one critical component and preserves its shutdown result. It does
+not spawn each internal loop under a second independent policy.
 
-The host must align budgets: request upstream stop-claiming during drain, allow
-its full cleanup allowance, and observe its returned error. An already in-flight
-claim may complete after the stop request. The inspected candidate offers no
-linearized stop-claim barrier, and its builder spawns loops without a readiness
-acknowledgement. The host needs an application initialization witness and must
-state what it proves. Upstream join returns its first failure; later internal
-errors are not automatically available to Batter. Dropping the supervisor is
-not join evidence. See the dated source inspection in [references](references.md).
-Do not assume an adapter can mechanically map every inner signal to Batter's
-forced token; inspect upstream behavior and document that translation.
+The host aligns budgets: it requests upstream stop-claiming during drain, allows
+the full native shutdown plus abort-drain allowance, and observes the returned
+error. An internal owner retains the native join even if a startup waiter or
+`WorkerHost` wrapper is dropped. An already in-flight claim may complete after
+the stop request. The inspected revision offers no linearized stop-claim barrier,
+and its builder spawns loops without a readiness acknowledgement, so the staged
+host uses an exact durable control-job witness. Upstream join returns its first
+failure; later internal errors are not automatically available to Batter. See
+the dated source inspection in [references](references.md). Do not assume an
+adapter can mechanically map every inner signal to Batter's forced token.
+
+The pinned claim API filters only by static job type; it has no worker-instance
+selector. The staged `jobs.startup.control` host therefore takes a PostgreSQL
+session advisory lock before catalog sync and holds that dedicated session until
+native driver completion. It checks the owning session every second throughout
+preparation and execution with a two-second local query bound and applies a
+session-local ten-second idle timeout; query failure or timeout requests native
+shutdown and remains an explicit driver failure. The release attempt records unlock and client closure separately before
+termination observation can authorize dependent cleanup; timeout and failure
+remain unconfirmed outcomes. Preparation is independently owned before acquisition,
+and dependency cleanup waits for its settlement even when native work never began. A healthy lease permits
+only one staged probe host per database. After server-confirmed lease loss, a
+successor can start while the predecessor is still stopping; generation-bound
+handlers make a predecessor retry, rather than complete or terminally fail, the
+successor's witness. This is bounded takeover, not rolling-deployment support; a
+provider host that needs overlap requires a separately designed durable ownership
+protocol. While holding the lock, a new owner cancels pending or leased startup
+controls left by an earlier owner before enqueueing its unique witness. A
+concurrent terminal transition is accepted after explicit terminal readback. A
+temporary one-connection pool closes all returned preparation connections, avoiding
+cancellation-sensitive SQLx reuse checks in hidden native checkouts; it closes
+before native construction. PgLease owns witness readback disposition. The
+application pool maximum excludes this temporary connection and the control session.
+The endpoint must provide direct or session-sticky PostgreSQL semantics;
+transaction-pooling middleware that reassigns sessions is unsupported.
+Session close releases the lock, but failover or a split database service remains
+outside this process-local handoff; no remote session-termination acknowledgement
+is claimed.
 
 Application writes and dependent job submission share a native transaction.
 Rollback, idempotency and payload-conflict semantics belong to the selected
@@ -477,9 +505,14 @@ used. The application owns schema names and password/TLS policy; see the
 The reference fixture paths and delivery command root consume these outputs.
 The command root uses configured authentication, request deadline, pool,
 Bulkhead and finite-process constructors; live held-work cases prove their
-runtime effects. `batter-0cp` must consume `WorkerSettings::builder`
-in the hosted worker with acknowledged startup and joined shutdown. Those tasks
-retain their own acceptance. Authorized external migration remains `batter-7r3.6`.
+runtime effects. Its staged worker uses `WorkerSettings::builder`, preserves
+Runledger's intent-promoter inheritance, and hosts the complete native supervisor
+as one Batter critical component. A control job must pass catalog sync, claim,
+actual handler dispatch and durable success before component acknowledgement.
+The probe-only registry omits `records.delivery.execute`, so application
+readiness remains unapproved and ordinary delivery jobs remain pending until the
+provider task installs its real handler through the same host constructor.
+Authorized external migration remains `batter-7r3.6`.
 The producer does not introduce Runlimit settings or an alternate job supervisor.
 
 Acquire inside existing `Startup`, reserving cleanup before acquisition and
@@ -489,6 +522,25 @@ SQLx close error. Keep the external fixture lease owned until pool finalization
 has completed, then await lease cleanup and deferred drain. The new live startup
 probe follows this order; offline file-resource tests retain a real acquisition
 error alongside a separate real cleanup failure.
+
+The worker requests Runledger stop-claiming at Batter drain, then resolves the
+external future that starts `run_until_shutdown`'s ten-second bounded join.
+Runledger may spend one additional second draining aborted direct tasks, so the
+outer grace includes that allowance. An already in-flight claim may still return
+and dispatch after stop; no linearized no-claim acknowledgement is claimed.
+The native join and its result publication are retained independently of the
+wrapper. Native success marks the application termination gate
+`CooperativelyStopped`; timeout, panic, or returned runtime error stays
+`Unproven`. Dropping the wrapper requests shutdown but does not detach that join.
+A separately driven nested cleanup owner waits for driver observation, then
+records dependency hooks as `UnsafeTaskExit` without invoking them when worker
+termination is unproved. It also consumes the final Batter process outcome, so
+an unsafe exit from another direct component prevents cleanup of shared
+dependencies even if the worker itself stopped. The original native driver error
+remains in the component record; the nested report remains inspectable even if
+Batter skipped its grouped outer hook.
+Runledger returns only its first observed loop failure and logs later drain
+failures, which the host cannot reconstruct.
 
 Live reference preflight and fixture acquisition share the application validator
 through a private live-endpoint policy. Preflight authenticates with the same

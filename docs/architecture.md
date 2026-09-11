@@ -119,13 +119,27 @@ Observers retain outcomes without keeping a running owner alive. Initializer
 construction, polling and destructor unwinds are caught separately; original
 application failures and destructor panics coexist in the startup report.
 
-Successful initialization arms readiness and starts the existing owned driver.
-Each registered component must still acknowledge actual initialization with
-`ShutdownSignal::mark_started`. Drain cannot be reversed by late approval.
+By default, successful initialization arms readiness and starts the existing
+owned driver. `without_readiness_approval` deliberately leaves application
+approval to the running owner. Each registered component must still acknowledge
+actual initialization with `ShutdownSignal::mark_started`. Drain cannot be
+reversed by late approval.
 `register_signals` installs native SIGTERM/SIGINT listeners during initialization;
-installation errors enter startup cleanup before readiness. Their component
-receives signals once the running driver starts. Tokio's process-wide signal
-handlers remain installed after listeners are dropped.
+installation errors enter startup cleanup before readiness. Applications with a
+long initializer can instead call `install_signals`, select on the returned
+sources during initialization, and transfer them into their critical component
+before handoff. Completed reception is retained through registration. The staged
+reference root uses that path around its complete awaited initializer. Tokio's process-wide signal handlers remain installed after listeners
+are dropped.
+
+That staged worker keeps its complete native join under an independent owner.
+Preparation is independently owned before acquisition, and native spawning
+transfers synchronously into the native driver. Its control session is monitored,
+and bounded release observations are retained before dependency cleanup. Native
+termination proof, release certainty and caller observation remain separate facts. Registration rejection returns
+the already-stopping host to the caller, rather than discarding its only
+awaitable owner. These are example composition contracts, not new foundation
+supervision or database abstractions.
 
 The lower-level `take_cleanup` pattern remains explicitly caller-driven. Its
 caller cancellation can abandon asynchronous cleanup. Resources not yet

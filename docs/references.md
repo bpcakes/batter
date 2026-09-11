@@ -1051,9 +1051,11 @@ boundaries so an application failure is retained alongside a destructor panic.
 Tokio 1.53.1's [Unix signal source](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/tokio/src/signal/unix.rs)
 was inspected in the downloaded Cargo registry because the web page could not
 be fetched. `signal` installs listeners immediately; Tokio's process-wide handler
-is not restored when listeners are dropped. The helper registers consumption as
-a critical component, so signals are consumed once that driver starts. Linux
-process smoke evidence is recorded in validation; no new macOS run is claimed.
+is not restored when listeners are dropped. `install_signals` retains both
+sources for cancellation-safe polling during initialization, then transfers them
+to the critical component. A Linux real-child unit control sends SIGTERM before
+that transfer; process smoke evidence is recorded in validation. No new macOS run
+is claimed.
 
 ## Owned dependency health semantics (2026-09-09)
 
@@ -1882,3 +1884,78 @@ using the existing private fake passfile failed against the earlier handoff.
 The handoff now supplies an explicit empty query password when necessary; the
 same real native parser then preserves the selected empty value. These checks
 do not read a real credential file or establish live server authentication.
+
+## Hosted Runledger implementation recheck, 2026-09-11
+
+Rechecked the selected Runledger 0.12.0 revision
+`0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4` before implementing the staged
+worker host; the dependency graph did not change.
+
+- The pinned
+  [supervisor builder and driver](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/supervisor.rs)
+  validate every returned build error before the first internal spawn. Build
+  success is not an initialization acknowledgement. Dropping the supervisor
+  requests shutdown and detaches task handles, so it is not join evidence.
+- The pinned
+  [worker loop](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker.rs)
+  derives its claim filter from registered static handler types. It checks
+  shutdown before starting a claim, but a claim already in progress may return
+  and dispatch after the request; there is no linearized stop-claim receipt. The
+  corresponding
+  [claim query](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/claim_ids.sql)
+  filters by those job types and contains no worker-instance selector. The
+  staged control host therefore uses PostgreSQL's documented session advisory
+  lock as an exclusive per-database ownership fence and retains that session
+  through observed native driver completion.
+- `run_until_shutdown` starts its bounded wait when the supplied external future
+  resolves. Requesting only the cloneable native handle leaves that future
+  pending, so the application host owns both signals and sends them in that
+  order. The pinned
+  [task group](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/task_group.rs)
+  may spend up to `min(timeout, 1 second)` draining aborted tasks after the main
+  bound. It returns the first observed error and logs later drain failures.
+- The pinned
+  [attempt execution](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker/execution.rs)
+  gives each handler a native attempt deadline. The reference control handler
+  creates a fresh Batter `OperationContext` from that deadline and injects only
+  host-owned dependencies; it never inherits the submitting request token.
+  Handler failures and the
+  [completion path](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker/completion.rs)
+  are durable job outcomes rather than supervisor-loop failures.
+
+These semantics justify the explicit termination gate. The current outer drain
+allowance is fourteen seconds: ten native shutdown, one abort drain, two lease
+release and one scheduling margin. The startup witness is clamped before that
+complete reserve. Returned timeout or panic remains unproven
+transitive termination. An internal application owner retains and publishes the
+native join even after wrapper cancellation or Drop; only its observed successful
+return permits dependent cleanup. The final Batter report can still veto shared
+dependency teardown from direct panic/abort outcomes, abort requests, unjoined
+tasks or an `UnsafeTaskExit` cleanup skip.
+
+The follow-up ownership repair was checked against PostgreSQL 18's primary
+documentation. Session advisory locks remain held until explicit release or
+session end, and `pg_advisory_unlock_all` is implicitly applied even after an
+ungraceful disconnect ([advisory lock functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS)).
+The dedicated probe connection sets only its own `idle_session_timeout`, whose
+documented effect is to terminate a non-transactional idle session after the
+configured interval; PostgreSQL cautions that generic pooling middleware may
+react poorly to that setting ([client connection defaults](https://www.postgresql.org/docs/18/runtime-config-client.html#RUNTIME-CONFIG-CLIENT-OTHER)).
+The implementation therefore detaches this connection from SQLx's reusable pool,
+checks it every second, bounds each query locally, and treats loss as a driver
+failure. This bounds ordinary stale-session detection; it is not a fencing token
+across split-brain failover or an operating-system TCP guarantee.
+
+## Probe ownership and release semantics, 2026-09-11 (batter-2zw)
+
+Rechecked Runledger 0.12.0 at 0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4,
+SQLx 0.9.0 and PostgreSQL 18 against these primary sources and Cargo's exact local
+sources. No dependency revision changed.
+
+- [Pinned Runledger builder and shutdown](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/supervisor.rs): build spawns after validation; Drop requests shutdown and detaches; abort drain adds up to min(timeout, one second).
+- [Pinned cancellation](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/admin/recovery.rs): LEASED becomes CANCELED immediately, original expiry remains, already-terminal updates return invalid-state.
+- [Pinned claiming](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/claim_ids.sql): only PENDING rows are claim candidates.
+- [SQLx PoolConnection](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolConnection.html): detach releases pool accounting. Local sqlx-core 0.9.0 src/pool/connection.rs runs after_release before the reuse ping; returning false closes instead. src/pool/options.rs marks parent() internal-only, so the reference does not use it.
+- [PostgreSQL termination protocol](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-TERMINATION): Terminate and client close are not a backend-exit acknowledgement; matches local sqlx-postgres 0.9.0 src/connection/mod.rs.
+- [Advisory lock functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS): unlock's boolean distinguishes removal from no lock held.
+- [Tokio 1.53.1 Unix Signal](https://docs.rs/tokio/1.53.1/tokio/signal/unix/struct.Signal.html): recv is cancellation-safe; a completed receive is consumed. The foundation now retains that fact during registration.

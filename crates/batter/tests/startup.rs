@@ -497,6 +497,40 @@ async fn successful_initialization_still_requires_actual_component_acknowledgeme
 }
 
 #[tokio::test]
+async fn successful_initialization_can_withhold_application_readiness_approval() {
+    let acknowledged = Arc::new(AtomicUsize::new(0));
+    let component_acknowledged = acknowledged.clone();
+    let mut starting = startup(move |scope| {
+        Box::pin(async move {
+            scope
+                .supervisor()
+                .register("staged", move |shutdown| async move {
+                    assert!(shutdown.mark_started());
+                    component_acknowledged.store(1, Ordering::SeqCst);
+                    shutdown.draining().await;
+                    Ok(())
+                })
+                .unwrap();
+            Ok(())
+        })
+    })
+    .without_readiness_approval()
+    .start();
+    let running = starting.wait().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while acknowledged.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert!(running.handle().mark_ready());
+    running.handle().wait_ready().await.unwrap();
+    assert!(running.shutdown().await.unwrap().is_success());
+}
+
+#[tokio::test]
 async fn shutdown_projection_retains_coordinator_failure_without_formatting_it() {
     let error = Arc::new(
         tokio::spawn(async { panic!("private-coordinator-marker") })

@@ -30,14 +30,18 @@ class ReferenceLiveControls(unittest.TestCase):
             reference_live.main()
         self.assertEqual(run.call_count, 3)
         self.assertIn("reference_preflight", run.call_args_list[0].args[0])
-        self.assertEqual(run.call_args_list[1].args[0][-2:], ["--ignored", "--list"])
-        self.assertEqual(run.call_args_list[2].args[0][-2:], ["--ignored", "--test-threads=1"])
+        self.assertEqual(run.call_args_list[1].args[0][-2:], ["--", "--list"])
+        self.assertEqual(run.call_args_list[2].args[0][-2:], ["--include-ignored", "--test-threads=1"])
 
     def test_configuration_cases_cannot_be_omitted_from_inventory_or_execution(self):
         configured = {"configured_command_root_bounds",
                       "configured_pool_capacity_and_acquire_timeout",
                       "configured_startup_pool_close_before_lease",
-                      "configured_worker_concurrency"}
+                      "configured_worker_concurrency",
+                      "hosted_preparation_cancellation_releases_lease",
+                      "hosted_preparation_leased_and_terminal_reconciliation",
+                      "startup_signals_during_schema_and_control_preparation",
+                      "startup_signal_during_pool_acquisition"}
         self.assertTrue(configured <= CASES)
         for missing in configured:
             inventory = "\n".join(f"{case}: test" for case in CASES if case != missing)
@@ -46,7 +50,7 @@ class ReferenceLiveControls(unittest.TestCase):
             summary = f"\ntest result: ok. {len(CASES)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;"
             self.assertFalse(complete_execution(output + summary))
 
-    def test_inventory_requires_every_named_ignored_case(self):
+    def test_inventory_requires_every_named_case(self):
         output = "\n".join(f"{case}: test" for case in CASES)
         self.assertTrue(complete_inventory(output))
         self.assertFalse(complete_inventory(output.replace(next(iter(CASES)), "unexpected")))

@@ -8,7 +8,12 @@ Unix-only application is not a reusable database framework.
 
 ## Key entrypoints
 
-- `src/main.rs` and `src/runtime.rs` own the command-only process root.
+- `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
+- `src/worker.rs`, `src/worker/probe.rs`, `src/worker/errors.rs` and
+  `src/worker/cleanup.rs`, `src/worker/preparation.rs`, `src/worker/lease.rs` and
+  `src/worker/termination.rs` own the probe-only Runledger host, continuously
+  monitored and generation-bound witness, termination proof, concrete failures
+  and separately driven dependency cleanup.
 - `src/delivery.rs` owns command identity, the one-transaction submission and
   durable owner-scoped projections.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
@@ -45,8 +50,24 @@ submission uses one `PgLease` and one READ COMMITTED transaction for command,
 delivery and Runledger rows. Exact replay never re-enqueues. Owner/key identity,
 record generation, canonical payload and immutable enqueue fields stay retained;
 uncertain commit/rollback acknowledgement is reconciled by owner/key and is never
-automatically retried. The producer definition has no handler until the owning
-worker/provider tasks add one. Close pools
+automatically retried. The delivery producer definition has no handler in this
+stage. The hosted probe registry contains only `jobs.startup.control`; catalog
+synchronization alone must not make `records.delivery.execute` claimable.
+Keep the dedicated session live through preparation and execution, and await
+bounded unlock/client-closure observations before publishing completion. Retain
+failed or unconfirmed release separately from native stop; never claim backend
+exit from SQLx close. Preparation owns its session independently before acquisition,
+including cancelled waiters. Keep temporary preparation-pool closure before native
+construction, close returned preparation connections, and use PgLease for witness
+reads. The application pool limit excludes the one control session and the one
+temporary preparation connection; declare both in fixture capacity. After confirmed session loss, a predecessor
+must not complete or terminally fail a successor generation's witness, and no
+number of predecessor retries may exhaust the control's attempts. Live lease
+tests must target the exact two-key lock, witness backend exit before successor
+acquisition, and always await a started supervisor before returning a failure. A registered-but-unstarted host still owns and
+must request native shutdown when its Batter supervisor is dropped.
+Application readiness stays unapproved until the provider task installs and
+witnesses its real handler through the same host constructor. Close pools
 before consuming leases; explicitly drain deferred cleanup. Startup witnesses
 prove only their observed job path. Ordinary workspace tests never require a live
 database. Native option tests cross the cleared-environment child boundary;

@@ -98,6 +98,7 @@ pub struct Startup<F> {
     supervisor: Supervisor,
     context: OperationContext,
     cleanup: CleanupBudget,
+    approve_readiness: bool,
     initialize: F,
 }
 
@@ -117,8 +118,59 @@ impl<F> Startup<F> {
             supervisor,
             context,
             cleanup,
+            approve_readiness: true,
             initialize,
         }
+    }
+
+    /// Hand off a successfully initialized driver without approving application
+    /// readiness. Registered components may still acknowledge their own startup;
+    /// admission remains [`crate::lifecycle::Readiness::Starting`] until the
+    /// caller explicitly invokes [`crate::lifecycle::ShutdownHandle::mark_ready`].
+    ///
+    /// This is useful for a staged composition root that can run infrastructure
+    /// before its business handler is available. Initialization failure retains
+    /// the same owned cleanup behavior as [`Self::new`].
+    ///
+    /// ```
+    /// use batter::{
+    ///     cleanup::CleanupBudget,
+    ///     lifecycle::{Readiness, ShutdownBudget, Supervisor},
+    ///     operation::OperationContext,
+    ///     startup::Startup,
+    /// };
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter::BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let mut supervisor = Supervisor::new(ShutdownBudget::new(
+    ///     second, second, second, cleanup,
+    /// )?);
+    /// supervisor.register("worker", |signal| async move {
+    ///     signal.mark_started();
+    ///     signal.draining().await;
+    ///     Ok(())
+    /// })?;
+    /// let mut starting = Startup::new(
+    ///     supervisor,
+    ///     OperationContext::new(second)?,
+    ///     cleanup,
+    ///     |_| Box::pin(async { Ok::<_, std::io::Error>(()) }),
+    /// )
+    /// .without_readiness_approval()
+    /// .start();
+    /// let running = starting.wait().await?;
+    /// assert_eq!(running.handle().readiness(), Readiness::Starting);
+    /// assert!(running.handle().mark_ready());
+    /// running.handle().wait_ready().await.unwrap();
+    /// assert!(running.shutdown().await?.is_success());
+    /// # Ok(()) }
+    /// ```
+    #[must_use = "the returned startup specification contains the selected approval policy"]
+    pub fn without_readiness_approval(mut self) -> Self {
+        self.approve_readiness = false;
+        self
     }
 
     /// Launch owned startup on the current Tokio runtime.

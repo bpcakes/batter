@@ -23,7 +23,7 @@ pub use process::{
 };
 
 pub use report::ShutdownReport;
-pub use unix::{SignalRegistrationError, register_signals};
+pub use unix::{InstalledSignals, SignalRegistrationError, install_signals, register_signals};
 
 use crate::{
     BoxError, ConfigurationError, RegistrationError,

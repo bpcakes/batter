@@ -254,6 +254,33 @@ after a killed process but does not remove the role or terminate existing sessio
 The completion regression also holds an original admin checkout while a later
 replacement pool starts closing, then resumes the same completion owner.
 
+Seven hosted-worker cases use the production `WorkerHost` and typed settings
+constructor. The probe-only registry executes and durably completes its control
+job while a delivery submitted through the real command path remains unclaimed;
+an exact replay adds no attempt. The probe case also rejects a second active
+control owner for the same database. Another case requests drain while a claimed
+handler is held, then releases it and observes successful completion after the
+stop request without claiming a linearized no-claim barrier. The timeout case
+holds that handler through the real ten-second native shutdown bound, requires
+the returned `ShutdownTimeout`, and inspects skipped nested dependency cleanup
+with zero finalizer calls. The retry case compares handler invocations with
+durable attempt rows and proves an enqueue replay adds neither. A controlled
+completion-persistence failure lets the real handler run but prevents its
+durable success witness, so owned startup fails without a ready handoff and
+executes partial-startup cleanup. The owner-drop case releases an in-flight job,
+drops the public wrapper, and proves the independent native join is observed
+before dependent cleanup runs. The lease-loss case terminates the dedicated
+advisory-lock backend and starts a successor before awaiting the predecessor;
+continuous preparation monitoring and generation-bound handling require a valid
+successor witness, retained predecessor failure, unproven predecessor termination
+and released ownership. The normal probe also verifies release before dependency
+cleanup, cancels a seeded pending control before a fresh witness, recovers the
+awaitable host after duplicate Batter registration, and proves an unstarted
+supervisor drop stops and releases a successfully registered worker. Configured concurrency 1/2
+now executes through the same application host constructor. A unit control feeds
+a stale invocation before the expected witness and proves the latter is selected;
+durable stale rows are reconciled before the native worker starts.
+
 Their [API manifest](reference-compatibility.md) states the exact scope and pins.
 
 ```sh
@@ -1228,8 +1255,9 @@ The command-root case holds real pool work to distinguish configured pool timeou
 from request deadline, holds one production router request to reject at the
 configured Bulkhead, and exhausts configured finite-process admission.
 The first holds the sole checkout through a second acquisition's native timeout
-and then proves reuse. The second holds real handlers at limits 1/2, observes
-starts, releases and joins, then independently requires SUCCEEDED database rows.
+and then proves reuse. The second holds real handlers at limits 1/2 through
+`WorkerHost`, observes starts before component acknowledgement, releases and
+joins the single hosted component, then independently requires SUCCEEDED rows.
 The third retains an external native lease until owned startup failure and pool
 close are observed, then awaits cleanup/drain and queries independent absence.
 These cases are ignored only in ordinary discovery. The explicit runner requires
@@ -1273,3 +1301,29 @@ must agree across both native parsers. The fake-passfile child also reparses the
 live handoff, proving that an explicit empty password survives. IPv6 literals
 are rejected by both the shared live policy and actual preflight entrypoint
 before connection work; the separate direct native IPv6 wire test remains.
+
+## Probe preparation and early signal regressions
+
+The reference live inventory includes hosted_preparation_cancellation_releases_lease,
+hosted_preparation_leased_and_terminal_reconciliation and
+startup_signals_during_schema_and_control_preparation. They hold actual PostgreSQL
+locks, await blocked queries, then cancel a caller/parent, commit a racing terminal
+transition, or send SIGTERM to an authorized child. Preparation cancellation must
+retain confirmed unlock before immediate successor preparation. Child tests require
+owned cleanup reports rather than merely an exit code. The offline
+startup_signal_during_pool_acquisition case withholds native authentication on a
+loopback socket. Private Unix launch/watchdog machinery bounds every child.
+
+Unit tests exercise overflow before acquisition, both release errors, shared release
+timeouts, native-plus-release failures, the composed stop allowance and a late
+cleanup failure after the outer hook times out. The composed clock test models the
+pinned native maximum and exercises the real release helper; real native timeout
+remains covered by hosted_worker_timeout_skips_dependencies. No fault test claims
+that SQLx close witnesses backend exit. The foundation child test completes received()
+then registers those sources and requires drain without a second signal.
+
+The strict runner discovers all 54 reference target entries and executes with
+--include-ignored: 52 database probes, the offline acquisition-signal test and
+its private child entry. It continues to require zero ignored/filtered entries
+and exact per-name success; the ordinary workspace run leaves all 52 live probes
+ignored. The runner controls reject missing startup/cancellation cases too.

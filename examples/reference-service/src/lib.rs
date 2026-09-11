@@ -45,8 +45,11 @@ pub mod delivery;
 /// Authenticated HTTP command and owner-scoped reconciliation routes.
 pub mod http;
 
-/// Owned command-only service startup and shutdown composition.
+/// Owned staged service startup and shutdown composition.
 pub mod runtime;
 
 /// Forward-only application/Runledger startup migration and definition sync.
 pub mod schema;
+
+/// Probe-only Runledger worker hosting and termination certainty.
+pub mod worker;

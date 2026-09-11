@@ -6,6 +6,11 @@ import sys
 from parallel_process import run_parallel
 
 CASES = frozenset({
+    "child_fixture",
+    "startup_signal_during_pool_acquisition",
+    "hosted_preparation_cancellation_releases_lease",
+    "hosted_preparation_leased_and_terminal_reconciliation",
+    "startup_signals_during_schema_and_control_preparation",
     "configured_command_root_bounds",
     "configured_pool_capacity_and_acquire_timeout",
     "configured_startup_pool_close_before_lease",
@@ -43,6 +48,13 @@ CASES = frozenset({
     "fixture_template_reuse_and_isolation",
     "fixture_waiter_loss_keeps_cleanup_driven",
     "fixture_wrong_server_retains_lease",
+    "hosted_worker_in_flight_finishes_after_drain",
+    "hosted_worker_dropped_owner_is_observed_before_cleanup",
+    "hosted_worker_lease_loss_stops_host",
+    "hosted_worker_probe_registry_and_normal_drain",
+    "hosted_worker_retry_attempt_accounting",
+    "hosted_worker_timeout_skips_dependencies",
+    "hosted_worker_witness_failure_prevents_readiness",
     "initialized_schema_upgrade",
     "lease_cleanup_defer_and_drop",
     "migrations_and_transactional_enqueue",
@@ -78,12 +90,12 @@ def main():
     if not check.ok or check.stdout.strip() != b"reference-preflight:ok":
         print(check.output, file=sys.stderr)
         sys.exit("Native PostgreSQL preflight failed; no fixtures were started.")
-    inventory = run(COMMAND + ["--", "--ignored", "--list"], timeout=300)
+    inventory = run(COMMAND + ["--", "--list"], timeout=300)
     if not inventory.ok or not complete_inventory(inventory.stdout.decode("utf-8", errors="replace")):
         print(inventory.output, file=sys.stderr)
-        sys.exit("Live probe inventory failed: required ignored cases must all compile and exist.")
-    print(f"PostgreSQL 18 prerequisite passed; executing {len(CASES)} required live cases.", flush=True)
-    result = run(COMMAND + ["--", "--ignored", "--test-threads=1"], timeout=180)
+        sys.exit("Live probe inventory failed: required live cases and offline signal controls must all compile and exist.")
+    print(f"PostgreSQL 18 prerequisite passed; executing {len(CASES)} required cases (52 live probes and two offline signal entries).", flush=True)
+    result = run(COMMAND + ["--", "--include-ignored", "--test-threads=1"], timeout=180)
     print(result.output, end="")
     if not result.ok or not complete_execution(result.stdout.decode("utf-8", errors="replace")):
         sys.exit("Live probes did not all execute successfully.")

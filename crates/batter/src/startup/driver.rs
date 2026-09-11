@@ -140,6 +140,7 @@ where
         supervisor,
         context,
         cleanup,
+        approve_readiness,
         initialize,
     } = startup;
     let handle = supervisor.handle();
@@ -153,7 +154,9 @@ where
         result = check(&context, &handle);
     }
     if result.is_ok() && destruction_panic.is_none() {
-        handle.mark_ready();
+        if approve_readiness {
+            handle.mark_ready();
+        }
         return Ok(scope.supervisor.start());
     }
     let cause = result.err().unwrap_or(StartupCause::DestructionPanicked);

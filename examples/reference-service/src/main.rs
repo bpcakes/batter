@@ -1,4 +1,4 @@
-//! Runnable command-only reference service. Provider execution is added later.
+//! Runnable staged reference service. Provider execution is added later.
 
 use batter::{BoxError, settings::SettingsSource};
 use batter_example_reference_service::{

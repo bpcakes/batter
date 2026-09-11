@@ -401,8 +401,12 @@ running owner. Dropping an unclaimed handoff requests running-driver drain.
 
 Initialization checks the operation deadline/cancellation and process drain,
 including before factory invocation and after successful future destruction.
-Success arms readiness; the running driver and every critical acknowledgement
-are still required. A drain request cannot revive Ready. Failure preserves the
+By default success arms readiness; the running driver and every critical
+acknowledgement are still required. `Startup::without_readiness_approval` instead
+hands off the running driver while application readiness remains Starting, so a
+later composition stage can approve admission explicitly. Component
+acknowledgement does not substitute for that approval. A drain request cannot
+revive Ready. Failure preserves the
 application's concrete error and static stage, interruption or unwind payload,
 an independent initializer destruction panic, and all cleanup outcomes.
 Stage metadata must be suitable for diagnostics. Default error formatting omits
@@ -419,11 +423,14 @@ work, arbitrary destructor, non-yielding initializer, aborting panic, process or
 runtime destruction is covered. The default panic hook may still print secrets.
 Unexpected coordinator termination retains a JoinError without inventing cleanup.
 
-`register_signals` validates the component name and installs SIGTERM/SIGINT
-listeners before returning. Installation errors follow owned startup cleanup.
-Signals are consumed by the registered component after driver start; this is not
-an independent signal driver during earlier initialization. Tokio changes
-process-wide signal disposition and does not restore it on listener drop.
+`register_signals` validates the component name, installs SIGTERM/SIGINT listeners
+and transfers them to a critical component. `install_signals` separates those
+steps: the owner can poll `InstalledSignals::received` during initialization and
+later register the same sources before handoff. A real-child regression sends
+SIGTERM before registration. Neither helper creates an independent task during
+initialization; the initializer must keep polling the borrowed receive future.
+Tokio changes process-wide signal disposition and does not restore it on listener
+drop.
 
 Standalone commands can await `OperationContext::run` and then separately await
 `CleanupStack::close`, preserving both outcomes. The `finite_command` example
@@ -441,6 +448,28 @@ For supervised services, `check_shutdown` accepts only a successful shutdown
 report; failures retain the complete report, including forced abort, skipped
 cleanup and unjoined work, or the original coordinator error. Its redacted
 formatting does not inspect those causes.
+
+Example-owned dependency cleanup driven after that report treats direct
+panic/abort outcomes, abort requests and unjoined tasks as unsafe even when the
+Batter cleanup stack was empty and therefore had no skipped record to inspect.
+The reference worker owns preparation independently from the first lease
+acquisition. Caller cancellation requests stop but cannot cancel its settlement.
+Dependency cleanup waits for preparation and native observation; native uncertainty
+still skips finalizers. A bounded release records server-confirmed unlock, no lock
+held, query failure/unavailability or timeout separately from local client closure.
+Only an actual server answer supports an unlock claim; client closure never proves
+backend exit. Native cooperative stop remains a separate fact from release success.
+Startup and process failures retain WorkerSettlement and late dependency reports,
+including after an outer cleanup-hook timeout. Runtime loss and task panic can
+leave remote outcomes unconfirmed; no async Drop or detached-descendant join follows.
+
+Installed Unix signals cover the reference initializer before its first await.
+Completed InstalledSignals::received reception is remembered, and successful
+registration requests drain without another signal. The reference reserves one
+14-second worker stop allowance: 10 seconds native shutdown, up to one second
+native abort drain, two seconds release and one second scheduling margin. Before
+native construction, temporary preparation-pool close plus lease release can use
+four seconds within that reserve. Dependency cleanup has its own subsequent budget.
 
 ## Dependency health sampling
 
@@ -919,8 +948,9 @@ Focused offline tests prove source policy, native field mapping, changed HTTP
 response deadlines, independent admission capacities and retained startup/cleanup
 failures. Explicit live cases additionally require a disposable PostgreSQL 18
 endpoint; their execution status is recorded in [validation](validation.md).
-No production command, hosted worker or external deployed adoption follows from
-these example constructors and probes.
+The unpublished reference package now composes these constructors into a staged
+command and probe-only worker host. No delivery-provider execution, publication,
+deployment or external adoption follows from that example.
 
 The private live endpoint handoff accepts `localhost` or `127.0.0.1` with
 sslmode=disable. It rejects IPv6 literals before acquisition because SQLx 0.9

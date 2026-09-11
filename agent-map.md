@@ -19,9 +19,9 @@ Fast jump index for agent-facing guidance in this repository.
   and error-preserving result combination.
 - [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool
   acquisition and explicit teardown.
-- [Reference compatibility](./examples/reference-service/AGENTS.md): native type
-  identity, typed settings constructors, live migration/job/lease probes and
-  pinned upstream contracts.
+- [Reference compatibility](./examples/reference-service/AGENTS.md): staged
+  worker/command root, native type identity, typed settings constructors, live
+  migration/job/lease probes and pinned upstream contracts.
 
 ## Private shared test sources
 

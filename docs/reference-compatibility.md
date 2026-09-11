@@ -2,7 +2,7 @@
 
 Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures), `batter-kjl` (failure retention). This API/evidence manifest accompanies the unpublished
 [reference package](../examples/reference-service/README.md). Beads owns delivery
-acceptance and status.
+acceptance and status. Worker-host delivery is owned by `batter-0cp`.
 
 ## Selected graph
 
@@ -31,9 +31,10 @@ other database backends or non-Unix platforms to Batter's support policy.
 Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct
 disposable local PostgreSQL 18 clusters, using the primary superuser/SCRAM/autovacuum
 prerequisites in [testing](testing.md#explicit-reference-compatibility-probes), and run `bash scripts/test_reference_live.sh` from the root. It preflights the server
-and role, checks an exact inventory of forty ignored cases, and invokes
+and role, checks an exact inventory of 54 entries (52 live probes, the offline
+acquisition-signal control and its private child entry), and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
--- --ignored`. Every named case must pass, with zero filtered or ignored cases.
+-- --include-ignored`. Every named entry must pass, with zero filtered or ignored cases.
 
 | Required contract | Public API and probe | Evidence / limitation |
 | --- | --- | --- |
@@ -44,6 +45,10 @@ and role, checks an exact inventory of forty ignored cases, and invokes
 | Transactional enqueue | `enqueue_job_with_outcome_tx`; `migrations_and_transactional_enqueue` | READ COMMITTED is set/read back. Application insert and enqueue both disappear after rollback; committed retry returns Existing with the original ID; another owner gets a distinct Inserted job |
 | Immutable canonical fields | Same transactional API/probe | Payload, priority, max attempts, timeout, schedule and stage changes each yield `job.idempotency_conflict`. A later stored priority change preserves the original snapshot/retry ID. REPEATABLE READ yields `job.enqueue_idempotency_unsupported_isolation` |
 | Scoped startup witness | `JobCatalog::sync_definitions`, `Supervisor::builder`, `run_until_shutdown`, `shutdown_handle`; `worker_startup_witness_and_shutdown` | Continuously driven supervisor races actual handler acknowledgement of the submitted job ID against unexpected exit; awaited shutdown precedes independent SUCCEEDED readback |
+| Hosted probe registry | `worker::prepare_probe_worker`; `hosted_worker_probe_registry_and_normal_drain` | Typed control payload reaches its generation-bound handler and durable SUCCEEDED state before component acknowledgement. A delivery submitted through the production command path beforehand remains PENDING with zero attempts because the registered-type claim filter omits it. Its request deadline is independent of the fresh operation context derived from the control attempt deadline. A continuously monitored session advisory lock rejects a second active probe owner for the same database; pending/leased controls are canceled before the exact witness is enqueued. Duplicate Batter registration retains an awaitable, already-stopping host, while dropping an unstarted successful registration still requests and observes native shutdown |
+| Hosted witness failure | Same preparation path; `hosted_worker_witness_failure_prevents_readiness` | A PostgreSQL trigger rejects only the control job's SUCCEEDED persistence after the real handler invocation. The witness times out, no running handoff is returned, owned partial-startup cleanup runs, and the one durable attempt remains non-successful |
+| Hosted drain and uncertainty | `worker::WorkerHost`, `TerminationGate`, `DependencyCleanup`; `hosted_worker_in_flight_finishes_after_drain`, `hosted_worker_dropped_owner_is_observed_before_cleanup`, `hosted_worker_timeout_skips_dependencies`, `hosted_worker_lease_loss_stops_host` | Drain requests native stop-claiming before starting the bounded external shutdown window. An acknowledged in-flight handler can complete afterward. Dropping the wrapper requests shutdown while an independent owner retains the native join; dependent cleanup waits for that observation. The advisory-lock connection is released before that observation; a one-second monitor with a two-second query bound turns session loss into retained driver failure and unproven termination. Concurrent successor preparation is generation-fenced from the stopping predecessor. A real native timeout preserves `RuntimeError::ShutdownTimeout`, leaves the gate Unproven, invokes no dependent finalizer and retains a nested `UnsafeTaskExit` report |
+| Hosted retry/configuration | Same host constructor; `hosted_worker_retry_attempt_accounting`, `configured_worker_concurrency` | Controlled retry produces two handler invocations and exactly two durable attempt rows; replay creates neither. Held handlers distinguish configured concurrency 1 from 2 through the hosted path |
 | Lease ownership | `empty_database`, `cleanup`, `defer_cleanup`, Drop, `drain_deferred_cleanup`; `lease_cleanup_defer_and_drop` | Every native pool closes before disposal. Independent `pg_database` reads confirm presence and post-drain absence. Dropping a never-polled consuming cleanup future also transfers fallback cleanup |
 
 The upgrade fixture inspects the public `MIGRATOR` bundle and uses SQLx
@@ -56,7 +61,7 @@ SQL source was copied into Batter.
 
 ## Runtime limits
 
-The startup witness proves schema checks, catalog sync, claim/dispatch to one
+Each startup witness proves schema checks, catalog sync, claim/dispatch to one
 registered handler, and persisted completion for that job. It does not prove
 readiness of every worker, intent-promoter, scheduler or reaper loop. `build()`
 spawns loops without acknowledging initialization. Keep driving
@@ -70,12 +75,61 @@ This cannot prove arbitrary detached descendants created by handlers stopped.
 The caller receives only the first observed runtime failure; additional drained
 failures are logged upstream and cannot be reconstructed by Batter.
 
-The bounded shutdown APIs allow extra abort cleanup of `min(timeout, 1 second)`.
+The hosted driver owns a separate external shutdown trigger because requesting
+the cloneable native shutdown handle alone does not start
+`run_until_shutdown`'s timeout clock while its supplied future remains pending.
+At process drain the host requests the native handle first, then resolves that
+future. The bounded shutdown APIs allow extra abort cleanup of
+`min(timeout, 1 second)`. An internal observer retains the native join and
+publishes its result independently of any wrapper or startup waiter. Dependency
+cleanup waits for that publication; an unsafe final Batter process report still
+forces shared dependency cleanup to be skipped.
+
+Runledger claims by static registered job type and has no instance selector at
+this revision. The staged probe holds a PostgreSQL session advisory lock from
+before catalog synchronization through native driver completion. A second probe
+host for the same healthy database lease is rejected, so rolling overlap is not
+supported by this staging contract. The dedicated session is checked every second
+throughout preparation and native execution with a two-second local bound and a
+session-local ten-second `idle_session_timeout`; failure requests native stop,
+retains both lease and shutdown failures, and leaves transitive termination
+unproven. After confirmed lease loss, a successor may acquire before predecessor
+shutdown observation; its witness generation cannot be completed or terminally
+failed by the predecessor and is retried after the shutdown reserve. Each such
+retry consumes a durable attempt, so the control has no finite attempt budget and
+the witness is bounded only by its deadline. An independent preparation owner
+retains the acquired session across waiter cancellation. Release attempts finish
+before native observation and record unlock and local closure separately; errors
+and timeouts remain unsuccessful, unconfirmed outcomes. An unusable session skips
+unlock. SQLx client close does not acknowledge remote backend exit.
+While holding the lock, the next owner cancels pending or leased control rows
+before enqueueing its unique witness. Session end releases the lock; this does not
+fence split-brain database failover or prove that Batter remotely terminated
+another session.
+
 Non-yielding work can exceed cooperative timing assumptions. Supervisor Drop,
-error or timeout is not successful transitive-stop evidence. The witness uses
-a 10-second shutdown budget, a 20-second acknowledgement limit, and an independent
-runner process bound. No tracing subscriber or panic hook is installed. Upstream
-logging and default panic-hook output remain outside Batter's diagnostic promises.
+error or timeout is not successful transitive-stop evidence. The witness uses a
+10-second native shutdown budget and one shared 14-second end-to-end reserve before its parent startup deadline,
+and caps its requested 20-second acknowledgement interval to the remaining safe
+window. No tracing subscriber or panic hook is installed. Upstream logging and
+default panic-hook output remain outside Batter's diagnostic promises.
+
+The temporary one-connection preparation pool closes each returned connection
+before SQLx's return-to-pool ping. Pinned native catalog/cancellation/enqueue APIs
+hide their checkouts, so this prevents cancelled blocked queries from parking the
+application pool. It is explicitly closed before native construction. Witness
+readback uses batter-sqlx PgLease and permits reuse only after acknowledged reads.
+BATTER_POOL_MAX_CONNECTIONS limits the application pool: one detached control
+session is additional while running, and one temporary preparation connection is
+additional during initialization. These are local allocations, not a bound on
+residual remote backends. Takeover fixtures reserve two overlapping control
+sessions plus one preparation connection.
+
+Pinned cancel_job directly makes a LEASED row CANCELED and preserves its original
+lease expiry; it is no longer selectable as PENDING or LEASED. If a competing
+terminal transition wins first, the native invalid-state error is reconciled by
+reading back SUCCEEDED, CANCELED or DEAD_LETTERED. Other failures remain errors.
+Cancellation does not prove an executing handler stopped.
 
 ## External harness contract
 
@@ -192,12 +246,18 @@ and 1.94.0. Both runs passed the native preflight and exact execution inventory.
 [Validation](validation.md#configuration-live-completion-batter-5pm-2026-09-10)
 records the image, commands, results and remaining platform/TLS limits.
 
-Those runs predate the native URL handoff corrections, including query-space,
+Those runs predated the native URL handoff corrections, including query-space,
 host/database/TLS and empty-password normalization and the fixture caller changes.
-The reconciled inventory contains forty cases. The current handoff has offline
-regression evidence; the combined live suite has not been rerun on it. `batter-5pm` remains open for current AC5/AC8 live revalidation
-on both supported toolchains. Passwordless Setup needs separate focused evidence;
-the complete suite requires the primary SCRAM controls. The historical runs do not establish that pending acceptance.
+At that historical checkpoint the reconciled inventory contained forty cases and
+live revalidation remained pending. Subsequent forty-, 42- and 47-case suites
+passed on both supported toolchains and closed that acceptance gap. The subsequent
+49-case inventory passed completely on Linux/Rust 1.98.1; that follow-up had
+Clippy/compile evidence only on 1.94.0. The current ownership repair expands the
+live inventory to 52 (54 total runner entries), with cancellation, leased/terminal reconciliation and real-child
+startup-signal cases. All 54 entries passed on Linux with both Rust 1.98.1 and
+1.94.0; exact execution evidence is recorded in validation.
+Passwordless Setup has separate focused evidence; the complete suite continues
+to require the primary SCRAM controls.
 
 The current runner's preflight is `examples/reference_preflight.rs`, sharing
 `tests/support/live_endpoint.rs` with fixture acquisition. It reuses RootSettings
