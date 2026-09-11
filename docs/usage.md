@@ -1,5 +1,41 @@
 # Usage patterns
 
+## Canonical agent consumer path
+
+For services, start from the executable
+[`Startup` rustdoc](../crates/batter/src/startup.rs) or the
+[HTTP composition example](../crates/batter-axum/examples/http_service.rs).
+These demonstrate owned initialization and transfer to a running driver;
+await its report and inspect every retained task or cleanup failure. Compose
+native Rust/Tokio futures through these boundaries, use validated settings,
+and keep application errors concrete.
+Repeated instructions that a consumer must manually rebuild these protocols
+indicate integration debt and should prompt a design review.
+
+For work that finishes without starting a service, the
+[finite-command example](#finite-commands-and-separately-awaited-cleanup)
+demonstrates a caller-owned path. It separately awaits work and cleanup and
+retains both outcomes, but dropping the outer future or cleanup waiter can
+abandon finalization. It does not provide the service path's owned driver.
+
+The lower-level APIs remain available where an application needs a different
+ownership boundary, but their caller obligations are explicit: direct
+`run_until` and `CleanupStack::close` driving can be abandoned by cancellation,
+and joining a wrapper cannot prove detached descendants stopped. Treat these
+escape hatches as deliberately weaker contracts, not alternate spellings of
+the owned-driver path. Agent-only consumption also does not add a DSL, hide
+application policy, or guarantee remote effects.
+
+When proposing a change, test independent failure scenarios and ask a fresh
+agent to implement or modify a consumer from the documented path. Mark that
+evaluation proposed and unexecuted until this repository records the run.
+
+If example repairs repeatedly fail the same invariant or break a coupled
+lifecycle phase, the implementing agent must initiate the
+[consumer/API assessment](adr/010-agent-only-consumption.md#recurring-example-review-defects).
+Determine whether the remedy belongs in the consumer, Batter or a supported
+adapter, or the application/upstream protocol before continuing dependent repairs.
+
 Source examples belong to their owning packages and are part of the workspace
 compile/test matrix. See [validation](validation.md) for executed commands and
 remaining gaps. The Rust snippets below illustrate existing APIs.

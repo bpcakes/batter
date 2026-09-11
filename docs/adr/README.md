@@ -14,6 +14,7 @@ establish that the current source has passed validation.
 | [007](007-unix-platform-scope.md) | Unix-only platform scope; Windows is unsupported and not planned. |
 | [008](008-http-transport-ownership.md) | Observe response, body, connection and direct server lifetimes separately. |
 | [009](009-http-lifetime-observations.md) | Measured HTTP/1.1 lifetimes; preserve response-construction ownership. |
+| [010](010-agent-only-consumption.md) | Optimize the canonical integration path for coding-agent consumers. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, and an update to the validation/status documents. Do not silently weaken

@@ -1,5 +1,22 @@
 # Architecture
 
+## Agent-only consumption
+
+Batter's integration APIs are designed for autonomous coding agents. The
+canonical path should make ownership, cancellation, joining, registration,
+finalization, deadline relationships, and error retention follow from
+library-driven execution and constrained interfaces. Repeated caller
+obligations to reconstruct those protocols are design debt, even when they are
+documented. This policy does not move application-specific protocols into the
+foundation or claim that types can prove arbitrary remote effects.
+
+Examples are consumer contracts, and lower-level escape hatches must state the
+obligations they leave with callers without appearing equivalent to the
+protected path. Proposed design changes should be exercised with independent
+failure scenarios and fresh-agent implementation or modification tasks. Review
+quality and test volume alone are insufficient; absent recorded execution,
+agent-usability evaluations remain proposed and unexecuted.
+
 ## A foundation of operational contracts
 
 The workspace targets Unix backends. Windows is unsupported and not planned;

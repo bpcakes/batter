@@ -48,6 +48,40 @@ The checkout is now under Git; committing or publishing requires an explicit use
 request. An included CI
 definition is not evidence of a hosted CI execution.
 
+## Agent-only consumption policy
+
+Batter is consumed only through coding agents. Optimize its public integration
+path for agents generating and modifying applications, rather than for a small
+API surface or familiarity alone. Prefer operational invariants enforced by
+library-owned execution, constrained interfaces, validated configuration, and
+executable checks. Repeated consumer instructions to coordinate cancellation,
+joins, registration, finalization, deadline relationships, or error retention
+are design feedback and debt, even when the instructions are accurate. Keep
+application-specific protocols at the application root or in a justified
+supported adapter.
+
+Agents maintaining Batter use this guide to preserve contracts and evidence.
+Agents consuming Batter should follow the canonical examples and protected
+integration path. Low-level escape hatches must disclose their caller
+obligations and are not equivalent to that path. Agent-only consumption does
+not justify opaque DSLs, excessive abstractions, giant instruction files, or
+claims that types prove arbitrary remote effects. Examples are consumer
+contracts. Evaluate design changes with independent failure scenarios and fresh
+agent implementation or modification tasks; label such evaluations proposed
+and unexecuted unless executable evidence exists. See
+[ADR-010](docs/adr/010-agent-only-consumption.md).
+
+When an example review loop repeats a confirmed invariant failure after repair,
+or a repair introduces a failure in a coupled lifecycle phase, the implementation
+agent must initiate a consumer/API design assessment. Do not wait for the user
+or a review-round limit. Separate implementation mistakes, library/adapter gaps,
+and application/upstream protocol complexity; record the evidence and explicitly
+report the concern before continuing dependent repairs. Apply the
+[assessment procedure](docs/adr/010-agent-only-consumption.md#recurring-example-review-defects),
+including its authorization boundary. Example code is evidence of consumer
+usability; neither more patches nor more caller instructions establish that the
+cause has been removed.
+
 ## Code map
 
 `crates/batter/src/lifecycle.rs` and `crates/batter/src/lifecycle/` own critical/finite process tasks, readiness

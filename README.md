@@ -9,6 +9,31 @@ is written.
 It is for Tokio services that need owned shutdown, deadlines, and cleanup. It is
 not a web framework, DI container, or a replacement for application types.
 
+## For coding-agent consumers
+
+Batter's integration APIs are designed for autonomous coding agents. Prefer the
+canonical, library-driven path so operational invariants follow from ownership,
+constrained interfaces, validated configuration, and executable checks. Repeated
+caller obligations to coordinate cancellation, joining, cleanup, deadline
+relationships, registration, or error retention are design debt, even when
+documented. Keep application-specific protocols in the application or a
+supported adapter; agent-only consumption does not call for an opaque DSL,
+extra abstraction layers, or claims that types prove arbitrary remote effects.
+
+Examples are consumer contracts. When a lower-level escape hatch is necessary,
+its documentation must state the obligations it leaves with the caller and must
+not present it as equivalent to the protected path. Assess proposed changes with
+independent failure scenarios and fresh-agent implementation or modification
+tasks; clean reviews or test volume alone do not establish agent usability.
+Those evaluations are proposed and unexecuted unless this repository records
+specific evidence. See [ADR-010](docs/adr/010-agent-only-consumption.md),
+[architecture](docs/architecture.md#agent-only-consumption), and
+[usage](docs/usage.md#canonical-agent-consumer-path).
+
+Recurring invariant failures during example review require the implementation
+agent to [assess the consumed API](docs/adr/010-agent-only-consumption.md#recurring-example-review-defects)
+and report the design concern before continuing dependent repairs.
+
 ## Status
 
 **0.1.0 MVP, locally validated; not a production-validated release.** Publishing
