@@ -11,6 +11,11 @@ publish = false
 workspace = true
 
 [dependencies]
+batter.workspace = true
+batter-axum = { path = "../../crates/batter-axum" }
+tokio = { workspace = true, features = ["sync"] }
+url = "2.5.8"
+percent-encoding = "2.3.2"
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 runledger-core = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
 runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4" }
@@ -18,9 +23,13 @@ runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "0
 
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+tokio-postgres = "=0.7.18"
+axum.workspace = true
+tower = { workspace = true, features = ["util"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 batter-sqlx = { workspace = true, features = ["test-support"] }
 postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util", "net", "io-util"] }
 serde_json = "1"
 batter-test-support.workspace = true
-batter.workspace = true

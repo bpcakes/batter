@@ -330,7 +330,8 @@ async fn low_level_partial() -> ProbeResult {
 }
 
 pub async fn pending_pool_error() -> ProbeResult {
-    let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    let (url, _) = super::live_endpoint::from_process()?;
+    let url = url.expose_secret().to_owned();
     let observer = PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)

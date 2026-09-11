@@ -117,3 +117,42 @@ Production and publication evidence is tracked in [Beads](roadmap.md).
 Local library validation is not application-specific operational evidence or
 production certification. Deployment and publication remain separate owner
 decisions.
+
+## Loading example settings
+
+The HTTP example keeps loopback bind `127.0.0.1:3000`, request budget 2000 ms and
+Bulkhead capacity 32. Set `BATTER_BIND`, `BATTER_REQUEST_TIMEOUT_MS` and
+`BATTER_BULKHEAD_CAPACITY` explicitly to change them. `RUST_LOG` keeps the existing
+`batter=info,http_service=info` default only when absent. Invalid or non-Unicode
+values fail before resource acquisition, with static configuration diagnostics.
+
+`BATTER_ENV_FILE` selects one optional literal dotenv file, limited to 64 KiB.
+There is no default `.env` search. The selected file must exist and be readable;
+unknown/duplicate/malformed entries fail even when environment values would
+replace them. Environment overrides valid file structure; explicit in-memory
+overrides are available to root callers/tests. The file cannot select another
+file. Quote values containing spaces or `#`; dollar and backslash are literal.
+
+For example, write these fake, local settings to a temporary file:
+
+```text
+BATTER_BIND=127.0.0.1:3000
+BATTER_REQUEST_TIMEOUT_MS=5
+BATTER_BULKHEAD_CAPACITY=1
+RUST_LOG='info,batter=warn'
+```
+
+Run `BATTER_ENV_FILE=/path/to/file BATTER_REQUEST_TIMEOUT_MS=100 cargo run -p
+batter-axum --example http_service --locked`. The environment selects a 100 ms
+response budget rather than the file's 5 ms budget; the demonstration `/work`
+operation takes 25 ms. The selected capacity applies to actual concurrent work.
+Response streaming remains outside this deadline.
+
+The reference package's validated constructors have a larger application schema,
+listed in its [README](../examples/reference-service/README.md). It has no serving
+command yet. Serving configuration requires an explicit database password and
+worker ID; Setup allows externally provisioned passwordless local TCP fixtures.
+Remove native PG* variables from the process launch environment when using this
+root, select sslmode explicitly, and keep the environment unchanged thereafter.
+Native connection option Debug/URL output and source-chain inspection may reveal
+credentials. Automatic root formatting does not make those exposures redacted.

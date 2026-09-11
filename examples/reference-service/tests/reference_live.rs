@@ -239,3 +239,21 @@ async fn fixture_autovacuum_retains_lease() {
 async fn fixture_role_cleanup_after_assertion() {
     assert_probe(support::fixture_observer_role::role_cleanup_after_assertion().await);
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn configured_pool_capacity_and_acquire_timeout() {
+    assert_probe(support::configuration::one_slot_pool().await);
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn configured_startup_pool_close_before_lease() {
+    assert_probe(support::configuration::failed_startup_closes_pool_before_lease().await);
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn configured_worker_concurrency() {
+    support::with_database(support::configured_worker::probe).await;
+}

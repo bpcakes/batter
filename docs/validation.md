@@ -1,6 +1,201 @@
 # Validation evidence
 
-Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-11. Earlier sections retain their historical scope.
+
+## Rebase reconciliation onto 4e3e45b, 2026-09-11
+
+The local HTTP lifetime and typed-settings changes are reconciled with the
+upstream session-observation delivery. The live runner retains all 37 upstream
+cases plus the three configuration cases. Both endpoint roots share the native
+validator; the SQLx preflight retains the upstream PostgreSQL 18, primary
+superuser/catalog-lock/autovacuum/track_counts and distinct-cluster checks.
+Invalid secondary endpoints fail before either connection is opened. Cluster
+identifiers retain the signed bigint domain, including both extrema.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; Rust 1.98.1
+(`48a229cea 2026-09-01`), Cargo 1.98.1 (`797e8a9bc 2026-08-05`), and
+Rust 1.94.0 (`4a4ef493e 2026-03-02`), Cargo 1.94.0
+(`85eff7c80 2026-01-15`). Cargo regenerated the merged lockfile; all locked
+package versions and sources match the upstream lockfile. Only dependency
+edges changed. Its SHA-256 is
+`86b82ac103a8447dcfeb10ab834b620ac2492d4bb405681a0b6e71413b706d49`.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test configuration --locked` | PASS: 20 tests. |
+| `cargo test -p batter-example-reference-service --example reference_preflight --locked` | PASS: three tests, including the native child rejection controls and signed cluster policy. |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --ignored --list` | PASS: all 40 required cases discovered; no live case executed. |
+| `bash scripts/verify.sh` | PASS: 764 Rust executions, 81 summaries, 53 intentional live ignores; Python controls, formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix, counts, lint and rustdoc checks. |
+| Rebuild `http_service` on each toolchain, then run all five `scripts/smoke_http.py` profiles from testing.md | PASS: all ten smokes. |
+
+The first preflight test extraction placed its subprocess entry in a nested
+module, so the exact root selector executed zero tests and the focused check
+failed. Keeping the entry at the crate root repaired that failure; the final
+focused check and full matrix pass. The first Jig run's commands completed, but
+its receipts were rejected because documentation and tracker edits overlapped
+the read-only run. A stable worktree rerun under
+`plan_01M27NF33BB8C5388C8G5F5F9D` passes all five required targets on Rust
+1.98.1. Its successful `api:test` receipt is
+`receipt_01M27P27T2ZZ67BEJHPYZNWQYG`; both `work evidence` and `work gates`
+confirm fresh passing evidence. The final documentation-only update refreshes
+whole-repository policy checks while reusing unchanged Rust receipts.
+
+The Beads database was reconciled in place with `br sync --reconcile` after a
+read-only dry run and backups. All 88 issues and upstream comment contents are
+preserved; only `batter-5pm` receives the combined acceptance note. Upstream
+`batter-kjl` remains closed. `batter-5pm` remains in progress for AC5/AC8: neither
+required PostgreSQL endpoint is configured here, and the combined 40-case live
+suite has not run on either toolchain. Earlier 19- and 37-case results retain
+their historical scope. No database provisioning, macOS, TLS, hosted CI or
+publication evidence is added.
+
+## Configuration prerequisites and acceptance status (batter-5pm), 2026-09-11
+
+The ordinary reference configuration target requires enabled IPv6 loopback
+(`::1`) for its native protocol fixture, alongside IPv4 loopback and Unix
+subprocess permissions. The testing guide and reference package guides now state
+that prerequisite explicitly. No test was ignored, skipped or weakened.
+
+`batter-5pm` is reopened: the current handoff has not passed the nineteen-case
+live suite after its URL and fixture-caller corrections. AC5 and AC8 remain
+unchanged and pending for live revalidation on both supported toolchains.
+The implementation is delivered with offline evidence; the earlier live runs
+remain historical. Beads confirms `batter-kpd`, `batter-0cp` and `batter-7r3.6`
+are not ready while this delivery prerequisite remains open.
+
+Only documentation and tracker state changed. The Rust source, dependencies,
+test commands and configuration match the preceding validated working files.
+Rust/Cargo 1.98.1 and 1.94.0 version identities were rechecked and match the
+records below. The preceding two full verification matrices and ten HTTP smokes
+remain the latest such executions; they were not repeated for these text changes.
+
+`cargo test -p batter-example-reference-service --test configuration --locked
+native_ipv6_connection_sends_exact_decoded_credentials` passes on Linux x86_64
+with Rust 1.98.1: one executed test, nineteen filtered out. The fresh native
+review also ran all five `test_reference_live.py` controls successfully with
+Python bytecode writes disabled. No PostgreSQL endpoint is configured, no live
+case was rerun and no database was provisioned. No macOS, TLS or hosted execution
+claim is added.
+
+Jig follow-up plan `plan_01M27GHQXGY9DN4PET2RF2EWN6` in the temporary validation
+checkout executes and passes all five required targets, including a fresh Rust
+test matrix (`api:test` receipt `receipt_01M27GNVNS9M3YTJ5GG7319EVJ`), formatting,
+Clippy, contract and file-budget checks. It uses Rust 1.98.1,
+`PYTHONDONTWRITEBYTECODE=1` and
+`CARGO_TARGET_DIR=/home/aa/Documents/batter/target`. The checkout has the same
+included working files; `.agent` in this repository remains review-excluded and
+untouched. This local gate does not satisfy the pending live acceptance.
+
+## Native live handoff boundary correction (batter-5pm), 2026-09-10
+
+This record supersedes the hostname-only handoff evidence below. The private
+live boundary rejects IPv6 literals before acquisition: SQLx 0.9.0 retains the
+URL's brackets in its TCP host, which fails native tuple-address resolution.
+The root's direct native-options IPv6 wire test still passes. Supported live
+URLs preserve the selected hostname, database, TLS mode and password across
+SQLx and the harness's tokio-postgres parser. Explicit empty passwords prevent
+fixture pools from consulting an ambient passfile. All special fixture roots
+now use the same handoff, including acquisition and cleanup-failure probes.
+
+The native parser regressions cover encoded loopback names, leading-slash and
+percent-encoded database names, case-insensitive input TLS spelling, credentials
+and application names. A real preflight child checks the IPv6 rejection reason.
+The existing hostile-passfile child now also checks the fixture handoff; that
+assertion failed against the previous handoff and passes after the correction.
+The status row now identifies the nineteen-case live runs as historical.
+
+Linux x86_64; Rust/Cargo 1.98.1 and 1.94.0 as recorded below. Cargo.lock and its
+recorded SHA-256 are unchanged.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test configuration --locked` | PASS: all 20 tests, including native parser, passfile and direct IPv6 wire checks. |
+| `cargo test -p batter-example-reference-service --example reference_preflight --locked` | PASS: both tests, including the actual preflight child. |
+| `bash scripts/verify.sh` | PASS on the final caller changes: 756 Rust executions, 81 summaries, 32 intentional live ignores; Python controls, formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix and counts. |
+| Rebuild `http_service` on each toolchain, then run all five `scripts/smoke_http.py` profiles from testing.md | PASS: all ten smokes. |
+
+Jig's temporary validation checkout contains the same included working files;
+the review-excluded `.agent` state in this repository remains untouched. Plan
+`plan_01M26MXSY8Y9HWPB81K76CQYXN` passes all five required targets and the
+`verify` gate with Rust 1.98.1, `PYTHONDONTWRITEBYTECODE=1` and
+`CARGO_TARGET_DIR=/home/aa/Documents/batter/target`. The final-source `api:test`
+receipt is `receipt_01M26N7B8RSP6PWNJX5W54WYSD`; receipts reside in that temporary
+checkout, not this repository's excluded current-plan state.
+
+No PostgreSQL endpoint is configured, so live authentication and the nineteen
+live cases were not rerun. No macOS, TLS negotiation, hosted CI or deployed
+adoption evidence is added.
+
+## Live endpoint hostname correction (batter-5pm), 2026-09-10
+
+The live handoff now serializes the validated loopback hostname before passing
+its URL to the harness. Previously `local%68ost` validated as `localhost` for
+preflight but remained encoded in SQLx fixture pool options. The regression
+first failed on that exact mismatch, then passed for encoded DNS and IPv4 names.
+It models the pinned harness's `Url` normalization and fixture database-path
+replacement and independently checks host, port, username and database. Existing
+credential cases and IPv6 authority preservation still pass. The native
+credential test now also includes the harness's initial `Url` normalization.
+
+Linux x86_64; the same Rust/Cargo 1.98.1 and 1.94.0 versions recorded below.
+Cargo.lock remains unchanged, SHA-256
+`ebfcb6780d104dd56bd7bb6c4b2143dbaac1225d34e96b39e72c9dde38d6b9cc`.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test configuration --locked live_preflight_and_fixture_share_the_native_endpoint_policy` before the repair | Expected failure: fixture host `local%68ost` differs from expected `localhost`. |
+| `cargo test -p batter-example-reference-service --test configuration --locked` after the repair | PASS: all 20 tests. |
+| `bash scripts/verify.sh` | PASS: 756 Rust executions, 81 summaries and 32 intentional live ignores; Python controls, formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix and counts. |
+| Rebuild `http_service` on each toolchain, then run all five `scripts/smoke_http.py` profiles from testing.md | PASS: all ten smokes. |
+
+Jig verification uses a temporary checkout of the same working files to preserve
+the review's exclusion of `.agent` in this repository. The temporary plan is
+`plan_01M26KEKZC2DHYE4NN7NJ5WZFP`. The first attempt ran all five targets
+successfully but returned incomplete `source_raced` freshness evidence despite
+unchanged global source digests. The temporary index was refreshed and Python
+bytecode writes disabled for a bounded recheck, which passed all five targets
+and the required `verify` gate. Both attempts used Rust 1.98.1 and
+`CARGO_TARGET_DIR=/home/aa/Documents/batter/target`; the successful attempt also
+set `PYTHONDONTWRITEBYTECODE=1`. Receipts remain in the temporary checkout;
+no current-plan receipt was written into this repository's excluded state.
+
+No live endpoint is configured, so the nineteen-case live suite was not rerun.
+The earlier live results remain historical; this correction adds no live
+authentication, TLS, macOS, hosted CI or deployed-adoption evidence.
+
+## Live endpoint query credential correction (batter-5pm), 2026-09-10
+
+The private preflight/fixture URL handoff now encodes query spaces as `%20` for
+the harness's native parser, retaining literal userinfo plus signs and existing
+percent escapes. The regression uses the actual locked SQLx 0.9.0 and
+tokio-postgres 0.7.18 parsers in a cleared child. Its first run against the old
+handoff failed with `+` (byte 43) where the expected password had a space
+(byte 32); the correction passes all seven password cases and application-name
+checks. The only new dependency edge is a reference-package dev dependency on
+the already resolved tokio-postgres version. Cargo regenerated the lockfile;
+no package version changed.
+
+Linux x86_64; rustc 1.98.1 (`48a229cea`, 2026-09-01), Cargo 1.98.1
+(`797e8a9bc`, 2026-08-05); rustc 1.94.0 (`4a4ef493e`, 2026-03-02), Cargo
+1.94.0 (`85eff7c80`, 2026-01-15). Cargo.lock SHA-256:
+`ebfcb6780d104dd56bd7bb6c4b2143dbaac1225d34e96b39e72c9dde38d6b9cc`.
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test configuration --locked` | PASS: 20 tests, including native credential handoff. |
+| `bash scripts/verify.sh` | PASS: 756 Rust executions, 81 summaries, 32 intentional live ignores; Python controls, formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: same counts and checks, including hostile-parent PG* configuration tests. |
+| Rebuild `http_service` with `cargo build -p batter-axum --example http_service --locked` on each toolchain, then run the five `scripts/smoke_http.py` profiles from testing.md | PASS: default, SIGINT, deadline, warn-filter and warn-filter+deadline on both rebuilt binaries (ten smokes). |
+
+Jig evidence for this correction belongs to
+`plan_01M26GQD8JZJX1N14XVF925G62`; managed work evidence and gates record the
+current receipt conclusions. No live PostgreSQL endpoint is configured for
+this correction, so live authentication/the nineteen-case suite were not rerun.
+The live results below remain historical evidence. This parser regression adds
+no macOS, TLS, hosted CI or deployed-adoption claim.
 
 ## Documentation consistency follow-up: 2026-09-11
 
@@ -648,6 +843,172 @@ deployment was performed.
 
 
 
+
+## Configuration live completion (batter-5pm), 2026-09-10
+
+After the user requested Docker provisioning, a dedicated disposable container
+using the official `postgres:18` image supplied the missing endpoint. Docker
+Engine 29.8.0; image digest
+`sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280`;
+server PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2), Linux x86_64. The container
+published only a dynamically assigned loopback port, used an ephemeral generated
+password and had no repository or existing database mounts. Provisioning remains
+external to application and test code.
+
+With `POSTGRES_TEST_ADMIN_URL` pointing to this container's explicit
+`postgres://postgres:<password>@127.0.0.1:<port>/postgres?sslmode=disable` endpoint:
+
+| Command | Result |
+| --- | --- |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS: native authentication/version/privilege preflight, exact inventory, 19 passed / 0 failed / 0 ignored; test body 21.65 seconds. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS: same preflight and inventory, 19 passed / 0 failed / 0 ignored; test body 20.19 seconds. |
+
+These runs execute the configured pool timeout/reuse, worker capacities 1 and 2
+with committed lease-count observations, and startup pool-close-before-lease
+probes. They supersede the missing-endpoint limitation in the historical records
+below. No code, test command, dependency or toolchain changed after the preceding
+754-execution verification matrices and ten HTTP smokes; those results remain
+applicable. Final Jig evidence is refreshed after delivery documentation and
+tracker updates. No macOS, TLS negotiation, hosted CI or deployed-adoption claim
+is added. The disposable container and its anonymous volume are removed after
+verification.
+
+## Configuration boundary corrections (batter-5pm), 2026-09-10
+
+This follow-up addresses the independent comprehensive review's root causes:
+process-global native constructors in otherwise injected tests, divergent live
+preflight policy, and a duplicated documentation inventory breakdown. Research
+and resolved open questions are recorded in [references](references.md#configuration-boundary-follow-up-research-2026-09-10).
+The implementation also replaces the worker probe's quiet-window inference with
+a committed native lease-count observation; that live oracle is not yet executed.
+
+Same Linux x86_64 and exact Rust/Cargo versions as the typed-root record below.
+No dependency versions or Cargo.lock contents changed. Final current-source evidence:
+
+| Command / evidence | Result |
+| --- | --- |
+| `PGDATA=/tmp/batter-hostile-parent PGPASSWORD=parent-secret-marker cargo test -p batter-example-reference-service --test configuration --locked` | PASS: nineteen tests; native consumers run in cleared child processes. |
+| `cargo test -p batter-example-reference-service --example reference_preflight --locked` | PASS: two tests, including the actual entrypoint's bounded child rejection cases. |
+| Built native preflight, invoked with missing URL, PGDATA, unsupported query, remote host and TLS-required URL | All five return exit 1 with expected static diagnostics, no fake-secret marker and no success marker. No fixture is acquired. |
+| `bash scripts/verify.sh` | PASS: 754 Rust executions, 81 summaries, 32 intentional live ignores; Python controls, formatting, Clippy and warning-denied rustdoc pass. Includes the hostile-parent configuration target. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same counts and checks. |
+| Rebuild HTTP example on each toolchain, then default, SIGINT, deadline, warn-filter and warn-filter+deadline smoke profiles | PASS: all ten on their respective rebuilt binaries. |
+| `bash scripts/test_reference_live.sh` on both toolchains | Both exit 1 through native preflight: POSTGRES_TEST_ADMIN_URL is absent. No fixture starts and no live case executes. |
+
+Initial follow-up checks caught a module-inception lint and a scheduling control
+that still expected two runtime passes. The module name and scheduling controls
+were corrected, including explicit failure propagation from the new third pass;
+no existing semantic test was weakened. A later regression addition invokes the
+actual native preflight main rather than relying only on shared-validator tests;
+both complete matrices were rerun after it. Final Jig evidence for
+plan_01M262XKYHQ8SPX2XT63H2TN2M is retained in managed work evidence and gates.
+
+Python now owns scheduling/inventory only; Rust preflight and fixture acquisition
+share the same application validator and live endpoint policy. The selected
+native credentials authenticate the read-only preflight connection itself.
+Do not claim successful authentication/version/privilege checking, the stronger
+worker oracle, or the three new live cases without an externally selected server.
+The endpoint/configuration has been requested; no provisioning was performed.
+The Bead remains in progress, with no new macOS/TLS/hosted/deployed evidence.
+
+## Configuration review fixes (batter-5pm), 2026-09-10
+
+Both collated review findings are addressed in the uncommitted implementation.
+The live pool-close probe retains its StartupError report together with evidence
+or channel failures. Its private checker is also exercised offline with actual
+Startup primary/cleanup failures, preserving concrete causes and redacted output.
+Four settings fixture consumers now use exclusive Unix directory creation with
+mode 0700 and checked explicit cleanup. Existing directory/symlink controls pass.
+An isolated child-process reproduction precreated the allocator's first candidate
+with a symlink to a review-owned canary: the fixture skipped that candidate,
+passed, and preserved all 19 canary bytes. Previously the same fixture truncated
+the canary while passing. No unrelated files were used; reproduction files were
+removed.
+
+Environment/toolchain identities are the same as the typed-root record below.
+No dependency versions or lockfile contents changed during these fixes.
+
+| Command / evidence | Result |
+| --- | --- |
+| `cargo test -p batter --test settings --locked` | PASS: seven tests, including exclusive directory/symlink regression. |
+| `cargo test -p batter-example-reference-service --test configuration --locked` | PASS: eighteen offline tests, including retained primary/cleanup/channel failure evidence. |
+| `bash scripts/verify.sh` | PASS: 732 Rust executions / 79 summaries / 32 intentional live ignores; formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same counts and checks. |
+| Rebuild HTTP example on each toolchain, then `scripts/smoke_http.py` default, SIGINT, deadline, warn-filter, warn-filter+deadline | PASS: all ten profiles after their respective builds. |
+
+The first verification attempt passed its tests but Clippy rejected a redundant
+borrow. Follow-up Clippy checks also caught a duplicate shared-module inclusion
+and the formatted live probe's function length. The final sources remove the
+borrow, include the fixture module once per test binary, and separate startup
+observation from fixture teardown; no semantic test was relaxed. Final Jig
+receipts for plan_01M262XKYHQ8SPX2XT63H2TN2M are recorded in managed work evidence.
+The original nineteen-case PostgreSQL live acceptance remains pending an
+externally selected endpoint. These review fixes do not close the owning Bead
+or claim live, macOS, hosted CI, TLS, publication, or deployment evidence.
+
+## Typed root configuration (batter-5pm), 2026-09-10
+
+Implementation is present; the owning Bead remains **in progress** because the
+required PostgreSQL live executions lack an externally selected endpoint. This
+record does not relabel compiled/ignored cases as live results.
+
+Environment: Linux 7.0.11-76070011-generic, x86_64-unknown-linux-gnu, glibc 2.39,
+Python 3.12.3. Baseline HEAD `0e47f7dbd5d0c04d878d290c5d8c9181d1162b18`, with the
+uncommitted batter-5pm implementation. Rust 1.98.1 is
+`48a229ceaefd4985c50990b14116b6d856af0985` (LLVM 22.1.8); Rust 1.94.0 is
+`4a4ef493e3a1488c6e321570238084b38948f6db` (LLVM 21.1.8).
+Cargo versions: 1.98.1 `797e8a9bc` and 1.94.0 `85eff7c80`.
+Cargo generated the lockfile's new direct dependency edges; no upstream version
+changed. Lock SHA-256:
+`afed3580de9f3993d9e08630f6c6824c8ea22d618e30ff40269e19f3a74a7379`.
+
+| Command / evidence | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1 after the final redaction test: 729 passing Rust executions across 79 successful summaries, 32 intentional live ignores; formatting, Clippy and warning-denied rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same 729 executions / 79 summaries / 32 ignores and all remaining checks. |
+| `cargo build -p batter-axum --example http_service --locked` | PASS on 1.98.1 and with `RUSTUP_TOOLCHAIN=1.94.0`; each binary was rebuilt before its smoke set. |
+| `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` | PASS on both rebuilt binaries. |
+| Same smoke with `--signal SIGINT` | PASS on both. |
+| Same smoke with `--deadline` | PASS on both. |
+| Same smoke with `--warn-filter` | PASS on both. |
+| Same smoke with `--warn-filter --deadline` | PASS on both. |
+| Selected-file executable exercise on 1.98.1 | A temporary file set bind to an ephemeral loopback port, timeout 5 ms, capacity 1 and RUST_LOG=off. `/work` returned 503/deadline_exceeded with no environment timeout; overriding timeout to 100 ms returned 200/`ok`. Both processes passed readiness and exited 0 after SIGTERM; temporary files were removed. |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py` | PASS: five runner controls, including omission of each added configuration case. Also passed in both verify matrices. |
+| `scripts/jig doctor` | PASS; no required or optional setup step. |
+| `scripts/jig work check --plan-id plan_01M262XKYHQ8SPX2XT63H2TN2M` | PASS with fresh final receipts after the added secret-bearing startup report test; Clippy, formatting, api:test, contract and file-budget targets pass. The current api:test receipt and target freshness are retained in this plan's managed evidence (`scripts/jig work evidence --plan-id plan_01M262XKYHQ8SPX2XT63H2TN2M`). |
+| `bash scripts/test_reference_live.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | Both exit 1 before fixtures: POSTGRES_TEST_ADMIN_URL is unset. No live case ran. |
+
+The new foundation target executes six source/bounds/redaction tests. The HTTP
+example now has `test = true` and executes twelve tests in normal discovery,
+including actual configured router capacity/deadline changes and bounded child
+entrypoint diagnostics. The reference configuration target executes seventeen
+offline tests. Its native IPv6 protocol fixture observes decoded username,
+database and password bytes. It is not a PostgreSQL server or TLS negotiation test.
+
+Early focused runs caught the SQLx IPv6 URL formatter limitation and a test
+assuming failed startup would report Stopped. The tests now exercise native IPv6
+wire behavior and assert the native Draining state before running transfer.
+A final audit added genuine secret-bearing parser and cleanup causes to the
+startup formatting/tracing oracle; both complete toolchain matrices were rerun
+successfully afterward. No existing semantic assertion was relaxed. The last change was
+confined to that reference test; HTTP source, configuration and smoke prerequisites
+were unchanged after both rebuilt smoke sets.
+
+The explicit reference inventory is nineteen (previously sixteen), including
+`configured_pool_capacity_and_acquire_timeout`, `configured_worker_concurrency`
+and `configured_startup_pool_close_before_lease`. All compile and are ignored
+only by ordinary discovery. Completion still requires both explicit live runs
+against an operator-selected disposable local PostgreSQL 18 endpoint with CREATE
+DATABASE plus the documented catalog-lock fault-injection privileges. The user
+has been asked which existing configuration to use. This task did not provision
+a server. Historical sixteen-case live results do not prove the new cases.
+
+The selected feature graph has no SQLx TLS backend; native mode retention is
+tested but TLS negotiation remains unverified. Native options/source inspection,
+upstream logs and panic hooks remain outside redacted projections. No new macOS,
+hosted CI, production command/worker, external adoption, publication or deployment
+evidence is claimed. No commit was made.
+
 ## Cancelled wait diagnostics and terminal assertions, 2026-09-10
 
 Owning Bead `batter-538`, following `batter-rv8`; baseline `486e0b0` plus the
@@ -786,7 +1147,7 @@ Logs: `/tmp/batter-budget-verify-1.98.1.log`,
 An initial focused run caught the old dual-failure output matcher after the driver
 introduced explicit optional exercise/reconciliation results. The matcher was
 updated to require the new error structure and both original failure payloads;
-all subsequent focused/full checks passed. No semantic assertion was relaxed.
+all subsequent focused/full checks passed. No existing semantic assertion was relaxed.
 
 Final Jig receipts are attached to `plan_01M25V0FY8F7JAH8P0JAY6GFFK` after this
 source/tracker update. Existing staging is preserved; follow-up edits are unstaged.
@@ -5677,7 +6038,7 @@ all database checks use the existing Unix socket fixture, without provisioning.
 Initial example tests hit sandbox loopback denial, then passed with socket
 permission. A preliminary command used the directory name as a Cargo package
 name; using `batter-example-postgres-lifecycle` resolved that selection error.
-No semantic assertion was relaxed. The native panic controls intentionally leave
+No existing semantic assertion was relaxed. The native panic controls intentionally leave
 the default hook active. New macOS/hosted execution remains unverified.
 
 Barrier tests deliberately pause between acquisition and registration to prove

@@ -1,6 +1,6 @@
-# Runtime source selected with jig update --vcs-ref v0.3.0.
+# Contract v9 runtime, pinned for exhaustive target freshness.
 # Use update --recopy to retain it; plain update advances the upstream branch.
-_commit = "8629700b92cd9ab8b09f8ff86de4fc1573469c83"
+_commit = "10a3dc9ae63547b09a48b05a463495bce2101f37"
 _src_path = "https://github.com/bpcakes/jig-sh.git"
 repo_name = "batter"
 default_branch = "master"
@@ -53,7 +53,53 @@ root = "inferred"
 description = "Run Rust Clippy with repository policy."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+inputs_policy = "exhaustive"
+inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "test-support/*.rs",
+    "test-support/process/**",
+]
 legacy_aliases = ["jig.clippy"]
 
 [repository.actions.target]
@@ -61,12 +107,13 @@ component = "api"
 action = "clippy"
 
 [repository.actions.runner]
-kind = "command"
+kind = "shell"
 command = "api_clippy_command"
 
 [repository.actions.provenance]
+inputs_policy = "declared"
 effects = "inherited"
-inputs = "inherited"
+inputs = "overridden"
 intent = "inherited"
 legacy_aliases = "inherited"
 runner = "overridden"
@@ -76,7 +123,53 @@ target = "inherited"
 description = "Check Rust formatting."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", "**/*.rs", "rust-toolchain", "rust-toolchain.toml", "**/rust-toolchain", "**/rust-toolchain.toml", ".cargo/**", "**/.cargo/**", "rustfmt.toml", ".rustfmt.toml", "**/rustfmt.toml", "**/.rustfmt.toml", "clippy.toml", ".clippy.toml", "**/clippy.toml", "**/.clippy.toml"]
+inputs_policy = "exhaustive"
+inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "test-support/*.rs",
+    "test-support/process/**",
+]
 legacy_aliases = ["jig.fmt_check"]
 
 [repository.actions.target]
@@ -84,12 +177,13 @@ component = "api"
 action = "fmt"
 
 [repository.actions.runner]
-kind = "command"
+kind = "shell"
 command = "api_fmt_command"
 
 [repository.actions.provenance]
+inputs_policy = "declared"
 effects = "inherited"
-inputs = "inherited"
+inputs = "overridden"
 intent = "inherited"
 legacy_aliases = "inherited"
 runner = "overridden"
@@ -99,7 +193,55 @@ target = "inherited"
 description = "Run Rust tests."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml","Cargo.lock","**/Cargo.toml","**/Cargo.lock","**/*.rs","rust-toolchain","rust-toolchain.toml","**/rust-toolchain","**/rust-toolchain.toml",".cargo/**","**/.cargo/**","rustfmt.toml",".rustfmt.toml","**/rustfmt.toml","**/.rustfmt.toml","clippy.toml",".clippy.toml","**/clippy.toml","**/.clippy.toml","scripts/scheduling_process.py","scripts/stress_scheduling.py","scripts/check_scheduling_mutation.py","scripts/test_scheduling_process.py","scripts/parallel_process.py","scripts/scheduling_controls.py","scripts/test_matrix.py","scripts/test_parallel_process.py","scripts/smoke_postgres.py","scripts/test_smoke_postgres.py","examples/postgres-lifecycle/tests/diagnostics.py","scripts/reference_live.py","scripts/test_reference_live.py","scripts/test_reference_live.sh","**/*.sql"]
+inputs_policy = "exhaustive"
+inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
 legacy_aliases = ["jig.test"]
 
 [repository.actions.target]
@@ -107,10 +249,11 @@ component = "api"
 action = "test"
 
 [repository.actions.runner]
-kind = "command"
+kind = "shell"
 command = "api_test_command"
 
 [repository.actions.provenance]
+inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
 intent = "inherited"
@@ -122,7 +265,55 @@ target = "inherited"
 description = "Run Rust tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
-inputs = ["Cargo.toml","Cargo.lock","**/Cargo.toml","**/Cargo.lock","**/*.rs","rust-toolchain","rust-toolchain.toml","**/rust-toolchain","**/rust-toolchain.toml",".cargo/**","**/.cargo/**","rustfmt.toml",".rustfmt.toml","**/rustfmt.toml","**/.rustfmt.toml","clippy.toml",".clippy.toml","**/clippy.toml","**/.clippy.toml","scripts/scheduling_process.py","scripts/stress_scheduling.py","scripts/check_scheduling_mutation.py","scripts/test_scheduling_process.py","scripts/parallel_process.py","scripts/scheduling_controls.py","scripts/test_matrix.py","scripts/test_parallel_process.py","scripts/smoke_postgres.py","scripts/test_smoke_postgres.py","examples/postgres-lifecycle/tests/diagnostics.py","scripts/reference_live.py","scripts/test_reference_live.py","scripts/test_reference_live.sh","**/*.sql"]
+inputs_policy = "exhaustive"
+inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
 legacy_aliases = ["jig.test_locked"]
 
 [repository.actions.target]
@@ -130,10 +321,11 @@ component = "api"
 action = "test-locked"
 
 [repository.actions.runner]
-kind = "command"
+kind = "shell"
 command = "api_test_locked_command"
 
 [repository.actions.provenance]
+inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
 intent = "inherited"
@@ -143,6 +335,7 @@ target = "inherited"
 
 [[repository.actions]]
 description = "Prepare repository dependencies and local tooling."
+inputs_policy = "whole_repository"
 intent = "operate"
 effects = ["worktree", "process", "external"]
 legacy_aliases = ["jig.bootstrap"]
@@ -152,10 +345,11 @@ component = "repo"
 action = "bootstrap"
 
 [repository.actions.runner]
-kind = "command"
+kind = "shell"
 command = "repo_bootstrap_command"
 
 [repository.actions.provenance]
+inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
 intent = "inherited"
@@ -165,6 +359,7 @@ target = "inherited"
 
 [[repository.actions]]
 description = "Validate the checked-in Jig repository contract."
+inputs_policy = "whole_repository"
 intent = "check"
 effects = ["read_only", "process"]
 inputs = [".jig.toml", "scripts/jig"]
@@ -179,6 +374,7 @@ kind = "native"
 operation = "jig.contract_check"
 
 [repository.actions.provenance]
+inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
 intent = "inherited"
@@ -188,6 +384,7 @@ target = "inherited"
 
 [[repository.actions]]
 description = "Enforce repository-owned source file budgets."
+inputs_policy = "whole_repository"
 intent = "check"
 effects = ["read_only"]
 inputs = ["**"]
@@ -208,6 +405,7 @@ max_total_bytes = 268435456
 missing_comparison = "block"
 
 [repository.actions.provenance]
+inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
 intent = "inherited"
@@ -215,6 +413,8 @@ legacy_aliases = "inherited"
 runner = "inherited"
 target = "inherited"
 
+# These checks are independent requirements. Keep policy checks out of
+# api:test dependencies so refreshing policy evidence does not rerun Rust tests.
 [[repository.profiles]]
 id = "verify"
 description = "Default repository verification targets."

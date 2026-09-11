@@ -437,3 +437,60 @@ Reference completion starts all retained observer-pool closes concurrently. An
 older pool's held checkout cannot postpone marking later replacements closed.
 The pending owner still retains every pool and the cached driver outcome until
 explicit recovery; the timeout grants no remote-cleanup or async-drop guarantee.
+
+## Application settings constructor handoff
+
+The foundation's `settings` module has no SQLx, Axum or Runledger dependency.
+The runnable HTTP example uses its literal source reader and bounds and passes
+its selected capacity into the actual router. The reference package owns
+`config::{RootSettings, PoolSettings, WorkerSettings, ConfigMode}`. Its constructors
+return native `RequestPolicy`, `PgPoolOptions`, `PgConnectOptions`, `Bulkhead`,
+Batter `Supervisor`, and `JobsConfig`/Runledger `SupervisorBuilder`.
+
+Use `RootSettings::from_process(mode, selected_path, overrides)` once before
+acquisition. Tests can inject file/environment/override sources directly.
+Precedence is defaults < explicit file < captured environment < explicit
+in-memory overrides. Dedicated files/overrides reject every unknown key;
+environment ignores unrelated names but rejects unknown BATTER_/JOBS_ names and
+all PG* entries. `connect_options_from_process` also rejects actual PG* entries even when the
+settings loader was injected. Keep process environment unchanged during native
+construction; no passfile, native URL fallback or `JobsConfig::from_env` path is
+used. The application owns schema names and password/TLS policy; see the
+[reference settings schema](../examples/reference-service/README.md).
+
+Existing reference fixture pool and worker-witness paths consume these outputs.
+`batter-kpd` must adopt the constructors in the full command/root and prove the
+production runtime effects; `batter-0cp` must consume `WorkerSettings::builder`
+in the hosted worker with acknowledged startup and joined shutdown. Those tasks
+retain their own acceptance. Authorized external migration remains `batter-7r3.6`.
+The producer does not introduce Runlimit settings or an alternate job supervisor.
+
+Acquire inside existing `Startup`, reserving cleanup before acquisition and
+registering immediately after success. Pool close returns unit; retain native
+acquisition/initialization errors and every cleanup record without inventing a
+SQLx close error. Keep the external fixture lease owned until pool finalization
+has completed, then await lease cleanup and deferred drain. The new live startup
+probe follows this order; offline file-resource tests retain a real acquisition
+error alongside a separate real cleanup failure.
+
+Live reference preflight and fixture acquisition share the application validator
+through a private live-endpoint policy. Preflight authenticates with the same
+explicit SQLx options as the configured startup probe. Both endpoint settings
+validate before either connection opens; the native checks retain primary
+superuser/autovacuum/track_counts requirements and reject equal signed cluster
+identities. Each read-only pool closes before its result is interpreted. The
+entrypoint returns only a fixed success marker or sanitized error. The validated URL
+handed to the harness encodes query `+` as `%20`, so the harness's native
+tokio-postgres parser receives the same spaces as the root and SQLx. It also
+serializes the validated hostname and database, canonicalizes the disabled TLS
+mode and retains an explicit empty password instead of permitting SQLx passfile
+fallback. IPv6 literals are rejected at this private live boundary: the locked
+SQLx URL parser retains brackets during TCP lookup. Use `localhost` or
+`127.0.0.1`; direct root construction still supports native IPv6 options. Userinfo
+`+` and existing percent escapes retain their meaning. The Python runner
+owns budgets and exact case inventory, not endpoint parsing or credential
+fallback. Ordinary native-constructor tests cross a cleared-environment child
+boundary, and the matrix requires success with hostile PG* parent variables.
+The acquisition, cleanup-failure, pool-failure and primary/secondary observation
+fixture roots all consume the shared handoff; their custom budgets do not re-read
+the original URL.

@@ -330,7 +330,7 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "run_parallel", execute), \
                 mock.patch.object(matrix, "render_outcomes"):
             self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [4, 2, 1])
+        self.assertEqual([len(batch) for batch in batches], [4, 3, 1])
         self.assertEqual(batches[0][1], matrix.RUNNER_TESTS)
         self.assertEqual(batches[0][3], matrix.REFERENCE_RUNNER_TESTS)
         self.assertIn("--no-default-features", batches[0][0])
@@ -339,6 +339,11 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("--no-default-features", batches[1][0])
         self.assertIn("--all-targets", batches[1][1])
         self.assertIn("--workspace", batches[1][1])
+        self.assertEqual(batches[1][2][0], "env")
+        self.assertIn("PGDATA=/unused-configuration-fixture", batches[1][2])
+        self.assertIn("PGPASSWORD=parent-secret-marker", batches[1][2])
+        self.assertIn("configuration", batches[1][2])
+        self.assertIn("--locked", batches[1][2])
         self.assertIn("--doc", batches[2][0])
         self.assertTrue(all("--locked" in command for batch in batches for command in batch
                             if command[0] == "cargo"))
@@ -351,8 +356,9 @@ class MatrixTests(unittest.TestCase):
             [[success, failure, success, success]],
             [[success, success, failure, success]],
             [[success, success, success, failure]],
-            [[success, success, success, success], [failure, success]],
-            [[success, success, success, success], [success, failure]],
+            [[success, success, success, success], [failure, success, success]],
+            [[success, success, success, success], [success, failure, success]],
+            [[success, success, success, success], [success, success, failure]],
         ]
         for results in batches:
             with self.subTest(results=results), \

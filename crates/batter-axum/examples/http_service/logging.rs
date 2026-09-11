@@ -1,29 +1,11 @@
-use std::{env::VarError, error::Error, fmt};
+use batter::settings::RedactedError;
+use std::env::VarError;
 use tracing_subscriber::{EnvFilter, filter::FromEnvError};
 
 const DEFAULT_FILTER: &str = "batter=info,http_service=info";
 
-// Both automatic Debug output from main and Display omit environment contents.
-// The original parser/environment failure remains available to a trusted sink.
-pub(super) struct LogConfigurationError(FromEnvError);
-
-impl fmt::Display for LogConfigurationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid RUST_LOG configuration")
-    }
-}
-
-impl fmt::Debug for LogConfigurationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl Error for LogConfigurationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
-    }
-}
+// Source traversal is deliberate; normal formatting uses shared static metadata.
+pub(super) type LogConfigurationError = RedactedError<FromEnvError>;
 
 pub(super) fn filter(value: Result<String, VarError>) -> Result<EnvFilter, LogConfigurationError> {
     let parsed = match value {
@@ -31,12 +13,13 @@ pub(super) fn filter(value: Result<String, VarError>) -> Result<EnvFilter, LogCo
         Err(VarError::NotPresent) => return Ok(EnvFilter::new(DEFAULT_FILTER)),
         Err(error) => Err(FromEnvError::from(error)),
     };
-    parsed.map_err(LogConfigurationError)
+    parsed.map_err(|cause| RedactedError::new("RUST_LOG", "invalid configuration", cause))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
     use tracing_subscriber::filter::ParseError;
 
@@ -59,8 +42,8 @@ mod tests {
     fn invalid_filter_is_rejected_with_a_retained_source() {
         let error = filter(Ok("batter=invalid-level".into())).unwrap_err();
         assert!(error.source().unwrap().source().unwrap().is::<ParseError>());
-        assert_eq!(format!("{error:?}"), "invalid RUST_LOG configuration");
-        assert_eq!(error.to_string(), "invalid RUST_LOG configuration");
+        assert_eq!(format!("{error:?}"), "RUST_LOG: invalid configuration");
+        assert_eq!(error.to_string(), "RUST_LOG: invalid configuration");
     }
 
     #[test]
@@ -75,7 +58,7 @@ mod tests {
             .downcast_ref::<VarError>()
             .unwrap();
         assert_eq!(original, &VarError::NotUnicode(value));
-        assert_eq!(format!("{error:?}"), "invalid RUST_LOG configuration");
-        assert_eq!(error.to_string(), "invalid RUST_LOG configuration");
+        assert_eq!(format!("{error:?}"), "RUST_LOG: invalid configuration");
+        assert_eq!(error.to_string(), "RUST_LOG: invalid configuration");
     }
 }

@@ -9,7 +9,13 @@ composition; it is not a reusable database framework.
 ## Key entrypoints
 
 - `src/lib.rs` proves native SQLx type identity.
+- `src/config.rs` and `src/config/` own the example settings schema, validated
+  native constructor inputs, TCP URL subset and PG*/passfile restrictions.
+- `tests/configuration.rs` covers source policy, bounds, redaction, native
+  consumers and partial startup without PostgreSQL.
 - `tests/reference_live.rs` owns explicitly ignored live probes.
+- `examples/reference_preflight.rs` and `tests/support/live_endpoint.rs` share
+  native preflight/fixture policy; Python owns scheduling and inventory only.
 - `../../scripts/test_reference_live.sh` selects and verifies live execution.
 
 ## Edit here for X
@@ -20,10 +26,24 @@ independent. Update `../../docs/reference-compatibility.md` with executed eviden
 
 ## Invariants
 
+Settings names/defaults/precedence and required passwords stay in this root.
+Use shared `batter::settings` mechanics, retain concrete causes behind static
+diagnostics, and pass validated outputs to native constructors without fallback.
+Never use native from_env/builder_from_env or raw URL parsing after this validation.
+The private live-endpoint handoff canonicalizes selected host/database/TLS values,
+preserves explicit empty passwords and encodes query spaces as `%20` for the
+external harness's required URL API. Reject IPv6 literals at this private live
+boundary; SQLx's URL consumer cannot use their brackets for TCP lookup. Direct
+root native IPv6 options remain supported. Native parser tests guard the handoff.
 Use one native SQLx graph and explicit application-owned transactions. Close pools
 before consuming leases; explicitly drain deferred cleanup. Startup witnesses
 prove only their observed job path. Ordinary workspace tests never require a live
-database. Explicit live invocation fails when prerequisites are missing.
+database. Native option tests cross the cleared-environment child boundary;
+the matrix also tests hostile parent PG* state. The ordinary configuration target
+requires enabled IPv6 loopback (`::1`) for its native protocol fixture, plus
+IPv4 loopback and Unix subprocess permissions. This test is not skipped when
+the host or container lacks IPv6. Never mutate process globals.
+Explicit live invocation fails when prerequisites are missing.
 
 ## Common commands
 
@@ -41,7 +61,7 @@ target DROP's ProcSignalBarrier wait, not only a short pending duration. Its
 before/after PID identity requires no other connection producers on the dedicated
 serial server; forwarded client ports need not match server-observed ports.
 Keep these prerequisites and the strict
-Python inventory/preflight controls synchronized with docs/testing.md.
+native preflight and Python inventory controls synchronized with docs/testing.md.
 
 Identify the autovacuum worker with pg_stat_progress_vacuum and the prepared table's
 actual relation OID, with substantial heap scanning remaining. Database-wide worker

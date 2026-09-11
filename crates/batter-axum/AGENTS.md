@@ -21,6 +21,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/readiness.rs` owns read-only dependency/lifecycle reasons and severity policy.
 - `src/serving.rs` registers a bound native listener/router with the supervisor.
 - `examples/http_service.rs` demonstrates adoption of these public helpers.
+  `http_service/config.rs` owns its explicit file/environment settings and
+  configured router capacity; example tests run in normal Cargo discovery.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,

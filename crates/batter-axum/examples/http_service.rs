@@ -1,6 +1,15 @@
 //! A runnable Axum composition root with probes and bounded operations.
+#[path = "http_service/config.rs"]
+mod config;
 #[path = "http_service/logging.rs"]
 mod logging;
+use config::Config;
+#[cfg(test)]
+#[path = "http_service/configuration_tests.rs"]
+mod configuration_tests;
+#[cfg(test)]
+#[path = "http_service/diagnostic_process.rs"]
+mod diagnostic_process;
 mod support;
 #[cfg(test)]
 #[path = "http_service/tests.rs"]
@@ -24,7 +33,7 @@ use batter_axum::{
     CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, dependency_readiness, liveness,
     operational_http, register_http, render_infrastructure_failure, request_admission,
 };
-use std::{convert::Infallible, net::SocketAddr, time::Duration};
+use std::{convert::Infallible, time::Duration};
 
 async fn fail(Extension(id): Extension<CorrelationId>) -> Response {
     render_infrastructure_failure(HttpFailure::Internal, Some(&id))
@@ -51,30 +60,6 @@ fn register_dependency_health(
         Ok(())
     })?;
     Ok(health)
-}
-
-struct Config {
-    bind: SocketAddr,
-    request_budget: Duration,
-}
-
-impl Config {
-    fn load() -> Result<Self, BoxError> {
-        let bind = match std::env::var("BATTER_BIND") {
-            Ok(value) => value.parse()?,
-            Err(std::env::VarError::NotPresent) => "127.0.0.1:3000".parse()?,
-            Err(error) => return Err(error.into()),
-        };
-        let milliseconds = match std::env::var("BATTER_REQUEST_TIMEOUT_MS") {
-            Ok(value) => value.parse::<u64>()?,
-            Err(std::env::VarError::NotPresent) => 2_000,
-            Err(error) => return Err(error.into()),
-        };
-        Ok(Self {
-            bind,
-            request_budget: Duration::from_millis(milliseconds),
-        })
-    }
 }
 
 #[derive(Clone)]
@@ -125,13 +110,14 @@ fn router(
     handle: batter::lifecycle::ShutdownHandle,
     request_budget: Duration,
     dependency: HealthReader<std::io::Error>,
+    bulkhead_capacity: usize,
 ) -> Result<Router, batter::ConfigurationError> {
     let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_infrastructure_json();
     let application = Router::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
         .with_state(AppState {
-            outbound: Bulkhead::new(32)?,
+            outbound: Bulkhead::new(bulkhead_capacity)?,
         })
         .route_layer(middleware::from_fn_with_state(policy, request_admission));
     // Health endpoints must remain outside the admission gate.
@@ -146,10 +132,20 @@ fn router(
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    match run().await {
+    report_exit(run().await)
+}
+
+fn report_exit(result: Result<(), BoxError>) -> std::process::ExitCode {
+    match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(_) => {
-            eprintln!("Error: process failed");
+        Err(error) => {
+            if let Some(error) = error.downcast_ref::<batter::settings::SettingsError>() {
+                eprintln!("Error: configuration failed: {error}");
+            } else if let Some(error) = error.downcast_ref::<logging::LogConfigurationError>() {
+                eprintln!("Error: configuration failed: {error}");
+            } else {
+                eprintln!("Error: process failed");
+            }
             std::process::ExitCode::FAILURE
         }
     }
@@ -173,10 +169,15 @@ impl std::fmt::Debug for InitializationFailure {
 }
 
 async fn run() -> Result<(), BoxError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(logging::filter(std::env::var("RUST_LOG"))?)
-        .try_init()?;
     let config = Config::load()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(logging::filter(
+            config
+                .log_filter
+                .clone()
+                .ok_or(std::env::VarError::NotPresent),
+        )?)
+        .try_init()?;
     let supervisor = Supervisor::new(support::shutdown_budget());
     let mut starting = batter::startup::Startup::new(
         supervisor,
@@ -189,7 +190,12 @@ async fn run() -> Result<(), BoxError> {
                     let health = register_dependency_health(scope.supervisor())?;
                     scope.stage("http.bind")?;
                     let handle = scope.supervisor().handle();
-                    let application = router(handle, config.request_budget, health)?;
+                    let application = router(
+                        handle,
+                        config.request_budget,
+                        health,
+                        config.bulkhead_capacity,
+                    )?;
                     let listener = tokio::net::TcpListener::bind(config.bind).await?;
                     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
                     register_http(scope.supervisor(), "http", listener, application)?;
@@ -206,4 +212,12 @@ async fn run() -> Result<(), BoxError> {
     let running = starting.wait().await?;
     batter::lifecycle::check_shutdown(running.wait().await)?;
     Ok(())
+}
+
+#[test]
+fn child_fixture() {
+    if diagnostic_process::launch::scenario().is_some() {
+        assert_eq!(main(), std::process::ExitCode::FAILURE);
+        std::process::exit(42);
+    }
 }

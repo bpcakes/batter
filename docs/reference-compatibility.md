@@ -31,7 +31,7 @@ other database backends or non-Unix platforms to Batter's support policy.
 Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct
 disposable local PostgreSQL 18 clusters, using the primary superuser/SCRAM/autovacuum
 prerequisites in [testing](testing.md#explicit-reference-compatibility-probes), and run `bash scripts/test_reference_live.sh` from the root. It preflights the server
-and role, checks an exact inventory of thirty-seven ignored cases, and invokes
+and role, checks an exact inventory of forty ignored cases, and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
 -- --ignored`. Every named case must pass, with zero filtered or ignored cases.
 
@@ -134,8 +134,8 @@ uses two for holding and observing its catalog lock; the lock operation declares
 under the eight-connection per-lease limit. Upstream sessions and independent
 harnesses remain additional server usage.
 
-The thirty-seven-case inventory preserves the four original compatibility probes
-and includes thirty-three fixture cases. They cover retained body error, over-budget rejection,
+The live inventory preserves the original compatibility probes and includes
+fixture lifecycle and configured-constructor cases. They cover retained body error, over-budget rejection,
 partial multi-pool and sibling acquisition failure, body panic, batch-capacity
 rejection, held-checkout close ordering, cancelled/resumed waiting, foreign-template
 rejection, simultaneous body and actual lease-cleanup failure, and observer failure
@@ -167,3 +167,43 @@ for both dedicated endpoints. That section owns the required server authority,
 autovacuum settings, authentication and distinct-cluster checks. The strict runner
 rejects unmet prerequisites before inventory and executes the complete case set
 serially.
+
+## Typed configuration constructor extension (batter-5pm)
+
+The selected upstream pins remain unchanged. The reference package now owns
+validated RootSettings/PoolSettings/WorkerSettings and explicit native constructor
+methods. Existing worker witness and fixture pool creation consume those methods.
+The foundation supplies only std-based source/bounds/redaction mechanics; direct
+Axum/Batter/url/percent-encoding edges belong to this example package.
+
+Offline configuration tests execute native field assertions, HTTP deadline and
+admission behavior, partial startup failure, child-process PG*/passfile policy,
+tracing redaction and an IPv6 PostgreSQL startup/password handshake. Native SQLx
+option formatting remains a trusted exposure and its bare-IPv6 URL formatter
+limitation is documented in [references](references.md). TLS mode preservation
+is tested through native options; the graph has no SQLx TLS backend and TLS
+negotiation is unverified.
+
+The original typed-configuration change extended its then-sixteen-case inventory to
+nineteen with configured pool timeout/reuse, configured worker concurrency and owned
+startup closing its pool before fixture lease cleanup. All nineteen cases passed
+on a disposable PostgreSQL 18.6 Docker endpoint on 2026-09-10, using Rust 1.98.1
+and 1.94.0. Both runs passed the native preflight and exact execution inventory.
+[Validation](validation.md#configuration-live-completion-batter-5pm-2026-09-10)
+records the image, commands, results and remaining platform/TLS limits.
+
+Those runs predate the native URL handoff corrections, including query-space,
+host/database/TLS and empty-password normalization and the fixture caller changes.
+The reconciled inventory contains forty cases. The current handoff has offline
+regression evidence; the combined live suite has not been rerun on it. `batter-5pm` remains open for current AC5/AC8 live revalidation
+on both supported toolchains. Passwordless Setup needs separate focused evidence;
+the complete suite requires the primary SCRAM controls. The historical runs do not establish that pending acceptance.
+
+The current runner's preflight is `examples/reference_preflight.rs`, sharing
+`tests/support/live_endpoint.rs` with fixture acquisition. It reuses RootSettings
+and `connect_options_from_process` and performs the version/privilege check through
+native SQLx before the exact live inventory. The held-worker configuration probe
+now checks committed LEASED rows while handlers are held, rather than inferring
+capacity from a 150 ms quiet period. The pinned worker commits a complete claim
+batch before spawning its handlers; the fixture precommits fewer eligible jobs
+than its configured batch size. Live execution evidence remains separate.

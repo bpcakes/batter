@@ -32,3 +32,6 @@ pub fn native_connection<'borrow>(
 ) -> &'borrow mut sqlx::PgConnection {
     transaction
 }
+
+/// Application-owned validated settings and explicit native constructors.
+pub mod config;

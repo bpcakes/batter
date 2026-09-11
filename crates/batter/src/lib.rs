@@ -33,6 +33,7 @@ pub mod health;
 pub mod lifecycle;
 pub mod operation;
 pub mod retry;
+pub mod settings;
 pub mod startup;
 pub mod telemetry;
 

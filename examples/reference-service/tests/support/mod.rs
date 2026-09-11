@@ -1,3 +1,5 @@
+pub mod configuration;
+pub mod configured_worker;
 pub mod fixture_acquisition;
 pub mod fixture_background_session;
 pub mod fixture_cleanup_failure;
@@ -16,6 +18,7 @@ pub mod fixture_startup_session;
 pub mod fixture_template_observer;
 pub mod fixtures;
 pub mod leases;
+mod live_endpoint;
 pub mod migrations;
 pub mod transactions;
 pub mod worker;
@@ -28,9 +31,9 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 pub type ProbeResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 pub async fn harness() -> Result<PostgresHarness, Box<dyn std::error::Error + Send + Sync>> {
-    let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    let (url, _options) = live_endpoint::from_process()?;
     let config = HarnessConfig::new("batter_compat")?
-        .with_admin_database_url(url)
+        .with_admin_database_url(url.expose_secret())
         .with_cleanup_on_start(false)
         .with_connection_budget(16)?
         .with_connections_per_database(8)?
@@ -55,9 +58,12 @@ where
         Box::pin(async move {
             let plan = batter_sqlx::test_support::ConnectionPlan::new(
                 vec![
-                    PgPoolOptions::new()
-                        .max_connections(4)
-                        .acquire_timeout(Duration::from_secs(10)),
+                    batter_example_reference_service::config::PoolSettings::new(
+                        4,
+                        0,
+                        Duration::from_secs(10),
+                    )?
+                    .pool_options(),
                 ],
                 0,
             )?;

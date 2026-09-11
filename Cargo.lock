@@ -162,10 +162,13 @@ dependencies = [
 name = "batter-example-reference-service"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "batter",
+ "batter-axum",
  "batter-sqlx",
  "batter-test-support",
  "futures-util",
+ "percent-encoding",
  "postgres-test-harness",
  "runledger-core",
  "runledger-postgres",
@@ -173,6 +176,11 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-postgres",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

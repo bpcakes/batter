@@ -55,3 +55,10 @@ Raw `WithSubscriber::with_subscriber(subscriber)` arguments also convert through
 interrupted event/wire diagnostics on destruction under the governing phase or
 semantic checkpoint deadline. Keep capture and reports outside those futures;
 recheck keep-alive handler counts after terminal reports in both HTTP fixtures.
+
+`temp_dir.rs` allocates private Unix fixture directories with exclusive creation
+and mode 0700. Existing directories or symlinks are rejected; bounded retries
+choose another candidate. Tests retain the owner and explicitly check `close`;
+Drop is only a best-effort panic fallback. Settings and configuration fixtures
+share this private source, with collision/symlink controls in the foundation
+settings target. It is not a public crate API or a database fixture.

@@ -28,3 +28,4 @@ tower = { workspace = true, features = ["util"] }
 
 [[example]]
 name = "http_service"
+test = true

@@ -66,7 +66,7 @@ async fn readiness_responses() -> [String; 4] {
         })
         .unwrap();
     let health = register_dependency_health(&mut supervisor).unwrap();
-    let app = router(handle.clone(), Duration::from_secs(1), health.clone()).unwrap();
+    let app = router(handle.clone(), Duration::from_secs(1), health.clone(), 32).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -213,7 +213,7 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
     let health = monitor.reader();
     let handle = ShutdownHandle::new();
     handle.mark_ready();
-    let app = router(handle.clone(), Duration::from_secs(1), health).unwrap();
+    let app = router(handle.clone(), Duration::from_secs(1), health, 32).unwrap();
     let status = || async {
         app.clone()
             .oneshot(

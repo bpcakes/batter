@@ -142,7 +142,12 @@ bash scripts/verify.sh             # Subsequent locked checks.
 Python 3.9 or newer is required by the scheduling subprocess tests, including plain
 `cargo test`; the verification script checks that prerequisite before running Rust.
 Workspace tests also require permission to create Unix subprocesses and bind and
-connect IPv4 loopback TCP sockets. The example readiness tests run automatically
+connect IPv4 and IPv6 loopback TCP sockets. IPv6 loopback (`::1`) must be enabled
+on the host or container running the matrix: the ordinary reference configuration
+target performs a native PostgreSQL protocol handshake on a test-owned IPv6
+listener, without an external database. Enable that prerequisite before running
+the gate; this semantic test is mandatory and does not silently skip when IPv6
+is unavailable. The example readiness tests run automatically
 under `--all-targets`; they are not ignored and contact only test-owned listeners
 on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
 HTTP process smoke commands remain a separate required step.
@@ -182,9 +187,9 @@ both limits across libraries, examples, and tests.
 
 ## Explicit reference compatibility probes
 
-The [reference package](../examples/reference-service/README.md) has thirty-seven named
-ignored cases in `tests/reference_live.rs`: four upstream compatibility probes
-and thirty-three fixture probes. Fixture cases cover template reuse/isolation, acknowledged
+The [reference package](../examples/reference-service/README.md) has the required named
+ignored cases in `tests/reference_live.rs`: upstream compatibility, fixture lifecycle
+and configuration probes. `scripts/reference_live.py::CASES` owns the exact inventory. Fixture cases cover template reuse/isolation, acknowledged
 lock operations, returned body errors, partial/sibling acquisition, panic,
 resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
 errors, observer failure, cancelled native creation, abandoned producer errors
@@ -271,10 +276,20 @@ Failure controls briefly lock that shared system catalog;
 keep other workloads off this endpoint. The runner executes cases serially.
 This entry point deliberately executes the complete inventory; individually selected
 Cargo probes do not establish complete live-inventory verification.
-The runner requires `psql`, rejects missing/remote/TLS-required endpoints, verifies
-the server and ignored-case inventory, and requires all thirty-seven cases to run. It
-uses the existing Unix process owner with 15-second preflight, 300-second compile
-inventory and 180-second live-run limits, plus bounded signal escalation/reaping.
+The runner invokes the `reference_preflight` Rust example, which shares endpoint
+validation with fixture acquisition and authenticates through the same explicit
+SQLx options as the configured startup probe. It rejects PG* environment entries,
+missing/remote/TLS-required endpoints and unsupported query parameters before
+fixture creation. Both endpoints are validated before either connection opens.
+The full suite requires SCRAM on the primary; use explicit URL credentials.
+The native Setup constructor also supports separately selected passwordless
+endpoints for focused probes; passfiles are not consulted. The runner
+checks the server and ignored-case inventory, and requires every named case to run.
+The existing Unix process owner allows 300 seconds for preflight compilation/run,
+300 seconds for compile/inventory and 180 seconds for live execution, plus bounded
+signal escalation/reaping. For each endpoint, native acquisition and the
+prerequisite query each have a ten-second budget; its pool closes before the
+result is interpreted or the next endpoint opens.
 
 The inside-target observer case now uses the shared completion helper for the
 wrong pool and corrected retry. It recovers the pending owner, explicitly closes
@@ -282,8 +297,9 @@ the wrong native pool through its observer_pools accessor, witnesses backend exi
 and then retries. No external wrong-pool clone is needed. Replacing
 a pool alone does not close its database sessions. Redacted report controls
 distinguish successful cleanup with retained failures from failed consuming cleanup.
-The Python controls include the successful distinct-cluster path through both
-inventory and execution. Preflight does not certify SCRAM for a future disposable
+The Rust controls reject failed prerequisite results and equal cluster identities,
+including signed 64-bit extrema; Python controls require successful native preflight
+before inventory and exact execution. Preflight does not certify SCRAM for a future disposable
 database: pg_hba rules can differ by database. The raw startup case checks the
 actual authentication exchange for that database and fails on trust authentication.
 
@@ -306,8 +322,8 @@ duration within the 180-second bound. This is a workload backstop, not a promise
 to complete arbitrary stalled native operations. Timing claims for newer inventories and CPU-constrained Linux execution are
 recorded separately in validation; arbitrary slower environments remain unverified.
 Compile time has its separate inventory bound.
-`scripts/test_reference_live.py` checks zero-test, skipped, missing-case and endpoint
-rejection behavior in the ordinary test matrix.
+`scripts/test_reference_live.py` checks zero-test, skipped, missing-case and native preflight
+failure/ordering behavior in the ordinary test matrix.
 
 Live test failures print only known redacted report counts and combined failure
 branches. The adapter does not format native error contents or arbitrary source chains;
@@ -325,13 +341,12 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Jig verification
 
-The repository selects the official Jig `v0.3.0` release. Jig resolves that tag
-and records its SHA in `_commit`; this is source installation metadata, not a
-persistent product-version constraint. Use `scripts/jig update --recopy` to
-retain the selected revision, or `scripts/jig update --vcs-ref v0.3.0` to select
-the release explicitly. Plain `scripts/jig update` advances to the upstream
-default branch. `jig_version` is legacy in modern contracts; this accepted release-selection
-policy remains in force.
+The repository pins Jig commit `10a3dc9ae63547b09a48b05a463495bce2101f37`
+with contract v9 for scoped target freshness. This revision follows the v0.3.0
+release; the binary still reports 0.3.0, so use `scripts/jig info` to inspect the
+source SHA and contract epoch. Use `scripts/jig update --recopy` to retain this
+revision. Plain `scripts/jig update` advances to the upstream default branch.
+Do not downgrade to the v0.3.0 tag while exhaustive input policies are configured.
 
 On a fresh checkout, run `scripts/jig doctor` before starting an MCP client.
 The first invocation builds the repository-local runtime using Cargo, Git,
@@ -351,11 +366,47 @@ For final backend verification, a fresh passing `api:test` receipt from the curr
 plan's gate/profile run also satisfies the final-test requirement. Inspect
 `scripts/jig work evidence --plan-id <id>` and `scripts/jig work gates --plan-id <id>`
 before deciding to run `scripts/jig check test` again. Reuse requires unchanged
-worktree, command/configuration, toolchain and relevant environment/prerequisites,
+check inputs, command/configuration, toolchain and relevant environment/prerequisites,
 and no later unresolved failure. Toolchain and external-state identity are not
 established by Jig's fingerprint alone. A plain `verify.sh` invocation does not
 produce a Jig receipt, and this rule does not replace either supported-toolchain
 check, rustdoc or HTTP smokes.
+
+The `verify` profile requires independent Clippy, formatting, tests, contract and
+file-budget targets. Keep these as siblings; `depends_on` is for actual execution
+prerequisites. The Rust targets declare `inputs_policy = "exhaustive"`: workspace
+manifests and lockfiles, toolchain/Cargo/lint configuration, package source,
+examples, tests, benches and migrations, and shared test sources. Test targets
+also cover the Python helpers and shell entrypoints under `scripts/`. When a
+check starts consuming another path, update both `.jig.toml` and the resolved
+`.agent/jig-contract.json` inputs. Use scoped prefixes rather than `**/*.rs`:
+exhaustive globs must not intersect ignored build or cache directories.
+
+Root tracker exports and root documentation are outside the Rust targets' input
+scopes. Closing a Bead does not invalidate their receipts. Contract and file-budget
+retain conservative whole-repository scope; after tracker closeout, run
+`scripts/jig work check --plan-id <id>` to refresh these inexpensive policy checks
+and reuse the original Rust passes. Configuration changes intentionally invalidate
+previous evidence. A file-budget policy edit also invalidates that native target.
+This is per-target freshness, not a global exclusion of tracker data.
+
+If inspection reports `unknown` with reason `collection_limit`, increase its
+read-only budget before deciding that checks need execution:
+
+```sh
+scripts/jig work evidence --plan-id <id> --freshness-timeout-ms 30000
+scripts/jig work gates --plan-id <id> --freshness-timeout-ms 30000
+```
+
+The default inspection budget is two seconds; this checkout can exceed it.
+These commands validate existing evidence and do not run checks. A remaining
+unknown result needs diagnosis; increasing the budget is not a freshness bypass.
+
+For targeted native recovery use
+`scripts/jig check repo:file-budget --plan-id <id>` and let Jig derive the
+comparison from the work plan. `work check --tool jig.file_budget` produces legacy
+evidence and cannot satisfy a native target gate. Supplying explicit comparison
+provenance can also differ from the gate's work-plan comparison authority.
 
 The private `parallel_process.py` runner owns at most four direct command groups,
 keeps bounded output while continuing to drain overflow, and returns all outcomes
@@ -390,7 +441,7 @@ The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
 adds Jig installation, contract, guide, file-budget, and integration regression
 checks. It caches only the installed runtime directories, keyed by runner OS and
 architecture plus the source/configuration, contract, toolchain, installer, and
-workflow contents. A cache miss builds the selected release; a hit still passes
+workflow contents. A cache miss builds the selected revision; a hit still passes
 Jig's compatibility and source-stamp checks. Cache reuse on hosted runners has
 not yet been exercised.
 
@@ -410,6 +461,11 @@ python3 -m unittest discover -s scripts -p 'test_*.py' -v
 The Jig tests execute the CI helper with the real Jig runtime in disposable Git repositories,
 verify budget enforcement and missing-base behavior, exercise a restored runtime
 with Cargo blocked, check actual Git merges, and inspect generated ZIP contents.
+Freshness controls retain the real target scopes and native policy checks, replace
+expensive commands with execution counters, and check tracker/documentation reuse
+across dirty, staged and committed states. Source, shared fixtures, migrations and
+new or changed Python helpers must invalidate test evidence; a targeted native
+file-budget refresh must preserve the original Rust receipts.
 The Python tests use the standard library and do not run or provision PostgreSQL.
 The scheduling target additionally supplies its compiled Rust binary to run six
 launch-protocol controls; standalone Python discovery runs the process controls.
@@ -1139,6 +1195,73 @@ prerequisites in `docs/validation.md`. A source review is not a passing test.
 A passing build is not an operational audit. A deterministic unit test is not
 proof that a database commit or an arbitrary external effect is cancellation-safe.
 
-The live-runner Python controls validate signed64-bit cluster identifiers,
-including both extrema, and reject failed prerequisite rows before inventory.
-The captured primary preflight command must retain its track_counts predicate.
+## Typed settings verification
+
+The native preflight uses signed 64-bit cluster identifiers and rejects failed
+prerequisite rows or equal cluster identities. Offline controls preserve both
+signed extrema and require invalid secondary endpoints to fail before connection.
+
+`crates/batter/tests/settings.rs` covers injected sources, exact-path bounded
+literal reading, redacted aggregates, retained typed errors and numeric limits.
+The HTTP example is explicitly marked `test = true`, so its actual router and
+configuration child-process tests run under the normal all-targets matrix.
+Configured capacities 1/3 hold real request futures; 5/100 ms source policies
+change the demonstration work outcome. Child entrypoint failures require useful
+sanitized stderr and a nonzero exit, using the shared Unix watchdog/capture.
+
+`examples/reference-service/tests/configuration.rs` covers all native worker/pool
+fields, signed/unsigned conversion edges, Serve/Setup policy, separate finite-task
+and Bulkhead capacities, response deadlines, real file acquisition/cleanup
+failures, tracing redaction, PG* rejection and fake passfile isolation in bounded
+children. A loopback IPv6 native PostgreSQL handshake verifies decoded startup
+and password bytes independently of SQLx's URL formatter. This is a protocol
+fixture, not PostgreSQL server or TLS verification.
+
+The exact live inventory adds `configured_pool_capacity_and_acquire_timeout`,
+`configured_worker_concurrency` and `configured_startup_pool_close_before_lease`.
+The first holds the sole checkout through a second acquisition's native timeout
+and then proves reuse. The second holds real handlers at limits 1/2, observes
+starts, releases and joins, then independently requires SUCCEEDED database rows.
+The third retains an external native lease until owned startup failure and pool
+close are observed, then awaits cleanup/drain and queries independent absence.
+These cases are ignored only in ordinary discovery. The explicit runner requires
+every configured case to execute, and missing live prerequisites fail its target.
+Current executed evidence and remaining prerequisites are in [validation](validation.md).
+
+### Configuration review regressions
+
+The settings fixture rejects existing temporary directories and symlinks before
+writing and checks private Unix permissions. The reference configuration target
+executes the same report checker as the live pool-close probe: actual Startup
+failures prove retention of primary, cleanup and channel causes on evidence
+mismatches, with sanitized formatting. Neither regression needs PostgreSQL.
+
+Native connection-option tests always run through the configuration suite's
+cleared-environment subprocess boundary, including actual IPv6 and worker-builder
+assertions. `test_matrix.py` additionally runs the entire configuration target with
+PGDATA, PGUSER and PGPASSWORD deliberately set in its parent process. This catches
+new tests that accidentally depend on an empty developer environment. Native
+constructor tests must use that boundary rather than mutating process globals.
+
+The `reference_preflight` example's normal tests invoke its actual entrypoint in
+bounded child processes, requiring sanitized rejection before live work for
+missing, PG-contaminated, remote and unsupported-query inputs. The configuration
+and preflight targets share only private Unix process mechanics in
+`tests/support/configuration_process.rs`; scenario assertions stay with their
+owning target. A successful fake runner response is never database evidence.
+
+`live_handoff_preserves_credentials_across_native_parsers` runs in a cleared
+configuration child. It compares the preflight options and the handed-off URL
+through SQLx 0.9.0 and the harness's locked tokio-postgres 0.7.18 parser against
+explicit expected password/application bytes. It covers query `+`/`%20`, literal
+and encoded plus signs, reserved characters, Unicode and an empty password.
+This parser regression needs no database and does not establish live authentication.
+The endpoint-policy regression additionally follows the harness's `Url`
+normalization and database-path replacement before native parsing. Encoded DNS
+and IPv4 loopback inputs must preserve the validated host, explicit port and
+username in fixture options; the generated fixture database remains distinct
+from the admin database. Uppercase TLS-mode inputs and leading database slashes
+must agree across both native parsers. The fake-passfile child also reparses the
+live handoff, proving that an explicit empty password survives. IPv6 literals
+are rejected by both the shared live policy and actual preflight entrypoint
+before connection work; the separate direct native IPv6 wire test remains.

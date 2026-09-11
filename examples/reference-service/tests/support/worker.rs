@@ -4,9 +4,7 @@ use runledger_core::{
     jobs::{JobCompletion, JobContext, JobFailure, JobType},
     prelude::async_trait,
 };
-use runledger_runtime::{
-    Supervisor, catalog::JobCatalog, config::JobsConfig, registry::JobHandler,
-};
+use runledger_runtime::{catalog::JobCatalog, registry::JobHandler};
 use serde_json::{Value, json};
 use sqlx::{PgPool, types::Uuid};
 use tokio::sync::mpsc;
@@ -55,19 +53,19 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
     )
     .await?;
     tx.commit().await?;
-    let config = JobsConfig {
-        worker_id: "compatibility-worker".into(),
-        poll_interval: Duration::from_millis(20),
-        claim_batch_size: 1,
-        lease_ttl_seconds: 60,
-        max_global_concurrency: 1,
-        reaper_interval: Duration::from_secs(1),
-        schedule_poll_interval: Duration::from_secs(1),
-        reaper_retry_delay_ms: 100,
-    };
-    let supervisor = Supervisor::builder(&pool, config)?
-        .with_catalog(&catalog)
-        .build()?;
+    let config = batter_example_reference_service::config::WorkerSettings::from_source(
+        &batter::settings::SettingsSource::from_pairs([
+            ("JOBS_WORKER_ID".into(), "compatibility-worker".into()),
+            ("JOBS_POLL_INTERVAL_MS".into(), "20".into()),
+            ("JOBS_CLAIM_BATCH_SIZE".into(), "1".into()),
+            ("JOBS_LEASE_TTL_SECONDS".into(), "60".into()),
+            ("JOBS_MAX_GLOBAL_CONCURRENCY".into(), "1".into()),
+            ("JOBS_REAPER_INTERVAL_SECONDS".into(), "1".into()),
+            ("JOBS_SCHEDULE_POLL_INTERVAL_SECONDS".into(), "1".into()),
+            ("JOBS_REAPER_RETRY_DELAY_MS".into(), "100".into()),
+        ])?,
+    )?;
+    let supervisor = config.builder(&pool)?.with_catalog(&catalog).build()?;
     let stop = supervisor.shutdown_handle();
     let mut driver = tokio::spawn(
         supervisor.run_until_shutdown(std::future::pending(), Duration::from_secs(10)),

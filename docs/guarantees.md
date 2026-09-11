@@ -867,3 +867,67 @@ error and both capacities; resuming after release completes their close first.
 A successful join leaves diagnostics open for the caller's catalog checks. Pending
 formatting includes separate redacted driver-joined and driver-failure flags,
 so successful driver completion with pending admin closure remains distinguishable.
+
+
+## Explicit settings and redacted diagnostics
+
+`batter::settings` supplies std-based explicit inputs, a bounded literal reader,
+unsigned decimal/duration bounds, `SecretString`, and static diagnostic projections.
+It installs no source order, setting names, subscriber, environment mutation or
+file discovery. Applications validate source structure before overlaying inputs,
+then parse winning values. Missing, empty and non-Unicode remain distinct;
+invalid winners never select defaults. Duplicate pairs fail before merging.
+
+`read_file` opens only its supplied path. `read_literal` reads at most the checked
+byte limit plus one and requires UTF-8. The dialect supports LF/CRLF, blank lines,
+full-line comments, ASCII identifier keys, outer space/tab trimming, and literal
+unquoted or wholly single/double-quoted values. Unquoted whitespace, quotes and
+`#` are rejected. Quoted interior bytes are literal; dollar and backslash have
+no interpolation or escaping semantics. Export statements, multiline values and
+inline comments are unsupported. Source errors identify static categories and
+optional line numbers, never input keys, paths or values.
+
+`SecretString`, `SettingsSource`, `SettingsError` and `RedactedError<E>` hide values
+in ordinary, nested and alternate Debug/Display. Secret access and error-source
+traversal are explicit trusted operations. The original native causes remain
+available; arbitrary source-chain reporters can expose them. No encryption,
+zeroization, process-wide logging policy or panic-hook redaction follows.
+
+The reference root owns defaults, precedence and serve/setup password policy.
+Its private validated fields feed native request, pool, connection, Bulkhead,
+finite-process and Runledger constructors. Its supported TCP URL subset requires
+explicit host, username, database and sslmode; only password, sslmode and
+application_name query settings are accepted, once each. Credentials are decoded
+once, invalid percent/UTF-8 encodings fail, and unknown query settings are rejected
+before any SQLx URL parser can warn. Serve requires a nonempty password and worker
+identity; Setup permits passwordless externally provisioned endpoints and no
+worker identity, but cannot manufacture a worker in that state.
+
+SQLx 0.9 lacks an environment-free default constructor. The reference rejects
+all captured PG* entries, even empty/non-Unicode ones, and rechecks the actual
+process environment before `new_without_pgpass` and explicit setters. The process
+must not mutate its environment during construction. No passfile is loaded.
+Returned native options and their Debug/URL conversion are trusted exposures;
+upstream runtime diagnostics remain outside this projection. The selected graph
+has no SQLx TLS backend: requested TLS modes are retained, not downgraded, but
+TLS connections require the application to enable a native TLS feature. TLS
+negotiation is unverified. SQLx's native URL formatter cannot round-trip a bare
+setter-provided IPv6 host; the reference passes the bare host required by Tokio
+and separately tests its native startup/password wire exchange.
+
+Focused offline tests prove source policy, native field mapping, changed HTTP
+response deadlines, independent admission capacities and retained startup/cleanup
+failures. Explicit live cases additionally require a disposable PostgreSQL 18
+endpoint; their execution status is recorded in [validation](validation.md).
+No production command, hosted worker or external deployed adoption follows from
+these example constructors and probes.
+
+The private live endpoint handoff accepts `localhost` or `127.0.0.1` with
+sslmode=disable. It rejects IPv6 literals before acquisition because SQLx 0.9
+retains their URL brackets during TCP lookup. Direct root construction still
+supports bare native IPv6 options. The handoff serializes the validated host and
+database, canonical TLS mode and explicit password choice, including empty
+passwords; fixture URL parsing must not select an ambient passfile. Query spaces
+retain their meaning in both native clients. Parser regressions model the
+harness's normalization and database-path replacement; they do not establish
+live authentication or TLS.

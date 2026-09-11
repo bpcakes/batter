@@ -1691,3 +1691,194 @@ proven lost wakeup here. Event history plus `notify_waiters` and creation of the
 notification future before checking history supports multiple event waiters
 without consuming another waiter's sole permit. Fixture history remains the
 predicate; a notification alone never proves the required event occurred.
+
+## Typed configuration audit: 2026-09-10
+
+Planning evidence for `batter-5pm`, inspected against worktree baseline
+`0e47f7dbd5d0c04d878d290c5d8c9181d1162b18`. This section records native
+semantics used by the [implementation plan](../.agent/plans/batter-5pm.md);
+it is not execution evidence for the planned settings API.
+
+[dotenvy 0.15.7 source reading](https://docs.rs/dotenvy/0.15.7/src/dotenvy/lib.rs.html)
+provides exact-path and reader iterators, separate from environment-mutating
+loaders and ancestor-search helpers. Its
+[substitution parser](https://docs.rs/dotenvy/0.15.7/src/dotenvy/parse.rs.html)
+still reads the real process environment before previously parsed file values.
+The selected registry `src/errors.rs` also retains the offending line in
+`Error::LineParse` and includes it in Debug/Display. Choosing an iterator alone
+therefore establishes neither source isolation nor diagnostic redaction. The
+planned literal source dialect is an explicit Batter design choice, not a claim
+that dotenvy disables interpolation.
+
+SQLx's selected registry package is 0.9.0; its `.cargo_vcs_info.json` names
+`003b698e99e024f3621b8043a2426fde5b741171`. The
+[connection option source](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-postgres/src/options/mod.rs)
+derives Debug over credential fields. `new_without_pgpass` avoids passfile
+loading but still initializes fields from PG* variables. Public setters allow
+explicit endpoint/password/SSL policy; they do not provide a general
+environment-free initializer. The
+[URL parser](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-postgres/src/options/parse.rs)
+accepts userinfo and query passwords, logs unknown query parameters with their
+values, and applies passfile lookup after parsing. Wrapping its returned error
+cannot retract an already emitted warning. The plan requires URL validation
+before native construction and an explicit reference-root ambient-source policy.
+These points were checked in Cargo's selected registry source and the versioned
+upstream source; docs.rs SQLx source retrieval was unavailable during this audit.
+
+The selected SQLx core 0.9.0 `src/pool/options.rs` exposes
+`get_max_connections`, `get_min_connections`, and `get_acquire_timeout`.
+Its documented minimum is internally clamped to maximum. Root validation must
+reject an invalid min/max pair if that is the application contract, and native
+getter checks must accompany real acquisition tests.
+
+The pinned Runledger
+[JobsConfig implementation](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/config.rs)
+defaults malformed environment input and clamps several values. Direct
+`validate` instead rejects invalid configuration; its lease/retry lower bounds
+are 1, whereas environment loading clamps them to 10 seconds/1000 milliseconds.
+The inspected `src/supervisor.rs` explicit builder requires a Tokio runtime and
+retains typed config; `builder_from_env` introduces additional ambient intent
+settings. Root constructors must use the explicit path. The existing reference
+worker probe is an executable consumer seam, not an implemented production host.
+
+### Implementation recheck and native limits
+
+During batter-5pm implementation the selected Cargo sources were rechecked at
+those same SQLx 0.9.0 and Runledger Git revisions; `Cargo.lock` adds only direct
+edges to already selected packages, with no upstream upgrade. The typed builder
+and JobsConfig validation remain the constructor path; environment loaders are
+not called by reference settings or worker probes.
+
+The SQLx [URL formatter](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-postgres/src/options/parse.rs)
+interpolates a setter-provided host without adding IPv6 brackets. Its
+[native TCP socket path](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-core/src/net/socket/mod.rs)
+passes `(host, port)` to Tokio. The reference keeps bare IPv6 for native connection
+and verifies startup/password bytes in a loopback handshake; DNS/IPv4 option URLs
+separately prove password round-tripping. No corrected upstream formatter is
+claimed. The selected reference feature graph contains no native SQLx TLS backend;
+mode setters are inspected/tested, TLS negotiation is unverified.
+
+The already selected [url 2.5.8](https://docs.rs/url/2.5.8/url/struct.Url.html)
+provides URL structure parsing. The reference applies its own narrow query-key
+policy and validates percent triplets before
+[percent-encoding 2.3.2](https://docs.rs/percent-encoding/2.3.2/percent_encoding/struct.PercentDecode.html)'s
+strict UTF-8 decode. Query plus-to-space conversion occurs once. Explicit empty
+userinfo passwords retain source presence even when Url normalizes its password
+accessor to None, so a query password cannot conceal a conflicting source.
+
+## Configuration boundary follow-up research, 2026-09-10
+
+Rechecked the actual selected graph before this correction round: SQLx 0.9.0,
+Runledger 0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4 and harness
+3d525e6fc5745ce2e2437c7997de5cccdecff4ac; no dependency update is involved.
+
+- [SQLx 0.9 PgConnectOptions](https://docs.rs/sqlx/0.9.0/sqlx/postgres/struct.PgConnectOptions.html#method.new_without_pgpass)
+  and locally resolved options/mod.rs confirm that bypassing passfiles still
+  reads PG* defaults. The public native-construction seam is now named
+  `connect_options_from_process` to expose that effect; pure injected parsing
+  is separate. Clearing a constructor's environment in place would introduce
+  process-global mutation, not an environment-free constructor.
+- [Rust set_var safety](https://doc.rust-lang.org/std/env/fn.set_var.html#safety)
+  explains why multi-threaded Unix programs cannot assume global environment
+  mutation is safe. Tests use child environments; an extra hostile-parent
+  matrix target protects that boundary. Root PG* rejection stays fail-closed.
+- [PostgreSQL 18 identifiers](https://www.postgresql.org/docs/18/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS)
+  allow spaces in quoted identifiers. Encoded identifier/application-name spaces
+  are intentional; raw URL whitespace rejection prevents parser normalization,
+  not legitimate percent decoding. The proposed blanket post-decode whitespace
+  ban would reject supported inputs and is not applied.
+- [Pinned harness admin URL mapping](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+  clones the admin URL and changes the database path, preserving query parameters.
+  Preflight must therefore share the Rust validator and native credentials rather
+  than rely on a different Python grammar and psql environment/passfile behavior.
+- [Pinned JobsConfig validation](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/config.rs)
+  has per-field checks and no additional cross-field rule. Setup without identity
+  checks the supplied bounds and cannot build a worker; there is no uncovered
+  current cross-field invariant. Both roots deliberately own separate schemas;
+  an environment file for one root is not promised to configure the other.
+- [Pinned worker iteration](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker.rs)
+  caps a claim at available capacity, then spawns the returned batch.
+  [Native claim transaction](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/claim.rs)
+  marks that batch LEASED and commits before returning. The configuration fixture
+  precommits its entire eligible set, smaller than claim batch size, so a database
+  lease-count observation can detect excess configured capacity independently of
+  delayed handler scheduling. The changed live probe still needs real execution.
+
+The selected-file reader follows an operator-selected path; it never claimed a
+filesystem sandbox or symlink prohibition. The earlier security defect was reuse
+of attacker-prepopulated writable fixture directories, now separately prevented
+by exclusive private creation. No global no-symlink policy is inferred.
+
+## Disposable verification endpoint, 2026-09-10
+
+The [official PostgreSQL image documentation](https://hub.docker.com/_/postgres)
+was checked before provisioning: `POSTGRES_PASSWORD` initializes the default
+superuser's password on an empty instance. A disposable `postgres:18` container
+provided live acceptance evidence; the resolved digest and actual server version
+are recorded in [validation](validation.md#configuration-live-completion-batter-5pm-2026-09-10).
+This operational test setup adds no provisioning implementation or ordinary-test
+database dependency to the workspace.
+
+## Live endpoint query decoding correction, 2026-09-10
+
+The pinned [harness AdminClient](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+passes its retained URL to `tokio_postgres::Config::from_str`. The resolved
+tokio-postgres 0.7.18 `src/config.rs` (`UrlParser::parse_params` / `decode`) only
+percent-decodes query values. SQLx 0.9.0 `src/options/parse.rs` instead uses
+`Url::query_pairs`, matching the root's form-style `+` to space decoding.
+These exact locked sources were inspected locally; the pinned harness source
+was also checked upstream. The published source references are
+[tokio-postgres 0.7.18](https://docs.rs/crate/tokio-postgres/0.7.18/source/src/config.rs)
+and [SQLx 0.9.0](https://docs.rs/crate/sqlx-postgres/0.9.0/source/src/options/parse.rs).
+
+The live handoff now replaces query `+` with `%20` after root validation, while
+preserving userinfo and percent escapes. A native parser regression failed on
+the original handoff and passes with the correction. The reference package adds
+an exact dev dependency on the already resolved tokio-postgres version to test
+the actual harness parser; Cargo regenerated only that package's dependency edge
+in the lockfile, without upgrading packages. Live server authentication remains
+separate evidence.
+
+## Live endpoint hostname handoff correction, 2026-09-10
+
+The locked [SQLx 0.9.0 URL parser](https://docs.rs/crate/sqlx-postgres/0.9.0/source/src/options/parse.rs)
+percent-decodes Unix socket paths, but passes other URL host strings directly to
+the TCP host setter. The root instead decodes its explicit TCP hostname. Thus
+`local%68ost` selected `localhost` for preflight and a different DNS spelling for
+fixture pools. The exact installed source was inspected together with the
+[pinned harness admin URL mapping](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs),
+which normalizes through `url::Url` and replaces only the fixture database path.
+
+The shared live handoff uses the validated hostname with
+[`Url::set_host` in url 2.5.8](https://docs.rs/url/2.5.8/url/struct.Url.html#method.set_host),
+with the earlier query-space correction. Its native compatibility limits and
+additional normalization are recorded below.
+Regressions compare the independent expected host, port, username and database
+against the locked native parsers after the harness's normalization steps.
+The encoded-host regression failed before the repair. No upstream dependency
+or public API change is needed.
+
+## Native live URL compatibility, 2026-09-10
+
+The same pinned SQLx URL parser retains IPv6 authority brackets. Its PostgreSQL
+connection stream passes that host to
+[`sqlx-core` 0.9.0 TCP connection](https://docs.rs/crate/sqlx-core/0.9.0/source/src/net/socket/mod.rs),
+which uses Tokio's `(host, port)` address form. A native reproduction confirmed
+that `[::1]` fails lookup there while bare `::1` resolves. The private live
+fixture policy now rejects IPv6 literals before connection work; the root's
+native-options IPv6 wire test remains supported. This avoids applying a private
+live-runner workaround throughout the generic adapter's native URL consumers.
+
+Related comparisons of the locked native parsers found two further scalar
+differences: SQLx accepts case-insensitive TLS modes, while tokio-postgres 0.7.18
+requires `disable` exactly; SQLx trims all leading path slashes before decoding,
+while the harness client removes one. The live handoff serializes the validated
+database as one encoded path component and the selected disabled TLS mode in
+canonical spelling. Credential/query values retain their selected bytes.
+
+SQLx's URL parser also calls `apply_pgpass` after parsing. An absent URL password
+therefore differs from the root's explicit empty Setup password. A regression
+using the existing private fake passfile failed against the earlier handoff.
+The handoff now supplies an explicit empty query password when necessary; the
+same real native parser then preserves the selected empty value. These checks
+do not read a real credential file or establish live server authentication.

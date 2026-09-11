@@ -148,6 +148,20 @@ Do not hide body streaming, transaction commit ambiguity, non-yielding tasks,
 unbounded semaphore waiters, or default panic-hook output behind generic words
 like "safe" or "reliable". Test what those words would actually mean.
 
+## Verification input ownership
+
+The independent Rust targets use Jig contract v9 exhaustive input scopes. Keep
+those scopes complete when adding fixtures, helpers, configuration or new source
+roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Keep formatting,
+contract and file-budget checks as required profile siblings, not test execution
+dependencies. Tracker-only edits preserve Rust receipts; a final
+`scripts/jig work check --plan-id <id>` may refresh the inexpensive whole-repository
+policy checks while reusing Rust passes. Use native `scripts/jig check
+repo:file-budget --plan-id <id>` for a targeted refresh, without overriding the
+plan comparison. If inspection reports `collection_limit`, repeat `work evidence`
+or `work gates` with `--freshness-timeout-ms 30000`; this reads existing evidence
+without executing checks. See [Jig verification](docs/testing.md#jig-verification).
+
 ## Finding the next task
 
 Run `bv --robot-triage`, then verify current state with `br ready --type task --json`
@@ -220,7 +234,7 @@ optional SQLx adapter and example packages.
 - For backend changes, require a successful final `api:test` receipt from
   `scripts/jig work check`, the `verify` profile, or `scripts/jig check test`.
   Inspect `scripts/jig work evidence` and `scripts/jig work gates` first. A fresh
-  passing receipt for the current plan and worktree satisfies this requirement;
+  passing receipt for the current plan and check inputs satisfies this requirement;
   do not automatically rerun tests after a profile that already passed them.
   Reuse also requires unchanged test commands/configuration, toolchain, relevant
   environment and prerequisites, with no later unresolved failure. Jig freshness

@@ -19,6 +19,8 @@ Windows support and non-Unix fallbacks are out of scope.
   its public path remains `batter::lifecycle::ShutdownReport`.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
+- `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
+  mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
 - `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.

@@ -6,7 +6,7 @@ transactions, and routers. Standardize how work is owned, bounded, observed, and
 stopped—not how every business operation is written.
 
 **Status: 0.1.0 MVP, locally validated; not a production-validated release.**
-The workspace includes failure-contract tests and six runnable demonstrations. Dependencies were upgraded to
+The workspace includes failure-contract tests and six runnable demonstrations plus a read-only live-suite preflight. Dependencies were upgraded to
 the latest stable direct releases on 2026-09-07, including SQLx 0.9.0, with a
 Cargo-generated lockfile. See [validation](docs/validation.md) for executed
 checks and remaining gaps, and [current status](docs/status.md).
@@ -198,3 +198,11 @@ points to Beads, the sole owner of delivery tasks and their dependencies. See al
 
 MIT; see [LICENSE](LICENSE). Review ownership and publication policy before
 turning this internal MVP into a public release.
+
+
+Typed root settings use `batter::settings` for explicit bounded source reading,
+integer/duration parsing and redacted diagnostics. Application schemas stay at
+the root: the runnable HTTP example accepts `BATTER_ENV_FILE` and configured
+request/capacity values; the reference package exposes validated native pool and
+worker constructors. See [operations](docs/operations.md#loading-example-settings)
+and the [reference schema](examples/reference-service/README.md#typed-settings-and-native-constructors).

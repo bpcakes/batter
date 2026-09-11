@@ -30,9 +30,10 @@ enum Creation {
 async fn harness(
     budget: usize,
 ) -> Result<PostgresHarness, Box<dyn std::error::Error + Send + Sync>> {
+    let (url, _) = super::live_endpoint::from_process()?;
     Ok(PostgresHarness::start(
         HarnessConfig::new(PROJECT)?
-            .with_admin_database_url(std::env::var("POSTGRES_TEST_ADMIN_URL")?)
+            .with_admin_database_url(url.expose_secret())
             .with_cleanup_on_start(false)
             .with_connection_budget(budget)?
             .with_connections_per_database(4)?

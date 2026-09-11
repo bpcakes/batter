@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -100,6 +101,110 @@ class JigIntegrationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("file_budget.baseline_unavailable",
                               [finding["code"] for finding in self.latest_findings()])
+
+    def jig(self, *args):
+        result = subprocess.run([str(self.runtime), "--json", *args], cwd=self.repo,
+                                env=self.env, text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def prepare_freshness(self):
+        # Keep the actual repository target scopes/profile. Replace only expensive
+        # command bodies with observable executions; native policy checks stay real.
+        shutil.copy2(ROOT / ".gitignore", self.repo / ".gitignore")
+        runner = self.repo / "scripts/fixture_check.py"
+        runner.write_text(
+            "from pathlib import Path\nimport sys\n"
+            "with Path('.agent/fixture-executions').open('a') as output:\n"
+            "    output.write(sys.argv[1] + '\\n')\n"
+        )
+        config = self.repo / ".jig.toml"
+        text = config.read_text()
+        for label in ["clippy", "fmt", "test", "test_locked"]:
+            text = re.sub(rf'^api_{label}_command = .*$',
+                          lambda _, label=label: f'api_{label}_command = '
+                          + json.dumps(f"python3 scripts/fixture_check.py {label}"),
+                          text, flags=re.MULTILINE)
+        config.write_text(text)
+        for name, content in {
+            "crates/example/src/lib.rs": "pub fn example() {}\n",
+            "crates/example/tests/fixture.txt": "example fixture\n",
+            "examples/example/migrations/001.sql": "SELECT 1;\n",
+            "test-support/temp_dir.rs": "// shared test fixture\n",
+            ".beads/issues.jsonl": '{"status":"open"}\n',
+            "README.md": "Example documentation\n",
+            "scripts/example_helper.py": "# example helper\n",
+        }.items():
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        # Ignored build/cache contents must not make the exhaustive scopes unknown.
+        for name in ["target/debug/generated.rs", "scripts/__pycache__/example.pyc"]:
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("ignored build output\n")
+        self.commit("freshness fixture")
+        result = subprocess.run(
+            [str(self.runtime), "work", "start", "--title", "Example freshness",
+             "--body", "Exercise actual target input scopes.", "--print-plan-id"],
+            cwd=self.repo, env=self.env, text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout.strip()
+
+    def freshness_check(self, plan):
+        result = self.jig("work", "check", "--plan-id", plan)
+        self.assertTrue(result["ok"], result)
+        return {entry["target"]["action"]: entry for entry in result["target_evidence"]}
+
+    def execution_count(self, label):
+        return (self.repo / ".agent/fixture-executions").read_text().splitlines().count(label)
+
+    def test_tracker_closeout_reuses_rust_passes_across_git_states(self):
+        plan = self.prepare_freshness()
+        original = self.freshness_check(plan)
+        for state in ["dirty", "staged", "committed"]:
+            with self.subTest(state=state):
+                if state == "dirty":
+                    (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
+                    (self.repo / "README.md").write_text("Updated example documentation\n")
+                elif state == "staged":
+                    self.git("add", ".beads", "README.md")
+                else:
+                    self.commit("tracker closeout")
+                current = self.freshness_check(plan)
+                for action in ["clippy", "fmt", "test"]:
+                    self.assertEqual(self.execution_count(action), 1)
+                    self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+                    self.assertEqual(current[action]["disposition"], "reused")
+                self.assertNotEqual(current["file-budget"]["receipt_id"],
+                                    original["file-budget"]["receipt_id"])
+
+    def test_relevant_source_and_helpers_invalidate_test_pass(self):
+        plan = self.prepare_freshness()
+        previous = self.freshness_check(plan)
+        for count, name in enumerate([
+            "crates/example/src/lib.rs", "crates/example/tests/fixture.txt",
+            "examples/example/migrations/001.sql", "test-support/temp_dir.rs",
+            "scripts/example_helper.py", "scripts/new_helper.py",
+        ], start=2):
+            with self.subTest(path=name):
+                path = self.repo / name
+                path.write_text((path.read_text() if path.exists() else "") + "\n")
+                current = self.freshness_check(plan)
+                self.assertEqual(self.execution_count("test"), count)
+                self.assertNotEqual(current["test"]["receipt_id"], previous["test"]["receipt_id"])
+                previous = current
+
+    def test_native_policy_refresh_does_not_execute_rust_targets(self):
+        plan = self.prepare_freshness()
+        original = self.freshness_check(plan)
+        (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
+        self.jig("check", "repo:file-budget", "--plan-id", plan)
+        current = self.freshness_check(plan)
+        for action in ["clippy", "fmt", "test"]:
+            self.assertEqual(self.execution_count(action), 1)
+            self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
 
     def test_restored_runtime_cache_runs_without_cargo(self):
         cache = self.runtime.parent.parent

@@ -10,7 +10,8 @@ use super::{ProbeResult, fixture_run};
 pub async fn probe() -> ProbeResult {
     // Exclusive disposable endpoint: this acknowledged global catalog lock must
     // not race another live case. The runner selects --test-threads=1.
-    let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    let (url, _) = super::live_endpoint::from_process()?;
+    let url = url.expose_secret().to_owned();
     let config = HarnessConfig::new("batter_faults")?
         .with_admin_database_url(url.clone())
         .with_cleanup_on_start(false)
@@ -91,7 +92,8 @@ fn assert_both(report: &batter_sqlx::test_support::FixtureReport<(), FixtureErro
 }
 
 async fn low_level_both() -> ProbeResult {
-    let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    let (url, _) = super::live_endpoint::from_process()?;
+    let url = url.expose_secret().to_owned();
     let config = HarnessConfig::new("batter_faults")?
         .with_admin_database_url(url.clone())
         .with_cleanup_on_start(false)
@@ -130,7 +132,8 @@ async fn low_level_both() -> ProbeResult {
 }
 
 pub async fn deferred_and_consuming() -> ProbeResult {
-    let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
+    let (url, _) = super::live_endpoint::from_process()?;
+    let url = url.expose_secret().to_owned();
     let config = HarnessConfig::new("batter_deferred")?
         .with_admin_database_url(url.clone())
         .with_cleanup_on_start(false)
