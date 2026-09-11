@@ -257,3 +257,15 @@ async fn configured_startup_pool_close_before_lease() {
 async fn configured_worker_concurrency() {
     support::with_database(support::configured_worker::probe).await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn reference_delivery_command_and_reconciliation() {
+    support::with_database(support::delivery::command_and_reconciliation).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn configured_command_root_bounds() {
+    support::with_database(support::delivery::configured_root_bounds).await;
+}

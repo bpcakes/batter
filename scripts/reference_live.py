@@ -6,6 +6,7 @@ import sys
 from parallel_process import run_parallel
 
 CASES = frozenset({
+    "configured_command_root_bounds",
     "configured_pool_capacity_and_acquire_timeout",
     "configured_startup_pool_close_before_lease",
     "configured_worker_concurrency",
@@ -45,6 +46,7 @@ CASES = frozenset({
     "initialized_schema_upgrade",
     "lease_cleanup_defer_and_drop",
     "migrations_and_transactional_enqueue",
+    "reference_delivery_command_and_reconciliation",
     "worker_startup_witness_and_shutdown",
 })
 

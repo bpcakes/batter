@@ -1,5 +1,6 @@
 pub mod configuration;
 pub mod configured_worker;
+pub mod delivery;
 pub mod fixture_acquisition;
 pub mod fixture_background_session;
 pub mod fixture_cleanup_failure;

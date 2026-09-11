@@ -19,6 +19,8 @@
 //! let overrides = SettingsSource::from_pairs([
 //!     ("DATABASE_URL".into(), "postgres://user:fake@localhost/db?sslmode=disable".into()),
 //!     ("JOBS_WORKER_ID".into(), "worker-example".into()),
+//!     ("BATTER_AUTH_OWNER_ID".into(), "00000000-0000-0000-0000-000000000001".into()),
+//!     ("BATTER_AUTH_TOKEN".into(), "fake-example-token".into()),
 //! ])?;
 //! let config = RootSettings::from_sources(ConfigMode::Serve, None,
 //!     SettingsSource::default(), overrides)?;
@@ -32,6 +34,7 @@ mod worker;
 pub use pool::PoolSettings;
 pub use worker::WorkerSettings;
 
+use crate::{auth::BearerAuthenticator, delivery::OwnerId};
 use batter::{
     admission::Bulkhead,
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
@@ -47,6 +50,8 @@ const ROOT_NAMES: &[&str] = &[
     "BATTER_REQUEST_TIMEOUT_MS",
     "BATTER_BULKHEAD_CAPACITY",
     "BATTER_PROCESS_CAPACITY",
+    "BATTER_AUTH_OWNER_ID",
+    "BATTER_AUTH_TOKEN",
     "DATABASE_URL",
 ];
 
@@ -69,6 +74,7 @@ pub struct RootSettings {
     pool: PoolSettings,
     worker: WorkerSettings,
     endpoint: endpoint::Endpoint,
+    authenticator: Option<BearerAuthenticator>,
 }
 impl RootSettings {
     /// Capture process environment once, read only an explicitly selected file,
@@ -125,6 +131,59 @@ impl RootSettings {
             )?)
             .map_err(|e| SettingsError::new(name, "integer overflow").with_cause(e))
         };
+        let endpoint = endpoint::Endpoint::parse(values.required("DATABASE_URL")?, mode)?;
+        let authenticator = match mode {
+            ConfigMode::Serve => {
+                let owner = values
+                    .required("BATTER_AUTH_OWNER_ID")?
+                    .parse()
+                    .map_err(|error| {
+                        SettingsError::new("BATTER_AUTH_OWNER_ID", "invalid UUID").with_cause(error)
+                    })?;
+                let owner = OwnerId::new(owner).map_err(|error| {
+                    SettingsError::new("BATTER_AUTH_OWNER_ID", "invalid UUID").with_cause(error)
+                })?;
+                let token = batter::settings::SecretString::new(
+                    values.required("BATTER_AUTH_TOKEN")?.to_owned(),
+                );
+                Some(BearerAuthenticator::new(owner, token).map_err(|error| {
+                    SettingsError::new("BATTER_AUTH_TOKEN", "invalid token").with_cause(error)
+                })?)
+            }
+            ConfigMode::Setup => {
+                let owner = values.text("BATTER_AUTH_OWNER_ID")?;
+                let token = values.text("BATTER_AUTH_TOKEN")?;
+                match (owner, token) {
+                    (None, None) => None,
+                    (Some(owner), Some(token)) => {
+                        let owner = owner.parse().map_err(|error| {
+                            SettingsError::new("BATTER_AUTH_OWNER_ID", "invalid UUID")
+                                .with_cause(error)
+                        })?;
+                        let owner = OwnerId::new(owner).map_err(|error| {
+                            SettingsError::new("BATTER_AUTH_OWNER_ID", "invalid UUID")
+                                .with_cause(error)
+                        })?;
+                        Some(
+                            BearerAuthenticator::new(
+                                owner,
+                                batter::settings::SecretString::new(token.to_owned()),
+                            )
+                            .map_err(|error| {
+                                SettingsError::new("BATTER_AUTH_TOKEN", "invalid token")
+                                    .with_cause(error)
+                            })?,
+                        )
+                    }
+                    _ => {
+                        return Err(SettingsError::new(
+                            "authentication",
+                            "owner and token must be configured together",
+                        ));
+                    }
+                }
+            }
+        };
         Ok(Self {
             bind,
             request_budget,
@@ -132,7 +191,8 @@ impl RootSettings {
             process_capacity: capacity("BATTER_PROCESS_CAPACITY")?,
             pool: PoolSettings::from_values(&values)?,
             worker: WorkerSettings::from_values(&values, mode == ConfigMode::Serve)?,
-            endpoint: endpoint::Endpoint::parse(values.required("DATABASE_URL")?, mode)?,
+            endpoint,
+            authenticator,
         })
     }
     /// Native bind address; binding remains an owned startup action.
@@ -172,6 +232,14 @@ impl RootSettings {
     /// Borrow validated worker settings for the explicit native builder.
     pub fn worker(&self) -> &WorkerSettings {
         &self.worker
+    }
+    /// Clone the configured production authenticator.
+    ///
+    /// Setup mode may omit authentication because it never serves requests.
+    pub fn authenticator(&self) -> Result<BearerAuthenticator, SettingsError> {
+        self.authenticator.clone().ok_or_else(|| {
+            SettingsError::new("authentication", "serving authentication is not configured")
+        })
     }
 }
 impl fmt::Debug for RootSettings {

@@ -1,9 +1,61 @@
-# Reference compatibility probes
+# Reference delivery command and compatibility probes
 
-Unpublished, Unix-only application package for `batter-4t6`. Its native SQLx
-pool/connection/transaction seams compile against pinned Runledger Git sources.
+Unpublished, Unix-only application package. Its runnable command accepts an
+authenticated request for an exact generic-record generation, persists its
+owner-scoped identity and delivery, and submits one Runledger job in the same
+native SQLx transaction. The package also retains the compatibility and fixture
+probes created for `batter-4t6`.
 The [compatibility manifest](../../docs/reference-compatibility.md) records exact
 versions, API contracts, executed evidence and limits.
+
+## Atomic delivery command
+
+Run the command-only service with an explicit PostgreSQL endpoint, owner and
+opaque bearer token. `JOBS_WORKER_ID` remains part of the validated serving
+schema, but this task intentionally starts no Runledger worker or provider:
+
+```sh
+DATABASE_URL='postgres://service:password@127.0.0.1:5432/service?sslmode=disable' \
+JOBS_WORKER_ID='reference-producer' \
+BATTER_AUTH_OWNER_ID='00000000-0000-0000-0000-000000000001' \
+BATTER_AUTH_TOKEN='replace-with-an-opaque-token' \
+  cargo run -p batter-example-reference-service --locked
+```
+
+An optional positional settings-file path uses the literal format described
+below. Environment values override that file; no file is discovered implicitly.
+Startup applies the pinned Runledger migration history, the forward-only
+application history, the upstream compatibility check, and the handler-free
+`records.delivery.execute` producer definition before readiness.
+
+The authenticated routes are:
+
+- `POST /records/{record_id}/deliveries` with `expected_generation`,
+  `idempotency_key`, and `payload`.
+- `GET /deliveries/{delivery_id}` for the owner-scoped durable projection.
+- `GET /delivery-commands/{idempotency_key}` for reconciliation when the caller
+  did not receive the POST response.
+
+The idempotency key is 1–128 URL-safe ASCII bytes (`A-Z`, `a-z`, `0-9`, `.`,
+`_`, `:`, `-`); the meaningful JSON payload is at most 16 KiB encoded. The
+application retains the owner, record, expected positive generation, canonical
+JSONB payload, stable delivery UUID, and immutable Runledger enqueue inputs.
+An exact retry returns the same delivery without another enqueue. Changed
+record/generation/payload input conflicts. Another authenticated owner may reuse
+the same key independently and cannot observe the first owner's rows.
+
+The first submission uses one `PgLease`, one READ COMMITTED transaction, and the
+native `enqueue_job_with_outcome_tx` API. Acknowledged commit returns the lease;
+acknowledged rollback returns it after rollback; interruption after `BEGIN` or a
+missing commit/rollback acknowledgement retires it and returns an uncertain
+outcome. The service never retries a transaction automatically. The caller must
+query its original owner/key; absence while the original database session may
+still settle does not prove rollback.
+
+`pending`, `in_flight`, `succeeded`, `dead_lettered`, and `cancelled` are a
+closed application projection of the locked Runledger status vocabulary. This
+command initially creates `pending` work only. No worker or provider runs here,
+so acceptance never means that an external effect succeeded.
 
 Run offline compilation and the native seam doctest:
 
@@ -51,19 +103,20 @@ still supports IPv6. The live handoff canonicalizes selected host, database and
 TLS values and explicitly retains empty passwords so fixture parsing does not
 fall back to a passfile.
 
-The recorded nineteen-case live passes predate these handoff corrections.
-Current live revalidation of the combined forty-case inventory on both toolchains remains pending in
-`batter-5pm`; the implementation's offline checks do not complete that acceptance.
+The recorded forty-case live passes predate the command implementation. The
+current runner requires 42 cases, including the command/reconciliation and
+configured-root cases; see validation for current execution evidence.
 
 The external harness owns four kinds of lease cleanup, and each application pool
-closes before lease disposal. The runner checks prerequisites, requires all forty
+closes before lease disposal. The runner checks prerequisites, requires all 42
 named ignored cases to exist and run, and uses the existing bounded Unix process
 owner. Ordinary workspace tests report these cases as ignored and require no
 database. The failure injection locks a shared system catalog, so keep other
 workloads off the endpoint; the runner executes cases serially. A failed or watchdog-terminated run does not establish cleanup.
 
-The migration fixtures and witness job are minimal probes. They do not implement
-the later business command, durable provider, HTTP host. Reusable native pool/lease ownership comes from the optional
+The original migration fixtures and witness job remain narrow compatibility
+probes. The delivery command adds a production HTTP/root composition but no
+durable provider or worker host. Reusable native pool/lease ownership comes from the optional
 `batter-sqlx/test-support` feature; template isolation and lock-operation probes
 exercise it without importing application policy into the adapter.
 
@@ -96,6 +149,8 @@ there is no interpolation, escaping, export, multiline or inline-comment syntax.
 | BATTER_REQUEST_TIMEOUT_MS | 2000; positive, at most one year |
 | BATTER_BULKHEAD_CAPACITY | 32; 1..=Tokio Semaphore::MAX_PERMITS |
 | BATTER_PROCESS_CAPACITY | 32; independent finite-task bound, same range |
+| BATTER_AUTH_OWNER_ID | Required non-nil UUID in Serve; optional only as an owner/token pair in Setup |
+| BATTER_AUTH_TOKEN | Required visible-ASCII token, 1..=256 bytes in Serve; redacted from application diagnostics |
 | BATTER_POOL_MAX_CONNECTIONS | 8; positive u32 |
 | BATTER_POOL_MIN_CONNECTIONS | 0; u32, at most maximum |
 | BATTER_POOL_ACQUIRE_TIMEOUT_MS | 3000; positive, at most one year |
@@ -146,9 +201,11 @@ panic hooks, and do not encrypt or erase memory.
 
 Offline tests cover source/bounds/redaction/native constructors and partial startup.
 The explicit live inventory additionally includes configured pool timeout/reuse,
-held-handler worker concurrency, and failed startup closing its pool before the
-native fixture lease. See [validation](../../docs/validation.md) for execution
-status. Full command and worker hosting remain separate delivery tasks.
+held-handler worker concurrency, failed startup closing its pool before the
+native fixture lease, atomic delivery/reconciliation, and command-root pool,
+deadline, Bulkhead, and finite-process effects. See
+[validation](../../docs/validation.md) for execution status. Worker hosting and
+provider execution remain separate delivery tasks.
 
 Offline native-option, IPv6 and worker-builder checks execute in cleared child
 processes. The normal matrix repeats this target with hostile parent PG* values;

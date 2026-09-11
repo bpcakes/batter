@@ -83,6 +83,7 @@ fn rejected_urls_and_nested_aggregates_never_format_input() {
             "postgres://user:secret-marker@host/db?sslmode=disable",
         ),
         ("JOBS_WORKER_ID", "secret-marker"),
+        ("BATTER_AUTH_TOKEN", "secret-auth-marker"),
     ])
     .unwrap();
     for text in [
@@ -90,9 +91,13 @@ fn rejected_urls_and_nested_aggregates_never_format_input() {
         format!("{root}"),
         format!("{:?}", vec![&root]),
         format!("{} {:?}", root.worker(), root.worker()),
+        format!("{:?}", root.authenticator().unwrap()),
     ] {
         assert!(!text.contains("secret-marker"));
+        assert!(!text.contains("secret-auth-marker"));
     }
+    let error = load(&[("BATTER_AUTH_TOKEN", "secret auth marker")]).unwrap_err();
+    assert!(!format!("{error} {error:#?}").contains("secret auth marker"));
     let error = load(&[(
         "DATABASE_URL",
         "postgres://user:secret-marker@host/db?sslmode=secret-marker",

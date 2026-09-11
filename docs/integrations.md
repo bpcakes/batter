@@ -1,8 +1,8 @@
 # Integration ownership contracts
 
 The `batter-axum` and `batter-sqlx` adapters, native SQLx lifecycle example and
-unpublished reference compatibility package exist in this snapshot. The latter
-composes pinned native upstream APIs in explicit live probes; see the
+unpublished reference command package exist in this snapshot. The latter
+composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
 Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
@@ -177,11 +177,27 @@ especially outcomes around commit. A caller deadline or lost connection does not
 prove rollback. Do not turn an ambiguous outcome into a generic "retryable"
 Batter error. Implement application idempotency/reconciliation separately.
 
-## Runledger: future host, not another worker runtime
+The reference service now demonstrates that contract for delivery of a versioned
+generic record. A unique `(owner_id, idempotency_key)` command row, delivery row,
+and native Runledger enqueue share one READ COMMITTED transaction and one
+`PgLease`. The command retains its canonical record/generation/JSONB and immutable
+enqueue inputs. Exact replay reads that committed identity without enqueueing
+again; changed input conflicts. The stable delivery UUID namespaces Runledger's
+key, while the authenticated owner becomes its `organization_id`.
+
+Only acknowledged commit or rollback returns the connection to the pool. Failed
+commit/rollback acknowledgement or interruption after `BEGIN` retires it and
+produces an uncertain response. `GET /delivery-commands/{idempotency_key}` lets
+the same authenticated owner reconcile without a response-generated identifier;
+absence during settlement is not rollback evidence. This initial command has no
+automatic transaction replay, worker handler, provider effect, or exactly-once
+claim. The later controlled concurrency/fault suite owns stronger proof.
+
+## Runledger: native producer implemented; host remains future work
 
 Reviewed baseline from the preceding brief: runledger-core, runledger-postgres,
 and runledger-runtime 0.12.0, with a PostgreSQL 18 requirement in its published
-README. The reference compatibility package now compiles and exercises the Git
+README. The reference package now compiles and exercises the Git
 revision selected in the [manifest](reference-compatibility.md). The registry
 release uses a different SQLx version and is not interchangeable with that pin.
 
@@ -458,9 +474,10 @@ construction; no passfile, native URL fallback or `JobsConfig::from_env` path is
 used. The application owns schema names and password/TLS policy; see the
 [reference settings schema](../examples/reference-service/README.md).
 
-Existing reference fixture pool and worker-witness paths consume these outputs.
-`batter-kpd` must adopt the constructors in the full command/root and prove the
-production runtime effects; `batter-0cp` must consume `WorkerSettings::builder`
+The reference fixture paths and delivery command root consume these outputs.
+The command root uses configured authentication, request deadline, pool,
+Bulkhead and finite-process constructors; live held-work cases prove their
+runtime effects. `batter-0cp` must consume `WorkerSettings::builder`
 in the hosted worker with acknowledged startup and joined shutdown. Those tasks
 retain their own acceptance. Authorized external migration remains `batter-7r3.6`.
 The producer does not introduce Runlimit settings or an alternate job supervisor.

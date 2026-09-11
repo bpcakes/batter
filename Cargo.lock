@@ -173,14 +173,17 @@ dependencies = [
  "runledger-core",
  "runledger-postgres",
  "runledger-runtime",
+ "serde",
  "serde_json",
  "sqlx",
+ "thiserror",
  "tokio",
  "tokio-postgres",
  "tower",
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]

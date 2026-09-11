@@ -1,4 +1,5 @@
 use crate::{load, source};
+use axum::http::HeaderValue;
 use batter::settings::{SettingsSource, read_literal};
 use batter_example_reference_service::config::{
     ConfigMode, PoolSettings, RootSettings, WorkerSettings,
@@ -22,6 +23,17 @@ fn root_defaults_and_all_worker_fields_reach_native_values() {
     assert_eq!(jobs.reaper_interval, Duration::from_secs(15));
     assert_eq!(jobs.schedule_poll_interval, Duration::from_secs(30));
     assert_eq!(jobs.reaper_retry_delay_ms, 30_000);
+    let owner = root
+        .authenticator()
+        .unwrap()
+        .authenticate(Some(&HeaderValue::from_static(
+            "Bearer fake-configured-token",
+        )))
+        .unwrap();
+    assert_eq!(
+        owner.as_uuid().to_string(),
+        "00000000-0000-0000-0000-000000000001"
+    );
 }
 
 #[test]
@@ -132,6 +144,7 @@ fn application_source_order_and_mode_requirements_are_explicit() {
     )
     .unwrap();
     assert!(setup.worker().jobs_config().is_err());
+    assert!(setup.authenticator().is_err());
     assert!(
         RootSettings::from_sources(
             ConfigMode::Serve,
@@ -159,6 +172,41 @@ fn application_source_order_and_mode_requirements_are_explicit() {
         )
         .is_err()
     );
+    let serving_endpoint = "postgres://user:fake-password@localhost/database?sslmode=disable";
+    assert!(
+        RootSettings::from_sources(
+            ConfigMode::Serve,
+            None,
+            SettingsSource::default(),
+            source(&[
+                ("DATABASE_URL", serving_endpoint),
+                ("JOBS_WORKER_ID", "worker")
+            ])
+        )
+        .is_err()
+    );
+    for authentication in [
+        &[(
+            "BATTER_AUTH_OWNER_ID",
+            "00000000-0000-0000-0000-000000000002",
+        )][..],
+        &[("BATTER_AUTH_TOKEN", "token-only")][..],
+    ] {
+        let mut setup = source(&[("DATABASE_URL", endpoint)]);
+        setup.overlay(source(authentication));
+        assert!(
+            RootSettings::from_sources(ConfigMode::Setup, None, SettingsSource::default(), setup)
+                .is_err()
+        );
+    }
+    assert!(
+        load(&[(
+            "BATTER_AUTH_OWNER_ID",
+            "00000000-0000-0000-0000-000000000000"
+        )])
+        .is_err()
+    );
+    assert!(load(&[("BATTER_AUTH_TOKEN", "token with space")]).is_err());
 }
 
 #[test]

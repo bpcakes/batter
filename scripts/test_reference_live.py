@@ -34,7 +34,8 @@ class ReferenceLiveControls(unittest.TestCase):
         self.assertEqual(run.call_args_list[2].args[0][-2:], ["--ignored", "--test-threads=1"])
 
     def test_configuration_cases_cannot_be_omitted_from_inventory_or_execution(self):
-        configured = {"configured_pool_capacity_and_acquire_timeout",
+        configured = {"configured_command_root_bounds",
+                      "configured_pool_capacity_and_acquire_timeout",
                       "configured_startup_pool_close_before_lease",
                       "configured_worker_concurrency"}
         self.assertTrue(configured <= CASES)

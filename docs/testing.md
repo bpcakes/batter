@@ -188,8 +188,12 @@ both limits across libraries, examples, and tests.
 ## Explicit reference compatibility probes
 
 The [reference package](../examples/reference-service/README.md) has the required named
-ignored cases in `tests/reference_live.rs`: upstream compatibility, fixture lifecycle
-and configuration probes. `scripts/reference_live.py::CASES` owns the exact inventory. Fixture cases cover template reuse/isolation, acknowledged
+ignored cases in `tests/reference_live.rs`: the atomic command, upstream compatibility,
+fixture lifecycle and configuration probes. `scripts/reference_live.py::CASES` owns the exact inventory. The command case applies both migration histories twice,
+uses the production authenticated router, and checks exact replay, canonical
+payload conflict, foreign-owner isolation, replacement-generation fencing,
+discarded-response reconciliation, pending state and exact command/delivery/job
+counts. Fixture cases cover template reuse/isolation, acknowledged
 lock operations, returned body errors, partial/sibling acquisition, panic,
 resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
 errors, observer failure, cancelled native creation, abandoned producer errors
@@ -1217,8 +1221,12 @@ children. A loopback IPv6 native PostgreSQL handshake verifies decoded startup
 and password bytes independently of SQLx's URL formatter. This is a protocol
 fixture, not PostgreSQL server or TLS verification.
 
-The exact live inventory adds `configured_pool_capacity_and_acquire_timeout`,
+The exact live inventory includes `configured_command_root_bounds`,
+`configured_pool_capacity_and_acquire_timeout`,
 `configured_worker_concurrency` and `configured_startup_pool_close_before_lease`.
+The command-root case holds real pool work to distinguish configured pool timeout
+from request deadline, holds one production router request to reject at the
+configured Bulkhead, and exhausts configured finite-process admission.
 The first holds the sole checkout through a second acquisition's native timeout
 and then proves reuse. The second holds real handlers at limits 1/2, observes
 starts, releases and joins, then independently requires SUCCEEDED database rows.

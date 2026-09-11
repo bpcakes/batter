@@ -2,13 +2,18 @@
 
 ## Purpose
 
-Own executable native SQLx, Runledger and external harness compatibility probes
-for batter-4t6 and reusable fixture acceptance for batter-4jz/batter-kjl. This unpublished Unix-only package will host later reference
-composition; it is not a reusable database framework.
+Own the runnable generic delivery command, native SQLx/Runledger compatibility
+probes, and reusable external-harness fixture acceptance. This unpublished
+Unix-only application is not a reusable database framework.
 
 ## Key entrypoints
 
-- `src/lib.rs` proves native SQLx type identity.
+- `src/main.rs` and `src/runtime.rs` own the command-only process root.
+- `src/delivery.rs` owns command identity, the one-transaction submission and
+  durable owner-scoped projections.
+- `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
+- `src/schema.rs` owns repeated migration/compatibility/producer-definition startup.
+- `src/lib.rs` also preserves native SQLx type identity probes.
 - `src/config.rs` and `src/config/` own the example settings schema, validated
   native constructor inputs, TCP URL subset and PG*/passfile restrictions.
 - `tests/configuration.rs` covers source policy, bounds, redaction, native
@@ -35,7 +40,13 @@ preserves explicit empty passwords and encodes query spaces as `%20` for the
 external harness's required URL API. Reject IPv6 literals at this private live
 boundary; SQLx's URL consumer cannot use their brackets for TCP lookup. Direct
 root native IPv6 options remain supported. Native parser tests guard the handoff.
-Use one native SQLx graph and explicit application-owned transactions. Close pools
+Use one native SQLx graph and explicit application-owned transactions. Delivery
+submission uses one `PgLease` and one READ COMMITTED transaction for command,
+delivery and Runledger rows. Exact replay never re-enqueues. Owner/key identity,
+record generation, canonical payload and immutable enqueue fields stay retained;
+uncertain commit/rollback acknowledgement is reconciled by owner/key and is never
+automatically retried. The producer definition has no handler until the owning
+worker/provider tasks add one. Close pools
 before consuming leases; explicitly drain deferred cleanup. Startup witnesses
 prove only their observed job path. Ordinary workspace tests never require a live
 database. Native option tests cross the cleared-environment child boundary;

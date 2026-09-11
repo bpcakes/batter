@@ -316,7 +316,13 @@ deliberately instead of dropping diagnostics or printing the reports' derived
 
 Do not wrap an entire transaction/commit in a blanket retry. Continue to use
 native SQLx transaction parameters where application writes and Runledger enqueue
-must share the transaction. That reference integration is planned, not included.
+must share the transaction. The
+[reference delivery command](../examples/reference-service/README.md#atomic-delivery-command)
+shows the implemented boundary: validate before acquisition; pass one operation
+budget through `PgLease` acquisition and transaction work; return the lease only
+after acknowledged commit/rollback; and reconcile an uncertain result by the
+original authenticated owner and idempotency key. An absent reconciliation row
+while a database session may still settle is not proof of rollback.
 
 ## Tests that do not lose teardown errors
 

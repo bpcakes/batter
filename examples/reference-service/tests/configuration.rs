@@ -31,6 +31,11 @@ fn load(pairs: &[(&str, &str)]) -> Result<RootSettings, batter::settings::Settin
             "postgres://user:fake-password@localhost/database?sslmode=disable",
         ),
         ("JOBS_WORKER_ID", "configured-worker"),
+        (
+            "BATTER_AUTH_OWNER_ID",
+            "00000000-0000-0000-0000-000000000001",
+        ),
+        ("BATTER_AUTH_TOKEN", "fake-configured-token"),
     ]);
     values.overlay(source(pairs));
     RootSettings::from_sources(ConfigMode::Serve, None, SettingsSource::default(), values)

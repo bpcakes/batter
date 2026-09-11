@@ -2,6 +2,69 @@
 
 Latest evidence: 2026-09-11. Earlier sections retain their historical scope.
 
+## Atomic reference command live acceptance (batter-kpd), 2026-09-11
+
+The current 42-case reference inventory passed against two dedicated temporary
+PostgreSQL 18.6 clusters on both supported Rust toolchains. Both clusters used
+SCRAM-SHA-256 host authentication; the primary used superuser authority,
+`track_counts=on`, and `autovacuum_naptime=1s`. Native preflight verified the
+versions, required privileges, and distinct signed cluster identifiers before
+creating a fixture. The clusters were local verification infrastructure, not
+application provisioning or deployment evidence.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; PostgreSQL
+`18.6 (Ubuntu 18.6-1.pgdg24.04+2)`; Rust/Cargo 1.98.1
+(`48a229cea` / `797e8a9bc`) and 1.94.0 (`4a4ef493e` / `85eff7c80`). The
+audited Git baseline is `acb5df43d7ac2fcea38683f4b0b90fe748dc11e3`; the
+implementation remains an uncommitted working-tree change as required.
+Cargo.lock SHA-256 is
+`848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+
+| Command | Result |
+| --- | --- |
+| `POSTGRES_TEST_ADMIN_URL=<temporary-primary> POSTGRES_TEST_OBSERVER_URL=<temporary-observer> RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS on the final split source tree: PostgreSQL 18 preflight; 42 passed, 0 failed, 0 ignored, 0 filtered; 54.22s. |
+| `POSTGRES_TEST_ADMIN_URL=<temporary-primary> POSTGRES_TEST_OBSERVER_URL=<temporary-observer> RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS on the final split source tree: the same preflight and 42-case inventory; 0 failed, ignored, or filtered; 54.13s. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS: 32 ordinary library/binary/integration tests plus three preflight-example tests; all 42 live cases discovered and intentionally ignored. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: four doctests, including delivery submission/reconciliation and authentication examples. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings` | PASS after separating service orchestration and live scenarios below repository complexity/length limits. |
+| `PYTHONPATH=scripts python3 -m unittest scripts/test_reference_live.py` | PASS: five strict inventory/execution controls. |
+| `bash scripts/verify.sh` | PASS on the final split source tree with Rust 1.98.1: complete Rust/Python matrix, formatting, warning-denied Clippy, doctests, and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on the final split source tree with the same complete verification scope on the minimum toolchain. |
+| Rebuild `batter-axum` example `http_service` on each toolchain, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten process smokes, including readiness/probes/fallback, custom envelopes, work/deadline, INFO/WARN-filtered correlation, both signals, and exit 0. |
+| `scripts/jig work check --plan-id plan_01M27S0SZB2H9KHXBYT0MDCFM7` | PASS: Clippy, formatting, tests, contract and file-budget targets. Source-validation receipts are Clippy `receipt_01M27WG2R5D1W3N0Z8XD19ECKY`, formatting `receipt_01M27WG34BVMADZTN4RRFH6HTA`, and tests `receipt_01M27WG3GBH7RJHYQEZFCNY7SZ`; the final tracker/documentation-only refresh reused them and passed both whole-repository policy targets. |
+
+The new command case applies Runledger and application startup twice, uses the
+production authentication/router path, and proves exact replay, canonical JSONB
+comparison, foreign-owner lookup and target isolation, replacement-generation
+fencing, response-discard reconciliation, pending state, and exact equality of
+the command/delivery/job/enqueue-event counts. It also verifies Runledger's
+organization, key, type, payload, and status against the retained immutable
+request. The configured-root case distinguishes pool acquisition timeout from
+request deadline and exhausts the production Bulkhead and finite-process
+capacities with held work.
+
+The first full development run passed 41 cases but exposed a weak timing setup:
+the intended 30ms held-pool timeout could expire during initial SCRAM connection
+establishment, before the held-checkout scenario began. The final test uses a
+500ms pool acquisition budget inside a 1.5s request budget; a focused strict-SCRAM
+rerun and both complete inventories pass. No semantic assertion was removed.
+The runner's intentional deferred-cleanup diagnostic appeared while its
+error-retention case passed, as designed. True concurrent same-key/fault injection
+and controlled lost-commit-acknowledgement proof remain assigned to
+`batter-8q8.1`/`batter-fms`; the current case discards an acknowledged response
+to prove the public reconciliation path without overstating transport fault
+injection. No macOS, TLS, hosted CI, worker, provider, publication, or deployment
+claim is added.
+
+The first connected Jig profile rejected the new 989-line delivery module at the
+repository's 800-line hard limit. Transaction orchestration was moved into its
+own 226-line child module, leaving the domain and SQL mapping at 768 lines. The
+targeted file-budget check and the final connected profile pass without a waiver;
+`work evidence` and `work gates` report all required evidence fresh and passing.
+The acceptance record was added to `batter-kpd` before its verified closure;
+worker/provider execution and the stronger concurrency/fault suite remain open
+under their separately owned Beads.
+
 ## Combined configuration live acceptance (batter-5pm), 2026-09-11
 
 The reconciled forty-case reference inventory passed against two operator-started,

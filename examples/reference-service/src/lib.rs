@@ -14,6 +14,9 @@
 //! ```
 #![forbid(unsafe_code)]
 
+/// Application-owned bearer authentication producing trusted owner identity.
+pub mod auth;
+
 /// Proves the application pool and upstream pool are the same native type.
 pub fn native_pool(pool: &sqlx::PgPool) -> &runledger_postgres::DbPool {
     pool
@@ -35,3 +38,15 @@ pub fn native_connection<'borrow>(
 
 /// Application-owned validated settings and explicit native constructors.
 pub mod config;
+
+/// Atomic application command, durable delivery projection and query paths.
+pub mod delivery;
+
+/// Authenticated HTTP command and owner-scoped reconciliation routes.
+pub mod http;
+
+/// Owned command-only service startup and shutdown composition.
+pub mod runtime;
+
+/// Forward-only application/Runledger startup migration and definition sync.
+pub mod schema;

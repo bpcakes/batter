@@ -122,12 +122,14 @@ lower library minimum.
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
-| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Pinned compatibility probes, validated constructors, and an explicit live test target. |
+| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, pinned compatibility probes, validated constructors, and an explicit live test target. |
 
 PostgreSQL provisioning stays in the external `postgres-test-harness` repository;
 it is not a workspace member. The optional `batter-sqlx/test-support` feature is
 selected by reference tests; the default adapter graph excludes the harness.
-Runlimit and Runledger adapters are **not implemented**. Ownership boundaries
+Runlimit and a reusable Runledger host adapter are **not implemented**. The
+reference application directly uses Runledger's native transactional producer
+API but does not start a worker or provider. Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The
 [compatibility manifest](docs/reference-compatibility.md) records the reference
