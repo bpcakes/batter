@@ -68,11 +68,16 @@ pub struct DatabaseCleanup {
     pub database_name: String,
     /// Actual cleanup result, after all its registered pools closed.
     pub result: Result<(), FixtureError>,
+    /// All failed session observations, even if a later explicit retry succeeded.
+    pub observation_failures: Vec<Arc<FixtureError>>,
+    /// Native pool acquisition errors retained even when the body handled them.
+    pub pool_failures: Vec<Arc<sqlx::Error>>,
 }
 
 /// Complete internal report; formatting hides body and native error contents.
 ///
-/// Inspect `body`, every `acquisitions` and `databases` result, and `drain` to retain all
+/// Inspect `body`, every `acquisitions` and `databases` result (including
+/// `pool_failures` and `observation_failures`), and `drain` to retain all
 /// causes. `Error::source` exposes only the first cause; it cannot represent a
 /// branching error report. No native pool-close error is fabricated: close returns unit.
 /// A successful driver join is not a successful fixture: inspect the report or
@@ -141,10 +146,11 @@ impl<T, E> FixtureReport<T, E> {
     pub fn is_ok(&self) -> bool {
         self.body.is_ok()
             && self.acquisitions.iter().all(Result::is_ok)
-            && self
-                .databases
-                .iter()
-                .all(|database| database.result.is_ok())
+            && self.databases.iter().all(|database| {
+                database.result.is_ok()
+                    && database.observation_failures.is_empty()
+                    && database.pool_failures.is_empty()
+            })
             && self.drain.is_ok()
     }
     /// Extract a successful body value, otherwise retain the entire report.
@@ -163,7 +169,7 @@ impl<T, E> fmt::Display for FixtureReport<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "fixture report: body_failed={}, acquisition_failures={}, database_failures={}, drain_failed={}",
+            "fixture report: body_failed={}, acquisition_failures={}, database_failures={}, pool_failures={}, observation_failures={}, drain_failed={}",
             self.body.is_err(),
             self.acquisitions
                 .iter()
@@ -173,6 +179,14 @@ impl<T, E> fmt::Display for FixtureReport<T, E> {
                 .iter()
                 .filter(|database| database.result.is_err())
                 .count(),
+            self.databases
+                .iter()
+                .map(|database| database.pool_failures.len())
+                .sum::<usize>(),
+            self.databases
+                .iter()
+                .map(|database| database.observation_failures.len())
+                .sum::<usize>(),
             self.drain.is_err()
         )
     }
@@ -193,6 +207,12 @@ impl<T: 'static, E: Error + 'static> Error for FixtureReport<T, E> {
             }
         }
         for database in &self.databases {
+            if let Some(error) = database.pool_failures.first() {
+                return Some(error.as_ref());
+            }
+            if let Some(error) = database.observation_failures.first() {
+                return Some(error.as_ref());
+            }
             if let Err(error) = &database.result {
                 return Some(error);
             }

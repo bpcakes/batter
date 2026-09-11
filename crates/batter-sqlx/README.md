@@ -60,3 +60,35 @@ observation, and runtime death has no completion guarantee. `PoolAcquire` means
 cleanup is pending; low-level `Connect` reports attempted cleanup. The low-level
 fixture owner is must-use and still requires explicit finish. Provisioning and
 caching stay upstream; migrations and row builders stay consumer-owned.
+
+Owned runs can opt into `with_session_observer(SessionObserver)` before acquisition.
+After tracked pool close, an independently budgeted admin pool must observe no
+sessions for that database. Timeout/error retains the lease and parks its cleanup
+until `SessionObserver::retry_with`; independent databases continue. Every failed
+attempt survives recovery in `DatabaseCleanup::observation_failures`. Stop new
+connection producers before observation; absence does not prevent future sessions.
+`wait_for` returns pending without cancelling work; `cleanup_progress` reports
+historical phases and errors. Pending is not clean reuse. Dropping the retry
+control can strand a parked driver; runtime loss can trigger destructive native
+lease Drop. The low-level manual APIs do not use this optional observer.
+
+Pool-acquisition errors share their concrete cause through `Arc<sqlx::Error>` in
+`FixtureError::PoolAcquire` and `DatabaseCleanup::pool_failures`; handling an error
+in the body cannot make the report successful. Inspect all report branches after
+finish, including separate consuming-cleanup and deferred-drain causes.
+
+Session retries broadcast to all users of that control. Unread requests coalesce;
+a request during an active attempt is consumed after failure without cancelling
+that attempt. The full attempt budget includes pool acquisition; timeout means
+no absence witness, not proof of surviving sessions.
+
+Parked leases retain the upstream harness's admission permits. Exhausting a
+shared harness with unresolved observations can block other runs' acquisitions
+indefinitely. Recover the parked leases before awaiting more capacity; keeping
+databases retained does not guarantee progress for another run.
+
+Retry replacement never closes the previous pool. An observer mistakenly inside a
+disposable database must be explicitly closed before a corrected retry. Same-server
+identity and normal native catalog visibility remain caller preconditions; database
+name presence is not a cluster identity check. Redacted report summaries separate
+failed consuming database cleanup from retained pool and observation failures.

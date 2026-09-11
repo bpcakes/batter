@@ -758,4 +758,80 @@ producer cancellation is unverified; neither is a supported completion claim.
 outcome after explicit cleanup. Live probes cover cancelled native creation,
 abandoned initializer error/panic, shared admission, partial/sibling acquisition,
 body panic, simultaneous errors, close ordering and independent catalog absence.
-Remaining ownership/session failure cases belong to `batter-kjl`.
+`batter-kjl` additionally retains handled pool-acquisition errors in each database
+report; the delivered `PoolAcquire` and retained `pool_failures` share the same
+native cause through Arc. SQLx's internal after-connect retries may expose only
+the final native acquisition error; this does not recover errors SQLx itself hides.
+
+`FixtureRun::wait_for` bounds observation only: `Ok(None)` means pending. A cancelled
+wait returns no result and can be resumed; a cleanup-driver JoinError is separate.
+`cleanup_progress` exposes historical database phases and observation errors.
+With `with_session_observer`, cleanup closes every tracked pool, then queries all
+sessions for the database through an independent admin pool. The query checks
+that the database exists and the observer is outside it. The caller must select
+the same server and stop all producers of new connections. This is a point-in-time
+absence witness, not fencing, remote cancellation or permission to reuse a database.
+Matching database names do not validate cluster identity. A differently targeted
+server with the same name can satisfy the query; normal native catalog visibility
+and actual same-server targeting are caller preconditions. The observation does
+not clear prepared transactions, active logical replication slots or subscriptions;
+native cleanup may still fail after session absence is observed.
+The live SCRAM startup control shows why producers must stop: an authenticating
+backend can have NULL database identity and pass this filter. Native lease
+cleanup can then remain pending on PostgreSQL's process barrier until that
+connection closes. A separate live autovacuum control proves that an assigned
+background worker is included and can require explicit retry after timeout.
+The startup control identifies the actual target DROP backend's ProcSignalBarrier
+wait while its sole new startup socket stays open, then closes that socket and
+requires completion. Its identity window requires the dedicated serial test server.
+
+A bounded session observation that times out or returns an error retains the lease
+and parks only that database until an explicit `SessionObserver::retry_with`
+request is available. Requests broadcast; one made during an active attempt is
+consumed after failure, and unread requests coalesce. Independent
+cleanup continues. Explicit retries coalesce while an attempt is active; they
+never interrupt active work. Each failed attempt remains in the final report,
+which stays unsuccessful even after eventual cleanup succeeds. The driver retains
+the retry channel: losing all external controls can leave it parked indefinitely.
+There is no implicit destructive fallback while the driver remains live.
+
+Native detach and adapter retirement tests hold acknowledged blocked backends
+past successful pool close, observe their identities and retained database from a
+separate one-slot admin pool, then release them and resume cleanup. Observer
+PoolClosed and wrong-target failures retain identical causes across progress and
+report. Separate native resources prove body, consuming-cleanup and deferred-drain
+errors coexist; external harness shutdown does not replace drain. Default native
+panic hooks and upstream harness diagnostics remain outside adapter redaction.
+
+Report summaries count failed consuming database cleanups separately from retained
+pool failures and observation attempts. Successful cleanup with a recovered error
+still makes the report unsuccessful, while database_failures remains zero. Replacing
+an incorrectly targeted observer does not close its sessions: callers must explicitly
+close their native pool clone and witness backend exit before the corrected retry.
+
+A live-runtime waiter-loss test proves driver cleanup continues after release of
+a held checkout. A separate actual runtime-destruction test observes a cancelled
+driver JoinError and native lease Drop deleting the database while a checkout is
+still held. That is destructive fallback, not completed pool closure or a fixture
+cleanup guarantee. The test drains upstream cleanup from a surviving harness on
+another runtime; process death is not covered.
+
+Reference fixture completion uses one bounded consumer helper. A pending error
+retains the waiter, diagnostic pool, all session pools and retry control together for typed recovery;
+its automatic formatting exposes phases/counts only. It never treats timeout as
+permission to drop the database. Abandoning that error loses the recovery handle;
+runtime destruction retains the native destructive Drop limitation above.
+
+Specifically, an unrecovered pending result passed to the reference `assert_probe`
+boundary panics and may destroy its per-test runtime, triggering that native
+fallback. The helper's timeout itself does not delete a lease; subsequent test
+runtime teardown may. This boundary does not guarantee database survival after
+an unsuccessful test returns or panics.
+
+The reference completion bound also covers administrative pool closure. Driver
+failure closes session and diagnostic pools before propagating the original
+JoinError. If a checkout prevents closure, the pending owner retains that cached
+error and both capacities; resuming after release completes their close first.
+A successful join leaves diagnostics open for the caller's catalog checks. Pending
+formatting includes separate redacted driver-joined and driver-failure flags,
+so successful driver completion with pending admin closure remains distinguishable.

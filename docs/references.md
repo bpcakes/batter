@@ -1235,3 +1235,309 @@ classifies adding enum variants and adding `non_exhaustive` to an existing
 exhaustive enum as breaking changes. ReadinessReason remains exhaustive by
 design: additional states warrant consumer policy review, rather than a new
 wildcard fallback that can conceal a readiness/severity decision.
+
+## Fixture failure retention and session observation: 2026-09-10
+
+Rechecked the resolved SQLx 0.9.0 source in `sqlx-core/src/pool/mod.rs` and
+`pool/connection.rs`. [Pool::close](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+returns unit and waits for tracked checked-out connections; native
+[PoolConnection::detach](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolConnection.html#method.detach)
+removes that accounting. Neither acknowledges the detached backend's exit.
+The live negative control uses native detach alongside Batter's actual PgLease
+retirement, then observes the blocked backend IDs outside the closing one-slot pool.
+
+The PostgreSQL 18 [statistics documentation](https://www.postgresql.org/docs/18/monitoring-stats.html)
+describes pg_stat_activity session rows, visibility of session existence/database
+across roles, and transaction-local snapshot caching. The fixture observer uses
+fresh auto-commit catalog queries, tests database presence and that its own database
+is distinct, and checks absence of all rows for the disposable database. It does
+not infer quiescence from elapsed time, pool size or cached PID disappearance.
+The caller must select the same server and stop new connection producers; a read
+is not a connection-admission fence. Backend IDs are test witnesses, not durable
+identities or a mechanism to terminate sessions.
+
+Rechecked postgres-test-harness revision
+[`3d525e6fc5745ce2e2437c7997de5cccdecff4ac`](https://github.com/bpcakes/postgres-test-harness/tree/3d525e6fc5745ce2e2437c7997de5cccdecff4ac),
+`src/harness.rs` DatabaseLease::cleanup/defer_cleanup/Drop and
+`src/cleanup.rs` awaited/deferred failure delivery. Consuming cleanup delivers its
+own error; explicit defer hands a separate resource to the queue, whose drain
+returns DeferredCleanup with native per-database causes. External shutdown is a
+no-op and cannot replace that barrier. Native lease Drop submits fallback deletion;
+destroying a fixture driver is therefore not conservative resource retention.
+The new real fault test uses separate resources for both error paths and recovers
+tagged residuals only after releasing the acknowledged catalog lock.
+
+The unpublished opt-in fixture API changes PoolAcquire's payload from owned
+sqlx::Error to Arc<sqlx::Error>, and adds per-database failure collections. This
+source compatibility adjustment is explicit: all in-workspace consumers are
+updated together, while external source adopters must update field construction
+and payload matching. It preserves native identity after the application handles
+an error; cloning a formatted message would not. No dependency version changed;
+Cargo regenerated the lockfile for the reference test's direct batter dependency.
+
+## Fixture retry and completion review follow-up: 2026-09-10
+
+Rechecked [Tokio 1.53.1 watch Receiver](https://docs.rs/tokio/1.53.1/tokio/sync/watch/struct.Receiver.html#method.changed)
+and [Sender::send_replace](https://docs.rs/tokio/1.53.1/tokio/sync/watch/struct.Sender.html#method.send_replace).
+`borrow_and_update` marks the current value seen; `changed` immediately consumes
+an unseen update. This establishes the intended broadcast/coalescing semantics:
+a request received during an active attempt permits another attempt after failure,
+without cancelling that active attempt. The first attempt reads the latest pool.
+A live two-database control verifies this behavior and retained failure identities.
+
+Inspected the Cargo-resolved postgres-test-harness revision
+`3d525e6fc5745ce2e2437c7997de5cccdecff4ac`, `src/admin.rs:860` and
+`src/harness.rs:771,815`. The [pinned admin source](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs#L860)
+uses `DROP DATABASE IF EXISTS ... WITH (FORCE)`; consuming cleanup awaits queue
+completion and lease Drop submits fallback cleanup. The raw admin web fetch failed;
+the exact local Cargo checkout supplied this evidence. PostgreSQL 18
+[DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)
+documents FORCE attempting connection termination. A failed observer therefore
+must retain the lease; returning a pending error retains the run/control rather
+than aborting cleanup. No second protective non-FORCE drop is assumed.
+
+The shared observer timeout bounds acquisition and polling together. It means
+absence was not established, and does not identify remaining sessions as its
+cause. Diagnostic pool capacity is separate from observation capacity in the
+normal reference helpers and detached-session proof. Deliberate capacity starvation
+is isolated to the explicitly named active-attempt retry fault test.
+
+
+## Fixture terminal completion and review questions: 2026-09-10
+
+Rechecked the selected SQLx **0.9.0** local Cargo source
+`sqlx-core/src/pool/mod.rs:420-442` and `pool/inner.rs`. The versioned
+[Pool::close contract](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+requires awaiting tracked checkout closure; dropping the last pool handle does
+not supply that completion witness. The web fetch was unavailable, so the exact
+Cargo source supplied the evidence. Multiple close calls can resume waiting.
+This supports retaining the cached driver outcome and pools while a bounded
+administrative close remains pending. The implementation changes only the private
+reference completion policy; native leases and adapter ownership remain intact.
+
+Answers to the independent review's open questions:
+
+- **Retention versus failed test/runtime exit:** the lease-retention contract is
+  conditional on the cleanup runtime remaining alive. Returning pending preserves
+  it; the later assertion panic and runtime destruction cross that boundary.
+  [Tokio 1.53.1 Runtime shutdown](https://docs.rs/tokio/1.53.1/tokio/runtime/struct.Runtime.html#shutdown)
+  drops yielding tasks rather than guaranteeing completion. The pinned harness
+  `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` `harness.rs:815` queues fallback
+  cleanup on lease Drop; `admin.rs:860` uses FORCE. PostgreSQL 18
+  [DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)
+  documents its connection termination behavior. A non-destructive runtime-death
+  guarantee would require an upstream lease/provisioning policy change, outside
+  this completion helper's contract. Existing live controls cover both boundaries.
+- **Missing database:** remain unresolved. An absent name can mean the wrong
+  server or external deletion and cannot establish the required witness. Do not
+  recreate the name, manufacture successful cleanup, or drop the retained lease
+  to finish a report. A correct replacement observer can recover a wrong-target
+  error; external deletion has no automatic recovery protocol here.
+- **Shared retry control:** intentionally broadcasts across runs, not just a
+  single suite. [Tokio 1.53.1 Sender](https://docs.rs/tokio/1.53.1/tokio/sync/watch/struct.Sender.html#method.send_replace)
+  and [Receiver](https://docs.rs/tokio/1.53.1/tokio/sync/watch/struct.Receiver.html#method.borrow_and_update)
+  confirm latest-value broadcast, coalescing and seen-version behavior. Use a
+  fresh control for independently recovered runs; sharing requires coordinated
+  observer-pool lifetime. The existing active-attempt test covers two databases
+  in one run. Cross-run broadcast and replacement before a first attempt lack
+  dedicated execution coverage; no new claim of such coverage is made.
+
+The public retry example now calls out that its final consuming wait is unbounded.
+Repeated `wait_for` preserves bounded, resumable observation when a retry fails.
+The original defect was a private completion-ownership split: two caller-level
+question-mark returns bypassed diagnostic closure on a terminal driver error.
+Closing in the owning helper avoids duplicating error-path cleanup in consumers.
+
+
+The next review's shared-capacity question was confirmed against the same pinned
+[harness source](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/harness.rs),
+`DatabaseLeaseInner::permit`, and local `server.rs::acquire_database_permit` /
+`admission.rs::acquire`. A retained lease owns admission permits; parked runs can
+exhaust shared capacity until explicitly recovered. No automatic permit release
+is appropriate while the database remains retained. This liveness limit is now
+explicit in SessionObserver rustdoc, the adapter README and integration contract.
+
+Git index/untracked state does not alter the review or build scope: both include
+all current source inputs, and this work authorizes no commit. Any later commit
+must include new module sources together with their declarations; `commit -a`
+is not an instructed delivery step. Tracker closure follows the current review
+and gates rather than the staged historical metadata.
+
+
+Final review question, PostgreSQL background workers: the PostgreSQL 18
+[activity view](https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY)
+includes autovacuum, parallel and logical-replication workers, plus extension
+backend types. PostgreSQL 18's
+[CountOtherDBBackends implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/storage/ipc/procarray.c)
+signals conflicting autovacuum workers during DROP interlocking. This does not
+supply a prior absence witness. Keep the existing all-database-backend check:
+a client-only filter would omit application-related background work too. This is
+an intentionally conservative policy; maintenance activity can cause a pending
+attempt requiring explicit retry. No autovacuum timing guarantee is claimed.
+The reference 30-second whole-run limit remains the documented consumer policy;
+only the recorded macOS execution establishes its timing evidence, not slower
+or hosted runners. Current `br show`/the Beads database is authoritative for
+status; an older Git index is a historical staged snapshot, not delivery state.
+
+
+## Fixture observation coverage follow-up: 2026-09-10
+
+Rechecked SQLx 0.9.0, Tokio 1.53.1 and harness revision
+`3d525e6fc5745ce2e2437c7997de5cccdecff4ac` against Cargo.lock. New probes retain
+those native APIs. The earlier cross-run/pre-first-attempt coverage limitations
+above describe their historical snapshot; dedicated tests now cover both.
+
+PostgreSQL 18 [statistics visibility](https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-STATS-VIEWS)
+exposes session existence and database identity to ordinary users. The pinned
+[18.4 pgstat implementation](https://github.com/postgres/postgres/blob/REL_18_4/src/backend/utils/adt/pgstatfuncs.c)
+assigns database identity before restricted activity fields. The test now connects
+as an unprivileged, non-inheriting LOGIN role, verifies absence of superuser
+and pg_read_all_stats privilege, and witnesses a different user's detached
+session. Observation times out and retains the database until that session closes.
+Role identifiers consist only of a fixed prefix and generated decimal digits;
+role creation/removal is confined to the dedicated disposable primary server.
+
+PostgreSQL 18.4 [backend initialization](https://github.com/postgres/postgres/blob/REL_18_4/src/backend/utils/init/postinit.c)
+publishes initial backend status before authentication and database assignment.
+The SCRAM protocol test pauses at AuthenticationSASL, finds the new backend with
+NULL datname and observes cleanup advancing to CleaningLease. The first test
+incorrectly expected full completion while authentication was paused; actual
+execution showed DROP waiting on ProcSignalBarrier. The pinned
+[DROP implementation](https://github.com/postgres/postgres/blob/REL_18_4/src/backend/commands/dbcommands.c)
+confirms its storage-manager process barrier. The corrected oracle requires
+pending completion, then closes the startup connection, witnesses backend exit
+and awaits the same successful report. This tests a limitation; it adds no
+connection fence or arbitrary startup/shutdown guarantee.
+
+The real autovacuum test uses documented PostgreSQL 18
+[table storage parameters](https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-STORAGE-PARAMETERS)
+and [vacuum settings](https://www.postgresql.org/docs/18/runtime-config-vacuum.html)
+to retain a worker through a 200 ms observation attempt. It witnesses the actual
+worker identity, disables subsequent ordinary autovacuum on its own table,
+waits for all sessions to exit and retries explicitly. Production observation
+continues to include all database backend types. It does not gain a maintenance
+completion deadline.
+
+The active-attempt oracle now uses pg_blocking_pids acknowledgement of both
+observer connection-initialization queries instead of racing a published phase
+against pool selection. Both current-thread and multi-thread Tokio tests preserve
+the two ordered native causes and their Arc identities. Pre-first-attempt updates
+are sent while a body gate prevents cleanup; only the latest pool can be selected.
+Shared-pool tests cover both waiting for both drivers before close and recovering
+a second run after the first completion closes their shared native pool.
+
+
+The coverage review follow-up replaced SET ROLE with an actual SCRAM-authenticated
+unprivileged LOGIN role. PostgreSQL's documented permission checks use current_user;
+the stronger control also makes session_user unprivileged. A native Tokio child
+contains assertion unwinding, while the outer owner awaits pool close and DROP
+ROLE before interpreting its JoinError. The injected assertion regression checks
+that the role is absent and the native panic identity remains observable. This
+is not a runtime-death or general async-drop guarantee.
+
+The PostgreSQL 18 [control-data function](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-CONTROL)
+returns a cluster's system_identifier. Live preflight now requires access on both
+endpoints and rejects equal identities before fixture execution, including aliases.
+SQLx 0.9 Pool::close is resumable and marks closure only when polled; concurrent
+join_all polling starts every retained replacement close even if an earlier pool
+has a held checkout. Its existing futures-util 0.3.34 dependency is now explicitly
+selected by the reference package too; Cargo generated the lockfile change.
+The new held-original/replacement regression tests that all closes start before
+releasing the original checkout and resuming the same successful report.
+
+The proposed server-wide wait for every NULL-datname client was considered and
+not adopted: it couples independent fixture databases to unrelated authentication
+attempts and still cannot fence a later connection. The API continues to require
+caller-owned producer shutdown and a same-server observer. The startup control
+records the narrower witness instead of adding a global admission policy.
+
+The next review found a test scheduling assumption, a known permanent temporary-role
+password, and stale ownership descriptions. The held-original close test now joins
+the empty driver before timing administrative closure. Active retries now pass
+through the actual recoverable completion owner on both Tokio runtimes. Secondary
+URL rejection also has a full runner-entry control.
+
+PostgreSQL 18 [CREATE ROLE](https://www.postgresql.org/docs/18/sql-createrole.html)
+defines VALID UNTIL as password expiry, not role removal or session termination.
+The restricted-login test uses a fresh
+[random UUID](https://www.postgresql.org/docs/18/functions-uuid.html) password and
+a five-minute deadline from the server clock. PostgreSQL
+[format](https://www.postgresql.org/docs/18/functions-string.html#FUNCTIONS-STRING-FORMAT)
+quotes its identifier and literals before executing role DDL. The live role probe
+checks finite expiry; its outer owner still explicitly drops the role after joining
+the assertion-bearing task. Process death may leave an expired role.
+
+The secondary privilege question was checked against PostgreSQL 18.4
+[control-data source](https://github.com/postgres/postgres/blob/REL_18_4/src/backend/utils/misc/pg_controldata.c)
+and [built-in grants](https://github.com/postgres/postgres/blob/REL_18_4/src/backend/catalog/system_functions.sql),
+then executed on the disposable secondary: BEGIN, CREATE ROLE fixture_control_probe
+NOLOGIN NOSUPERUSER, SET LOCAL ROLE, SELECT system_identifier IS NOT NULL FROM
+pg_catalog.pg_control_system(), ROLLBACK returned true. Public execution is available
+by default on that version; an explicit EXECUTE grant is needed only if revoked.
+The progress types retain the workspace's existing exhaustive API convention;
+adding a phase remains an intentional compatibility decision, not a claim that
+future variants are source-compatible.
+
+Another review exposed ambiguous recovery guidance and report counters. SQLx
+pool replacement does not close the old pool, so an inside-target observer must
+be closed explicitly before a correct observer can witness session absence. The
+reference completion owner now exposes a read-only observer_pools slice of its
+native pools. The control exercises explicit close and a backend-exit witness
+through the same pending ObservedRun without an external pool clone. It does not automatically close arbitrary replaced
+pools because they may still serve active attempts or shared runs. Report Display
+now separates consuming-cleanup failures, pool failures and observation attempts;
+offline and live controls distinguish recovered errors from failed deletion.
+
+PostgreSQL 18 [DROP DATABASE](https://www.postgresql.org/docs/18/sql-dropdatabase.html)
+can fail with prepared transactions, active logical replication slots or subscriptions
+despite a session-absence witness; native errors remain in the cleanup report.
+The [system_user function](https://www.postgresql.org/docs/18/functions-info.html)
+reports authentication for the current connection, not a future database selected
+by potentially different pg_hba rules. The disposable server returned NULL for a
+trusted in-container administrative connection and scram-sha-256:postgres for the
+external test endpoint. The actual disposable-database SCRAM control remains the
+authentication oracle. The same-server requirement also remains explicit: a name
+lookup cannot distinguish an identical database name on a different cluster.
+Normal native catalog session-identity visibility is part of that observer contract.
+
+The autovacuum follow-up uses PostgreSQL 18
+[VACUUM progress reporting](https://www.postgresql.org/docs/18/progress-reporting.html#VACUUM-PROGRESS-REPORTING):
+the view identifies pid, database and relation OID for the vacuum currently running.
+The test records its created table's OID, selects an actual autovacuum of that table
+with more than half the heap still to scan, and rechecks the same table/worker after
+the short observation timeout. It no longer mistakes a transient database visit
+or another table's vacuum for its deliberately cost-limited workload. No arbitrary
+server scheduling or maintenance-duration guarantee is added.
+
+The startup follow-up now witnesses the target DROP query's actual
+ProcSignalBarrier wait and rechecks its backend after the pending interval before
+releasing the raw socket. A merely slow DROP cannot satisfy that oracle. The
+dedicated serial server remains required for the before/after startup PID window;
+forwarded socket ports need not retain their frontend identity. PostgreSQL 18
+[vacuum configuration](https://www.postgresql.org/docs/18/runtime-config-vacuum.html)
+requires track_counts as well as autovacuum. Preflight now rejects track_counts=off
+before inventory. A real invocation with PGOPTIONS='-c track_counts=off' exited1
+with the explicit prerequisite message and no fixture execution. The same local
+Docker forwarding control measured frontend port 50977 and server-visible port
+65048 (172.17.0.1); matching socket.local_addr would reject that supported path.
+The raw connection was closed after the measurement.
+
+The identity parser follow-up uses the documented signed bigint output of
+[pg_control_system](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-CONTROL-SYSTEM).
+PostgreSQL18.4 [initialization source](https://raw.githubusercontent.com/postgres/postgres/REL_18_4/src/backend/access/transam/xlog.c)
+places Unix seconds in the upper32 bits of the stored identifier;
+[SQL output conversion](https://raw.githubusercontent.com/postgres/postgres/REL_18_4/src/backend/utils/misc/pg_controldata.c)
+uses Int64GetDatum. A negative SQL identifier is therefore valid. Preflight now
+compares parsed signed64-bit values, with bounded decimal input and range checks.
+Python controls cover both extrema, negative identifiers, malformed/oversized
+output, and failed prerequisite rows carrying an otherwise valid identifier.
+
+The final coverage audit inspected SQLx0.9.0
+[PoolOptions::connect_lazy](https://docs.rs/sqlx-core/0.9.0/src/sqlx_core/pool/options.rs.html)
+and [PostgreSQL URL parsing](https://docs.rs/sqlx-postgres/0.9.0/src/sqlx_postgres/options/parse.rs.html).
+The lazy error branch is URL/options parsing, before pool construction; it feeds
+the same retained pool-failure owner as an acquire error. The harness supplies
+its validated administrative URL with an encoded disposable database path, so a
+malformed raw URL is not directly injectable through FixtureScope. Parser-specific
+option disagreement remains a narrower unisolated failure path; no additional
+coverage is claimed for it. No test-only production injection seam was added.

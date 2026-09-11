@@ -273,7 +273,8 @@ retains server ownership and calls shutdown after all runs and leases finish.
 Deferred drain is the upstream shared-queue barrier and can observe earlier
 submissions from another owner; it is not an exclusive per-run queue.
 
-`PoolAcquire` means registered pools await driver cleanup. Low-level `Connect`
+`PoolAcquire(Arc<sqlx::Error>)` means registered pools await driver cleanup. Its
+cause also remains in `DatabaseCleanup::pool_failures` if handled by the body. Low-level `Connect`
 means all opened pools were closed and lease cleanup was awaited; its absent
 cleanup error means success. Both paths retain lazy pool handles before polling
 connectivity, including the pool whose initialization fails. They check one
@@ -288,8 +289,8 @@ must join operations and release checkouts before returning; a held checkout can
 keep cleanup pending. Runtime destruction and internal driver failure have no
 completion guarantee. The low-level `DatabaseFixture::finish` remains available
 for caller-managed sequencing; cancelling that future or dropping that owner can
-invoke destructive upstream lease Drop. `batter-kjl` retains the remaining
-owner-loss, deferred-failure and retired-session failure matrix.
+invoke destructive upstream lease Drop. `batter-kjl` tests both live-driver waiter loss and actual runtime loss: the
+latter can queue deletion through native lease Drop while a checkout is held.
 
 Use native SQLx pools and application migration entrypoints. Close all application
 connections before returning a database lease. SQLx 0.9 pool close returns unit;
@@ -329,3 +330,103 @@ Before promoting an adapter into a stable public API, use it in two different
 application composition roots, exercise partial-startup and shutdown failures,
 and document the external version contract. An ergonomic convenience is not a
 reason to hide native SQLx transactions or collapse meaningful upstream errors.
+
+
+### Optional fixture session observation
+
+Install `FixtureSuite::with_session_observer` before `start`. The shared
+`SessionObserver` takes a caller-budgeted admin pool on the same server, outside
+the disposable databases, and a positive attempt deadline. After tracked pools
+close, it requires database presence and absence of all database sessions,
+including detached ones. Applications must stop new connection producers first;
+this read does not fence a later connection. The minimal reference fixture uses
+two separately bounded one-slot admin pools: session observation and independent
+body/catalog diagnostics. Initializer pools remain caller-owned.
+
+A timeout or native observation failure retains the lease and appears in
+`cleanup_progress`; independent databases keep cleaning. Repair the cause and
+call `SessionObserver::retry_with` to resume parked observations, including with a
+replacement admin pool. Failed attempts remain in `observation_failures` after
+recovery. `FixtureRun::wait_for` returns `Ok(None)` for pending observation; only
+`wait`/`into_report` yields a completed report. Neither pending nor driver join
+means clean reuse. Losing the retry control can strand the live driver; destroying
+its runtime can run destructive native lease Drop. No native close error is
+invented for SQLx's unit-returning `Pool::close`.
+
+Retry replacement does not close the old pool's sessions. The shared completion
+owner exposes retained native pools through `observer_pools()` for explicit repair.
+If one accidentally connects inside a disposable database, close it and witness
+backend exit before requesting the corrected retry. The wrong-target regression
+recovers the same pending owner without keeping an external wrong-pool clone.
+Automatically closing replaced pools would disrupt
+active attempts or other runs sharing those pools.
+
+The unpublished fixture API now shares PoolAcquire's payload through Arc and adds
+per-database pool/observation failure collections. Workspace consumers and struct
+literals move together; downstream source consumers must adapt payload matching
+to `as_ref()` and inspect the new collections. Domain/native causes retain their
+concrete identity. Generic `Script` and `finish` remain unchanged leaf helpers.
+
+The reference consumers share `ObservedRun::finish` with a 30-second whole-run
+wait budget. Pending returns a redacted phase/count error owning the original
+`FixtureRun`, retry control, all session pools and the diagnostic pool. Downcasting its concrete cause
+permits repair and another bounded finish; no retry is automatic. The private retry method retains each replacement pool with its control;
+completed runs close all session pools. The caller must retain a diagnostic clone;
+after a successful driver join, that clone stays open for caller-owned catalog
+checks and awaited closure. A terminal
+driver JoinError instead closes diagnostics in the completion helper before
+propagation. The same wait budget covers these administrative closes; a blocked
+close retains the cached report/JoinError and pools in the pending owner. Discarding a pending error loses observation
+and recovery control while the live driver continues; destroying its runtime
+can still invoke destructive native lease Drop. This is a consumer test-failure
+policy, not a cleanup-completion or async-drop guarantee.
+
+Retry requests broadcast across all databases/runs using the same SessionObserver.
+Unread requests coalesce. A request during an active attempt does not cancel it;
+if that attempt fails, the unread request authorizes the next attempt immediately.
+A successful attempt needs no retry. The first attempt uses the latest pool.
+The budget covers connection acquisition and every catalog poll: timeout means
+absence was not established, not proof that sessions were present.
+
+The reference test boundary (`assert_probe`) panics on an unrecovered pending
+error. Its per-test runtime can then be destroyed and native lease Drop can
+submit FORCE deletion; a bounded failed test is not a retained-runtime cleanup
+guarantee. Callers needing recovery must keep the runtime and the typed pending
+owner alive. A missing database remains ObservationTarget/pending. This catches
+the wrong-server test's missing name, but an identical name on a different cluster
+could pass; the caller must select the actual harness server. No API treats
+external deletion as successful owned cleanup. The native pg_stat_activity catalog
+and its normal session-identity visibility are required; a substituted filtered
+view is outside the contract. Session absence does not inspect prepared transactions,
+active logical replication slots or subscriptions. Those can still prevent native
+DROP and appear as consuming-cleanup errors.
+
+The reference suite exercises the missing-target branch against a distinct
+PostgreSQL cluster, restricted-login visibility, cross-run retry and pool closure,
+pre-first-attempt replacement, template recovery and both Tokio runtime flavors.
+Its SCRAM startup negative control establishes a narrower boundary: a backend
+can exist with no assigned database name, allowing observation to advance to
+native lease cleanup while that connection is still starting. PostgreSQL 18's
+subsequent DROP may wait on its process-signal barrier. The test closes the
+startup connection and awaits the same driver before claiming completion.
+A separate real autovacuum worker keeps observation pending until that worker
+exits and the caller explicitly retries. Stop connection producers, including
+startup attempts, before body exit; native cleanup phases are not completed reports.
+
+`DatabaseProgress` Debug follows report privacy: only phase and failure count are
+formatted; names and native causes remain available for deliberate typed inspection.
+The detached-session probe transfers its session pool to the completion owner and
+has no outer close on a pending result. Its two-second attempt gives backend exit
+more margin; the five-second witness deadline remains independent.
+
+Parked leases also retain upstream admission permits. A shared harness whose
+capacity is exhausted by pending observations cannot admit further leases until
+recovery releases capacity; observe and repair existing runs before awaiting new
+ones. A shared retry control does not create additional capacity. Pending
+reference summaries distinguish `driver_joined=false` from admin closure after
+a joined driver, and separately report `driver_failed` without native contents.
+
+Reference completion starts all retained observer-pool closes concurrently. An
+older pool's held checkout cannot postpone marking later replacements closed.
+The pending owner still retains every pool and the cached driver outcome until
+explicit recovery; the timeout grants no remote-cleanup or async-drop guarantee.

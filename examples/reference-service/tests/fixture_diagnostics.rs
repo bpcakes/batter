@@ -21,6 +21,8 @@ fn failed_probe_prints_branches_and_report_counts_without_native_contents() {
             },
         )))],
         databases: vec![DatabaseCleanup {
+            pool_failures: Vec::new(),
+            observation_failures: Vec::new(),
             database_name: "database-secret".into(),
             result: Err(FixtureError::ObservationTimeout),
         }],
@@ -37,6 +39,8 @@ fn failed_probe_prints_branches_and_report_counts_without_native_contents() {
         "body_failed=true",
         "acquisition_failures=1",
         "database_failures=1",
+        "pool_failures=0",
+        "observation_failures=0",
         "drain_failed=true",
         "cleanup:",
     ] {
@@ -49,5 +53,17 @@ fn failed_probe_prints_branches_and_report_counts_without_native_contents() {
 fn unclassified_probe_error_contents_remain_redacted() {
     let message = panic_message(Err("native-secret".into()));
     assert!(message.contains("unclassified"));
+    assert!(!message.contains("native-secret"));
+}
+
+#[test]
+fn pending_probe_preserves_cause_and_prints_only_supplied_redacted_summary() {
+    let error = ProbeError::pending(
+        "native-secret".into(),
+        "fixture completion pending; AwaitingRetry=1".into(),
+    );
+    assert!(error.0.to_string().contains("native-secret"));
+    let message = panic_message(Err(Box::new(error)));
+    assert!(message.contains("AwaitingRetry=1"));
     assert!(!message.contains("native-secret"));
 }

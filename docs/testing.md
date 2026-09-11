@@ -168,45 +168,136 @@ both limits across libraries, examples, and tests.
 
 ## Explicit reference compatibility probes
 
-The [reference package](../examples/reference-service/README.md) has sixteen named
+The [reference package](../examples/reference-service/README.md) has thirty-seven named
 ignored cases in `tests/reference_live.rs`: four upstream compatibility probes
-and twelve fixture probes. Fixture cases cover template reuse/isolation, acknowledged
+and thirty-three fixture probes. Fixture cases cover template reuse/isolation, acknowledged
 lock operations, returned body errors, partial/sibling acquisition, panic,
 resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
 errors, observer failure, cancelled native creation, abandoned producer errors
 and shared-harness waiting. The owned runner preserves all teardown results;
 independent catalog queries verify absence. Low-level finish controls additionally
 check absence before deferred drain.
+Additional cases prove native detach and adapter-retired backend retention past
+pool close, real observer failure and explicit retry, distinct consuming/deferred
+cleanup failure resources, handled pool error identity, assertion plus Script
+exhaustion, live waiter loss and actual runtime destruction. The session cases
+use an independent one-slot admin pool and five-second witness budgets, with a
+two-second detached-session observation attempt and 30–40 ms cancelled/pending waits. They
+require database presence and exact retired backend identities before releasing
+the acknowledged lock. The runtime-loss test holds its checkout through native
+Drop deletion, demonstrating the absence of a runtime-death completion guarantee.
+The deferred fault test separately drains external mode and recovers both tagged
+residual databases after releasing the catalog lock. Every new case belongs to
+the checked Python inventory and its 180-second external process watchdog.
+The retry follow-ups exercise the actual shared bounded completion helper:
+a pending error returns in 30 ms with its run/control intact, repairs a closed
+observer pool and retains the original body and observation causes. Another case
+blocks two observer connection-initialization queries behind an acknowledged
+PostgreSQL advisory lock, sends a retry while both three-second attempts are active,
+then recovers its pending completion owner and checks both ordered failure histories,
+native error identities and successful recovery. The same oracle runs on current-thread
+and two-worker Tokio runtimes. Detached-session diagnostics have their own
+pool, acknowledge the blocking relation before body exit, and witness backend
+absence before requesting the bounded retry. The outer-helper regression holds a diagnostic checkout while the body waits
+for a release signal. It requires a pending return before release, verifies that
+the pool remains open, then resumes the same body/run and checks database absence.
+Ordinary shared fixture helpers use a
+30-second whole-run completion budget; their session attempts are 10 seconds for
+`run` and five seconds for `observed_failure`.
+The terminal-driver regression destroys an unpolled driver runtime, then closes
+its admin pools on a surviving runtime. Real held checkouts force a bounded
+pending return; release and resume must close both pools and return the original
+cancelled task ID. The no-checkout branch requires closure before error return. A successful cached
+report with a held session checkout must identify admin-close pending distinctly
+and leave diagnostics usable after recovery. Offline report tests isolate handled
+pool errors and recovered observation failures with all other branches successful,
+and check native source identity, failure counts and source precedence.
+Ten additional cases cover a real wrong-server/missing-target observation,
+restricted observer logins seeing other users' database identities,
+shared retries across runs, updates before the first attempt, coordinated and
+premature shared-pool close, template-clone recovery, multithreaded in-flight
+retry, SCRAM startup and a real autovacuum worker. The startup negative control
+keeps a connection paused before database assignment: observation advances to
+native lease cleanup while its `datname` is null; completion stays pending until
+that connection closes. This is an executable limit, not a connection fence.
+The autovacuum control witnesses the worker and retained database past the attempt
+budget, disables further ordinary vacuum launches, observes session exit, then
+explicitly retries. Neither case authorizes future producers during cleanup. A deliberate assertion
+panic in the restricted-login test body is joined before pool closure and DROP
+ROLE; a native JoinError remains inspectable after the role is confirmed absent.
+Each login gets a PostgreSQL-generated random password expiring after five minutes;
+the live probe checks that finite deadline. Expiry bounds password authentication
+after a killed process but does not remove the role or terminate existing sessions.
+The completion regression also holds an original admin checkout while a later
+replacement pool starts closing, then resumes the same completion owner.
+
 Their [API manifest](reference-compatibility.md) states the exact scope and pins.
 
 ```sh
 cargo check -p batter-example-reference-service --all-targets --all-features --locked
 RUSTUP_TOOLCHAIN=1.94.0 cargo check -p batter-example-reference-service --all-targets --all-features --locked
-POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable' \
+POSTGRES_TEST_ADMIN_URL='postgres://postgres:fixture@127.0.0.1:5432/postgres?sslmode=disable' \
+POSTGRES_TEST_OBSERVER_URL='postgres://postgres:fixture@127.0.0.1:5433/postgres?sslmode=disable' \
   bash scripts/test_reference_live.sh
 ```
 
-Select a dedicated disposable local PostgreSQL 18 server with CREATE/DROP DATABASE
-authority plus MAINTAIN/UPDATE/DELETE/TRUNCATE on `pg_catalog.pg_shdescription`.
-The runner rejects a CREATEDB-only role before compiling/running fixtures.
+Select two dedicated disposable local PostgreSQL 18 servers. The primary needs
+superuser authority for temporary restricted-role controls, SCRAM host authentication
+for the startup handshake, and both autovacuum and track_counts enabled with
+`autovacuum_naptime <= 5s`.
+Use `postgres -c autovacuum_naptime=1s` when provisioning it. The secondary must
+be a different cluster and allow `pg_control_system()` for identity preflight;
+PostgreSQL 18.4 permits this by default. If that access was revoked, grant
+`EXECUTE ON FUNCTION pg_catalog.pg_control_system()` to the observer login in
+its selected administrative database. No target fixture databases are created
+there. Matching cluster identities are
+rejected before compiling or running fixtures, including endpoint aliases. The runner
+rejects missing endpoints and insufficient primary authority before fixtures.
 Failure controls briefly lock that shared system catalog;
 keep other workloads off this endpoint. The runner executes cases serially.
+This entry point deliberately executes the complete inventory; individually selected
+Cargo probes do not establish complete live-inventory verification.
 The runner requires `psql`, rejects missing/remote/TLS-required endpoints, verifies
-the server and ignored-case inventory, and requires all sixteen cases to run. It
+the server and ignored-case inventory, and requires all thirty-seven cases to run. It
 uses the existing Unix process owner with 15-second preflight, 300-second compile
 inventory and 180-second live-run limits, plus bounded signal escalation/reaping.
+
+The inside-target observer case now uses the shared completion helper for the
+wrong pool and corrected retry. It recovers the pending owner, explicitly closes
+the wrong native pool through its observer_pools accessor, witnesses backend exit
+and then retries. No external wrong-pool clone is needed. Replacing
+a pool alone does not close its database sessions. Redacted report controls
+distinguish successful cleanup with retained failures from failed consuming cleanup.
+The Python controls include the successful distinct-cluster path through both
+inventory and execution. Preflight does not certify SCRAM for a future disposable
+database: pg_hba rules can differ by database. The raw startup case checks the
+actual authentication exchange for that database and fails on trust authentication.
+
+The autovacuum oracle records the actual vacuum_probe relation OID and selects
+its worker through pg_stat_progress_vacuum while most heap scanning remains. It
+rechecks that same pid/database/relation after the observation timeout. A transient
+launcher visit or vacuum on another table cannot satisfy that witness. The dedicated
+serial server and bounded cooperative scheduling assumptions still apply.
+
+The startup probe witnesses the actual target DROP backend waiting on
+`ProcSignalBarrier`, rechecks that same backend after the bounded pending wait,
+then closes the paused socket and awaits completion. Startup identity uses before/
+after backend sets on the dedicated serial server: container proxies can rewrite
+the client's port, so a frontend socket tuple is not a portable server-side identity.
+No unrelated connection producer may run during that identity window.
 Watchdog termination is failure and does not claim application/database cleanup.
-The current serial sixteen-case suite took 5.54–5.61 seconds in the round-one
+The earlier serial sixteen-case suite took 5.54–5.61 seconds in the round-one
 Linux measurements after compilation, leaving over thirty times that measured
 duration within the 180-second bound. This is a workload backstop, not a promise
-to complete arbitrary stalled native operations. Slower environments remain
-unverified; compile time has its separate inventory bound.
+to complete arbitrary stalled native operations. Timing claims for newer inventories and CPU-constrained Linux execution are
+recorded separately in validation; arbitrary slower environments remain unverified.
+Compile time has its separate inventory bound.
 `scripts/test_reference_live.py` checks zero-test, skipped, missing-case and endpoint
 rejection behavior in the ordinary test matrix.
 
 Live test failures print only known redacted report counts and combined failure
-branches. Native error contents and arbitrary source chains are never formatted
-automatically. The separate offline `fixture_diagnostics` target verifies actual
+branches. The adapter does not format native error contents or arbitrary source chains;
+upstream harness cleanup diagnostics and the default panic hook can still print. The separate offline `fixture_diagnostics` target verifies actual
 panic output for simultaneous body/observer failures and unknown-error redaction;
 it does not change the exact ignored live inventory. Fixture report doctests
 reject discarded owned and borrowed observations with `unused_must_use` denied.
@@ -912,3 +1003,7 @@ Record command, toolchain, dependency lock hash, platform, result, and skipped
 prerequisites in `docs/validation.md`. A source review is not a passing test.
 A passing build is not an operational audit. A deterministic unit test is not
 proof that a database commit or an arbitrary external effect is cancellation-safe.
+
+The live-runner Python controls validate signed64-bit cluster identifiers,
+including both extrema, and reject failed prerequisite rows before inventory.
+The captured primary preflight command must retain its track_counts predicate.

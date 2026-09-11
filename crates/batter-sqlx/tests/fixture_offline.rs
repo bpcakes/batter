@@ -110,7 +110,13 @@ fn synthetic_report_preserves_every_failure_branch_and_redacts_contents() {
         ))),
         acquisitions: vec![Err(AcquisitionFailure::Native(producer.clone()))],
         databases: vec![DatabaseCleanup {
+            pool_failures: vec![std::sync::Arc::new(sqlx::Error::Protocol(
+                "pool-secret".into(),
+            ))],
             database_name: "probe".into(),
+            observation_failures: vec![std::sync::Arc::new(FixtureError::Observe(
+                sqlx::Error::Protocol("observer-secret".into()),
+            ))],
             result: Err(FixtureError::Observe(sqlx::Error::Protocol(
                 "cleanup-secret".into(),
             ))),
@@ -137,4 +143,152 @@ fn synthetic_report_preserves_every_failure_branch_and_redacts_contents() {
     assert!(
         matches!(&report.acquisitions[0], Err(AcquisitionFailure::Native(error)) if std::sync::Arc::ptr_eq(error, &producer))
     );
+}
+
+#[tokio::test]
+async fn session_observation_rejects_unusable_budgets_before_acquisition() {
+    use batter_sqlx::test_support::{FixtureError, SessionObserver};
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy("postgres://probe@localhost/unused")
+        .unwrap();
+    for bound in [std::time::Duration::ZERO, std::time::Duration::MAX] {
+        assert!(matches!(
+            SessionObserver::new(pool.clone(), bound),
+            Err(FixtureError::InvalidBudget)
+        ));
+    }
+    assert_eq!(pool.size(), 0);
+    pool.close().await;
+}
+
+#[test]
+fn progress_debug_exposes_phase_and_count_without_names_or_native_contents() {
+    use batter_sqlx::test_support::{CleanupPhase, DatabaseProgress, FixtureError};
+    let progress = DatabaseProgress {
+        database_name: "database-secret".into(),
+        phase: CleanupPhase::AwaitingRetry,
+        observation_failures: vec![std::sync::Arc::new(FixtureError::Observe(
+            sqlx::Error::Protocol("observer-secret".into()),
+        ))],
+    };
+    let debug = format!("{progress:?}");
+    assert!(debug.contains("AwaitingRetry"));
+    assert!(debug.contains("observation_failures: 1"));
+    assert!(!debug.contains("secret"));
+}
+
+fn successful_database_report() -> batter_sqlx::test_support::FixtureReport<(), std::io::Error> {
+    use batter_sqlx::test_support::{DatabaseCleanup, FixtureReport};
+    FixtureReport {
+        body: Ok(()),
+        acquisitions: vec![Ok(())],
+        databases: vec![DatabaseCleanup {
+            database_name: "probe".into(),
+            pool_failures: vec![],
+            observation_failures: vec![],
+            result: Ok(()),
+        }],
+        drain: Ok(()),
+    }
+}
+
+fn assert_database_failure(
+    report: &batter_sqlx::test_support::FixtureReport<(), std::io::Error>,
+    expected: &str,
+) {
+    assert!(!report.is_ok());
+    let summary = report.to_string();
+    assert!(summary.contains("body_failed=false"));
+    assert!(summary.contains(expected), "{summary}");
+    assert!(!summary.contains("secret"));
+}
+
+#[test]
+fn handled_pool_error_alone_keeps_report_unsuccessful_and_native_source_identity() {
+    use std::{error::Error, sync::Arc};
+    let cause = Arc::new(sqlx::Error::Protocol("pool-secret".into()));
+    let mut report = successful_database_report();
+    report.databases[0].pool_failures.push(cause.clone());
+    assert_database_failure(
+        &report,
+        "database_failures=0, pool_failures=1, observation_failures=0",
+    );
+    assert!(std::ptr::eq(
+        report
+            .source()
+            .unwrap()
+            .downcast_ref::<sqlx::Error>()
+            .unwrap(),
+        cause.as_ref(),
+    ));
+    assert!(report.into_result().is_err());
+}
+
+#[test]
+fn recovered_observation_alone_keeps_report_unsuccessful_and_source_identity() {
+    use batter_sqlx::test_support::FixtureError;
+    use std::{error::Error, sync::Arc};
+    let cause = Arc::new(FixtureError::Observe(sqlx::Error::Protocol(
+        "observer-secret".into(),
+    )));
+    let mut report = successful_database_report();
+    report.databases[0].observation_failures.push(cause.clone());
+    assert_database_failure(
+        &report,
+        "database_failures=0, pool_failures=0, observation_failures=1",
+    );
+    assert!(std::ptr::eq(
+        report
+            .source()
+            .unwrap()
+            .downcast_ref::<FixtureError>()
+            .unwrap(),
+        cause.as_ref(),
+    ));
+    assert!(report.into_result().is_err());
+}
+
+#[test]
+fn database_source_prioritizes_acquisition_then_observation_then_cleanup() {
+    use batter_sqlx::test_support::FixtureError;
+    use std::{error::Error, sync::Arc};
+    let pool = Arc::new(sqlx::Error::PoolClosed);
+    let observation = Arc::new(FixtureError::ObservationTimeout);
+    let mut report = successful_database_report();
+    report.databases[0].pool_failures.push(pool.clone());
+    report.databases[0]
+        .observation_failures
+        .push(observation.clone());
+    report.databases[0].result = Err(FixtureError::ObservationTarget);
+    assert_database_failure(
+        &report,
+        "database_failures=1, pool_failures=1, observation_failures=1",
+    );
+    assert!(std::ptr::eq(
+        report
+            .source()
+            .unwrap()
+            .downcast_ref::<sqlx::Error>()
+            .unwrap(),
+        pool.as_ref(),
+    ));
+    report.databases[0].pool_failures.clear();
+    assert!(std::ptr::eq(
+        report
+            .source()
+            .unwrap()
+            .downcast_ref::<FixtureError>()
+            .unwrap(),
+        observation.as_ref(),
+    ));
+    report.databases[0].observation_failures.clear();
+    assert_database_failure(
+        &report,
+        "database_failures=1, pool_failures=0, observation_failures=0",
+    );
+    assert!(matches!(
+        report.source().unwrap().downcast_ref::<FixtureError>(),
+        Some(FixtureError::ObservationTarget)
+    ));
 }

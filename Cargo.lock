@@ -162,8 +162,10 @@ dependencies = [
 name = "batter-example-reference-service"
 version = "0.1.0"
 dependencies = [
+ "batter",
  "batter-sqlx",
  "batter-test-support",
+ "futures-util",
  "postgres-test-harness",
  "runledger-core",
  "runledger-postgres",

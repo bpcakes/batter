@@ -29,19 +29,34 @@ where
         .max_connections(1)
         .connect(harness.admin_database_url())
         .await?;
-    let report = FixtureSuite::new(harness).start(body).into_report().await;
+    let session_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(harness.admin_database_url())
+        .await?;
+    let session_observer = batter_sqlx::test_support::SessionObserver::new(
+        session_pool.clone(),
+        Duration::from_secs(5),
+    )?;
+    let run = FixtureSuite::new(harness)
+        .with_session_observer(session_observer.clone())
+        .start(body);
+    let report = super::fixture_completion::ObservedRun::new(
+        run,
+        session_observer,
+        session_pool,
+        observer.clone(),
+    )
+    .finish(Duration::from_secs(30))
+    .await?;
     let observation = async {
-        if let Ok(report) = &report {
-            for database in &report.databases {
-                fixture_run::absent(&observer, &database.database_name).await?;
-            }
+        for database in &report.databases {
+            fixture_run::absent(&observer, &database.database_name).await?;
         }
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     }
     .await;
     observer.close().await;
     // Return the actual report for identity checks only after catalog observation.
-    let report = report?;
     assert!(
         observation.is_ok(),
         "independent catalog observation failed"
@@ -95,9 +110,7 @@ pub async fn partial_acquisition_and_panic() -> ProbeResult {
         assert_eq!(report.databases.len(), if sibling { 2 } else { 1 });
         assert!(matches!(
             report.body,
-            Err(BodyFailure::Returned(FixtureError::PoolAcquire(
-                sqlx::Error::PoolTimedOut
-            )))
+            Err(BodyFailure::Returned(FixtureError::PoolAcquire(ref error))) if matches!(error.as_ref(), sqlx::Error::PoolTimedOut)
         ));
     }
     for during_connect in [false, true] {
@@ -178,9 +191,11 @@ pub async fn close_order_and_resumable_wait() -> ProbeResult {
     let (connection, pools, name, independent) = receiver.await?;
     pools[0].close_event().await;
     pools[1].close_event().await; // Independent pool closes must also start.
-    let pending = tokio::time::timeout(Duration::from_millis(40), run.wait())
+    let pending = run
+        .wait_for(Duration::from_millis(40))
         .await
-        .is_err();
+        .expect("fixture driver joined")
+        .is_none();
     let retained = present(&observer, &name).await;
     let independent_cleaned = wait_absent(&observer, &independent).await;
     drop(connection);
@@ -364,7 +379,7 @@ pub async fn pending_pool_error() -> ProbeResult {
             );
             assert!(matches!(
                 error,
-                FixtureError::PoolAcquire(sqlx::Error::PoolTimedOut)
+                FixtureError::PoolAcquire(ref error) if matches!(error.as_ref(), sqlx::Error::PoolTimedOut)
             ));
             Err(error)
         })
@@ -376,9 +391,89 @@ pub async fn pending_pool_error() -> ProbeResult {
     assert_eq!(report.databases.len(), 1);
     assert!(matches!(
         report.body,
-        Err(BodyFailure::Returned(FixtureError::PoolAcquire(
-            sqlx::Error::PoolTimedOut
-        )))
+        Err(BodyFailure::Returned(FixtureError::PoolAcquire(ref error))) if matches!(error.as_ref(), sqlx::Error::PoolTimedOut)
     ));
+    Ok(())
+}
+
+pub async fn handled_pool_failure() -> ProbeResult {
+    let delivered = Arc::new(std::sync::Mutex::new(None));
+    let body_delivered = delivered.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let report = observed_failure(move |scope| {
+        Box::pin(async move {
+            let plan = ConnectionPlan::new(
+                vec![PgPoolOptions::new().max_connections(1), failing_pool(calls)],
+                0,
+            )?;
+            let Err(FixtureError::PoolAcquire(error)) = scope.empty(&plan).await else {
+                panic!("real partial pool acquisition must fail");
+            };
+            *body_delivered.lock().unwrap() = Some(error);
+            Ok(())
+        })
+    })
+    .await?;
+    assert!(report.body.is_ok());
+    assert!(!report.is_ok());
+    assert!(
+        report
+            .to_string()
+            .contains("database_failures=0, pool_failures=1, observation_failures=0")
+    );
+    let delivered = delivered.lock().unwrap();
+    assert_eq!(report.databases[0].pool_failures.len(), 1);
+    assert!(Arc::ptr_eq(
+        delivered.as_ref().unwrap(),
+        &report.databases[0].pool_failures[0]
+    ));
+    assert!(matches!(
+        report.databases[0].pool_failures[0].as_ref(),
+        sqlx::Error::PoolTimedOut
+    ));
+    Ok(())
+}
+
+pub async fn assertion_and_script_failure() -> ProbeResult {
+    let result = fixture_run::run(|scope, _| {
+        Box::pin(async move {
+            let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
+            let _db = scope.empty(&plan).await?;
+            let script = batter_test_support::Script::<(), std::io::Error>::new([Ok(())]);
+            script.next()?;
+            // Returned assertion failure plus actual script exhaustion, combined by
+            // existing generic finish before the adapter drives native cleanup.
+            let assertion = Err::<(), _>(std::io::Error::other("controlled assertion"));
+            batter_test_support::finish(assertion, script.next())?;
+            Ok(())
+        })
+    })
+    .await;
+    let error = result.expect_err("both assertion and verification must survive");
+    let outer = error
+        .downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+        .unwrap();
+    let batter_test_support::TestFailure::Body(body) = outer else {
+        panic!("cleanup succeeded");
+    };
+    let report = body
+        .0
+        .downcast_ref::<FixtureReport<(), ProbeError>>()
+        .unwrap();
+    let Err(BodyFailure::Returned(body)) = &report.body else {
+        panic!("returned body failure required");
+    };
+    let both = body
+        .0
+        .downcast_ref::<batter_test_support::TestFailure<
+            std::io::Error,
+            batter_test_support::ScriptError<std::io::Error>,
+        >>()
+        .unwrap();
+    assert!(
+        matches!(both, batter_test_support::TestFailure::Both { body, cleanup: batter_test_support::ScriptError::Exhausted } if body.to_string() == "controlled assertion")
+    );
+    assert!(report.databases.iter().all(|db| db.result.is_ok()));
+    assert!(report.drain.is_ok());
     Ok(())
 }

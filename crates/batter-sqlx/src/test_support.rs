@@ -7,7 +7,8 @@
 //! Low-level suite methods and [`DatabaseFixture::finish`] remain manual:
 //! cancelling those futures or dropping their owners may invoke destructive lease
 //! Drop. Abandoned low-level template preparation can leave initializing templates
-//! outside deferred drain. No runtime-death or detached-session quiescence guarantee is implied.
+//! outside deferred drain. Use [`SessionObserver`] for explicit independent session-absence observation.
+//! No runtime-death or remote-termination guarantee is implied.
 //!
 //! ```no_run
 //! use batter_sqlx::test_support::{ConnectionPlan, FixtureSuite, FixtureError};
@@ -27,6 +28,9 @@
 mod acquisition;
 mod report;
 mod runner;
+mod sessions;
+
+pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
 pub use report::{
     AcquisitionFailure, BodyFailure, DatabaseCleanup, FixtureReport, FixtureReportRef,
@@ -132,8 +136,9 @@ pub enum FixtureError {
     /// Producer stopped before delivery. Its native join failure is in the report.
     AcquisitionStopped,
     /// Pool acquisition failed with resources still registered for driver cleanup.
+    /// The same native cause is retained in the database report, even if handled.
     /// The final report, not this error, establishes their cleanup outcome.
-    PoolAcquire(sqlx::Error),
+    PoolAcquire(Arc<sqlx::Error>),
     /// Low-level pool acquisition failure after all opened pools closed and lease
     /// cleanup was awaited. `None` means that cleanup succeeded on this path.
     Connect {
@@ -144,8 +149,12 @@ pub enum FixtureError {
     },
     /// PostgreSQL observation failed.
     Observe(sqlx::Error),
-    /// The intended blocker/waiter relation was not observed within the bound.
+    /// A blocker/waiter relation or database-session absence was not observed
+    /// within the bound. A session timeout means absence was not established,
+    /// not proof that sessions remain; its lease stays pending until recovery.
     ObservationTimeout,
+    /// Observer targets the disposable database or cannot see that database.
+    ObservationTarget,
 }
 
 impl fmt::Display for FixtureError {
@@ -162,8 +171,9 @@ impl fmt::Display for FixtureError {
                 cleanup: Some(_), ..
             } => "fixture pool acquisition and cleanup failed",
             Self::Connect { .. } => "fixture pool acquisition failed",
-            Self::Observe(_) => "fixture lock observation failed",
-            Self::ObservationTimeout => "fixture lock observation timed out",
+            Self::Observe(_) => "fixture PostgreSQL observation failed",
+            Self::ObservationTarget => "fixture observation target is invalid",
+            Self::ObservationTimeout => "fixture PostgreSQL observation timed out",
         })
     }
 }
@@ -177,9 +187,8 @@ impl std::error::Error for FixtureError {
         match self {
             Self::Harness(error) => Some(error),
             Self::Acquisition(error) => Some(error.as_ref()),
-            Self::Connect { source, .. } | Self::PoolAcquire(source) | Self::Observe(source) => {
-                Some(source)
-            }
+            Self::PoolAcquire(error) => Some(error.as_ref()),
+            Self::Connect { source, .. } | Self::Observe(source) => Some(source),
             _ => None,
         }
     }
@@ -191,6 +200,7 @@ impl std::error::Error for FixtureError {
 pub struct FixtureSuite {
     harness: PostgresHarness,
     templates: Vec<DatabaseTemplate>,
+    observer: Option<SessionObserver>,
 }
 
 impl FixtureSuite {
@@ -199,7 +209,17 @@ impl FixtureSuite {
         Self {
             harness,
             templates: Vec::new(),
+            observer: None,
         }
+    }
+
+    /// Require independently observed session absence before owned-run lease cleanup.
+    /// This applies to `start`, including partial acquisition; manual `empty` and
+    /// `DatabaseFixture::finish` retain their existing caller-driven contract.
+    /// See [`SessionObserver`] for configuration, retry and a complete example.
+    pub fn with_session_observer(mut self, observer: SessionObserver) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Retain a template so unchanged inputs reuse upstream initialization.
@@ -292,6 +312,7 @@ impl FixtureSuite {
 pub struct DatabaseFixture {
     pools: Vec<PgPool>,
     lease: DatabaseLease,
+    pool_failures: Vec<Arc<sqlx::Error>>,
 }
 
 impl DatabaseFixture {
@@ -299,6 +320,7 @@ impl DatabaseFixture {
         let mut fixture = Self {
             pools: Vec::new(),
             lease,
+            pool_failures: Vec::new(),
         };
         if let Err(source) = fixture.open_pools(plan).await {
             let cleanup = fixture.dispose().await.err();

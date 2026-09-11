@@ -1,6 +1,6 @@
 # Native reference compatibility
 
-Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures). This API/evidence manifest accompanies the unpublished
+Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures), `batter-kjl` (failure retention). This API/evidence manifest accompanies the unpublished
 [reference package](../examples/reference-service/README.md). Beads owns delivery
 acceptance and status.
 
@@ -28,9 +28,10 @@ other database backends or non-Unix platforms to Batter's support policy.
 
 ## Executable contracts
 
-Set `POSTGRES_TEST_ADMIN_URL` to a disposable local PostgreSQL 18 endpoint and
-run `bash scripts/test_reference_live.sh` from the root. It preflights the server
-and role, checks an exact inventory of sixteen ignored cases, and invokes
+Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct
+disposable local PostgreSQL 18 clusters, using the primary superuser/SCRAM/autovacuum
+prerequisites in [testing](testing.md#explicit-reference-compatibility-probes), and run `bash scripts/test_reference_live.sh` from the root. It preflights the server
+and role, checks an exact inventory of thirty-seven ignored cases, and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
 -- --ignored`. Every named case must pass, with zero filtered or ignored cases.
 
@@ -95,8 +96,7 @@ at queue acceptance and releases the permit before deletion finishes. Drop queue
 fallback cleanup while retaining its permit through completion. A polled cleanup
 waiter may be cancelled after ownership transfers to the queue; the selected
 source retains eventual failures for deferred drain. That cancelled-waiter path
-is inspected-only here; broader failure/cancellation fixture delivery belongs to
-`batter-kjl`. No runtime-death or arbitrary async-drop guarantee follows.
+is inspected-only here; the executed failure/ownership extension is described below. No runtime-death or arbitrary async-drop guarantee follows.
 
 External `shutdown()` is a no-op, including deferred cleanup. Explicitly await
 `drain_deferred_cleanup()` before teardown. A lease's Drop is destructive fallback,
@@ -134,15 +134,20 @@ uses two for holding and observing its catalog lock; the lock operation declares
 under the eight-connection per-lease limit. Upstream sessions and independent
 harnesses remain additional server usage.
 
-The sixteen-case inventory preserves the four original compatibility probes and
-adds twelve fixture cases. They cover retained body error, over-budget rejection,
+The thirty-seven-case inventory preserves the four original compatibility probes
+and includes thirty-three fixture cases. They cover retained body error, over-budget rejection,
 partial multi-pool and sibling acquisition failure, body panic, batch-capacity
 rejection, held-checkout close ordering, cancelled/resumed waiting, foreign-template
 rejection, simultaneous body and actual lease-cleanup failure, and observer failure
 without replacement of the body report. The real cleanup-failure injection uses an
 acknowledged catalog lock on a dedicated endpoint and explicitly cleans its residual
-through upstream ownership after releasing the lock. No retired-session termination
-claim follows; remaining session/owner-loss cases belong to `batter-kjl`.
+through upstream ownership after releasing the lock. The batter-kjl extension observes native-detached and adapter-retired session
+identities independently of pool closure, retains the database on timeout and
+observer failure, and resumes the same cleanup after explicit retry. It also
+covers handled pool errors, assertion/Script failures, distinct deferred and
+consuming errors, waiter loss and runtime loss. It does not terminate remote
+sessions itself; tests explicitly release their blockers. Runtime loss can trigger
+destructive native Drop while a checkout remains held.
 
 
 The acquisition cases cancel delivery only after PostgreSQL acknowledges a
@@ -157,7 +162,8 @@ verifies the run completes without taking server ownership. Pool-error controls
 observe the failed fixture and its first connected pool while cleanup is still
 pending; the low-level counterpart independently requires completed cleanup.
 
-The runner checks major version 18, CREATE DATABASE authority, and one of
-MAINTAIN/UPDATE/DELETE/TRUNCATE on `pg_catalog.pg_shdescription`, required by the
-acknowledged catalog-lock fault injection. A normal CREATEDB-only role is rejected
-before inventory/fixtures. Use a dedicated endpoint, with cases serialized.
+Use the [canonical live-runner prerequisites](testing.md#explicit-reference-compatibility-probes)
+for both dedicated endpoints. That section owns the required server authority,
+autovacuum settings, authentication and distinct-cluster checks. The strict runner
+rejects unmet prerequisites before inventory and executes the complete case set
+serially.

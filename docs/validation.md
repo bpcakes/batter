@@ -2,6 +2,650 @@
 
 Latest evidence: 2026-09-10. Earlier sections retain their historical scope.
 
+## Documentation consistency follow-up: 2026-09-11
+
+The complete review matched fingerprint
+`a7a10600a99f7987b7d2d3c0186753f664534a1f54598887d5682c060c741740`.
+Codex and Cursor found no actionable defects. Opus found two low documentation
+drift issues: an obsolete prerequisite list in the compatibility guide and a
+fixture contract paragraph present only in the package agent guide. The
+compatibility guide now links to the canonical testing prerequisites. The package
+README owns the full fixture contract; the agent guide links there and retains
+its source ownership map. This removes duplicated contract text that had drifted.
+
+This follow-up changes documentation only. The immediately preceding final7
+macOS/Linux Rust, live, HTTP, Python and repeated timing evidence remains applicable:
+no Rust/Python sources, test commands, toolchains, dependency graph or server
+prerequisites changed. Fresh Jig receipts and the final independent review are
+recorded in the owning plan before closure. SQLx parsing research and the narrower
+unisolated lazy-parse failure path are recorded in [references](references.md).
+Linux MSRV/full-matrix, hosted execution and process-death cleanup remain unverified.
+
+## Signed cluster identity and repeated timing controls: 2026-09-10
+
+The preceding complete review matched fingerprint
+`45bb648c3ecf03c3f2d24658c416016b8e359d9dedf9e1d084668c488556e6c0`.
+Codex and Cursor found no actionable defects. Opus identified one low parser
+mismatch: pg_control_system exposes a signed bigint, but preflight accepted only
+unsigned digits. Primary-source research is recorded in [references](references.md).
+The runner now parses bounded signed64-bit decimal values. Python controls cover
+negative identifiers, both extrema, malformed/oversized output and failed
+prerequisite rows with valid identifiers; the primary command control also retains
+the track_counts predicate. There are still **ten Python controls**.
+
+Both macOS arm64 matrices passed on Rust **1.94.0** and **1.98.1**: **655 Rust
+test/doctest executions, zero failures, 50 intentional live ignores and 73 Rust
+summaries each**, plus formatting, Clippy, rustdoc and all Python controls. Both
+strict live runs executed **37 cases**, zero ignored/filtered, in **30.90 s** and
+**29.37 s** respectively. Both rebuilt HTTP examples passed all five smoke modes,
+**ten total**. Native Linux arm64 Rust1.98.1 passed all **37 live cases in 38.64 s**.
+Client and both PostgreSQL18.4 servers remained limited to **0.5 CPU each**.
+
+On that constrained Linux setup, ten serial repetitions each of the restricted-role
+and autovacuum controls passed: **20 additional live executions, zero failures**.
+Each two-case invocation completed in2.39–2.70 seconds. This is bounded repeated-run
+evidence, not an arbitrary scheduling guarantee. No observation deadline changed.
+The native retry loop remains tested against PostgreSQL in the explicit live suite;
+ordinary verification intentionally does not substitute a simulated implementation.
+
+Exact command vectors and outcomes are in `.agent/tmp/fixture-gaps/final7/matrix.py`,
+`matrix.log`, per-command logs, `linux-live-half-cpu.log`, `stress.py`, `stress.log`
+and ten per-iteration logs. Rust sources, dependency graph and toolchain/container
+identities are unchanged from the preceding matrix. Linux MSRV/full-matrix and
+hosted CI remain unverified. Prior api:test receipt
+`receipt_01M26M3QHZZGHANT1TEKCECZ10` is historical for the changed runner; fresh Jig
+receipts and final review evidence are recorded in the owning plan before closure.
+Task-owned containers are removed after final review. No staging or commit is performed.
+
+## Startup barrier and preflight controls: 2026-09-10
+
+The preceding complete review matched fingerprint
+`2d76fd09208bc65f697da975c1c74f27dbb15ec861f4a67a004c5d5518e47716`.
+Codex and Cursor found no actionable defects. Opus identified two low test issues:
+pending elapsed time alone did not prove the startup connection blocked DROP's
+process barrier, and preflight omitted the track_counts autovacuum prerequisite.
+The startup control now witnesses the actual target DROP backend waiting on
+ProcSignalBarrier and rechecks that wait before releasing its raw SCRAM connection.
+The strict runner requires track_counts before inventory. Primary-source research
+and the dedicated serial server prerequisite are recorded in [references](references.md).
+
+A real negative invocation with `PGOPTIONS='-c track_counts=off'` was rejected with
+exit1 before inventory or fixture execution. A separate raw connection measurement
+confirmed that Docker forwarding changed frontend port50977 to server-visible
+port65048; the connection was closed afterward. Thus socket.local_addr is not used
+as a PostgreSQL backend identity. These are bounded executed controls, not claims
+about arbitrary proxies or concurrent server activity.
+
+Both unchanged-source macOS arm64 matrices passed on Rust **1.94.0** and **1.98.1**:
+**655 Rust test/doctest executions, zero failures, 50 intentional live ignores and
+73 Rust summaries each**, plus formatting, Clippy, rustdoc and **ten Python
+controls**. Each strict live run executed all **37 cases**, zero ignored/filtered,
+in **30.45 s** and **29.13 s** respectively. Both rebuilt HTTP binaries passed five
+smoke modes, **ten total**. The rebuilt native Linux arm64 Rust1.98.1 client passed
+all **37 live cases in 38.95 s**, with client and both PostgreSQL18.4 servers at
+**0.5 CPU each**, under the unchanged 180-second watchdog.
+
+Exact command vectors and terminal outcomes are in
+`.agent/tmp/fixture-gaps/final6/matrix.py`, `matrix.log`, per-command logs,
+`linux-build.log`, `linux-live-half-cpu.log`, `track-counts-rejected.log` and
+`startup-port-mapping.log`. Dependency graph, lock hash and container versions
+remain unchanged from below. Linux MSRV/full-matrix and hosted CI remain
+unverified here. Prior api:test receipt `receipt_01M26JS8QYAB565W4TNQM4QBC3` is
+historical after this correction; fresh Jig receipts and final review records are
+stored in the owning plan before closure. Task-owned containers are removed after
+final review. The pre-existing index is preserved.
+
+## Autovacuum witness correction: 2026-09-10
+
+The complete unchanged-scope review fingerprint was
+`c00b392a0432e36e7559cd6ceb243ed61be8005691a3ba681e3855bffee9972d`.
+Codex and Cursor found no actionable defects. Opus identified one low test race:
+database-wide autovacuum worker selection could capture an unrelated, short-lived
+worker. The test now records its table's relation OID, selects that actual vacuum
+through pg_stat_progress_vacuum with most heap scanning remaining, and rechecks
+the same pid/database/relation after the observation timeout. Primary-source
+research and the bounded scheduling limitation are recorded in [references](references.md).
+
+Both final macOS arm64 `scripts/verify.sh` matrices passed on Rust **1.94.0** and
+**1.98.1**: **655 Rust test/doctest executions, zero failures, 50 intentional live
+ignores and 73 Rust summaries each**, plus formatting, Clippy, rustdoc and **ten
+Python controls**. All **37 live cases** ran with zero ignored/filtered in
+**31.08 s** and **29.26 s**, respectively. Both rebuilt HTTP binaries passed the
+five smoke modes, **ten total**. The rebuilt native Linux arm64 Rust 1.98.1 client
+passed all **37** live cases in **38.16 s** with client and both PostgreSQL 18.4
+servers at **0.5 CPU each**, under the unchanged 180-second watchdog.
+
+Exact commands and terminal outcomes are in `.agent/tmp/fixture-gaps/final5/matrix.py`,
+`matrix.log`, per-command logs, `linux-build.log` and `linux-live-half-cpu.log`.
+The dependency graph, lock hash and container versions are unchanged from below.
+Linux MSRV/full-matrix and hosted CI remain unverified here. Earlier api:test receipt
+`receipt_01M26HQFKQM780SVYQB5AMC92H` is historical after this correction; fresh Jig
+and final review records are stored in the owning plan before closure. Task-owned
+containers are removed after final review. The pre-existing index is preserved.
+
+## Fixture recovery access and diagnostic counts: 2026-09-10
+
+The next independent pass completed on unchanged fingerprint
+`e650c0fecdf7da8aa017d37964d34742d0da80c09d97364995d950a94cd2c1dd`.
+Codex and Cursor had no actionable findings. Claude Opus identified two low issues:
+the completion helper hid pools needed to repair an inside-target observer, and
+database_failures conflated failed consuming cleanup with retained recovered errors.
+
+The pending owner now exposes its retained native observer pools as a read-only
+slice for explicit repair. The wrong-target regression moves its sole misplaced
+pool handle into the helper, recovers pending, closes that retained pool, witnesses
+backend exit and retries the same owner. Automatic closure of arbitrary replaced
+pools would disrupt active attempts or shared runs, so native closure stays explicit.
+Report summaries now separately count failed consuming cleanups, pool failures and
+observation failures. Offline, live and diagnostic controls verify that recovered
+errors keep the report unsuccessful without implying a failed DROP. A positive
+runner-entry control follows distinct cluster identities through inventory and full
+execution. There are **ten Python controls** and still **37 live cases**.
+
+Open-question research is recorded in [references](references.md): same-server
+identity and native catalog visibility remain caller preconditions; name presence
+alone does not identify a cluster. Prepared transactions, active logical slots and
+subscriptions can prevent DROP after a session-absence witness. Authentication of
+an admin connection cannot certify database-specific pg_hba rules; the actual
+disposable-database SCRAM exchange remains the live oracle. No new runtime-death
+or general async-drop guarantee is added.
+
+Final unchanged-source macOS arm64 runs passed on Rust **1.94.0** and **1.98.1**:
+**655 Rust test/doctest executions, zero failures, 50 intentional live ignores and
+73 Rust summaries each**, plus formatting, Clippy, rustdoc and ten Python runner
+controls. Both strict live runs executed all **37** cases with zero ignored/filtered
+in **30.32 s** and **29.07 s** respectively. Both rebuilt HTTP examples passed all
+five smoke modes (**ten total**). Commands and terminal outcomes are in
+`.agent/tmp/fixture-gaps/final4/matrix.py`, `matrix.log` and the per-command logs.
+The intermediate final3 matrix was superseded because the accessor was finalized
+while it ran; it is not final unchanged-source evidence.
+
+The rebuilt native Linux arm64 Rust 1.98.1 client passed all **37** live cases in
+**38.93 s** with the client and both PostgreSQL 18.4 servers limited to **0.5 CPU
+each**, under the same 180-second watchdog. Logs are in `final4/linux-build.log`
+and `final4/linux-live-half-cpu.log`. Versions, image and lock hash remain as below.
+Linux MSRV/full-matrix and hosted CI execution remain unverified here.
+
+Earlier api:test receipt `receipt_01M26G7P8WPEN6RA6E1NC9ZFVB` is historical after
+these corrections. Fresh final Jig/review records are stored in the owning plan
+before closure. Task-owned containers are removed after the final review; the
+pre-existing index remains unchanged and no code commit is authorized.
+
+## Fixture coverage final follow-up: 2026-09-10
+
+The next complete all-reviewer snapshot was
+`0732a9c91e30ae2e5f55dddf866e18051869c14d4dca4aa66dff2dad2bafe40b`.
+Codex and Cursor found no actionable defects; Claude Opus found three low test/doc
+issues. The replacement-close regression now awaits the empty driver before its
+short close bound. Temporary LOGIN credentials are random with a five-minute
+server-clock password expiry; successful login and finite expiry are checked,
+and the existing assertion-panic control still requires explicit role removal.
+Ownership descriptions now identify the advisory-lock gate and admission liveness
+limit. The active-retry tests also recover the shared bounded completion owner on
+both Tokio runtimes. Python now has **nine** controls, including full-entry rejection
+of remote, TLS-required and host-override secondary URLs. The live inventory remains
+**37 cases: four compatibility and thirty-three fixture cases**.
+
+Primary-source research and a rolled-back ordinary-role query on PostgreSQL 18.4
+confirmed public pg_control_system access by default. Docs explain an explicit
+grant only when that access has been revoked. See [references](references.md).
+The dependency graph and lock hash remain unchanged from the preceding entry.
+
+Refreshed macOS arm64 verification passed on both Rust **1.94.0** and **1.98.1**:
+**655 Rust test/doctest executions, zero failures, 50 intentional live ignores and
+73 Rust summaries each**, plus formatting, Clippy, rustdoc and nine Python runner
+controls. All **37** live cases ran with zero ignored/filtered, in **30.53 s** and
+**29.42 s** respectively. Each compiler rebuilt the HTTP example and passed the
+five smoke modes, **ten total**. Exact commands and exit statuses are retained in
+`.agent/tmp/fixture-gaps/final2/matrix.py` and `matrix.log`, with per-command logs.
+
+The same Linux arm64 Rust 1.98.1 client and both PostgreSQL 18.4 containers from
+the preceding entry remained limited to **0.5 CPU each**. After rebuilding the test
+binary, the strict live runner passed all **37** cases in **38.22 s** under the
+unchanged 180-second watchdog. Logs: `final2/linux-build.log` and
+`final2/linux-live-half-cpu.log`. Linux MSRV, the full Linux matrix and hosted CI
+remain unverified here. Task-owned containers are removed after the final review.
+
+The earlier api:test receipt `receipt_01M26F63NK29KXY2T3AWEGBCVS` is historical
+after these corrections. Fresh final Jig evidence and independent review records
+are stored in plan `plan_01M26CV7EZ9G4YSG5R0M9ZTVQ9` before closure. No application
+code is staged or committed by this work; the pre-existing index is preserved.
+
+## Fixture coverage review corrections: 2026-09-10
+
+Follow-up for `batter-kjl`, plan `plan_01M26CV7EZ9G4YSG5R0M9ZTVQ9`. The
+independent Claude Opus/Codex/Cursor pass matched complete fingerprint
+`bf8cb67aea9e7b068a3fd04bbe0aa4256fcd9c186aa14b9dbe7fd8edc7f3a033`.
+Codex and Cursor had no actionable findings. Claude identified four low issues:
+sequential replacement-pool close, assertion unwinding past temporary role cleanup,
+a stale fixture count, and missing distinct-cluster preflight. All four are fixed.
+
+Completion now polls all retained native pool closes concurrently. A held original
+checkout cannot postpone starting replacement closure; the regression resumes
+the same cached outcome after releasing it. A native Tokio task contains assertions
+in the restricted-login probe, while its outer owner joins that task, closes the
+observer pool and drops the role before interpreting failure. A deliberate panic
+must remain a native JoinError after the role is confirmed absent. The visibility
+probe now uses an actual unprivileged LOGIN role, not SET ROLE. Preflight compares
+pg_control_system system identifiers and rejects endpoint aliases for one cluster
+before fixture execution. Both endpoints need permission to call that function.
+The manifest and strict inventory now agree on **37 cases: four compatibility
+and thirty-three fixture cases**. Python prerequisite/inventory controls total eight.
+
+Cargo added only the reference package's direct development dependency edge to
+already-resolved futures-util 0.3.34 for join_all; no native version changed.
+Final Cargo.lock SHA-256:
+`733b324bc403b92b39f792663dc751dc6ac952b5f0f8c02a52b0aa53c11ff303`.
+
+Both full macOS arm64 `scripts/verify.sh` runs passed on Rust **1.94.0** and
+**1.98.1**: **655 test/doctest executions, 73 Rust summaries, zero failures and
+50 intentional live ignores each**, plus formatting, Clippy and rustdoc.
+Both strict live runs passed all **37 cases** with zero ignored/filtered, in
+**30.07 s** and **29.18 s**, respectively. Both rebuilt HTTP examples passed all
+five smoke modes, **ten total**, with the same commands as the preceding entry.
+The exact executable command driver is
+`.agent/tmp/fixture-gaps/followup/final_matrix.py`; its final-matrix.log records
+successful exit status for every verification, live, build and smoke invocation.
+
+Replacement task-owned PostgreSQL 18.4 containers are `batter-gap-final-db` and
+`batter-gap-final-other`, on the same dedicated loopback ports and SCRAM settings
+as below. The Linux arm64 client is `batter-gap-final-linux`, using the same
+Rust 1.98.1 image and read-only workspace mount. After compilation, all three
+containers were limited with `docker update --cpus=0.5`; the complete strict
+**37-case** Linux live run passed in **38.42 s**. This measures CPU-constrained
+clients and servers under the unchanged 180-second watchdog, not arbitrary
+network failures, server saturation, Linux MSRV or hosted CI. Quotas are recorded
+in `followup/container-quotas.txt`; logs include `linux-build.log` and
+`linux-live-half-cpu.log`. The earlier task-owned containers were removed; these
+replacement containers are removed after final review/evidence collection.
+
+The earlier Jig check passed all five gates with api:test receipt
+`receipt_01M26DZB0TMEKVJEHTN191C0NX`; it is historical after these corrections.
+Fresh final work-check, evidence/gates and independent review records are stored
+in this plan before closure. No staging, commit or publication is authorized.
+
+## Fixture observation coverage: 2026-09-10
+
+Bead `batter-kjl`, plan `plan_01M26CV7EZ9G4YSG5R0M9ZTVQ9`, baseline
+`486e0b0f9f4c4439077418715843b30042205f7e` plus existing uncommitted changes.
+Added nine named live cases and two Python prerequisite controls. The inventory
+is now **36 live cases**; template success already used SessionObserver, so the
+new template case proves retained failure and recovery. The existing active-retry
+oracle now uses acknowledged blocked PostgreSQL queries and runs on both Tokio
+runtime flavors. Every retained native failure still survives recovery by identity.
+No production API or dependency version changed. Tokio net/io-util features are
+now explicitly declared by the reference package that uses the startup socket.
+Cargo.lock SHA-256: `023f51eed6b46caed9e331e7d5b45374ddfb55d2ed14b1e32beeda52821e8a4f`.
+
+Primary-source research and the startup experiment are recorded in
+[references](references.md#fixture-observation-coverage-follow-up-2026-09-10).
+Initial verification found ordinary SQLx 0.9 dynamic-SQL typing and a Clippy
+complexity violation; audited numeric-only identifiers, typed error wrapping and
+a separate assertion helper resolved them without suppressions. The first
+36-case run passed 35 and failed the startup oracle because native DROP waited
+on ProcSignalBarrier. The corrected test requires CleaningLease/pending while
+the unassigned SCRAM backend remains alive, then closes it and verifies completion.
+It never equates an absence witness or a native cleanup phase with completion.
+
+Executed macOS arm64 results:
+
+| Command | Result |
+| --- | --- |
+| `bash scripts/verify.sh` on Rust 1.98.1 (`48a229cea`) | PASS; 655 test/doctest executions, 73 Rust summaries, zero failures, 49 intentional live ignores; formatting, Clippy and rustdoc pass. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS; same counts and checks. |
+| `bash scripts/test_reference_live.sh` on each pinned toolchain | All 36 cases pass, zero ignored/filtered; 30.02 s on 1.94.0 and 28.88 s on 1.98.1. |
+| `cargo build -p batter-axum --example http_service --locked` on each toolchain, followed by `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` in default, SIGINT, deadline, warn-filter and warn-filter+deadline modes | Both builds and all ten smoke executions pass. |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py -v` | Six controls pass, including missing-secondary and failed-secondary rejection before fixture execution; also run by both full matrices. |
+
+Task-owned PostgreSQL containers `batter-gap-db` and `batter-gap-other` run
+**PostgreSQL 18.4 Debian Linux arm64**. Primary and secondary endpoints are
+`postgres://postgres:fixture@127.0.0.1:49618/postgres?sslmode=disable` and
+`postgres://postgres:fixture@127.0.0.1:49619/postgres?sslmode=disable`, assigned to
+`POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL`. These are disposable
+fixture credentials. Primary startup uses `postgres -c autovacuum_naptime=1s
+-c max_connections=100`; both use SCRAM host authentication. Existing unrelated
+containers were untouched. Live preflight now requires these explicit endpoints,
+primary superuser authority and fast autovacuum; startup explicitly rejects a
+non-SCRAM host handshake. No server provisioning was added to the libraries.
+
+Native **Linux arm64** live execution used task-owned `batter-gap-linux`, image
+`rust:1.98.1-bookworm` digest
+`sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa`,
+Rust 1.98.1, Cargo 1.98.1, kernel `6.12.76-linuxkit`, and psql 15.19.
+The workspace was mounted read-only, with `CARGO_TARGET_DIR=/tmp/batter-target`.
+Task-owned socat listeners forwarded container loopback ports 5432/5433 to the
+two dedicated host endpoints; the same strict live runner executed all 36 cases.
+The two-CPU run passed in **36.28 s**. After `docker update --cpus=0.5
+batter-gap-linux`, the repeat passed in **38.10 s**, still within the unchanged
+180-second watchdog. This measures client CPU restriction against the same
+server, not arbitrary slow networks, overloaded servers, Linux MSRV or hosted CI.
+The ordinary 30-second consumer policy remains unchanged; tests use explicit
+bounds and controlled releases. Hosted execution remains unverified.
+
+Logs and the exact final command driver are under `.agent/tmp/fixture-gaps/`:
+`final_matrix.py`, `final-matrix.log`, `verify-{1.94.0,final-1.98.1}.log`,
+`live-final-<toolchain>.log`, `http-<toolchain>-<profile>.log`, `linux-build.log`,
+`linux-live.log` and `linux-live-half-cpu.log`. Task-owned containers are removed
+after evidence collection; completion, final independent review and Jig
+work-check/evidence/gates receipts are retained in this plan's append-only records.
+No staging, commit, publication or hosted CI execution is part of this task.
+
+## Fixture completion diagnostics and isolated report errors: 2026-09-10
+
+Bead `batter-kjl`, plan `plan_01M2681XJ8YA22QEVZ69V7F499`, unchanged baseline
+`486e0b0f9f4c4439077418715843b30042205f7e`. The next frozen review matched
+fingerprint `116695266f69630e089c64638b5ae6a7661bdb438c77adbc3c786a9c9310ce79`.
+Codex found no defects; Claude Opus found three low-severity follow-ups: pending
+summary ambiguity after successful join, incomplete ObservationTimeout rustdoc,
+and missing isolated offline coverage for retained error branches.
+
+All three are corrected. The helper records an unobserved driver separately
+from a joined driver and formats `driver_joined` plus `driver_failed`. A live
+successful-join/held-session-checkout control distinguishes administrative close
+from an unfinished driver and verifies that diagnostics stay usable after
+recovery. Three offline report tests isolate handled pool errors, recovered
+observation errors and source precedence while the body/acquisitions/drain
+succeed. They verify unsuccessful outcomes, database counts and native source
+identity. Timeout rustdoc now covers lock relation and session-absence attempts.
+Pinned-source research confirms that parked leases retain shared admission
+capacity; the adapter README, rustdoc and integration contract state the resulting
+liveness limit. Untracked module files remain build/review inputs; no Git commit
+or staging operation is part of this task.
+
+Both full verification scripts passed on **macOS arm64**, Rust **1.98.1** and
+**1.94.0**: **655 test/doctest executions, 73 summaries, zero failures and 40
+intentional live ignores each**, plus formatting, warning-denied Clippy and
+rustdoc. Both explicit live runs passed all **27 cases**, including the extended
+terminal-completion regression. Both rebuilt HTTP binaries passed all five
+profiles, **ten smokes total**. No dependency changes occurred in this iteration.
+
+The replacement task-owned PostgreSQL **18.4 Debian Linux arm64** container was
+`batter-kjl-terminal-round3`, exposed only at `127.0.0.1:63014`, and was stopped
+and removed after execution. Exact commands are the same verification/build/smoke
+commands in the following section, with this live endpoint:
+`POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:63014/postgres?sslmode=disable' bash scripts/test_reference_live.sh`.
+Logs are `.agent/tmp/batter-kjl-terminal-round3/{verify,live,http-build,http}-<toolchain>.log`.
+The previous iteration's Jig gate passed with api:test receipt
+`receipt_01M268JAYVYWS0N2FBF368HN32`; it is historical after these source changes.
+The final `scripts/jig work check --plan-id plan_01M2681XJ8YA22QEVZ69V7F499 --json`
+runs after this evidence update and writes `jig-check.json` in the new log
+directory. Its exact final receipts, `work evidence`/`work gates` outcomes and
+subsequent frozen Opus/Codex review results are retained in the same plan's
+append-only records and checked before closure. No new Linux client or hosted
+execution is claimed.
+
+Final Jig verify passed all five targets with api:test receipt
+`receipt_01M269J23XD0XA084HHXQHQBJP`; evidence/gates were fresh and passed.
+Both final reviewers completed against unchanged, complete fingerprint
+`5b302afc91c82d9f894b7a6aaf0b8bf8b5e4a07c927b604fa3fffc1224cec65a`.
+Codex reported no findings. Claude Opus found no working-tree code defect; its
+sole low-severity finding concerned hypothetical partial commits from the mixed
+index/untracked state. That finding is not actionable in this full-working-tree,
+uncommitted task, and the new module was included in review and verification.
+No index changes were made to satisfy it. The remaining background-worker and
+runner-timing questions are researched in references. No actionable findings
+remain after adjudication. Subsequent edits only record research/review outcomes
+and tracker completion; the verified Rust/test sources and dependencies are
+unchanged. The documentation/metadata edits require fresh file-budget evidence. Targeted
+refresh was unavailable: `jig check --plan-id ... repo:file-budget` rejected a
+prepared/executed plan identity mismatch, and `work check --tool jig.file_budget`
+reported an unsupported native tool kind. The supported full work-check profile
+is therefore rerun for final closure; no test assertion failed in these CLI
+errors. Its final output is `final-jig-check.json` in the round3 log directory.
+
+## Terminal fixture-driver admin closure: 2026-09-10
+
+Owning Bead: `batter-kjl`; follow-up plan `plan_01M2681XJ8YA22QEVZ69V7F499`;
+Git baseline `486e0b0f9f4c4439077418715843b30042205f7e` plus the existing fixture
+working changes. The prior final review retained one low-severity defect:
+`ObservedRun::finish` propagated driver JoinError before either caller closed
+its diagnostic pool. This was a private ownership split, not a defect in native
+lease retention. Closure now belongs to the completion owner on that error path.
+The same bound covers driver observation and administrative closure; pending
+retains the cached error and both capacities for resumable close. Success still
+leaves diagnostics available for catalog checks. No native-error or public
+adapter API changes were made.
+
+Research in [references](references.md#fixture-terminal-completion-and-review-questions-2026-09-10)
+answers the runtime-loss, missing-target and shared-retry questions against
+SQLx 0.9.0, Tokio 1.53.1, pinned harness `3d525e6fc5745ce2e2437c7997de5cccdecff4ac`
+and PostgreSQL 18. These are explicit limited contracts. The example now marks
+its consuming final wait as unbounded; dedicated cross-run/pre-first-attempt
+coverage remains absent rather than implied by the existing two-database test.
+
+The new live test uses actual driver-runtime destruction before first poll and
+administrative pools on a surviving runtime. With held checkouts, both closes
+start, bounded finish returns the retained owner, and release/resume returns the
+same cancelled task ID only after both pool sizes reach zero. Without held
+checkouts the terminal error returns after both closes. The focused test and
+all **27 explicit live cases** passed on Rust 1.98.1.
+
+Validation ran on macOS arm64, Rust 1.98.1 (`48a229cea`) and 1.94.0
+(`4a4ef493e`). The unchanged dependency graph uses a task-owned PostgreSQL
+**18.4 Debian Linux arm64** container, `batter-kjl-terminal-review`, exposed only
+at `127.0.0.1:61307`. This server does not establish Linux Rust-client evidence.
+Logs are in `.agent/tmp/batter-kjl-terminal/`:
+
+- `bash scripts/verify.sh` -> `verify-1.98.1.log`
+- `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` -> `verify-1.94.0.log`
+- `POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:61307/postgres?sslmode=disable' bash scripts/test_reference_live.sh`
+  on each toolchain -> `live-<toolchain>.log`
+- `cargo build -p batter-axum --example http_service --locked`, then
+  `python3 scripts/smoke_http.py --binary target/debug/examples/http_service`
+  with default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and
+  `--warn-filter --deadline`, on each toolchain -> `http-<toolchain>.log`
+- `scripts/jig work check --plan-id plan_01M2681XJ8YA22QEVZ69V7F499 --json`,
+  followed by `work evidence` and `work gates` -> `jig-check.json` and plan records.
+
+Both complete verification scripts passed: **652 test/doctest executions,
+73 summaries, zero failures and 40 intentional live ignores per toolchain**, plus
+formatting, warning-denied Clippy and rustdoc. Both explicit live runs passed all
+**27 cases**, and both rebuilt HTTP binaries passed all five profiles (**ten
+smokes total**). The task-owned container was stopped and removed afterward.
+The first full verification passed its test matrix but failed Clippy on the new
+regression's complexity (26/20). Extracting terminal assertions alone still gave
+21/20; separating the per-case setup resolved it without suppressions or weaker
+assertions. The complete runs above followed that correction.
+
+The final Jig command and independent Opus/Codex review run after this evidence
+update. Their exact receipt and frozen reports belong to the named plan's
+append-only records and `.agent/tmp/batter-kjl-terminal/`. This section claims no
+Jig or review success in advance; those outcomes are checked before Bead closure.
+No commit, push, publication or hosted execution is claimed.
+
+## Fixture progress privacy and final pool transfer: 2026-09-10
+
+A further independent review found a redundant session-pool close in the detached
+probe's outer wrapper, which could close a pool retained by a pending error. That
+wrapper now transfers the pool directly to the completion owner and never closes
+it afterward. `DatabaseProgress` Debug now prints only phase and failure count;
+an offline regression rejects database-name and native-error disclosure. Its
+public fields retain deliberate inspection. The detached-session attempt was
+increased from 200 ms to two seconds to give independent backend exit more margin.
+
+After these changes, both complete verification scripts passed on macOS arm64,
+Rust 1.98.1 and 1.94.0: **652 test/doctest executions, 73 summaries, zero failures,
+39 intentional live ignores per toolchain**, plus formatting, warning-denied
+Clippy and rustdoc. Both explicit live runs passed all **26 cases**, and both
+rebuilt HTTP examples passed all five smoke profiles (**ten total**). The final
+task-owned PostgreSQL 18.4 container exposed only 127.0.0.1:58500 and was stopped
+and removed after execution. Exact commands and final logs remain under
+`.agent/tmp/batter-kjl-review/`. Earlier sections retain their prior-round counts;
+no new Linux client or hosted execution is claimed.
+
+The working-tree review includes the newly added completion/retry source files.
+All commands above and the reviews included those new build inputs. Git staging
+status is independent of that execution evidence. No commit or publication was
+performed by that remediation. Tracker closure follows the completed review loop; the
+implemented-status row describes the capability rather than claiming a closed
+review task. The documented 30-second consumer wait is intentional, including
+for compatibility probes; a slow overrun fails with retained pending ownership
+and retains the stated runtime-teardown limitation.
+
+## Fixture completion boundary follow-up: 2026-09-10
+
+The next independent review of the full diff identified the diagnostic pool
+still closing outside the bounded pending path. The common helpers now return
+the typed pending error immediately; it retains both administrative capacities,
+and only actual body/run completion permits diagnostic close. The private recovery
+method retains every replacement session pool until driver completion so callers
+cannot update the retry control while forgetting pool ownership. The live outer
+helper regression holds a real diagnostic checkout, requires pending return before
+an explicit body release, then resumes that same body and verifies lease cleanup.
+
+Also corrected the public retry example to inspect completed cleanup separately
+from retained observation failures; combined detached-test release/close/absence
+errors after bounded completion; and increased deliberate active-attempt starvation
+to a three-second attempt window. The reference assertion boundary's runtime-death
+behavior is explicit: an unrecovered pending error followed by test panic can
+trigger native FORCE deletion. Returning pending does not promise survival across
+runtime destruction. Missing/wrong-target observation remains pending by design.
+
+On the same macOS arm64/toolchains and unchanged dependency graph described below,
+final `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+both passed: **651 test/doctest executions, 73 summaries, zero failures, 39 intentional
+live ignores each**, plus formatting, warning-denied Clippy and rustdoc. All
+**26 required live cases passed on each toolchain**, and freshly rebuilt HTTP
+examples passed all **ten smoke invocations** across the five profiles per compiler.
+
+The replacement task-owned PostgreSQL 18.4 container used only 127.0.0.1:57010 and
+was stopped/removed after the two runs. Logs and exact commands under
+`.agent/tmp/batter-kjl-review/` now describe this final snapshot. Focused Clippy
+initially rejected a Result fold; using an explicit loop preserves all errors
+without the suggested short-circuiting try_fold or a lint suppression. Final file
+budget has only a nonblocking 475-line notice for fixture_failures.rs. The prior
+25-case evidence below is historical. Jig evidence and final independent review
+are tracked under `plan_01M26254CNX0RB5MJ0QYYD2H0Z`; no commit or publication is
+included in this work.
+
+## Fixture completion review remediation: 2026-09-10
+
+Bead `batter-kjl`; plan `plan_01M26254CNX0RB5MJ0QYYD2H0Z`; baseline
+`486e0b0f9f4c4439077418715843b30042205f7e`. Independent Claude Opus and Codex
+reviews found unbounded waits in shared observed-fixture helpers; Claude also
+found competition between detached-session diagnostics and the observer pool.
+The cause was consumer protocol composition: the retained cleanup driver needs
+explicit recovery, while those helpers exposed only an unbounded finish.
+
+The private shared `ObservedRun::finish` now returns a bounded pending error
+retaining the actual run, retry control and dedicated session pool. Its automatic
+summary contains phases/counts, and the caller can downcast, repair and resume.
+Completed runs explicitly close that session pool. Both common helpers use this
+path with a 30-second whole-run wait. No automatic retry/deletion was introduced.
+Detached-session tests separate diagnostic capacity, acknowledge blocking before
+body exit and witness server-session absence before retry. Public retry docs now
+state the existing broadcast/coalescing semantics. Primary-source research and
+native FORCE deletion are recorded in [references](references.md).
+
+Executed on macOS arm64 with Rust/Cargo 1.98.1 and 1.94.0, using the unchanged
+SQLx 0.9.0 / harness `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` graph. The task-owned
+`batter-kjl-review-validation` container ran PostgreSQL 18.4 Debian on Linux
+arm64, exposed only at 127.0.0.1:55014 using local trust. It was stopped and
+removed after both live runs. Existing database servers were not used. The Linux
+database container does not establish Linux Rust-client validation.
+
+| Executed command | Outcome |
+| --- | --- |
+| `bash scripts/verify.sh` with Rust 1.98.1 | Passed: 651 Rust test/doctest executions in 73 summaries, zero failures, 38 intentional live ignores; formatting, warning-denied Clippy and rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed with the same counts and all checks. |
+| `POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:55014/postgres?sslmode=disable' bash scripts/test_reference_live.sh`, on each toolchain | All 25 required cases passed, none ignored/filtered; inventory and privilege preflight passed. |
+| Rebuild `http_service` and run default, SIGINT, deadline, WARN filter and WARN-filter/deadline smoke profiles on each toolchain | All ten HTTP process smokes passed. |
+| `scripts/jig file-budget check --base HEAD`; `git diff --check` | Passed; only the existing nonblocking line-budget notice for fixture_failures.rs (now 477 lines), no warnings/errors or waivers. |
+
+New live controls recover the original owner from a bounded pending error and
+retain body SQLSTATE 22012 plus the same observation-error Arc. Another control
+holds the observer pool connection intentionally, sends coalescing retries while
+two observations are active, and checks both ordered timeout/PoolClosed histories
+survive recovery. A separate offline diagnostic test retains its concrete cause
+while printing only the supplied pending summary. No exhaustive scheduling,
+Linux client or hosted execution claim is added.
+
+Two development verification attempts passed their test matrices but failed
+Clippy on the new recovery probe's complexity (21/20). Separating body setup alone
+did not resolve it; extracting the retained-report assertions did. The subsequent
+full verification passed without lint suppression or weaker assertions. Logs and
+exact matrix/smoke commands are under `.agent/tmp/batter-kjl-review/`; Jig gate
+receipts and review-loop progress belong to the named plan's append-only records.
+
+## Fixture failure retention: 2026-09-10
+
+Bead `batter-kjl`; plan `plan_01M25Y0VN2H93NVFSZNRQ8D14P`, baseline
+`486e0b0f9f4c4439077418715843b30042205f7e`. Reused the existing owned runner,
+added bounded/resumable observation, explicit session-observer retry and retained
+pool/observation failure histories. The audit also fixed handled pool acquisition
+errors disappearing from successful-body reports. Native causes share identity;
+report formatting includes those failures without formatting their contents.
+
+Executed on macOS arm64 (`aarch64-apple-darwin`), Rust/Cargo 1.98.1 and 1.94.0.
+Rust commits: `48a229ceaefd4985c50990b14116b6d856af0985` and
+`4a4ef493e3a1488c6e321570238084b38948f6db`. SQLx remains 0.9.0 and the harness
+remains revision `3d525e6fc5745ce2e2437c7997de5cccdecff4ac`. Cargo generated the
+sole lockfile change for the reference test's direct batter dependency; lockfile
+SHA-256: `023f51eed6b46caed9e331e7d5b45374ddfb55d2ed14b1e32beeda52821e8a4f`.
+
+A task-owned Docker container, `batter-kjl-validation`, used the already available
+`postgres:18` image: PostgreSQL 18.4 Debian on Linux aarch64. It exposed only
+127.0.0.1:62202, with an isolated disposable cluster and explicit local trust
+configuration. The task-owned container was stopped and removed after both live
+runs. No existing database server was mutated. Native client/runtime
+claims here concern macOS; the Linux database container is not a Linux Rust
+workspace test. No new hosted CI execution is claimed.
+
+| Executed command | Outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | Passed: 650 Rust test/doctest executions in 73 summaries, zero failures, 36 intentionally ignored live cases; formatting, warning-denied Clippy and rustdoc passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Passed with the same 650/73 counts, zero failures, 36 intentional ignores and all formatting/lint/doc checks. |
+| `POSTGRES_TEST_ADMIN_URL='postgres://postgres@127.0.0.1:62202/postgres?sslmode=disable' bash scripts/test_reference_live.sh`, on each toolchain | All 23 required cases executed and passed, none ignored or filtered. Inventory and PostgreSQL privilege preflight passed. |
+| `env -u POSTGRES_TEST_ADMIN_URL bash scripts/test_reference_live.sh` | Failed with exit 1 before inventory/fixtures and a configuration diagnostic, as required. |
+| `cargo build -p batter-axum --example http_service --locked`, then `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` with default, `--signal SIGINT`, `--deadline`, `--warn-filter`, `--warn-filter --deadline`, on each toolchain | All ten HTTP process smokes passed. |
+| `scripts/jig file-budget check --base HEAD`; `git diff --check` | Passed; one nonblocking 466-line notice for fixture_failures.rs, no warnings/errors or waivers. |
+
+Logs and the exact smoke command script are under `.agent/tmp/batter-kjl/`:
+`verify-1.98.1-final.log`, `verify-1.94.0.log`, `live-default-final.log`,
+`live-1.94.0.log`, `http.log`, and `http.sh`. An initial full default run passed
+its tests but failed Clippy on new probe complexity. Splitting setup, observation
+and assertions resolved the lint without suppressions or relaxed assertions;
+the later complete verification passed. Early development compiles also caught
+borrowed JoinError propagation and a missing upstream non-exhaustive pattern.
+
+The live controls hold acknowledged native-detached and PgLease-retired backends
+through successful pool close, then witness their exact IDs and retained database
+from an independent one-slot observer. A parked database does not block independent
+database cleanup. Explicit release/retry permits completion while retaining the
+original observation timeout. PoolClosed and wrong-database observation failures
+likewise retain both attempts; the original Arc survives into the final report.
+Partial acquisitions and body panics also run with session observation enabled.
+Handled native PoolTimedOut still fails the report and appears in its redacted
+counts. A returned assertion plus Script exhaustion retains both generic failure
+branches after native cleanup and catalog absence checks.
+
+An acknowledged pg_shdescription lock causes real body SQLSTATE 22012,
+consuming-lease cleanup failure and a distinct deferred lease's queue failure.
+The tests inspect each native branch and database identity; external shutdown
+does not consume the drain failure. Both tagged residuals are reclaimed through
+upstream owner-aware stale cleanup after unlock. The upstream harness emits its
+own deferred failure diagnostic; no adapter redaction of upstream logs is claimed.
+
+Waiter loss on a live runtime keeps the driver and held lease alive until checkout
+release. A different test destroys the actual driver runtime: repeated waits
+retain its cancelled JoinError, and native lease Drop deletes the database while
+a checkout is still held. A surviving harness explicitly drains that fallback.
+This is evidence against runtime-death cleanup guarantees, not clean pool reuse.
+Session absence is a point-in-time observation; callers must stop new connection
+producers and select the same server. Manual DatabaseFixture finish and template
+initializer-owned pools retain their documented ownership limits.
+
+The explicit `scripts/jig check test` ran its tests successfully (process exit 0)
+but Jig rejected that receipt because the container-removal documentation edit
+changed the worktree while the target ran. No test assertion failed. The subsequent
+`scripts/jig work check --plan-id plan_01M25Y0VN2H93NVFSZNRQ8D14P` verify profile
+passed all five targets; `work evidence` and `work gates` reported fresh/passed
+with no unresolved failures. Its api:test receipt is
+`receipt_01M25Z7JQEMS291NY5D39KW613`. Final metadata and plan-finish evidence are
+retained in the append-only plan records; receipt freshness is rechecked after
+this note. No commit, push, publication or
+deployment was performed.
+
 ## Ownership and operational adapter reconciliation: 2026-09-10
 
 User-authorized rebase of ownership commit `f5449cd` onto upstream `9a49422`

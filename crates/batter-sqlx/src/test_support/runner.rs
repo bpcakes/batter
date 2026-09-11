@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use tokio::task::JoinHandle;
 
 use super::acquisition::{Registered, Resources, join_producers, produce};
-use super::report::{BodyFailure, DatabaseCleanup, FixtureReport, FixtureReportRef};
+use super::report::{BodyFailure, FixtureReport, FixtureReportRef};
 use super::{ConnectionPlan, DatabaseFixture, FixtureError, FixtureSuite};
 
 /// A body borrowing its allocation scope; the scope cannot escape into a task.
@@ -152,12 +152,24 @@ impl FixtureScope {
             registered.fixtures.push(DatabaseFixture {
                 pools: Vec::new(),
                 lease,
+                pool_failures: Vec::new(),
             });
             capacity.forget(); // Held until the driver cleans this registered lease.
             Ok(index)
         })
         .await?;
         self.open(index, plan).await
+    }
+
+    fn pool_failed(&self, index: usize, error: sqlx::Error) -> FixtureError {
+        let error = Arc::new(error);
+        self.resources
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .fixtures[index]
+            .pool_failures
+            .push(error.clone());
+        FixtureError::PoolAcquire(error)
     }
 
     async fn open(
@@ -181,7 +193,7 @@ impl FixtureScope {
             let pool = options
                 .clone()
                 .connect_lazy(&url)
-                .map_err(FixtureError::PoolAcquire)?;
+                .map_err(|error| self.pool_failed(index, error))?;
             self.resources
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -191,7 +203,10 @@ impl FixtureScope {
             // Unlike connect().await, the pool is retained before this explicit
             // acquisition polls after_connect. SQLx may also maintain minimum
             // connections in its own background task.
-            let connection = pool.acquire().await.map_err(FixtureError::PoolAcquire)?;
+            let connection = pool
+                .acquire()
+                .await
+                .map_err(|error| self.pool_failed(index, error))?;
             drop(connection);
             pools.push(pool);
         }
@@ -208,9 +223,35 @@ impl FixtureScope {
 pub struct FixtureRun<T, E> {
     driver: Option<JoinHandle<FixtureReport<T, E>>>,
     result: Option<Result<FixtureReport<T, E>, tokio::task::JoinError>>,
+    progress: super::sessions::Progress,
 }
 
 impl<T, E> FixtureRun<T, E> {
+    /// Observe for at most `bound`; `Ok(None)` means pending, never clean reuse.
+    /// Only this observation expires; the body and cleanup driver remain owned.
+    /// Cancelling this future likewise leaves `wait`/`wait_for` resumable. A native
+    /// driver JoinError remains distinct from timeout and SQLx close's unit result.
+    /// See [`super::SessionObserver`] for an example.
+    pub async fn wait_for(
+        &mut self,
+        bound: std::time::Duration,
+    ) -> Result<Option<FixtureReportRef<'_, T, E>>, &tokio::task::JoinError> {
+        match tokio::time::timeout(bound, self.wait()).await {
+            Ok(result) => result.map(Some),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Snapshot database phases and all observation errors recorded so far.
+    /// Empty progress can mean the body or acquisition producers are still active.
+    /// Completed entries still require inspection of the final report and drain.
+    pub fn cleanup_progress(&self) -> Vec<super::DatabaseProgress> {
+        self.progress
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Observe the same driver repeatedly, including after a cancelled wait.
     pub async fn wait(&mut self) -> Result<FixtureReportRef<'_, T, E>, &tokio::task::JoinError> {
         if self.result.is_none() {
@@ -269,6 +310,9 @@ impl FixtureSuite {
         F: for<'a> FnOnce(&'a mut FixtureScope) -> FixtureBody<'a, T, E> + Send + 'static,
     {
         let resources = Registered::new(self.templates);
+        let observer = self.observer;
+        let progress = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let driver_progress = progress.clone();
         let harness = self.harness.clone();
         let capacity = Arc::new(tokio::sync::Semaphore::new(
             harness.connection_limits().max_simultaneous_leases(),
@@ -291,16 +335,27 @@ impl FixtureSuite {
                     .unwrap_or_else(|error| error.into_inner())
                     .fixtures,
             );
-            let databases =
-                futures_util::future::join_all(fixtures.into_iter().map(|fixture| async move {
-                    let database_name = fixture.database_name().to_owned();
-                    let result = fixture.cleanup().await;
-                    DatabaseCleanup {
-                        database_name,
-                        result,
-                    }
-                }))
-                .await;
+            *driver_progress
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = fixtures
+                .iter()
+                .map(|fixture| super::DatabaseProgress {
+                    database_name: fixture.database_name().to_owned(),
+                    phase: super::CleanupPhase::ClosingPools,
+                    observation_failures: Vec::new(),
+                })
+                .collect();
+            let databases = futures_util::future::join_all(fixtures.into_iter().enumerate().map(
+                |(index, fixture)| {
+                    super::sessions::cleanup(
+                        fixture,
+                        observer.clone(),
+                        driver_progress.clone(),
+                        index,
+                    )
+                },
+            ))
+            .await;
             let drain = harness
                 .drain_deferred_cleanup()
                 .await
@@ -315,6 +370,7 @@ impl FixtureSuite {
         FixtureRun {
             driver: Some(driver),
             result: None,
+            progress,
         }
     }
 }

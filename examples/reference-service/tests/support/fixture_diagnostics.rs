@@ -11,6 +11,11 @@ impl ProbeError {
         )
     }
 
+    /// The caller supplies only the fixed pending-phase/count summary.
+    pub fn pending(error: Box<dyn Error + Send + Sync>, summary: String) -> Self {
+        Self(error, summary)
+    }
+
     pub fn report<T: Send + Sync + 'static>(report: Box<FixtureReport<T, Self>>) -> Self {
         // Only FixtureReport's deliberately redacted formatting is permitted.
         // Keep the original report for typed inspection of every native cause.
