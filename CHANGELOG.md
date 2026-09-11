@@ -8,6 +8,21 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `batter::settings` for explicit bounded sources, integer/duration parsing
+  and redacted diagnostics. HTTP and reference roots own their schemas and native
+  constructors; live forty-case acceptance of those constructors remains pending.
+- Add the optional `batter-sqlx` PostgreSQL lease, probe and pool-close adapter,
+  plus unpublished postgres-lifecycle and reference-service example packages.
+  Isolated fixtures are opt-in under `batter-sqlx/test-support`; provisioning stays
+  in the external harness.
+- Add owned `startup::Startup`, `health::HealthMonitor`, and Axum operational
+  helpers (`operational_http`, `ReadinessPolicy`, `register_http`).
+- Retain operation, HTTP and process-task tracing parents when diagnostic INFO
+  spans are filtered.
+- Add component-ownership comparisons and HTTP/1.1 transport/lifetime suites on
+  the shared Unix process harness.
+- Add the `finite_command` example. Service startup and finite-command cleanup
+  remain separately awaited.
 - Add `ShutdownCause::FiniteTaskExit` for shutdown initiated by admitted finite
   task failures. `ComponentExit` remains specific to registered critical
   components. Downstream exhaustive matches must add the new variant; code that
@@ -15,10 +30,11 @@ contracts, capability facts and validation history.
 - Remove `ShutdownHandle::observer`; obtain completion observers through
   `RunningSupervisor::observer` after `Supervisor::start` so every observer has
   an owned completion publisher.
-- Split the virtual workspace into `batter`, `batter-axum`, independent generic
-  test support, and an unpublished SQLx example package. HTTP imports move to
-  `batter_axum`; the old `axum` and `postgres-example` features are removed.
-  Keep PostgreSQL provisioning external and retain Rust 1.94 for every package.
+- Split the virtual workspace into `batter`, `batter-axum`, `batter-sqlx`,
+  independent generic test support, and two unpublished example packages. HTTP
+  imports move to `batter_axum`; the old `axum` and `postgres-example` features
+  are removed. Keep PostgreSQL provisioning external and retain Rust 1.94 for
+  every package.
 - Expose `batter::telemetry::with_current_dispatch` for adapter futures while
   preserving dispatch during polling and destruction. Keep the combined HTTP
   `RequestPolicy` readiness/deadline contract unchanged.
@@ -65,7 +81,8 @@ contracts, capability facts and validation history.
   a generic type in HTTP rustdoc. Failure-path assertions and runtime contracts
   remain unchanged.
 - Record local verification and HTTP SIGTERM smoke results in
-  [validation](docs/validation.md); live PostgreSQL remains untested.
+  [validation](docs/validation.md). Optional adapter live cases have Linux
+  evidence; the combined forty-case reference live inventory remains pending.
 
 ## 0.1.0 — MVP source snapshot — 2026-09-07
 

@@ -6,7 +6,8 @@ Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
 This workspace contains four library packages and two SQLx example packages,
-with failure-contract tests, doctests, and six runnable demonstrations.
+with failure-contract tests, doctests, and six runnable demonstrations plus a
+read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
 verification passed on Rust 1.94.0 and 1.98.1 after upgrading the dependencies;
 `docs/validation.md` records exact commands, versions, outcomes, and limitations.
@@ -59,6 +60,8 @@ read-only freshness snapshots and writer lifetime.
 `crates/batter/src/operation.rs` owns deadline/cancellation boundaries and typed failures.
 `crates/batter/src/retry.rs` owns replay policy, bounded attempts, and backoff.
 `crates/batter/src/admission.rs` owns process-local concurrency permits.
+`crates/batter/src/settings.rs` and `settings/` own explicit source reading, bound
+parsing and redacted diagnostics; application schemas remain outside the foundation.
 `crates/batter/src/telemetry.rs` records outcomes without printing error contents
 and exposes `with_current_dispatch` for adapter-owned futures.
 `crates/batter/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and

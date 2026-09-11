@@ -23,6 +23,7 @@ application composition root
   |-- native services / concrete constructors / domain errors
   |-- batter lifecycle + cleanup
   |-- batter operation + retry + admission
+  |-- batter settings (explicit sources; application schemas)
   |-- native tracing subscriber and exporters (application-owned)
   |-- optional batter-axum -> batter + Axum / Tower
   |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
@@ -259,6 +260,15 @@ current span; instrument the inner future when needed. The Axum adapter calls it
 its async boundary, preserving the existing first-poll capture. Observations and
 nested spans must live inside the protected future. This seam introduces no
 task ownership, cancellation shielding, global subscriber, or runtime abstraction.
+
+## Explicit settings
+
+`settings` reads only caller-supplied pairs, literals or an explicit file path.
+It parses bounded integers and durations, and redacts Display/Debug for secrets
+and static diagnostic wrappers. It does not search for `.env`, read the process
+environment, or own application field names. HTTP and reference roots keep their
+schemas and pass validated values into native constructors. See
+[guarantees](guarantees.md#explicit-settings-and-redacted-diagnostics).
 
 ## Why there is no resource graph yet
 

@@ -83,8 +83,10 @@ cargo run -p batter-axum --example http_service
 ```
 
 The example binds `127.0.0.1:3000` by default and provides `/live`, `/ready`,
-`/work`, and `/fail`. `BATTER_BIND` and `BATTER_REQUEST_TIMEOUT_MS` configure its
-listener and deadline. SIGINT/SIGTERM initiate shutdown on Unix.
+`/work`, and `/fail`. `BATTER_BIND`, `BATTER_REQUEST_TIMEOUT_MS` and
+`BATTER_BULKHEAD_CAPACITY` configure its listener, deadline and concurrency.
+`BATTER_ENV_FILE` may name one literal dotenv file; there is no default `.env`
+search. SIGINT/SIGTERM initiate shutdown on Unix.
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
 

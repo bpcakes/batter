@@ -8,6 +8,15 @@ Application futures and errors stay concrete. HTTP support is a separate
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
 
+`health` provides an ordinary supervised monitor with explicit timing policy and
+cloneable read-only observations. Readers do no probes; stale or stopped writers
+are unready. See the [usage example](../../docs/usage.md#sample-health-independently-of-http-traffic).
+
+`settings` reads only caller-supplied pairs, literals or an explicit file path.
+It does not search for `.env` or read the process environment. Application schemas
+and native constructors stay at the composition root. See
+[operations](../../docs/operations.md#loading-example-settings).
+
 ```rust
 use batter::operation::OperationContext;
 use std::time::Duration;
@@ -51,7 +60,3 @@ caller-cancellation limits are explained in [usage](../../docs/usage.md#finite-c
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. This is an early foundation,
 not a production-validated release. MIT licensed.
-
-`health` provides an ordinary supervised monitor with explicit timing policy and
-cloneable read-only observations. Readers do no probes; stale or stopped writers
-are unready. See the [usage example](../../docs/usage.md#sample-health-independently-of-http-traffic).

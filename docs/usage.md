@@ -266,6 +266,27 @@ This does not spawn a task, allocate a wrapper on the heap, install a subscriber
 or shield asynchronous cleanup from cancellation. Ordinary operation users get
 dispatch preservation from `OperationContext::run` without adding this wrapper.
 
+## Explicit settings sources
+
+```rust
+use batter::settings::{SettingsSource, SecretString, bounded_u64};
+
+fn example() -> Result<(), batter::settings::SettingsError> {
+    let source = SettingsSource::from_pairs([("LIMIT".into(), "4".into())])?;
+    let limit = bounded_u64(source.required("LIMIT")?, "LIMIT", 1, 16)?;
+    assert_eq!(limit, 4);
+    assert_eq!(SecretString::new("credential").to_string(), "[REDACTED]");
+    Ok(())
+}
+```
+
+Applications own names, defaults, source order and required-secret policy.
+Nothing here reads the process environment or searches for a file. The HTTP
+example accepts `BATTER_ENV_FILE` and configured bind/timeout/capacity values;
+the reference package exposes validated native pool and worker constructors.
+See [operations](operations.md#loading-example-settings) and the
+[reference schema](../examples/reference-service/README.md#typed-settings-and-native-constructors).
+
 ## Resource acquisition and partial startup
 
 Register a cleanup factory immediately after acquiring an owned resource. A

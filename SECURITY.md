@@ -31,6 +31,9 @@ bodies, and panic payloads. Internal reports retain original errors; Debug/sourc
 inspection or an application's logs can expose them. Do not serialize reports
 as HTTP responses. Use explicit sanitized domain mappings and low-cardinality
 metric labels. Operation names must remain developer-controlled constants.
+`SecretString` and `RedactedError` redact Display/Debug; `expose_secret` and
+`Error::source` remain trusted inspection. Settings do not erase memory or
+sanitize third-party logs.
 
 Rust's default panic hook can print payloads to stderr before JoinError is
 observed. Batter does not install or sanitize a global hook. Tracing hygiene is
@@ -38,7 +41,7 @@ not whole-process secret redaction. Never put secrets in panic messages.
 
 ## Dependencies and publishing
 
-The local source forbids unsafe code in all three library crate roots; that is not an audit
+The local source forbids unsafe code in all four library crate roots; that is not an audit
 of transitive dependencies or proof of logical cancellation safety. Resolve and
 review Cargo.lock, run your dependency advisory/license checks, and evaluate
 all optional features on the actual target platform. CI actions are separate

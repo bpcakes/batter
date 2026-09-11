@@ -2,6 +2,37 @@
 
 Latest evidence: 2026-09-11. Earlier sections retain their historical scope.
 
+## Combined configuration live acceptance (batter-5pm), 2026-09-11
+
+The reconciled forty-case reference inventory passed against two operator-started,
+disposable PostgreSQL 18.6 Docker clusters on both supported Rust toolchains. The
+primary used SCRAM host authentication, superuser authority, `track_counts=on`
+and `autovacuum_naptime=1s`; the observer was a distinct cluster and allowed
+`pg_control_system()`. Native preflight verified both server versions, required
+primary capabilities and distinct cluster identifiers before any fixture ran.
+
+Linux x86_64, kernel `7.0.11-76070011-generic`; Rust 1.98.1
+(`48a229cea 2026-09-01`) and Rust 1.94.0 (`4a4ef493e 2026-03-02`). The Docker
+image was `postgres@sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972be8687`
+and reported PostgreSQL `18.6 (Debian 18.6-1.pgdg13+2)`. The tested source
+baseline was commit `29856ba8e0998db9cc0adae489077ebe1d60c02c`, tree
+`59d7c7995d333b42a3f237483665e6b6031346f0`; only documentation was modified
+locally. Cargo.lock SHA-256 remained
+`86b82ac103a8447dcfeb10ab834b620ac2492d4bb405681a0b6e71413b706d49`.
+
+| Command | Result |
+| --- | --- |
+| `POSTGRES_TEST_ADMIN_URL=<disposable-primary> POSTGRES_TEST_OBSERVER_URL=<disposable-observer> RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS: PostgreSQL 18 preflight; 40 passed, 0 failed, 0 ignored, 0 filtered; 74.51s. |
+| `POSTGRES_TEST_ADMIN_URL=<disposable-primary> POSTGRES_TEST_OBSERVER_URL=<disposable-observer> RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS: PostgreSQL 18 preflight; 40 passed, 0 failed, 0 ignored, 0 filtered; 74.83s. |
+
+The runner emitted its intentional deferred-cleanup failure diagnostic while the
+corresponding retention regression passed; each complete command exited zero.
+Together with the unchanged two-toolchain matrices, ten HTTP smokes and current
+Jig `api:test` evidence recorded immediately below, these executions satisfy the
+remaining AC5 and AC8 live evidence for `batter-5pm`. The containers were local
+test infrastructure, not application provisioning or deployment evidence. No
+macOS, TLS, hosted CI or publication claim is added.
+
 ## Rebase reconciliation onto 4e3e45b, 2026-09-11
 
 The local HTTP lifetime and typed-settings changes are reconciled with the
@@ -44,11 +75,10 @@ whole-repository policy checks while reusing unchanged Rust receipts.
 The Beads database was reconciled in place with `br sync --reconcile` after a
 read-only dry run and backups. All 88 issues and upstream comment contents are
 preserved; only `batter-5pm` receives the combined acceptance note. Upstream
-`batter-kjl` remains closed. `batter-5pm` remains in progress for AC5/AC8: neither
-required PostgreSQL endpoint is configured here, and the combined 40-case live
-suite has not run on either toolchain. Earlier 19- and 37-case results retain
-their historical scope. No database provisioning, macOS, TLS, hosted CI or
-publication evidence is added.
+`batter-kjl` remains closed. At this checkpoint `batter-5pm` remained in progress
+for AC5/AC8 because neither required PostgreSQL endpoint was configured and the
+combined 40-case suite had not run. The live acceptance record above supersedes
+that pending state. Earlier 19- and 37-case results retain their historical scope.
 
 ## Configuration prerequisites and acceptance status (batter-5pm), 2026-09-11
 

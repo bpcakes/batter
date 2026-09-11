@@ -1,6 +1,6 @@
 # Testing and failure-contract coverage
 
-Cargo discovers foundation, Axum adapter and generic test-support tests, plus
+Cargo discovers foundation, adapter, example and generic test-support tests, plus
 library doctests. [Validation](validation.md) records dated execution counts,
 toolchains and outcomes; this guide describes behaviors and verification commands.
 Foundation fixture-dispatch entries are inert in the parent run. The non-yielding
