@@ -128,3 +128,12 @@ wrapper abortion; dependent cleanup remains conservatively skipped on forced
 abort. `register_http(&mut Supervisor, ...)` remains source-compatible for the
 lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
 real socket and explicitly release the outstanding body afterward.
+
+When authentication admission needs the direct TCP peer, replace the registration
+call with `register_http_with_connect_info_in(scope, "http", listener, router)`.
+Middleware and handlers can then extract native `ConnectInfo<SocketAddr>`, including
+the peer port, through Axum's make-service conversion. Behind a proxy this is the
+proxy's socket address; forwarding headers do not select it. Authentication and
+proxy trust remain application policy. The listener ownership and shutdown
+contract is identical to `register_http_in`; existing plain registrations keep
+their behavior. See the helper's rustdoc for a complete registration example.

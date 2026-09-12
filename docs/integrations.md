@@ -79,8 +79,13 @@ not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
 `register_http_in` registers a bound `TcpListener` and initialized `Router`
-through constrained startup authority. `register_http` retains its exact
-`&mut Supervisor` signature for lower-level compatibility. Both enter one native
+through constrained startup authority. Its opt-in companion
+`register_http_with_connect_info_in` accepts the same arguments and installs native
+`ConnectInfo<SocketAddr>` for direct-peer admission middleware and handlers.
+The address and port come from the accepted TCP socket; forwarded headers do not
+select identity. Behind a proxy this is the proxy address. Authentication and proxy
+trust remain application-owned. `register_http` retains its exact
+`&mut Supervisor` signature for lower-level compatibility. All three enter one native
 implementation and register a direct critical component. It acknowledges startup on its first task poll; bind
 errors remain in owned `Startup`. Registration failure and abandoned startup
 release the listener. Native Axum accept errors are retried internally.

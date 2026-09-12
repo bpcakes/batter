@@ -19,7 +19,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
 - `src/readiness.rs` owns read-only dependency/lifecycle reasons and severity policy.
-- `src/serving.rs` registers a bound native listener/router with the supervisor.
+- `src/serving.rs` registers a bound native listener/router with the supervisor,
+  including opt-in direct TCP peer `ConnectInfo<SocketAddr>` through protected authority.
 - `examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.

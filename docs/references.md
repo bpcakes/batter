@@ -1276,14 +1276,27 @@ Axum 0.8.9 [ConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/struct.ConnectI
 and [ServiceExt](https://docs.rs/axum/0.8.9/axum/trait.ServiceExt.html) require the
 make-service conversion to supply connection metadata. A plain Router does not
 install that extension. `register_http` intentionally retains its narrow Router
-contract; its rustdoc demonstrates an application-owned supervised native
-`into_make_service_with_connect_info` serve closure.
+contract. The later opt-in companion below replaces the previously documented
+application-owned supervised native serve closure for direct TCP peer metadata.
 
 Cargo's [SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html)
 classifies adding enum variants and adding `non_exhaustive` to an existing
 exhaustive enum as breaking changes. ReadinessReason remains exhaustive by
 design: additional states warrant consumer policy review, rather than a new
 wildcard fallback that can conceal a readiness/severity decision.
+
+### Direct TCP peer registration: 2026-09-12
+
+Rechecked locked Axum 0.8.9 `src/extract/connect_info.rs` and
+[Connected](https://docs.rs/axum/0.8.9/axum/extract/connect_info/trait.Connected.html):
+the `SocketAddr` implementation for `IncomingStream<TcpListener>` copies the
+stream's `remote_addr`. Its native make-service wraps each cloned router in
+`Extension(ConnectInfo(...))` before request middleware runs.
+[ConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/struct.ConnectInfo.html)
+requires that make-service conversion. Batter's fixed
+`register_http_with_connect_info_in` uses it without parsing forwarding headers
+or replacing application authentication/proxy policy. Locked Tokio is 1.53.1;
+no dependency change was needed. Delivery is tracked by `batter-rme`.
 
 ## Fixture failure retention and session observation: 2026-09-10
 

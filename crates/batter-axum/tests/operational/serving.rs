@@ -9,7 +9,7 @@ use batter::{
     operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
-use batter_axum::{register_http, register_http_in};
+use batter_axum::{register_http, register_http_in, register_http_with_connect_info_in};
 use std::{
     convert::Infallible,
     ops::{Deref, DerefMut},
@@ -27,6 +27,9 @@ use tokio::{
     sync::oneshot,
     time::timeout,
 };
+
+type RegisterHttp =
+    fn(&mut Supervisor, &'static str, TcpListener, Router) -> Result<(), batter::RegistrationError>;
 
 fn cleanup_budget() -> CleanupBudget {
     CleanupBudget::new(
@@ -206,6 +209,15 @@ impl Drop for StreamingBody {
 
 #[tokio::test]
 async fn streaming_outlives_response_budget_and_forced_wrapper_abort_skips_cleanup() {
+    streaming_abort(register_http).await;
+}
+
+#[tokio::test]
+async fn peer_server_forced_wrapper_abort_still_skips_dependent_cleanup() {
+    streaming_abort(register_http_with_connect_info_in).await;
+}
+
+async fn streaming_abort(register: RegisterHttp) {
     let (release_tx, release_rx) = oneshot::channel();
     let (dropped_tx, mut dropped_rx) = oneshot::channel();
     let body = Arc::new(std::sync::Mutex::new(Some(StreamingBody {
@@ -236,7 +248,7 @@ async fn streaming_outlives_response_budget_and_forced_wrapper_abort_skips_clean
         .layer(axum::middleware::from_fn(batter_axum::operational_http));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    register_http(&mut supervisor, "http", listener, app).unwrap();
+    register(&mut supervisor, "http", listener, app).unwrap();
     let running = supervisor.start();
     handle.mark_ready();
     timeout(Duration::from_secs(1), handle.wait_ready())
@@ -291,6 +303,15 @@ async fn streaming_outlives_response_budget_and_forced_wrapper_abort_skips_clean
 
 #[tokio::test]
 async fn borrowed_startup_waiter_is_inert_but_owner_drop_releases_listener_before_cleanup() {
+    startup_abandonment(register_http).await;
+}
+
+#[tokio::test]
+async fn peer_server_startup_owner_drop_releases_listener_before_cleanup() {
+    startup_abandonment(register_http_with_connect_info_in).await;
+}
+
+async fn startup_abandonment(register: RegisterHttp) {
     use std::future::{Future, poll_fn};
     let base = supervisor();
     let handle = base.handle();
@@ -318,7 +339,7 @@ async fn borrowed_startup_waiter_is_inert_but_owner_drop_releases_listener_befor
                         Ok(())
                     })
                     .unwrap();
-                register_http(scope.supervisor(), "http", listener, Router::new()).unwrap();
+                register(scope.supervisor(), "http", listener, Router::new()).unwrap();
                 bound_tx.send(address).unwrap();
                 std::future::pending::<Result<(), std::io::Error>>().await
             })
@@ -362,6 +383,12 @@ async fn borrowed_startup_waiter_is_inert_but_owner_drop_releases_listener_befor
     );
     release_tx.send(()).unwrap();
     let outcome = timeout(Duration::from_secs(2), completion).await.unwrap();
+    assert_startup_drain(outcome);
+    assert_eq!(handle.readiness(), Readiness::Draining);
+    drop(TcpListener::bind(address).await.unwrap());
+}
+
+fn assert_startup_drain(outcome: StartupOutcome<std::io::Error>) {
     let StartupOutcome::Failed(StartupError::Failed(report)) = outcome else {
         panic!("expected retained startup drain failure")
     };
@@ -370,8 +397,6 @@ async fn borrowed_startup_waiter_is_inert_but_owner_drop_releases_listener_befor
     assert!(report.cleanup.is_success());
     assert_eq!(report.cleanup.records.len(), 1);
     assert_eq!(report.cleanup.records[0].name, "dependency");
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    drop(TcpListener::bind(address).await.unwrap());
 }
 
 #[tokio::test]

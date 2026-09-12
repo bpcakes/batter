@@ -1172,6 +1172,16 @@ that port reservation, in which case the smoke test should fail visibly.
 
 ## Limits of current coverage
 
+The operational `connect_info` cases use protected startup and two real TCP
+connections, comparing middleware and handler output against each client's
+independently observed local address and port. Forged Forwarded, X-Forwarded-For
+and X-Real-IP headers cannot select the reported peer. Registration failures
+require exact invalid/duplicate-name errors and rebinding of only rejected
+listeners; dropping the unstarted owner releases the accepted listener. Shared
+serving scenarios also execute the peer variant through startup waiter/owner
+abandonment and a streaming body surviving forced wrapper abort. These checks
+do not establish application authentication or proxy-trust correctness.
+
 The SQLx example's `tests/diagnostics.rs` launches the actual executable with
 missing, non-Unicode and malformed database URLs, requiring a nonzero exit and
 sanitized stderr. Its example-local Python parent uses the shared process owner

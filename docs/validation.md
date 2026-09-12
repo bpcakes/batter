@@ -7493,3 +7493,55 @@ live SQLx suite on each toolchain after the oracle changes. The trusted review
 exclusions cover `.agent`; no fresh Jig command was run because Jig appends there
 and this loop's validation was constrained not to write excluded paths. Existing
 Jig state was left unchanged.
+
+## Direct TCP peer HTTP registration: 2026-09-12
+
+Delivery Bead `batter-rme`; Jig plan `plan_01M2BHP64PFFA99BPV57MT2WH2`,
+baseline `6f25e6476efd614b68cf884d0271707cbb36c6e8`. Implementation is confined
+to Batter and shaped by downstream direct-peer authentication admission.
+`register_http_with_connect_info_in` opts into native `ConnectInfo<SocketAddr>`
+while retaining the same private supervised serving implementation as the plain
+helpers. No dependency or Cargo.lock change was made.
+
+Environment: Linux x86_64; rustc 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0
+(`4a4ef493e`, 2026-03-02); locked Axum 0.8.9 and Tokio 1.53.1. Cargo.lock
+SHA-256: `13d5a89554eb34020d89b63855d00a64307b6e1711394e2603455f9850bc248e`.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-axum --test operational --locked` | All 21 cases passed, including four added peer/lifecycle cases. |
+| `bash scripts/verify.sh` | Final default-toolchain full core/minimal, workspace runtime, hostile-environment, doctest, formatting, Clippy and rustdoc matrix passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service` with `--locked`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | All ten process smokes passed, five per toolchain, with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `scripts/jig work check --plan-id plan_01M2BHP64PFFA99BPV57MT2WH2`, with evidence/gates inspection | All five required profile targets passed and were fresh in evidence/gates: api:test receipt `receipt_01M2BJDGXRDFAMGR1ZCCHTTZSR`, plus Clippy, formatting, contract and file budget. Final tracker/document changes reuse unchanged Rust receipts and refresh whole-repository policy checks. |
+
+The peer oracle opens two simultaneous real TCP connections and compares both
+request middleware and handler output to each client's independently obtained
+local address and port. Forwarded, X-Forwarded-For and X-Real-IP headers carry
+different forged values. Protected startup must reach Ready, graceful shutdown
+must produce a successful report and named cleanup, and cleanup independently
+rebinds the released listener. Exact invalid/duplicate registration errors release
+only rejected listeners; an unstarted owner retains its listener until drop.
+Shared existing scenarios additionally exercise peer-enabled startup waiter/owner
+abandonment and a body surviving forced server-wrapper abort, retaining the
+unsuccessful report and skipped dependent cleanup before explicit body release.
+
+An initial focused compile misspelled `RegistrationError::Duplicate`; it was
+corrected to the actual variant and exact component name. The first two full
+default-toolchain attempts passed runtime tests and doctests, then hit Clippy's
+complexity limit in shared lifecycle test helpers. Selecting the registration
+function directly and extracting the complete startup-report assertions removed
+that complexity without dropping assertions or relaxing lints. The final matrix
+above ran after those changes.
+
+The tracker initially rejected automatic import of existing exported feedback.
+Its native hash-bound source-path reconciliation retained the newer issue's two
+comments, normalized 16 stale local source paths, and restored normal `br` access.
+Native export assigned those imported comments new local IDs while preserving
+text, author and timestamp. The dedicated delivery Bead was then created normally.
+
+No live PostgreSQL checks, macOS or hosted-CI execution, downstream migration,
+commit, publication or deployment was performed for this delivery. Authentication
+and proxy trust remain application policy; the peer is the proxy when a proxy
+opens the socket. No custom listener/connection-info support, stream deadline,
+descendant-joining or runtime-death guarantee is added.

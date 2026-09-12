@@ -911,9 +911,15 @@ A real streaming regression holds a body beyond the request budget and through
 wrapper abort: the report is unsuccessful and dependent cleanup is skipped even
 though every direct task was joined. The test separately releases the body.
 There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
-The helper accepts a plain Router and supplies no ConnectInfo extension. Native
-`into_make_service_with_connect_info` belongs in an application-owned supervised
-serve closure; the helper rustdoc includes that composition.
+`register_http` and `register_http_in` accept a plain Router and supply no
+ConnectInfo extension. Their opt-in companion `register_http_with_connect_info_in`
+uses native `into_make_service_with_connect_info::<SocketAddr>` so middleware and
+handlers can extract the accepted TCP socket's remote address and port. Forwarded,
+X-Forwarded-For and X-Real-IP headers are not interpreted; behind a proxy the peer
+is the proxy. Authentication, proxy trust and application extension replacement
+remain application-owned. The companion shares the registration, acknowledgement,
+listener-release, graceful-drain and conservative wrapper-abort contracts above.
+It accepts no arbitrary make-service, custom metadata type or alternate listener.
 
 ## Optional database fixture finish
 

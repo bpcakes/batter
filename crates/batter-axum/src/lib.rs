@@ -16,7 +16,7 @@ mod serving;
 
 pub use correlation::{CorrelationId, operational_http, render_infrastructure_failure};
 pub use readiness::{ReadinessPolicy, ReadinessReason, dependency_readiness};
-pub use serving::{register_http, register_http_in};
+pub use serving::{register_http, register_http_in, register_http_with_connect_info_in};
 
 use axum::{
     Json,

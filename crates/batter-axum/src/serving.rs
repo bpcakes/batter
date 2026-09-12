@@ -4,6 +4,7 @@ use batter::{
     lifecycle::Supervisor,
     registration::{Registration, RegistrationTarget},
 };
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 /// Register an already-bound native Axum server as a supervised critical task.
@@ -35,28 +36,9 @@ use tokio::net::TcpListener;
 /// register_http(supervisor, "http", listener, app)?;
 /// # Ok(()) }
 /// ```
-/// This helper accepts a plain [`Router`]; it does not install
-/// [`axum::extract::ConnectInfo`]. Applications requiring peer addresses keep the
-/// native make-service conversion in their own supervised component:
-///
-/// ```no_run
-/// use axum::{Router, extract::ConnectInfo, routing::get};
-/// use batter::lifecycle::Supervisor;
-/// use std::net::SocketAddr;
-/// # async fn example(supervisor: &mut Supervisor) -> Result<(), batter::BoxError> {
-/// let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-/// let app = Router::new().route("/peer", get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move {
-///     peer.to_string()
-/// }));
-/// supervisor.register("http", move |shutdown| async move {
-///     shutdown.mark_started();
-///     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-///         .with_graceful_shutdown(async move { shutdown.draining().await })
-///         .await?;
-///     Ok(())
-/// })?;
-/// # Ok(()) }
-/// ```
+/// This helper does not install [`axum::extract::ConnectInfo`]. Use
+/// [`register_http_with_connect_info_in`] when middleware or handlers need the
+/// direct TCP peer address.
 /// See the runnable `http_service` example for owned startup and signal composition.
 pub fn register_http(
     supervisor: &mut Supervisor,
@@ -64,7 +46,13 @@ pub fn register_http(
     listener: TcpListener,
     application: Router,
 ) -> Result<(), RegistrationError> {
-    register_http_impl(supervisor.registration(), name, listener, application)
+    register_http_impl(
+        supervisor.registration(),
+        name,
+        listener,
+        application,
+        false,
+    )
 }
 
 /// Register an already-bound Axum server through constrained registration authority.
@@ -72,13 +60,55 @@ pub fn register_http(
 /// This is the canonical companion to [`batter::startup::Startup::scoped`]. It
 /// has the same runtime and native descendant limits as [`register_http`], while
 /// preventing the adapter from receiving process-start or cleanup-extraction authority.
+/// It does not install connection metadata; use [`register_http_with_connect_info_in`]
+/// for the direct TCP peer.
 pub fn register_http_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,
     listener: TcpListener,
     application: Router,
 ) -> Result<(), RegistrationError> {
-    register_http_impl(target.registration(), name, listener, application)
+    register_http_impl(target.registration(), name, listener, application, false)
+}
+
+/// Register a native Axum server with the direct TCP peer available to the router.
+///
+/// This opt-in companion to [`register_http_in`] installs
+/// [`axum::extract::ConnectInfo<SocketAddr>`] using Axum's native make-service
+/// conversion. Middleware and handlers receive the accepted socket's remote
+/// address, including its port. Behind a proxy this is the proxy's socket address;
+/// forwarded headers are not interpreted. Authentication, proxy trust and any
+/// application middleware that replaces extensions remain application-owned.
+///
+/// Listener transfer, startup acknowledgement, graceful drain and conservative
+/// cleanup after wrapper abortion have the same contract as [`register_http`].
+/// No custom connection-info type, listener or make-service is accepted.
+///
+/// ```no_run
+/// use axum::{Router, extract::ConnectInfo, routing::get};
+/// use batter::registration::RegistrationTarget;
+/// use batter_axum::register_http_with_connect_info_in;
+/// use std::net::SocketAddr;
+///
+/// // Call from Startup::scoped after application resources are initialized.
+/// async fn register<T: RegistrationTarget + ?Sized>(scope: &mut T)
+///     -> Result<(), batter::BoxError>
+/// {
+///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+///     let router = Router::new().route("/peer", get(
+///         |ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.to_string() },
+///     ));
+///     register_http_with_connect_info_in(scope, "http", listener, router)?;
+///     Ok(())
+/// }
+/// ```
+pub fn register_http_with_connect_info_in<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
+    name: &'static str,
+    listener: TcpListener,
+    application: Router,
+) -> Result<(), RegistrationError> {
+    register_http_impl(target.registration(), name, listener, application, true)
 }
 
 fn register_http_impl(
@@ -86,12 +116,23 @@ fn register_http_impl(
     name: &'static str,
     listener: TcpListener,
     application: Router,
+    direct_peer: bool,
 ) -> Result<(), RegistrationError> {
     registration.register(name, move |shutdown| async move {
         shutdown.mark_started();
-        axum::serve(listener, application)
-            .with_graceful_shutdown(async move { shutdown.draining().await })
+        let draining = async move { shutdown.draining().await };
+        if direct_peer {
+            axum::serve(
+                listener,
+                application.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(draining)
             .await?;
+        } else {
+            axum::serve(listener, application)
+                .with_graceful_shutdown(draining)
+                .await?;
+        }
         Ok(())
     })
 }
