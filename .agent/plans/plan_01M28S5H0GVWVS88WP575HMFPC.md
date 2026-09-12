@@ -1,0 +1,1 @@
+Resolve the verified ownership-boundary defect and all severity-low-or-higher findings from bounded all-reviewer rounds. Preserve epoch fencing, independent lease monitoring, conservative cleanup, exact live inventory, and two-toolchain evidence.

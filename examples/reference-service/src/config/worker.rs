@@ -1,11 +1,6 @@
 use super::MAX_DURATION;
 use batter::settings::{SecretString, SettingsError, SettingsSource, bounded_u64, milliseconds};
-use runledger_runtime::{
-    Supervisor,
-    config::{JOBS_CLAIM_BATCH_SIZE_MAX, JobsConfig},
-    supervisor::SupervisorBuilder,
-};
-use sqlx::PgPool;
+use runledger_runtime::config::{JOBS_CLAIM_BATCH_SIZE_MAX, JobsConfig};
 use std::{fmt, time::Duration};
 
 pub(super) const NAMES: &[&str] = &[
@@ -20,6 +15,7 @@ pub(super) const NAMES: &[&str] = &[
 ];
 
 /// Reference worker settings. Setup can omit identity but cannot construct a worker.
+/// Polling uses native validation and does not participate in an execution witness.
 #[derive(Clone)]
 pub struct WorkerSettings {
     id: Option<SecretString>,
@@ -72,6 +68,8 @@ impl WorkerSettings {
     }
     /// Produce all eight explicit native fields and run native validation.
     /// The returned native type's Debug exposes its worker identity.
+    /// The composition root prepares the native supervisor with this input and
+    /// transfers it to [`batter_runledger::register`] before starting work.
     pub fn jobs_config(&self) -> Result<JobsConfig, SettingsError> {
         let id = self
             .id
@@ -91,12 +89,6 @@ impl WorkerSettings {
             .validate()
             .map_err(|e| SettingsError::new("worker", "native validation failed").with_cause(e))?;
         Ok(config)
-    }
-    /// Build via Runledger's explicit typed entry; requires a live Tokio runtime.
-    /// Caller supplies the catalog and owns running and joining the supervisor.
-    pub fn builder<'a>(&self, pool: &'a PgPool) -> Result<SupervisorBuilder<'a>, SettingsError> {
-        Supervisor::builder(pool, self.jobs_config()?)
-            .map_err(|e| SettingsError::new("worker", "native construction failed").with_cause(e))
     }
 }
 impl fmt::Debug for WorkerSettings {

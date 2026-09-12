@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains four library packages and two SQLx example packages,
+This workspace contains five library packages and two SQLx example packages,
 with failure-contract tests, doctests, and six runnable demonstrations plus a
 read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
@@ -103,6 +103,9 @@ full inner-future destruction, without heap allocation.
 `crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and pool-close registration; server-session termination remains separate.
+`crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
+translates native initialization, stop clocks and complete settlement into managed
+process ownership. Native descendant supervision remains in Runledger.
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
 process machinery included by foundation and Axum integration tests. It is not

@@ -80,7 +80,8 @@ async fn completed_work_is_observed_before_abort_after_coordinator_delay() {
     poll_driver_once(driver.as_mut()).await;
     handle.request();
     poll_driver_once(driver.as_mut()).await;
-    tokio::time::advance(Duration::from_secs(2)).await;
+    // Enter cancellation at its absolute boundary; completion still precedes abort.
+    tokio::time::advance(Duration::from_secs(1)).await;
     poll_driver_once(driver.as_mut()).await;
     finish.send(()).unwrap();
     receipt.wait().await.unwrap();
@@ -122,11 +123,13 @@ async fn only_unfinished_work_is_aborted_and_real_abort_still_skips_cleanup() {
     poll_driver_once(driver.as_mut()).await;
     handle.request();
     poll_driver_once(driver.as_mut()).await;
-    tokio::time::advance(Duration::from_secs(2)).await;
+    // Enter cancellation at its absolute boundary; completion still precedes abort.
+    tokio::time::advance(Duration::from_secs(1)).await;
     poll_driver_once(driver.as_mut()).await;
     finish.send(()).unwrap();
     receipt.wait().await.unwrap();
-    tokio::time::advance(Duration::from_secs(2)).await;
+    // Resume after cancellation expired, with observation time left for actual aborts.
+    tokio::time::advance(Duration::from_millis(1500)).await;
     let report = driver.await;
     assert_eq!(report.completed_process_tasks, 1);
     assert_eq!(report.abort_requested, ["pending"]);
@@ -168,7 +171,7 @@ async fn completed_failures_retain_causes_when_observed_after_deadline() {
         poll_driver_once(driver.as_mut()).await;
         handle.request();
         poll_driver_once(driver.as_mut()).await;
-        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
         poll_driver_once(driver.as_mut()).await;
         finish.send(()).unwrap();
         let failure = receipt.wait().await.unwrap_err();
@@ -242,7 +245,8 @@ async fn completed_critical_stop_is_observed_after_deadline_without_false_abort(
     handle.wait_ready().await.unwrap();
     handle.request();
     poll_driver_once(driver.as_mut()).await;
-    tokio::time::advance(Duration::from_secs(2)).await;
+    // Enter cancellation at its absolute boundary; completion still precedes abort.
+    tokio::time::advance(Duration::from_secs(1)).await;
     poll_driver_once(driver.as_mut()).await;
     finish.send(()).unwrap();
     stopped_rx.await.unwrap();

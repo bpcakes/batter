@@ -8,8 +8,9 @@
 //!
 //! Deadlines drop futures; they do not undo external effects. Cancellation is
 //! cooperative, not preemption. Supervision owns directly registered tasks,
-//! not tasks secretly spawned by a component. Explicit asynchronous cleanup
-//! must be driven to completion by its caller. See `docs/guarantees.md`.
+//! not tasks secretly spawned by a component. Owned startup, command and service
+//! drivers retain registered cleanup independently of borrowed waiters. Direct
+//! `CleanupStack::close` driving remains caller-owned. See `docs/guarantees.md`.
 //!
 //! ```
 //! use batter::operation::OperationContext;
@@ -29,6 +30,7 @@
 
 pub mod admission;
 pub mod cleanup;
+pub mod command;
 pub mod health;
 pub mod lifecycle;
 pub mod operation;

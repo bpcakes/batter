@@ -1,0 +1,23 @@
+[package]
+name = "agent-consumer-exercise"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+batter = { path = "../../../crates/batter" }
+batter-runledger = { path = "../../../crates/batter-runledger" }
+runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
+runledger-core = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
+runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+
+[lib]
+path = "consumer.rs"
+[[test]]
+name = "integration"
+path = "integration.rs"
+[[test]]
+name = "modification"
+path = "modification.rs"

@@ -14,7 +14,6 @@ use std::{
 use tokio::{
     sync::mpsc,
     task::{AbortHandle, Id, JoinError, JoinSet},
-    time::Instant,
 };
 use tracing::Instrument;
 
@@ -164,12 +163,12 @@ impl TaskSet {
         &mut self,
         queued: &mut Option<mpsc::Receiver<process::QueuedProcess>>,
         handle: &ShutdownHandle,
-        deadline: Instant,
+        allowance: std::time::Duration,
     ) {
         while self.pending(handle) {
             tokio::select! {
                 biased;
-                _ = tokio::time::sleep_until(deadline) => break,
+                _ = handle.shared.phase_elapsed(allowance) => break,
                 _ = self.next_exit(handle), if !self.is_empty() => {}
                 Some(task) = receive_process(queued) => self.spawn_process(task),
             }

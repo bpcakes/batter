@@ -1,0 +1,5 @@
+Replace development sibling overrides with the verified pushed native revision in both Cargo workspaces. Preserve existing changes and historical evidence. Validate isolated source resolution, consumer tests, exact two-toolchain verify scripts, HTTP smokes and final Jig gates. No commits or pushes.
+
+Owning Bead: `batter-vly`. Pushed native revision: `d57ec6be61e9f00ccce373b19ca356cafe98f206`.
+
+Completed: exact remote revision verified; root and consumer Cargo lockfiles regenerated without registry updates. Isolated no-sibling resolution passes, with the old override rejected by a negative control. Both exact toolchains pass verify.sh, all five HTTP smokes and all seven unchanged consumer oracles. Jig api:test receipt receipt_01M2AE92EX64Y1WNKVYHQFG99R and all other required targets pass; stable refresh succeeds after initial metadata-during-validation rejection. Current docs and source contracts updated. Live endpoints unset; no new PostgreSQL/macOS/hosted claim. See docs/validation.md and /tmp/batter-vly-results.json. No staging, commits or pushes.

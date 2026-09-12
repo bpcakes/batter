@@ -76,6 +76,10 @@ impl OperationPhases {
 }
 
 impl OperationContext {
+    pub(crate) fn scoped_child(&self) -> Self {
+        Self::under(self.deadline, &self.cancellation)
+    }
+
     /// Create an independent operation with a positive total time budget.
     pub fn new(budget: Duration) -> Result<Self, ConfigurationError> {
         validation::positive(budget, "operation budget")?;
@@ -125,6 +129,8 @@ impl OperationContext {
     /// Explicitly await finalization after observing the work result; using
     /// `?` to return early on a work failure would skip it. Neither this method
     /// nor the returned contexts provide cancellation shielding or async Drop.
+    /// Use [`crate::command::Command::within`] for finite work whose owner must
+    /// retain cleanup independently of work cancellation and borrowed waiters.
     /// When reserving inside a `run` scope, finish both phases before that
     /// enclosing scope returns and cancels its descendants.
     pub fn reserve_finalization(

@@ -17,6 +17,30 @@ fn ready() -> Shared {
     state
 }
 
+#[tokio::test(start_paused = true)]
+async fn earlier_native_stop_wakes_each_active_process_phase() {
+    for seconds in [1, 2, 3] {
+        let state = Arc::new(Shared::new(true));
+        let earlier = Instant::now();
+        tokio::time::advance(std::time::Duration::from_secs(5)).await;
+        state.request();
+        let waiting = state.clone();
+        let (entered, entry) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            entered.send(()).unwrap();
+            waiting
+                .phase_elapsed(std::time::Duration::from_secs(seconds))
+                .await;
+        });
+        entry.await.unwrap();
+        assert!(!task.is_finished());
+        state.request_since(earlier);
+        tokio::task::yield_now().await;
+        assert!(task.is_finished(), "tightened phase did not wake");
+        task.await.unwrap();
+    }
+}
+
 #[test]
 fn all_startup_orders_require_the_driver_approval_and_acknowledgement() {
     for order in [

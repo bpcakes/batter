@@ -28,7 +28,8 @@ it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` foundation,
-`batter-axum` and `batter-sqlx` adapters, and `batter-test-support` utilities are separate libraries;
+`batter-axum`, `batter-sqlx` and `batter-runledger` adapters, and
+`batter-test-support` utilities are separate libraries;
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
@@ -45,7 +46,8 @@ application composition root
   |-- optional batter-axum -> batter + Axum / Tower
   |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
   |     `-- opt-in test-support -> external harness + generic test support
-  |-- Runlimit, Runledger (future thin adapters)
+  |-- optional batter-runledger -> batter + native runtime preparation / settlement
+  |-- native Runlimit (no adapter implemented)
   `-- reference tests -> batter-test-support + external postgres-test-harness
 ```
 

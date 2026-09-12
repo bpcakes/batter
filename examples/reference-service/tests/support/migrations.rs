@@ -7,6 +7,7 @@ pub async fn upgrade_probe(pool: PgPool) -> ProbeResult {
     let mut application = sqlx::migrate!("./migrations");
     application.set_ignore_missing(true);
     application.run(&pool).await?;
+    assert_owner_epoch_sequence(&pool).await?;
     let inserted = sqlx::query("INSERT INTO compatibility_probe (value) VALUES (42)")
         .execute(&pool)
         .await?;
@@ -14,17 +15,7 @@ pub async fn upgrade_probe(pool: PgPool) -> ProbeResult {
     let before: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await?;
-    let missing =
-        runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await;
-    assert!(
-        matches!(
-            missing,
-            Err(runledger_postgres::SchemaCompatibilityError::Incompatible(
-                sqlx::migrate::MigrateError::VersionTooNew(202609050001, _)
-            ))
-        ),
-        "old initialized schema must be rejected by current startup"
-    );
+    assert_upgrade_required(&pool).await?;
     runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
     runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await?;
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
@@ -41,6 +32,32 @@ pub async fn upgrade_probe(pool: PgPool) -> ProbeResult {
         .fetch_one(&pool)
         .await?;
     assert_eq!(after, repeated);
+    Ok(())
+}
+
+async fn assert_owner_epoch_sequence(pool: &PgPool) -> ProbeResult {
+    let first_epoch: i64 = sqlx::query_scalar("SELECT nextval('startup_control_owner_epoch')")
+        .fetch_one(pool)
+        .await?;
+    let second_epoch: i64 = sqlx::query_scalar("SELECT nextval('startup_control_owner_epoch')")
+        .fetch_one(pool)
+        .await?;
+    assert_eq!(second_epoch, first_epoch + 1);
+    Ok(())
+}
+
+async fn assert_upgrade_required(pool: &PgPool) -> ProbeResult {
+    let missing =
+        runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(pool).await;
+    assert!(
+        matches!(
+            missing,
+            Err(runledger_postgres::SchemaCompatibilityError::Incompatible(
+                sqlx::migrate::MigrateError::VersionTooNew(202609050001, _)
+            ))
+        ),
+        "old initialized schema must be rejected by current startup"
+    );
     Ok(())
 }
 

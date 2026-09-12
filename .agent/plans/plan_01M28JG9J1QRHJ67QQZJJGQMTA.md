@@ -1,0 +1,1 @@
+Own batter-8q8.4. Reproduce the post-dispatch commit race with exact backend identities; add owner-safe eventual reconciliation after the current witness succeeds; preserve successor-witness protection; update contracts, status, validation, and tracker evidence; run both Rust toolchains, HTTP smokes, and Jig gates.

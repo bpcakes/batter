@@ -131,6 +131,16 @@ fn numeric_edges_are_rejected_before_native_clamping_or_truncation() {
             .is::<runledger_runtime::config::JobsConfigValidationError>()
     );
     assert!(WorkerSettings::from_source(&SettingsSource::default()).is_err());
+
+    let standalone_worker = WorkerSettings::from_source(&source(&[
+        ("JOBS_WORKER_ID", "standalone-worker"),
+        ("JOBS_POLL_INTERVAL_MS", &year_ms.to_string()),
+    ]))
+    .unwrap();
+    assert_eq!(
+        standalone_worker.jobs_config().unwrap().poll_interval,
+        Duration::from_millis(year_ms)
+    );
 }
 
 #[test]

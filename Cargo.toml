@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
+members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
 default-members = ["crates/batter", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
@@ -14,6 +14,8 @@ too_many_lines = "warn"
 [workspace.dependencies]
 batter = { path = "crates/batter" }
 batter-sqlx = { path = "crates/batter-sqlx" }
+batter-runledger = { path = "crates/batter-runledger" }
+runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
 batter-test-support = { path = "crates/batter-test-support" }
 pin-project-lite = "0.2.17"
 tokio = { version = "1.53.1", default-features = false }

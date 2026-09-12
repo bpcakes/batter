@@ -5,6 +5,7 @@
 //! remain a typed successful task value. No automatic restart is provided.
 
 mod driver;
+mod managed;
 mod process;
 mod report;
 mod state;
@@ -22,6 +23,10 @@ pub use process::{
     ProcessAdmissionError, ProcessHandle, ProcessReceipt, ProcessScope, ProcessTaskError,
 };
 
+pub use managed::{
+    ManagedComponent, ManagedFailure, ManagedInitialization, ManagedObserver, ManagedOutcome,
+    ManagedRecord, ManagedSettlement, ManagedShutdownBudget, SettlementEvidence,
+};
 pub use report::ShutdownReport;
 pub use unix::{InstalledSignals, SignalRegistrationError, install_signals, register_signals};
 
@@ -37,7 +42,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{sync::mpsc, time::Instant};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 /// Process admission state, not an automatic dependency-health assessment.
@@ -178,7 +183,9 @@ impl ShutdownSignal {
     }
 }
 
-/// Phase budgets; these rely on tasks yielding to the runtime.
+/// Phase budgets, measured from one recorded stop time. Scheduling delays consume
+/// that allowance; entering a later phase cannot restart its clock. These rely on
+/// tasks yielding to the runtime. Cleanup has its own independent budget.
 #[derive(Clone, Copy, Debug)]
 pub struct ShutdownBudget {
     drain: Duration,
@@ -294,6 +301,7 @@ pub struct Supervisor {
     // run_until transfers this guard into the outer driver future.
     ownership: Option<EmergencyShutdown>,
     components: Vec<Component>,
+    managed: Vec<managed::Registration>,
     cleanup: CleanupStack,
     handle: ShutdownHandle,
     budget: ShutdownBudget,
@@ -310,6 +318,7 @@ impl Supervisor {
         Self {
             ownership: Some(EmergencyShutdown(handle.clone())),
             components: Vec::new(),
+            managed: Vec::new(),
             cleanup: CleanupStack::new(),
             handle,
             budget,
@@ -364,13 +373,44 @@ impl Supervisor {
 
     fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
         validation::name(name)?;
-        if self
-            .components
-            .iter()
-            .any(|component| component.name == name)
+        if self.managed.iter().any(|component| component.name == name)
+            || self
+                .components
+                .iter()
+                .any(|component| component.name == name)
         {
             return Err(RegistrationError::Duplicate(name));
         }
+        Ok(())
+    }
+
+    /// Register a native runtime through its adapter, retaining settlement even
+    /// after its direct waiter is aborted. Name validation precedes any factory
+    /// invocation; only the started driver invokes this synchronous factory.
+    /// The absolute context bounds initialization, not native shutdown or cleanup.
+    /// Application approval remains separate from the library-owned native ack.
+    ///
+    /// The factory must transfer all newly started native work in one
+    /// [`ManagedComponent`]. Returning Err asserts that no native work was
+    /// started; perform fallible validation before spawning. A factory panic
+    /// makes termination uncertain and prevents dependency cleanup.
+    /// Acquire asynchronous resources with
+    /// [`crate::startup::Startup`] before registration. Prefer an adapter's
+    /// registration function in application composition.
+    pub fn register_managed<F, R>(
+        &mut self,
+        name: &'static str,
+        context: crate::operation::OperationContext,
+        factory: F,
+    ) -> Result<(), RegistrationError>
+    where
+        F: FnOnce(ManagedShutdownBudget) -> Result<ManagedComponent<R>, BoxError> + Send + 'static,
+        R: ManagedSettlement,
+    {
+        self.check_component_name(name)?;
+        self.managed
+            .push(managed::Registration::new(name, context, factory));
+        self.handle.shared.register_component();
         Ok(())
     }
 
@@ -438,28 +478,30 @@ impl Supervisor {
     {
         self.handle.shared.start_driver();
         let mut tasks = TaskSet::default();
+        let mut managed = Vec::new();
+        for registration in self.managed.drain(..) {
+            let name = registration.name;
+            let (component, observer) = registration.prepare(self.budget);
+            managed.push((name, observer));
+            tasks.spawn_component(component, &self.handle);
+        }
         for component in self.components.drain(..) {
             tasks.spawn_component(component, &self.handle);
         }
         tokio::pin!(shutdown);
         let cause = self.wait_for_shutdown(shutdown.as_mut(), &mut tasks).await;
         self.handle.request();
+        let drain = self.budget.drain;
+        let cancel = drain + self.budget.cancel;
+        let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
         tasks
-            .collect_until(
-                &mut self.queued,
-                &self.handle,
-                Instant::now() + self.budget.drain,
-            )
+            .collect_until(&mut self.queued, &self.handle, drain)
             .await;
         let forced_cancellation = tasks.unfinished(&self.handle);
         self.handle.force_cancel();
         tasks
-            .collect_until(
-                &mut self.queued,
-                &self.handle,
-                Instant::now() + self.budget.cancel,
-            )
+            .collect_until(&mut self.queued, &self.handle, cancel)
             .await;
         // No new descendants can arrive after forced cancellation. Transfer all
         // already admitted queue entries into the owned JoinSet before abort.
@@ -472,17 +514,18 @@ impl Supervisor {
         let abort_requested = tasks.abort_unfinished();
         if !tasks.is_empty() {
             tasks
-                .collect_until(
-                    &mut self.queued,
-                    &self.handle,
-                    Instant::now() + self.budget.abort_reap,
-                )
+                .collect_until(&mut self.queued, &self.handle, reap)
                 .await;
         }
         let summary = tasks.finish();
+        let managed_records = managed::freeze(managed, &self.handle, reap).await;
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.
-        let unsafe_exit = !abort_requested.is_empty() || summary.unsafe_exit;
+        let unsafe_exit = !abort_requested.is_empty()
+            || summary.unsafe_exit
+            || managed_records
+                .iter()
+                .any(|record| !record.outcome.allows_dependency_cleanup());
         let cleanup = if unsafe_exit {
             self.cleanup.skip(SkipReason::UnsafeTaskExit)
         } else {
@@ -492,6 +535,7 @@ impl Supervisor {
         ShutdownReport {
             cause,
             tasks: summary.records,
+            managed: managed_records,
             completed_process_tasks: summary.completed,
             forced_cancellation,
             abort_requested,

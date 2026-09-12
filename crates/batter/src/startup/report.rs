@@ -11,7 +11,7 @@ use tokio::task::JoinError;
 pub struct PanicPayload(Mutex<Box<dyn Any + Send>>);
 
 impl PanicPayload {
-    pub(super) fn new(payload: Box<dyn Any + Send>) -> Self {
+    pub(crate) fn new(payload: Box<dyn Any + Send>) -> Self {
         Self(Mutex::new(payload))
     }
 

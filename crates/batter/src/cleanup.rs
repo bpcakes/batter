@@ -270,13 +270,27 @@ impl CleanupStack {
     /// Every skipped hook is reported and logged once, in LIFO order. Polling
     /// and destruction retain the tracing subscriber captured on first poll.
     pub async fn close(self, budget: CleanupBudget) -> CleanupReport {
-        scoped_dispatch::scope(self.close_inner(budget)).await
+        self.close_before(budget, None).await
     }
 
-    async fn close_inner(mut self, budget: CleanupBudget) -> CleanupReport {
+    pub(crate) async fn close_before(
+        self,
+        budget: CleanupBudget,
+        end: Option<Instant>,
+    ) -> CleanupReport {
+        scoped_dispatch::scope(self.close_inner(budget, end)).await
+    }
+
+    async fn close_inner(mut self, budget: CleanupBudget, end: Option<Instant>) -> CleanupReport {
         let started = Instant::now();
-        let work_deadline = started + budget.total;
-        let final_deadline = started + budget.total_allowance();
+        let final_deadline = end.map_or(started + budget.total_allowance(), |end| {
+            end.min(started + budget.total_allowance())
+        });
+        let work_deadline = (started + budget.total).min(
+            final_deadline
+                .checked_sub(budget.abort_reap)
+                .unwrap_or(started),
+        );
         let mut report = CleanupReport::default();
         loop {
             // Keep skipped hooks on the stack so reporting and capture drops

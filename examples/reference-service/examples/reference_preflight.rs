@@ -27,6 +27,7 @@ async fn main() -> ExitCode {
 const PRIMARY_QUERY: &str = "SELECT current_setting('server_version_num')::int / 10000 = 18 \
     AND rolsuper AND current_setting('autovacuum')::boolean \
     AND current_setting('track_counts')::boolean \
+    AND current_setting('max_prepared_transactions')::int > 0 \
     AND current_setting('autovacuum_naptime')::interval <= interval '5 seconds' \
     AND has_table_privilege(current_user, \
     'pg_catalog.pg_shdescription', 'MAINTAIN,UPDATE,DELETE,TRUNCATE'), \
@@ -73,7 +74,7 @@ fn accept_primary((accepted, identity): (bool, i64)) -> Result<i64, SettingsErro
     if !accepted {
         return Err(SettingsError::new(
             "primary preflight",
-            "requires PostgreSQL 18, superuser and catalog-lock privileges, autovacuum and track_counts enabled with naptime <= 5s",
+            "requires PostgreSQL 18, superuser and catalog-lock privileges, prepared transactions, autovacuum and track_counts enabled with naptime <= 5s",
         ));
     }
     Ok(identity)

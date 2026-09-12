@@ -7,6 +7,48 @@ use support::{ProbeResult, fixture_diagnostics::assert_probe, with_database};
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_preserves_history_and_disables_old_catalog() {
+    with_database(support::retirement::history_and_disable).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_rejects_wrong_identity() {
+    with_database(support::retirement::wrong_identity).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_rejects_hidden_sessions() {
+    with_database(support::retirement::restricted_visibility).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_observes_late_enqueue() {
+    with_database(support::retirement::pending_transaction).await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL 18 with max_prepared_transactions greater than zero"]
+async fn retirement_rejects_prepared_enqueue() {
+    with_database(support::retirement::prepared_transaction).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_retains_commit_error_through_readback_cancellation() {
+    with_database(support::retirement::commit_error_and_readback).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn retirement_retains_lost_commit_acknowledgement() {
+    with_database(support::retirement::lost_commit_acknowledgement).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn migrations_and_transactional_enqueue() {
     with_database(support::transactions::probe).await;
 }
@@ -19,50 +61,38 @@ async fn initialized_schema_upgrade() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn worker_startup_witness_and_shutdown() {
+async fn isolated_durable_execution_and_shutdown() {
     with_database(support::worker::probe).await;
 }
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_probe_registry_and_normal_drain() {
-    with_database(support::hosted_worker::probe_registry_and_normal_drain).await;
+async fn native_initialization_without_queue_writes() {
+    with_database(support::native_hosted::queue_independent_initialization).await;
 }
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_witness_failure_prevents_readiness() {
-    with_database(support::hosted_worker::witness_failure_prevents_readiness).await;
+async fn native_in_flight_finishes_after_drain() {
+    with_database(support::native_hosted::in_flight_drain).await;
 }
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_in_flight_finishes_after_drain() {
-    with_database(support::hosted_worker::in_flight_finishes_after_drain).await;
+async fn native_owner_drop_retains_settlement() {
+    with_database(support::native_hosted::owner_drop).await;
 }
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_dropped_owner_is_observed_before_cleanup() {
-    with_database(support::hosted_worker::dropped_owner_is_observed_before_cleanup).await;
+async fn native_business_failure_preserves_process() {
+    with_database(support::native_hosted::business_failure).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_lease_loss_stops_host() {
-    with_database(support::hosted_worker_ownership::lease_loss_stops_host).await;
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_timeout_skips_dependencies() {
-    with_database(support::hosted_worker::timeout_skips_dependencies).await;
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_worker_retry_attempt_accounting() {
-    with_database(support::hosted_worker::retry_attempt_accounting).await;
+async fn native_unjoined_callback_blocks_dependency_cleanup() {
+    with_database(support::native_descendants::callback_outlives_wrapper).await;
 }
 
 #[tokio::test]
@@ -326,18 +356,12 @@ async fn startup_signal_during_pool_acquisition() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_preparation_cancellation_releases_lease() {
-    with_database(support::hosted_preparation::cancellation_releases_preparation).await;
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn hosted_preparation_leased_and_terminal_reconciliation() {
-    with_database(support::hosted_preparation::leased_and_terminal_reconciliation).await;
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn startup_signals_during_schema_and_control_preparation() {
+async fn startup_signal_during_schema_initialization() {
     with_database(support::startup_signals::during_database_initialization).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn production_root_withholds_readiness_without_control_jobs() {
+    with_database(support::production_readiness).await;
 }

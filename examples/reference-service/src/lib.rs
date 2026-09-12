@@ -17,6 +17,9 @@
 /// Application-owned bearer authentication producing trusted owner identity.
 pub mod auth;
 
+/// Owned offline retirement of legacy startup controls; never invoked by service startup.
+pub mod retirement;
+
 /// Proves the application pool and upstream pool are the same native type.
 pub fn native_pool(pool: &sqlx::PgPool) -> &runledger_postgres::DbPool {
     pool
@@ -50,6 +53,3 @@ pub mod runtime;
 
 /// Forward-only application/Runledger startup migration and definition sync.
 pub mod schema;
-
-/// Probe-only Runledger worker hosting and termination certainty.
-pub mod worker;

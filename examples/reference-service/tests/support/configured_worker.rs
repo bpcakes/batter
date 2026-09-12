@@ -6,13 +6,11 @@ use super::{
 use batter::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{ShutdownBudget, Supervisor},
+    lifecycle::{ShutdownBudget, Supervisor, check_shutdown},
+    operation::OperationContext,
     settings::SettingsSource,
 };
-use batter_example_reference_service::{
-    config::WorkerSettings,
-    worker::{TerminationGate, TerminationState, WorkerHost},
-};
+use batter_example_reference_service::config::WorkerSettings;
 use runledger_core::{
     jobs::{JobCompletion, JobContext, JobFailure, JobType},
     prelude::async_trait,
@@ -70,9 +68,29 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
     let ids = enqueue_jobs(pool, limit, total).await?;
 
     let settings = configured_settings(limit)?;
-    let gate = TerminationGate::new();
-    let host = WorkerHost::start(&settings, pool, &catalog, gate.clone())?;
-    let before_registration: Result<HashSet<Uuid>, BoxError> = async {
+    let config = settings.jobs_config()?;
+    let second = Duration::from_secs(1);
+    let cleanup = CleanupBudget::new(second, second, second)?;
+    let mut supervisor = Supervisor::new(ShutdownBudget::new(
+        Duration::from_secs(10),
+        second,
+        second,
+        cleanup,
+    )?);
+    let native_pool = pool.clone();
+    batter_runledger::register(&mut supervisor, "worker", OperationContext::new(second)?, {
+        runledger_runtime::Supervisor::builder(&native_pool, config)?
+            .with_catalog(catalog)
+            .prepare()?
+    })?;
+    let running = supervisor.start();
+    running.handle().mark_ready();
+    let observed: Result<HashSet<Uuid>, BoxError> = async {
+        running
+            .handle()
+            .wait_ready()
+            .await
+            .map_err(|_| "native initialization did not complete")?;
         let mut witnessed = HashSet::new();
         for _ in 0..limit {
             let id = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
@@ -82,47 +100,14 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
                 return Err("unexpected or repeated worker witness".into());
             }
         }
-        // Pinned native claim commits the whole batch before spawning handlers;
-        // excess capacity leases the extra row before its handler is scheduled.
         held_leases(pool, &ids, limit).await?;
         Ok(witnessed)
     }
     .await;
-    let mut witnessed = match before_registration {
-        Ok(witnessed) => witnessed,
-        Err(error) => {
-            release.add_permits(total);
-            return finish_unregistered(host, Err(error)).await;
-        }
-    };
-
-    // The actual held-handler evidence authorizes component acknowledgement.
-    let second = Duration::from_secs(1);
-    let cleanup = CleanupBudget::new(second, second, second)?;
-    let mut supervisor = Supervisor::new(ShutdownBudget::new(
-        batter_example_reference_service::worker::WORKER_SHUTDOWN_ALLOWANCE,
-        Duration::from_secs(2),
-        second,
-        cleanup,
-    )?);
-    if let Err(error) = host.register(&mut supervisor) {
-        let (registration, host) = error.into_parts();
-        release.add_permits(total);
-        return finish_unregistered(host, Err(Box::new(registration))).await;
-    }
-    let handle = supervisor.handle();
-    let running = supervisor.start();
-    let ready: ProbeResult = if !handle.mark_ready() {
-        Err("configured host rejected readiness".into())
-    } else {
-        handle
-            .wait_ready()
-            .await
-            .map_err(|_| "configured host did not acknowledge startup".into())
-    };
+    // Release every actual handler even when an assertion prerequisite failed.
     release.add_permits(total);
     let body: ProbeResult = async {
-        ready?;
+        let mut witnessed = observed?;
         let id = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
             .await?
             .ok_or("worker witness closed")?;
@@ -132,18 +117,9 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
         Ok(())
     }
     .await;
-    let shutdown = running
-        .shutdown()
-        .await
-        .map_err(|error| Box::new(error) as BoxError)
-        .and_then(|report| {
-            report
-                .is_success()
-                .then_some(())
-                .ok_or_else(|| "configured host shutdown failed".into())
-        });
+    let shutdown =
+        check_shutdown(running.shutdown().await).map_err(|error| Box::new(error) as BoxError);
     finish_results(body, shutdown)?;
-    assert_eq!(gate.state(), TerminationState::CooperativelyStopped);
     let statuses: Vec<(Uuid, String)> =
         sqlx::query_as("SELECT id, status::text FROM job_queue WHERE id = ANY($1)")
             .bind(ids.iter().copied().collect::<Vec<_>>())
@@ -190,14 +166,6 @@ async fn enqueue_jobs(
         ids.insert(job.job_id);
     }
     Ok(ids)
-}
-
-async fn finish_unregistered(host: WorkerHost, body: ProbeResult) -> ProbeResult {
-    let shutdown = host
-        .shutdown()
-        .await
-        .map_err(|error| Box::new(error) as BoxError);
-    finish_results(body, shutdown)
 }
 
 fn finish_results(body: ProbeResult, cleanup: Result<(), BoxError>) -> ProbeResult {

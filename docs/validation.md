@@ -1,6 +1,822 @@
 # Validation evidence
 
-Latest evidence: 2026-09-11. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-12. Earlier sections retain their historical scope.
+
+## Pushed native source pin (batter-vly), 2026-09-12
+
+The user reported that the native changes were committed and pushed. The clean
+local Runledger checkout and `git ls-remote origin HEAD` both identified
+`d57ec6be61e9f00ccce373b19ca356cafe98f206`. Root and archived-consumer manifests
+now select that revision for core/postgres/runtime 0.12.0 without path overrides.
+Cargo regenerated both lockfiles; only the three native `source` entries changed,
+with no registry version or dependency-edge changes. Initial targeted
+`cargo update -p runledger-runtime` could not identify the removed path package;
+ordinary Cargo metadata resolution then generated the new Git entries successfully.
+
+A temporary copy of the current files had no sibling native checkout. A negative
+control restoring a sibling override failed with the expected missing manifest;
+`cargo metadata --offline --locked --format-version 1` then passed for both final
+workspaces, and all six native entries identified the exact Git revision. Offline
+resolution used the Git source already fetched from the remote, not an empty Cargo
+cache. Logs: `/tmp/batter-vly-isolated-negative.log`,
+`/tmp/batter-vly-isolated-root.log`, `/tmp/batter-vly-isolated-consumer.log`.
+
+Linux x86_64 acceptance passed on exact Rust 1.98.1 and 1.94.0:
+
+| Check | Executed result |
+| --- | --- |
+| `bash scripts/verify.sh` with each `RUSTUP_TOOLCHAIN` | PASS: formatting, complete offline matrix including failure contracts and doctests, workspace strict Clippy and warning-denied rustdoc. |
+| HTTP example build and all five `scripts/smoke_http.py` profiles | PASS on both: SIGTERM, SIGINT, deadline, WARN-filtered and WARN-filtered deadline. |
+| `CARGO_TARGET_DIR=target cargo test --locked --manifest-path docs/evidence/batter-gi4/Cargo.toml` | PASS on both: all five original and two modification oracles unchanged. |
+
+Final `scripts/jig work check --plan-id plan_01M2ADTDEGCN0TP433NWHXFZEQ`
+passed all five targets on Rust 1.98.1. The first invocation returned nonzero
+because this evidence document changed during validation, although every target
+passed; a stable refresh reused the passing receipts and succeeded. Evidence and
+gates report fresh passes, including `api:test` receipt
+`receipt_01M2AE92EX64Y1WNKVYHQFG99R`. Commands and outcomes are retained in
+`/tmp/batter-vly-acceptance.py`, `/tmp/batter-vly-acceptance.log` and
+`/tmp/batter-vly-results.json`; Jig outputs are `/tmp/batter-vly-jig-check.log`
+and `/tmp/batter-vly-jig-refresh.log`.
+Live PostgreSQL endpoints are unset, so no new live, macOS or hosted execution is
+claimed. Earlier paired-source evidence remains historical; the current pin does
+not retroactively change those records. No application source/tests or migrations
+were changed, and no staging, commit or push was performed.
+
+## Completion classification follow-up (batter-vef), 2026-09-12
+
+The user authorized three localized review repairs after the earlier review
+closure: snapshot command interruption at the final poll before destruction,
+distinguish native stop/settlement before initialization from process drain, and
+replace the stale reference README worker description. Managed readiness still
+requires a live context after initializer destruction; that separate contract
+has not changed. The added `ManagedInitialization::Stopped` variant requires an
+additional arm in exhaustive consumer matches.
+
+Before the behavior fixes, two command destruction controls failed (unexpected
+Cancelled/DeadlineExceeded instead of no late interruption), and two managed
+native-exit controls failed (Draining instead of Stopped). Final-poll interruption
+and process-drain controls passed. After repair, all 20 command and 22 managed
+tests pass on Linux x86_64 with Rust 1.98.1. Each command scenario covers both
+a success value and an original application error, plus completed cleanup.
+Logs: `/tmp/batter-vef-red.log`, `/tmp/batter-vef-managed-red.log`, and
+`/tmp/batter-vef-focused.log`.
+
+The first focused strict Clippy check rejected added complexity in the managed
+driver. Extracting the pending-initialization classification into a private
+helper restored the configured limit; no lint or semantic test was relaxed.
+
+Final Linux x86_64 verification passed:
+
+| Check | Executed result |
+| --- | --- |
+| `bash scripts/verify.sh` on pinned Rust 1.98.1 | PASS: formatting, complete offline matrix including doctests, workspace Clippy, warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete verification on the exact minimum toolchain. |
+| HTTP example build and all five `scripts/smoke_http.py` profiles | PASS on both toolchains: SIGTERM, SIGINT, deadline, WARN-filtered, WARN-filtered deadline. |
+| `scripts/jig work check --plan-id plan_01M2A27S15RXHQDATXZ3B5QGWR` | PASS on pinned 1.98.1: all five required targets. Evidence and gates report fresh passes, including `api:test` receipt `receipt_01M2A2QYY9F7CTHW7A3F31V0JP`. |
+
+Acceptance commands/logs: `/tmp/batter-vef-acceptance.py`,
+`/tmp/batter-vef-acceptance.log`, and the fourteen per-command logs named there.
+Jig output is `/tmp/batter-vef-jig-check.log`. Before/after source guards for both
+runs are `/tmp/batter-vef-acceptance-guard.json` and
+`/tmp/batter-vef-jig-guard.json`; both report unchanged executable inputs:
+Batter `273cd639177a066c85887285914cdefb68c0aa61b6884ee24d214f018257121d`,
+native `e5ed58464d235f4c436caabfe5706f2dce8f7fce8e1e96d746ec35d59ca48d3c`.
+The guard includes native source independently of root-only Jig receipts and
+excludes documentation/tracker metadata; its implementation remains
+`/tmp/batter-gi4-source-guard.py`. The sibling Runledger development dependency
+remains unchanged and outside this fix scope. No new macOS, live PostgreSQL,
+hosted execution or independent reviewer pass is claimed. No staging or commits.
+
+## Final review and Jig closure (batter-gi4), 2026-09-12
+
+The complete working-tree review/fix loop converged at its configured medium
+severity threshold: Batter used three repair rounds and four full review passes;
+the native sibling used five repair rounds and six full passes. Claude, Codex and
+Cursor completed both final scopes, with Cursor at xhigh effort. Parent captures
+were complete and matched: Batter
+`44cbd1eaf8173dc497a6b7a73ea4a93061e9d4a6d125a9d7490c2a58a808faa5`,
+native `696e4278939fa626943809e3433afa07ad446328fb804a3fa70293e65d075559`.
+Batter's trusted HEAD excludes `.agent`; native has no exclusions. A temporary
+review index exposed new files without modifying the original real index.
+
+After review, `scripts/jig check --profile verify --plan-id
+plan_01M294ERDA6M993R8MK890RQQ4` passed all five targets on pinned Rust 1.98.1,
+including the required `api:test` receipt. Both executable-input identities stayed
+unchanged at the values in the following section. Logs:
+`/tmp/batter-gi4-final-jig-verify.log` and
+`/tmp/batter-gi4-final-jig-verify-guard.json`. This supplements the already executed
+exact two-toolchain, rustdoc, HTTP and live acceptance; it does not replace it.
+
+All verified medium-or-higher findings are repaired. Low findings remain explicit:
+conservative cleanup refusal for aborted never-polled wrappers, top-level Requested
+labeling for managed failures, one stale reference README sentence, native report
+extensibility and planned-abort diagnostics. The full finding dispositions and
+coverage qualifications are in `/tmp/batter-gi4-review-ledger.json` and
+`/tmp/batter-gi4-review-handoff.md`. No claim of zero findings or population-wide
+agent convergence is made. Native 1.98.1 baseline Clippy diagnostics and the
+unpublished sibling dependency remain the documented acceptance boundaries.
+
+Final ExecPlan, validation and tracker closeout follows the frozen review and
+changes metadata only. The superseded witness repair tasks do not claim their
+original implementation was delivered. Provider task `batter-8q8.2` remains open;
+application readiness remains unapproved. No staging, commits or publication.
+
+## Reference settings construction (batter-gi4), 2026-09-12
+
+Static review found that `WorkerSettings::builder()` and its documented consumer
+still started a native supervisor directly and dropped it without observing
+settlement. The obsolete convenience API is removed. The existing configuration
+consumer now checks its native settings, transfers prepared work to the adapter,
+observes initialization and awaits successful managed shutdown. Its focused
+cleared-environment execution passes on Rust 1.98.1. The original independent
+`InitializationFailure` redaction/source assertions were restored verbatim from
+the preserved index and pass. Focused logs:
+`/tmp/batter-gi4-root-round3-worker.log` and
+`/tmp/batter-gi4-root-round3-redaction.log`.
+
+The refreshed paired matrix passes all sixteen commands on exact Rust 1.98.1
+and 1.94.0: full `verify.sh`, HTTP build and five smokes, all 58 live-runner entries
+and the separate maintenance-session probe. This matrix has no failed command;
+the earlier runtime-loss fixture incident remains recorded below. The restored
+redaction regression runs on both toolchains. The seven unchanged archived
+consumer oracles also pass on 1.98.1.
+
+All source guards are unchanged. Batter input identity:
+`831e334ba7791fe6dcb1070099d18d19494f35b180406b9e6b6798539e282b6e`;
+unchanged native identity:
+`e5ed58464d235f4c436caabfe5706f2dce8f7fce8e1e96d746ec35d59ca48d3c`.
+Logs/manifests: `/tmp/batter-gi4-round6-root-acceptance-{toolchain}-{0..7}.{log,json}`
+and `/tmp/batter-gi4-round6-consumer-archive.{log,json}`. Native acceptance remains
+481 library tests, 22 doctests, five PostgreSQL and ten supervisor integrations on
+both toolchains, with strict Clippy on 1.94.0; native source has not changed since
+that matrix. Final review and Jig closure are separate from these executions.
+
+## Final descendant harvest (batter-gi4), 2026-09-12
+
+An external scheduling probe reproduced a finished join reported as unjoined when
+another collector held its ready notification. The same probe passes after the
+bounded shutdown-boundary harvest; both logs are
+`/tmp/batter-gi4-harvest-probe-{red,green}.log`. Two repository regressions cover
+all boundary consumers, delayed notification delivery, record uniqueness and
+retention of the original shared panic. All eight registry controls pass.
+
+Exact Rust 1.94.0 and 1.98.1 pass 481 native library tests, 22 doctests, five
+PostgreSQL integration cases and ten supervisor integration cases. Strict native
+all-target Clippy passes on 1.94.0. The documented 1.98.1 baseline Clippy limitation
+remains. No semantic assertion or lint was relaxed; the first Clippy run required
+idiomatic iterator filtering and explicit test failure messages.
+
+All nine paired source guards are unchanged. Native identity:
+`e5ed58464d235f4c436caabfe5706f2dce8f7fce8e1e96d746ec35d59ca48d3c`;
+Batter identity: `148e5dbf90a05e72ce6eb735cd380870c0d013d7b59b61600bbb551aed1fa217`.
+Logs/manifests: `/tmp/batter-gi4-native-round5-acceptance-{toolchain}-{index}.{log,json}`.
+
+The paired Batter matrix passes on both exact toolchains: full `verify.sh`, HTTP
+build and all five smokes, all 58 reference entries plus the separate session
+replacement probe. All seven archived consumer oracles pass again on 1.98.1.
+Logs: `/tmp/batter-gi4-round5-root-acceptance-{toolchain}-{0..7}.{log,json}` and
+`/tmp/batter-gi4-round5-consumer-archive.{log,json}`.
+
+The first 1.94.0 live sweep passed 57/58: the unchanged
+`fixture_runtime_loss_exposes_native_drop` failed. PostgreSQL's server log showed
+its `DROP DATABASE ... WITH (FORCE)` cancelled by a statement timeout. The same
+fixture has an earlier intermittent failure recorded below. It passed alone in
+0.44 seconds, then the complete 58-case suite and separate session probe passed on
+unchanged inputs. No assertion or timeout was altered. The successful full rerun
+is `/tmp/batter-gi4-round5-root-live-msrv-recheck.{log,json}`; the isolated result is
+`/tmp/batter-gi4-round5-runtime-loss-recheck.{log,json}`. The initial failed attempt
+remains in the matrix log. These passes do not establish that the existing fixture
+is free from intermittent environmental failures. Final review and delivery
+closure remain tracked separately.
+
+## Failure publication and transaction classification (batter-gi4), 2026-09-12
+
+A repeated managed stop callback panic was caught but absent from the frozen
+process report while native settlement remained pending. The new regression first
+failed with zero retained failures; it passes after publication moved into the
+shared catch boundary. Sixteen foundation library tests, nineteen managed contracts
+and twenty-nine process ownership cases pass in the focused Rust 1.98.1 run.
+The late native result is released and joined before asserting the frozen report.
+
+The refreshed paired matrix passes on exact Rust 1.98.1 and 1.94.0: full
+`bash scripts/verify.sh`, HTTP build plus all five smokes, all 58 reference entries
+and the separate maintenance-session replacement probe. All sixteen guards retain
+the identities below. The example target executes all four CLI diagnostic tests
+on both versions, including an actual native closed-pool BEGIN failure and combined
+work/cleanup failures. Logs/manifests:
+`/tmp/batter-gi4-round4-root-acceptance-{toolchain}-{0..7}.{log,json}`.
+
+Two native regressions also failed before repair: BEGIN/COMMIT exposed ordinary
+query/business codes. Both now require fixed internal transaction-control code,
+kind, category and client message while preserving SQLx source and durable readback.
+Exact Rust 1.94.0 and 1.98.1 pass 479 native library tests, 22 doctests, five PostgreSQL
+integration cases and ten supervisor cases. Strict all-target Clippy passes on
+1.94.0; the separately reproduced 1.98.1 baseline limitation still applies.
+All nine command source guards are unchanged. Native input identity:
+`efcc361a8607d6497c659c3b846cf5051132517c09a6681ec3e1e4e705822108`.
+Logs/manifests: `/tmp/batter-gi4-native-round4-acceptance-{toolchain}-{index}.{log,json}`.
+RED/GREEN: `/tmp/batter-gi4-native-round4-classification-{red,green}.log`.
+
+The strengthened live owner-drop and production-root cases pass on Rust 1.98.1:
+drop alone initiates stop, and a pending delivery job retains its full row and zero
+attempts across production initialization, health sampling and shutdown. The actual
+CLI emits structured wrong-target facts, repeated absent-definition success and
+three usage refusals on both exact toolchains. The archived consumer again passes all seven unchanged
+oracles. Their paired source guards retain the native identity above and Batter
+`148e5dbf90a05e72ce6eb735cd380870c0d013d7b59b61600bbb551aed1fa217`.
+Logs/manifests: `/tmp/batter-gi4-root-round2-live-targeted.{log,json}`,
+`/tmp/batter-gi4-cli-smoke-round2.{log,json}`,
+`/tmp/batter-gi4-cli-smoke-round2-msrv.{log,json}` (after its guarded 1.94.0 build),
+and `/tmp/batter-gi4-round4-consumer-archive.{log,json}`. Review and delivery closure
+remain recorded by the owning Beads; these checks alone do not establish convergence.
+
+## Shared callback-owner repair (batter-gi4), 2026-09-12
+
+Four native worker-observer regressions first reproduced fatal destructor panics
+on timeout/abort, before/during shutdown. Observers and dead-letter hooks now share
+a private polling/destruction owner. Eight running/terminal cases pass, together
+with dual-panic and timeout-plus-destruction hook controls. The existing reaped
+case now requires both interruption facts. Existing public supervised-worker tests
+continue to require fatal main job-task destruction failures.
+
+Exact Rust 1.94.0 and 1.98.1 pass 116 core, 111 PostgreSQL and 252 runtime library
+tests, 21 doctests, five PostgreSQL integration cases and ten supervisor cases.
+Strict native all-target Clippy passes on 1.94.0. No semantic test or lint was
+relaxed: one setup helper was extracted after Clippy rejected complexity 21/20.
+The native 1.98.1 baseline lint limitation documented below remains separate.
+
+All nine paired source guards are unchanged, with native input identity
+`a40eabb8aea6d203724b2561a84a34a10dc2f4bfdefa5b3cae9cf00cbaa27046`.
+Logs/manifests: `/tmp/batter-gi4-native-round3-acceptance-{toolchain}-{index}.{log,json}`.
+The failure reproduction is `/tmp/batter-gi4-native-round3-observer-red.log`.
+
+Paired Batter acceptance also passes again on both exact toolchains: full
+`bash scripts/verify.sh`, HTTP build and all five process smokes, all 58 reference
+runner entries, and the separate maintenance-session replacement probe against
+PostgreSQL 18.6. All sixteen command guards retain the native identity above and
+Batter identity `2cba17441121afb34c122f871ecbcc67606b3a8fbc633f55f20cec19518448f5`.
+Logs/manifests: `/tmp/batter-gi4-round3-root-acceptance-{toolchain}-{0..7}.{log,json}`.
+The archived consumer passes all seven unchanged checks on Rust 1.98.1 against
+these same inputs (`/tmp/batter-gi4-round3-consumer-archive.{log,json}`). This is
+revalidation of the earlier exercise, not another independent agent evaluation.
+
+Full independent review and delivery closure are tracked by the owning Beads;
+these tests alone do not establish convergence. The registry microbenchmark and
+its limitations are recorded in [references](references.md#native-registry-overhead-probe-2026-09-12).
+
+## Refreshed paired acceptance (batter-gi4), 2026-09-12
+
+After both native repair rounds, `bash scripts/verify.sh` passes again on exact
+Rust 1.98.1 and 1.94.0, including workspace/core tests, hostile-environment checks,
+doctests, strict Clippy, formatting and warning-denied rustdoc. Both toolchains
+pass the HTTP build plus all five process smokes, all 58 reference runner entries
+and the separate library maintenance-session replacement probe. PostgreSQL is
+18.6. All sixteen paired command guards report unchanged inputs.
+
+Code-input identities for these executed commands:
+
+- Batter: `2cba17441121afb34c122f871ecbcc67606b3a8fbc633f55f20cec19518448f5`.
+- Native sibling: `c4a027e01515a495ff1c9b6bd954299f7f947ae2c148189252325ddad98b6a58`.
+
+Logs/manifests: `/tmp/batter-gi4-round2-root-acceptance-{toolchain}-{0..7}.{log,json}`.
+The archived fresh-agent consumer also passes all seven unchanged oracles again
+on Rust 1.98.1 against these inputs (`/tmp/batter-gi4-round2-consumer-archive.log`
+and its paired `.json` source guard). This is revalidation of the original bounded
+exercise, not a new independent agent evaluation.
+
+These direct checks refresh the earlier acceptance evidence; final Jig receipts
+and review closure belong to the owning Bead and plan. They do not imply a hosted
+CI/macOS execution or a standalone published native dependency graph.
+
+## Native observation follow-up (batter-gi4), 2026-09-12
+
+The second native review identified gaps in active descendant observation and in
+caught observer-destruction failures. Targeted regressions failed before repair:
+a driver needed an external descendant waiter to notice a panic; caught reaped-
+observer destruction approved cleanup; one completion repolled 128 unrelated joins
+256 times; and an exhausted cooperative budget hid 256 already-finished tasks.
+All four now pass. A first fixture attempt did not compile because it constructed
+an upstream non-exhaustive record; it was corrected to exercise the native observer
+task directly before collecting the reported failing assertions.
+
+Both real supervised-worker destructor-panic cases pass through the public legacy
+entrypoints. Additional controls establish bounded handle-requested shutdown and
+that a joined configuration failure permits cleanup while failing overall success.
+The Shared-notifier lifetime/deadlock regression continues to pass with the per-
+entry ready queue. The [research decisions](references.md#remaining-native-design-questions-2026-09-12)
+record why historical interruption still prevents cleanup and why no extra
+transaction/pooler abstraction was introduced.
+
+Exact Rust 1.94.0 and 1.98.1 pass 116 core, 111 PostgreSQL and 242 runtime library
+tests, 21 doctests, four cancellation/isolation cases plus one scope case, and ten
+supervisor integration cases. Native strict all-target Clippy passes on 1.94.0;
+the separately reproduced 1.98.1 baseline lint limitation remains unchanged.
+Logs/manifests: `/tmp/batter-gi4-native-round2-acceptance-{toolchain}-{index}.{log,json}`.
+Every command's paired source guard is unchanged. Native code-input identity:
+`c4a027e01515a495ff1c9b6bd954299f7f947ae2c148189252325ddad98b6a58`.
+Independent full review and delivery closure are tracked by `batter-gi4` and the
+native owning Bead; the test evidence above does not itself claim convergence.
+
+## Native review repair (batter-gi4), 2026-09-12
+
+The native all-reviewer pass confirmed that intentional observer abortion at the
+terminal cap incorrectly stopped the supervisor. Its regression failed before
+repair. Expected pre-stop abortion is now counted without stopping processing or
+retaining an unbounded history. Uncaught descendant failures remain fatal; older
+Result methods retain the original shared join error and begin bounded drain on
+internal stop. A public-API regression reproduced their earlier false success.
+
+Six PostgreSQL-backed regressions independently kept an application child alive
+after handler timeout, panic or lease loss, both before and during shutdown. Every
+case originally approved cooperative cleanup despite that live child. The repaired
+native boundary records these interruptions independently of successful job-task
+joins. All six pass; a seventh control returns an ordinary business failure after
+joining its child and continues to permit cleanup.
+
+Owned native cancellation now explicitly establishes READ COMMITTED. Its trigger
+oracle failed with a SERIALIZABLE session default before the fix and passes after,
+while the session default remains SERIALIZABLE. A separately executed missing-job
+classification followed by actual backend termination preserves both its original
+`job.not_found` classification and the subsequent rollback failure. Current error
+guidance and upgrade notes describe the enum/exhaustive-match and SQLx-source changes.
+
+Initial repaired Linux runs passed 235 runtime library tests, eight supervisor
+integration tests, four cancellation failure/isolation probes and one scope test.
+The added bounded internal-stop test brings runtime library coverage to 236; the
+missing-job rollback test brings PostgreSQL library coverage to 111. Subsequent
+source identities and matrix results are recorded in the newer sections above.
+Logs: `/tmp/batter-gi4-native-round1-*-red.log`,
+`/tmp/batter-gi4-native-round1-runtime-green.log`, and
+`/tmp/batter-gi4-native-round1-acceptance-{toolchain}-{index}.{log,json}`.
+
+## Managed initialization review repair (batter-gi4), 2026-09-12
+
+The first comprehensive review reproduced a managed readiness error: successful
+initializer polling or destruction could cancel/expire the startup context after
+the driver's pre-poll check. Three public regressions failed at the readiness
+assertion before the fix; the simultaneous original-error control already passed.
+The driver now rechecks the startup context after destruction and before publishing
+successful initialization. Returned errors remain intact, native settlement is
+still driven and acquired dependencies are finalized after cooperative settlement.
+
+On Linux Rust 1.98.1, all nineteen managed contracts, sixteen command contracts and
+seven scoped-ownership cases pass, as does focused strict Clippy. Logs are
+`/tmp/batter-gi4-round1-{red,green,clippy}.log`. The matrix/receipt identities below
+precede this repair and require final refresh. Current documentation also removes
+obsolete production witness/reconciliation instructions and distinguishes the
+historical inventory from the current 58-entry runner. Review closure is tracked
+by the owning Bead.
+
+## Complete matrices and fresh consumer acceptance (batter-gi4), 2026-09-12
+
+On Linux, `bash scripts/verify.sh` passes with Rust 1.98.1 and exact Rust 1.94.0:
+locked core/workspace tests, hostile-environment configuration, doctests, Clippy,
+formatting and warning-denied workspace rustdoc. Both toolchains also pass all
+five HTTP smokes (SIGTERM, SIGINT, deadline, WARN filtering and filtered deadline).
+Both pass the expanded 58-entry reference runner (56 database probes and two
+offline entries) plus the separate library maintenance-session replacement case.
+The new production-root case requires actual `/live` 200, persistent `/ready` 503,
+zero control-job rows and clean SIGTERM with owned cleanup completed.
+
+The forced `scripts/jig check --profile verify --plan-id
+plan_01M294ERDA6M993R8MK890RQQ4` passes all five required targets, including
+`api:test`, contract and file-budget. This is receipt evidence in addition to the
+direct two-toolchain commands. Documentation updates afterward may require cheap
+whole-repository policy refresh; they do not change Rust inputs.
+
+A separate source guard hashes both repositories' tracked/untracked non-document
+inputs before and after each HTTP/live command, the minimum-toolchain matrix and
+the forced Jig profile. All identities were unchanged. It excludes Markdown,
+`docs/`, `.agent/` and `.beads/`; those exclusions are not a general assertion that
+arbitrary files under those paths can never affect verification. Current runtime
+inputs remain in the declared crate/example/script roots. The archived consumer
+is separately compiled below. Root-only Jig freshness cannot observe native
+sibling changes and is not used as evidence of that sibling's identity.
+
+Recorded code-input SHA-256 identities:
+
+- Batter: `f5cc5251c8226045d12a6ad3cc9cf8cb67ed98bdb5db0804a1629d5ed3fa93bc`.
+- Native sibling: `a0fed51ea9313517a954e7c72a6a51365fc8e02ac413a50e3b3f6b0a4fff8eaf`.
+
+Logs and full before/after manifests: `/tmp/batter-gi4-acceptance-1.98.1-0` through
+`-6` and `/tmp/batter-gi4-acceptance-1.94.0-0` through `-7`, with `.log` and `.json`
+suffixes. The default workspace log is `/tmp/batter-gi4-workspace-1.98.1.log`;
+Jig has `/tmp/batter-gi4-jig-profile.log` and `.json`.
+
+Native verification additionally passes 116 core, 110 PostgreSQL and 233 runtime
+library tests on both exact toolchains, plus twelve PostgreSQL and nine runtime
+doctests, three cancellation-failure regressions and the authorization-scope case.
+Native all-target strict Clippy passes on 1.94.0, its pinned maintenance line.
+The supplementary 1.98.1 native Clippy run fails 18 `result_large_err` diagnostics.
+An untouched archive of native HEAD `50620137e36aab2333213fa8d8e51a095484e6eb`
+reproduces the same 18 diagnostics and 160-byte maximum variant. This is an
+existing error-representation/newer-lint compatibility gap, not introduced by the
+lifecycle or cancellation changes. No lint was suppressed and no public error
+representation was changed to hide it. See the [primary-source explanation](references.md#native-newer-clippy-baseline-2026-09-12).
+Logs: `/tmp/batter-gi4-native-acceptance-{1.94.0,1.98.1}-{0,1,2,3}.log`;
+baseline `/tmp/batter-gi4-native-baseline-clippy.log`. Each changed-source native
+command also has an unchanged before/after source manifest.
+
+The actual production executable and retirement CLI also pass a separate smoke:
+initialize one fresh disposable database, observe liveness, SIGTERM and await a
+successful process exit, independently observe database-session absence, reject
+wrong identity, then execute retirement twice successfully with zero controls.
+The disposable database is dropped afterward. The CLI reports only its database
+scope and explicitly does not claim deployment completion.
+Log/manifest: `/tmp/batter-gi4-cli-smoke.log` and `.json`.
+
+The [fresh consumer exercise](evidence/batter-gi4/README.md) passed first-attempt
+integration and modification: five initial behavioral checks, then two new total
+budget checks with all five originals preserved. The agent received public
+guidance and fixed interfaces, without private rationale or oracles. The archive
+also compiled and passed separately. This limited exercise is not a general
+convergence claim. All-reviewer repair and final scope verification were still
+pending at this stage.
+
+## Offline retirement and native teardown repair (batter-gi4), 2026-09-12
+
+The reference now has an owned offline retirement command and separate read-only
+readback. It verifies expected identity, rejects hidden/other sessions and prepared
+transactions, refuses physical connection replacement, disables the native legacy
+definition and preserves historical state. Native cancellation retains SQLx causes
+and secondary rollback failure. A returned primary failure is published before
+optional readback; actual lost COMMIT acknowledgement does not authorize replay.
+
+Executed on Linux Rust 1.98.1 against PostgreSQL 18.6:
+
+- Seven retirement cases pass: preservation/old catalog disable, wrong identity,
+  hidden sessions, late enqueue, prepared enqueue, commit rejection followed by
+  cancelled readback, and a transport fault discarding an actual COMMIT response.
+  A subsequent full-row assertion also confirms an unrelated job type remains
+  unchanged; its focused preservation case passed after the full-suite run.
+- The separate required library probe terminates its exact maintenance backend and
+  confirms replacement fails with retained acquisition error and completed cleanup.
+- The complete `scripts/test_reference_live.sh` runner passes 57 reference entries
+  (55 live and two offline) plus that library probe. An isolated repeat passed
+  after an earlier passing run overlapped native tests on the primary server.
+  Log: `/tmp/batter-gi4-reference-full-live-isolated.log`.
+- Adapter/reference all-target Clippy, six reference doctests, warning-denied
+  reference rustdoc and six Python inventory controls pass. These are direct
+  executions, not final Jig receipts or the complete two-toolchain matrix.
+
+The first complete run failed the callback cleanup probe. Its Notify-based fixture
+could resume only after the non-yielding callback's safety timeout, missing the
+intended scenario. Independent timer/atomic observation now proves the callback
+is still held at stop and report boundaries. The stronger probe then exposed a
+real native Shared-notifier/registry destruction deadlock. GDB confirmed the lock
+cycle; the stuck process was terminated and counted as failed. The native waker
+now owns only a separate notification signal. The new ownership regression failed
+before the fix and passes after it; cleanup assertions were preserved and strengthened.
+The repaired callback probe completes in under one second with cleanup skipped.
+
+Native Rust 1.94.1 verification: all 233 runtime library tests pass; three new
+cancellation regressions and the existing authorization-scope test pass; the
+rollback error/source unit test, twelve PostgreSQL doctests and PostgreSQL/runtime
+all-target Clippy pass. Native Error::RollbackFailure is an added public enum
+variant; coordinated exhaustive-match changes are required before upstream release.
+No persisted schema or cancellation scope changed. Native runtime log:
+`/tmp/batter-gi4-native-runtime-after-fix.log`.
+
+The task-owned `batter-retirement-primary` cluster uses loopback port 55433,
+`max_prepared_transactions=10` and `autovacuum_naptime=1s`; the distinct observer
+is `batter-review-observer` on 55432. No credentials were checked in or printed.
+An initial retirement invocation omitted the required `sslmode=disable` and was
+rejected before fixture work; corrected endpoints passed the native preflight.
+Existing fault fixtures still emit their deliberate deferred-cleanup failure
+diagnostic; the exact runner verifies all named test outcomes and both targets.
+
+Rust 1.94.0 also passed the 57-entry reference runner and separate replacement
+probe, ordinary reference targets, six doctests and adapter/reference all-target
+Clippy. Log: `/tmp/batter-gi4-reference-msrv-retirement-final.log`. An earlier
+Clippy run rejected the expanded preservation test's size; extracting its repeated
+row-read helper fixed that without changing assertions. The new production-root case passed separately on Rust 1.98.1: actual HTTP
+liveness 200, readiness 503 across multiple health sampling intervals, no startup
+control rows and successful SIGTERM with awaited owned cleanup. The runner now
+requires 58 reference entries. Log: `/tmp/batter-gi4-production-root.log`.
+Those earlier 57-entry runs do not cover this added case.
+
+The libraries still resolve through uncommitted sibling path patches. Final
+external-source identity/Jig evidence, exact Rust 1.94.0 matrix, full HTTP smokes,
+production-root readiness proof, fresh-agent exercises and comprehensive all-model
+review convergence remain outstanding. No commit or push was made.
+
+## Native preparation and stop-clock exchange (batter-gi4), 2026-09-12
+
+The optional adapter consumes owned `PreparedSupervisor` values; the protected
+path accepts neither live supervisors nor factories. Preparation errors remain
+owned startup failures with retained cleanup. Native first causes are independent
+of clock tightening. Idempotent stop callbacks exchange earliest timestamps, and
+active native/process waits observe changes.
+
+Executed on Linux Rust 1.98.1:
+
+- `cargo test -p batter --lib --tests --examples --locked --quiet`: 301 tests
+  passed, including fifteen public managed contracts, process phase wakeups and
+  an update arriving during a stop callback.
+- Foundation doctests: 22 passed. Adapter: three runtime tests and three doctests
+  passed, including compile-fail controls for live-supervisor/closure inputs.
+- Adapter/reference all-target Clippy and foundation/adapter warning-denied
+  rustdoc passed. Reference library/configuration tests passed (six/twenty);
+  all five Python live-inventory controls passed.
+
+On exact Rust 1.94.0, fourteen selected lifecycle library tests, fifteen managed
+contracts, twenty-nine process ownership tests, adapter's three runtime tests and
+three doctests, and adapter/reference all-target Clippy passed. The first combined
+invocation applied a `lifecycle` name filter to the integration targets and selected
+none; both integration targets were subsequently run without that filter and
+passed. This is focused minimum-toolchain evidence, not the full workspace matrix.
+
+In the sibling native checkout on Rust 1.94.1, twenty-two selected supervisor
+tests (excluding the PostgreSQL settlement case), three preparation tests,
+fifty-two shutdown-selected tests, seven complete-report tests, nine doctests and
+all-target Clippy passed. These selections overlap; they are not a new full-suite
+count. A real non-yielding callback remains unjoined when an earlier parent
+deadline interrupts active native abort observation. That test releases and
+observes the callback before returning. No new PostgreSQL live case was executed.
+
+The native packages are uncommitted sibling path patches. These direct Cargo
+executions produced no Jig receipts and do not establish external-source reuse.
+Full workspace/two-toolchain/live/Jig/fresh-agent/review acceptance was still
+pending at this stage.
+
+## Owned finite commands (batter-gi4), 2026-09-12
+
+The finite-command API, optional absolute total reserve and UDP consumer cutover
+passed on Linux Rust 1.98.1:
+
+- `cargo test -p batter --tests --example finite_command --locked --quiet`:
+  298 library, integration and example tests passed.
+- `cargo test -p batter --doc --locked --quiet`: 22 doctests passed, including
+  implicit report-disposal rejection.
+- `cargo clippy -p batter --all-targets --locked -- -D warnings` and
+  `RUSTDOCFLAGS='-D warnings' cargo doc -p batter --no-deps --locked --quiet` passed.
+- `RUSTUP_TOOLCHAIN=1.94.0 cargo test -p batter --test command --test
+  scoped_owned_tasks --example finite_command --locked --quiet`: 16 command,
+  seven scoped ownership and six example tests passed on the exact minimum toolchain.
+
+After `cargo build -p batter --example finite_command --locked --quiet`, the actual
+`target/debug/examples/finite_command` default mode returned 0. `--fail-work`,
+`--fail-cleanup`, `--fail-both`, `--cancel` and `--deadline` each returned 1.
+Cancellation and deadline modes reported successful cleanup after resource
+registration. A Python subprocess driver imposed an eight-second bound per mode
+and checked the actual status and outcome facts. No database was required.
+
+The ownership tests gate a real semaphore permit behind dependent cleanup,
+drop command owners and borrowed waiters independently, and inspect retained
+original errors and both polling/destruction panics. Other cases cover parent
+cancellation isolation, total reserve rejection, expired factory inertness,
+cleanup timeout, final-poll cancellation, subscriber context through destruction,
+and published versus missing reports across runtime destruction. These do not
+establish remote transaction disposition or arbitrary detached-task termination.
+
+Logs: `/tmp/batter-gi4-command-tests.log` and `/tmp/batter-gi4-command-msrv.log`.
+The full workspace matrices, HTTP/live reference tests, fresh-agent exercises and
+all-reviewer convergence were still pending; the reference used its old native
+hosting path at this stage.
+
+## Managed component foundation (batter-gi4), 2026-09-12
+
+The new managed registration path and first-stop process clock passed on Linux
+Rust 1.98.1 with the current working tree:
+
+- `cargo test -p batter --tests --locked --quiet`: 281 tests passed across 24
+  targets/groups, including 14 new managed-component contracts.
+- `cargo test -p batter --doc --locked --quiet`: 18 doctests passed.
+- `cargo clippy -p batter --all-targets --locked -- -D warnings`: passed.
+- `RUSTDOCFLAGS='-D warnings' cargo doc -p batter --no-deps --locked --quiet`: passed.
+- `git diff --check`: passed.
+
+The managed tests own actual Tokio descendants, control initialization and
+settlement independently, cancel borrowed waiters, drop the service owner and
+force direct-wrapper abortion. They verify frozen incomplete process evidence,
+late native report retention without later cleanup, original error and destructor
+panic retention, classifier panic handling, inert invalid/expired construction,
+native early-stop propagation and the original parent timestamp. Paused clocks
+test ordering and budgets; they do not establish preemption of blocked threads.
+
+Four existing completed-task timing controls initially failed because their
+schedules relied on cancellation starting a fresh interval after delayed drain
+observation. Their schedules now complete work within the absolute cancellation
+interval and delay collection past that boundary. Their original assertions about
+retaining failures, avoiding false aborts and observing actual aborts remain intact;
+all 29 process-ownership tests passed afterward.
+
+The sibling native checkout `/home/aa/Documents/runledger`, still uncommitted,
+passed `cargo test -p runledger-runtime --lib --quiet` (224 tests), `cargo test
+-p runledger-runtime --doc --quiet` (eight doctests), and all-target Clippy with
+warnings denied on its Rust 1.94.1 toolchain. New stop observation/timestamp
+contracts passed along with the native descendant/real-PostgreSQL suite documented
+in the task plan. Batter still consumes the old pinned dependency: these are
+separate source-tree results, not native adapter integration evidence.
+
+The exact Rust 1.94.0 and 1.98.1 workspace matrices, HTTP/live reference acceptance,
+fresh-agent consumer exercises and comprehensive reviewer convergence remain
+pending for the full redesign. Existing Jig receipts do not authenticate this new
+source merely because earlier foundation tests passed.
+
+## Startup witness and shutdown lease follow-up (batter-8q8.4), 2026-09-11
+
+The newly authorized review/fix cycle addressed two medium findings from the
+preceding terminal review. Pinned Runledger inspection confirmed that an empty
+claim is followed by the complete configured poll interval. The existing
+14-second predecessor retry could therefore miss the fixed 20-second witness for
+otherwise valid long polling settings. This was a composition-contract omission,
+not a defect in Runledger: Serve now requires retry + poll + one-second margin to
+fit strictly inside the witness, making 4,999 ms the largest whole-millisecond
+poll. Standalone `WorkerSettings` parsing retains its prior native one-year range.
+`prepare_probe_worker` applies the same relationship before acquisition and again
+to the actual interval remaining after database preparation.
+
+The other finding exposed an incomplete lifecycle branch. Reconciliation failure
+dropped the combined monitor before awaiting up to eleven seconds of native stop
+and six seconds of reconciliation-pool close, even though the lease session had a
+ten-second idle timeout. The repair continues lease queries throughout both
+operations. A later lease failure is retained alongside the initiating
+reconciliation failure; it does not cancel bounded settlement or replace the
+primary cause. Clean native stop plus pool-close timeout now has its own typed
+`ReconciliationClose` classification. The composed paused-clock test includes
+native shutdown, abort drain, reconciliation close and release. Late-commit test
+owners now retain their parent and termination gate, request cancellation, and
+await preparation settlement on every failure path.
+
+The first complete Rust 1.98.1 live sweep correctly rejected the old 250 ms
+witness-failure fixture before acquisition. That oracle now uses 16 seconds, long
+enough to enter native execution while still forcing the intended durable-success
+timeout, and passed alone. A subsequent full sweep encountered the unrelated
+expected-failure fixture's deferred-cleanup race; the exact case passed alone and
+the required complete rerun then passed. These failed attempts are not counted as
+acceptance evidence.
+
+| Command / evidence | Outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` | PASS: 43 library tests, one binary test, 20 configuration tests, three fixture-diagnostic tests, ordinary discovery with all live cases ignored, and 12 doctests. |
+| `cargo clippy -p batter-example-reference-service --all-targets --locked -- -D warnings` | PASS after extracting root witness validation and owned-native observation helpers. |
+| Targeted PostgreSQL regressions for late commit, blocked reconciliation, lease-loss takeover, normal drain and witness failure | PASS on Rust 1.98.1 against PostgreSQL 18.6. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: all required test, configuration, lint and rustdoc phases. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on the declared minimum toolchain with the same required phases. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS on the final source: exact 56-entry inventory, 56 passed, zero failed/ignored/filtered. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS: exact 56-entry inventory, 56 passed, zero failed/ignored/filtered; 101.68 seconds. |
+| Five `scripts/smoke_http.py` modes after an explicit `batter-axum` example build | PASS on both Rust 1.98.1 and 1.94.0: SIGTERM, SIGINT, deadline, WARN-filter and WARN-filter/deadline modes. |
+| `cargo fmt --all -- --check`; `git diff --check` | PASS on the frozen pre-review tree. |
+
+The same two disposable `postgres:18.6` containers and image digest recorded
+below were recreated on loopback ports 55431/55432 with `track_counts=on` and
+one-second autovacuum naptime. Cargo.lock remained byte-identical at the SHA-256
+recorded below.
+
+## Startup-control ownership fencing review repair (batter-8q8.4), 2026-09-11
+
+The all-reviewer pass found that continuous stale-control reconciliation had been
+serialized with the ownership-session ping. Application-pool acquisition or a
+row-lock wait could therefore outlive the lease session's ten-second idle timeout,
+release the advisory lock, and let the old worker continue destructive work while
+a successor started. This is a design-boundary defect, not only a missing timeout.
+
+The repair gives each owner a PostgreSQL-sequence epoch on the lock-owning session
+immediately after lock acquisition and stores it in the control payload; older payloads decode as epoch zero. Runtime
+reconciliation selects only lower epochs. Lease checks and reconciliation are
+independently selected, and reconciliation uses a lazy one-connection pool with a
+four-second pass bound, 3.5-second statement timeout and three-second lock timeout.
+Returned reconciliation connections undergo SQLx's viability check before reuse,
+and the pool receives a separate six-second close allowance before lease release.
+The complete worker stop reserve is now 20 seconds. The application explicitly
+retries the replay-safe read/cancel pass after one or two failures; a third
+consecutive failure stops the worker and retains its concrete cause.
+
+The first fresh review of that repair found a timing coupling introduced by the
+larger reserve: the predecessor-generation retry delay had also become 18 seconds,
+while the production parent left only 17 seconds ahead of shutdown. The retry
+lower bound is again a separate 14 seconds because reconciliation-pool closure
+and lease release cannot keep native claiming loops alive. An exact unit assertion
+guards that relationship and the equal-witness/equal-epoch success path.
+
+The second fresh all-reviewer pass found that epoch allocation and the advisory
+lock were still split across sessions, so a delayed predecessor could acquire a
+later epoch after a successor had taken the lock. It also found that pool-close
+timeout composition replaced native, join or unexpected-success identity, and
+that two live failure branches detached started owners. Epoch allocation now
+occurs as part of lock acquisition on the exact lease connection. Close failure
+is supplemental on every prior completion kind and primary only after a requested
+successful native stop. The live branches retain, abort where needed, and await
+their owners before returning. The reference startup parent is now 45 seconds,
+leaving eleven seconds beyond the 14-second retry lower bound and ahead of the
+20-second stop reserve.
+
+Research before the follow-up edit confirmed that PostgreSQL can reorder `WHERE`
+predicates, so a job-type condition cannot protect a fallible JSON-text-to-bigint
+cast. The candidate predicate now uses `CASE`, casts only JSON numbers to native
+`numeric`, and treats missing or other JSON types as legacy epoch zero. The hosted
+normal-drain case includes a malformed string epoch and proves it is canceled
+without breaking preparation. The initialized-schema upgrade case directly
+advances the new sequence twice.
+
+SQLx 0.9 documents that an incomplete pool close may leave connection disposal to
+internal work and that client-side drop need not promptly notify PostgreSQL. A
+close timeout therefore remains unconfirmed and keeps dependent cleanup
+conservative. Its error is now supplemental to an earlier lease/reconciliation
+failure instead of replacing the initiating cause. A deterministic unit control
+races an immediately failed lease monitor against permanently pending
+reconciliation; serializing them makes the control time out. The row-lock live
+case remains the integrated cause-retention and successor-fencing proof rather
+than the sole evidence of scheduling independence.
+
+Pinned Runledger research also corrected an overclaim in the first regression.
+A late predecessor may be claimed once before reconciliation wins; a witness
+mismatch is not a supervisor-loop failure and cannot acknowledge the current
+witness. The live oracle now requires epoch ordering, zero or one stale attempt,
+terminal cancellation, and no subsequent attempt growth. A separate live case
+holds a legacy row lock, terminates the lease, and keeps the lock held until driver
+settlement proves that reconciliation cannot mask lease loss. The successor then
+cancels that never-claimed row at attempt zero.
+
+The last permitted repair round accepted three bounded follow-ups rather than a
+new architectural defect. It restored normal checked reuse on the long-lived
+reconciliation pool, while retaining forced non-reuse only for the temporary
+preparation pool; made unexpected native success depend on an actual recorded
+shutdown request instead of assuming every observation followed drain; and made
+the row-lock fixture retry until it locks a still-pending control while retaining
+and settling every started owner on all failure paths. A claim that reconciliation
+also had to keep running during shutdown was rejected: monitor failure immediately
+requests native stop, the owner epoch fences older controls, and dependent cleanup
+already treats close or lease-release uncertainty conservatively. PostgreSQL 18
+documentation confirms that ordinary `pg_dump` archives include sequence values;
+restoring `job_queue` without the epoch sequence and then resetting that sequence
+is explicitly outside this example's supported operational contract.
+
+Linux x86_64; Git baseline `f1cafe9abeb9c08960523288c2c2c25da5e18202`.
+Cargo.lock remained unchanged at SHA-256
+`848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+Two task-owned `postgres:18.6` containers used image digest
+`sha256:1957b2ff3137e4ef7f3bc813e74fff50b1e1ffddc85c8b9d6f14ade972be8687`,
+SCRAM host authentication, `track_counts=on`, `autovacuum_naptime=1s`, and
+loopback ports 55431/55432. Provisioning remained external to Batter.
+
+| Command / evidence | Outcome |
+| --- | --- |
+| Focused unit, warning-denied Clippy and package tests | PASS: exact retry timing, matching/mismatching epochs, legacy decoding, mutation-sensitive monitor selection, three-consecutive-failure policy, typed primary/supplemental failure composition and all ordinary reference targets. |
+| `hosted_preparation_late_control_commit_reconciliation` | PASS: lower-epoch cancellation, bounded zero-or-one attempt and stable post-cancellation count. |
+| `initialized_schema_upgrade`, `hosted_worker_probe_registry_and_normal_drain`, `hosted_worker_lease_loss_stops_host`, `hosted_worker_blocked_reconciliation_preserves_lease_monitor`, and `hosted_preparation_late_control_commit_reconciliation` after the first fresh review | PASS on Rust 1.98.1: upgraded sequence advancement, malformed-epoch cancellation, takeover timing, primary lease-loss classification under a blocked cancellation, and lower-epoch late-commit disposal. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: complete Rust/Python matrix, formatting, warning-denied Clippy, doctests and rustdoc. |
+| Rebuild `http_service` on each toolchain, then run the five documented smoke modes | PASS: all ten process smokes. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` | PASS on the final repaired source: exact 56-entry inventory, 56 passed, zero failed/ignored/filtered; 86.18 seconds. The immediately preceding sweep passed all changed ownership cases but the unrelated `fixture_runtime_loss_exposes_native_drop` case failed with its sanitized probe error; that case passed alone and the required complete rerun then passed. An earlier round also found a now-corrected 15-second witness-failure test context. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` | PASS on the final repaired source: the same exact 56-entry inventory and zero failed/ignored/filtered; 87.26 seconds. |
+
+The recurring sanitized deferred-cleanup message is the deliberate
+`fixture_body_and_cleanup_failures_retained` scenario. No macOS, hosted CI, TLS,
+deployment, publication, commit or push is claimed.
+
+## Late startup-control commit reconciliation (batter-8q8.4), 2026-09-11
+
+The investigation confirmed a supported late-publication ordering, but rejected
+the review's original blocked-`INSERT` trigger. Pinned Runledger awaits its
+enqueue before dispatching `COMMIT`; cancellation while that insert is blocked
+cannot publish the row later. The executable regression instead blocks an actual
+deferred constraint trigger after SQLx has sent `COMMIT`, cancels the predecessor,
+lets a distinct successor backend pass its initial stale-control scan, and proves
+that successor blocks on the still-uncommitted predecessor transaction. It then
+releases the old commit and requires the running owner to cancel the late row.
+The initial assertion only proved the attempt count stopped after cancellation;
+it did not prove that the row had never been claimed. The review-loop repair
+below corrects that contract and oracle. Exact
+`(pid, backend_start)` observation also requires the predecessor backend to exit.
+
+This initial implementation reconciled non-current startup controls continuously
+while monitoring its dedicated ownership lease, but serialized those operations.
+The subsequent review demonstrated that a blocked reconciliation could suppress
+lease checks; its replacement is recorded above this historical evidence. A reconciliation failure retained
+the concrete startup failure separately from any native shutdown result, and
+still permits the independently owned lease to attempt explicit unlock. This is
+periodic eventual reconciliation, not transaction commit acknowledgement or a
+general guarantee that remote work stopped when a local client was dropped.
+
+Linux x86_64; baseline `f1cafe9abeb9c08960523288c2c2c25da5e18202`, tree
+`b952d044396f40fb958803b65296334a925c242d`; plan
+`plan_01M28JG9J1QRHJ67QQZJJGQMTA`. Cargo.lock remained unchanged at SHA-256
+`848f4a89b6f50b35e1a14d0776f18601a5bdc05ee10a4a217e74dc51f6ebc70b`.
+The primary was a task-owned native PostgreSQL 18.6 Ubuntu cluster on loopback
+port 55431; the independent observer was task-owned `postgres:18.6` image
+`sha256:a6638641707cdf047e5d5c2781f437e2e809323cab22c70b280be8389fbb7878`
+on loopback port 55432, PostgreSQL 18.6 Debian. Both used SCRAM host
+authentication, `autovacuum_naptime=1s`, and `track_counts=on`.
+
+| Command / evidence | Outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib worker::tests::runtime_reconciliation_failure_retains_cause_and_native_shutdown --locked -- --exact` | PASS: concrete reconciliation cause identity and the separate successful native shutdown result were retained. |
+| `cargo test -p batter-example-reference-service --test reference_live hosted_preparation_late_control_commit_reconciliation --locked -- --ignored --exact --nocapture` with the primary endpoint | PASS in 2.76s after the final test-helper refactor. An initial invocation omitted the required `sslmode=disable` URL setting and was rejected by endpoint policy before fixture work. |
+| Mutation control removing the production runtime reconciliation call, then running the same focused live test | FAIL as required: the late row was not canceled before the bounded oracle expired. The production call was restored and the focused test passed again. |
+| `PYTHONPATH=scripts python3 -m unittest scripts/test_reference_live.py -v` | PASS: five inventory/preflight/exact-execution controls, including the new required preparation case. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/verify.sh` | PASS: complete Rust/Python matrix, formatting, warning-denied Clippy, doctests and rustdoc. The first run found test-helper cognitive complexity 24/20; splitting the orchestration into named phases resolved it without a lint allowance. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix on the minimum toolchain. |
+| Rebuild `http_service` on each toolchain, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten process smokes on their respective rebuilt binaries. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_reference_live.sh` with both endpoints | PASS: PostgreSQL 18 preflight, exact 55-entry inventory, 55 passed, 0 failed, 0 ignored, 0 measured, 0 filtered; 81.74s. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_reference_live.sh` with both endpoints | PASS: identical preflight and inventory, 55 passed, 0 failed, 0 ignored, 0 measured, 0 filtered; 80.66s. |
+| `scripts/jig work check --plan-id plan_01M28JG9J1QRHJ67QQZJJGQMTA`, then `work evidence` and `work gates` with a 30000ms freshness timeout | PASS: all five applicable targets; fresh required `verify` evidence, no unresolved gates. Initial final receipt `receipt_01M28M9J9PZFERRCP81FJ5DYT5`; a tracker/validation-only refresh follows this evidence entry. |
+
+The trailing sanitized deferred-cleanup message in each full live run belongs to
+the deliberate cleanup-failure scenario; both runners exited zero. The new
+behavior was not executed on macOS or hosted CI. No TLS, deployment, publication,
+commit or push is claimed.
 
 ## Complete preparation ownership (batter-2zw), 2026-09-11
 

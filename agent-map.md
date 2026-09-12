@@ -8,13 +8,15 @@ Fast jump index for agent-facing guidance in this repository.
 
 ## Nested guides
 
-- [Foundation](./crates/batter/AGENTS.md): lifecycle, startup, operations, retry,
+- [Foundation](./crates/batter/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
   cleanup, admission, dependency health, settings, and telemetry.
 - [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, probes, rendering,
   operational defaults, and HTTP observations.
 - [SQLx adapter](./crates/batter-sqlx/AGENTS.md): native PostgreSQL leases,
   client retirement, bounded probes, explicit pool cleanup and opt-in isolated
   database fixture ownership.
+- [Native runtime adapter](./crates/batter-runledger/AGENTS.md): inert native preparation,
+  initialization, stop-clock exchange and retained descendant settlement.
 - [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
   and error-preserving result combination.
 - [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool

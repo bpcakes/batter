@@ -109,9 +109,10 @@ The PostgreSQL example connects to an existing database, probes it with `SELECT
 does not create/drop databases or migrate a Runledger schema. Use only a local
 test database; never commit real connection secrets.
 
-`finite_command` owns one native loopback operation and separately awaits cleanup.
+`finite_command` uses `command::Command` to own one native loopback operation and
+retain cleanup independently of its waiter.
 Service startup is a different ownership path; see
-[usage](docs/usage.md#finite-commands-and-separately-awaited-cleanup) and the
+[usage](docs/usage.md#finite-commands-and-owned-cleanup) and the
 executable [`Startup` example](crates/batter/src/startup.rs).
 
 ## Use as a local dependency
@@ -145,6 +146,7 @@ lower library minimum.
 | `batter` | [crates/batter](crates/batter/README.md) | Process ownership, deadlines, retry, admission, cleanup, health, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
+| `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
 | `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, pinned compatibility probes, validated constructors, and an explicit live test target. |
@@ -152,9 +154,11 @@ lower library minimum.
 PostgreSQL provisioning stays in the external `postgres-test-harness` repository;
 it is not a workspace member. The optional `batter-sqlx/test-support` feature is
 selected by reference tests; the default adapter graph excludes the harness.
-Runlimit and a reusable Runledger host adapter are **not implemented**. The
-reference application directly uses Runledger's native transactional producer
-API but does not start a worker or provider. Ownership boundaries
+The optional `batter-runledger` adapter owns native initialization and settlement.
+The reference starts the native runtime with an empty handler registry and uses
+Runledger's transactional producer API. The delivery handler/provider and a
+Runlimit adapter remain unimplemented; application readiness stays unapproved.
+Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The
 [compatibility manifest](docs/reference-compatibility.md) records the reference

@@ -65,23 +65,31 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
             ("JOBS_REAPER_RETRY_DELAY_MS".into(), "100".into()),
         ])?,
     )?;
-    let supervisor = config.builder(&pool)?.with_catalog(&catalog).build()?;
-    let stop = supervisor.shutdown_handle();
-    let mut driver = tokio::spawn(
-        supervisor.run_until_shutdown(std::future::pending(), Duration::from_secs(10)),
-    );
-    let witnessed = tokio::select! {
-        exit = &mut driver => {
-            // Retain the actual runtime/join failure, including before startup.
-            exit??;
-            return Err("worker exited successfully before its startup witness".into());
-        }
-        result = tokio::time::timeout(Duration::from_secs(20), receiver.recv()) => result,
-    };
-    // Always request and observe shutdown before inspecting the witness result.
-    stop.request_shutdown();
-    let joined = driver.await?;
-    joined?;
+    let second = Duration::from_secs(1);
+    let cleanup = batter::cleanup::CleanupBudget::new(second, second, second)?;
+    let mut process = batter::lifecycle::Supervisor::new(batter::lifecycle::ShutdownBudget::new(
+        Duration::from_secs(10),
+        second,
+        second,
+        cleanup,
+    )?);
+    let native_pool = pool.clone();
+    let native_config = config.jobs_config()?;
+    batter_runledger::register(
+        &mut process,
+        "worker",
+        batter::operation::OperationContext::new(second)?,
+        {
+            runledger_runtime::Supervisor::builder(&native_pool, native_config)?
+                .with_catalog(catalog)
+                .prepare()?
+        },
+    )?;
+    let running = process.start();
+    running.handle().mark_ready();
+    let witnessed = tokio::time::timeout(Duration::from_secs(20), receiver.recv()).await;
+    // The witness proves durable test execution, never production initialization.
+    batter::lifecycle::check_shutdown(running.shutdown().await)?;
     assert!(
         matches!(witnessed, Ok(Some(id)) if id == job.job_id),
         "controlled handler was not witnessed"

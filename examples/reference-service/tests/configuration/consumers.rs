@@ -126,28 +126,46 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
 }
 
 #[test]
-fn explicit_worker_builder_consumes_validated_section() {
+fn managed_worker_preparation_consumes_validated_section() {
     super::process::native("native-worker");
 }
 
 pub(crate) async fn native_worker() {
     let root = load(&[
-        ("JOBS_WORKER_ID", "builder-worker"),
+        ("JOBS_WORKER_ID", "configured-worker"),
         ("JOBS_MAX_GLOBAL_CONCURRENCY", "2"),
     ])
     .unwrap();
     let pool = root
         .pool_options()
         .connect_lazy_with(root.connect_options_from_process().unwrap());
-    // Native build validates the supplied config and catalog without connecting.
+    pool.close().await;
+    // Local native initialization needs no database. Settings supply data; the
+    // adapter owns launch and settlement through the process lifecycle.
     let catalog = runledger_runtime::catalog::JobCatalog::new();
-    let supervisor = root
-        .worker()
-        .builder(&pool)
+    let config = root.worker().jobs_config().unwrap();
+    assert_eq!(config.worker_id, "configured-worker");
+    assert_eq!(config.max_global_concurrency, 2);
+    let prepared = runledger_runtime::Supervisor::builder(&pool, config)
         .unwrap()
         .with_catalog(&catalog)
-        .build()
+        .disable_scheduler()
+        .disable_reaper()
+        .prepare()
         .unwrap();
-    drop(supervisor);
-    pool.close().await;
+    let mut process = root.supervisor(budget()).unwrap();
+    batter_runledger::register(
+        &mut process,
+        "worker",
+        OperationContext::new(Duration::from_secs(3)).unwrap(),
+        prepared,
+    )
+    .unwrap();
+    let running = process.start();
+    running.handle().mark_ready();
+    let initialized =
+        tokio::time::timeout(Duration::from_secs(3), running.handle().wait_ready()).await;
+    let report = running.shutdown().await.unwrap();
+    assert!(matches!(initialized, Ok(Ok(()))));
+    assert!(report.is_success(), "{report}");
 }

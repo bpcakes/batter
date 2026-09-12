@@ -17,6 +17,9 @@ Windows support and non-Unix fallbacks are out of scope.
   an owned summary, never the underlying collections.
 - `src/lifecycle/report.rs` owns the shutdown report type and retained-outcome summary;
   its public path remains `batter::lifecycle::ShutdownReport`.
+- `src/lifecycle/managed.rs` and `managed/` own adapter-facing inert native factories,
+  library initialization acknowledgement and independently retained native settlement.
+  Application composition uses the native adapter; descendant accounting stays native.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
@@ -25,6 +28,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
+- `src/command.rs` and `command/` own finite callbacks and independently retained
+  LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined
   children with a nonconforming wrapper whose hidden child survives cleanup.
   `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;
@@ -49,9 +54,22 @@ Explicit notification and cancellation happen after releasing the guard.
 Readiness reads must remain available while native enqueue holds admission.
 Supervisor abandonment signaling is owned from construction and transferred to
 the driver; it precedes captured-value destruction and never runs finalizers.
-Completion channels belong to owned drivers: create them only in `start` and
-expose shutdown observers through `RunningSupervisor`, never shutdown control handles.
+Supervisor completion channels belong to `Supervisor::start`; expose shutdown
+observers through `RunningSupervisor`, never shutdown control handles. Managed
+native completion channels are created when the supervisor driver starts, and
+their observers travel in managed report records. Their independently retained
+owners continue after direct waiter abortion. Pending native settlement forbids
+cleanup; later observation never runs previously skipped finalizers.
+The earliest stop timestamp belongs to `lifecycle/state.rs`; phase entry and later
+requests cannot extend it. Idempotent native stop callbacks return the earlier
+native/parent timestamp. Propagate new earlier clocks to settling components and
+wake active phase waits; keep the first failure cause independent of tightening.
+Publish caught stop-control failures at their catch boundary, including repeated
+clock updates; pending native settlement must not hide an already-observed error.
 `StartingSupervisor` exposes startup observation without retaining running ownership.
+Finite command scopes expose validated cleanup reservations, never a takeable
+stack or process-task admission. Command cancellation is downward and cleanup
+does not inherit it; callback return/unwinding cannot bypass registered cleanup.
 Reserve cleanup names before acquisition and register immediately after success.
 Extracted finalizers remain explicitly awaited and must not inherit process
 operation cancellation; extraction does not detach captured tokens.

@@ -18,12 +18,12 @@ pub mod fixture_sessions;
 pub mod fixture_startup_session;
 pub mod fixture_template_observer;
 pub mod fixtures;
-pub mod hosted_preparation;
-pub mod hosted_worker;
-pub mod hosted_worker_ownership;
 pub mod leases;
 mod live_endpoint;
 pub mod migrations;
+pub mod native_descendants;
+pub mod native_hosted;
+pub mod retirement;
 pub mod startup_process;
 pub mod startup_signals;
 pub mod transactions;
@@ -71,7 +71,7 @@ where
                     )?
                     .pool_options(),
                 ],
-                3, // Two overlapping control sessions and one temporary preparation connection.
+                3, // Explicit external process/diagnostic capacity, separate from application pools.
             )?;
             let fixture = scope.empty(&plan).await?;
             body(fixture.pools()[0].clone()).await
@@ -80,3 +80,6 @@ where
     .await;
     fixture_diagnostics::assert_probe(result);
 }
+
+mod production_root;
+pub use production_root::production_readiness;

@@ -1,5 +1,25 @@
 # Testing and failure-contract coverage
 
+The native adapter's offline contracts run with `cargo test -p batter-runledger
+--locked`: local initialization without a database, zero task starts on rejected
+or unstarted registration, original preparation errors with owned startup cleanup,
+and compilation rejection of live-supervisor/closure arguments. The managed and
+process ownership targets cover retained settlement and delayed native stop
+observation. Library lifecycle controls verify wakeups in all three process phases
+and an earlier update arriving during callback execution. Native complete-report
+tests tighten active graceful and abort waits while preserving failure causes and
+uncertain descendants. [Validation](validation.md) records executed reference live
+cutover and retirement acceptance, including limitations and failed attempts.
+Review closure is tracked separately; older hosted-control sections below describe
+the previous implementation.
+
+Finite command completion controls in `crates/batter/tests/command/completion.rs`
+place cancellation or paused-clock expiry in the final poll versus future
+destruction, preserving both returned success values and application errors.
+Managed initialization controls distinguish native stop, native settlement and
+process drain before acknowledgement, and check retained settlement and cleanup.
+These sources are covered by the existing exhaustive Jig source/test inputs.
+
 Cargo discovers foundation, adapter, example and generic test-support tests, plus
 library doctests. [Validation](validation.md) records dated execution counts,
 toolchains and outcomes; this guide describes behaviors and verification commands.
@@ -88,18 +108,23 @@ checks unsuccessful empty supervision with successful cleanup and successful
 finite-work-only supervision. `finite_command` is explicitly declared with
 `test = true`; its six example tests run in the ordinary all-targets workspace
 matrix. They check native loopback work, separate/simultaneous work and cleanup
-failures, and cleanup after post-acquisition cancellation or deadline.
+failures, and cleanup after post-acquisition cancellation or deadline. The command
+library contracts in `tests/command.rs` additionally cover owner/waiter loss,
+downward cancellation, original result and panic retention, absolute total reserves,
+cleanup timeouts and report observation across runtime destruction. The scoped
+task suite checks work and cleanup destruction under the originating subscriber.
 
 ```sh
-cargo test -p batter --locked --test startup_composition --example finite_command
+cargo test -p batter --locked --test command --test startup_composition --example finite_command
 cargo test -p batter --doc --locked startup::Startup
 cargo run -p batter --example finite_command --locked
 ```
 
 The command's `--fail-work`, `--fail-cleanup`, `--fail-both`, `--cancel` and
 `--deadline` modes must exit nonzero; interruption must still report successful
-cleanup. See [usage](usage.md#finite-commands-and-separately-awaited-cleanup).
-These tests require no database and make no outer-future abandonment guarantee.
+cleanup. See [usage](usage.md#finite-commands-and-owned-cleanup).
+These tests require no database. Owned command finalization requires a live runtime;
+it cannot promise remote effect reversal or termination of arbitrary spawned tasks.
 
 The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
@@ -254,32 +279,15 @@ after a killed process but does not remove the role or terminate existing sessio
 The completion regression also holds an original admin checkout while a later
 replacement pool starts closing, then resumes the same completion owner.
 
-Seven hosted-worker cases use the production `WorkerHost` and typed settings
-constructor. The probe-only registry executes and durably completes its control
-job while a delivery submitted through the real command path remains unclaimed;
-an exact replay adds no attempt. The probe case also rejects a second active
-control owner for the same database. Another case requests drain while a claimed
-handler is held, then releases it and observes successful completion after the
-stop request without claiming a linearized no-claim barrier. The timeout case
-holds that handler through the real ten-second native shutdown bound, requires
-the returned `ShutdownTimeout`, and inspects skipped nested dependency cleanup
-with zero finalizer calls. The retry case compares handler invocations with
-durable attempt rows and proves an enqueue replay adds neither. A controlled
-completion-persistence failure lets the real handler run but prevents its
-durable success witness, so owned startup fails without a ready handoff and
-executes partial-startup cleanup. The owner-drop case releases an in-flight job,
-drops the public wrapper, and proves the independent native join is observed
-before dependent cleanup runs. The lease-loss case terminates the dedicated
-advisory-lock backend and starts a successor before awaiting the predecessor;
-continuous preparation monitoring and generation-bound handling require a valid
-successor witness, retained predecessor failure, unproven predecessor termination
-and released ownership. The normal probe also verifies release before dependency
-cleanup, cancels a seeded pending control before a fresh witness, recovers the
-awaitable host after duplicate Batter registration, and proves an unstarted
-supervisor drop stops and releases a successfully registered worker. Configured concurrency 1/2
-now executes through the same application host constructor. A unit control feeds
-a stale invocation before the expected witness and proves the latter is selected;
-durable stale rows are reconciled before the native worker starts.
+The native lifecycle cases now use `batter-runledger` and owned native preparation.
+They exercise queue-independent initialization, in-flight work completing after
+drain, retained settlement after owner loss, durable business failure without
+process failure and a non-yielding callback that remains unjoined at report time.
+The production-root child requires `/live` 200, `/ready` 503 across multiple health
+sampling intervals, no control-job rows and successful awaited SIGTERM cleanup.
+Seven offline retirement cases separately exercise legacy disable, quiescence,
+preservation and uncertain outcomes. The current inventory is listed below;
+the earlier example-owned witness/lease protocol was removed.
 
 Their [API manifest](reference-compatibility.md) states the exact scope and pins.
 
@@ -294,8 +302,9 @@ POSTGRES_TEST_OBSERVER_URL='postgres://postgres:fixture@127.0.0.1:5433/postgres?
 Select two dedicated disposable local PostgreSQL 18 servers. The primary needs
 superuser authority for temporary restricted-role controls, SCRAM host authentication
 for the startup handshake, and both autovacuum and track_counts enabled with
-`autovacuum_naptime <= 5s`.
-Use `postgres -c autovacuum_naptime=1s` when provisioning it. The secondary must
+`autovacuum_naptime <= 5s`, plus `max_prepared_transactions > 0` for offline
+retirement acceptance. Use `postgres -c autovacuum_naptime=1s -c
+max_prepared_transactions=10` when provisioning it. The secondary must
 be a different cluster and allow `pg_control_system()` for identity preflight;
 PostgreSQL 18.4 permits this by default. If that access was revoked, grant
 `EXECUTE ON FUNCTION pg_catalog.pg_control_system()` to the observer login in
@@ -1256,8 +1265,8 @@ from request deadline, holds one production router request to reject at the
 configured Bulkhead, and exhausts configured finite-process admission.
 The first holds the sole checkout through a second acquisition's native timeout
 and then proves reuse. The second holds real handlers at limits 1/2 through
-`WorkerHost`, observes starts before component acknowledgement, releases and
-joins the single hosted component, then independently requires SUCCEEDED rows.
+the native adapter, observes handler starts, releases and joins the managed
+component, then independently requires SUCCEEDED rows.
 The third retains an external native lease until owned startup failure and pool
 close are observed, then awaits cleanup/drain and queries independent absence.
 These cases are ignored only in ordinary discovery. The explicit runner requires
@@ -1302,28 +1311,63 @@ live handoff, proving that an explicit empty password survives. IPv6 literals
 are rejected by both the shared live policy and actual preflight entrypoint
 before connection work; the separate direct native IPv6 wire test remains.
 
-## Probe preparation and early signal regressions
+## Historical probe preparation and early signal regressions
 
-The reference live inventory includes hosted_preparation_cancellation_releases_lease,
-hosted_preparation_leased_and_terminal_reconciliation and
-startup_signals_during_schema_and_control_preparation. They hold actual PostgreSQL
-locks, await blocked queries, then cancel a caller/parent, commit a racing terminal
-transition, or send SIGTERM to an authorized child. Preparation cancellation must
+This section records the former production witness implementation. Its hosted
+worker tests have been replaced by native initialization/settlement and offline
+retirement probes under `batter-gi4`; do not use these historical names as the
+current live inventory.
+
+The former reference live inventory included hosted_preparation_cancellation_releases_lease,
+hosted_preparation_leased_and_terminal_reconciliation,
+hosted_preparation_late_control_commit_reconciliation,
+hosted_worker_blocked_reconciliation_preserves_lease_monitor and
+startup_signals_during_schema_and_control_preparation. They held actual PostgreSQL
+locks, await blocked queries, then cancel a caller/parent, publish a late committed
+control, commit a racing terminal transition, or send SIGTERM to an authorized child. Preparation cancellation must
 retain confirmed unlock before immediate successor preparation. Child tests require
 owned cleanup reports rather than merely an exit code. The offline
 startup_signal_during_pool_acquisition case withholds native authentication on a
 loopback socket. Private Unix launch/watchdog machinery bounds every child.
 
-Unit tests exercise overflow before acquisition, both release errors, shared release
-timeouts, native-plus-release failures, the composed stop allowance and a late
+The former unit tests exercised overflow and an incompatible retry/poll witness before
+acquisition, the exact 4,999/5,000 ms Serve boundary, both release errors, shared release
+timeouts, native-plus-release failures, a later lease failure during
+reconciliation-triggered settlement, the composed stop allowance and a late
 cleanup failure after the outer hook times out. The composed clock test models the
-pinned native maximum and exercises the real release helper; real native timeout
-remains covered by hosted_worker_timeout_skips_dependencies. No fault test claims
+pinned native maximum, reconciliation close and the real release helper; real native timeout
+was covered by hosted_worker_timeout_skips_dependencies. No fault test claims
 that SQLx close witnesses backend exit. The foundation child test completes received()
 then registers those sources and requires drain without a second signal.
 
-The strict runner discovers all 54 reference target entries and executes with
---include-ignored: 52 database probes, the offline acquisition-signal test and
-its private child entry. It continues to require zero ignored/filtered entries
-and exact per-name success; the ordinary workspace run leaves all 52 live probes
+That runner revision discovered 56 reference target entries and executed with
+--include-ignored: 54 database probes, the offline acquisition-signal test and
+its private child entry. It required zero ignored/filtered entries
+and exact per-name success; that ordinary workspace run left all 54 live probes
 ignored. The runner controls reject missing startup/cancellation cases too.
+
+## Native lifecycle and offline retirement acceptance
+
+The current reference target has 58 entries: 56 live probes and two offline signal
+entries. Seven retirement cases verify history/migration/sequence preservation and
+additive catalog disable, target identity, restricted session visibility, late
+native enqueue, prepared native enqueue, and retained commit failure through
+readback cancellation, plus actual lost COMMIT acknowledgement after durable
+cancellation. The latter discards the server's cancellation COMMIT response,
+observes `CANCELED` through a separate direct connection and requires exactly one
+cancellation event without changing the failed primary report. The runner
+additionally executes the ignored library case
+`retirement::session::tests::maintenance_session_replacement_is_refused`; it kills
+only its own observed maintenance backend, then requires physical replacement to
+fail with the original bounded acquisition error and completed cleanup. Exact
+execution checks prevent either target's cases being skipped or counted from a
+summary alone. The primary preflight requires prepared transactions enabled.
+
+Native lifecycle cases independently cover queue-free local initialization,
+in-flight work after drain, owner-drop settlement, durable business failure without
+process failure, and an unjoined callback preventing dependency cleanup. Production
+startup no longer enqueues a control job. Its process-level case checks liveness,
+withheld readiness and successful SIGTERM cleanup across actual HTTP requests.
+Full workspace/two-toolchain and fresh
+agent/review acceptance remain separate requirements; see the current validation
+entry for what actually executed.

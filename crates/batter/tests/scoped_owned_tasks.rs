@@ -18,6 +18,8 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::{Instrument, instrument::WithSubscriber};
 
+#[path = "scoped_owned_tasks/command.rs"]
+mod command;
 #[path = "scoped_owned_tasks/filtered.rs"]
 mod filtered;
 

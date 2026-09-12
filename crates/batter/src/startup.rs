@@ -10,11 +10,10 @@
 //! that a finite command has finished. A supervisor with neither critical
 //! components nor finite-work capacity reports
 //! [`crate::lifecycle::ShutdownCause::EmptySupervisor`], even if cleanup succeeds.
-//! For a standalone command, run bounded work and then explicitly await
-//! [`crate::cleanup::CleanupStack::close`], retaining both outcomes. Dropping
-//! that command or its cleanup future can abandon finalization. Configuring
-//! finite-work capacity supports component-free process supervision, but does
-//! not turn this initializer into an independently owned command/cleanup scope.
+//! For a standalone command, use [`crate::command::Command`] to retain finite
+//! work and its registered finalizers independently of borrowed waiters.
+//! Configuring finite-work capacity supports component-free process supervision,
+//! but does not turn this initializer into a finite-command owner.
 
 mod driver;
 mod report;

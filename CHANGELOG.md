@@ -8,9 +8,41 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Pin native runtime dependencies to pushed Git revision `d57ec6be61e9f00ccce373b19ca356cafe98f206`
+  in both workspaces, removing the requirement for a sibling development checkout.
+- Capture finite-command interruption at the final poll before future destruction.
+  Distinguish native termination before initialization from process drain in
+  managed reports, and correct the reference root's empty-registry description.
+- Managed stop-control failures are published immediately, including later clock
+  tightening while native settlement remains pending.
+- The offline retirement CLI emits structured, redacted recovery facts and keeps
+  the cancellation job ID, original refusal facts and cleanup disposition.
+- Reference worker settings expose validated configuration rather than a native
+  supervisor builder. The composition root prepares and transfers native work to
+  managed registration; the configuration consumer test follows that ownership.
+
+- Native runtime integration now accepts `PreparedSupervisor`, an owned validated
+  launch value, instead of an arbitrary application closure. Registration rejection
+  and dropping an unstarted process cannot start native work. Native preparation
+  errors remain part of owned application startup and retain its cleanup report.
+
+- Add `command::Command` for finite callbacks with independently owned LIFO
+  finalization, concrete work results, retained panic/cleanup outcomes and optional
+  absolute total reservation. Command cancellation stays below the parent and
+  cannot cancel cleanup. Migrate the UDP finite-command example to this owner.
+- Add adapter-facing managed component registration with library-owned native
+  initialization acknowledgement, independently retained settlement and cleanup
+  eligibility. Preserve reports after wrapper abortion, including native/future
+  failures. Anchor process shutdown phases to one first-stop timestamp. Native
+  adapter accepts inert native preparation and the reference root keeps readiness
+  unapproved until the delivery handler exists. Remove production startup-control
+  jobs, leases, owner epochs and reconciliation pools; preserve applied migrations.
+  Add explicit offline retirement with identity/quiescence checks, scoped native
+  cancellation and retained ambiguous outcomes. Linux acceptance includes the
+  production-root HTTP probe and retirement command on both supported toolchains.
 - Add `batter::settings` for explicit bounded sources, integer/duration parsing
   and redacted diagnostics. HTTP and reference roots own their schemas and native
-  constructors; live forty-case acceptance of those constructors remains pending.
+  constructors; current execution evidence is recorded in `docs/validation.md`.
 - Add the optional `batter-sqlx` PostgreSQL lease, probe and pool-close adapter,
   plus unpublished postgres-lifecycle and reference-service example packages.
   Isolated fixtures are opt-in under `batter-sqlx/test-support`; provisioning stays
@@ -21,8 +53,8 @@ contracts, capability facts and validation history.
   spans are filtered.
 - Add component-ownership comparisons and HTTP/1.1 transport/lifetime suites on
   the shared Unix process harness.
-- Add the `finite_command` example. Service startup and finite-command cleanup
-  remain separately awaited.
+- Add the `finite_command` example; finite work and service startup have distinct
+  owned lifecycle entrypoints.
 - Add `ShutdownCause::FiniteTaskExit` for shutdown initiated by admitted finite
   task failures. `ComponentExit` remains specific to registered critical
   components. Downstream exhaustive matches must add the new variant; code that
@@ -82,7 +114,8 @@ contracts, capability facts and validation history.
   remain unchanged.
 - Record local verification and HTTP SIGTERM smoke results in
   [validation](docs/validation.md). Optional adapter live cases have Linux
-  evidence; the combined forty-case reference live inventory remains pending.
+  evidence; the current 58-entry reference inventory and separate maintenance
+  probe pass on both supported toolchains.
 
 ## 0.1.0 — MVP source snapshot — 2026-09-07
 

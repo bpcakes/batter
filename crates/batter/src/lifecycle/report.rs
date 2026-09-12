@@ -1,4 +1,4 @@
-use super::{ShutdownCause, TaskOutcome, TaskRecord};
+use super::{ManagedRecord, ShutdownCause, TaskOutcome, TaskRecord};
 use crate::cleanup::CleanupReport;
 
 /// Complete process report, including teardown failures and unreaped work.
@@ -19,6 +19,9 @@ pub struct ShutdownReport {
     pub cause: ShutdownCause,
     /// Directly joined tasks, in observation order.
     pub tasks: Vec<TaskRecord>,
+    /// Native initialization and descendant settlement retained independently of
+    /// direct wrapper joins. Pending settlement prevents dependency cleanup.
+    pub managed: Vec<ManagedRecord>,
     /// Successful finite tasks are counted instead of retained individually.
     pub completed_process_tasks: u64,
     /// Whether directly registered tasks remained after the drain phase.
@@ -41,6 +44,10 @@ impl ShutdownReport {
                 .iter()
                 .all(|task| task.outcome == TaskOutcome::Stopped)
             && self.abort_requested.is_empty()
+            && self
+                .managed
+                .iter()
+                .all(|record| record.outcome.is_success())
             && self.unjoined.is_empty()
             && self.cleanup.is_success()
     }
@@ -60,9 +67,17 @@ impl std::fmt::Display for ShutdownReport {
             .count();
         write!(
             f,
-            "shutdown {:?}: {failures} task failure(s), {} unjoined; {}",
+            "shutdown {:?}: {failures} task failure(s), {} unjoined, {} unsuccessful managed component(s), {} pending native settlement(s); {}",
             self.cause,
             self.unjoined.len(),
+            self.managed
+                .iter()
+                .filter(|record| !record.outcome.is_success())
+                .count(),
+            self.managed
+                .iter()
+                .filter(|record| !record.outcome.finished)
+                .count(),
             self.cleanup
         )
     }

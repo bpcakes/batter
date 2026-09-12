@@ -12,7 +12,7 @@ use std::sync::{
     Mutex, MutexGuard,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
-use tokio::sync::Notify;
+use tokio::{sync::Notify, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Shared {
@@ -32,6 +32,7 @@ struct AdmissionState {
     finite_active: usize,
     forced: bool,
     failed: bool,
+    stop_started: Option<Instant>,
 }
 
 impl AdmissionState {
@@ -45,7 +46,9 @@ impl AdmissionState {
         }
     }
 
-    fn request_drain(&mut self) {
+    fn request_drain(&mut self, started: Instant) {
+        let started = started.min(Instant::now());
+        self.stop_started = Some(self.stop_started.map_or(started, |old| old.min(started)));
         if self.readiness != Readiness::Stopped {
             self.readiness = Readiness::Draining;
         }
@@ -64,6 +67,7 @@ impl Shared {
                 finite_active: 0,
                 forced: false,
                 failed: false,
+                stop_started: None,
             }),
             published_readiness: AtomicU8::new(Readiness::Starting as u8),
             drain: CancellationToken::new(),
@@ -154,9 +158,13 @@ impl Shared {
     }
 
     pub(super) fn request(&self) {
+        self.request_since(Instant::now());
+    }
+
+    pub(super) fn request_since(&self, started: Instant) {
         {
             let mut state = self.lock();
-            state.request_drain();
+            state.request_drain(started);
             self.publish_readiness(&state);
         }
         // Waking arbitrary application futures must happen outside our mutex.
@@ -164,10 +172,38 @@ impl Shared {
         self.changed.notify_waiters();
     }
 
+    pub(super) fn stop_started(&self) -> Option<Instant> {
+        self.lock().stop_started
+    }
+
+    pub(super) async fn stop_before(&self, known: Instant) -> Instant {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if let Some(started) = self.stop_started().filter(|started| *started < known) {
+                return started;
+            }
+            changed.await;
+        }
+    }
+
+    pub(super) async fn phase_elapsed(&self, allowance: std::time::Duration) {
+        loop {
+            let started = self.stop_started().expect("phase wait follows drain");
+            let deadline = started.checked_add(allowance).unwrap_or_else(Instant::now);
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(deadline) => return,
+                _ = self.stop_before(started) => {},
+            }
+        }
+    }
+
     pub(super) fn force_cancel(&self) {
         {
             let mut state = self.lock();
-            state.request_drain();
+            state.request_drain(Instant::now());
             state.forced = true;
             self.publish_readiness(&state);
         }

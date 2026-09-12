@@ -54,9 +54,9 @@ cargo run -p batter --example finite_command
 ```
 
 The executable `startup::Startup` rustdoc shows a service handling a request
-before shutdown. `finite_command` instead owns one operation and separately
-awaits cleanup, retaining both results. Its failure/interruption modes and
-caller-cancellation limits are explained in [usage](../../docs/usage.md#finite-commands-and-separately-awaited-cleanup).
+before shutdown. `finite_command` uses `command::Command` to retain finite work
+and cleanup independently of borrowed waiters. Its failure/interruption modes and
+ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. This is an early foundation,
 not a production-validated release. MIT licensed.

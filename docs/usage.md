@@ -12,11 +12,12 @@ and keep application errors concrete.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
-For work that finishes without starting a service, the
-[finite-command example](#finite-commands-and-separately-awaited-cleanup)
-demonstrates a caller-owned path. It separately awaits work and cleanup and
-retains both outcomes, but dropping the outer future or cleanup waiter can
-abandon finalization. It does not provide the service path's owned driver.
+For finite work, use [`Command`](../crates/batter/src/command.rs) and the
+[finite-command example](#finite-commands-and-owned-cleanup). The command owner
+retains registered finalizers after callback errors, unwinding or work cancellation.
+Borrowed waiter cancellation changes no ownership; owner drop requests cancellation
+while finalization continues on the live runtime. Use `check_command` to interpret
+the complete work/cleanup result.
 
 The lower-level APIs remain available where an application needs a different
 ownership boundary, but their caller obligations are explicit: direct
@@ -188,14 +189,19 @@ supervisor. Its initializer is not a standalone acquisition/work/finalization
 owner. Do not enable unused capacity or register a dummy service just to avoid
 `EmptySupervisor` in a setup command.
 
-## Finite commands and separately awaited cleanup
+## Finite commands and owned cleanup
+
+Use `Command::new(work_context, cleanup_budget, callback).start()` for a finite
+operation. The callback receives a `CommandScope`: reserve a cleanup name before
+native acquisition and register the acquired resource immediately afterward,
+before another await. Returning an error with `?` still transfers control to
+owned finalization. The scope exposes a work context for nested native operations;
+its cancellation cannot travel upward to the parent context.
 
 The [finite-command example](../crates/batter/examples/finite_command.rs) binds a
 native loopback UDP socket, sends and receives one message, and releases the
-socket through an explicitly awaited cleanup stack. It reserves the cleanup
-name before acquisition and registers immediately after acquisition, before
-another await. Socket close is synchronous; for a dependency with native async
-close/flush, await that method inside the finalizer.
+socket through registered cleanup. It uses the library report and owner. Socket
+close is synchronous; a dependency's async close/flush belongs inside its finalizer.
 
 ```sh
 cargo run -p batter --example finite_command --locked
@@ -207,29 +213,30 @@ cargo run -p batter --example finite_command --locked -- --deadline
 ```
 
 The default succeeds; each injected failure/interruption exits unsuccessfully.
-`--cancel` and `--deadline` interrupt only after the resource is registered, then
-still await successful cleanup. The application-owned `CommandReport` retains
-the typed work result and full `CleanupReport`, including simultaneous failures.
-Only outcome/count summaries are printed at the `ExitCode` boundary. Returning
-early with `work?` before cleanup would lose finalization; projecting two errors
-into one message would lose their inspectable causes.
+`--cancel` and `--deadline` interrupt after resource registration and still await
+successful cleanup. `CommandReport` retains the concrete work result, independent
+future-destruction panic and all cleanup observations. A cleanup coordinator
+failure cannot replace the work result. `check_command(command.wait().await)`
+returns the report only when the complete command contract succeeds; failure
+retains the same report. Automatic report formatting omits cause/value contents.
+The example prints only outcome facts at an explicit `ExitCode` boundary.
 
-Command cancellation interrupts the current operation cooperatively, without a
-service drain phase. A Unix signal handler can call `OperationContext::cancel`
-and continue awaiting the command. Do not race and drop the whole command future
-in `select!`: that also abandons the code responsible for awaiting cleanup.
-Service drain instead withdraws admission before the later forced-cancellation
-phase, letting owned work finish under its configured allowances.
+`RunningCommand::cancel` interrupts work cooperatively, without a service drain
+phase. Cancelling a borrowed `wait()` has no effect; dropping the owner requests
+work cancellation while its coordinator finishes registered cleanup. A Unix signal
+handler can call `cancel` and await the retained report. Observers can await after
+owner drop. Work completion cancels its children before cleanup, while finalizers
+use an independent budget and must not capture work cancellation tokens.
 
-This finite command remains caller-owned throughout both phases. Dropping the
-outer future, cancelling its cleanup waiter, or unwinding past it can abandon
-asynchronous finalization. `Startup` does not own this path, and no asynchronous
-`Drop` or runtime/process-death guarantee is implied. The separate cleanup budget
-starts after work stops and adds to the work allowance; it deliberately does not
-inherit the cancelled or expired operation context. `reserve_finalization`
-partitions a total budget, but neither it nor reserving a cleanup name creates
-an independent cleanup owner. Database/provider interruption still cannot prove
-rollback, remote query termination, or absence of an external effect.
+`Command::new` starts the cleanup allowance after work stops. For an enclosing
+absolute total, use `Command::within(total_context, cleanup_budget, callback)`:
+it reserves the complete cleanup work plus abort-observation allowance before
+invoking work. Scheduling delay consumes the total, so expired cleanup is reported
+as skipped rather than extending the deadline. A value returned by a synchronous
+final poll after cancellation/deadline is preserved, with a separate interruption
+that prevents success. Runtime/process death and non-yielding threads cannot be
+repaired by ownership. Arbitrary spawned descendants and remote database/provider
+effects retain their actual contracts; this API does not prove they stopped.
 
 ## Reserve work and finalization budgets
 

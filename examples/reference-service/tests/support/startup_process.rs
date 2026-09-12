@@ -18,6 +18,10 @@ mod watchdog {
     pub struct StartupChild(FixtureChild);
     impl StartupChild {
         pub fn start(stage: &str, endpoint: &str) -> io::Result<Self> {
+            Self::start_at(stage, endpoint, "127.0.0.1:0")
+        }
+
+        pub fn start_at(stage: &str, endpoint: &str, bind: &str) -> io::Result<Self> {
             let (input, writer) = io::pipe()?;
             let mut command = Command::new(std::env::current_exe()?);
             command
@@ -25,7 +29,7 @@ mod watchdog {
                 .stdin(input)
                 .env_clear()
                 .env("DATABASE_URL", endpoint)
-                .env("BATTER_BIND", "127.0.0.1:0")
+                .env("BATTER_BIND", bind)
                 .env("BATTER_POOL_MAX_CONNECTIONS", "1")
                 .env("BATTER_POOL_ACQUIRE_TIMEOUT_MS", "20000")
                 .env("JOBS_WORKER_ID", "startup-signal")
@@ -81,7 +85,6 @@ pub fn child(stage: &str) {
     use batter_example_reference_service::{
         config::{ConfigMode, RootSettings},
         runtime::{self, RuntimeStartupFailure},
-        worker::UnlockOutcome,
     };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -91,6 +94,13 @@ pub fn child(stage: &str) {
             let settings =
                 RootSettings::from_process(ConfigMode::Serve, None, SettingsSource::default())
                     .unwrap();
+            if stage == "production" {
+                runtime::run(settings)
+                    .await
+                    .expect("clean production shutdown");
+                println!("startup-child:owned-cleanup-complete");
+                return;
+            }
             let error = runtime::run(settings)
                 .await
                 .expect_err("startup must drain");
@@ -103,13 +113,13 @@ pub fn child(stage: &str) {
             assert_eq!(startup.stage, stage);
             assert!(matches!(startup.cause, StartupCause::Draining));
             assert!(startup.cleanup.is_success());
-            assert!(failure.dependent_cleanup().unwrap().is_success());
-            if stage == "worker.witness" {
-                assert!(matches!(
-                    failure.worker().release.as_deref().unwrap().unlock,
-                    UnlockOutcome::Confirmed
-                ));
-            }
+            assert!(
+                startup
+                    .cleanup
+                    .records
+                    .iter()
+                    .any(|record| record.name == "postgres.pool")
+            );
             println!("startup-child:owned-cleanup-complete");
         });
 }

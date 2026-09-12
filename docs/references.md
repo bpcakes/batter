@@ -6,6 +6,18 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Pushed native source, 2026-09-12
+
+Verified the clean local Runledger checkout and remote HEAD with `git status`,
+`git log -1` and `git ls-remote origin HEAD`. Both identify
+[`d57ec6be61e9f00ccce373b19ca356cafe98f206`](https://github.com/bpcakes/runledger/commit/d57ec6be61e9f00ccce373b19ca356cafe98f206).
+Cargo fetched that Git source for core/postgres/runtime 0.12.0. The root and
+archived consumer manifests use the same revision without path patches; Cargo
+regenerated their lock entries. The native initialization/settlement and
+transaction-error contracts described below now have an immutable source identity.
+This source check does not itself establish runtime acceptance; executed checks
+and remaining limits are recorded under `batter-vly` in [validation](validation.md).
+
 ## HTTP fixture review follow-up: 2026-09-10
 
 The [Cargo dependency inheritance contract](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#inheriting-a-dependency-from-a-workspace)
@@ -1924,8 +1936,8 @@ worker host; the dependency graph did not change.
   are durable job outcomes rather than supervisor-loop failures.
 
 These semantics justify the explicit termination gate. The current outer drain
-allowance is fourteen seconds: ten native shutdown, one abort drain, two lease
-release and one scheduling margin. The startup witness is clamped before that
+allowance is twenty seconds: ten native shutdown, one abort drain, six runtime
+reconciliation close, two lease release and one scheduling margin. The startup witness is clamped before that
 complete reserve. Returned timeout or panic remains unproven
 transitive termination. An internal application owner retains and publishes the
 native join even after wrapper cancellation or Drop; only its observed successful
@@ -1959,3 +1971,797 @@ sources. No dependency revision changed.
 - [PostgreSQL termination protocol](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-TERMINATION): Terminate and client close are not a backend-exit acknowledgement; matches local sqlx-postgres 0.9.0 src/connection/mod.rs.
 - [Advisory lock functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS): unlock's boolean distinguishes removal from no lock held.
 - [Tokio 1.53.1 Unix Signal](https://docs.rs/tokio/1.53.1/tokio/signal/unix/struct.Signal.html): recv is cancellation-safe; a completed receive is consumed. The foundation now retains that fact during registration.
+
+## Late startup-control commit recheck, 2026-09-11 (batter-8q8.4)
+
+Rechecked the exact Runledger 0.12.0 revision
+`0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4`, SQLx 0.9.0 source revision
+`003b698e99e024f3621b8043a2426fde5b741171`, and PostgreSQL 18.6. No
+dependency revision changed.
+
+- Runledger's pinned
+  [standalone enqueue](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/src/jobs/queue/enqueue.rs)
+  awaits the INSERT before dispatching COMMIT. Cancellation while the INSERT is
+  lock-blocked therefore cannot produce a later committed row; the review's
+  original trigger was rejected.
+- SQLx's selected
+  [transaction implementation](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-core/src/transaction.rs)
+  clears its open flag only after the database commit future completes. Dropping
+  that future after COMMIT dispatch queues a rollback through the PostgreSQL
+  [transaction manager](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-postgres/src/transaction.rs).
+  The queued rollback follows the already-dispatched COMMIT and cannot undo it.
+- SQLx's PostgreSQL
+  [connection close](https://github.com/launchbadge/sqlx/blob/003b698e99e024f3621b8043a2426fde5b741171/sqlx-postgres/src/connection/mod.rs)
+  sends Terminate and closes the client transport. PostgreSQL's
+  [termination protocol](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-TERMINATION)
+  does not make that a server-backend exit acknowledgement or impose ordering on
+  the separate advisory-lock and successor sessions.
+- The deterministic live control uses a deferred constraint trigger, whose
+  execution is postponed to transaction end as documented for
+  [`CREATE CONSTRAINT TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html),
+  and identifies the exact blocking relationships with
+  [`pg_blocking_pids`](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-SESSION).
+  It observes the predecessor backend blocked in COMMIT and a distinct successor
+  backend blocked in catalog synchronization only after the successor's initial
+  stale scan. Releasing the gate commits the old row after that scan. Continuous
+  owner reconciliation cancels it while excluding the current witness; removing
+  that production call makes the live regression time out.
+
+The initial repair did not infer ownership from UUIDv7 order, but its exact-job
+exclusion alone was insufficient once a delayed reconciliation outlived the lock
+session. The review-loop repair below supersedes that assumption.
+
+## Startup-control ownership fencing recheck, 2026-09-11
+
+Research preceded the review repair and used the same pinned Runledger 0.12.0,
+SQLx 0.9.0 and PostgreSQL 18 graph.
+
+- PostgreSQL documents that [`idle_session_timeout`](https://www.postgresql.org/docs/18/runtime-config-client.html)
+  terminates an idle session and warns about pooled connections. Session advisory
+  locks are released at session end, while their application meaning remains
+  application-defined ([advisory-lock functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS)).
+  A lock check followed by destructive work on another session therefore is not
+  a durable ownership proof.
+- PostgreSQL [`nextval`](https://www.postgresql.org/docs/18/functions-sequence.html)
+  is atomic and returns distinct values across concurrent sessions. Its values
+  are not rolled back, so gaps are expected and harmless for an ordering fence;
+  it requires `USAGE` or `UPDATE` on the sequence. The application migration
+  uses the default cache of one, and lock acquisition obtains `nextval` on the
+  exact advisory-lock session before publishing the epoch. The same configured
+  database role was already used by the prior pooled call, so the session move
+  adds no privilege requirement. Every new startup-control payload stores the
+  value; missing legacy values are epoch zero.
+- PostgreSQL [`pg_dump`](https://www.postgresql.org/docs/18/app-pgdump.html)
+  includes sequence values in its data section by default. The operational
+  contract therefore requires logical restores to keep the startup-control rows
+  and owner-epoch sequence together; partial restores that reset one side are
+  unsupported.
+- PostgreSQL [`statement_timeout` and `lock_timeout`](https://www.postgresql.org/docs/18/runtime-config-client.html)
+  bound the dedicated reconciliation session. SQLx's
+  [`PoolOptions`](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolOptions.html)
+  acquisition timeout covers pool acquisition phases, not arbitrary executed SQL,
+  while [`Pool::close`](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+  waits for checked-out connections. SQLx also documents that an incomplete
+  close can leave remaining connection disposal to an internal task and that
+  client-side drop need not promptly inform PostgreSQL. The implementation
+  consequently uses server query bounds, lets SQLx test a returned runtime
+  connection before reuse, and supplies a separate six-second close allowance;
+  only completion proves close before lease release, while the epoch
+  fence remains authoritative after a timeout.
+- PostgreSQL does not define [`WHERE` expression evaluation order](https://www.postgresql.org/docs/18/sql-expressions.html#SYNTAX-EXPRESS-EVAL)
+  and can reorganize Boolean predicates. The epoch filter therefore cannot rely
+  on `job_type` being checked before a fallible text-to-integer cast. Its `CASE`
+  expression casts only JSON numbers to PostgreSQL `numeric`; missing or other
+  JSON types remain legacy epoch zero. PostgreSQL documents both
+  [`CASE` short-circuit selection](https://www.postgresql.org/docs/18/functions-conditional.html#FUNCTIONS-CASE)
+  and `jsonb` numbers' mapping to native `numeric` in its
+  [JSON type rules](https://www.postgresql.org/docs/18/datatype-json.html).
+- The pinned Runledger
+  [failure-completion path](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker/completion.rs)
+  treats a cancellation race as a completion-persistence failure for that job;
+  it does not return it as a supervisor-loop failure. A late lower-epoch control
+  can therefore consume one attempt before reconciliation without killing the
+  worker or authorizing the current witness. The application no longer claims a
+  no-claim barrier.
+- The pinned Runledger
+  [`worker_loop`](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/worker.rs#L100-L205)
+  polls immediately, then waits the configured full polling interval after an
+  empty claim. Its native validation requires a nonzero interval but does not
+  relate that value to an application witness. A delayed predecessor retry can
+  therefore wait one complete poll before its next claim. The application must
+  reserve retry delay + poll interval + scheduling margin inside its witness;
+  this is an application composition rule, not a Runledger guarantee.
+- The pinned baseline migration already supplies
+  [`idx_job_queue_type_status_created`](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/migrations/202603280001_runledger_baseline.up.sql)
+  on `(job_type, status, created_at DESC)`, so the periodic candidate scan is not
+  an unindexed full-table predicate. The added payload epoch remains a residual
+  filter over those candidates.
+
+Lease monitoring and reconciliation now race independently. Reconciliation owns
+one lazy connection outside the application pool, each pass is bounded, and a
+confirmed pool close precedes advisory-lease release. After a reconciliation
+failure initiates native shutdown, lease monitoring continues through the native
+join and that pool close; any later lease failure remains a supplemental typed
+cause. Because the complete
+read/cancel operation is idempotent—including readback of a cancellation whose
+acknowledgement was lost—the application explicitly authorizes two consecutive
+retries without error-string classification. A third consecutive failure stops
+the critical worker and retains the final concrete cause; any successful pass
+resets the streak.
+
+## Agent-consumer lifecycle redesign: research closure (2026-09-11)
+
+Owning Bead: `batter-gi4`. These are source-backed design decisions for the
+pending redesign, not claims that the new APIs or their acceptance tests exist.
+The native checkout inspected is Runledger
+`50620137e36aab2333213fa8d8e51a095484e6eb`; the reference still pins
+`0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4`. No dependency was changed by this
+research. Existing witness-contract sections above describe the current code.
+
+### Initialization, health and execution are distinct observations
+
+Native [SupervisorBuilder::build](https://github.com/bpcakes/runledger/blob/50620137e36aab2333213fa8d8e51a095484e6eb/runledger-runtime/src/supervisor.rs)
+validates configuration before spawning the enabled loops, but exposes no
+per-loop initialization acknowledgement. Native loops have explicit local
+initialization boundaries: worker validation and `WorkerLoop::new`; promoter
+validation and registered-type collection; scheduler validation; reaper validation,
+registry ownership and observer-set construction. Their subsequent normal passes
+can perform database mutations. An empty worker registry waits without claiming.
+
+Decision: add instance-local acknowledgement at those boundaries, before each
+loop's first processing pass. Disabled loops contribute no required acknowledgement.
+Serialize stop/failure and final acknowledgement so stopped startup cannot revive.
+Initialization need not wait for queue activity or a successful database operation.
+This does not promise that every loop waits at a global barrier before processing;
+one initialized loop can already run while another initializes.
+
+Production readiness combines native initialization, fresh dependency health and
+explicit application approval. The reference must withhold approval while its
+business handler is absent. A successful dependency query cannot prove job claim,
+handler or commit correctness. Exercise that complete path in isolated acceptance
+tests; do not recreate a production startup-control protocol to claim such proof.
+Runtime progress monitoring, if later required, needs its own explicit contract.
+
+### Native descendant settlement cannot be inferred by an adapter
+
+Native [worker observers](https://github.com/bpcakes/runledger/blob/50620137e36aab2333213fa8d8e51a095484e6eb/runledger-runtime/src/worker/observers.rs)
+own nested running callbacks as well as terminal callback tasks. Several Drop
+paths request abort and then release the running callback's join handle. Terminal
+shutdown can exhaust its abort-drain wait and only log unresolved tasks. Reaper
+observer shutdown has the same log-only unresolved outcome. Consequently, merely
+changing the outer supervisor's return type cannot establish descendant termination.
+
+[Tokio JoinHandle](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)
+(resolved to 1.53.1 when checked) documents that dropping a handle detaches its task,
+and abortion is a request whose completion must be observed. Joining a parent does
+not join its independently spawned descendants. Decision: native settlement must
+retain observation of its owned descendant set independently of loop-future
+destruction, including running callbacks. Report the initiating cause, later
+settlement errors, requested abortions and remaining unjoined work. Batter retains
+that settlement observation independently of the registered wrapper and uses it
+in its cleanup decision. Unknown termination never becomes clean by default.
+
+The report covers a finite settlement episode and its initiating cause, not an
+unbounded history of every completed job or best-effort notification. Ordinary
+business failures remain native durable outcomes. Preserve all causes within the
+declared settlement scope; do not silently truncate errors to achieve a memory cap.
+
+[TaskTracker 0.7.19](https://docs.rs/tokio-util/0.7.19/tokio_util/task/task_tracker/struct.TaskTracker.html)
+can witness destruction of tracked futures, but `close` does not prevent new
+spawns and Drop does not abort tasks. It therefore cannot replace ownership,
+admission closure, typed result retention and bounded joining by itself.
+
+### Finite commands need an owner, not another deadline helper
+
+The current `crates/batter/examples/finite_command.rs` explicitly requires callers
+to keep polling its outer future through cleanup. `OperationContext::reserve_finalization`
+creates two descendants of the same cancellation token; it neither shields cleanup
+nor arranges for cleanup to execute. Process admission also requires a running,
+ready service and does not end that service when one command completes.
+
+Decision: use the existing owned-startup coordinator pattern for a separate finite
+command entrypoint. Validate before invoking an inert factory; retain registered
+resources, work outcome and LIFO cleanup in the coordinator. A cancelled borrowed
+waiter has no ownership effect; dropping the command owner requests cancellation
+while a live runtime continues bounded finalization. Returning with `?` from the
+work callback cannot bypass cleanup. Native acquisition cancellation and remote
+effects retain their actual contracts; no arbitrary detached-task joining follows.
+
+### Budgets start at transitions and include nested settlement
+
+Native [TaskGroup](https://github.com/bpcakes/runledger/blob/50620137e36aab2333213fa8d8e51a095484e6eb/runledger-runtime/src/task_group.rs)
+adds an abort-drain allowance of up to one second after its graceful deadline.
+Worker observers separately allow twenty seconds of terminal drain and a bounded
+abort drain in production. A ten-second outer graceful limit can therefore abort
+the worker before its observer allowance ends. The native drive loop also listens
+to its supplied external future separately from the native shutdown handle;
+requesting only the latter does not itself select the bounded external-stop branch.
+
+Decision: make first-stop state and its absolute deadline authoritative across
+request paths. Repeated requests and delayed polling cannot restart the allowance.
+Nested phases consume that budget, with explicit abort/join reserve. Cleanup uses
+its own owner and allowance after work settlement; it does not inherit work
+cancellation. Sequential phase allowances add; concurrent components consume a
+shared interval. Validate any enclosing total and reserve before starting work.
+Remove witness retry/poll timing relationships when removing the witness. These
+are phase constraints, not a general scheduling or budget-solving framework.
+
+### Legacy controls have an offline retirement boundary
+
+[PostgreSQL advisory locks](https://www.postgresql.org/docs/18/explicit-locking.html#ADVISORY-LOCKS)
+belong to a session or transaction; release of the dedicated lock session does
+not prove a separate enqueue session has stopped. PostgreSQL
+[backend signaling](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL)
+also distinguishes a successfully sent signal from confirmed termination:
+`pg_terminate_backend` with zero timeout only acknowledges sending.
+
+Decision: retire controls offline, after stopping old producers and preventing
+restart. Verify their actual sessions and transactions have ended on the intended
+server before scanning; a free advisory lock or application-name-only snapshot
+is insufficient. If that precondition cannot be established, do not cancel rows
+under a claim of completed retirement. Cancel only matching nonterminal controls
+through native cancellation, retain terminal history and applied migrations, and
+leave the harmless sequence in place. Test a delayed enqueue on a separate session
+to ensure retirement cannot declare success while it can still commit.
+
+### Evidence still required
+
+The design choices above are resolved; implementation correctness and agent
+usability are not established by research. Deterministic tests must exercise
+acknowledgement/stop races, wrapper and waiter loss, nested callback abortion,
+combined errors and non-resetting budgets. Live tests must cover durable execution
+and offline retirement orderings. Fresh agents must independently integrate and
+then modify the public path against hidden failure scenarios. Record execution
+results before claiming that the redesign improves review/fix convergence.
+
+## Agent-consumer follow-up: remaining boundary decisions (2026-09-12)
+
+Owning Bead: `batter-gi4`. This follow-up inspects the current uncommitted
+implementation as well as the sources above. It records design decisions, not
+completed implementation or new acceptance results. The root now has development
+path patches for the three native packages in `../runledger`; the preceding
+research entry's statement that dependencies were unchanged is historical.
+
+### Register a native launch value rather than arbitrary application code
+
+The draft `crates/batter-runledger/src/lib.rs::register` accepts a closure returning
+a live native supervisor. A caller can construct that supervisor before calling
+`register` and capture it in the closure. The function's type accepts this even
+though it violates the documented no-work-before-registration contract. Duplicate
+registration then drops an already-running native owner. This is a concrete
+remaining agent-consumer footgun, not evidence that the managed driver is wrong.
+
+Native `runledger-runtime/src/supervisor.rs` already separates validation from
+its private `start` operation, but its public builder borrows a pool and `build`
+immediately spawns. Decision: expose an owned, validated, inert native launch
+value, produced by `SupervisorBuilder::prepare`. Its fields remain private; it
+owns cloned native handles and configuration, never a running task. Preserve
+`build` as the existing convenience path through preparation and start. The
+canonical Batter adapter consumes the inert value and invokes native start only
+inside managed ownership. Do not replicate the native builder in Batter or ask
+application agents to write the managed settlement protocol.
+
+Acceptance must include dropping preparation, duplicate registration and dropping
+an unstarted process with zero native task starts. A compile-fail consumer must
+be unable to pass a live supervisor or a closure in place of the launch value.
+This constrains native construction, not arbitrary side effects in user-written
+handler constructors or destructors.
+
+### Keep the first cause, but allow a deadline to become earlier
+
+The current native `shutdown.rs` stores `(started, cause)` together in `OnceLock`.
+`task_group/report.rs` computes its two deadlines once. Consider parent drain at
+t=0, native failure at t=1, and delayed adapter propagation of the parent stop at
+t=2: `request_shutdown_since(t=0)` currently retains t=1. The parent still bounds
+its own observation and skips uncertain cleanup, so this is not proof of false
+clean termination. It does mean native settlement can exceed the interval the
+adapter claims to share with its parent.
+
+Decision: preserve the initiating native cause separately from the authoritative
+deadline. A received earlier enclosing deadline may tighten the native deadline;
+no request may extend it. Deadline changes must wake an already-running settlement
+wait and affect both graceful and abort observation. Merely replacing `OnceLock`
+with a minimum timestamp without changing the already-created sleeps is
+insufficient. Native stop observation must also carry its timestamp into the
+parent, rather than starting a fresh parent interval when the event is polled.
+Add deterministic tests for both propagation orders, a tightening during each
+phase, repeated later requests, and retention of the original native failure.
+
+### Retire the known legacy producer through native admission policy
+
+The native API already supplies a narrower durable control than another custom
+queue trigger: `update_job_definition` can set only `is_enabled = false` while
+retaining other definition fields. Its disable guard rejects active schedules.
+Native [enqueue](https://github.com/bpcakes/runledger/blob/50620137e36aab2333213fa8d8e51a095484e6eb/runledger-postgres/src/jobs/queue/enqueue.rs)
+requires an enabled definition and holds a shared row lock during insertion.
+The actual old root uses additive `JobCatalog::sync_definitions`; that
+[pinned implementation preserves a stored disabled state](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-runtime/src/catalog/sync.rs).
+Consequently, disabling the exact legacy definition serializes with that native
+enqueue path and its normal startup sync cannot simply re-enable the producer.
+This is an inference for the inspected producer/version, not protection against
+arbitrary SQL writers, exact catalog sync or an administrator re-enabling it.
+
+Decision: make native definition disable part of the offline retirement path,
+then use `cancel_job_with_scope` for only the legacy type's nonterminal rows.
+Preserve cancellation events, attempts, terminal rows, applied migrations and
+the sequence. Missing definitions are an idempotent absence, not a reason to
+create a fake handler/catalog. Do not use the exact-sync API with an empty
+catalog: that public API explicitly rejects empty catalogs. Resolve uncertain
+cancellation acknowledgement by reading actual state and retain the original
+failure; a partial batch must never be reported as complete.
+
+The separate offline precondition remains necessary: deployment tooling owns
+stopping old producers and revoking their restart authority. Database credentials,
+process names and an advisory-lock snapshot cannot establish that fact. The
+retirement entrypoint must not claim deployment completion from a caller-provided
+boolean. It verifies database identity, actual old session/transaction absence
+and the native disabled definition; its report states exactly those observations.
+Provisioning and deployment orchestration remain outside Batter.
+
+There is an additional transaction case: PostgreSQL
+[PREPARE TRANSACTION](https://www.postgresql.org/docs/18/sql-prepare-transaction.html)
+detaches a transaction from its session while retaining its locks and allowing
+later commit. Therefore, session disappearance cannot prove there is no later
+commit. Check the target database's
+[pg_prepared_xacts](https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html)
+and refuse completion while any prepared transaction remains; do not guess which
+ones are harmless or roll them back automatically. In the native enqueue path,
+the retained definition lock can also make disable wait: bound that wait and
+report it rather than treating timeout as successful retirement.
+
+Rejected shortcuts are now explicit. `NOLOGIN` does not disable privileges used
+through another login's [role membership](https://www.postgresql.org/docs/18/role-membership.html).
+`ALLOW_CONNECTIONS false` blocks ordinary new database connections but is not a
+proof that existing producers stopped; PostgreSQL 18.6's
+[database command implementation](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/dbcommands.c)
+also rejects setting it from the target database itself. Adding a global database
+maintenance controller would exceed this example's retirement responsibility.
+
+Required live scenarios are a delayed enqueue on a separate session, a prepared
+enqueue whose client exited, restarted additive catalog sync preserving disable,
+a cancellation with uncertain acknowledgement, and unchanged domain/terminal
+rows. The existing task-owned PostgreSQL 18.6 server was read-only checked during
+this follow-up and has `max_prepared_transactions = 0`; that configuration does
+not execute the prepared-transaction scenario. Run that case on a separately
+provisioned disposable PostgreSQL 18 cluster with two-phase transactions enabled.
+
+### External source changes cannot inherit root-only verification receipts
+
+Cargo's [patch mechanism](https://doc.rust-lang.org/cargo/reference/overriding-dependencies.html)
+supports the sibling development sources; the lockfile does not fingerprint
+their working contents. Jig's pinned revision
+`10a3dc9ae63547b09a48b05a463495bce2101f37` rejects parent-directory input globs in
+`crates/jig/src/repository/affected/tests.rs`. Its `docs/public-contract.md`
+explicitly excludes arbitrary external changes from repository freshness.
+Adding `../runledger/**` to the root's exhaustive inputs is therefore invalid.
+
+Decision for this uncommitted development phase: force the required Rust targets
+when producing final evidence, record both repositories' relevant source content
+identities before and after execution, and run with native source writers stopped.
+A mismatch invalidates the run. Root receipt freshness alone cannot authorize
+reuse while these path patches are active. Do not build a new Jig attestation
+subsystem or vendor a second runtime to conceal the boundary. The eventual
+versioned native dependency cutover is separate from this no-commit task.
+
+### Scope and the remaining empirical question
+
+Keep native task accounting in Runledger, managed process/command ownership in
+Batter, translation in the optional adapter, and application schema/health/handler
+approval in the reference root. A production startup control job adds a durable
+protocol to answer a local initialization question and stays removed. The missing
+business handler continues to withhold readiness approval.
+
+Research resolves those responsibilities; it cannot establish review convergence.
+Fresh agents must integrate and then modify the public path without private
+implementation explanations. Evaluate against independently authored ownership,
+deadline, readiness and failure-retention scenarios. Record semantic failures and
+repair rounds, including reviewer disagreement. A smaller diff or a clean final
+review alone is not evidence that a new agent can use the API correctly.
+
+## Retirement research closure against the draft (2026-09-12)
+
+Owning Bead: `batter-gi4`. This follow-up inspected the uncommitted retirement
+draft and executed narrowly scoped PostgreSQL experiments. It does not establish
+that the retirement command works: its live acceptance remains outstanding.
+
+### Unknown activity must prevent completion
+
+PostgreSQL's [statistics visibility contract](https://www.postgresql.org/docs/18/monitoring-stats.html#MONITORING-STATS-VIEWS)
+exposes the existence, user and database of other sessions to ordinary roles,
+while hiding other fields. The [18.6 implementation](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/adt/pgstatfuncs.c)
+places backend type behind statistics permissions. The draft filters with
+`backend_type = 'client backend'`; SQL excludes a hidden NULL value.
+
+Executed on the task-owned PostgreSQL 18.6 primary: one acknowledged session ran
+`pg_sleep`, while a separate connection used `SET ROLE pg_read_all_settings`.
+That role observed the first session's database, user and application name but a
+NULL backend type. Both connections exited normally; no role or schema was changed.
+This reproduces the predicate's undercount, not a complete retirement invocation.
+
+Decision: do not interpret unknown activity as absence. Refuse retirement for
+other target-database backends unless their type is visible and explicitly
+non-producing, such as an autovacuum worker. Unknown types, client sessions and
+parallel execution remain blockers. Do not automatically grant privileges, kill
+sessions or infer authority from an application name. Check before mutation and
+again at completion. A restricted-role live control must exercise the actual
+retirement path, not merely repeat the corrected predicate in a test.
+
+### Prepared transactions require a separate observation
+
+PostgreSQL [PREPARE TRANSACTION](https://www.postgresql.org/docs/18/sql-prepare-transaction.html)
+retains transaction state independently of the originating connection, including
+locks. [pg_prepared_xacts](https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html)
+is the appropriate database-scoped observation; an empty client-session set is
+insufficient.
+
+Executed on a separate disposable PostgreSQL 18.6 container, with networking
+disabled and `max_prepared_transactions=10`: commit fixture schema first, then
+hold a definition row `FOR SHARE`, insert a job and prepare the transaction. After
+that client exited, independent SQL observed one prepared transaction, zero other
+clients and zero visible jobs. Definition disable failed with a 100 ms lock
+timeout. Explicitly committing that known fixture transaction exposed one job;
+disable then succeeded and no prepared transactions remained. The disposable
+container was stopped and removed.
+
+Two exploratory attempts did not prove this sequence: the first contacted the
+image's temporary initialization server; the second accidentally included fixture
+DDL in the prepared transaction and received a missing-relation error. The final
+probe waited for PID 1 to be the final postgres server, committed DDL separately,
+and asserted the actual lock-timeout and before/after counts. Only that final
+probe supports the lock-ordering result. This is a PostgreSQL semantic experiment,
+not execution of Runledger's enqueue or the retirement command.
+
+Decision: check prepared transactions before disable, so existing prepared work
+produces an explicit refusal instead of merely exhausting the command budget.
+Keep the post-disable check for races. Never resolve unknown prepared transactions
+automatically. Native enqueue/disable ordering still needs its own live acceptance.
+
+### A one-slot pool does not pin a maintenance session
+
+SQLx 0.9.0 [pool options](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/options.rs)
+and the locally resolved `sqlx-core-0.9.0/src/pool/inner.rs` permit replacement
+connections. Disabling idle/max-lifetime retirement does not prevent replacement
+after a broken socket. `after_connect` errors close the new connection, log the
+error and enter a retry loop. Therefore the draft's initial identity query plus
+`max_connections(1)` does not establish identity for subsequent operations.
+
+Decision: use a direct PostgreSQL endpoint; the mutating maintenance owner must reject physical-session replacement
+after its first verified connection, with bounded acquisition and retained typed
+diagnostics. Do not rely solely on the acquisition hook's logged error or forward
+raw database errors into that log. After connection loss, stop mutation; optional
+readback uses a separately identity-verified, read-only connection. Never replay a
+cancellation automatically. Cluster system identifier plus database OID identifies
+the database lineage, not a unique physical replica; maintenance also requires a
+stable intended endpoint and excludes failover during the operation. This remains
+example-owned maintenance policy, not a new Batter connection manager.
+
+### Publish the primary failure before optional reconciliation
+
+The inspected native `runledger-postgres/src/jobs/admin/recovery.rs` maps cancellation
+begin/commit SQLx errors to `Error::ConnectionError(error.to_string())`. Its missing
+job path also logs and discards rollback failure. The native error model already
+has `QueryError::source_arc` and `from_query_sqlx_with_context`; preserving a
+returned native error in Batter cannot recover causes already discarded upstream.
+
+The retirement draft has a second independent loss point: after receiving a native
+cancellation error, it awaits readback before returning that error. Command
+cancellation during that await destroys both the readback future and its captured
+original error. The command owner preserves returned work outcomes, not every
+intermediate value in an application future.
+
+Decision: repair source retention and secondary rollback failure in the native
+cancellation path. Return and publish the retirement command's primary failure,
+including job identity and acknowledged progress, before optional reconciliation.
+Readback is a separate read-only operation against an already retained primary
+report. A missing readback remains explicitly unobserved; it never upgrades the
+primary failure to success. Do not add an application error side channel, a generic
+failure journal, or another cleanup coordinator to compensate for this ordering.
+Acceptance must interrupt reconciliation after the primary report is published
+and prove that the original native/SQLx cause remains inspectable.
+
+### Keep absence and compiler feedback accurately classified
+
+Native disable returns absence without inserting a definition. If a definition is
+absent, a later old additive catalog sync could insert it enabled. Accordingly,
+`DefinitionState::Absent` is an observation, not a durable disabled tombstone.
+Deployment restart revocation remains required in both absent and disabled cases;
+only an existing disabled row has the inspected additive-sync preservation property.
+Do not introduce a fake handler or silently claim a stronger database admission
+guarantee for absence.
+
+The draft's return type `Command<RetirementReport, RetirementError>` also failed
+`cargo check -p batter-example-reference-service --all-targets --locked --quiet`:
+the implemented inert specification is `Command<F>`, while its running owner and
+reports use result/error generics. This is confirmed consumer/API naming friction,
+not evidence of a runtime ownership defect or repeated review failure. Correct the
+consumer against the actual public factory signature and include returning an
+inert specification from a helper in fresh-agent acceptance. Do not redesign the
+foundation solely to make this one incorrect annotation compile.
+The annotation was corrected to return an opaque factory implementing the public
+`CommandFuture` contract. The same all-target check and package formatting check
+then passed on Rust 1.98.1. This corrects compilation only; it does not validate
+the retirement behavior or close the operational gaps above.
+
+The remaining design choices are settled. Implementation and acceptance remain:
+repair the concrete gaps above, execute native and retirement fault scenarios,
+then evaluate independent agent integration/modification and full review repair
+convergence. More documentation cannot substitute for those results.
+
+## Shared-join notification ownership (2026-09-12)
+
+The resolved futures-util 0.3.34 package identifies upstream source commit
+`705e6b5c0f06535b1aac1cb1989a172b3d45be8c`. Its
+[Shared implementation](https://github.com/rust-lang/futures-rs/blob/705e6b5c0f06535b1aac1cb1989a172b3d45be8c/futures-util/src/future/future/shared.rs)
+wakes registered wakers while holding the notifier mutex; dropping a registered
+Shared observer also locks that mutex. A native registry waker that owns the
+registry containing that observer can therefore destroy it recursively during
+notification when the waker holds the final registry reference.
+
+This was observed, not merely inferred: a focused callback probe reached runtime
+destruction with one worker blocked in Shared::drop. Its GDB stack showed
+Notifier::wake_by_ref -> registry ArcWake/drop -> RegistryInner/Entry destruction
+-> Shared::drop -> the same notifier mutex. The process was explicitly terminated
+after diagnosis; it was not counted as passed. A regression independently checks
+that a pending notification does not retain the registry, keeping the old registry
+alive during test cleanup to avoid hanging the regression itself. It failed before
+the fix and passed afterward. The callback live probe and all 233 native runtime
+library tests also pass after the wake signal was separated from registry ownership.
+This is a correction in native descendant observation; adapters and application
+agents acquire no additional joining or cleanup obligation.
+
+
+## Native newer-Clippy baseline (2026-09-12)
+
+The supplemental Rust 1.98.1 strict native Clippy run reports 18 `result_large_err`
+diagnostics for the existing runtime error enum (maximum variant 160 bytes).
+The same command against an untouched archive of native HEAD
+`50620137e36aab2333213fa8d8e51a095484e6eb` reproduces all 18 diagnostics with the
+same size. Native strict Clippy on exact Rust 1.94.0 passes. Both toolchains compile
+and pass native library/doctest/cancellation tests; Batter's required complete
+workspace matrices and strict Clippy pass on both.
+
+Clippy's [upstream change #17130](https://github.com/rust-lang/rust-clippy/pull/17130),
+merged June 2, 2026, extended `result_large_err` and `result_unit_err` to async
+functions. That explains why this existing representation is newly diagnosed;
+it does not demonstrate a new allocation, lost error, or lifecycle failure.
+The [official configuration](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#large-error-threshold)
+documents the default 128-byte threshold. We preserve native source compatibility
+rather than redesign the existing error payloads solely for this supplemental
+newer-compiler lint. No lint threshold or assertion was relaxed. The exact failed
+commands remain in validation evidence; strict native 1.98.1 Clippy is not claimed.
+
+## Native review boundary decisions, 2026-09-12
+
+The pinned SQLx 0.9.0 pool implementation exposes `begin_with`, allowing owned
+cancellation to start with `BEGIN ISOLATION LEVEL READ COMMITTED` in the same
+native transaction. PostgreSQL 18's [SET TRANSACTION contract](https://www.postgresql.org/docs/18/sql-set-transaction.html)
+and [connection defaults](https://www.postgresql.org/docs/18/runtime-config-client.html)
+confirm that a plain BEGIN inherits a configurable session isolation level.
+The revised cancellation path establishes READ COMMITTED explicitly; it does not
+modify the session default. A PostgreSQL 18.6 trigger oracle rejects cancellation
+unless that actual transaction is READ COMMITTED, while the connection remains
+configured SERIALIZABLE. This test failed before the change.
+
+The native review also traced terminal-observer admission refusal to intentional
+running-observer abortion. Its cancelled join must not initiate process failure.
+Pre-stop interruptions are counted to keep history bounded; shutdown-time aborts
+retain their joins. Uncaught panics and unexpected cancellations remain fatal,
+and older Result drivers must retain that cause rather than return false success.
+Handler timeout, caught panic and lease-maintenance failure are interruptions even
+when the outer worker task joins successfully. Their settlement classification
+must reflect that distinction; returned business errors remain durable outcomes.
+Tests keep an actual application child alive at the native report boundary and
+then join it independently, separating native task completion from transitive
+application settlement.
+
+## Remaining native design questions, 2026-09-12
+
+Native full review pass two used stable fingerprint
+`785bb346d7ca1c3e65faf6a751c108068b51c16d1b2902c64309946fe5da80a3`.
+Its open questions were resolved against the actual consumer and failure contracts:
+
+- Active observation belongs to the native driver. A regression let a descendant
+  panic after the driver began waiting, withheld its separate join waiter, and
+  reproduced the driver hanging. All Result entrypoints now drive shared registry
+  observation; an application agent needs no supplementary watcher. Both actual
+  supervised-worker destructor-panic integration cases pass through `join` and
+  `run_until_shutdown`.
+- A caught reaped-observer destructor panic had become an ordinary wrapper result.
+  The report incorrectly approved cleanup. The outer catch now records the original
+  panic as a callback failure before returning its typed normal wrapper output.
+- Callback interruption cannot establish that arbitrary application children
+  stopped. Historical interruption facts therefore permanently prevent cooperative
+  cleanup and overall shutdown success for that runtime instance. Durable business
+  failures remain separate. A joined configuration error permits cleanup but still
+  fails shutdown; callers must use the appropriate predicate.
+- The native Result API is a loop-observation compatibility path, not proof that
+  every descendant has completed aborting. Dependency owners use the complete report.
+  Handle-requested `run_until_shutdown` now has the same bounded drain behavior as
+  its external signal path; this deliberate behavior change is documented and tested.
+- One completion previously caused 256 unnecessary polls of 128 unrelated pending
+  joins. Per-entry notifications remove that scan. Their wakers retain only a signal,
+  and the signal queue retains weak waker references, preserving the proven absence
+  of a Shared-notifier/registry destruction cycle.
+- A separate exhausted-budget fixture found zero of 256 already-finished tasks.
+  The resolved Tokio 1.53.1 [JoinSet source](https://docs.rs/tokio/1.53.1/src/tokio/task/join_set.rs.html)
+  harvests nonblocking joins through `unconstrained`; the native task set now follows
+  that approach for join observation only, never for application future polling.
+- PostgreSQL 18 explicitly supports isolation characteristics in
+  [BEGIN](https://www.postgresql.org/docs/18/sql-begin.html). SQLx 0.9.0 sends the
+  supplied statement through its transaction manager. There is no evidence here
+  that the cancellation helper needs a second abstraction to accommodate a proxy
+  rewriting that statement. [PgBouncer's feature contract](https://www.pgbouncer.org/features.html)
+  distinguishes session and transaction pooling from statement pooling, which
+  disallows multi-statement transactions. No live PgBouncer compatibility claim
+  is made. Reusing the older two-statement helper would also inherit its different
+  rollback-error contract; that is not a valid reason to weaken the new cancellation
+  boundary.
+
+New report types remain exhaustive in this change. The review's future source-
+compatibility observation is below the configured medium repair threshold; it is
+not a current lost-error or cleanup defect. Adding new variants or fields later
+requires an explicit compatibility decision, as with other public native types.
+
+## Best-effort callback destruction, 2026-09-12
+
+The next native review found a remaining callback-boundary inconsistency. Four
+worker-observer regressions failed before repair: timeout and explicit abortion,
+both before and during stop, let a future's destructor panic escape into a fatal
+native descendant join. Reaped observers happened to catch timeout destruction
+at an outer poll boundary; that was not a shared callback ownership contract.
+
+The resolved futures-util 0.3.34
+[CatchUnwind implementation](https://github.com/rust-lang/futures-rs/blob/705e6b5c0f06535b1aac1cb1989a172b3d45be8c/futures-util/src/future/future/catch_unwind.rs)
+protects polling. It does not protect destruction of the wrapper itself. Native
+observers and dead-letter hooks now use one private callback owner that catches
+polling and synchronous future destruction, including destruction caused by a
+native timeout or task abortion. Original polling and later destruction failures
+are both retained. This adds no asynchronous Drop/finalization guarantee and does
+not claim that application-created detached children stopped. Unexpected main
+job-task failures remain fatal; best-effort callback interruption still disqualifies
+cooperative cleanup. The process panic hook and existing native diagnostics retain
+their documented behavior.
+
+Eight running/terminal-observer controls now pass. Separate hook tests retain both
+poll plus destruction failures and timeout plus destruction failures. The earlier
+reaped test now requires both the timeout and its destructor failure; its former
+single-fact expectation was strengthened after the shared owner made both causes
+observable. A passing join never erases that callback interruption evidence.
+
+## Native registry overhead probe, 2026-09-12
+
+An external microbenchmark on a shared Linux development host (not an isolated
+performance environment) compiled the current registry and shutdown sources
+against Rust 1.98.1, Tokio 1.53.1 and futures-util 0.3.34 in release mode. Each case
+ran 10,000 yielding tasks five times with alternating baseline/registry order;
+values below are median nanoseconds per task. The registry variant includes a
+concurrent active shutdown/descendant observer. The baseline uses native JoinSet.
+
+| Runtime threads | Concurrent tasks | JoinSet | Registered plus active observer | Added time |
+| --- | --- | --- | --- | --- |
+| 1 | 64 | 492 ns | 1,444 ns | 952 ns |
+| 1 | 256 | 557 ns | 1,678 ns | 1,121 ns |
+| 4 | 64 | 1,066 ns | 4,472 ns | 3,406 ns |
+| 4 | 256 | 618 ns | 3,483 ns | 2,865 ns |
+
+The ownership/observation work has a measurable cost; it is not zero-cost task
+wrapping. This bounded probe also executes registry observation concurrently with
+join harvesting on four threads. It does not measure real queue/database throughput,
+latency tails, or application callbacks, and is not a production capacity claim.
+The design retains this accounting: it supplies the required ownership and failure
+observations, and the deterministic regression independently prevents the former
+quadratic unrelated-join scan. No high-throughput worker target is being claimed
+or used to justify another abstraction.
+
+Harness, generated lockfile and output are in `/tmp/batter-gi4-registry-bench/`;
+`active-observer-release.log` is the final measurement. The copied registry differs
+only in its module-source path annotation. Initial direct-rustc setup failed to
+select compatible cached artifacts; an external Cargo workspace resolved the exact
+dependency graph instead. Earlier debug and passive-observer timings are exploratory
+and are not the measurements above. The native repository source was not changed
+by the benchmark.
+
+
+## Transaction-control classifications and CLI recovery, 2026-09-12
+
+A deferred PostgreSQL constraint trigger can fail when COMMIT runs; it need not
+fail the earlier mutation statement. PostgreSQL 18 documents that timing in
+[SET CONSTRAINTS](https://www.postgresql.org/docs/18/sql-set-constraints.html).
+The live regression deliberately raises SQLSTATE 23514 from a deferred constraint
+trigger; it does not claim that ordinary CHECK constraints are deferrable.
+The resolved SQLx 0.9.0 `sqlx-core/src/transaction.rs` propagates its transaction
+manager's commit error. The hosted docs endpoint was unavailable during this
+recheck, so the exact Cargo-resolved source was inspected locally instead.
+
+The old native cancellation boundary fed begin/commit errors through the ordinary
+statement classifier. Actual tests reproduced `db.query_failed` for a closed
+pool at BEGIN and `db.business_rule_violation` for the deferred COMMIT rejection.
+Preserving the SQLx cause alone did not make that API sensible for agents branching
+on stable codes. The existing typed classification mechanism now supplies fixed
+internal `TransactionBeginFailed` / `TransactionCommitUnconfirmed` kinds and
+`db.transaction_begin_failed` / `db.transaction_commit_unconfirmed` codes.
+SQLSTATE and original SQLx sources remain available for trusted diagnosis; these
+codes do not establish rollback or authorize replay. Statement classification and
+caller-owned transaction contracts remain separate.
+
+The operator CLI now carries the retained facts across its final output boundary:
+JSON includes stage, refusal kind, target identity, quiescence counts, cancellation
+job ID, earlier acknowledged cancellations, sanitized native classification and
+cleanup disposition. Session-replacement wrappers preserve their original facts.
+Native error text is omitted. The actual executable rejects wrong identity, emits
+repeated absent-definition success, and gives structured usage failures. Library
+readback stays separate from the primary outcome and cannot turn it into success.
+
+The managed failure-publication regression similarly exposed an ownership-boundary
+error: a caught repeated-stop panic remained local until potentially unfinished
+native settlement. Publishing at the shared catch point preserves it in the frozen
+process report. The regression first failed with zero retained failures and passes
+with the original payload visible before settlement finishes; later completion
+never restarts skipped cleanup. No new application-level coordination protocol was
+introduced for either repair. Executed results are in [validation](validation.md).
+
+## Final descendant harvest and remaining contract questions, 2026-09-12
+
+Notification-driven observation and a final settlement check have different needs.
+An external scheduling probe paused a collector immediately after taking the ready
+queue: a real Tokio task was already finished before another snapshot began, yet
+that snapshot reported one unjoined task. The probe restored the held notifications
+and awaited the actual task before its failed assertion. After repair the same
+probe reports zero unjoined tasks. Evidence is in
+`/tmp/batter-gi4-harvest-probe-{red,green}.log`; the temporary harness copies the
+native registry, changes only its report-module path, and adds the scheduling probe.
+
+Collectors now acquire registry state before taking the queue. Shutdown boundary
+checks additionally inspect each finished handle once, independently of queued
+notifications, and removal wakes registered waiters. Ordinary observation still
+polls only notified joins. This avoids replacing a lost-notification defect with
+an unbounded notification-drain loop or restoring the earlier quadratic scan on
+normal task completion. Tests cover all three boundary consumers, the original
+shared panic, delayed notification delivery without duplicate records, and the
+existing zero-unrelated-repoll control. A shared join concurrently being polled
+by another owner can still be pending; bounded reporting cannot await arbitrary
+non-yielding execution beyond its allowance.
+
+The remaining native questions do not change the chosen ownership contracts.
+Rust 1.98.1's [`Error::source`](https://doc.rust-lang.org/std/error/trait.Error.html#method.source)
+returns one optional cause, so `RollbackFailure` exposes the primary operation in
+that chain and retains both operation and rollback in public typed fields. The
+CLI inspects both explicitly without rendering native diagnostics. The cancellation
+classifier stays inside its owned READ COMMITTED transaction, whose statement
+snapshots follow [PostgreSQL 18's isolation contract](https://www.postgresql.org/docs/18/transaction-iso.html).
+This avoids a second pool acquisition; it does not promise a single transaction-wide
+snapshot. Caller-owned workflow transactions retain their existing caller-owned
+commit/rollback contract. Batter's actual `register_managed` factory requires `Send`
+and captures `PreparedSupervisor`, so the compiled adapter already enforces that
+transfer property. Earlier interrupted application callbacks remain permanently
+insufficient proof of dependency quiescence; durable business success does not
+establish that detached children stopped.
+
+## Remove the remaining settings launch shortcut, 2026-09-12
+
+The reference's public `WorkerSettings::builder` still returned the native builder,
+and its README directed application agents to that convenience method. The
+configuration consumer then called immediate `build()`, dropped the resulting
+supervisor and closed its pool without observing settlement. This was a remaining
+application-level route around the intended ownership boundary, despite the
+adapter's rejection of already-live supervisors.
+
+Worker settings now return validated `JobsConfig` data only. The existing consumer
+passes that data through native preparation and `batter_runledger::register`,
+observes initialization, and awaits a successful managed shutdown. No alternate
+settings-level launch wrapper was added. The production root already used this
+prepared path, so its lifecycle policy is unchanged. The focused consumer test
+passes in its cleared-environment child. The independent `InitializationFailure`
+redaction/source regression was restored verbatim from the preserved index; its
+type remains, even though the surrounding old worker tests were retired.
+
+Other review questions retain the established scope: the reference's 20-second
+startup deadline includes native initialization, and ownership handoff does not
+claim readiness. A late native initializer fails and drains without approval;
+starting a new independent allowance would exceed its parent. Native schema
+compatibility explicitly checks public tables and trigger functions in
+`runledger-postgres/src/migrations.rs`, matching retirement's pinned search path.
+The legacy producer used a global submission and no schedule; retirement leaves
+unknown tenant-scoped rows alone and refuses a definition with an active schedule
+rather than reporting success. Deployed-version quiescence remains an external
+maintenance precondition, not a fact inferred from this binary's empty registry.

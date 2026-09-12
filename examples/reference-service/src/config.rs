@@ -184,13 +184,14 @@ impl RootSettings {
                 }
             }
         };
+        let worker = WorkerSettings::from_values(&values, mode == ConfigMode::Serve)?;
         Ok(Self {
             bind,
             request_budget,
             bulkhead_capacity: capacity("BATTER_BULKHEAD_CAPACITY")?,
             process_capacity: capacity("BATTER_PROCESS_CAPACITY")?,
             pool: PoolSettings::from_values(&values)?,
-            worker: WorkerSettings::from_values(&values, mode == ConfigMode::Serve)?,
+            worker,
             endpoint,
             authenticator,
         })
@@ -242,6 +243,7 @@ impl RootSettings {
         })
     }
 }
+
 impl fmt::Debug for RootSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("RootSettings([REDACTED])")

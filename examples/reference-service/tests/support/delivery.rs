@@ -55,7 +55,18 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> RootSettings {
 fn app(settings: &RootSettings, pool: PgPool) -> Router {
     let handle = ShutdownHandle::new();
     handle.mark_ready();
-    router(settings, handle, pool).expect("validated settings build the router")
+    let second = std::time::Duration::from_secs(1);
+    let monitor = batter::health::HealthMonitor::new(
+        batter::health::HealthPolicy::new(
+            second,
+            second,
+            std::time::Duration::from_secs(3),
+            second,
+        )
+        .unwrap(),
+        || async { Ok::<_, std::convert::Infallible>(()) },
+    );
+    router(settings, handle, pool, monitor.reader()).expect("validated settings build the router")
 }
 
 async fn request(

@@ -1,0 +1,20 @@
+[package]
+name = "batter-runledger"
+description = "Owned Runledger initialization and native descendant settlement for Batter"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+batter.workspace = true
+runledger-runtime.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }

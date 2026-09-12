@@ -129,7 +129,7 @@ shutdown. Completion captures whether drain had started; a later drain cannot
 reclassify an earlier successful critical exit as expected. There is no restart.
 Application `mark_ready` arms readiness: Ready requires a running driver plus
 every registered critical component's `mark_started` acknowledgement after
-actual initialization. Acknowledgement is an application assertion, not an
+actual initialization. For direct `register`, acknowledgement is an application assertion, not an
 inspection of its internal descendants. Forgotten acknowledgement leaves Starting.
 
 The [component ownership comparisons](../crates/batter/tests/component_ownership.rs)
@@ -141,6 +141,61 @@ The library cannot inspect hidden children or automatically skip cleanup because
 they exist. Joining only the wrapper does not establish transitive termination.
 Separate comparisons retain early-success failure, concrete task and cleanup
 errors together, and native panic/abort JoinErrors with skipped finalizers.
+
+`register_managed` is the adapter-facing path for a native runtime with its own
+descendants. Name validation and the absolute startup context precede factory
+invocation. An Err factory result asserts that validation rejected construction
+before spawning native work; adapter implementations must enforce this. The
+factory transfers initialization observation, native stop observation/control and
+the complete native settlement driver together. Batter acknowledges initialization,
+observes early native stop to drain peers, and retains the settlement owner outside
+the direct waiter. A successful initialization poll is acknowledged only after
+its future is destroyed and the startup context is rechecked; a returned error
+remains intact if cancellation also occurs. Application readiness approval and dependency health remain
+separate. No durable startup job is required by this protocol.
+
+Before initialization, observed native stopping or settlement records
+`ManagedInitialization::Stopped`; process drain records `Draining`. Native
+termination still drains peers and retains its settlement and failures separately.
+
+The supported native adapter accepts `PreparedSupervisor` from native
+`SupervisorBuilder::prepare`, rather than arbitrary caller factories. Preparation
+validates configuration and owns cloned handles without starting tasks. A live
+supervisor cannot cross this registration boundary; rejection and unstarted drop
+do not launch native work. Preparation errors propagate through owned application
+startup and its registered cleanup. Adapter tests include compile-fail controls
+for live supervisors and closures, plus runtime task-count observations.
+
+`ShutdownReport.managed` freezes each component's observed initialization,
+original typed native report, additional failures and pending settlement at the
+end of bounded observation. Wrapper abortion cannot discard the only native driver.
+Any pending settlement, native refusal of cooperative dependency release, or
+panic prevents finalizer execution. A component observer can retain a late report;
+it never changes the frozen process outcome or runs skipped finalizers afterward.
+Original initialization errors, polling/destruction panics and later native reports
+coexist. Every caught stop-callback panic is published before waiting for native
+settlement, including callbacks for later clock tightening. A pending native
+report cannot hide an already-observed callback failure. Default managed diagnostics omit their contents. The adapter's native
+ownership/classification contract remains necessary; Batter cannot discover
+arbitrary hidden tasks. [Managed contracts](../crates/batter/tests/managed_components.rs)
+exercise actual Tokio descendants and controlled failures. Native adapter/live
+execution is recorded in [validation](validation.md). A panicking third-party stop
+callback can leave retained native settlement pending; the bounded process report
+retains the failure and skips cleanup, without fabricating native termination.
+
+Drain, cancellation and abort/reap use consecutive absolute boundaries anchored
+at the first recorded process stop, including requests before driver polling.
+Repeated requests and delayed phase observation cannot restart the allowance.
+The native managed budget uses the parent's drain interval for native graceful
+shutdown and its cancellation interval for native abort/join; parent abort/reap
+remains available for final observation. The idempotent stop callback receives
+the earliest known parent timestamp and returns the earliest native/enclosing
+timestamp. An earlier native stop tightens the process clock; Batter propagates
+later discoveries to components already settling. Active drain/cancel/reap waits
+wake on tightening. The native first failure cause stays separate and is never
+overwritten by a clock update. Concurrent components share these intervals rather than each
+adding new process time. Cleanup uses its own budget after settlement. This does
+not preempt a non-yielding task or make runtime death recoverable.
 
 Readiness only moves forward: Starting may become Ready or Draining, Ready may
 become Draining, and coordinator completion publishes Stopped. Stopped cannot
@@ -379,6 +434,41 @@ around run_until and then describe the result as completed graceful shutdown.
 Drive its own phased protocol and inspect the report. A process watchdog may
 terminate an unresponsive binary, but no cleanup guarantee survives that action.
 
+## Owned finite commands
+
+`Command::new` is inert; `start` retains the callback, its work context and
+registered LIFO cleanup independently of waiters. Command cancellation stays
+below the supplied parent context. Returning an error with `?`, factory/poll
+unwinding or cancelling work still reaches registered finalization. Original
+work results actually returned by a poll, late boundary interruptions,
+future-destruction panics and cleanup
+outcomes coexist in `CommandReport`. A failed cleanup coordinator cannot erase
+the work result. `check_command` interprets the complete contract, and the shared
+report warns when implicitly discarded. Formatting excludes value/cause contents.
+
+Command interruption is captured at the final poll before destroying the work
+future. Cancellation or deadline expiry during destruction cannot reclassify
+completed work; destruction panics and cleanup failures still make the report
+unsuccessful. This differs from startup readiness, which requires a live context
+after initializer destruction before acknowledging readiness.
+
+Cancelling borrowed waiters has no effect. Dropping `RunningCommand` requests
+work cancellation; observers retain completion without keeping that owner alive.
+Work completion cancels child contexts before cleanup. Finalizers must use their
+native independent cleanup, not captured work cancellation tokens. Resources are
+registered through validated reservations; no takeable stack lets the canonical
+scope silently relinquish finalization. Unregistered resources and arbitrary
+spawned tasks remain outside this future/cleanup ownership contract.
+
+`Command::new` gives cleanup its own allowance after work stops. `Command::within`
+reserves cleanup's total work and abort-observation allowance inside an enclosing
+absolute deadline. Work and cleanup cannot restart that total. Scheduling delays
+can consume the reserve and produce explicit skipped hooks. Neither variant can
+preempt non-yielding code, undo remote effects or finalize after runtime death.
+Published reports survive runtime destruction; an observer whose monitor died
+before publication cannot fabricate a completed report. Tests in `tests/command`
+cover these ownership/budget distinctions; the finite example exercises native UDP.
+
 ## Owned startup contract
 
 `Startup` initializes a running supervisor, not a standalone finite command.
@@ -432,44 +522,34 @@ initialization; the initializer must keep polling the borrowed receive future.
 Tokio changes process-wide signal disposition and does not restore it on listener
 drop.
 
-Standalone commands can await `OperationContext::run` and then separately await
-`CleanupStack::close`, preserving both outcomes. The `finite_command` example
-covers returned work/cleanup errors and post-acquisition cancellation/deadline.
-Its cleanup budget starts after the operation finishes and adds to that work
-allowance, independent of operation cancellation. Cancellation interrupts command
-work immediately at the cooperative operation boundary, without service drain;
-the caller must continue driving the cleanup phase. Dropping the command or its
-cleanup future, unwinding, or losing the runtime can abandon that phase. Native
-resource Drop is not an awaited finalization report. Cleanup reservation validates
-a name, and `reserve_finalization` partitions time; neither creates a separate
-owner. No remote database termination or rollback guarantee follows.
+Standalone finite commands use `Command` to retain work and cleanup independently
+of the caller's waiter. The lower-level `OperationContext::run` and
+`CleanupStack::close` remain separately driven operations; composing them manually
+does not create an owned finalization driver. No remote database termination or
+rollback guarantee follows from either local completion report.
 
 For supervised services, `check_shutdown` accepts only a successful shutdown
 report; failures retain the complete report, including forced abort, skipped
 cleanup and unjoined work, or the original coordinator error. Its redacted
 formatting does not inspect those causes.
 
-Example-owned dependency cleanup driven after that report treats direct
-panic/abort outcomes, abort requests and unjoined tasks as unsafe even when the
-Batter cleanup stack was empty and therefore had no skipped record to inspect.
-The reference worker owns preparation independently from the first lease
-acquisition. Caller cancellation requests stop but cannot cancel its settlement.
-Dependency cleanup waits for preparation and native observation; native uncertainty
-still skips finalizers. A bounded release records server-confirmed unlock, no lock
-held, query failure/unavailability or timeout separately from local client closure.
-Only an actual server answer supports an unlock claim; client closure never proves
-backend exit. Native cooperative stop remains a separate fact from release success.
-Startup and process failures retain WorkerSettlement and late dependency reports,
-including after an outer cleanup-hook timeout. Runtime loss and task panic can
-leave remote outcomes unconfirmed; no async Drop or detached-descendant join follows.
+The reference root uses owned startup and managed native settlement. Installed
+Unix signals cover initialization before its first await and transfer to the
+running driver. Native loop acknowledgement, fresh PostgreSQL sampling and
+application readiness approval are separate facts. The native registry is empty
+until a delivery handler exists; application readiness remains unapproved.
+Production starts no durable control job, advisory-lock owner or reconciliation
+pool. The startup allowance is 20 seconds. Process drain, cancellation and reap
+allowances are ten, one and one seconds, followed by separately bounded pool
+cleanup. Native graceful/abort settlement consumes the same process stop clock.
 
-Installed Unix signals cover the reference initializer before its first await.
-Completed InstalledSignals::received reception is remembered, and successful
-registration requests drain without another signal. The reference reserves one
-14-second worker stop allowance: 10 seconds native shutdown, up to one second
-native abort drain, two seconds release and one second scheduling margin. Before
-native construction, temporary preparation-pool close plus lease release can use
-four seconds within that reserve. Dependency cleanup has its own subsequent budget.
+Applied legacy migrations and the owner-epoch sequence remain intact. The separate
+finite retirement command requires explicit database identity and operational
+quiescence, disables the exact legacy definition and cancels only its nonterminal
+jobs through native APIs. It preserves history and domain rows. Independent
+readback can clarify a lost commit acknowledgement but never replaces or erases
+the original command failure. Retirement is not run by service startup; its
+fixture acceptance is not evidence of a deployment retirement.
 
 ## Dependency health sampling
 
@@ -961,3 +1041,28 @@ passwords; fixture URL parsing must not select an ambient passfile. Query spaces
 retain their meaning in both native clients. Parser regressions model the
 harness's normalization and database-path replacement; they do not establish
 live authentication or TLS.
+
+## Offline legacy retirement
+
+The reference's finite retirement command verifies expected cluster/database
+identity on one direct PostgreSQL session, rejects replacement of that session,
+and requires no other target-database client or unknown backend and no prepared
+transaction. These checks precede native definition disable and repeat before
+completion. It cancels only global nonterminal legacy controls through native
+Runledger policy. Applied migrations, sequence state and terminal/domain history
+remain. An absent definition is not a durable disabled tombstone.
+
+Deployment tooling must stop old producers and prevent restart before maintenance;
+the database report cannot establish that external fact. Native definition disable
+blocks the inspected enqueue path and is preserved by the inspected additive
+catalog sync, not arbitrary SQL or administrative re-enabling. Pool closure alone
+does not prove backend death. Connection loss, deadline expiry or cancellation
+never proves absence of remote effects or permits automatic replay.
+
+A returned cancellation failure is published with the owned command report before
+optional readback. The separate read-only command cannot overwrite that report;
+its cancellation leaves the primary cause inspectable. Scoped native cancellation
+retains SQLx begin/commit sources and a separately returned rollback failure.
+Reports cover returned outcomes, not every intermediate value inside a cancelled
+native future. Real commit rejection and interruption during readback are covered
+by PostgreSQL 18.6 probes; full redesign acceptance remains tracked separately.

@@ -1,78 +1,47 @@
 # Staged worker, reference delivery command and compatibility probes
 
 Unpublished, Unix-only application package. Its runnable root initializes the
-authenticated delivery command and hosts a probe-only Runledger worker as one
-Batter critical component. The control handler is witnessed through durable
-success, but the delivery handler is deliberately absent and application
-readiness remains unapproved until `batter-8q8.2` installs the real provider.
-The package also retains the compatibility and fixture probes created for
-`batter-4t6`.
-The [compatibility manifest](../../docs/reference-compatibility.md) records exact
-versions, API contracts, executed evidence and limits.
+atomic delivery command and registers native Runledger through `batter-runledger`.
+Native preparation is inert; Batter owns launch, initialization acknowledgement,
+settlement observation and dependency cleanup. The delivery handler is absent,
+so the native registry is empty and readiness remains unapproved until
+`batter-8q8.2` installs the real provider. No production startup control job runs.
+The [compatibility manifest](../../docs/reference-compatibility.md) records version
+contracts and execution evidence. The redesigned live inventory passes on Linux
+with both supported toolchains; review closure remains under `batter-gi4`.
 
 ## Staged worker and atomic delivery command
 
-Run the staged service with an explicit PostgreSQL endpoint, worker identity,
-owner and opaque bearer token. Startup executes `jobs.startup.control` through
-the probe registry and keeps driving the native supervisor, but it never claims
-`records.delivery.execute`:
+Run with an explicit PostgreSQL endpoint, worker identity, owner and bearer token:
 
 ```sh
 DATABASE_URL='postgres://service:password@127.0.0.1:5432/service?sslmode=disable' \
-JOBS_WORKER_ID='reference-probe' \
+JOBS_WORKER_ID='reference-worker' \
 BATTER_AUTH_OWNER_ID='00000000-0000-0000-0000-000000000001' \
 BATTER_AUTH_TOKEN='replace-with-an-opaque-token' \
   cargo run -p batter-example-reference-service --locked
 ```
 
-An optional positional settings-file path uses the literal format described
-below. Environment values override that file; no file is discovered implicitly.
-Startup applies the pinned Runledger migration history, the forward-only
-application history, the upstream compatibility check, and the handler-free
-`records.delivery.execute` producer definition. It then witnesses the control
-handler and hands off a running driver without approving application readiness.
-Consequently `/ready` and admission-protected business routes remain unavailable
-in this stage. Signal sources are installed before the first awaited pool acquisition and
-polled throughout schema, binding and worker preparation, then transferred to the critical signal component at
-handoff, so SIGTERM/SIGINT can still initiate owned startup cleanup.
+An optional positional settings-file path uses the literal format below.
+Environment values override that file; no file is discovered implicitly.
+Startup installs signals before the first awaited acquisition, applies native
+and forward-only application migrations, checks compatibility, synchronizes the
+handler-free delivery producer, binds HTTP and registers native preparation.
+Signals remain polled through initialization and transfer to the running driver.
+One 20-second startup allowance covers initialization. Shutdown has ten seconds
+of drain, one second of cancellation, one second of abort observation and separate
+bounded pool cleanup; native settlement shares those process intervals.
 
-The private control registry uses one dedicated PostgreSQL session advisory lock
-per database. A second staged probe host is rejected until the first native
-driver has completed and released its session; rolling overlap is intentionally
-not supported during a healthy lease. The owner checks that same session every
-second throughout database preparation and native execution, bounds each check
-to two seconds, and sets a session-local ten-second idle limit; loss requests
-native shutdown and remains an explicit unproven termination. A successor may
-acquire after server-confirmed session loss before that shutdown is observed, so
-each control handler accepts only its own witness generation. A predecessor that
-claims the successor's witness returns an authorized delayed retry instead of
-completing or terminally failing it. Each such retry consumes one durable
-attempt, so the control carries no finite attempt budget: the witness is bounded
-by its deadline alone, and stale controls are canceled by the next owner rather
-than dead-lettered by attempt exhaustion.
-Preparation runs under an independent owner before lease acquisition. Dropping
-its waiter requests cancellation while cleanup continues on the live runtime.
-The owner records bounded unlock and local closure separately; errors and timeouts
-remain unconfirmed release, and client close never proves backend exit. Inspect
-TerminationGate::settlement after dependency cleanup; preparation errors are shared
-through Arc so waiter loss cannot discard them. RuntimeStartupFailure and
-RuntimeShutdownFailure retain these outcomes alongside the outer and nested reports.
-One 14-second reserve includes native shutdown, abort drain, lease release and margin.
-
-BATTER_POOL_MAX_CONNECTIONS is the application pool limit. The control session
-adds one connection while running. Preparation temporarily adds a separate
-one-connection pool for the native catalog/cancellation/enqueue helpers; its
-connections close on return and it closes before native construction. This avoids
-SQLx return-to-pool checks waiting behind cancelled queries. Witness reads use
-PgLease disposition. These allocations do not bound residual remote sessions.
-Before enqueueing its unique witness, a new owner cancels every pending or leased
-control left by an earlier owner. An already-terminal cancellation race is
-accepted only after a readback proves its terminal state. A rejected Batter registration returns an
-error that retains the already-stopping host so its driver can still be awaited.
-Dropping an unstarted Batter supervisor also drops that registered owner, requests
-native shutdown and leaves the independent observer to publish completion.
-This staging contract requires a direct or session-sticky PostgreSQL connection;
-transaction-pooling middleware that reassigns sessions is unsupported.
+Native loop initialization requires no queue mutation or durable execution proof.
+Fresh PostgreSQL health comes from a separate bounded sample, and application
+approval remains withheld. Consequently `/ready` and admission-protected business
+routes remain unavailable in this stage. Nonterminal business jobs are not claimed
+by the empty native registry. Durable execution is tested only in isolated probes.
+The application pool limit includes native runtime and health usage; there are no
+extra production control/reconciliation pools. Applied legacy migrations and the
+owner-epoch sequence remain intact. Offline retirement passed fixture acceptance
+and explicit CLI execution; startup does not run it. This does not establish
+retirement of any deployed database.
 
 The authenticated routes are:
 
@@ -100,7 +69,7 @@ still settle does not prove rollback.
 
 `pending`, `in_flight`, `succeeded`, `dead_lettered`, and `cancelled` are a
 closed application projection of the locked Runledger status vocabulary. This
-command initially creates `pending` work only. The probe worker does not
+command initially creates `pending` work only. The native registry does not
 register the delivery type, so acceptance never means that an external effect
 succeeded.
 
@@ -116,10 +85,40 @@ loopback socket permissions and Unix subprocess permissions, including inside
 containers. Their IPv6 PostgreSQL protocol fixture owns its listener and requires
 no external database. Enable IPv6 before running the matrix; the test is mandatory.
 
+Offline legacy controls retire through `retirement::prepare` or the
+`retire_startup_controls` example. Stop old deployments and revoke restart first;
+use a direct PostgreSQL endpoint and the expected cluster identifier/database OID
+from the known deployment target. Production startup never runs retirement.
+
+```bash
+cargo run -p batter-example-reference-service --example retire_startup_controls -- \
+  "$EXPECTED_SYSTEM_IDENTIFIER" "$EXPECTED_DATABASE_OID" service.env
+```
+
+The command rejects a mismatched target, other client/unknown backends, prepared
+transactions and physical connection replacement. It disables the native legacy
+definition and cancels only its global nonterminal jobs through Runledger. Terminal
+history, domain rows, migrations and the epoch sequence remain. An absent
+definition is reported as absent; it is not a durable disabled tombstone.
+Failures remain failures even if later `retirement::readback` observes a cancelled
+job. Retain the primary command report before running that separate read-only
+command; cancelling readback cannot remove the already-published primary cause.
+The CLI emits one JSON object: successful reports go to stdout (exit 0), failures
+to stderr (exit 1). Keep that object. It includes the command stage, work/refusal
+kind, actual target identity, quiescence counts, prior cancellation count and
+cleanup disposition when available. Cancellation failures include `job_id`,
+`readback_attempted: false`, and sanitized native classification; a session-replacement
+wrapper retains these under `original`. Pass that job ID and the independently
+verified target to `retirement::readback`. Native SQL/error/panic bodies are never
+formatted by this projection. Setup failures give the fixed usage without printing
+configuration contents. JSON facts do not authorize retry or replace the retained
+library report. The report describes database observations, not deployment completion.
+
 For live probes, select **two dedicated disposable local PostgreSQL 18 servers**.
-The primary requires superuser authority, SCRAM host authentication and autovacuum
+The primary requires superuser authority, SCRAM host authentication,
+`max_prepared_transactions > 0`, and autovacuum
 with `track_counts` enabled and `autovacuum_naptime <= 5s`
-(use `postgres -c autovacuum_naptime=1s`). The
+(use `postgres -c autovacuum_naptime=1s -c max_prepared_transactions=10`). The
 secondary must be a different cluster for the wrong-server observation control
 and permit `pg_control_system()`; preflight rejects equal cluster identities.
 PostgreSQL 18.4 permits this by default; if access was revoked, grant
@@ -150,22 +149,24 @@ still supports IPv6. The live handoff canonicalizes selected host, database and
 TLS values and explicitly retains empty passwords so fixture parsing does not
 fall back to a passfile.
 
-The recorded forty- and 42-case live passes predate worker hosting. The current
-runner requires 54 entries (52 live probes and two offline signal entries), including command/reconciliation, configured-root,
-hosted-worker witness, exclusive probe ownership and lease loss, retained driver
-observation, drain, timeout and attempt-accounting cases; see validation for the distinction
-between compiled inventory and live execution evidence.
+Earlier live-suite results retain their historical scope. The current executable
+inventory is defined in `scripts/reference_live.py` and checked against the Rust
+target; its native initialization, ownership, durable execution, callback and
+business-failure cases replace the retired hosted-control protocol cases.
+All 58 runner entries (56 database and two offline signal cases), plus the
+separate maintenance-session probe, passed on both supported toolchains on Linux.
+Ordinary tests keep database cases ignored and run offline signal controls without
+PostgreSQL. See [validation](../../docs/validation.md) for exact execution scope.
 
-The external harness owns four kinds of lease cleanup, and each application pool
-closes before lease disposal. The runner checks prerequisites, requires all 54
-named entries to exist and run, and uses the existing bounded Unix process
-owner. Ordinary workspace tests ignore the 52 database cases, execute the two
-offline entries, and require no
-database. The failure injection locks a shared system catalog, so keep other
-workloads off the endpoint; the runner executes cases serially. A failed or watchdog-terminated run does not establish cleanup.
+The external harness owns lease cleanup and each application pool closes before
+lease disposal. The runner checks prerequisites and exact named results through
+bounded Unix process ownership. Database failure injection requires dedicated
+endpoints and serial execution. A failed or watchdog-terminated run does not
+establish cleanup.
 
 The original migration fixtures remain narrow compatibility probes. The staged
-root adds a probe-only worker host but no durable delivery provider. Reusable
+root starts native Runledger with an empty handler registry and withholds readiness
+approval until the delivery handler is implemented and verified. Reusable
 native pool/lease ownership comes from the optional
 `batter-sqlx/test-support` feature; template isolation and lock-operation probes
 exercise it without importing application policy into the adapter.
@@ -235,8 +236,11 @@ worker constructor then fails. Both modes validate every supplied setting.
 section validation to current probes without pretending they are serving roots.
 
 Use `request_policy`, `pool_options`, `connect_options_from_process`, `bulkhead`, `supervisor`
-and `worker().builder` directly at their native consumer boundaries. The returned
-native connection options can expose secrets through Debug and URL conversion.
+and `worker().jobs_config()` for validated native inputs. The composition root
+passes worker configuration to native `prepare()` and transfers the owned result
+to `batter_runledger::register`; settings expose no supervisor builder or live
+worker convenience API. The returned native connection options can expose secrets
+through Debug and URL conversion.
 The selected graph has no SQLx TLS backend: settings preserve requested modes,
 but TLS connection execution requires the application's native SQLx TLS feature;
 no TLS negotiation result is claimed. SQLx 0.9's URL formatter cannot represent

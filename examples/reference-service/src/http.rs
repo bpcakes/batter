@@ -23,8 +23,7 @@ use batter::{
     operation::{Interruption, OperationContext},
 };
 use batter_axum::{
-    HttpFailure, liveness, operational_http, readiness, render_infrastructure_failure,
-    request_admission,
+    HttpFailure, liveness, operational_http, render_infrastructure_failure, request_admission,
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -57,10 +56,26 @@ pub enum RouterBuildError {
 /// admission/deadline, then process-local database admission. Health endpoints
 /// stay outside those gates. The outer operational middleware supplies only
 /// server-generated diagnostics; it cannot select `OwnerId`.
-pub fn router(
+/// Production composition with fresh dependency health in addition to native
+/// initialization acknowledgement and explicit application readiness approval.
+pub fn router<E: Send + Sync + 'static>(
     settings: &RootSettings,
     handle: ShutdownHandle,
     pool: PgPool,
+    health: batter::health::HealthReader<E>,
+) -> Result<Router, RouterBuildError> {
+    let probes = Router::new()
+        .route("/live", get(liveness))
+        .route("/ready", get(batter_axum::dependency_readiness::<E>))
+        .with_state(batter_axum::ReadinessPolicy::new(handle.clone(), health));
+    router_with_probes(settings, handle, pool, probes)
+}
+
+fn router_with_probes(
+    settings: &RootSettings,
+    handle: ShutdownHandle,
+    pool: PgPool,
+    probes: Router,
 ) -> Result<Router, RouterBuildError> {
     let authenticator = settings.authenticator()?;
     let policy = settings
@@ -81,10 +96,6 @@ pub fn router(
         .layer(DefaultBodyLimit::max(REQUEST_BODY_MAX_BYTES))
         .route_layer(middleware::from_fn_with_state(policy, request_admission))
         .route_layer(middleware::from_fn_with_state(authenticator, authenticate));
-    let probes = Router::new()
-        .route("/live", get(liveness))
-        .route("/ready", get(readiness))
-        .with_state(handle);
     Ok(business
         .merge(probes)
         .fallback(|| async { StatusCode::NOT_FOUND })
@@ -408,7 +419,14 @@ mod tests {
         let pool = settings
             .pool_options()
             .connect_lazy_with(settings.connect_options_from_process().unwrap());
-        router(&settings, handle, pool).unwrap()
+        // Isolated business-route tests deliberately have no published health.
+        let second = Duration::from_secs(1);
+        let monitor = batter::health::HealthMonitor::new(
+            batter::health::HealthPolicy::new(second, second, Duration::from_secs(3), second)
+                .unwrap(),
+            || async { Ok::<_, std::convert::Infallible>(()) },
+        );
+        router(&settings, handle, pool, monitor.reader()).unwrap()
     }
 
     #[tokio::test]
