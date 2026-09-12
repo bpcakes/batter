@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     cleanup::CleanupStack,
+    completion::wait_published,
     operation::{Interruption, OperationContext},
     scoped_dispatch,
     startup::PanicPayload,
@@ -78,16 +79,9 @@ impl<T, E> CommandObserver<T, E> {
     /// Panics if runtime death destroys publication before a result exists;
     /// already published results remain observable after runtime destruction.
     pub async fn wait(&self) -> CommandOutcome<T, E> {
-        let mut completion = self.completion.clone();
-        loop {
-            if let Some(outcome) = completion.borrow_and_update().clone() {
-                return outcome;
-            }
-            completion
-                .changed()
-                .await
-                .expect("owned command monitor retains publication");
-        }
+        wait_published(self.completion.clone())
+            .await
+            .expect("owned command monitor retains publication")
     }
 }
 

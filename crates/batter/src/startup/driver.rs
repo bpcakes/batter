@@ -3,6 +3,7 @@ use super::{
     StartupError, StartupFailure, StartupFuture, StartupScope,
 };
 use crate::{
+    completion::wait_published,
     lifecycle::{
         InstalledSignals, Readiness, RunningSupervisor, ShutdownHandle, SignalRegistrationError,
         SupervisorObserver, install_reserved_signals,
@@ -52,16 +53,9 @@ impl<E> StartupObserver<E> {
     /// Panics if the runtime destroys the monitor before publication; no cleanup
     /// report can be fabricated after runtime death. Published results survive.
     pub async fn wait(&self) -> StartupOutcome<E> {
-        let mut completion = self.completion.clone();
-        loop {
-            if let Some(outcome) = completion.borrow_and_update().clone() {
-                return outcome;
-            }
-            completion
-                .changed()
-                .await
-                .expect("owned startup monitor retains publication");
-        }
+        wait_published(self.completion.clone())
+            .await
+            .expect("owned startup monitor retains publication")
     }
 }
 

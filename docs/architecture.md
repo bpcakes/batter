@@ -252,6 +252,11 @@ coordinator and publishes a retained report or JoinError. `start` creates the
 completion channel; only the monitor owns its sender. Completion observers come
 from `RunningSupervisor`, so every observer has an owned driver publisher.
 Shared readiness/admission state and `ShutdownHandle` carry no completion channel.
+Command, startup and process observers share one private snapshot-before-wait
+mechanism while retaining distinct public outcome types and boundary-specific
+runtime-loss diagnostics. Managed native observation remains separate because a
+closed publisher returns its last settlement snapshot instead of fabricating a
+terminal outcome or panicking.
 The lower-level `run_until` and `CleanupStack::close` remain cancellation-fragile when driven
 directly by callers. No guarantee survives termination of their Tokio runtime.
 

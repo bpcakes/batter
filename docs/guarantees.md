@@ -408,6 +408,11 @@ or coordinator error. The same applies to `RunningSupervisor::wait`/`shutdown`.
 An outcome published before runtime shutdown remains readable. Tests cover both
 the unpublished-monitor failure and a late observer retaining a published report;
 they do not establish cleanup or task termination after arbitrary runtime loss.
+Command, startup and process completion observers use the same private
+snapshot-before-wait mechanism. Their public outcome types and runtime-loss
+diagnostics remain separate. `ManagedObserver` is intentionally excluded: native
+settlement publication starts with a meaningful pending snapshot, and sender loss
+returns that last evidence rather than claiming completion or panicking.
 
 An unstarted `Supervisor` owns abandonment signaling from construction. Dropping
 it withdraws readiness, signals drain and forced cancellation, and wakes

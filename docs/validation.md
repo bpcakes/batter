@@ -2,6 +2,33 @@
 
 Latest evidence: 2026-09-12. Earlier sections retain their historical scope.
 
+## Retained completion publication core (DU-001), 2026-09-12
+
+Command, startup and process completion observers now delegate their identical
+snapshot-before-wait loop to one private helper. Each public observer retains its
+existing type, outcome, cancellation ownership and runtime-loss diagnostic.
+Managed native settlement observation remains separate because publisher loss
+returns its last snapshot instead of panicking. Direct unit controls prove that
+an already-published value is ready on the helper's first poll, a pending waiter
+observes later publication, and closure before publication returns an error.
+
+Local macOS arm64 acceptance from Git baseline
+`6f25e6476efd614b68cf884d0271707cbb36c6e8` and Cargo.lock SHA-256
+`13d5a89554eb34020d89b63855d00a64307b6e1711394e2603455f9850bc248e`
+passed on rustc/Cargo 1.98.1 (`48a229cea` / `797e8a9b`) and 1.94.0
+(`4a4ef493e` / `85eff7c8`):
+
+| Check | Executed result |
+| --- | --- |
+| `cargo test -p batter completion --locked` | PASS: the three new helper controls plus existing filtered completion cases. |
+| `bash scripts/verify.sh` on each toolchain | PASS: complete offline/workspace matrix, observer runtime-loss and retained-identity tests, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| HTTP example build plus five `scripts/smoke_http.py` profiles on each toolchain | PASS: ten executions covering SIGTERM, SIGINT, deadline, WARN filtering and WARN-filtered deadline. |
+| `scripts/jig check --profile verify` | PASS: all five targets, including `api:test`, formatting, strict Clippy, contract v9 and file-budget checks; run plan `run-plan_sha256:eefa68fdeff182b30c5b4df7c670de4f377db7630dac24ac09d5dce87acd6899`. |
+
+No dependency or lockfile change was needed. Live PostgreSQL was not required
+and was not executed. No new Linux, hosted, publication or deployment evidence
+is claimed.
+
 ## Constrained owned startup registration (batter-lp2.1), 2026-09-12
 
 `Startup::scoped` now projects a private-field `ProtectedStartupScope` over the

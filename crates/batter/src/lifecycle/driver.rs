@@ -1,5 +1,5 @@
 use super::{ShutdownHandle, ShutdownReport, Supervisor};
-use crate::scoped_dispatch;
+use crate::{completion::wait_published, scoped_dispatch};
 use std::{future::pending, ops::Deref, sync::Arc};
 use tokio::{sync::watch, task::JoinError};
 use tracing::Instrument;
@@ -164,18 +164,11 @@ impl SupervisorObserver {
     /// another runtime cannot recover that outcome. An already published outcome
     /// remains available after runtime shutdown.
     pub async fn wait(&self) -> DriverOutcome {
-        let mut completion = self.completion.clone();
-        loop {
-            if let Some(outcome) = completion.borrow_and_update().clone() {
-                return outcome;
-            }
-            // Only start constructs this channel. Its monitor owns the sender
-            // until publishing, independently of all owners and control handles.
-            completion
-                .changed()
-                .await
-                .expect("owned driver retains completion sender");
-        }
+        // Only start constructs this channel. Its monitor owns the sender until
+        // publishing, independently of all owners and control handles.
+        wait_published(self.completion.clone())
+            .await
+            .expect("owned driver retains completion sender")
     }
 }
 

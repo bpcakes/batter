@@ -40,6 +40,7 @@ pub mod settings;
 pub mod startup;
 pub mod telemetry;
 
+mod completion;
 mod scoped_dispatch;
 mod validation;
 

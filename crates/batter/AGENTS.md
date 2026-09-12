@@ -30,6 +30,8 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
 - `src/command.rs` and `command/` own finite callbacks and independently retained
   LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
+- `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
+  command, startup and process completion observers; their public policies stay separate.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined
   children with a nonconforming wrapper whose hidden child survives cleanup.
   `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;

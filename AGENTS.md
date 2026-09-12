@@ -98,6 +98,8 @@ read-only freshness snapshots and writer lifetime.
 parsing and redacted diagnostics; application schemas remain outside the foundation.
 `crates/batter/src/telemetry.rs` records outcomes without printing error contents
 and exposes `with_current_dispatch` for adapter-owned futures.
+`crates/batter/src/completion.rs` privately centralizes retained completion
+publication waits without merging command, startup or process outcome types.
 `crates/batter/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
 full inner-future destruction, without heap allocation.
 `crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter.
