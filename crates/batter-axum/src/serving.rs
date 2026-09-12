@@ -1,5 +1,9 @@
 use axum::Router;
-use batter::{RegistrationError, lifecycle::Supervisor};
+use batter::{
+    RegistrationError,
+    lifecycle::Supervisor,
+    registration::{Registration, RegistrationTarget},
+};
 use tokio::net::TcpListener;
 
 /// Register an already-bound native Axum server as a supervised critical task.
@@ -60,7 +64,30 @@ pub fn register_http(
     listener: TcpListener,
     application: Router,
 ) -> Result<(), RegistrationError> {
-    supervisor.register(name, move |shutdown| async move {
+    register_http_impl(supervisor.registration(), name, listener, application)
+}
+
+/// Register an already-bound Axum server through constrained registration authority.
+///
+/// This is the canonical companion to [`batter::startup::Startup::scoped`]. It
+/// has the same runtime and native descendant limits as [`register_http`], while
+/// preventing the adapter from receiving process-start or cleanup-extraction authority.
+pub fn register_http_in<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
+    name: &'static str,
+    listener: TcpListener,
+    application: Router,
+) -> Result<(), RegistrationError> {
+    register_http_impl(target.registration(), name, listener, application)
+}
+
+fn register_http_impl(
+    mut registration: Registration<'_>,
+    name: &'static str,
+    listener: TcpListener,
+    application: Router,
+) -> Result<(), RegistrationError> {
+    registration.register(name, move |shutdown| async move {
         shutdown.mark_started();
         axum::serve(listener, application)
             .with_graceful_shutdown(async move { shutdown.draining().await })

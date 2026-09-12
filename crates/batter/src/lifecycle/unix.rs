@@ -122,6 +122,29 @@ impl InstalledSignals {
         }
         Ok(())
     }
+
+    pub(crate) fn register_reserved(self, supervisor: &mut Supervisor) {
+        let Self {
+            name,
+            mut terminate,
+            mut interrupt,
+            received,
+        } = self;
+        let handle = supervisor.handle();
+        supervisor.register_reserved(name, move |shutdown| async move {
+            shutdown.mark_started();
+            tokio::select! {
+                biased;
+                _ = shutdown.draining() => {},
+                _ = terminate.recv() => handle.request(),
+                _ = interrupt.recv() => handle.request(),
+            }
+            Ok(())
+        });
+        if received {
+            supervisor.handle().request();
+        }
+    }
 }
 
 /// Install SIGTERM/SIGINT sources without delaying their consumption until the
@@ -140,6 +163,26 @@ pub fn install_signals(
             signal(SignalKind::terminate())?,
             signal(SignalKind::interrupt())?,
         ))
+    })
+}
+
+pub(crate) fn install_reserved_signals(
+    name: &'static str,
+) -> Result<InstalledSignals, SignalRegistrationError> {
+    install_reserved_with(name, signal)
+}
+
+fn install_reserved_with(
+    name: &'static str,
+    mut install: impl FnMut(SignalKind) -> io::Result<Signal>,
+) -> Result<InstalledSignals, SignalRegistrationError> {
+    let terminate = install(SignalKind::terminate()).map_err(SignalRegistrationError::Install)?;
+    let interrupt = install(SignalKind::interrupt()).map_err(SignalRegistrationError::Install)?;
+    Ok(InstalledSignals {
+        name,
+        terminate,
+        interrupt,
+        received: false,
     })
 }
 
@@ -175,6 +218,54 @@ mod tests {
     };
 
     const SIGNAL_CHILD: &str = "BATTER_INSTALLED_SIGNAL_CHILD";
+    const PARTIAL_SIGNAL_CHILD: &str = "BATTER_PARTIAL_SIGNAL_CHILD";
+
+    #[test]
+    fn partial_reserved_install_retains_the_second_native_error() {
+        if std::env::var_os(PARTIAL_SIGNAL_CHILD).is_some() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let mut calls = 0;
+                let result = install_reserved_with("signals", |kind| {
+                    calls += 1;
+                    if calls == 1 {
+                        signal(kind)
+                    } else {
+                        Err(io::Error::other("second-listener-marker"))
+                    }
+                });
+                let Err(error) = result else {
+                    panic!("partial installation unexpectedly succeeded")
+                };
+                let SignalRegistrationError::Install(error) = error else {
+                    panic!("wrong partial-install error")
+                };
+                assert_eq!(calls, 2);
+                assert_eq!(error.to_string(), "second-listener-marker");
+            });
+            return;
+        }
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "lifecycle::unix::tests::partial_reserved_install_retains_the_second_native_error",
+                "--nocapture",
+            ])
+            .env(PARTIAL_SIGNAL_CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}; stdout={:?}; stderr={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn installed_sources_receive_before_driver_registration() {

@@ -1,7 +1,7 @@
 # batter-runledger
 
 An optional adapter for agent consumers of native Runledger. Pass the native
-builder's `prepare()` result to `register`. Preparation owns validated configuration
+builder's `prepare()` result to `register_in` from `Startup::scoped`. Preparation owns validated configuration
 and starts no tasks; registration accepts no live supervisor or application factory.
 The process starts native work after accepting ownership and validating its name.
 The executable rustdoc shows the complete registration path.
@@ -11,6 +11,8 @@ execution proof and application readiness approval are separate. Production star
 does not enqueue a control job. The native driver and its settlement report survive
 direct waiter abortion; Batter uses that evidence before dependency finalization.
 `NativeReport` preserves all original native outcomes and unresolved descendants.
+The exact `register(&mut Supervisor, ...)` signature remains available for
+lower-level consumers; both names enter the same native ownership path.
 
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;

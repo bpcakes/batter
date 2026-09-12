@@ -19,11 +19,21 @@ outcome reconciliation and server-side resource policy. Ordinary successful
 return is SQLx's asynchronous health-check path, not an immediate reuse promise.
 
 `probe(&pool, &context)` performs SELECT 1 with acquisition and query sharing the
-total budget. `register_pool_close(&mut supervisor, name, &pool)` registers native
-closure in existing explicit LIFO cleanup. It does not close on registration
-failure; the caller retains the pool and must await teardown. The runnable
-[PostgreSQL lifecycle example](../../examples/postgres-lifecycle/README.md)
-demonstrates both helpers against an existing database.
+total budget. Reserve cleanup first, then use
+`pool_in(slot, PgPoolOptions, PgConnectOptions)` to construct a native lazy pool
+whose awaited close hook is registered before the pool is returned. This return
+does not establish connectivity or readiness, and native minimum-connection
+maintenance may begin during construction. Release checkouts and join dependent
+work before cleanup expects `Pool::close` to complete.
+
+`register_pool_close(&mut supervisor, name, &pool)` remains the lower-level path
+for externally owned pools and registers native closure in existing explicit
+LIFO cleanup. It does not close on registration failure; the caller retains the
+pool and must await teardown. The adapter-owned
+[`owned_pool`](examples/owned_pool.rs) example composes `pool_in` with a finite
+`Command`; the runnable [PostgreSQL lifecycle
+example](../../examples/postgres-lifecycle/README.md) demonstrates the legacy
+helper with an independently acquired pool.
 
 `SqlxFailure` retains the original SQLx cause with fixed Debug/Display.
 `FailureClass` classifies native variants, never error strings, and grants no
@@ -35,11 +45,14 @@ neither pool retirement nor an I/O error proves a write did not commit.
 No database creation, migration, repository, transaction manager, or replay is
 supplied. Select TLS through native SQLx features in the consumer.
 
-Run `cargo test -p batter-sqlx --features test-support --locked` for offline contracts. Live cases are
-ignored in ordinary all-feature checks. Configure `DATABASE_URL` for an external
-disposable database and run `bash scripts/test_sqlx_live.sh`; missing prerequisites
-fail. The runner uses up to six simultaneous server sessions, including retired sessions and session advisory locks,
-verifies case inventory, and bounds the test process. Provisioning stays external.
+Run `cargo test -p batter-sqlx --features test-support --locked` for offline
+contracts. Live cases are ignored in ordinary all-feature checks. Configure
+`DATABASE_URL` for an external disposable database and run
+`bash scripts/test_sqlx_live.sh`; missing prerequisites fail. The runner verifies
+an exact 24-case inventory across the ten disposition cases and fourteen pool
+ownership cases, executes each target serially, and bounds every child process.
+Cases can use up to six simultaneous server sessions, including retired sessions
+and session advisory locks. Provisioning stays external.
 
 ## Optional fixture support
 

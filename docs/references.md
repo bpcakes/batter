@@ -2765,3 +2765,28 @@ The legacy producer used a global submission and no schedule; retirement leaves
 unknown tenant-scoped rows alone and refuses a definition with an active schedule
 rather than reporting success. Deployed-version quiescence remains an external
 maintenance precondition, not a fact inferred from this binary's empty registry.
+
+## Protected startup and pool API experiments, 2026-09-12
+
+Planning experiments inspected resolved Tokio 1.53.1 `src/signal/unix.rs` and
+SQLx 0.9.0 `sqlx-core/src/pool/{options,inner,mod}.rs`. Tokio's
+[Unix signal contract](https://docs.rs/tokio/latest/tokio/signal/unix/fn.signal.html)
+retains process-wide handlers and coalesces notifications. SQLx's
+[native pool options](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolOptions.html)
+permit maintenance work during lazy construction. In the pinned 0.9.0
+[`spawn_maintenance_tasks`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/inner.rs)
+implementation, minimum-connection work starts immediately only when both idle
+timeout and maximum lifetime are disabled; otherwise the selected reaper period
+elapses first. SQLx's
+[pool close](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html) waits for accounted
+connections after marking the pool closed. Thus installation-before-owner-return
+is not an OS arrival fence, and pool registration-before-return is neither
+construction inertness nor server-session termination.
+
+The [experiment record](evidence/agent-startup-apis-2026-09-12/README.md) preserves
+prototype sources, failure controls, fresh-agent trials and their limitations.
+The protected startup, signal and owned-pool APIs are now implemented. Linux
+subprocess tests exercise synchronous TERM/INT ownership and default-disposition
+controls; the pool suite exercises native option preservation and close ownership
+against PostgreSQL 18.6. No new macOS or hosted execution is claimed. No upstream
+dependency upgrade was made.

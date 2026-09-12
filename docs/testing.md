@@ -101,9 +101,14 @@ runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inpu
 cover both the new fixtures and reused control modules, so source changes stale
 the test receipt. All five HTTP executable smoke profiles remain separate.
 
-The startup rustdoc is executable: it acquires a native capacity permit, starts
+The startup rustdocs are executable: the legacy example acquires a native capacity permit, starts
 a channel service, waits for acknowledged readiness, handles a request, and
-awaits shutdown/resource release. `tests/startup_composition.rs` independently
+awaits shutdown/resource release. The protected example reserves cleanup and
+registers a critical component without supervisor access. `tests/protected_startup.rs`
+checks typed error retention before destructor panic, observer identity, direct
+reservation across await, real request handling and join-before-finalization.
+`tests/registration.rs` checks sealed reborrowing plus invalid/duplicate ordinary
+and managed rejection without factory invocation. `tests/startup_composition.rs` independently
 checks unsuccessful empty supervision with successful cleanup and successful
 finite-work-only supervision. `finite_command` is explicitly declared with
 `test = true`; its six example tests run in the ordinary all-targets workspace
@@ -130,10 +135,20 @@ The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
 `DATABASE_URL` identifying an externally provisioned disposable PostgreSQL
 database, run `bash scripts/test_sqlx_live.sh`. The runner rejects missing
-configuration and case-inventory mismatches, then executes all ignored cases
-under the existing Unix process watchdog. It requires up to six simultaneous
+configuration and case-inventory mismatches, then executes the exact ten-case
+disposition target and fourteen-case pool-ownership target serially under the
+existing Unix process watchdog. Python controls reject missing, skipped,
+duplicated, summary-only, or newly unlisted cases. It requires up to six simultaneous
 server sessions, visibility of its own `pg_stat_activity` rows, advisory locks
 and TEMP-table privilege. It does not create databases or persistent objects.
+
+The pool-ownership target proves Command and legacy Startup query composition,
+reservation rejection before construction, native option/callback preservation,
+authentication and cancelled-acquisition cleanup, later error and panic cleanup,
+two-pool LIFO order, and held-checkout success/timeout behavior. Its negative
+oracles reject a missing record and `is_closed()` observed before the close future
+finishes. A successful record plus a closed pool is local client evidence only,
+not remote session termination or rollback acknowledgement.
 
 Each interrupted-case observer first witnesses the acquired backend waiting for
 a lock. Cancellation, deadline, application error, panic and outer-future drop
@@ -548,7 +563,8 @@ receipt are excluded.
 | Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Dependency health freshness, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter/tests/health.rs) and [ownership](../crates/batter/tests/health/ownership.rs), [publication](../crates/batter/tests/health/publication.rs) |
-| Owned startup waiter/owner loss, acquisition-registration barriers, LIFO failures, initialization deadline, panic and readiness/handoff | [startup.rs](../crates/batter/tests/startup.rs); injected signal installation failure in [unix.rs](../crates/batter/src/lifecycle/unix.rs) |
+| Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic and readiness/handoff | [startup.rs](../crates/batter/tests/startup.rs), [protected_startup.rs](../crates/batter/tests/protected_startup.rs), [registration.rs](../crates/batter/tests/registration.rs) |
+| Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, TERM/INT during start and running, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter/src/lifecycle/unix.rs) |
 | Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Completion/drain classification regression | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
 | Never-polled driver drop notifies readiness/cancellation; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |

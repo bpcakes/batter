@@ -12,6 +12,7 @@ use batter::{
     BoxError, RegistrationError,
     lifecycle::{ManagedComponent, ManagedSettlement, Supervisor},
     operation::OperationContext,
+    registration::{Registration, RegistrationTarget},
 };
 use runledger_runtime::{PreparedSupervisor, RuntimeShutdownBudget, RuntimeShutdownReport};
 use std::{
@@ -83,7 +84,30 @@ pub fn register(
     startup: OperationContext,
     prepared: PreparedSupervisor,
 ) -> Result<(), RegistrationError> {
-    process.register_managed(name, startup, move |budget| {
+    register_impl(process.registration(), name, startup, prepared)
+}
+
+/// Register owned native preparation through constrained registration authority.
+///
+/// The protected target never receives a live native supervisor and exposes no
+/// process-start or cleanup-extraction operations. Native initialization, stop,
+/// and complete settlement remain identical to [`register`].
+pub fn register_in<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
+    name: &'static str,
+    startup: OperationContext,
+    prepared: PreparedSupervisor,
+) -> Result<(), RegistrationError> {
+    register_impl(target.registration(), name, startup, prepared)
+}
+
+fn register_impl(
+    mut registration: Registration<'_>,
+    name: &'static str,
+    startup: OperationContext,
+    prepared: PreparedSupervisor,
+) -> Result<(), RegistrationError> {
+    registration.register_managed(name, startup, move |budget| {
         let budget = RuntimeShutdownBudget::new(budget.graceful(), budget.abort())?;
         let native = prepared.start();
         let initialization = native.startup_observer();

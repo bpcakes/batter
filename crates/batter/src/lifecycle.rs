@@ -28,6 +28,7 @@ pub use managed::{
     ManagedRecord, ManagedSettlement, ManagedShutdownBudget, SettlementEvidence,
 };
 pub use report::ShutdownReport;
+pub(crate) use unix::install_reserved_signals;
 pub use unix::{InstalledSignals, SignalRegistrationError, install_signals, register_signals};
 
 use crate::{
@@ -302,6 +303,7 @@ pub struct Supervisor {
     ownership: Option<EmergencyShutdown>,
     components: Vec<Component>,
     managed: Vec<managed::Registration>,
+    reserved_components: Vec<&'static str>,
     cleanup: CleanupStack,
     handle: ShutdownHandle,
     budget: ShutdownBudget,
@@ -319,6 +321,7 @@ impl Supervisor {
             ownership: Some(EmergencyShutdown(handle.clone())),
             components: Vec::new(),
             managed: Vec::new(),
+            reserved_components: Vec::new(),
             cleanup: CleanupStack::new(),
             handle,
             budget,
@@ -374,6 +377,7 @@ impl Supervisor {
     fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
         validation::name(name)?;
         if self.managed.iter().any(|component| component.name == name)
+            || self.reserved_components.contains(&name)
             || self
                 .components
                 .iter()
@@ -382,6 +386,33 @@ impl Supervisor {
             return Err(RegistrationError::Duplicate(name));
         }
         Ok(())
+    }
+
+    pub(crate) fn reserve_component_name(
+        &mut self,
+        name: &'static str,
+    ) -> Result<(), RegistrationError> {
+        self.check_component_name(name)?;
+        self.reserved_components.push(name);
+        Ok(())
+    }
+
+    pub(crate) fn register_reserved<F, Fut>(&mut self, name: &'static str, factory: F)
+    where
+        F: FnOnce(ShutdownSignal) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+    {
+        let position = self
+            .reserved_components
+            .iter()
+            .position(|reserved| *reserved == name)
+            .expect("internal component reservation must exist exactly once");
+        self.reserved_components.swap_remove(position);
+        self.components.push(Component {
+            name,
+            factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
+        });
+        self.handle.shared.register_component();
     }
 
     /// Register a native runtime through its adapter, retaining settlement even

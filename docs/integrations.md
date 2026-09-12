@@ -78,8 +78,10 @@ Choose middleware order deliberately: Batter's timer starts inside its middlewar
 not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
-`register_http` registers a bound `TcpListener` and initialized `Router` as a
-direct critical component. It acknowledges startup on its first task poll; bind
+`register_http_in` registers a bound `TcpListener` and initialized `Router`
+through constrained startup authority. `register_http` retains its exact
+`&mut Supervisor` signature for lower-level compatibility. Both enter one native
+implementation and register a direct critical component. It acknowledges startup on its first task poll; bind
 errors remain in owned `Startup`. Registration failure and abandoned startup
 release the listener. Native Axum accept errors are retried internally.
 The server uses with_graceful_shutdown and waits for it to finish
@@ -153,13 +155,24 @@ contents. This adapter adds no database creation/recheck, migration, transaction
 manager or retry policy. `register_pool_close` retains caller ownership on
 registration failure; the caller must explicitly close that pool.
 
-The [example](../examples/postgres-lifecycle/src/main.rs), packaged as
+For a pool created inside a Batter owner, reserve its cleanup name first and call
+`pool_in(slot, PgPoolOptions, PgConnectOptions)`. The synchronous return means the
+awaited close hook has already been published; it does not mean the database was
+contacted. Perform a bounded query or `probe` before readiness. SQLx can begin
+minimum-connection maintenance during lazy construction, and pool close waits for
+accounted checkouts, so join dependent work and release leases before cleanup.
+The adapter-owned `owned_pool` example demonstrates this finite `Command` path.
+
+The [service example](../examples/postgres-lifecycle/src/main.rs), packaged as
 `batter-example-postgres-lifecycle`, uses native PgPoolOptions and the optional
 `batter-sqlx` bounded probe and Pool::close registration. It registers close as a dependency finalizer and
 uses `Startup` for owned initialization and startup-error cleanup. It reserves the
 pool finalizer name before connecting and registers closure immediately after
-acquisition. `register_signals` and `check_shutdown` are shared with the HTTP
-composition; pool sizing, probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
+acquisition. Protected application roots can instead select `Startup::scoped(...)
+.with_unix_signals("signals")`, which installs listeners before the owner is
+returned and removes the initializer's manual reception/handoff obligation.
+`register_signals` remains the lower-level compatibility helper. Pool sizing,
+probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain. No database abstraction or generic transaction retry is introduced.
 The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Portable checks
@@ -201,7 +214,9 @@ sibling path overrides; see the exact source and evidence limits in the
 inert `PreparedSupervisor` values. Native supervision, durable policy, claim
 behavior, observers, schedules, workflows and retries remain upstream.
 
-The adapter translates local loop initialization, earliest stop time and complete
+Protected startup passes its sealed registration target to
+`batter_runledger::register_in`; the exact legacy `register(&mut Supervisor, ...)`
+signature remains and shares the same implementation. The adapter translates local loop initialization, earliest stop time and complete
 native settlement into Batter managed-component ownership. Native joins survive
 direct waiter abortion. Reports retain later errors and unresolved descendants;
 Batter skips dependent cleanup when settlement is unproved. Absolute phase

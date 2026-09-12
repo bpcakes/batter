@@ -29,10 +29,15 @@ pub use failure::{FailureClass, SqlxFailure};
 
 use batter::{
     RegistrationError,
+    cleanup::CleanupSlot,
     lifecycle::Supervisor,
     operation::{OperationContext, OperationError},
 };
-use sqlx::{PgConnection, PgPool, Postgres, pool::PoolConnection};
+use sqlx::{
+    PgConnection, PgPool, Postgres,
+    pool::PoolConnection,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 
 /// One checked-out connection, retired unless explicitly returned after success.
 ///
@@ -126,6 +131,54 @@ pub async fn probe(
             Ok(())
         })
         .await
+}
+
+/// Construct a native lazy PostgreSQL pool and publish its close finalizer.
+///
+/// `slot` must be reserved before this call. Successful native construction is
+/// followed immediately by infallible cleanup registration, before the pool is
+/// returned. Return does not establish connectivity, authentication, query or
+/// schema readiness: use a native operation or [`probe`] explicitly afterward.
+/// Native pool options and callbacks are preserved without modification.
+///
+/// SQLx may start maintenance work during lazy construction, including minimum
+/// connection work, so call this on a compatible live Tokio runtime. Native
+/// constructor panics are not converted and no runtime-death cleanup is implied.
+/// The finalizer awaits [`PgPool::close`]; callers must first join dependent work
+/// and release checked-out connections. Local closure does not prove remote
+/// cancellation, transaction rollback, or detached server-session termination.
+///
+/// ```no_run
+/// use batter::cleanup::{CleanupBudget, CleanupStack};
+/// use batter_sqlx::pool_in;
+/// use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+/// use std::time::Duration;
+/// # async fn example() -> Result<(), batter::RegistrationError> {
+/// let mut cleanup = CleanupStack::new();
+/// let pool = pool_in(
+///     cleanup.reserve("postgres.pool")?,
+///     PgPoolOptions::new(),
+///     PgConnectOptions::new(),
+/// );
+/// // Perform an explicit query or `batter_sqlx::probe` before readiness.
+/// # drop(pool);
+/// # let second = Duration::from_secs(1);
+/// # let budget = CleanupBudget::new(second, second, second).unwrap();
+/// # assert!(cleanup.close(budget).await.is_success());
+/// # Ok(()) }
+/// ```
+pub fn pool_in(
+    slot: CleanupSlot<'_>,
+    pool_options: PgPoolOptions,
+    connect_options: PgConnectOptions,
+) -> PgPool {
+    let pool = pool_options.connect_lazy_with(connect_options);
+    let closing = pool.clone();
+    slot.register(move || async move {
+        closing.close().await;
+        Ok(())
+    });
+    pool
 }
 
 /// Register native pool close in the supervisor's explicit LIFO cleanup stack.

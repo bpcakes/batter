@@ -119,11 +119,12 @@ retains Starting/Draining/Stopped and each unready dependency status in response
 extensions. `with_level` explicitly changes severity only. Decisions do no probe
 I/O and are point-in-time observations, not atomic with future drain.
 
-Inside owned `Startup`, bind a native `TcpListener`, assemble the `Router`, then
-call `register_http(supervisor, "http", listener, router)`. It acknowledges when
+Inside protected `Startup::scoped` composition, bind a native `TcpListener`, assemble the
+`Router`, then call `register_http_in(scope, "http", listener, router)`. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
 failure and abandoned startup release the listener. Native accept errors are
 retried by Axum. Streaming bodies can outlive response deadlines and direct
 wrapper abortion; dependent cleanup remains conservatively skipped on forced
-abort. The [operational tests](tests/operational.rs) exercise that limit with a
+abort. `register_http(&mut Supervisor, ...)` remains source-compatible for the
+lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
 real socket and explicitly release the outstanding body afterward.

@@ -35,5 +35,8 @@ name = "offline"
 name = "postgres_live"
 
 [[test]]
+name = "pool_ownership_live"
+
+[[test]]
 name = "fixture_offline"
 required-features = ["test-support"]

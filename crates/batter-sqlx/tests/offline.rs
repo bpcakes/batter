@@ -2,8 +2,8 @@ use batter::{
     lifecycle::{ShutdownBudget, Supervisor},
     operation::{Interruption, OperationContext, OperationError},
 };
-use batter_sqlx::{FailureClass, PgLease, SqlxFailure, probe, register_pool_close};
-use sqlx::postgres::PgPoolOptions;
+use batter_sqlx::{FailureClass, PgLease, SqlxFailure, pool_in, probe, register_pool_close};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, time::Duration};
 
 #[test]
@@ -88,4 +88,48 @@ async fn rejected_registration_retains_caller_pool_ownership() {
     assert!(report.is_success());
     assert_eq!(report.records.len(), 1);
     assert!(pool.is_closed());
+}
+
+#[tokio::test]
+async fn slot_owned_pool_registers_close_before_return() {
+    let second = Duration::from_secs(1);
+    let budget = batter::cleanup::CleanupBudget::new(second, second, second).unwrap();
+    let mut cleanup = batter::cleanup::CleanupStack::new();
+    let pool = pool_in(
+        cleanup.reserve("pool").unwrap(),
+        PgPoolOptions::new(),
+        PgConnectOptions::new()
+            .host("127.0.0.1")
+            .port(1)
+            .username("unused")
+            .database("unused"),
+    );
+    let retained = pool.clone();
+    let report = cleanup.close(budget).await;
+    assert!(report.is_success());
+    assert_eq!(report.records.len(), 1);
+    assert_eq!(report.records[0].name, "pool");
+    assert!(retained.is_closed());
+    assert!(matches!(
+        retained.acquire().await,
+        Err(sqlx::Error::PoolClosed)
+    ));
+}
+
+#[test]
+fn reservation_rejection_precedes_pool_construction() {
+    let mut cleanup = batter::cleanup::CleanupStack::new();
+    assert!(cleanup.reserve("").is_err());
+    let first = cleanup.reserve("pool").unwrap();
+    first.register(|| async { Ok(()) });
+    assert!(cleanup.reserve("pool").is_err());
+}
+
+#[test]
+fn legacy_registration_signature_remains_exact() {
+    let _: fn(
+        &mut Supervisor,
+        &'static str,
+        &sqlx::PgPool,
+    ) -> Result<(), batter::RegistrationError> = register_pool_close;
 }

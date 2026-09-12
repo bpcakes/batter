@@ -23,12 +23,15 @@ RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
 SMOKE_TESTS = [sys.executable, "scripts/test_smoke_postgres.py", "-v"]
 REFERENCE_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_reference_live.py", "-v"]
+SQLX_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                     "-p", "test_sqlx_live.py", "-v"]
 
 
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     for labels, commands in [(["core-library", "runner-controls", "smoke-controls", "reference-runner-controls"],
                               [CORE_CHECK, RUNNER_TESTS, SMOKE_TESTS, REFERENCE_RUNNER_TESTS]),
+                             (["sqlx-runner-controls"], [SQLX_RUNNER_TESTS]),
                              (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),
                              (["doctests"], [DOC_TESTS])]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)

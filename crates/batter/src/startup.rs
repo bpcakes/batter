@@ -17,12 +17,19 @@
 
 mod driver;
 mod report;
+mod signals;
 
 pub use driver::{StartingSupervisor, StartupObserver, StartupOutcome};
-pub use report::{PanicPayload, PanicPayloadBusy, StartupCause, StartupError, StartupFailure};
+pub use report::{
+    InitializationError, PanicPayload, PanicPayloadBusy, StartupCause, StartupError, StartupFailure,
+};
 
 use crate::{
-    RegistrationError, cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,
+    RegistrationError,
+    cleanup::{CleanupBudget, CleanupSlot},
+    lifecycle::Supervisor,
+    operation::OperationContext,
+    registration::{Registration, RegistrationTarget},
 };
 use std::{future::Future, pin::Pin};
 
@@ -181,6 +188,171 @@ impl<F> Startup<F> {
         E: Send + Sync + 'static,
     {
         driver::start(self)
+    }
+}
+
+impl Startup<()> {
+    /// Construct the canonical registration-constrained startup specification.
+    ///
+    /// The callback receives no supervisor or operation-context accessor. It can
+    /// set stage metadata, reserve finalization before acquisition, and lend
+    /// sealed registration authority to supported adapters. Construction is
+    /// inert; [`ScopedStartup::start`] uses the same owned coordinator as legacy
+    /// [`Startup::start`].
+    ///
+    /// ```
+    /// use batter::{cleanup::CleanupBudget,
+    ///     lifecycle::{ShutdownBudget, Supervisor}, operation::OperationContext,
+    ///     startup::Startup};
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), batter::BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let mut starting = Startup::scoped(process, OperationContext::new(second)?, cleanup,
+    ///     |scope| Box::pin(async move {
+    ///         scope.reserve_cleanup("dependency")?.register(|| async { Ok(()) });
+    ///         scope.registration().register("worker", |shutdown| async move {
+    ///             shutdown.mark_started();
+    ///             shutdown.draining().await;
+    ///             Ok(())
+    ///         })?;
+    ///         Ok::<_, batter::RegistrationError>(())
+    ///     })).start();
+    /// let running = starting.wait().await?;
+    /// running.handle().wait_ready().await.unwrap();
+    /// batter::lifecycle::check_shutdown(running.shutdown().await)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn scoped<F, E>(
+        supervisor: Supervisor,
+        context: OperationContext,
+        cleanup: CleanupBudget,
+        initialize: F,
+    ) -> ScopedStartup<F>
+    where
+        F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E>,
+    {
+        ScopedStartup {
+            supervisor,
+            context,
+            cleanup,
+            approve_readiness: true,
+            signals: signals::SignalPolicy::default(),
+            initialize,
+        }
+    }
+}
+
+/// Inert protected startup specification returned by [`Startup::scoped`].
+pub struct ScopedStartup<F> {
+    supervisor: Supervisor,
+    context: OperationContext,
+    cleanup: CleanupBudget,
+    approve_readiness: bool,
+    signals: signals::SignalPolicy,
+    initialize: F,
+}
+
+impl<F> ScopedStartup<F> {
+    /// Keep readiness application-controlled after successful initialization.
+    #[must_use = "the returned startup specification contains the selected approval policy"]
+    pub fn without_readiness_approval(mut self) -> Self {
+        self.approve_readiness = false;
+        self
+    }
+
+    /// Select library-owned Unix SIGTERM/SIGINT handling for this startup.
+    ///
+    /// Selection is inert. [`Self::start`] validates and reserves `name`, then
+    /// installs both native listeners synchronously before returning its owner.
+    /// Selecting more than once is retained as
+    /// [`InitializationError::SignalPolicyAlreadySelected`] during started
+    /// cleanup; it is never last-wins. Dropping the unstarted specification
+    /// installs nothing. Tokio's process-wide signal disposition is not restored
+    /// when listeners are dropped.
+    ///
+    /// ```no_run
+    /// # use batter::{cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor}, operation::OperationContext, startup::Startup};
+    /// # use std::time::Duration;
+    /// # fn configured() -> Result<(), batter::BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let startup = Startup::scoped(process, OperationContext::new(second)?, cleanup,
+    ///     |_scope| Box::pin(async { Ok::<_, batter::RegistrationError>(()) }))
+    ///     .with_unix_signals("signals");
+    /// // `startup.start()` installs both listeners before returning its owner.
+    /// # drop(startup); Ok(()) }
+    /// ```
+    #[must_use = "the returned startup specification contains the selected Unix signal policy"]
+    pub fn with_unix_signals(mut self, name: &'static str) -> Self {
+        self.signals = self.signals.select(name);
+        self
+    }
+
+    /// Launch protected owned startup on the current Tokio runtime.
+    ///
+    /// Application failures are retained as
+    /// [`InitializationError::Application`] without strengthening `E`'s bounds.
+    pub fn start<E>(self) -> StartingSupervisor<InitializationError<E>>
+    where
+        F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+        E: Send + Sync + 'static,
+    {
+        driver::start_scoped(self)
+    }
+}
+
+/// Registration-constrained access while an owned initializer runs.
+///
+/// This scope deliberately exposes no supervisor, context, process-start, or
+/// cleanup-extraction operation. Application-owned handles captured before
+/// startup remain application-owned and are not restricted by this view.
+///
+/// ```compile_fail,E0599
+/// # fn restricted(scope: &mut batter::startup::ProtectedStartupScope) {
+/// let _ = scope.supervisor();
+/// # }
+/// ```
+///
+/// ```compile_fail,E0599
+/// # fn restricted(scope: &mut batter::startup::ProtectedStartupScope) {
+/// let _replacement = scope.start();
+/// # }
+/// ```
+pub struct ProtectedStartupScope {
+    supervisor: Supervisor,
+    stage: &'static str,
+}
+
+impl ProtectedStartupScope {
+    /// Set redacted application stage metadata after validating its name.
+    pub fn stage(&mut self, stage: &'static str) -> Result<(), RegistrationError> {
+        crate::validation::name(stage)?;
+        self.stage = stage;
+        Ok(())
+    }
+
+    /// Reserve finalizer ownership directly so the slot can cross an acquisition await.
+    pub fn reserve_cleanup(
+        &mut self,
+        name: &'static str,
+    ) -> Result<CleanupSlot<'_>, RegistrationError> {
+        self.supervisor.reserve_cleanup(name)
+    }
+
+    /// Borrow registration-only authority for ordinary or native components.
+    pub fn registration(&mut self) -> Registration<'_> {
+        Registration::new(&mut self.supervisor)
+    }
+}
+
+impl crate::registration::private::Sealed for ProtectedStartupScope {}
+impl RegistrationTarget for ProtectedStartupScope {
+    fn registration(&mut self) -> Registration<'_> {
+        ProtectedStartupScope::registration(self)
     }
 }
 

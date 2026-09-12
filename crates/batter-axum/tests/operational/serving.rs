@@ -9,9 +9,10 @@ use batter::{
     operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
-use batter_axum::register_http;
+use batter_axum::{register_http, register_http_in};
 use std::{
     convert::Infallible,
+    ops::{Deref, DerefMut},
     pin::Pin,
     sync::{
         Arc,
@@ -48,6 +49,19 @@ fn supervisor() -> Supervisor {
     )
 }
 
+struct SupervisorWrapper(Supervisor);
+impl Deref for SupervisorWrapper {
+    type Target = Supervisor;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for SupervisorWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 async fn connect(address: std::net::SocketAddr) -> TcpStream {
     let mut client = TcpStream::connect(address).await.unwrap();
     client
@@ -65,7 +79,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
     let supervisor = supervisor();
     let handle = supervisor.handle();
     assert_eq!(handle.readiness(), Readiness::Starting);
-    let mut starting = Startup::new(
+    let mut starting = Startup::scoped(
         supervisor,
         OperationContext::new(Duration::from_secs(2)).unwrap(),
         cleanup_budget(),
@@ -75,14 +89,14 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
                 let listener = TcpListener::bind("127.0.0.1:0").await?;
                 let address = listener.local_addr()?;
                 scope
-                    .supervisor()
-                    .on_cleanup("dependency", move || async move {
+                    .reserve_cleanup("dependency")
+                    .unwrap()
+                    .register(move || async move {
                         cleanup.store(true, Ordering::SeqCst);
                         Ok(())
-                    })
-                    .unwrap();
-                register_http(
-                    scope.supervisor(),
+                    });
+                register_http_in(
+                    scope,
                     "http",
                     listener,
                     Router::new().route("/", get(|| async { "served" })),
@@ -127,6 +141,16 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
 
 #[tokio::test]
 async fn invalid_registration_and_unstarted_supervisor_drop_release_the_bound_listener() {
+    let _: fn(
+        &mut Supervisor,
+        &'static str,
+        TcpListener,
+        Router,
+    ) -> Result<(), batter::RegistrationError> = register_http;
+    let mut wrapped = SupervisorWrapper(supervisor());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    assert!(register_http(&mut wrapped, "", listener, Router::new()).is_err());
+
     let mut supervisor = supervisor();
     for name in ["", "http"] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

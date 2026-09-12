@@ -2,6 +2,35 @@
 
 Latest evidence: 2026-09-12. Earlier sections retain their historical scope.
 
+## Constrained owned startup registration (batter-lp2.1), 2026-09-12
+
+`Startup::scoped` now projects a private-field `ProtectedStartupScope` over the
+existing owned coordinator. Its sealed `Registration` authority can register
+ordinary and managed components and reserve cleanup, but has no supervisor,
+context, process-start, replacement or cleanup-extraction operation. Returned
+application failures enter `InitializationError<E>` at the poll boundary before
+initializer destruction. Exact legacy startup and Axum/Runledger adapter
+signatures remain available; the new `_in` entry points share their native bodies.
+
+Linux x86_64 acceptance from baseline
+`39c1b6e3c1c75f808becb5a5e7c33f58001a2ee4` passed on rustc/Cargo 1.98.1
+(`48a229cea` / `797e8a9b`) and 1.94.0 (`4a4ef493e` / `85eff7c8`):
+
+| Check | Executed result |
+| --- | --- |
+| `bash scripts/verify.sh` on each toolchain | PASS: complete offline/workspace matrix, doctests including authority compile-fail controls, formatting, strict Clippy and warning-denied rustdoc. |
+| Protected foundation, Axum and Runledger cases | PASS: channel request `21 -> 42`, component join before resource release, retained application error plus destruction panic, duplicate/invalid ordinary and managed rejection without factory invocation, actual loopback HTTP request, and prepared native two-loop initialization/settlement without PostgreSQL. |
+| HTTP example build plus five `scripts/smoke_http.py` profiles on each toolchain | PASS: ten executions covering SIGTERM, SIGINT, deadline, WARN filtering and WARN-filtered deadline. |
+| `scripts/jig work check --plan-id plan_01M2AZ3VXCTVCDKGHHAFKZR1X7` | PASS: fresh `api:test` receipt `receipt_01M2B08EHZ6KBX47RCEJR54KCY`, plus fmt, Clippy, contract-v9 and file-budget targets. |
+
+The authority controls compile positive public imports before rejecting supervisor
+access, process start, forged target implementation and a registration view moved
+to a `'static` task. Native adapter tests retain typed function-pointer and
+`DerefMut` calls to the old concrete signatures. No dependency or lockfile change
+was needed. Existing managed pending-settlement and uncertain-cleanup tests passed
+unchanged in both full matrices. Live PostgreSQL was not required for this task
+and was not executed. No new macOS or hosted evidence is claimed.
+
 ## Non-blocking retained panic inspection (batter-ai6), 2026-09-12
 
 The retained panic diagnostic boundary now exposes
@@ -7282,3 +7311,82 @@ a short private mutex, without a lock-free/wait-free claim. No detached-task,
 remote cancellation, async Drop, non-yielding preemption, runtime-death or actual
 database-health guarantee follows. No commit, push, publication or deployment
 was performed.
+
+## Protected startup-owned Unix signals: 2026-09-12
+
+Bead `batter-lp2.2`; plan `plan_01M2B0BJMHHFSF51D0NDGTYPWQ`; baseline
+`39c1b6e3c1c75f808becb5a5e7c33f58001a2ee4`. Protected startup now optionally
+reserves a component name and installs SIGTERM/SIGINT synchronously before its
+owner is returned. The existing coordinator owns reception through initialization
+and transfers the listeners into one real critical task without a fallible
+application handoff. Legacy startup and explicit signal helpers remain unchanged.
+
+Executed on Linux x86_64 with rustc 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0
+(`4a4ef493e`, 2026-03-02). Tokio remains locked at 1.53.1.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter --test startup_signals --locked -- --nocapture` | Three top-level cases passed. Fresh children cover TERM and INT immediately after start return, after resource registration, after borrowed-waiter cancellation, in approved and unapproved running services, plus default termination for configured-but-unstarted and started-but-unconfigured controls. Ordinary and managed reserved-name theft and configured owner loss also pass in isolated children. |
+| `cargo test -p batter startup::driver::tests --lib --locked -- --nocapture` | Two injected controls passed: pre-cancellation skips installation, while preflight IO survives immediate owner loss alongside an unused initializer-capture panic and failed cleanup. Default panic-hook output remains expected. |
+| `cargo test -p batter lifecycle::unix::tests::partial_reserved_install_retains_the_second_native_error --lib --locked -- --nocapture` | A fresh child installed the first actual native source, injected failure for the second, and retained the original IO marker. No process-disposition rollback is claimed. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/verify.sh` | Passed core/minimal checks, complete workspace runtime tests, hostile-environment controls, doctests, formatting, Clippy and rustdoc. An initial run reached Clippy after all runtime/doctest checks and rejected the driver's eighth argument; the private callback/listener state was grouped and the complete verifier then passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten process smokes passed with readiness/probe behavior, response and telemetry assertions, selected signals, and exit zero. |
+
+The real signal controls are Linux evidence only. Tokio installs process-wide
+handlers and does not restore the prior disposition when listeners drop; a
+partial installation is not rollback. No new macOS or hosted-CI execution,
+second-signal force-exit, non-yielding preemption,
+runtime-death cleanup or atomic kernel-arrival fence is claimed. Final Jig gate
+receipts are recorded in the living plan and append-only state.
+
+## Cleanup-slot-owned SQLx pools: 2026-09-12
+
+Bead `batter-lp2.3`; plan `plan_01M2B21R4PY11K6GCMER1CW48K`; baseline
+`39c1b6e3c1c75f808becb5a5e7c33f58001a2ee4`. The adapter now exposes the exact
+synchronous `pool_in(CleanupSlot, PgPoolOptions, PgConnectOptions) -> PgPool`
+boundary. The slot is validated before native construction, and successful
+construction is followed by infallible close-hook registration before return.
+The legacy `register_pool_close` signature remains unchanged.
+
+Executed on Linux x86_64 with rustc 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0
+(`4a4ef493e`, 2026-03-02), SQLx 0.9.0, Tokio 1.53.1, and an externally provisioned
+PostgreSQL 18.6 (`18.6-1.pgdg24.04+2`) database reached through its local Unix
+socket. The suite did not provision or mutate roles, databases, or server policy.
+Its missing-role case preserved the selected endpoint and observed an actual
+PostgreSQL authentication rejection; no TLS or specific password method is claimed.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --features test-support --locked`, adapter Clippy, and adapter rustdoc | Offline registration, legacy signature, ignored-target inventory, doctests, the adapter-owned example build, and warnings-as-errors checks passed. |
+| `bash scripts/test_sqlx_live.sh` on each toolchain | The retained ten-case disposition target and new fourteen-case pool-ownership target each matched their exact inventory and passed serially: 24 live cases per toolchain. Expected application panic hooks remained visible. |
+| `cargo run -p batter-sqlx --example owned_pool --locked` on each toolchain | The real bounded query, pool cleanup, and complete finite command all reported success. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/verify.sh` | A first matrix run found one `BrokenPipe` in the signal-test parent release write while all focused repetitions passed. The initial workaround deferred that auxiliary write error to the final child status/transcript assertion. Comprehensive review then found that the parent could still block while waiting for its first stdout marker or final `Command::output`, and could stop draining stderr. The repaired harness drains both pipes concurrently, bounds both phases, kills and reaps on timeout, and retains semantic markers, status, cleanup and capture diagnostics. A fresh complete matrix passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same post-review complete minimal/workspace runtime, hostile-environment, doctest, formatting, Clippy and rustdoc matrix passed. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten process smokes passed with the selected signal, readiness, response, correlation and telemetry assertions. |
+
+The ownership live cases cover successful Command and legacy Startup queries,
+invalid and duplicate reservations before construction, native callback/options
+and positive-minimum maintenance, server authentication failure, cancelled
+acquisition, later application error and panic, two-pool dependency order, held
+checkout completion/timeout, retained work plus cleanup failures, and negative
+oracles for omitted or premature cleanup. SQLx's default idle/lifetime timers
+delay the minimum-maintenance loop; the explicit native test disables both and
+observes its configured `after_connect` callback before consumer checkout.
+
+The review repair also made the authentication case derive its connection from
+the configured `DATABASE_URL`, overriding only the deliberately missing role and
+password, so a selected Unix socket, TCP host, port, database and TLS policy are
+not silently replaced. Its focused live case and the complete fourteen-case
+ownership target passed on both toolchains. The signal harness has a separate
+fresh-child regression that floods stderr before its startup marker and another
+that stalls before the marker; the former completes and the latter is killed,
+reaped and followed by a successful child run. The Axum adapter README now calls
+the protected registration API a protected composition path; migrating the
+remaining legacy HTTP example is separately owned by `batter-lp2.4`.
+
+These results establish local pool ownership and awaited close reporting. They do
+not establish construction inertness, schema readiness, remote cancellation,
+rollback, detached-session termination, runtime-death cleanup, macOS behavior, or
+hosted CI. Jig receipts and final review evidence are recorded separately in the
+living plan and append-only state.

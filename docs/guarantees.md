@@ -477,10 +477,26 @@ finite-work capacity produce `ShutdownCause::EmptySupervisor`. The initializer
 can succeed and every finalizer can succeed while the shutdown report remains
 unsuccessful. Configured finite capacity permits a component-free running
 supervisor; root work still requires readiness, submission and explicit shutdown.
-The executable startup rustdoc and `startup_composition` tests cover these
+The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.
 
-`Startup::new` invokes no initializer. `start` launches the owner on a live Tokio
+`Startup::scoped` is the canonical agent-consumer path. Its
+`ProtectedStartupScope` exposes only validated stage selection, direct cleanup
+reservation and a private-field `Registration` view. That view forwards ordinary
+and managed registration but cannot start or replace the process, extract cleanup,
+recover a `Supervisor`, or outlive its borrow. The sealed `RegistrationTarget`
+lets native adapters accept either this protected scope or the lower-level
+supervisor without allowing application-defined targets. Handles and contexts
+captured before startup remain outside this restriction.
+
+Protected startup retains application failures inside the redacted,
+non-exhaustive `InitializationError<E>` envelope. The driver maps a returned `E`
+at its poll boundary before destroying the completed initializer future, so the
+application error and a separate destruction panic can coexist. It uses the same
+coordinator, cleanup, report publication and running handoff as the legacy path.
+
+`Startup::new` remains the explicitly lower-level compatibility path and invokes
+no initializer. `start` launches the owner on a live Tokio
 runtime. Dropping the inert builder only abandons its unstarted supervisor;
 no asynchronous cleanup is implied. Once started, dropping `StartingSupervisor`
 requests drain while the coordinator drives registered cleanup independently.
@@ -517,14 +533,23 @@ work, arbitrary destructor, non-yielding initializer, aborting panic, process or
 runtime destruction is covered. The default panic hook may still print secrets.
 Unexpected coordinator termination retains a JoinError without inventing cleanup.
 
-`register_signals` validates the component name, installs SIGTERM/SIGINT listeners
-and transfers them to a critical component. `install_signals` separates those
-steps: the owner can poll `InstalledSignals::received` during initialization and
-later register the same sources before handoff. A real-child regression sends
-SIGTERM before registration. Neither helper creates an independent task during
-initialization; the initializer must keep polling the borrowed receive future.
-Tokio changes process-wide signal disposition and does not restore it on listener
-drop.
+Protected `.with_unix_signals(name)` is inert until `start`. Start first retains
+repeated selection as a configuration error; otherwise it checks existing drain
+or interruption, reserves the component identity, and installs SIGTERM then
+SIGINT synchronously before returning the owner. The coordinator owns reception
+during initialization and fulfills the reservation with one real critical task
+before running handoff. A signal observed during initialization requests drain;
+it cannot approve readiness. Preflight failures skip the initializer but remain
+owned through prior cleanup, even if the startup owner is then dropped. Cleanup
+slots use a distinct namespace from component reservations.
+
+`register_signals` and `install_signals` remain lower-level compatibility helpers.
+The latter requires its caller to poll `InstalledSignals::received` during
+initialization and register the same sources before handoff. Tokio changes
+process-wide signal disposition and does not restore it on listener drop; a
+partial installation failure is not rollback. Signal-enabled start requires a
+live Tokio runtime with signal support. Reception is cooperative and is not an
+atomic fence at kernel delivery.
 
 Standalone finite commands use `Command` to retain work and cleanup independently
 of the caller's waiter. The lower-level `OperationContext::run` and
@@ -644,6 +669,15 @@ contracts. Resource values must not require an unavailable runtime after shutdow
 ## PostgreSQL client disposition
 
 The optional `batter-sqlx` package owns only checked-out client disposition.
+`pool_in` synchronously consumes a prevalidated cleanup slot, constructs a native
+lazy pool from the supplied options, and registers awaited `Pool::close` before
+returning the pool. It does not establish connectivity or readiness. SQLx may
+start native minimum-connection maintenance during construction; constructor
+panics and runtime death remain native limits. Dependent work must be joined and
+checked-out connections released before successful cleanup can be expected.
+`register_pool_close` remains a lower-level compatibility path for pools acquired
+elsewhere, with caller-owned cleanup if registration fails.
+
 `PgLease` detaches and drops its client unless the application explicitly calls
 `return_to_pool` after acknowledged query/commit/rollback completion. Keep the
 lease inside the future whose interruption should retire it. Panics propagate;

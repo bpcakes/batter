@@ -34,6 +34,7 @@ pub mod command;
 pub mod health;
 pub mod lifecycle;
 pub mod operation;
+pub mod registration;
 pub mod retry;
 pub mod settings;
 pub mod startup;

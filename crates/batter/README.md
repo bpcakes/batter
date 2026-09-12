@@ -54,7 +54,14 @@ cargo run -p batter --example finite_command
 ```
 
 The executable `startup::Startup` rustdoc shows a service handling a request
-before shutdown. `finite_command` uses `command::Command` to retain finite work
+before shutdown. New composition should use `Startup::scoped`, whose
+`ProtectedStartupScope` exposes stage metadata, direct cleanup reservation and
+sealed registration authority without process start or cleanup extraction.
+Select `.with_unix_signals("signals")` when the startup owner should install
+SIGTERM/SIGINT synchronously and retain reception through initialization,
+handoff and supervised drain. Unselected startup preserves the native default.
+`Startup::new` remains the lower-level compatibility path for callers needing
+direct `&mut Supervisor` access. `finite_command` uses `command::Command` to retain finite work
 and cleanup independently of borrowed waiters. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 

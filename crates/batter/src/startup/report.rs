@@ -1,4 +1,4 @@
-use crate::{cleanup::CleanupReport, operation::Interruption};
+use crate::{cleanup::CleanupReport, lifecycle::SignalRegistrationError, operation::Interruption};
 use std::{
     any::Any,
     error::Error,
@@ -6,6 +6,45 @@ use std::{
     sync::{Arc, Mutex, TryLockError},
 };
 use tokio::task::JoinError;
+
+/// Stable failure envelope for the protected startup path.
+///
+/// Formatting is deliberately redacted and never requires the application
+/// error to implement `Debug` or `Display`. Trusted callers can match the
+/// concrete application or signal cause directly.
+#[non_exhaustive]
+pub enum InitializationError<E> {
+    /// Original application initialization failure.
+    Application(E),
+    /// Unix signal installation or reserved-component registration failed.
+    Signals(SignalRegistrationError),
+    /// More than one signal policy was selected for one startup specification.
+    SignalPolicyAlreadySelected,
+}
+
+impl<E> fmt::Display for InitializationError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Application(_) => "application initialization failed",
+            Self::Signals(_) => "startup signal initialization failed",
+            Self::SignalPolicyAlreadySelected => "startup signal policy was already selected",
+        })
+    }
+}
+impl<E> fmt::Debug for InitializationError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+impl<E: Error + 'static> Error for InitializationError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Application(error) => Some(error),
+            Self::Signals(error) => Some(error),
+            Self::SignalPolicyAlreadySelected => None,
+        }
+    }
+}
 
 /// Retained unwinding panic payload; default formatting never inspects it.
 pub struct PanicPayload(Mutex<Box<dyn Any + Send>>);

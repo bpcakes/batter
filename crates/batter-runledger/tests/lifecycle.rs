@@ -3,10 +3,13 @@ use batter::{
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
 };
-use batter_runledger::{NativeReport, register};
+use batter_runledger::{NativeReport, register, register_in};
 use runledger_runtime::{config::JobsConfig, registry::JobRegistry};
 use sqlx::postgres::PgPoolOptions;
-use std::time::Duration;
+use std::{
+    ops::{Deref, DerefMut},
+    time::Duration,
+};
 
 fn process() -> Supervisor {
     let second = Duration::from_secs(1);
@@ -19,6 +22,19 @@ fn process() -> Supervisor {
         )
         .unwrap(),
     )
+}
+
+struct ProcessWrapper(Supervisor);
+impl Deref for ProcessWrapper {
+    type Target = Supervisor;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for ProcessWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 fn context() -> OperationContext {
     OperationContext::new(Duration::from_secs(3)).unwrap()
@@ -70,7 +86,58 @@ async fn native_local_initialization_requires_no_database_or_durable_witness() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn protected_startup_owns_native_local_initialization_and_settlement() {
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+        .unwrap();
+    pool.close().await;
+    let prepared = runledger_runtime::Supervisor::builder(&pool, config())
+        .unwrap()
+        .with_registry(JobRegistry::new())
+        .disable_scheduler()
+        .disable_reaper()
+        .prepare()
+        .unwrap();
+    let mut starting = batter::startup::Startup::scoped(
+        process(),
+        context(),
+        CleanupBudget::new(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap(),
+        move |scope| {
+            Box::pin(async move {
+                register_in(scope, "native", context(), prepared)?;
+                Ok::<(), batter::RegistrationError>(())
+            })
+        },
+    )
+    .start();
+    let running = starting.wait().await.unwrap();
+    running.handle().wait_ready().await.unwrap();
+    let report = running.shutdown().await.unwrap();
+    assert!(report.is_success(), "{report}");
+    let native = report.managed[0]
+        .outcome
+        .settlement
+        .as_ref()
+        .unwrap()
+        .downcast_ref::<NativeReport>()
+        .unwrap();
+    assert_eq!(native.native.loops.len(), 2);
+    assert!(native.native.is_cooperatively_stopped());
+}
+
+#[tokio::test(start_paused = true)]
 async fn rejected_registration_and_unstarted_drop_never_build_native_work() {
+    let _: fn(
+        &mut Supervisor,
+        &'static str,
+        OperationContext,
+        runledger_runtime::PreparedSupervisor,
+    ) -> Result<(), batter::RegistrationError> = register;
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
         .unwrap();
@@ -85,6 +152,8 @@ async fn rejected_registration_and_unstarted_drop_never_build_native_work() {
             .prepare()
             .unwrap()
     };
+    let mut wrapped = ProcessWrapper(process());
+    assert!(register(&mut wrapped, "", context(), prepare()).is_err());
     let mut process = process();
     register(&mut process, "native", context(), prepare()).unwrap();
     assert!(register(&mut process, "native", context(), prepare()).is_err());
