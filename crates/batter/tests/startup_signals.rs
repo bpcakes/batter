@@ -1,6 +1,6 @@
 use batter::{
     RegistrationError,
-    cleanup::CleanupBudget,
+    cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ManagedComponent, ManagedSettlement, ShutdownBudget, Supervisor},
     operation::OperationContext,
     startup::{InitializationError, Startup, StartupCause, StartupError},
@@ -20,6 +20,9 @@ use std::{
 };
 
 const CHILD_MODE: &str = "BATTER_PROTECTED_SIGNAL_CHILD";
+const REPEATED_CLEANUP_TOTAL: Duration = Duration::from_secs(3);
+const REPEATED_SIGNAL_DELAY: Duration = Duration::from_millis(1500);
+const REPEATED_CLEANUP_MAX_ELAPSED: Duration = Duration::from_millis(3750);
 
 struct NativeReport;
 
@@ -194,6 +197,11 @@ fn configured_signals_cover_start_return_running_and_explicit_opt_out() {
     assert!(output.contains("reserved-name-rejected"), "{output:?}");
     let output = run_child_to_completion("owner-loss");
     assert!(output.contains("owner-loss-cleanup"), "{output:?}");
+
+    for (first, repeated) in [("TERM", "INT"), ("INT", "TERM")] {
+        let output = run_repeated_signals_during_cleanup(first, repeated);
+        assert!(output.contains("repeat-cleanup-timed-out"), "{output:?}");
+    }
 }
 
 #[test]
@@ -223,6 +231,7 @@ fn run_child(mode: &str) {
         "reserved-name" => run_reserved_name_child(false),
         "reserved-managed-name" => run_reserved_name_child(true),
         "owner-loss" => run_owner_loss_child(),
+        "repeat-cleanup" => run_repeated_cleanup_child(),
         "stderr-flood" => {
             std::io::stderr()
                 .write_all(&vec![b'x'; 256 * 1024])
@@ -232,6 +241,73 @@ fn run_child(mode: &str) {
         "stall-before-marker" => runtime().block_on(std::future::pending()),
         _ => panic!("unknown signal child mode"),
     }
+}
+
+fn run_repeated_cleanup_child() {
+    runtime().block_on(async {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let called = calls.clone();
+        let cleanup_started = Arc::new(Mutex::new(None));
+        let started = cleanup_started.clone();
+        let mut starting = Startup::scoped(
+            supervisor(),
+            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            CleanupBudget::new(
+                REPEATED_CLEANUP_TOTAL,
+                Duration::from_secs(5),
+                Duration::from_millis(250),
+            )
+            .unwrap(),
+            move |scope| {
+                Box::pin(async move {
+                    scope
+                        .reserve_cleanup("resource")?
+                        .register(move || async move {
+                            let mut termination = tokio::signal::unix::signal(
+                                tokio::signal::unix::SignalKind::terminate(),
+                            )
+                            .unwrap();
+                            let mut interruption = tokio::signal::unix::signal(
+                                tokio::signal::unix::SignalKind::interrupt(),
+                            )
+                            .unwrap();
+                            called.fetch_add(1, Ordering::SeqCst);
+                            *started.lock().unwrap() = Some(Instant::now());
+                            println!("repeat-cleanup-started");
+                            std::io::stdout().flush().unwrap();
+                            tokio::select! {
+                                received = termination.recv() => assert!(received.is_some()),
+                                received = interruption.recv() => assert!(received.is_some()),
+                            }
+                            println!("repeat-signal-observed");
+                            std::io::stdout().flush().unwrap();
+                            std::future::pending::<Result<(), batter::BoxError>>().await
+                        });
+                    println!("repeat-ready");
+                    std::io::stdout().flush().unwrap();
+                    std::future::pending::<Result<(), RegistrationError>>().await
+                })
+            },
+        )
+        .with_unix_signals("signals")
+        .start();
+
+        let report = failure(starting.wait().await);
+        assert!(matches!(report.cause, StartupCause::Draining));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(report.cleanup.records.len(), 1);
+        assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::TimedOut);
+        assert!(!report.cleanup.is_success());
+        let elapsed = (*cleanup_started.lock().unwrap()).unwrap().elapsed();
+        assert!(
+            elapsed <= REPEATED_CLEANUP_MAX_ELAPSED,
+            "cleanup exceeded its original allowance: {elapsed:?}"
+        );
+        println!(
+            "repeat-cleanup-timed-out elapsed_ms={}",
+            elapsed.as_millis()
+        );
+    });
 }
 
 fn run_held_child() {
@@ -591,6 +667,61 @@ fn run_signaled_child(mode: &str, signal: &str, survives: bool) -> String {
         );
     }
     output.stdout
+}
+
+fn run_repeated_signals_during_cleanup(first: &str, repeated: &str) -> String {
+    let child = CapturedChild::spawn("repeat-cleanup", false);
+    let child = wait_for_child_marker(child, "repeat-ready");
+    let child = send_signal(child, first);
+    let child = wait_for_child_marker(child, "repeat-cleanup-started");
+    std::thread::sleep(REPEATED_SIGNAL_DELAY);
+    let child = send_signal(child, repeated);
+    let child = wait_for_child_marker(child, "repeat-signal-observed");
+    let output = child.finish(Instant::now() + Duration::from_secs(5));
+    assert!(
+        !output.timed_out,
+        "repeated-signal child timed out: first={first} repeated={repeated}"
+    );
+    assert!(
+        output.status.success(),
+        "{}; stdout={:?}; stderr={:?}",
+        output.status,
+        output.stdout,
+        output.stderr
+    );
+    output.stdout
+}
+
+fn wait_for_child_marker(child: CapturedChild, expected: &str) -> CapturedChild {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match child.lines.recv_timeout(remaining) {
+            Ok(line) if line.contains(expected) => return child,
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                let output = child.finish(Instant::now());
+                panic!(
+                    "child did not publish {expected}; status={}; stdout={:?}; stderr={:?}",
+                    output.status, output.stdout, output.stderr
+                )
+            }
+        }
+    }
+}
+
+fn send_signal(child: CapturedChild, signal: &str) -> CapturedChild {
+    let result = Command::new("/bin/kill")
+        .args([format!("-{signal}"), child.child.id().to_string()])
+        .status();
+    if !matches!(result, Ok(status) if status.success()) {
+        let output = child.finish(Instant::now());
+        panic!(
+            "failed to send {signal}; result={result:?}; status={}; stdout={:?}; stderr={:?}",
+            output.status, output.stdout, output.stderr
+        );
+    }
+    child
 }
 
 fn run_child_to_completion(mode: &str) -> String {

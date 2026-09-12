@@ -2,7 +2,7 @@
 
 use batter::{
     BoxError, RegistrationError,
-    cleanup::{CleanupBudget, CleanupOutcome, CleanupReport},
+    cleanup::{CleanupBudget, CleanupOutcome, CleanupRecord, CleanupReport},
     command::{Command, CommandCause},
     lifecycle::{ShutdownBudget, Supervisor},
     operation::{Interruption, OperationContext},
@@ -51,6 +51,18 @@ fn connection() -> PgConnectOptions {
     .expect("runner supplied a native PostgreSQL URL")
 }
 
+fn authentication_connections() -> (PgConnectOptions, PgConnectOptions) {
+    let accepted = PgConnectOptions::from_str(
+        &std::env::var("BATTER_SQLX_AUTH_ACCEPT_URL")
+            .expect("live runner requires a password-authenticated PostgreSQL URL"),
+    )
+    .expect("runner supplied a native password-authenticated PostgreSQL URL");
+    let rejected = accepted
+        .clone()
+        .password("batter-live-suite-deliberately-invalid-password");
+    (accepted, rejected)
+}
+
 fn supervisor() -> Supervisor {
     Supervisor::new(
         ShutdownBudget::new(
@@ -73,7 +85,7 @@ async fn wait_until(mut predicate: impl FnMut() -> bool) {
     .expect("observable native transition timed out");
 }
 
-async fn assert_closed(pool: &PgPool, cleanup: &CleanupReport, names: &[&str]) {
+fn assert_cleanup(cleanup: &CleanupReport, names: &[&str]) {
     assert!(cleanup.is_success(), "{cleanup:?}");
     assert!(cleanup.skipped.is_empty());
     assert_eq!(
@@ -84,9 +96,36 @@ async fn assert_closed(pool: &PgPool, cleanup: &CleanupReport, names: &[&str]) {
             .collect::<Vec<_>>(),
         names
     );
-    assert_eq!(pool.size(), 0);
-    assert!(pool.is_closed());
-    assert!(matches!(pool.acquire().await, Err(sqlx::Error::PoolClosed)));
+}
+
+async fn assert_native_closed(pool: &PgPool) {
+    native_closed_oracle(pool).await.unwrap();
+}
+
+async fn assert_closed(pool: &PgPool, cleanup: &CleanupReport, names: &[&str]) {
+    cleanup_oracle(cleanup, pool, names).await.unwrap();
+}
+
+async fn native_closed_oracle(pool: &PgPool) -> Result {
+    if pool.size() != 0
+        || !pool.is_closed()
+        || !matches!(pool.acquire().await, Err(sqlx::Error::PoolClosed))
+    {
+        return Err(std::io::Error::other("native pool close was not settled").into());
+    }
+    Ok(())
+}
+
+async fn cleanup_oracle(cleanup: &CleanupReport, pool: &PgPool, names: &[&str]) -> Result {
+    let actual_names = cleanup
+        .records
+        .iter()
+        .map(|record| record.name)
+        .collect::<Vec<_>>();
+    if !cleanup.is_success() || !cleanup.skipped.is_empty() || actual_names.as_slice() != names {
+        return Err(std::io::Error::other("pool cleanup record was not successful").into());
+    }
+    native_closed_oracle(pool).await
 }
 
 #[tokio::test]
@@ -175,11 +214,9 @@ async fn invalid_slot_prevents_pool_construction() -> Result {
     let counted = calls.clone();
     let report = Command::new(operation(), cleanup_budget(), move |scope| {
         Box::pin(async move {
-            assert!(scope.reserve_cleanup("").is_err());
-            if let Ok(slot) = scope.reserve_cleanup("") {
-                counted.fetch_add(1, Ordering::SeqCst);
-                drop(pool_in(slot, options(), connection()));
-            }
+            let slot = scope.reserve_cleanup("")?;
+            counted.fetch_add(1, Ordering::SeqCst);
+            drop(pool_in(slot, options(), connection()));
             Ok::<_, RegistrationError>(())
         })
     })
@@ -187,7 +224,10 @@ async fn invalid_slot_prevents_pool_construction() -> Result {
     .wait()
     .await
     .unwrap();
-    assert!(report.is_success());
+    assert!(matches!(
+        report.work,
+        Err(CommandCause::Failed(RegistrationError::InvalidName))
+    ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(report.cleanup.as_ref().unwrap().records.is_empty());
     Ok(())
@@ -204,11 +244,9 @@ async fn duplicate_slot_prevents_second_pool() -> Result {
         Box::pin(async move {
             let first = pool_in(scope.reserve_cleanup("pool")?, options(), connection());
             *published.lock().unwrap() = Some(first);
-            assert!(scope.reserve_cleanup("pool").is_err());
-            if let Ok(slot) = scope.reserve_cleanup("pool") {
-                counted.fetch_add(1, Ordering::SeqCst);
-                drop(pool_in(slot, options(), connection()));
-            }
+            let second = scope.reserve_cleanup("pool")?;
+            counted.fetch_add(1, Ordering::SeqCst);
+            drop(pool_in(second, options(), connection()));
             Ok::<_, RegistrationError>(())
         })
     })
@@ -216,7 +254,10 @@ async fn duplicate_slot_prevents_second_pool() -> Result {
     .wait()
     .await
     .unwrap();
-    assert!(report.is_success());
+    assert!(matches!(
+        report.work,
+        Err(CommandCause::Failed(RegistrationError::Duplicate("pool")))
+    ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let pool = observed.lock().unwrap().clone().unwrap();
     assert_closed(&pool, report.cleanup.as_ref().unwrap(), &["pool"]).await;
@@ -229,6 +270,8 @@ async fn native_options_and_maintenance_are_preserved() -> Result {
     let connects = Arc::new(AtomicUsize::new(0));
     let counted = connects.clone();
     let inside = connects.clone();
+    let observed = Arc::new(Mutex::new(None));
+    let published = observed.clone();
     let report = Command::new(operation(), cleanup_budget(), move |scope| {
         Box::pin(async move {
             let native = options()
@@ -246,6 +289,7 @@ async fn native_options_and_maintenance_are_preserved() -> Result {
                     })
                 });
             let pool = pool_in(scope.reserve_cleanup("pool")?, native, connection());
+            *published.lock().unwrap() = Some(pool.clone());
             assert_eq!(pool.options().get_max_connections(), 4);
             assert_eq!(pool.options().get_min_connections(), 1);
             wait_until(|| inside.load(Ordering::SeqCst) >= 1).await;
@@ -262,6 +306,8 @@ async fn native_options_and_maintenance_are_preserved() -> Result {
     .unwrap();
     assert!(report.is_success(), "{report:?}");
     assert!(connects.load(Ordering::SeqCst) >= 1);
+    let pool = observed.lock().unwrap().clone().unwrap();
+    assert_closed(&pool, report.cleanup.as_ref().unwrap(), &["pool"]).await;
     Ok(())
 }
 
@@ -272,12 +318,20 @@ async fn authentication_error_keeps_pool_cleanup() -> Result {
     let published = observed.clone();
     let report = Command::new(operation(), cleanup_budget(), move |scope| {
         Box::pin(async move {
-            let rejected = connection()
-                .username("missing_pool_ownership_role")
-                .password("invalid-pool-ownership-password");
-            let pool = pool_in(scope.reserve_cleanup("pool").unwrap(), options(), rejected);
-            *published.lock().unwrap() = Some(pool.clone());
-            probe(&pool, &operation()).await
+            let (accepted, rejected) = authentication_connections();
+            let accepted_pool = pool_in(
+                scope.reserve_cleanup("auth.control").unwrap(),
+                options(),
+                accepted,
+            );
+            let rejected_pool =
+                pool_in(scope.reserve_cleanup("pool").unwrap(), options(), rejected);
+            *published.lock().unwrap() = Some((accepted_pool.clone(), rejected_pool.clone()));
+            assert!(
+                probe(&accepted_pool, &operation()).await.is_ok(),
+                "configured authentication control must complete a query"
+            );
+            probe(&rejected_pool, &operation()).await
         })
     })
     .start()
@@ -288,10 +342,12 @@ async fn authentication_error_keeps_pool_cleanup() -> Result {
         &report.work,
         Err(CommandCause::Failed(batter::operation::OperationError::Failed(error)))
             if matches!(error.native(), sqlx::Error::Database(database)
-                if matches!(database.code().as_deref(), Some("28P01" | "28000")))
+                if database.code().as_deref() == Some("28P01"))
     ));
-    let pool = observed.lock().unwrap().clone().unwrap();
-    assert_closed(&pool, report.cleanup.as_ref().unwrap(), &["pool"]).await;
+    let (accepted_pool, rejected_pool) = observed.lock().unwrap().clone().unwrap();
+    assert_cleanup(report.cleanup.as_ref().unwrap(), &["pool", "auth.control"]);
+    assert_native_closed(&rejected_pool).await;
+    assert_native_closed(&accepted_pool).await;
     Ok(())
 }
 
@@ -442,7 +498,8 @@ async fn two_pools_close_after_dependents_in_lifo_order() -> Result {
         ["dependent", "second", "first"]
     );
     let (first, second) = observed.lock().unwrap().clone().unwrap();
-    assert!(first.is_closed() && second.is_closed());
+    assert_native_closed(&second).await;
+    assert_native_closed(&first).await;
     Ok(())
 }
 
@@ -473,6 +530,10 @@ async fn held_checkout(release_before_timeout: bool) -> Result {
     let wait = tokio::spawn(async move { command.wait().await });
     wait_until(|| pool.is_closed()).await;
     if release_before_timeout {
+        assert!(
+            !wait.is_finished(),
+            "the owning report completed while a checkout still held pool close"
+        );
         drop(held);
         let report = wait.await??;
         assert_closed(&pool, report.cleanup.as_ref().unwrap(), &["pool"]).await;
@@ -542,21 +603,8 @@ async fn work_and_cleanup_failures_are_both_retained() -> Result {
         ]
     );
     let pool = observed.lock().unwrap().clone().unwrap();
-    assert!(pool.is_closed());
+    assert_native_closed(&pool).await;
     assert!(!format!("{report:?}").contains("private-cleanup-marker"));
-    Ok(())
-}
-
-fn cleanup_oracle(cleanup: &CleanupReport, pool: &PgPool, close_finished: bool) -> Result {
-    if cleanup.records.len() != 1
-        || cleanup.records[0].name != "pool"
-        || cleanup.records[0].outcome != CleanupOutcome::Succeeded
-        || !cleanup.skipped.is_empty()
-        || !pool.is_closed()
-        || !close_finished
-    {
-        return Err(std::io::Error::other("pool cleanup was not completely observed").into());
-    }
     Ok(())
 }
 
@@ -565,17 +613,41 @@ fn cleanup_oracle(cleanup: &CleanupReport, pool: &PgPool, close_finished: bool) 
 async fn ownership_oracles_reject_missing_and_premature_cleanup() -> Result {
     let missing = options().connect_lazy_with(connection());
     sqlx::query("SELECT 1").execute(&missing).await?;
-    assert!(cleanup_oracle(&CleanupReport::default(), &missing, false).is_err());
     missing.close().await;
+    assert!(
+        cleanup_oracle(&CleanupReport::default(), &missing, &["pool"])
+            .await
+            .is_err()
+    );
 
     let premature = options().connect_lazy_with(connection());
     let held = premature.acquire().await?;
     let closing = premature.clone();
     let close = tokio::spawn(async move { closing.close().await });
     wait_until(|| premature.is_closed()).await;
-    let claimed = CleanupReport::default();
-    assert!(cleanup_oracle(&claimed, &premature, close.is_finished()).is_err());
+    let claimed = CleanupReport {
+        records: vec![CleanupRecord {
+            name: "pool",
+            outcome: CleanupOutcome::Succeeded,
+            error: None,
+        }],
+        skipped: Vec::new(),
+    };
+    assert!(claimed.is_success());
+    assert_eq!(claimed.records[0].name, "pool");
+    assert!(premature.is_closed());
+    assert!(!close.is_finished());
+    assert!(
+        cleanup_oracle(&claimed, &premature, &["pool"])
+            .await
+            .is_err()
+    );
     drop(held);
     tokio::time::timeout(Duration::from_secs(2), close).await??;
+    assert!(
+        cleanup_oracle(&claimed, &premature, &["pool"])
+            .await
+            .is_ok()
+    );
     Ok(())
 }

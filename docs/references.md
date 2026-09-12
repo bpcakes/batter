@@ -2790,3 +2790,57 @@ subprocess tests exercise synchronous TERM/INT ownership and default-disposition
 controls; the pool suite exercises native option preservation and close ownership
 against PostgreSQL 18.6. No new macOS or hosted execution is claimed. No upstream
 dependency upgrade was made.
+
+## Protected startup arbitration recheck, 2026-09-12
+
+The post-commit review rechecked the exact resolved Tokio 1.53.1 behavior against
+its primary versioned documentation and downloaded source. Tokio's
+[`select!` contract](https://docs.rs/tokio/1.53.1/tokio/macro.select.html)
+states that `biased;` polls branches from top to bottom and cancels the other
+branches after one completes. A branch-only startup representation therefore
+cannot retain an initializer result and a signal that are both ready in one
+poll; changing branch order merely changes which fact is discarded.
+
+[`Signal::recv`](https://docs.rs/tokio/1.53.1/tokio/signal/unix/struct.Signal.html#method.recv)
+is cancellation-safe, Unix notifications are coalesced, and a completed receive
+consumes one notification. The
+[`signal` installation contract](https://docs.rs/tokio/1.53.1/tokio/signal/unix/fn.signal.html)
+also states that Tokio's process-wide handler remains installed after the
+`Signal` value is dropped. The repaired private startup driver directly polls
+both installed sources and retains completed reception in their owned value. At
+each observation boundary it first rejects an already-visible drain,
+cancellation, deadline or configured signal without another initializer poll;
+only when that precheck is clear does it poll the initializer once and then
+observe sources that became ready during that poll before arbitrating. This is
+not an atomic kernel-arrival fence, does not count coalesced signals, and does
+not restore the prior process disposition. No dependency version changed.
+
+## SQLx ownership-oracle recheck, 2026-09-12
+
+The live-suite repair rechecked PostgreSQL 18's primary authentication contracts.
+[`trust`](https://www.postgresql.org/docs/18/auth-trust.html) performs no password
+verification. The
+[`pg_hba.conf` rules](https://www.postgresql.org/docs/18/auth-pg-hba-conf.html)
+use only the first matching record and do not fall through after authentication
+failure. The
+[`password authentication` documentation](https://www.postgresql.org/docs/18/auth-password.html)
+defines the server password methods, while the
+[`error-code appendix`](https://www.postgresql.org/docs/18/errcodes-appendix.html)
+distinguishes generic invalid authorization `28000` from invalid password
+`28P01`. PostgreSQL 18's
+[`auth-scram.c`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/libpq/auth-scram.c)
+performs a mock SCRAM exchange for a nonexistent role or an unusable SCRAM secret
+so those states do not reveal role existence. Exact `28P01` therefore does not by
+itself prove that a known role rejected its password. The runner requires a
+known-good password-authenticated URL; the Rust case first completes a query with
+its parsed options, then changes only the password and accepts only `28P01` from
+that derived connection.
+
+Pinned SQLx 0.9.0 pool source and its
+[`Pool::close` documentation](https://docs.rs/sqlx/0.9.0/sqlx/struct.Pool.html#method.close)
+were rechecked. Close marks the shared pool closed before waiting for acquired
+connections to return. The live suite now treats `is_closed()` as initiation
+only, proves its command owner remains unfinished while a checkout is held, and
+requires zero pool size plus `PoolClosed` from a later acquisition for completion.
+No server-session termination or authentication-method introspection is inferred
+from SQLx's public API. No dependency changed.

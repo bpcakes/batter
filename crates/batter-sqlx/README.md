@@ -47,8 +47,13 @@ supplied. Select TLS through native SQLx features in the consumer.
 
 Run `cargo test -p batter-sqlx --features test-support --locked` for offline
 contracts. Live cases are ignored in ordinary all-feature checks. Configure
-`DATABASE_URL` for an external disposable database and run
-`bash scripts/test_sqlx_live.sh`; missing prerequisites fail. The runner verifies
+`DATABASE_URL` for an external disposable database and
+`BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
+then run `bash scripts/test_sqlx_live.sh`; missing prerequisites fail. The
+authentication case first completes a query with those parsed connection options,
+then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
+A trust endpoint, missing role or connection refusal is not equivalent.
+The runner verifies
 an exact 24-case inventory across the ten disposition cases and fourteen pool
 ownership cases, executes each target serially, and bounds every child process.
 Cases can use up to six simultaneous server sessions, including retired sessions

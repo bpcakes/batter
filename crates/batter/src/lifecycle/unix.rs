@@ -1,6 +1,10 @@
 use super::Supervisor;
 use crate::RegistrationError;
-use std::{fmt, io};
+use std::{
+    fmt, io,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 /// Signal installation or component registration failed before readiness.
@@ -87,15 +91,21 @@ impl InstalledSignals {
     /// retained: later waits complete immediately and successful registration
     /// requests drain without requiring a second signal.
     pub async fn received(&mut self) {
+        std::future::poll_fn(|cx| self.poll_received(cx)).await;
+    }
+
+    pub(crate) fn poll_received(&mut self, cx: &mut Context<'_>) -> Poll<()> {
         if self.received {
-            return;
+            return Poll::Ready(());
         }
-        tokio::select! {
-            biased;
-            _ = self.terminate.recv() => {},
-            _ = self.interrupt.recv() => {},
+        let terminate = Pin::new(&mut self.terminate).poll_recv(cx);
+        let interrupt = Pin::new(&mut self.interrupt).poll_recv(cx);
+        if terminate.is_ready() || interrupt.is_ready() {
+            self.received = true;
+            Poll::Ready(())
+        } else {
+            Poll::Pending
         }
-        self.received = true;
     }
 
     /// Transfer both installed sources into one critical supervisor component.

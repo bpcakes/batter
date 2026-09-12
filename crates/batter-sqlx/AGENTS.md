@@ -29,9 +29,10 @@ independent of SQLx. Never provision PostgreSQL in this package.
 ## Common commands
 
 Run `cargo test -p batter-sqlx --features test-support --locked` for offline contracts and
-`bash scripts/test_sqlx_live.sh` with DATABASE_URL for the ignored live cases.
-The explicit invocation must fail when prerequisites are missing. Also run the
-root two-toolchain verification, HTTP smoke profiles and required Jig gates.
+`bash scripts/test_sqlx_live.sh` with `DATABASE_URL` plus a known-good password
+endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` for the ignored live cases. The explicit
+invocation must fail when prerequisites are missing. Also run the root
+two-toolchain verification, HTTP smoke profiles and required Jig gates.
 
 ## Optional fixture support
 

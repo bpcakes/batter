@@ -507,6 +507,15 @@ running owner. Dropping an unclaimed handoff requests running-driver drain.
 
 Initialization checks the operation deadline/cancellation and process drain,
 including before factory invocation and after successful future destruction.
+While the initializer is pending, each private observation boundary first rejects
+an already-ready drain, cancellation, deadline or configured Unix signal without
+polling application work again. Otherwise it polls the initializer once and then
+observes sources that became ready during that poll. A concrete application error
+or initializer panic observed in that poll is retained; signal reception still
+requests drain. A successful initializer observed with a signal transfers the
+consumed reception into reserved registration, whose drain request is caught by
+the final check, so it cannot publish readiness or require a second signal. An
+independent destruction panic does not suppress that final lifecycle classification.
 By default success arms readiness; the running driver and every critical
 acknowledgement are still required. `Startup::without_readiness_approval` instead
 hands off the running driver while application readiness remains Starting, so a
@@ -539,7 +548,8 @@ or interruption, reserves the component identity, and installs SIGTERM then
 SIGINT synchronously before returning the owner. The coordinator owns reception
 during initialization and fulfills the reservation with one real critical task
 before running handoff. A signal observed during initialization requests drain;
-it cannot approve readiness. Preflight failures skip the initializer but remain
+it cannot approve readiness. Repeated signals do not restart cleanup's separate
+fixed allowance or turn a timed-out finalizer into successful cleanup. Preflight failures skip the initializer but remain
 owned through prior cleanup, even if the startup owner is then dropped. Cleanup
 slots use a distinct namespace from component reservations.
 
@@ -675,6 +685,10 @@ returning the pool. It does not establish connectivity or readiness. SQLx may
 start native minimum-connection maintenance during construction; constructor
 panics and runtime death remain native limits. Dependent work must be joined and
 checked-out connections released before successful cleanup can be expected.
+Local completion evidence requires the named successful cleanup record, zero
+remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alone
+only witnesses that close began. These facts still say nothing about detached
+server sessions.
 `register_pool_close` remains a lower-level compatibility path for pools acquired
 elsewhere, with caller-owned cleanup if registration fails.
 

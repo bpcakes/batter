@@ -7340,6 +7340,48 @@ second-signal force-exit, non-yielding preemption,
 runtime-death cleanup or atomic kernel-arrival fence is claimed. Final Jig gate
 receipts are recorded in the living plan and append-only state.
 
+## Startup arbitration post-review repair: 2026-09-12
+
+Reopened Bead `batter-lp2.2`; plan
+`plan_01M2B7RSCGTA0A2PJ4M0D5RRYH`, baseline
+`b87708db06640fa9fd81f6d15cd2f2cfa538f7be`. The all-reviewer commit review
+found that biased branch selection could discard a simultaneously ready concrete
+initializer result, and that the protected handoff guard had accidentally
+suppressed the legacy final lifecycle check when successful-future destruction
+panicked. The repair replaces branch-only selection with private
+observe-then-arbitrate polling, retains consumed signal reception across successful
+handoff, and restores the independent final check. A subsequent all-reviewer
+review-fix pass found that this boundary polled the initializer before rejecting
+an interruption that was already visible. The corrected boundary now prechecks
+drain, cancellation, deadline and signals, polls application work only while
+clear, then observes facts that became ready during that poll. Public APIs are
+unchanged.
+
+Executed on Linux x86_64 with rustc 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0
+(`4a4ef493e`, 2026-03-02). Tokio remains locked at 1.53.1; no dependency changed.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter startup::driver::tests --lib --locked -- --nocapture` | Five controls passed. A pending initializer receives exactly one poll and no extra poll after drain becomes visible. Injected reception becomes ready during the application poll for both an error and a success: the error stays concrete; the success transfers the consumed fact into reserved registration and ends Draining without a second signal or Ready publication. |
+| `cargo test -p batter --test startup --locked -- --nocapture` | Seventeen tests passed. A new legacy control returns success, requests drain during future destruction, panics in that destructor, and retains both `StartupCause::Draining` and the independent panic payload. |
+| `cargo test -p batter --test startup_signals --locked -- --nocapture` | Four top-level cases passed. For TERM then INT and INT then TERM, the cleanup hook installs listeners before publishing its marker, the parent waits 1.5 seconds before the repeat, and a listener must publish `repeat-signal-observed`. Each child invokes one hook, reports `TimedOut`, remains unsuccessful, and bounds elapsed cleanup observation to 3.75 seconds against the original 3-second total plus 250-millisecond abort allowance. Marker or delivery failure kills and reaps the child before reporting both streams. |
+| `bash scripts/verify.sh` | Complete default-toolchain core/minimal, workspace runtime, hostile-environment, doctest, format, Clippy and rustdoc matrix passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten process smokes passed with selected-signal exit zero, readiness, response, correlation and telemetry assertions. |
+| PostgreSQL lifecycle three-case live target plus SIGTERM/SIGINT executable smokes, on each toolchain | All six live tests and four process smokes passed against the existing external PostgreSQL 18.6 Unix-socket database. |
+
+The deterministic controls distinguish an event already visible before an
+application poll from one that becomes visible during it. The former prevents
+new work; a concrete error or panic returned by the latter poll remains owned.
+The subprocess cases also prove the delayed repeat reaches a cleanup-owned
+listener and reject either deadline restart or reporting a timed-out hook as
+success. This is cooperative observation, not an atomic fence at kernel arrival.
+Tokio coalesces notifications and retains its process-wide handler. The dedicated two-cluster
+reference live suite was not rerun because its privileged admin and observer
+endpoints were unavailable; its offline runner controls and workspace tests did
+pass in both complete matrices. No macOS or hosted execution is newly claimed.
+No commit, push, publication or deployment was performed.
+
 ## Cleanup-slot-owned SQLx pools: 2026-09-12
 
 Bead `batter-lp2.3`; plan `plan_01M2B21R4PY11K6GCMER1CW48K`; baseline
@@ -7390,3 +7432,64 @@ not establish construction inertness, schema readiness, remote cancellation,
 rollback, detached-session termination, runtime-death cleanup, macOS behavior, or
 hosted CI. Jig receipts and final review evidence are recorded separately in the
 living plan and append-only state.
+
+## SQLx ownership-oracle post-review repair: 2026-09-12
+
+Reopened Bead `batter-lp2.3`; plan
+`plan_01M2B8NWYSW61AM69FDSV6N1NP`, baseline
+`b87708db06640fa9fd81f6d15cd2f2cfa538f7be`. The all-reviewer commit review
+found that several live checks could pass for the wrong reason: generic
+authorization failure stood in for password rejection, `is_closed()` stood in
+for completed native closure, synthetic reservation failures bypassed their
+production composition path, and matrix controls did not inject failure into
+every command in the real four-batch topology. The repair changes tests and
+runner contracts only; no public or production Rust API changed.
+
+Executed on Linux x86_64 with rustc 1.98.1 (`48a229cea`, 2026-09-01) and 1.94.0
+(`4a4ef493e`, 2026-03-02), SQLx 0.9.0 and Tokio 1.53.1. The initial repair used
+an external PostgreSQL 18.6 server. Review-fix-loop round 2 found that PostgreSQL
+SCRAM deliberately returns the same invalid-password class for nonexistent roles,
+so exact `28P01` alone was insufficient. The repaired oracle was rerun against an
+isolated no-volume `postgres:18` container reporting PostgreSQL 18.6
+(`18.6-1.pgdg13+2`) over loopback. It first completed a real query with the
+configured role, then changed only the parsed connection's password and required
+`28P01`. The disposable container was stopped and auto-removed after validation.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `python3 -m unittest discover -s scripts -p 'test_sqlx_live.py' -v` | Five runner-contract controls passed. Missing either the ordinary endpoint or known-good password-authenticated endpoint stops before test invocation. |
+| `python3 -m unittest discover -s scripts -p 'test_parallel_process.py' -v` | Twenty-two controls passed. The matrix negative now injects each of nine failures across actual batch sizes `[4, 1, 3, 1]` and requires later batches not to start. |
+| `cargo test -p batter-sqlx --features test-support --locked` | Offline adapter tests, ignored-live inventory and doctests passed. |
+| `bash scripts/test_sqlx_live.sh` with `DATABASE_URL` and `BATTER_SQLX_AUTH_ACCEPT_URL`, on each toolchain | The ten disposition cases and fourteen ownership cases passed: 24 live cases per toolchain. The authentication case completed and closed both the successful control pool and derived rejection pool. |
+| Focused authentication case with a deliberately missing role supplied as `BATTER_SQLX_AUTH_ACCEPT_URL` | Failed as intended with status 101 at the explicit successful-query control; the mock SCRAM `28P01` cannot satisfy the rejection oracle. |
+| Focused `native_options_and_maintenance_are_preserved` case on each toolchain after review-fix-loop round 3 | Passed against an isolated PostgreSQL 18.6 container; the case now requires its named cleanup record, zero pool size and a later `PoolClosed` acquisition in addition to the native callback/options observations. |
+| `bash scripts/verify.sh` | The complete default-toolchain core/minimal, workspace runtime, hostile-environment, doctest, formatting, Clippy and rustdoc matrix passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero checks. |
+
+Successful cleanup now requires the named successful cleanup record, zero native
+pool size, and `PoolClosed` from a later acquisition. The held-checkout case also
+proves the owner remains unfinished before release. Positive and negative cases
+now call the same cleanup-plus-native-close oracle. The missing-record negative
+first closes its native pool so only the cleanup record is absent. The premature
+negative supplies the claimed successful record while its held checkout keeps
+native size nonzero; after release and close completion, that unchanged oracle
+passes. Invalid and duplicate reservations propagate the exact
+registration error through the real fallible command path and prove the native
+constructor counter remains zero; the legitimate first pool in the duplicate
+case still closes completely. The native-options/maintenance case retains its own
+pool clone and applies the same completion oracle, so an empty cleanup report
+cannot satisfy that acceptance path.
+
+A successful query followed by exact `28P01` after changing only the parsed
+password proves rejection for that known-good role and endpoint, not SCRAM versus
+MD5 negotiation. Zero size plus `PoolClosed` proves SQLx pool-close settlement,
+not termination of arbitrary detached server work. No macOS, hosted-CI, TLS,
+remote-cancellation, rollback, ambiguous-commit or runtime-death guarantee is
+added. No commit, push, publication or deployment was performed.
+
+This continuation reran both complete Rust verification matrices and the 24-case
+live SQLx suite on each toolchain after the oracle changes. The trusted review
+exclusions cover `.agent`; no fresh Jig command was run because Jig appends there
+and this loop's validation was constrained not to write excluded paths. Existing
+Jig state was left unchanged.

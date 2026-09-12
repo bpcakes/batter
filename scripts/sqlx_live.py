@@ -65,9 +65,12 @@ def complete_execution(output, cases):
 
 
 def main():
-    if not os.environ.get("DATABASE_URL"):
-        print("DATABASE_URL must identify an externally provisioned disposable PostgreSQL database",
-              file=sys.stderr)
+    missing = [name for name in ("DATABASE_URL", "BATTER_SQLX_AUTH_ACCEPT_URL")
+               if not os.environ.get(name)]
+    if missing:
+        print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +
+               "; provide an ordinary disposable database and a known-good "
+               "password-authenticated endpoint"), file=sys.stderr)
         return 1
     for target, cases in TARGETS.items():
         inventory = invoke(target, ["--ignored", "--list", "--format", "terse"])

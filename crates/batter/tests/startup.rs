@@ -297,6 +297,25 @@ impl Drop for DropPanic {
     }
 }
 
+struct SuccessfulDrainDropPanic {
+    handle: batter::lifecycle::ShutdownHandle,
+}
+
+impl Future for SuccessfulDrainDropPanic {
+    type Output = Result<(), Failure>;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for SuccessfulDrainDropPanic {
+    fn drop(&mut self) {
+        self.handle.request();
+        panic!("successful-destruction-original")
+    }
+}
+
 #[tokio::test]
 async fn application_failure_and_future_destruction_panic_both_survive() {
     let mut starting = startup(|scope| {
@@ -321,6 +340,40 @@ async fn application_failure_and_future_destruction_panic_both_survive() {
         })
         .expect("payload inspection is uncontended");
     assert_eq!(report.cleanup.records.len(), 1);
+    assert!(report.cleanup.is_success());
+}
+
+#[tokio::test]
+async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain() {
+    let process = supervisor();
+    let handle = process.handle();
+    let future_handle = handle.clone();
+    let mut starting = Startup::new(
+        process,
+        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        cleanup_budget(),
+        move |_scope| {
+            Box::pin(SuccessfulDrainDropPanic {
+                handle: future_handle,
+            })
+        },
+    )
+    .start();
+
+    let report = failed(starting.wait().await);
+    assert!(matches!(report.cause, StartupCause::Draining));
+    report
+        .destruction_panic
+        .as_ref()
+        .unwrap()
+        .try_inspect(|payload| {
+            assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"successful-destruction-original")
+            );
+        })
+        .expect("payload inspection is uncontended");
+    assert_eq!(handle.readiness(), Readiness::Draining);
     assert!(report.cleanup.is_success());
 }
 

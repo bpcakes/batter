@@ -46,10 +46,13 @@ class SqlxLiveControls(unittest.TestCase):
         self.assertFalse(sqlx_live.complete_execution(output, cases))
 
     def test_missing_environment_fails_before_invocation(self):
-        with patch.dict("os.environ", {}, clear=True), \
-                patch.object(sqlx_live, "run_parallel") as run:
-            self.assertEqual(sqlx_live.main(), 1)
-            run.assert_not_called()
+        for environment in ({}, {"DATABASE_URL": "ordinary"},
+                            {"BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"}):
+            with self.subTest(environment=environment), \
+                    patch.dict("os.environ", environment, clear=True), \
+                    patch.object(sqlx_live, "run_parallel") as run:
+                self.assertEqual(sqlx_live.main(), 1)
+                run.assert_not_called()
 
     def test_main_discovers_then_executes_each_target(self):
         results = []
@@ -58,7 +61,10 @@ class SqlxLiveControls(unittest.TestCase):
                 SimpleNamespace(ok=True, stdout=inventory(cases)),
                 SimpleNamespace(ok=True, stdout=execution(cases)),
             ])
-        with patch.dict("os.environ", {"DATABASE_URL": "redacted"}, clear=True), \
+        with patch.dict("os.environ", {
+                    "DATABASE_URL": "ordinary-redacted",
+                    "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted-redacted",
+                }, clear=True), \
                 patch.object(sqlx_live, "run_parallel",
                              side_effect=[([result]) for result in results]) as run, \
                 patch.object(sqlx_live, "render_outcomes"):

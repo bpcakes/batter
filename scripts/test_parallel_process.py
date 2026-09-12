@@ -353,23 +353,20 @@ class MatrixTests(unittest.TestCase):
     def test_failure_of_any_prerequisite_or_runtime_pass_stops_later_batches(self):
         success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
         failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
-        batches = [
-            [[failure, success, success, success]],
-            [[success, failure, success, success]],
-            [[success, success, failure, success]],
-            [[success, success, success, failure]],
-            [[success, success, success, success], [failure, success, success]],
-            [[success, success, success, success], [success, failure, success]],
-            [[success, success, success, success], [success, success, failure]],
-        ]
-        for results in batches:
-            with self.subTest(results=results), \
+        batch_sizes = [4, 1, 3, 1]
+        for failing_batch, size in enumerate(batch_sizes):
+            for failing_command in range(size):
+                results = [[success] * earlier for earlier in batch_sizes[:failing_batch]]
+                failed = [success] * size
+                failed[failing_command] = failure
+                results.append(failed)
+                with self.subTest(batch=failing_batch, command=failing_command), \
                     mock.patch.object(sys, "argv", ["test_matrix.py"]), \
                     mock.patch.object(matrix, "run_parallel",
                                       side_effect=results) as execute, \
                     mock.patch.object(matrix, "render_outcomes"):
-                self.assertEqual(matrix.main(), 1)
-                self.assertEqual(execute.call_count, len(results))
+                    self.assertEqual(matrix.main(), 1)
+                    self.assertEqual(execute.call_count, failing_batch + 1)
 
 
 class MutationCopyTests(unittest.TestCase):
