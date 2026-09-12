@@ -6,7 +6,7 @@ For services, start from the executable
 [`Startup` rustdoc](../crates/batter/src/startup.rs) or the
 [HTTP composition example](../crates/batter-axum/examples/http_service.rs).
 These demonstrate owned initialization and transfer to a running driver;
-await its report and inspect every retained task or cleanup failure. Compose
+use `check_shutdown` on its awaited result and retain failures for trusted inspection. Compose
 native Rust/Tokio futures through these boundaries, use validated settings,
 and keep application errors concrete.
 Repeated instructions that a consumer must manually rebuild these protocols
@@ -117,39 +117,70 @@ components and no finite-work capacity reports `EmptySupervisor`; successful
 resource cleanup does not make that shutdown report successful. Configure
 genuine service work, or use the finite-command composition below.
 
-The [worker example](../crates/batter/examples/worker.rs) shows inert registration and observed
-signal handling. The [HTTP example](../crates/batter-axum/examples/http_service.rs) shows Axum's
-native server future and separate probe/router state. Do not add a bare spawn
-inside a registered component merely to make borrowing convenient; use composed
-futures or an explicitly owned JoinSet and await its shutdown.
+Use `Startup::new(supervisor, context, cleanup_budget, initializer).start()`.
+Inside the initializer, reserve cleanup before resource acquisition and register
+it immediately after success through `scope.supervisor()`. Register components
+and Unix signals there as well. Await `starting.wait()` to obtain the
+`RunningSupervisor`; startup failure retains initialization and cleanup errors.
+The [HTTP example](../crates/batter-axum/examples/http_service.rs) demonstrates
+this complete path with native listener binding and `register_http`.
 
-Every registered task is critical. A one-shot warmup belongs in startup, not in
-the critical task set. A maintenance loop needs an intentional missed-tick,
-error, and cancellation policy. A Runledger worker should be hosted through its
-upstream supervisor rather than flattened into Batter-managed internal loops.
+Successful `Startup` initialization supplies application readiness approval by
+default and starts the owned driver. Each direct critical component still calls
+`shutdown.mark_started()` after actual initialization; supported adapters own
+their component acknowledgement. The driver publishes Ready only after every
+registered component acknowledges. Use `without_readiness_approval()` only when
+application policy deliberately defers approval, then call `handle.mark_ready()`
+after those checks pass. Fresh dependency health remains a separate readiness
+condition. A one-shot warmup belongs in the initializer, not the critical task set.
+A maintenance loop needs an intentional missed-tick, error and cancellation policy.
 
-Call each component's `shutdown.mark_started()` after its actual initialization.
-The application calls `handle.mark_ready()` after its own startup checks; the
-driver publishes Ready only once all components acknowledge. Prefer
-`let running = supervisor.start();` and `running.wait().await` for process
-ownership. `running.shutdown().await` is cancel-safe as a waiter; the separately
-driven cleanup still requires the runtime to remain alive.
+For Runledger workers, select the implemented
+[`batter-runledger` managed adapter](../crates/batter-runledger/src/lib.rs).
+During owned startup, complete dependency/schema initialization, create native
+inert preparation with
+`runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`,
+and pass it to `batter_runledger::register(scope.supervisor(), name, context, prepared)`.
+The adapter translates native initialization, stop clocks and retained descendant
+settlement into Batter ownership; Runledger retains its internal supervisor and
+durable work policy. Follow the [reference composition root](../examples/reference-service/src/runtime.rs)
+and [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
+That root deliberately withholds application approval while its delivery handler
+is absent. Native initialization alone does not establish dependency health or
+application readiness, and native joins do not prove arbitrary detached work or
+remote sessions stopped.
 
-An owned-driver `Ok` contains `SharedShutdownReport`; call `is_success()` and
-handle retained task/cleanup failures before treating shutdown as successful.
+At service completion, use `batter::lifecycle::check_shutdown(running.wait().await)?`
+inside the application's `run` function. For an explicit stop, use
+`check_shutdown(running.shutdown().await)?`. Both borrowed waiters are cancel-safe;
+the separately driven cleanup still requires the runtime to remain alive.
+`check_shutdown` checks the complete report and retains an unsuccessful report
+or coordinator error in `ShutdownFailure`, with redacted formatting. A successful
+wait alone is insufficient: it may return a report containing failures.
+
+Keep rich errors available for deliberate inspection at a trusted sink. Return
+`ExitCode` from `main` with application-selected sanitized output, as the HTTP
+example does. A `main` returning `Result<(), BoxError>` prints the error's
+**Debug** representation through Rust's `Termination` implementation. Changing
+Display does not sanitize Debug or arbitrary errors propagated through `?`.
+
+### Lower-level lifecycle and report access
+
+The [worker example](../crates/batter/examples/worker.rs) illustrates direct
+registration and supervisor driving, not the complete owned-startup/error-retention
+path above. Direct `Supervisor::start()` leaves acquisition failure cleanup and
+application readiness approval with the caller. Do not copy its count-only error
+conversion when original shutdown causes must be retained. Do not add a bare spawn
+inside a component to make borrowing convenient; use composed futures or an
+explicitly owned JoinSet and await its shutdown.
+
+An owned-driver `Ok` contains `SharedShutdownReport`. If inspecting it directly
+instead of using `check_shutdown`, check `is_success()` and retain every failure.
 The wrapper cheaply clones the same completed report, dereferences to
 `ShutdownReport`, and can be retained as an application error through `BoxError`.
 Its `must_use` warning catches a bare `running.wait().await?;` or
 `running.wait().await.unwrap();`, but cannot require inspection after binding
-or explicit disposal. See its rustdoc example for awaited shutdown and failure
-propagation followed by an explicit process exit boundary. A `main` returning
-`Result<(), BoxError>` uses Rust's `Termination` implementation, which prints an
-error's **Debug** representation, including retained task and cleanup errors.
-Keep rich errors inside `run`/`stop` and return `ExitCode` from `main`, as in the
-[SQLx example](../examples/postgres-lifecycle/src/main.rs). Choose a trusted sink
-before that boundary; only application-selected sanitized output belongs on the
-default CLI path. Changing a report's Display does not sanitize Debug or arbitrary
-errors propagated through `?`.
+or explicit disposal.
 
 Migration from the earlier owned-driver API: replace explicit
 `Arc<ShutdownReport>` return annotations with `SharedShutdownReport` and
@@ -360,7 +391,7 @@ deliberately instead of dropping diagnostics or printing the reports' derived
 Do not wrap an entire transaction/commit in a blanket retry. Continue to use
 native SQLx transaction parameters where application writes and Runledger enqueue
 must share the transaction. The
-[reference delivery command](../examples/reference-service/README.md#atomic-delivery-command)
+[reference delivery command](../examples/reference-service/README.md#staged-worker-and-atomic-delivery-command)
 shows the implemented boundary: validate before acquisition; pass one operation
 budget through `PgLease` acquisition and transaction work; return the lease only
 after acknowledged commit/rollback; and reconcile an uncertain result by the

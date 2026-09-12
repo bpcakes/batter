@@ -65,8 +65,13 @@ targets. Reusable pool/lease/template composition is opt-in under the SQLx
 adapter test-support feature, selected by reference development dependencies.
 The external harness retains provisioning and template-cache ownership. The optional SQLx
 adapter shares the observed connection disposition mechanism while preserving
-native transactions and application policy. Runlimit and Runledger adapters still
-require proven shared mechanics. See [ADR-006](adr/006-workspace-packages.md).
+native transactions and application policy. The implemented optional
+`batter-runledger` adapter translates owned native preparation, initialization,
+stop clocks and complete settlement into managed process ownership; native
+supervision and durable policy remain in Runledger. Runlimit has no implemented
+Batter adapter; adding one still requires proven shared mechanics. See
+[ADR-006](adr/006-workspace-packages.md) and the
+[Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
 
 Each package declares its version, Rust minimum, and publication policy. All
 currently retain version 0.1.0, Rust 1.94, and `publish = false`; a shared
@@ -151,14 +156,18 @@ before handoff. Completed reception is retained through registration. The staged
 reference root uses that path around its complete awaited initializer. Tokio's process-wide signal handlers remain installed after listeners
 are dropped.
 
-That staged worker keeps its complete native join under an independent owner.
-Preparation is independently owned before acquisition, and native spawning
-transfers synchronously into the native driver. Its control session is monitored,
-and bounded release observations are retained before dependency cleanup. Native
-termination proof, release certainty and caller observation remain separate facts. Registration rejection returns
-the already-stopping host to the caller, rather than discarding its only
-awaitable owner. These are example composition contracts, not new foundation
-supervision or database abstractions.
+The [staged reference worker](../examples/reference-service/src/runtime.rs) uses
+`batter_runledger::register` inside owned `Startup`, after dependency and schema
+initialization. Registration consumes inert native preparation; native work starts
+only under the process driver. The adapter maps native loop initialization to
+component acknowledgement and exchanges the earliest native/parent stop clock.
+Managed ownership retains complete native settlement outside the direct waiter;
+Batter uses that evidence for its conservative dependent-cleanup decision. The
+application needs no separate native join driver, termination gate or report
+channel. Native supervision stays upstream, and settlement does not prove remote
+server-session termination or arbitrary detached handler work stopped. Fresh
+dependency health and application approval remain separate; this reference root
+withholds approval until its real delivery handler is installed.
 
 The lower-level `take_cleanup` pattern remains explicitly caller-driven. Its
 caller cancellation can abandon asynchronous cleanup. Resources not yet
