@@ -531,7 +531,9 @@ application's concrete error and static stage, interruption or unwind payload,
 an independent initializer destruction panic, and all cleanup outcomes.
 Stage metadata must be suitable for diagnostics. Default error formatting omits
 cause contents; explicit error sources/panic inspection are trusted operations.
-`PanicPayload::try_inspect` never waits for another inspector: concurrent or
+The shared `batter::PanicPayload` type is used by startup, command and managed
+lifecycle reports; its original `batter::startup::PanicPayload` path remains a
+compatible re-export. `PanicPayload::try_inspect` never waits for another inspector: concurrent or
 recursive access returns `PanicPayloadBusy`. A callback panic does not poison
 future inspection. Inspection remains synchronous and temporarily excludes other
 inspectors; it does not clone, format or expose the retained payload automatically.
@@ -564,7 +566,8 @@ initialization and register the same sources before handoff. Tokio changes
 process-wide signal disposition and does not restore it on listener drop; a
 partial installation failure is not rollback. Signal-enabled start requires a
 live Tokio runtime with signal support. Reception is cooperative and is not an
-atomic fence at kernel delivery.
+atomic fence at kernel delivery. Process-global signal selection belongs at the
+executable root; reusable in-process test helpers must not install it implicitly.
 
 Standalone finite commands use `Command` to retain work and cleanup independently
 of the caller's waiter. The lower-level `OperationContext::run` and
@@ -598,8 +601,10 @@ fixture acceptance is not evidence of a deployment retirement.
 ## Dependency health sampling
 
 `HealthMonitor` owns one native probe factory and creates no tasks. Constructing
-it or its consuming `run` future is inert. Register `run` as an ordinary
-supervised component; first poll acknowledges that the sampling loop is usable,
+it or its consuming `run` future is inert. Canonical `register_in` validates the
+component before transferring the writer and returns its `HealthReader`; failure
+drops the inert writer without invoking a probe. Direct `run` remains available
+for lower-level composition. First poll acknowledges that the sampling loop is usable,
 not that the dependency is healthy. Application startup approval and dependency
 health remain separate. Returned probe errors and timeouts update health and
 allow recovery; panics propagate to the critical task boundary and stop the writer.

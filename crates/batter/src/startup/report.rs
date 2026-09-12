@@ -1,10 +1,8 @@
-use crate::{cleanup::CleanupReport, lifecycle::SignalRegistrationError, operation::Interruption};
-use std::{
-    any::Any,
-    error::Error,
-    fmt,
-    sync::{Arc, Mutex, TryLockError},
+use crate::{
+    PanicPayload, cleanup::CleanupReport, lifecycle::SignalRegistrationError,
+    operation::Interruption,
 };
+use std::{error::Error, fmt, sync::Arc};
 use tokio::task::JoinError;
 
 /// Stable failure envelope for the protected startup path.
@@ -43,54 +41,6 @@ impl<E: Error + 'static> Error for InitializationError<E> {
             Self::Signals(error) => Some(error),
             Self::SignalPolicyAlreadySelected => None,
         }
-    }
-}
-
-/// Retained unwinding panic payload; default formatting never inspects it.
-pub struct PanicPayload(Mutex<Box<dyn Any + Send>>);
-
-/// Another caller is currently inspecting the retained panic payload.
-///
-/// This is a transient local contention result, not evidence about the payload
-/// or the operation that panicked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("panic payload is already being inspected")]
-pub struct PanicPayloadBusy;
-
-impl PanicPayload {
-    pub(crate) fn new(payload: Box<dyn Any + Send>) -> Self {
-        Self(Mutex::new(payload))
-    }
-
-    /// Inspect the original payload in a trusted callback without waiting for a lock.
-    ///
-    /// Concurrent or recursive inspection returns [`PanicPayloadBusy`] instead
-    /// of blocking. A previous callback panic does not prevent later inspection.
-    /// Keep the callback short; it temporarily excludes other inspectors.
-    ///
-    /// ```
-    /// use batter::startup::{PanicPayload, PanicPayloadBusy};
-    ///
-    /// fn is_string(payload: &PanicPayload) -> Result<bool, PanicPayloadBusy> {
-    ///     payload.try_inspect(|value| value.is::<&'static str>())
-    /// }
-    /// ```
-    pub fn try_inspect<T>(
-        &self,
-        inspect: impl FnOnce(&(dyn Any + Send)) -> T,
-    ) -> Result<T, PanicPayloadBusy> {
-        let payload = match self.0.try_lock() {
-            Ok(payload) => payload,
-            Err(TryLockError::Poisoned(error)) => error.into_inner(),
-            Err(TryLockError::WouldBlock) => return Err(PanicPayloadBusy),
-        };
-        Ok(inspect(&**payload))
-    }
-}
-
-impl fmt::Debug for PanicPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("startup panic payload retained")
     }
 }
 

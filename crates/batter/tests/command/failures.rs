@@ -1,8 +1,7 @@
 use super::*;
 use batter::{
-    BoxError,
+    BoxError, PanicPayload,
     command::{CommandFailure, check_command},
-    startup::PanicPayload,
 };
 use std::{pin::Pin, task::Context};
 

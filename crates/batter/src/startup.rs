@@ -19,10 +19,9 @@ mod driver;
 mod report;
 mod signals;
 
+pub use crate::{PanicPayload, PanicPayloadBusy};
 pub use driver::{StartingSupervisor, StartupObserver, StartupOutcome};
-pub use report::{
-    InitializationError, PanicPayload, PanicPayloadBusy, StartupCause, StartupError, StartupFailure,
-};
+pub use report::{InitializationError, StartupCause, StartupError, StartupFailure};
 
 use crate::{
     RegistrationError,
@@ -63,12 +62,12 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 /// let capacity = Arc::new(Semaphore::new(1));
 /// let acquiring = capacity.clone();
 /// let (requests, mut inbox) = mpsc::channel::<(u32, oneshot::Sender<u32>)>(1);
-/// let mut starting = Startup::new(supervisor, context, cleanup, move |scope| Box::pin(async move {
+/// let mut starting = Startup::scoped(supervisor, context, cleanup, move |scope| Box::pin(async move {
 ///     scope.stage("service.capacity")?;
-///     let slot = scope.supervisor().reserve_cleanup("service.capacity")?;
+///     let slot = scope.reserve_cleanup("service.capacity")?;
 ///     let permit = acquiring.acquire_owned().await.expect("capacity remains open");
 ///     slot.register(move || async move { drop(permit); Ok(()) });
-///     scope.supervisor().register("doubler", move |shutdown| async move {
+///     scope.registration().register("doubler", move |shutdown| async move {
 ///         shutdown.mark_started(); // The initialized inbox is now owned by this task.
 ///         loop {
 ///             tokio::select! {
@@ -83,7 +82,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 ///         Ok(())
 ///     })?;
 ///     Ok::<_, batter::RegistrationError>(())
-/// })).start();
+/// })).with_unix_signals("signals").start();
 /// let running = starting.wait().await?;
 /// // Keep requests alive until shutdown: an early critical task exit is a failure.
 /// let response = request_context.run("service.request", |_| async {

@@ -148,16 +148,15 @@ owned driver. `without_readiness_approval` deliberately leaves application
 approval to the running owner. Each registered component must still acknowledge
 actual initialization with `ShutdownSignal::mark_started`. Drain cannot be
 reversed by late approval.
-`register_signals` installs native SIGTERM/SIGINT listeners during initialization;
-installation errors enter startup cleanup before readiness. Applications with a
-long initializer can instead call `install_signals`, select on the returned
-sources during initialization, and transfer them into their critical component
-before handoff. Completed reception is retained through registration. The staged
-reference root uses that path around its complete awaited initializer. Tokio's process-wide signal handlers remain installed after listeners
-are dropped.
+Canonical protected startup selects native SIGTERM/SIGINT ownership with
+`with_unix_signals`; installation occurs synchronously before the owner returns,
+and reception during initialization enters owned drain and cleanup. The lower-level
+`register_signals` and `install_signals` paths remain for direct-supervisor
+composition. Completed reception is retained through registration. Tokio's
+process-wide signal handlers remain installed after listeners are dropped.
 
 The [staged reference worker](../examples/reference-service/src/runtime.rs) uses
-`batter_runledger::register` inside owned `Startup`, after dependency and schema
+`batter_runledger::register_in` inside protected owned `Startup`, after dependency and schema
 initialization. Registration consumes inert native preparation; native work starts
 only under the process driver. The adapter maps native loop initialization to
 component acknowledgement and exchanges the earliest native/parent stop clock.
@@ -185,8 +184,9 @@ unsuccessful report or coordinator JoinError. Both service examples use it.
 
 ## Dependency observation
 
-`health::HealthMonitor` is one non-cloneable owner, driven by an ordinary
-supervised run future. `HealthReader` clones retain the latest concrete result
+`health::HealthMonitor` is one non-cloneable owner. Its canonical `register_in`
+operation transfers that writer to an ordinary supervised run future and returns
+only read access; direct `run` remains the lower-level driver. `HealthReader` clones retain the latest concrete result
 and monotonic completion time without retaining writer ownership. A short private
 mutex makes publication coherent; error destruction occurs outside it. Readers
 compute freshness at each call, so an unscheduled owner cannot extend success.

@@ -117,13 +117,19 @@ components and no finite-work capacity reports `EmptySupervisor`; successful
 resource cleanup does not make that shutdown report successful. Configure
 genuine service work, or use the finite-command composition below.
 
-Use `Startup::new(supervisor, context, cleanup_budget, initializer).start()`.
-Inside the initializer, reserve cleanup before resource acquisition and register
-it immediately after success through `scope.supervisor()`. Register components
-and Unix signals there as well. Await `starting.wait()` to obtain the
+Use `Startup::scoped(supervisor, context, cleanup_budget, initializer)`, select
+library-owned signals with `.with_unix_signals("signals")`, then call `.start()`.
+Inside the initializer, reserve cleanup before resource acquisition through
+`scope.reserve_cleanup(...)` and register it immediately after success. Pass the
+protected scope to `HealthMonitor::register_in` and adapter `_in` helpers rather
+than lending the complete supervisor. Await `starting.wait()` to obtain the
 `RunningSupervisor`; startup failure retains initialization and cleanup errors.
 The [HTTP example](../crates/batter-axum/examples/http_service.rs) demonstrates
-this complete path with native listener binding and `register_http`.
+this complete path with native listener binding and `register_http_in`.
+
+`Startup::new` remains the lower-level compatibility path when a composition
+root deliberately needs full supervisor access. Its additional caller
+obligations are not the canonical agent-consumer integration contract.
 
 Successful `Startup` initialization supplies application readiness approval by
 default and starts the owned driver. Each direct critical component still calls
@@ -140,7 +146,7 @@ For Runledger workers, select the implemented
 During owned startup, complete dependency/schema initialization, create native
 inert preparation with
 `runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`,
-and pass it to `batter_runledger::register(scope.supervisor(), name, context, prepared)`.
+and pass it to `batter_runledger::register_in(scope, name, context, prepared)`.
 The adapter translates native initialization, stop clocks and retained descendant
 settlement into Batter ownership; Runledger retains its internal supervisor and
 durable work policy. Follow the [reference composition root](../examples/reference-service/src/runtime.rs)
@@ -305,7 +311,7 @@ Applications remain responsible for durable uniqueness requirements and trust po
 The example selects `with_infrastructure_json()` and uses
 `render_infrastructure_failure` in handlers; legacy Problem JSON and custom
 rendering remain compatible. Readiness uses `ReadinessPolicy` with a read-only
-HealthReader, and owned startup calls `register_http` after binding the native
+HealthReader, and owned startup calls `register_http_in` after binding the native
 listener. These helpers do not own domain errors, body streaming or authentication.
 
 The callback controls only middleware-generated failures. Handlers should reuse
@@ -420,27 +426,25 @@ task, observe its JoinError, and explicitly perform teardown afterward.
 
 ```rust
 use batter::{
-    health::{HealthMonitor, HealthPolicy},
-    lifecycle::{Readiness, Supervisor},
+    health::{HealthMonitor, HealthPolicy, HealthReader},
+    registration::RegistrationTarget,
 };
 use std::{io, time::Duration};
 
-fn register_health(supervisor: &mut Supervisor) -> Result<batter::health::HealthReader<io::Error>, batter::BoxError> {
+fn register_health<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
+) -> Result<HealthReader<io::Error>, batter::BoxError> {
     let policy = HealthPolicy::new(
         Duration::from_secs(1), // whole probe, including acquisition
         Duration::from_secs(2), // delay after completion/destruction
         Duration::from_secs(4), // maximum observation age
         Duration::from_secs(1), // scheduling margin
     )?;
-    let monitor = HealthMonitor::new(policy, || async {
+    let reader = HealthMonitor::new(policy, || async {
         // Replace with the complete native dependency probe.
         Ok::<_, io::Error>(())
-    });
-    let reader = monitor.reader();
-    supervisor.register("dependency.health", move |shutdown| async move {
-        monitor.run(shutdown).await;
-        Ok(())
-    })?;
+    })
+    .register_in(target, "dependency.health")?;
     Ok(reader)
 }
 ```

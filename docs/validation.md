@@ -7572,3 +7572,63 @@ commit, publication or deployment was performed for this delivery. Authenticatio
 and proxy trust remain application policy; the peer is the proxy when a proxy
 opens the socket. No custom listener/connection-info support, stream deadline,
 descendant-joining or runtime-death guarantee is added.
+
+## Protected operational composition alignment: 2026-09-12
+
+Owning Bead `batter-7r3.6`; Jig plan
+`plan_01M2BQFY9P0WSNX0988TPED3Q8`; baseline
+`33a8c0cf7d6062b3ede023a52fb07c22e84910c7`. The foundation adds
+`HealthMonitor::register_in`, moves the shared opaque panic payload behind a
+neutral crate-root path with compatible startup re-exports, and makes protected
+startup the documented and runnable composition path. No dependency or lockfile
+change was made. Cargo.lock SHA-256 remained
+`13d5a89554eb34020d89b63855d00a64307b6e1711394e2603455f9850bc248e`.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02), Tokio 1.53.1,
+Axum 0.8.9 and SQLx 0.9.0.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| Focused foundation command, startup, protected-startup and health targets | 63 cases passed. The health inventory increased from 15 to 17 with duplicate-registration inertness and protected registration/readiness/shutdown coverage; command tests compile the neutral panic path while startup tests retain the compatible path. |
+| `cargo test -p batter-example-postgres-lifecycle --locked`, reference all-target/all-feature check, and the HTTP example tests | The PostgreSQL package passed 10 non-live cases with three live cases explicitly ignored; the protected reference root compiled; all 12 HTTP example cases passed. Protected startup's `InitializationError` layer retained the concrete PostgreSQL `ProcessFailure` and cleanup source chain. |
+| `bash scripts/verify.sh` | The final default-toolchain core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and rustdoc matrix passed. An earlier run reached doctests with two new documentation return-type coercion errors; those snippets were corrected and the complete matrix was rerun successfully. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten rebuilt process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `scripts/jig work check --plan-id plan_01M2BQFY9P0WSNX0988TPED3Q8`, followed by evidence/gates inspection | All five required sibling targets passed with fresh coverage of the 24 source and contract paths: api:test receipt `receipt_01M2BRBMFH34WRDSM9RHC7YE9E`, plus Clippy, formatting, contract and file budget. |
+
+The duplicate health-registration case proves name rejection occurs before any
+probe invocation and destroys the unregistered writer. The protected case proves
+the registered monitor acknowledges component startup, publishes a successful
+sample, participates in process readiness, stops under owned shutdown and then
+invalidates its reader. Direct `HealthMonitor::run`, `Startup::new`,
+`register_http`, `batter_runledger::register`, and the startup panic-payload path
+remain available as lower-level compatibility contracts.
+
+No live PostgreSQL suite was executed for this change, so the migrated database
+composition has compile, offline failure-contract and prior historical live
+evidence only. No hosted CI, new Linux execution, publication, deployment,
+commit, or remote-effect guarantee is claimed. Bead `batter-7r3.6` comment 66
+records this partial delivery without closing the umbrella task. The comment was
+added through `br --no-db` because the authoritative JSONL has 23 issues absent
+from the stale SQLite cache and native reconciliation reports 21 unrelated
+semantic conflicts; no unsafe database flush or conflict resolution was attempted.
+
+### Review follow-up: process-root signal ownership
+
+The PostgreSQL production root now selects `.with_unix_signals("signals")`
+before passing its configured `ScopedStartup` to `serve`; the reusable unit-test
+helper constructs the same protected startup without installing process-global
+handlers. A fresh-process regression runs that helper, then separately requires
+SIGTERM and SIGINT to retain their default terminating dispositions. The task
+failure case again requires exactly its one application component, so an
+unexpected signal task cannot disappear from the report assertion.
+
+The focused signal-disposition test and strict package Clippy passed. The full
+`bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+matrices then passed on the same macOS arm64 host, including 10 passing non-live
+PostgreSQL cases and three explicitly ignored live cases. Rebuilt HTTP examples
+passed all five documented smoke modes on each toolchain. Consumer guidance now
+names `register_http_in` and accurately assigns budgets and signal selection to
+their owning PostgreSQL example files. No live PostgreSQL, new Linux, hosted CI,
+publication or deployment evidence was added by this follow-up.

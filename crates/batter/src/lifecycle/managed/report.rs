@@ -1,5 +1,5 @@
 use super::ManagedSettlement;
-use crate::{BoxError, operation::Interruption, startup::PanicPayload};
+use crate::{BoxError, PanicPayload, operation::Interruption};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::{any::Any, fmt, sync::Arc};
 use tokio::{sync::watch, task::JoinError};

@@ -1,30 +1,26 @@
 //! Owned dependency sampling with read-only, time-bounded observations.
 //!
-//! A [`HealthMonitor`] creates no tasks. Register its consuming `run` future as
-//! an ordinary supervised component. Its readers never run probes. Dependency
-//! health is separate from lifecycle readiness: adapters must check both.
+//! A [`HealthMonitor`] creates no tasks. [`HealthMonitor::register_in`] transfers
+//! it to an ordinary supervised component and returns its read-only view. The
+//! lower-level consuming [`HealthMonitor::run`] future remains available. Readers
+//! never run probes. Dependency health is separate from lifecycle readiness:
+//! adapters must check both.
 //!
 //! ```no_run
-//! use batter::{health::{HealthMonitor, HealthPolicy}, lifecycle::{Readiness, Supervisor}};
+//! use batter::{health::{HealthMonitor, HealthPolicy, HealthReader},
+//!     startup::ProtectedStartupScope};
 //! use std::{convert::Infallible, time::Duration};
-//! # fn example(supervisor: &mut Supervisor) -> Result<(), batter::BoxError> {
+//! # fn register(scope: &mut ProtectedStartupScope)
+//! #     -> Result<HealthReader<Infallible>, batter::BoxError> {
 //! let policy = HealthPolicy::new(
 //!     Duration::from_secs(1), Duration::from_secs(2),
 //!     Duration::from_secs(4), Duration::from_secs(1),
 //! )?;
-//! let monitor = HealthMonitor::new(policy, || async {
+//! Ok(HealthMonitor::new(policy, || async {
 //!     // Replace with a native dependency probe, including its acquisition.
 //!     Ok::<_, Infallible>(())
-//! });
-//! let health = monitor.reader();
-//! supervisor.register("dependency.health", move |shutdown| async move {
-//!     monitor.run(shutdown).await;
-//!     Ok(())
-//! })?;
-//! // Each readiness decision obtains a fresh observation; reads do no I/O.
-//! let ready = supervisor.handle().readiness() == Readiness::Ready && health.is_healthy();
-//! # let _ = ready;
-//! # Ok(()) }
+//! }).register_in(scope, "dependency.health")?)
+//! # }
 //! ```
 
 mod observation;
@@ -33,7 +29,7 @@ mod policy;
 pub use observation::{HealthReader, HealthSnapshot, HealthStatus, ProbeObservation, ProbeOutcome};
 pub use policy::HealthPolicy;
 
-use crate::lifecycle::ShutdownSignal;
+use crate::{RegistrationError, lifecycle::ShutdownSignal, registration::RegistrationTarget};
 use observation::Publication;
 use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, sleep_until};
@@ -69,6 +65,50 @@ impl<F, E> HealthMonitor<F, E> {
     /// Clone read-only access without prolonging writer ownership.
     pub fn reader(&self) -> HealthReader<E> {
         HealthReader::new(self.publication.clone())
+    }
+
+    /// Transfer this writer to a supervised component and return read-only access.
+    ///
+    /// Registration validates `name` before the component factory can run. If
+    /// registration fails, the writer is dropped, no probe is invoked, and no
+    /// reader is returned. The registered component acknowledges its own startup
+    /// when [`Self::run`] is first polled and returns success after drain.
+    ///
+    /// ```
+    /// use batter::{
+    ///     health::{HealthMonitor, HealthPolicy, HealthReader},
+    ///     startup::ProtectedStartupScope,
+    /// };
+    /// use std::{convert::Infallible, time::Duration};
+    ///
+    /// fn register(scope: &mut ProtectedStartupScope)
+    ///     -> Result<HealthReader<Infallible>, batter::BoxError>
+    /// {
+    ///     let second = Duration::from_secs(1);
+    ///     let policy = HealthPolicy::new(second, second, second * 3, second)?;
+    ///     Ok(HealthMonitor::new(policy, || async { Ok::<_, Infallible>(()) })
+    ///         .register_in(scope, "dependency.health")?)
+    /// }
+    /// ```
+    pub fn register_in<T, Fut>(
+        self,
+        target: &mut T,
+        name: &'static str,
+    ) -> Result<HealthReader<E>, RegistrationError>
+    where
+        T: RegistrationTarget + ?Sized,
+        F: FnMut() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), E>> + Send + 'static,
+        E: Send + Sync + 'static,
+    {
+        let reader = self.reader();
+        target
+            .registration()
+            .register(name, move |shutdown| async move {
+                self.run(shutdown).await;
+                Ok(())
+            })?;
+        Ok(reader)
     }
 
     /// Sample sequentially until drain or cancellation, then invalidate readers.

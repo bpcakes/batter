@@ -1,8 +1,4 @@
-use batter::{
-    BoxError,
-    cleanup::CleanupBudget,
-    lifecycle::{ShutdownBudget, Supervisor},
-};
+use batter::{cleanup::CleanupBudget, lifecycle::ShutdownBudget};
 use std::time::Duration;
 
 pub fn cleanup_budget() -> CleanupBudget {
@@ -22,9 +18,4 @@ pub fn shutdown_budget() -> ShutdownBudget {
         cleanup_budget(),
     )
     .expect("constant shutdown budget is valid")
-}
-
-pub fn register_signals(supervisor: &mut Supervisor) -> Result<(), BoxError> {
-    batter::lifecycle::register_signals(supervisor, "signals")?;
-    Ok(())
 }

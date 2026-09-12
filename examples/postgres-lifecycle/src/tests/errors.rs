@@ -51,7 +51,13 @@ async fn startup_failure_path_retains_real_cleanup_diagnostics() {
     let error = process_result(result).expect_err("startup failure must reach the boundary");
     let failure = startup_failure(&error.cause);
     let source = std::error::Error::source(failure).unwrap();
-    let wrapped = source.downcast_ref::<ProcessFailure>().unwrap();
+    let initialization = source
+        .downcast_ref::<InitializationError<ProcessFailure>>()
+        .unwrap();
+    let wrapped = std::error::Error::source(initialization)
+        .unwrap()
+        .downcast_ref::<ProcessFailure>()
+        .unwrap();
     assert!(std::ptr::addr_eq(
         wrapped.cause.as_ref(),
         application_cause(failure).as_ref()

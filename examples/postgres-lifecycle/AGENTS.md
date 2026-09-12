@@ -15,7 +15,9 @@ Windows support and non-Unix fallbacks are out of scope.
   determine the executable outcome; `src/tests.rs` tests those same paths.
 - `src/tests/live.rs` contains explicitly selected tests against an externally
   provisioned database. Missing configuration must fail that selected target.
-- `src/support.rs` holds example-owned budgets and calls shared signal registration.
+- `src/support.rs` holds example-owned budgets. The production root selects
+  startup-owned signals before passing the configured startup to `serve`;
+  in-process unit tests deliberately use the signal-free path.
 - `tests/diagnostics.rs` runs `tests/diagnostics.py`, an external watchdog for
   actual executable configuration failures. It reuses the repository's bounded
   Unix process owner; keep credential fixtures and assertions in this example.

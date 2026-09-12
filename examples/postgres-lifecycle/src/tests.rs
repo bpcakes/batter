@@ -1,7 +1,7 @@
 use super::*;
 use batter::{
     lifecycle::ShutdownFailure,
-    startup::{StartupCause, StartupError, StartupFailure},
+    startup::{InitializationError, StartupCause, StartupError, StartupFailure},
 };
 use sqlx::PgPool;
 
@@ -9,24 +9,27 @@ async fn complete_startup(
     supervisor: Supervisor,
     result: Result<(), BoxError>,
 ) -> Result<(), BoxError> {
-    serve(supervisor, move |_| {
-        Box::pin(async move { process_result(result) })
-    })
-    .await
+    let startup = Startup::scoped(
+        supervisor,
+        OperationContext::new(Duration::from_secs(15)).unwrap(),
+        support::cleanup_budget(),
+        move |_| Box::pin(async move { process_result(result) }),
+    );
+    serve(startup).await
 }
 
-fn startup_failure(error: &BoxError) -> &StartupFailure<ProcessFailure> {
+fn startup_failure(error: &BoxError) -> &StartupFailure<InitializationError<ProcessFailure>> {
     match error
-        .downcast_ref::<StartupError<ProcessFailure>>()
+        .downcast_ref::<StartupError<InitializationError<ProcessFailure>>>()
         .unwrap()
     {
         StartupError::Failed(failure) => failure,
         StartupError::Coordinator(_) => panic!("expected startup report"),
     }
 }
-fn application_cause(failure: &StartupFailure<ProcessFailure>) -> &BoxError {
+fn application_cause(failure: &StartupFailure<InitializationError<ProcessFailure>>) -> &BoxError {
     match &failure.cause {
-        StartupCause::Failed(error) => &error.cause,
+        StartupCause::Failed(InitializationError::Application(error)) => &error.cause,
         _ => panic!("expected application failure"),
     }
 }
@@ -45,6 +48,13 @@ use batter::{cleanup::CleanupOutcome, lifecycle::TaskOutcome};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+};
+use std::{
+    io::{BufRead, BufReader},
+    os::unix::process::ExitStatusExt,
+    process::{Command, Stdio},
+    thread,
+    time::Instant,
 };
 
 #[path = "tests/errors.rs"]
@@ -141,12 +151,117 @@ async fn task_failure_survives_successful_coordination_and_exits_failure() {
         .unwrap();
     assert!(!report.is_success());
     assert_eq!(report.tasks.len(), 1);
-    assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
+    let task = &report.tasks[0];
+    assert_eq!(task.name, "component");
+    assert_eq!(task.outcome, TaskOutcome::Failed);
     assert_eq!(
-        report.tasks[0].error.as_ref().unwrap().to_string(),
+        task.error.as_ref().unwrap().to_string(),
         "task-credential-marker"
     );
     assert_exit(result, ExitCode::FAILURE);
+}
+
+const SIGNAL_DISPOSITION_CHILD: &str = "BATTER_SIGNAL_DISPOSITION_CHILD";
+const SIGNAL_DISPOSITION_READY: &str = "signal-disposition-child-ready";
+
+#[test]
+fn unit_startup_does_not_capture_process_signals() {
+    if std::env::var_os(SIGNAL_DISPOSITION_CHILD).is_some() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            complete_startup(supervisor(false), Ok(())).await.unwrap();
+        });
+        println!("{SIGNAL_DISPOSITION_READY}");
+        std::io::stdout().flush().unwrap();
+        loop {
+            thread::park();
+        }
+    }
+
+    for (signal, number) in [
+        (
+            "TERM",
+            tokio::signal::unix::SignalKind::terminate().as_raw_value(),
+        ),
+        (
+            "INT",
+            tokio::signal::unix::SignalKind::interrupt().as_raw_value(),
+        ),
+    ] {
+        assert_default_signal_terminates_child(signal, number);
+    }
+}
+
+fn assert_default_signal_terminates_child(signal: &str, number: i32) {
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::unit_startup_does_not_capture_process_signals",
+            "--nocapture",
+        ])
+        .env(SIGNAL_DISPOSITION_CHILD, "1")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let output = child.stdout.take().unwrap();
+    let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let mut output = BufReader::new(output);
+        let mut captured = String::new();
+        loop {
+            let mut line = String::new();
+            match output.read_line(&mut line) {
+                Ok(0) => return captured,
+                Ok(_) => {
+                    captured.push_str(&line);
+                    if line.contains(SIGNAL_DISPOSITION_READY) {
+                        let _ = ready_sender.try_send(());
+                    }
+                }
+                Err(error) => panic!("signal child output failed: {error}"),
+            }
+        }
+    });
+
+    if ready_receiver.recv_timeout(Duration::from_secs(3)).is_err() {
+        child.kill().unwrap();
+        let status = child.wait().unwrap();
+        let captured = reader.join().unwrap();
+        panic!("signal child did not become ready: {status}; output={captured:?}");
+    }
+    let sent = Command::new("/bin/kill")
+        .args([format!("-{signal}"), child.id().to_string()])
+        .status()
+        .unwrap();
+    if !sent.success() {
+        child.kill().unwrap();
+        let _ = child.wait();
+        let captured = reader.join().unwrap();
+        panic!("failed to send SIG{signal}; output={captured:?}");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            let captured = reader.join().unwrap();
+            assert_eq!(
+                status.signal(),
+                Some(number),
+                "SIG{signal} was captured instead of terminating the child: {status}; output={captured:?}"
+            );
+            return;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let _ = child.wait();
+            let captured = reader.join().unwrap();
+            panic!("SIG{signal} did not terminate the child; output={captured:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[tokio::test]

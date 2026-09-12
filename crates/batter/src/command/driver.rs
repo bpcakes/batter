@@ -3,11 +3,11 @@ use super::{
     SharedCommandReport,
 };
 use crate::{
+    PanicPayload,
     cleanup::CleanupStack,
     completion::wait_published,
     operation::{Interruption, OperationContext},
     scoped_dispatch,
-    startup::PanicPayload,
 };
 use std::{
     future::poll_fn,

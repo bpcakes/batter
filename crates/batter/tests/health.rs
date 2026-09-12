@@ -1,8 +1,10 @@
 use batter::{
-    ConfigurationError,
+    ConfigurationError, RegistrationError,
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader, HealthStatus, ProbeOutcome},
     lifecycle::{Readiness, ShutdownBudget, ShutdownHandle, Supervisor},
+    operation::OperationContext,
+    startup::Startup,
 };
 use std::{
     convert::Infallible,
@@ -57,6 +59,73 @@ async fn wait_status<E>(reader: &HealthReader<E>, status: HealthStatus) {
     })
     .await
     .expect("health state reached within the watchdog");
+}
+
+struct Dropped(Arc<AtomicUsize>);
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn rejected_registration_drops_the_inert_writer_without_invoking_its_probe() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut supervisor = supervisor();
+    supervisor
+        .register("dependency.health", |_| async { Ok(()) })
+        .unwrap();
+    let called = calls.clone();
+    let captured = Dropped(dropped.clone());
+    let monitor = HealthMonitor::new(policy(), move || {
+        let _ = &captured;
+        called.fetch_add(1, Ordering::SeqCst);
+        async { Ok::<_, Infallible>(()) }
+    });
+
+    let error = match monitor.register_in(&mut supervisor, "dependency.health") {
+        Ok(_) => panic!("duplicate health registration unexpectedly succeeded"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error, RegistrationError::Duplicate("dependency.health"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn protected_registration_owns_readiness_sampling_and_reader_shutdown() {
+    let (reader_tx, reader_rx) = oneshot::channel();
+    let mut starting = Startup::scoped(
+        supervisor(),
+        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        CleanupBudget::new(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap(),
+        move |scope| {
+            Box::pin(async move {
+                let reader = HealthMonitor::new(policy(), || async { Ok::<_, Infallible>(()) })
+                    .register_in(scope, "dependency.health")?;
+                assert!(reader_tx.send(reader).is_ok());
+                Ok::<_, RegistrationError>(())
+            })
+        },
+    )
+    .start();
+
+    let running = starting.wait().await.unwrap();
+    let reader = reader_rx.await.unwrap();
+    running.handle().wait_ready().await.unwrap();
+    wait_status(&reader, HealthStatus::Healthy).await;
+    assert_eq!(running.handle().readiness(), Readiness::Ready);
+
+    let report = running.shutdown().await.unwrap();
+    assert!(report.is_success(), "{report}");
+    assert_eq!(reader.snapshot().status(), HealthStatus::Stopped);
 }
 
 #[test]

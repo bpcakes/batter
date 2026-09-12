@@ -5,9 +5,10 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader},
-    lifecycle::{ShutdownBudget, Supervisor, check_shutdown, install_signals},
+    lifecycle::{ShutdownBudget, check_shutdown},
     operation::{OperationContext, OperationError},
-    startup::{Startup, StartupError},
+    registration::RegistrationTarget,
+    startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
 };
 use std::{fmt, time::Duration};
 
@@ -59,10 +60,10 @@ fn shutdown_budget() -> ShutdownBudget {
 
 /// Failed owned startup, including its independently driven cleanup report.
 /// Default formatting excludes native causes; inspection remains explicit.
-pub struct RuntimeStartupFailure(StartupError<InitializationFailure>);
+pub struct RuntimeStartupFailure(StartupError<InitializationError<InitializationFailure>>);
 impl RuntimeStartupFailure {
     /// Inspect the actual initialization cause and cleanup outcomes.
-    pub fn startup(&self) -> &StartupError<InitializationFailure> {
+    pub fn startup(&self) -> &StartupError<InitializationError<InitializationFailure>> {
         &self.0
     }
 }
@@ -92,49 +93,36 @@ pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
     let readiness = supervisor.handle();
     let context = OperationContext::new(STARTUP_ALLOWANCE)?;
     let native_startup = context.clone();
-    let mut starting = Startup::new(supervisor, context, cleanup_budget(), move |scope| {
+    let mut starting = Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
         Box::pin(async move {
-            scope.stage("signals.install").map_err(initialization)?;
-            let mut signals =
-                install_signals(scope.supervisor(), "signals").map_err(initialization)?;
-            let initialize = async {
-                let result: Result<(), BoxError> = async {
-                    scope.stage("postgres.acquire")?;
-                    let pool = register_pool(scope, &settings)?;
-                    drop(pool.acquire().await?);
-                    scope.stage("postgres.schema")?;
-                    initialize_schema(&pool).await?;
-                    let health = register_health(scope.supervisor(), pool.clone())?;
+            let result: Result<(), BoxError> = async {
+                scope.stage("postgres.acquire")?;
+                let pool = register_pool(scope, &settings)?;
+                drop(pool.acquire().await?);
+                scope.stage("postgres.schema")?;
+                initialize_schema(&pool).await?;
+                let health = register_health(scope, pool.clone())?;
 
-                    scope.stage("http.bind")?;
-                    let application = router(&settings, readiness.clone(), pool.clone(), health)?;
-                    let listener = tokio::net::TcpListener::bind(settings.bind()).await?;
-                    batter_axum::register_http(scope.supervisor(), "http", listener, application)?;
+                scope.stage("http.bind")?;
+                let application = router(&settings, readiness.clone(), pool.clone(), health)?;
+                let listener = tokio::net::TcpListener::bind(settings.bind()).await?;
+                batter_axum::register_http_in(scope, "http", listener, application)?;
 
-                    scope.stage("worker.register")?;
-                    let config = settings.worker().jobs_config()?;
-                    batter_runledger::register(scope.supervisor(), "worker", native_startup, {
-                        runledger_runtime::Supervisor::builder(&pool, config)?
-                            .with_registry(runledger_runtime::registry::JobRegistry::new())
-                            .prepare()?
-                    })?;
-                    Ok(())
-                }
-                .await;
-                result.map_err(initialization)
-            };
-            tokio::select! {
-                biased;
-                _ = signals.received() => { readiness.request(); return Ok(()); }
-                result = initialize => result?,
+                scope.stage("worker.register")?;
+                let config = settings.worker().jobs_config()?;
+                batter_runledger::register_in(scope, "worker", native_startup, {
+                    runledger_runtime::Supervisor::builder(&pool, config)?
+                        .with_registry(runledger_runtime::registry::JobRegistry::new())
+                        .prepare()?
+                })?;
+                Ok(())
             }
-            signals
-                .register(scope.supervisor())
-                .map_err(initialization)?;
-            Ok(())
+            .await;
+            result.map_err(initialization)
         })
     })
     .without_readiness_approval()
+    .with_unix_signals("signals")
     .start();
     let running = starting
         .wait()
@@ -145,10 +133,10 @@ pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
 }
 
 fn register_pool(
-    scope: &mut batter::startup::StartupScope,
+    scope: &mut ProtectedStartupScope,
     settings: &RootSettings,
 ) -> Result<sqlx::PgPool, BoxError> {
-    let slot = scope.supervisor().reserve_cleanup("postgres.pool")?;
+    let slot = scope.reserve_cleanup("postgres.pool")?;
     let options = settings.connect_options_from_process()?;
     let pool = settings.pool_options().connect_lazy_with(options);
     let closing = pool.clone();
@@ -159,24 +147,20 @@ fn register_pool(
     Ok(pool)
 }
 
-fn register_health(
-    process: &mut Supervisor,
+fn register_health<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
     pool: sqlx::PgPool,
 ) -> Result<HealthReader<OperationError<batter_sqlx::SqlxFailure>>, BoxError> {
     let second = Duration::from_secs(1);
     let policy = HealthPolicy::new(second, second, Duration::from_secs(3), second)?;
-    let monitor = HealthMonitor::new(policy, move || {
+    let reader = HealthMonitor::new(policy, move || {
         let pool = pool.clone();
         async move {
             let context = OperationContext::new(second).expect("static probe budget is valid");
             batter_sqlx::probe(&pool, &context).await
         }
-    });
-    let reader = monitor.reader();
-    process.register("postgres.health", move |shutdown| async move {
-        monitor.run(shutdown).await;
-        Ok(())
-    })?;
+    })
+    .register_in(target, "postgres.health")?;
     Ok(reader)
 }
 

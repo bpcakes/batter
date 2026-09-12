@@ -3,10 +3,10 @@ use super::{
     ManagedShutdownBudget, Registration, SettlementEvidence,
 };
 use crate::{
+    PanicPayload,
     lifecycle::{ShutdownBudget, ShutdownSignal},
     operation::Interruption,
     scoped_dispatch,
-    startup::PanicPayload,
 };
 use std::{
     future::Future,

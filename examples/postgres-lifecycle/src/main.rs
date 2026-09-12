@@ -8,7 +8,7 @@ use batter::{
     BoxError,
     lifecycle::{Supervisor, check_shutdown},
     operation::OperationContext,
-    startup::{Startup, StartupFuture, StartupScope},
+    startup::{ProtectedStartupScope, ScopedStartup, Startup, StartupFuture},
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{fmt, io::Write, process::ExitCode, time::Duration};
@@ -52,54 +52,54 @@ async fn run() -> Result<(), BoxError> {
     tracing_subscriber::fmt().with_target(false).try_init()?;
     let database_url = std::env::var("DATABASE_URL")?;
     let supervisor = Supervisor::new(support::shutdown_budget());
-    serve(supervisor, move |scope| {
-        Box::pin(async move {
-            let result: Result<(), BoxError> = async {
-                scope.stage("postgres.acquire")?;
-                // Reserve before acquisition: rejection cannot strand an acquired pool.
-                let slot = scope.supervisor().reserve_cleanup("postgres.pool")?;
-                let pool = PgPoolOptions::new()
-                    .max_connections(8)
-                    .acquire_timeout(Duration::from_secs(3))
-                    .connect(&database_url)
-                    .await?;
-                let closing = pool.clone();
-                slot.register(move || async move {
-                    closing.close().await;
-                    Ok(())
-                });
-                scope.stage("postgres.probe")?;
-                let probe = OperationContext::new(Duration::from_secs(5))?;
-                batter_sqlx::probe(&pool, &probe).await?;
-                scope.stage("signals")?;
-                support::register_signals(scope.supervisor())?;
-                scope
-                    .supervisor()
-                    .register("application", |shutdown| async move {
-                        shutdown.mark_started();
-                        shutdown.draining().await;
-                        Ok(())
-                    })?;
-                Ok(())
-            }
-            .await;
-            process_result(result)
-        })
-    })
-    .await
-}
-
-async fn serve<F>(supervisor: Supervisor, initialize: F) -> Result<(), BoxError>
-where
-    F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, ProcessFailure> + Send + 'static,
-{
-    let mut starting = Startup::new(
+    let startup = Startup::scoped(
         supervisor,
         OperationContext::new(Duration::from_secs(15))?,
         support::cleanup_budget(),
-        initialize,
+        move |scope| {
+            Box::pin(async move {
+                let result: Result<(), BoxError> = async {
+                    scope.stage("postgres.acquire")?;
+                    // Reserve before acquisition: rejection cannot strand an acquired pool.
+                    let slot = scope.reserve_cleanup("postgres.pool")?;
+                    let pool = PgPoolOptions::new()
+                        .max_connections(8)
+                        .acquire_timeout(Duration::from_secs(3))
+                        .connect(&database_url)
+                        .await?;
+                    let closing = pool.clone();
+                    slot.register(move || async move {
+                        closing.close().await;
+                        Ok(())
+                    });
+                    scope.stage("postgres.probe")?;
+                    let probe = OperationContext::new(Duration::from_secs(5))?;
+                    batter_sqlx::probe(&pool, &probe).await?;
+                    scope
+                        .registration()
+                        .register("application", |shutdown| async move {
+                            shutdown.mark_started();
+                            shutdown.draining().await;
+                            Ok(())
+                        })?;
+                    Ok(())
+                }
+                .await;
+                process_result(result)
+            })
+        },
     )
-    .start();
+    .with_unix_signals("signals");
+    serve(startup).await
+}
+
+async fn serve<F>(startup: ScopedStartup<F>) -> Result<(), BoxError>
+where
+    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, ProcessFailure>
+        + Send
+        + 'static,
+{
+    let mut starting = startup.start();
     let running = starting.wait().await?;
     if running.handle().wait_ready().await.is_ok() {
         tracing::info!("PostgreSQL lifecycle ready");

@@ -28,10 +28,11 @@ use batter::{
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::Supervisor,
     operation::{Interruption, OperationContext, OperationError},
+    registration::RegistrationTarget,
 };
 use batter_axum::{
     CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, dependency_readiness, liveness,
-    operational_http, register_http, render_infrastructure_failure, request_admission,
+    operational_http, register_http_in, render_infrastructure_failure, request_admission,
 };
 use std::{convert::Infallible, time::Duration};
 
@@ -39,8 +40,8 @@ async fn fail(Extension(id): Extension<CorrelationId>) -> Response {
     render_infrastructure_failure(HttpFailure::Internal, Some(&id))
 }
 
-fn register_dependency_health(
-    supervisor: &mut Supervisor,
+fn register_dependency_health<T: RegistrationTarget + ?Sized>(
+    target: &mut T,
 ) -> Result<HealthReader<std::io::Error>, BoxError> {
     let policy = HealthPolicy::new(
         Duration::from_secs(1),
@@ -48,17 +49,13 @@ fn register_dependency_health(
         Duration::from_secs(4),
         Duration::from_secs(1),
     )?;
-    let monitor = HealthMonitor::new(policy, || async {
+    let health = HealthMonitor::new(policy, || async {
         // Demonstration only, like the read in /work. Replace the whole future
         // with a native dependency probe, including connection acquisition.
         tokio::time::sleep(Duration::from_millis(10)).await;
         Ok::<_, std::io::Error>(())
-    });
-    let health = monitor.reader();
-    supervisor.register("dependency.health", move |shutdown| async move {
-        monitor.run(shutdown).await;
-        Ok(())
-    })?;
+    })
+    .register_in(target, "dependency.health")?;
     Ok(health)
 }
 
@@ -179,7 +176,8 @@ async fn run() -> Result<(), BoxError> {
         )?)
         .try_init()?;
     let supervisor = Supervisor::new(support::shutdown_budget());
-    let mut starting = batter::startup::Startup::new(
+    let handle = supervisor.handle();
+    let mut starting = batter::startup::Startup::scoped(
         supervisor,
         OperationContext::new(Duration::from_secs(15))?,
         support::cleanup_budget(),
@@ -187,20 +185,17 @@ async fn run() -> Result<(), BoxError> {
             Box::pin(async move {
                 let result: Result<(), BoxError> = async {
                     scope.stage("dependency.health")?;
-                    let health = register_dependency_health(scope.supervisor())?;
+                    let health = register_dependency_health(scope)?;
                     scope.stage("http.bind")?;
-                    let handle = scope.supervisor().handle();
                     let application = router(
-                        handle,
+                        handle.clone(),
                         config.request_budget,
                         health,
                         config.bulkhead_capacity,
                     )?;
                     let listener = tokio::net::TcpListener::bind(config.bind).await?;
                     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
-                    register_http(scope.supervisor(), "http", listener, application)?;
-                    scope.stage("signals")?;
-                    support::register_signals(scope.supervisor())?;
+                    register_http_in(scope, "http", listener, application)?;
                     Ok(())
                 }
                 .await;
@@ -208,6 +203,7 @@ async fn run() -> Result<(), BoxError> {
             })
         },
     )
+    .with_unix_signals("signals")
     .start();
     let running = starting.wait().await?;
     batter::lifecycle::check_shutdown(running.wait().await)?;

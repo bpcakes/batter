@@ -1,8 +1,8 @@
 //! Optional Runledger lifecycle translation. Native supervision and durable job
 //! policy stay in Runledger; Batter owns process registration and dependency cleanup.
 //!
-//! [`register`] starts prepared native work only after validated registration and
-//! driver startup. Native local-loop acknowledgement controls component readiness;
+//! [`register_in`] starts prepared native work only after validated protected
+//! registration and driver startup. Native local-loop acknowledgement controls component readiness;
 //! dependency health and explicit application approval remain separate. No durable
 //! startup control job, termination gate or application report channel is required.
 
@@ -45,25 +45,8 @@ impl ManagedSettlement for NativeReport {
 /// Schema/catalog synchronization and dependency acquisition belong to owned
 /// application startup before registration.
 ///
-/// ```no_run
-/// use batter::{BoxError, cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor},
-///     operation::OperationContext};
-/// use runledger_runtime::{config::JobsConfig, registry::JobRegistry};
-/// use std::time::Duration;
-/// # async fn example(pool: sqlx::PgPool, config: JobsConfig, registry: JobRegistry) -> Result<(), BoxError> {
-/// let second = Duration::from_secs(1);
-/// let cleanup = CleanupBudget::new(second, second, second)?;
-/// let mut process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-/// let native = runledger_runtime::Supervisor::builder(&pool, config)?
-///     .with_registry(registry).prepare()?;
-/// batter_runledger::register(&mut process, "worker", OperationContext::new(second)?, native)?;
-/// // Separate fresh dependency health and application approval belong here.
-/// let running = process.start();
-/// running.handle().mark_ready();
-/// running.handle().wait_ready().await.unwrap();
-/// batter::lifecycle::check_shutdown(running.shutdown().await)?;
-/// # Ok(()) }
-/// ```
+/// Prefer [`register_in`] inside canonical protected startup. This signature
+/// remains for lower-level direct-supervisor composition.
 /// A live native supervisor cannot be passed through the protected boundary:
 ///
 /// ```compile_fail,E0308
@@ -92,6 +75,30 @@ pub fn register(
 /// The protected target never receives a live native supervisor and exposes no
 /// process-start or cleanup-extraction operations. Native initialization, stop,
 /// and complete settlement remain identical to [`register`].
+///
+/// ```no_run
+/// use batter::{BoxError, operation::OperationContext,
+///     startup::ProtectedStartupScope};
+/// use runledger_runtime::{config::JobsConfig, registry::JobRegistry};
+/// use std::time::Duration;
+///
+/// fn register(
+///     scope: &mut ProtectedStartupScope,
+///     pool: &sqlx::PgPool,
+///     config: JobsConfig,
+///     registry: JobRegistry,
+/// ) -> Result<(), BoxError> {
+///     let native = runledger_runtime::Supervisor::builder(pool, config)?
+///         .with_registry(registry).prepare()?;
+///     batter_runledger::register_in(
+///         scope,
+///         "worker",
+///         OperationContext::new(Duration::from_secs(1))?,
+///         native,
+///     )?;
+///     Ok(())
+/// }
+/// ```
 pub fn register_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,

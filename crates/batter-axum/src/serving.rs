@@ -26,20 +26,12 @@ use tokio::net::TcpListener;
 /// The native server retries accept errors; it does not report them as task exits.
 /// No bind policy, signals, budgets, subscriber or runtime are installed here.
 ///
-/// ```no_run
-/// use axum::{Router, routing::get};
-/// use batter::lifecycle::Supervisor;
-/// use batter_axum::register_http;
-/// # async fn example(supervisor: &mut Supervisor) -> Result<(), batter::BoxError> {
-/// let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-/// let app = Router::new().route("/live", get(batter_axum::liveness));
-/// register_http(supervisor, "http", listener, app)?;
-/// # Ok(()) }
-/// ```
 /// This helper does not install [`axum::extract::ConnectInfo`]. Use
 /// [`register_http_with_connect_info_in`] when middleware or handlers need the
 /// direct TCP peer address.
 /// See the runnable `http_service` example for owned startup and signal composition.
+/// Prefer [`register_http_in`] inside canonical protected startup; this signature
+/// remains for lower-level direct-supervisor composition.
 pub fn register_http(
     supervisor: &mut Supervisor,
     name: &'static str,
@@ -62,6 +54,19 @@ pub fn register_http(
 /// preventing the adapter from receiving process-start or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
 /// for the direct TCP peer.
+///
+/// ```no_run
+/// use axum::{Router, routing::get};
+/// use batter::startup::ProtectedStartupScope;
+/// use batter_axum::register_http_in;
+///
+/// async fn register(scope: &mut ProtectedStartupScope) -> Result<(), batter::BoxError> {
+///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+///     let app = Router::new().route("/live", get(batter_axum::liveness));
+///     register_http_in(scope, "http", listener, app)?;
+///     Ok(())
+/// }
+/// ```
 pub fn register_http_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,
