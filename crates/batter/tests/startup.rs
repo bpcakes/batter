@@ -2,10 +2,14 @@ use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::{Interruption, OperationContext},
-    startup::{Startup, StartupCause, StartupError, StartupFuture, StartupOutcome, StartupScope},
+    startup::{
+        PanicPayloadBusy, Startup, StartupCause, StartupError, StartupFuture, StartupOutcome,
+        StartupScope,
+    },
 };
 use std::{
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
     sync::{
         Arc, Mutex,
@@ -309,12 +313,13 @@ async fn application_failure_and_future_destruction_panic_both_survive() {
         .destruction_panic
         .as_ref()
         .unwrap()
-        .inspect(|payload| {
+        .try_inspect(|payload| {
             assert_eq!(
                 payload.downcast_ref::<&str>(),
                 Some(&"destruction-original")
             );
-        });
+        })
+        .expect("payload inspection is uncontended");
     assert_eq!(report.cleanup.records.len(), 1);
     assert!(report.cleanup.is_success());
 }
@@ -335,7 +340,19 @@ async fn initializer_poll_panic_retains_payload_and_drives_cleanup() {
     let StartupCause::Panicked(payload) = &report.cause else {
         panic!("expected panic")
     };
-    payload.inspect(|payload| assert_eq!(payload.downcast_ref::<&str>(), Some(&"poll-original")));
+    payload
+        .try_inspect(|value| {
+            assert_eq!(value.downcast_ref::<&str>(), Some(&"poll-original"));
+            assert_eq!(payload.try_inspect(|_| ()), Err(PanicPayloadBusy));
+        })
+        .expect("outer payload inspection is uncontended");
+    let inspection_panic = catch_unwind(AssertUnwindSafe(|| {
+        let _ = payload.try_inspect::<()>(|_| panic!("inspection callback failed"));
+    }));
+    assert!(inspection_panic.is_err());
+    payload
+        .try_inspect(|value| assert_eq!(value.downcast_ref::<&str>(), Some(&"poll-original")))
+        .expect("a callback panic cannot prevent later inspection");
     assert_eq!(report.cleanup.records.len(), 1);
 }
 
@@ -435,12 +452,14 @@ async fn factory_construction_panic_still_closes_registered_resources() {
     let StartupCause::Panicked(payload) = &report.cause else {
         panic!("expected panic")
     };
-    payload.inspect(|payload| {
-        assert_eq!(
-            payload.downcast_ref::<&str>(),
-            Some(&"constructor-original")
-        )
-    });
+    payload
+        .try_inspect(|payload| {
+            assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"constructor-original")
+            )
+        })
+        .expect("payload inspection is uncontended");
     assert_eq!(report.cleanup.records.len(), 1);
     assert!(report.cleanup.is_success());
 }

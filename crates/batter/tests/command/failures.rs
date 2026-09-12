@@ -33,7 +33,9 @@ impl<F> Drop for DropPanic<F> {
 }
 
 fn assert_payload(payload: &PanicPayload, expected: &str) {
-    payload.inspect(|value| assert_eq!(value.downcast_ref::<&str>().copied(), Some(expected)));
+    payload
+        .try_inspect(|value| assert_eq!(value.downcast_ref::<&str>().copied(), Some(expected)))
+        .expect("payload inspection is uncontended");
 }
 
 #[tokio::test(start_paused = true)]

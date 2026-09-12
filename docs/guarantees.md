@@ -501,6 +501,10 @@ application's concrete error and static stage, interruption or unwind payload,
 an independent initializer destruction panic, and all cleanup outcomes.
 Stage metadata must be suitable for diagnostics. Default error formatting omits
 cause contents; explicit error sources/panic inspection are trusted operations.
+`PanicPayload::try_inspect` never waits for another inspector: concurrent or
+recursive access returns `PanicPayloadBusy`. A callback panic does not poison
+future inspection. Inspection remains synchronous and temporarily excludes other
+inspectors; it does not clone, format or expose the retained payload automatically.
 
 Cleanup has its own budget, independent of the startup operation context.
 `reserve_cleanup` / `CleanupStack::reserve` validate names before acquisition;

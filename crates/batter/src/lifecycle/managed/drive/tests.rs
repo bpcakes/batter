@@ -133,11 +133,13 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
     let ManagedFailure::Panicked(payload) = &frozen.failures[0] else {
         panic!("original stop panic was replaced");
     };
-    payload.inspect(|value| {
-        assert_eq!(
-            value.downcast_ref::<&str>(),
-            Some(&"original repeated stop failure")
-        )
-    });
+    payload
+        .try_inspect(|value| {
+            assert_eq!(
+                value.downcast_ref::<&str>(),
+                Some(&"original repeated stop failure")
+            )
+        })
+        .expect("payload inspection is uncontended");
     assert_eq!(eventual.failures.len(), 1);
 }

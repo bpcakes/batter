@@ -82,12 +82,14 @@ async fn initialization_error_and_its_destructor_panic_cannot_discard_native_rep
     let ManagedFailure::Panicked(payload) = &outcome.failures[0] else {
         panic!("destruction panic missing")
     };
-    payload.inspect(|value| {
-        assert_eq!(
-            value.downcast_ref::<&str>(),
-            Some(&"secret destructor payload")
-        )
-    });
+    payload
+        .try_inspect(|value| {
+            assert_eq!(
+                value.downcast_ref::<&str>(),
+                Some(&"secret destructor payload")
+            )
+        })
+        .expect("payload inspection is uncontended");
     assert!(outcome.settlement.is_some());
     assert!(!format!("{outcome:?}").contains("secret"));
     assert!(!closed.load(Ordering::SeqCst));

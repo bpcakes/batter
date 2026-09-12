@@ -19,7 +19,7 @@ mod driver;
 mod report;
 
 pub use driver::{StartingSupervisor, StartupObserver, StartupOutcome};
-pub use report::{PanicPayload, StartupCause, StartupError, StartupFailure};
+pub use report::{PanicPayload, PanicPayloadBusy, StartupCause, StartupError, StartupFailure};
 
 use crate::{
     RegistrationError, cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,

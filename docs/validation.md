@@ -2,6 +2,33 @@
 
 Latest evidence: 2026-09-12. Earlier sections retain their historical scope.
 
+## Non-blocking retained panic inspection (batter-ai6), 2026-09-12
+
+The retained panic diagnostic boundary now exposes
+`PanicPayload::try_inspect`. It returns the typed `PanicPayloadBusy` result
+instead of waiting when inspection is already in progress. The startup
+failure-path regression performs recursive inspection while the outer callback
+holds access and observes the contention result; it also proves that a callback
+panic does not prevent a later typed downcast. Existing startup, finite-command
+and managed-component payload checks use the non-blocking contract. The public
+rustdoc example compiles.
+
+Linux x86_64 acceptance passed from Git baseline
+`034ce0085220044dcf5f3561b00a0bfce96a801f`:
+
+| Check | Executed result |
+| --- | --- |
+| `bash scripts/verify.sh` on pinned Rust 1.98.1 | PASS: formatting, complete offline matrix including failure contracts and doctests, workspace strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete verification on the exact minimum toolchain. |
+| HTTP example build and all five `scripts/smoke_http.py` profiles | PASS on both toolchains: SIGTERM, SIGINT, deadline, WARN-filtered and WARN-filtered deadline. |
+| `scripts/jig check --profile verify` | PASS on pinned Rust 1.98.1: all five targets, including exhaustive `api:test` receipt `receipt_01M2AQ2VB76ZFHXK3K7M8D03BC`, contract v9 and file-budget checks. |
+
+The file-budget target reported the existing startup integration test above its
+warning threshold but no policy error; the profile passed without a waiver.
+Live PostgreSQL endpoints were not required for this foundation-only change and
+remain unset. No new macOS or hosted execution is claimed. No staging, commit,
+push, publication or deployment was performed.
+
 ## Pushed native source pin (batter-vly), 2026-09-12
 
 The user reported that the native changes were committed and pushed. The clean
