@@ -1,6 +1,489 @@
 # Validation evidence
 
-Latest evidence: 2026-09-12. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-13. Earlier sections retain their historical scope.
+
+## Merged commit verification, 2026-09-13
+
+The user explicitly requested commit and push after the stopped review loop.
+The branch was fast-forwarded to origin/master at
+8456ffccd729ca6f22b510075320b2e40d5bf59c, incorporating completion-publication
+and operational-composition changes. All61 SQLx files were preserved exactly
+through reconciliation. The only Git conflict was disjoint Beads issue updates;
+both sides and every local/remote append-only Jig event were retained. Plain
+Beads import failed semantic verification and rolled back. Native hash-bound
+reconciliation applied only the newer batter-7r3.6 record; tracker status is
+healthy with no pending synchronization or anomalies.
+
+On the merged result, both complete verify.sh matrices pass on Rust1.98.1 and
+1.94.0. Each toolchain also passes all53 SQLx live cases against a new dedicated
+PostgreSQL18.6 container, a separate HTTP example build and all five smoke modes,
+and verifier-example exit0 plus deliberate-violation exit1. The container and
+private credential files were removed afterward. Exact commands, statuses and
+receipt identifiers are retained in
+[merge validation](../.agent/reviews/batter-verifier-merge-validation.json).
+
+The main-checkout Jig run passes all five required targets with fresh evidence
+and gates, including api:test receipt receipt_01M2DKSBBHYQFNWVBKKXEANX3R and
+validation receipt receipt_01M2DKSHDZCFD9CYFYGDG7ZVD3 on plan
+plan_01M2DEZQF68QZZWR3CJXE0FAHX. Final tracker/document updates reuse unchanged
+Rust receipts and refresh repository policy checks. This resolves the current
+commit's missing Jig evidence; it does not retroactively change the copied-checkout
+failure or establish review convergence. The inherited-ledger repair still awaits
+an independent review, and low residuals remain batter-mzi and batter-6ye.
+No new macOS, hosted-CI or full downstream live execution is claimed.
+
+## Verifier loop round 1: inherited ledger membership, 2026-09-13
+
+Opening independent Claude/Codex/Cursor review completed with full included
+coverage and matching complete fingerprints. Codex identified late inheritance
+attachment outside the ledger row snapshot. A native PostgreSQL18.6 two-session
+probe confirmed an empty ledger before and after delete-plus-attach, while the
+old snapshot read the removed required row through newly expanded membership.
+This is an adapter boundary gap interacting with upstream catalog-cache behavior,
+not an application coordination mistake. Stronger locks would burden serving
+privileges; reproducing inheritance membership would add another protocol model.
+The bounded remedy rejects ledgers with parents or descendants in the snapshot
+and reads supported standalone ledgers with ONLY. Existing descendant locks and
+their TRUNCATE protection remain conservative; the prior native failure test now
+requires the explicit unsupported verdict while retaining its lock oracle.
+
+The first new live test failed because its barrier did not establish snapshot
+capture before metadata resolution. The round's one focused correction centralizes
+version checking and explicit snapshot capture after ledger locking, and warms
+the serving connection before the barrier. The exact missing-migration assertion
+is retained and passes through both combined and migration-only entrypoints.
+Fresh checks reject inherited parents and children, preserve identity and retain
+the clean session PID. Removing ONLY is rejected by the exact late-attachment
+assertion; source is restored before final verification. Both full verify.sh
+matrices (Rust1.98.1/1.94.0), both 53-case SQLx live suites, ten rebuilt HTTP
+smokes and both example outcomes per toolchain pass. Exact commands and outcomes
+are /tmp/batter-scope-r1-final-results.json, with /tmp/batter-scope-r1-final-*.log.
+The external-copy Jig commands exited successfully, but all five receipts were
+source_raced/unknown. The bounded loop stopped as validation failed after its
+permitted correction; no post-repair independent review ran. The user subsequently
+requested committing and pushing the retained work. This does not change the
+review outcome. The [historical handoff](../.agent/reviews/batter-verifier-scope-loop.md)
+records the findings and continuation state.
+
+Cursor's temporary-function hijack claim is rejected: PostgreSQL18 search_path
+rules exclude function/operator lookup in temporary schemas. A native exact
+pg_temp.left(name,integer) control returns pg_ only when explicitly qualified;
+unqualified left under pg_catalog,pg_temp returns the ordinary prefix. Two low
+Claude findings (owner diagnostic amplification and parameter lookup complexity)
+were verified and logged as deferred bugs batter-mzi and batter-6ye.
+
+## Verifier semantic boundary (batter-7r3.12 / batter-7r3.13), 2026-09-13
+
+The current implementation returns Incomplete/TemporaryNamespaces for explicit
+temporary namespace selections, including aliases, other-session names, object
+policies, routine argument types and migration ledgers. Combined, migration-only
+and authority-only checks reject the request before ledger locking or ordinary
+ACL evaluation; serving identity and clean session state remain preserved.
+PUBLIC exact relation declarations suppress column defaults while explicit
+column exceptions remain available. Required-policy validation and discovery
+share the same declaration index.
+
+A proposed native-current-privilege substitution was rejected before completion:
+a two-session PostgreSQL18.6 experiment observed repeatable-read nspacl unchanged
+but native has_schema_privilege changed after a committed grant. Captured-data
+evaluation is retained. The new public-entrypoint regression pauses verification
+at a catalog lock after capture, commits a schema grant, and proves required and
+excess findings both reflect the earlier snapshot; the next verification sees
+the grant. A separately prepared native query illustrates the differing catalog
+cache behavior. Native checks are independent references on stable fixtures,
+not a replacement for the snapshot contract.
+
+Focused execution passes all 54 library tests and three new live scenarios on
+a dedicated PostgreSQL18.6 container. Logs: /tmp/batter-scope-unit.log and
+/tmp/batter-scope-live-focused-pass.log. The first live build used a nonexistent
+finding variant and a private validation method; it was corrected to the public
+entrypoint and actual category. Fixture development also corrected a
+multi-command prepared statement, an uppercase PUBLIC subject expectation,
+and native-query prepared-plan reuse; the exact grant/verdict assertions were
+retained. One diagnostic-message edit failed compilation because the fixture
+requires a static message; separate static assertions replaced it. A documentation
+append script accidentally reused another document's buffer; all affected
+original bytes were reconstructed from the saved index/working patch before
+appending the intended text. No unrelated content was retained or removed.
+
+Two isolated guard mutations are behaviorally rejected by the new live cases:
+removing the temporary namespace boundary and removing exact-parent PUBLIC
+precedence. Source bytes are restored before final validation; outcomes are in
+/tmp/batter-scope-mutations.json and /tmp/batter-scope-mutant-*.log. The first
+PUBLIC mutation lookup stopped before editing because rustfmt had split the
+selected expression; the corrected lookup produced the behavioral failure.
+The first full Rust1.98.1 verify.sh passes, but its live suite hits the runner's
+180-second watchdog in the new snapshot fixture. The fixture opened an observer
+after holding pg_parameter_acl exclusively; connection startup can read that
+catalog and block. The focused run had passed, so it did not establish freedom
+from this ordering dependency. The fixture now acquires both bounded auxiliary
+connections before the barrier. This is a fixture sequencing mistake, not a
+change to the verifier's snapshot semantics. The dedicated cluster is recreated
+after the killed run; the final matrices below ran on that state.
+Both complete final verify.sh matrices pass on Rust1.98.1 and1.94.0. Each also
+passes the exact 52-case live runner, a separately built HTTP example and all
+five smoke modes (TERM, INT, deadline, WARN and WARN/deadline), plus normal
+verifier exit0 and deliberate-violation exit1. The dedicated PostgreSQL18.6
+cluster was recreated after the earlier fixture watchdog. Exact commands,
+statuses and durations are /tmp/batter-scope-final-results.json; final logs
+use /tmp/batter-scope-final2-*.log. The earlier failing run is retained in
+/tmp/batter-scope-first-matrix-failed.json and /tmp/batter-scope-final-live-1.98.1.log.
+The first Jig run's commands exited successfully, but its receipts were rejected
+with execution_mutated: documentation was updated while its read-only layer
+ran. No passing Jig evidence is claimed for that invocation. The documentation
+updates are finished before rerunning Jig on a frozen worktree; its failed
+output remains /tmp/batter-scope-final2-jig.log. The frozen rerun passes all five
+required gates on plan plan_01M2DEZQF68QZZWR3CJXE0FAHX, with fresh evidence and
+gates inspection. Its api:test receipt is receipt_01M2DGKVVW9X5MNHYVT34EDK66;
+validation receipt receipt_01M2DGM1ZT82HW8S55GBAA4HDP. The requested independent
+review-fix-loop follows this validated implementation.
+Earlier evidence below retains its original scope.
+The live inventory is now 52 entries (11 lease/migration, 14 pool ownership,
+27 authority/recovery). No macOS, hosted or full downstream execution is claimed.
+
+## Verifier identity and evaluation repair (batter-7r3.5), 2026-09-13
+
+The user-authorized follow-up preserves selected catalog identities separately
+from effective type ACL sources, renders qualified findings canonically, and
+shares a cooperative work/report budget across the production evaluator.
+Ordinary ACL comparisons visit reachable grantees/owners/active superusers;
+parameter defaults no longer rescan an active-role list per capability source.
+Policy, work and report exhaustion are explicit errors, never partial passes.
+Native raw-state reset remains intact, including its expected idle warning.
+
+Focused execution passes 52 library tests. The new controls exercise a loaded
+production snapshot under cancellation and a paused deadline, 2,048 additional
+roles with 4,096 types and a late grant option, actual evaluation-capacity failure,
+report payload rejection, nested policy limits and dotted/quoted identities.
+A dedicated task-owned PostgreSQL 18.6 container passes the cross-schema source
+revoke/grant comparison with native has_type_privilege, exact role/PUBLIC alias
+policies and the expected native idle notice. Final live runs also exercise
+migration-only, authority-only and combined entrypoints in that notice case.
+
+Three isolated guard mutations fail behaviorally: omit derived-type discovery,
+remove cooperative yields, and restore unquoted finding concatenation. All
+source bytes were restored before the final matrix. The first discovery mutation
+attempt contained an invalid Rust string escape and was rejected at compile time;
+it was corrected and only the subsequent behavioral rejection is counted.
+Logs and outcomes are /tmp/batter-root-mutant-*.log and
+/tmp/batter-root-mutations.json. These controls establish the named regressions,
+not universal correctness or real-time preemption.
+
+During test development the synthetic role range accidentally included its
+supposedly external owner OID and correctly produced ownership findings; using
+a disjoint range corrected the fixture. Existing live tests initially failed
+because their expected names were unquoted. They now retain the same exact
+object/role/privilege assertions using the canonical quoted representation.
+
+Final Linux execution passes on both Rust 1.98.1 and 1.94.0: each complete
+`bash scripts/verify.sh`, all 49 entries in `bash scripts/test_sqlx_live.sh`
+(11 lease/migration, 14 pool ownership, 24 authority/recovery), a separate
+`cargo build -p batter-axum --example http_service --locked`, and all five
+`scripts/smoke_http.py` modes (TERM, INT, deadline, WARN, WARN/deadline).
+On each toolchain `cargo run -p batter-sqlx --example verification --locked`
+returns 0 for the configured normal policy and 1 for the deliberate violation.
+The minimum-toolchain commands use `RUSTUP_TOOLCHAIN=1.94.0`. Live execution
+uses the dedicated PostgreSQL 18.6 container; credentials are not recorded.
+Exact commands, statuses, durations and log paths are in
+`/tmp/batter-root-final-results.json` and `/tmp/batter-root-final-*.log`.
+`scripts/jig work check --plan-id plan_01M2DBSBHNTWQWG8C8FDPFSKGS` passes
+api:test, api:clippy, api:fmt, repo:contract and repo:file-budget; the final
+pre-review api:test receipt is `receipt_01M2DD7V13WA6Z3DBEG54F00AT`, target validation
+receipt `receipt_01M2DD817A22MR7SRNPPEKKWJF`. The fresh independent
+all-reviewer review completed on an unchanged complete fingerprint
+`395baed2f44ab9d142797a16d9a4598b77c97f30a993e8fe68e7f4ebd45e6380`.
+Claude and Cursor each attested to all 44 evidence pages; Codex inspected
+production and selected tests, not every fixture line. The merged review retains
+one medium and one low issue; no conditional commit was made.
+
+The medium issue, batter-7r3.12, is a missing current-temporary-namespace semantic
+case in ordinary schema ACL evaluation. A separate real-login, one-slot pooled
+public-API probe on PostgreSQL 18.6 returns native USAGE/CREATE=true, while the
+verifier returns two MissingPrivilege findings when required and an incorrect
+WithinDeclaredPolicy with zero findings when both schema privileges are denied.
+The final probe exits 0 and explicitly cleans up its table and role; source is
+`/tmp/batter-temp-review-probe/src/main.rs`, output
+`/tmp/batter-temp-review-probe-final.log`. Early probe construction used an
+admin-authenticated session authorization (unsuitable for the excess-root oracle),
+then hit a dynamic-SQL compile error and asynchronous server cleanup race;
+real-login execution and explicit table cleanup corrected the probe. Repository
+source was unchanged. This is confirmation of a reviewer finding, not a passing
+regression test for a repair.
+
+The low issue, batter-7r3.13, records the relation/column PUBLIC default precedence
+ambiguity; source inspection confirms that an exact relation deny leaves column
+defaults active, but no live reproduction was executed for it. Claude's separate
+capacity concern is the explicitly documented per-expanded-row bound, not an
+accepted new defect; ordinary ACL boundary coverage remains a test gap.
+Full findings, adjudication and review limits are in
+[the final review](../.agent/reviews/batter-7r3.5-root-repair.md).
+After recording the final review, Jig marked Cargo.lock's input changed after
+staging and reran all five gates successfully. The final api:test receipt is
+`receipt_01M2DEADN1AZXC4HY0XS0D9YDZ`, target validation receipt
+`receipt_01M2DEAKJB8YKKCJB33NT6GEGM`; output is
+`/tmp/batter-root-jig-review-refresh.log`. The reviewed Cargo.lock and Rust/test
+source bytes remain unchanged. The task-owned PostgreSQL container and private
+credential files were removed after the successful native probe. Final
+whole-repository policy records are refreshed after this evidence update.
+Earlier recovery receipts remain historical. No new macOS, hosted,
+full-downstream or deployed execution is claimed. Existing Jig
+exhaustive src/tests globs cover all new files; no new source root or exemption
+was introduced.
+
+## Owned PostgreSQL verifier recovery (batter-7r3.5), 2026-09-13
+
+This is the user-approved recovery following the stopped borrowed-connection
+review below. The current API owns a serving-pool lease under one operation,
+locks its ledger before snapshot creation, and separates required current-role
+privileges from allowed authenticated-login potential authority. Discovery and
+exact policy data replace supported generic consumer ACL SQL. Migration-only
+and authority-only stages share the protected executor and report distinct
+coverage. Earlier source receipts are historical and do not validate these edits.
+
+Focused Linux x86_64 execution against a dedicated PostgreSQL 18.6 cluster passes
+caller transaction preservation through commit; occupied-pool timeout; residual
+written/empty/aborted pooled-state reset; both ledger DDL orderings; independent
+current-role SET/INHERIT/PUBLIC/column privilege checks; unlisted relation,
+column, sequence, definer and owner findings; all three mixed-case built-ins
+TimeZone/DateStyle/IntervalStyle with and without explicit ACL rows; exactly
+10,000 expanded parameter ACL rows and 10,001-row rejection; and oversized
+parameter-name rejection with client retirement. The final live inventory contains
+47 entries: 11 lease/migration, 14 pool ownership, and 22 authority/recovery.
+Additional native controls cover trusted helper resolution with serving settings
+restored, inherited-ledger TRUNCATE blocking, dependent array/multirange effective
+ACLs, and restricted/SET-only/INHERIT parameter visibility including NO_SHOW_ALL.
+The synthetic authority collector checks 4,096 types plus 4,096 PUBLIC invoker
+routines, then requires exactly one forbidden definer finding after one change.
+
+Eight isolated guard mutations in a source copy were rejected by targeted tests:
+READ COMMITTED instead of REPEATABLE READ; treating SET as required current-role
+inheritance; skipping discovered relation expansion; accepting the catalog row
+sentinel; skipping the early ledger lock; omitting pg_settings case folding;
+omitting the trusted search path; and locking ONLY the ledger parent.
+Each restored version passed in the same copy. Mutation log paths are
+`/tmp/batter-snapshot-mutant/<guard>-{mutant,restored}.log`; these are finite
+regression controls, not a universal correctness proof. The after-lock test's
+initial assertion expected UnsuccessfulMigration for an extra row; its corrected
+oracle requires the comparator's existing UnexpectedMigration category for
+version 2 and separately proves that the installed RLS policy hides that row.
+
+A disposable clone of the actual current consumer at
+`6862d25bd4241c80b96991c9a6e6f7948b2cdc78` patched all five Batter packages to this
+working tree. Its original checkout and published-source pin were untouched.
+On its own Rust 1.97.1 toolchain, 15 focused tests passed: both actual serving
+profiles plus a policy-only relation/column/routine extension, six unchanged
+authority regressions, two public startup/drop/cleanup cases, two administrative
+lifecycle cases, exact ledger corruption, privileged search-path drift and two
+safe error-mapping tests. Native SQL confirms the changed privileges. Database
+check and strict all-target Clippy, formatting and diff checks passed. The
+native harness initially rejected a hostless Unix URL; retry with a dedicated
+finite-lived TCP admin credential passed unchanged tests.
+
+The consumer removed 137 lines of duplicate supported ACL SQL and its generic
+ledger comparator. Typed manifests and error adaptation add approximately 91
+production lines overall; no total-line reduction is claimed. Exact SQLx shape,
+function/trigger protocol, unsupported-owner guard and pinned native queue
+compatibility remain local. Complete disposable patch and command evidence are
+`/tmp/batter-downstream-adoption.patch` and `/tmp/batter-downstream-evidence.md`.
+This is focused real-consumer evidence, not a full downstream suite, deployment
+or published dependency upgrade.
+
+The first full Rust 1.98.1 example build exceeded the compiler query-depth limit
+through the combined generated async type. Boxing only the inspection future
+fixed that example but still failed plain workspace Clippy. Boxing the whole
+private executor fixes both configurations without a downstream recursion-limit
+attribute. The exact failing Clippy command and minimum-toolchain example build
+passed in isolation. Earlier matrix/live passes are historical; the final source
+is verified again below. The new dependent-type fixture initially omitted its
+existing explicit work_mem grant; adding that allowance fixed the test policy
+while preserving native revoke/grant and clean-verdict oracles.
+
+The final full independent Codex pass found one remaining false positive:
+unknown custom-parameter syntax was being used to satisfy a required SET grant.
+A native source-copy regression loads PL/pgSQL, observes a reserved-prefix SET
+rejection, then fails because the old verifier reports a policy match. The
+ADR-010 recurrence assessment separated conservative possible excess authority
+from positive required authority before repair. Unknown required custom context
+now produces ParameterUnobservable/Incomplete, even with an explicit ACL; a
+visible loaded parameter still passes. The native three-way control covers the
+reserved-prefix denial, accepted but unobservable placeholder and visible loaded
+parameter. Hidden custom definitions with/without an ACL have synthetic coverage,
+not a live compiled-extension fixture. All 45 library tests and strict adapter
+Clippy pass, followed by the final matrices below.
+
+The earlier paired Claude/Codex review completed at matching complete fingerprint
+9e33a03f327acd6e0b3ee07a952d2cfe26ea9098231fc4f39e3fad3322e44a91. Its accepted
+catalog-resolution, descendant-lock, type-ACL, repeated-scan, visibility and
+documentation findings were repaired. The final full Codex pass completed at
+30d44538e8153ba2f6a277da67a1b6ee4cbf3e411cca2c87adf18b2cf8dd7400; targeted
+confirmation of its sole finding reports that issue resolved and no coupled
+defects at 8012edd5421b835d3a8e74a9264a7c4da2e79e399dfeffe5f78f5da0256ca804.
+All reviewer/parent captures matched with complete=true and no issues, using only
+the trusted HEAD .agent exclusion. The final confirmation was targeted, not a
+second full pass. Reviewers did not execute the native tests; parent execution
+is recorded separately. The [review record](../.agent/reviews/batter-7r3.5-recovery.md)
+preserves findings, adjudication, inventory and limitations. Final evidence/status
+updates follow that source freeze without changing Rust implementation or tests.
+
+| Final check on the settled source | Result |
+| --- | --- |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on Rust 1.98.1 and 1.94.0: complete workspace tests, doctests, runner controls, strict Clippy, formatting and rustdoc. |
+| `bash scripts/test_sqlx_live.sh` on both toolchains | PASS: exact 47/47 inventory and execution on each (11 lease/migration, 14 pool ownership, 22 authority/recovery), against the owned PostgreSQL 18.6 cluster. |
+| HTTP example build and all five `scripts/smoke_http.py` profiles on both toolchains | PASS: SIGTERM, SIGINT, deadline, WARN-filtered normal and WARN-filtered deadline; ten process smokes total. |
+| Runnable verification example, normal and deliberate-violation modes, on both toolchains | PASS: normal `WithinDeclaredPolicy`, zero findings and exit 0; deliberate violation `Violations` and exit 1. Unsupported boundaries remain disclosed. |
+| Eight isolated critical-guard removals and restorations | PASS: every removed guard caused its behavioral regression to fail; every restored version passed. The repeatable-read control was repeated against the settled SQLx source and retained logs. |
+| Final disposable-consumer recheck on Rust 1.97.1 | PASS: actual two-profile/policy-only-extension case, all six unchanged privilege regressions and strict all-target database Clippy, after the final upstream repairs. Earlier 15 focused checks are described above; no full consumer suite is claimed. |
+| `scripts/jig work check --plan-id plan_01M2BKZMD1XJYS0V168QTCFP86` and evidence/gates inspection | PASS: current `api:test` receipt `receipt_01M2DA5T9DFBQJC18HX2N3BEXW`, plus Clippy, formatting, contract and native file-budget siblings. Final evidence-only edits refresh affected policy checks while reusing unchanged Rust inputs. |
+
+The 20-step two-toolchain driver completed in 175.63 seconds. Exact commands,
+exit codes and log paths are retained in `/tmp/batter-recovery-final-results.json`
+and `/tmp/batter-recovery-final-<step>.log`. The distinct downstream toolchain and
+owned PostgreSQL prerequisites are recorded in the disposable adoption evidence.
+No new macOS or hosted verifier execution, full consumer suite, deployed upgrade,
+or remote-termination guarantee is claimed. The original consumer's source pin
+is unchanged; unrelated concurrent edits there were not modified or reverted.
+Source changes remain uncommitted.
+
+## PostgreSQL schema and runtime-authority verification (batter-7r3.5), historical semantic audit
+
+The implementation was audited again from the PostgreSQL 18 privilege and
+catalog contracts, then the repaired tree was exercised on Linux x86_64
+against local PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2). This source snapshot
+is newer than the historical repair and stopped-review records; their reports
+and Jig receipts are not reused for affected checks. The verifier remains a caller-owned
+`&mut PgConnection` API using one explicit repeatable-read, read-only snapshot.
+
+The audit separated SET-reachable execution identities from inherited ACL
+sources and corrected ADMIN reachability through INHERIT edges. It also bounds
+object catalog reads to declared and PUBLIC targets, models PostgreSQL true
+arrays without inventing dimensions, rejects duplicate policy objects, keeps
+PUBLIC parameter policy separate from reachable-role allowances, applies
+parameter-context defaults only to declared parameters, requires explicit type
+policy for direct row-type grants, and establishes the snapshot before the
+concurrent mutation control. The first fresh comprehensive pass additionally
+found and repaired masked authenticated-superuser authority, RLS-filtered
+migration ledgers, implicit custom-parameter SET authority, column ACLs on
+PUBLIC-selected relations, subscriptable vector/array identity collisions and
+quadratic per-role graph traversals. The next pass repaired PostgreSQL 18
+CREATEROLE management through ADMIN across otherwise unusable memberships,
+restored the call-entry identity before role-dependent reads, introduced full
+configuration `ParameterName` values, rejected nonexistent built-in parameter
+targets, indexed ACL entries once per object and retained catalog OID index use.
+The final repair round replaced the coarse ADMIN boolean with a per-target
+allowlist and audits grant token targets as potential SET/INHERIT authority. It
+also bounds migration-ledger rows and checksum bytes, preserves loaded extension
+parameter contexts, places the runnable verifier inside a finite operation, and
+uses unique fixture-owned custom parameter names so cleanup cannot revoke an
+operator's fixed cluster-wide PUBLIC ACL.
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p batter-sqlx --lib --features test-support --locked` | PASS: 34/34 unit tests, including PG18 version gating, shared linear SET/INHERIT/ADMIN reachability over a 2,048-role chain, target-specific ADMIN potential, CREATEROLE management through otherwise unusable memberships, loaded-extension parameter context, full custom parameter names, migration checksum bounds, inherited-only superuser controls, structural routine/true-array matching, duplicate-policy rejection, migration boundaries, status transitions, redacted errors and dual-cause retention. |
+| `cargo test -p batter-sqlx --features test-support --locked` | PASS: 34 library tests, 16 offline adapter/fixture tests, 7 authority live tests ignored in the ordinary run, 8 doctests and 4 compile-fail controls. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings` | PASS. |
+| `bash scripts/test_sqlx_live.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_sqlx_live.sh` | PASS on each toolchain against a dedicated PostgreSQL 18.6 cluster: exact 32/32 inventory and execution (11 PostgreSQL lease/read-only-verification, 14 pool ownership, 7 authority-verification cases). The cases include bounded oversized-ledger rejection, authenticated-role recovery after changed session authorization, call-entry SET ROLE ledger access and restoration, target-specific ADMIN and its potential predefined-role authority, actual CREATEROLE/ADMIN role management, RLS-filtered-ledger rejection, unique custom-parameter ACL cleanup, custom defaults and long names, true-array/vector overload identity, column ACLs on PUBLIC-selected relations, concurrent ACL snapshot isolation, 48 declared relations and checker-specific one-slot cancellation. |
+| `PYTHONPATH=scripts python3 -m unittest scripts/test_sqlx_live.py -v` | PASS: 5/5 inventory/parser controls. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete workspace matrices, including formatting, runner controls, all Rust targets, Clippy and rustdoc. |
+| HTTP example build plus all five `scripts/smoke_http.py` profiles, on Rust 1.98.1 and 1.94.0 | PASS: normal SIGTERM/SIGINT, deadline, WARN-filtered normal and WARN-filtered deadline profiles. |
+| `cargo run -p batter-sqlx --example verification --locked`, normal and deliberate-violation modes, on Rust 1.98.1 and 1.94.0 | PASS: normal returned `WithinDeclaredPolicy`; the deliberate checksum/ACL violation returned `Violations` and exited nonzero. |
+| `scripts/jig work check --plan-id plan_01M2BKZMD1XJYS0V168QTCFP86`, followed by evidence/gates inspection | PASS after the focused file-layout correction: fresh `api:test` receipt `receipt_01M2D36D0FYZS2EFYP9SF1F80A`, plus passing Clippy, formatting, contract and native file-budget targets. |
+
+The live commands used a fresh dedicated local PostgreSQL 18.6 cluster and
+finite random credentials with one-day expiry;
+fixture cleanup retains normal, error and panic causes. A process death can
+leave disposable residue until expiry or external cleanup and is not claimed as
+a runtime-death guarantee. An initial independent Claude/Codex pass covered the
+complete pre-Jig working-tree scope at verified fingerprint
+`effec36a9bae628ff3a94805d220a04ac6b48630f5a0eafaf40269ee1acf567e`, with
+`.agent` excluded by the trusted `HEAD` `.reviewignore`. The ensuing required
+Jig profile exposed hard file-budget failures in three new files. A focused
+correction moved authority unit tests, fixture provisioning and live-scenario
+phases into ordinary submodules below the 800-line limit without changing the
+seven-case inventory. Both complete workspace matrices and exact 32-case live
+runners passed again on both toolchains, and the full Jig profile then passed.
+
+A fresh context-free Claude/Codex review covered the complete corrected source
+at unchanged fingerprint
+`994b9a4170570837080b97ddd15ea84193cc8c0abc80980c14b9a74d1b09776c` and
+`HEAD` `ff507dcf48c688bbc31d99a517cfd5888de5910a`; both reviewers and the parent
+fingerprint check reported `complete=true`, no submodules and only the trusted
+`.agent` exclusion. The three-round comprehensive review-fix loop reached its
+round limit without converging. Two high-severity findings remain: the borrowed
+connection API can roll back an empty unmanaged raw transaction or abort one
+that already performed work, and concurrent RLS enablement can occur between
+the snapshot-visible metadata check and the ledger read and silently filter the
+ledger. Medium findings remain for exact lowercase matching that misses
+mixed-case `pg_settings` names such as `TimeZone`, and for unbounded
+materialization of cluster-wide roles, memberships and parameter ACLs. Low
+findings remain for the example's merged native/interruption diagnostic, its
+owner mode omitting the implicit `pg_database_owner` role allowance, and a fixed
+cluster-wide long-parameter fixture mutation that is not consistently covered by
+the fixture advisory lock. Two additional fixture claims from one reviewer were
+rejected by direct inspection: this snapshot has neither a five-parameter
+cleanup cap nor a UUID-based overlong role suffix. These unresolved defects keep
+the Bead in progress despite the passing execution evidence.
+
+The generic coverage remains intentionally additive: adopter-owned exact ledger
+shape/history, SECURITY DEFINER search paths/bodies, durable schema/history and
+profile-specific grant policy remain local. The live concurrent test now proves
+the captured snapshot excludes a committed post-snapshot ACL, while the
+many-object test exercises set-oriented catalog loading and indexed policy
+attachment; neither is an exhaustive concurrency/performance guarantee.
+
+## PostgreSQL schema and runtime-authority verification (batter-7r3.5), repair round 1 (historical)
+
+The optional SQLx adapter exposes a caller-owned `&mut PgConnection` verification
+API. It performs generic migration, role, PUBLIC, ownership,
+object/column/sequence/routine/database and declared-parameter checks in one
+repeatable-read read-only snapshot, awaits rollback, and retains native SQLx
+causes behind redacted diagnostics. The checker does not run DDL or a migrator
+lock and does not replace application-specific schema or grant policy.
+
+The following focused evidence was freshly executed on Linux 7.0.11 x86_64
+against local PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2), using rustc/cargo
+1.98.1 (`48a229cea` / `797e8a9bc`):
+
+The restricted-login fixture generates per-run finite credentials that expire
+after one day and removes roles/schemas on normal, error and panic paths. A
+process death can leave disposable residue until its expiry or an external
+cleanup; the tests make no runtime-death cleanup guarantee.
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p batter-sqlx --lib` | PASS: 16/16 unit tests, including PG18 version gating, role reachability, empty migration-boundary, quoted routine-policy and dual-cause controls. |
+| `cargo check -p batter-sqlx --tests --examples` | PASS. |
+| `cargo test -p batter-sqlx --features test-support --locked` | PASS: 18 library tests, 16 offline fixture/adapter tests and 10 doctest/compile-fail controls; external live cases remained ignored. |
+| `cargo test -p batter-sqlx --test verification_live -- --ignored --nocapture` | PASS: 2/2 restricted-LOGIN cases, including actual direct/inherited/SET/ADMIN operations, narrow allowed/denied controls, PUBLIC, ownership, table/column/sequence/routine grants, hidden protected parameters, two unrelated policies and checker-specific one-slot cancellation. |
+| `cargo test -p batter-sqlx --test postgres_live verification_uses_one_read_only_snapshot_and_preserves_ledger_policy -- --ignored --nocapture` | PASS: temporary SQLx-shaped ledger, later/unsuccessful/checksum/missing-row controls, no ledger mutation and explicit unsupported/incomplete reporting. |
+
+Final post-repair round-1 validation was then executed on the same Linux and
+PostgreSQL 18.6 environment. The complete SQLx runner uses a disposable
+administrator login whose password is not recorded; the runner itself creates
+the restricted fixture credentials.
+
+| Check | Result |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS: complete Rust 1.98.1 workspace, Clippy, rustdoc and doctest matrix. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: complete minimum-toolchain matrix. |
+| HTTP example plus five `scripts/smoke_http.py` profiles per toolchain | PASS: 10/10 (SIGTERM, SIGINT, deadline, WARN filtering and WARN-filtered deadline on Rust 1.98.1 and 1.94.0). |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_sqlx_live.sh` | PASS: 27/27 (PostgreSQL 11, pool 14, verification 2). |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/test_sqlx_live.sh` | PASS: 27/27 (PostgreSQL 11, pool 14, verification 2). |
+| `PYTHONPATH=scripts python3 -m unittest scripts/test_sqlx_live.py -v` | PASS: 5/5 runner inventory/parser controls. |
+| `./.git/jig-tools/contract-9-runtime/bin/jig file-budget check --base HEAD --json` | PASS: 14 files, 0 errors, 6 warnings and 8 notices; no waivers. |
+
+The file-budget check is a direct read-only target invocation and does not
+create Jig state. Final review convergence and the post-review Jig refresh are
+still pending; earlier Jig receipts are historical pre-repair evidence and are
+not reused for this source snapshot. No macOS, hosted, staging, commit or
+publication evidence is claimed.
+
+The generic checker deliberately does not replace adopter-owned exact ledger
+shape/type/NOT NULL checks, SECURITY DEFINER search-path/body checks,
+durable-history checks, or per-profile grant policy. A dedicated concurrent
+catalog-change oracle and a large-object round-trip benchmark remain unclaimed
+prevention evidence; the implementation's captured-snapshot and set-oriented
+catalog design is covered by the focused acceptance cases but does not imply
+an exhaustive concurrency or performance guarantee.
 
 ## Retained completion publication core (DU-001), 2026-09-12
 

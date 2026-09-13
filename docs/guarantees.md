@@ -709,6 +709,76 @@ Rust's default panic hook can still print payloads. No native error contents are
 added to adapter diagnostics, but trusted source inspection and upstream logging
 remain application-owned.
 
+The optional verification module owns a `PgLease` acquired from the supplied
+serving `PgPool`. One `OperationContext` covers acquisition, raw-state reset,
+repeatable-read read-only inspection, rollback and disposition. It never borrows
+an application transaction. Only a complete operation with acknowledged rollback
+permits pool return; native failure or interruption retires the lease. The
+library preserves session options and current role, recovering the initially
+authenticated login transaction-locally for the excess-authority audit. Masking
+session authorization cannot conceal recoverable superuser authority. A trusted
+transaction-local search path prevents application-defined overloads from
+redirecting catalog helpers; rollback restores the serving path.
+
+Combined and migration-only verification take an ACCESS SHARE ledger lock
+including inherited descendants before any snapshot-taking SELECT. Conflicting
+DDL waits; ordinary migration row writes remain possible. The shared executor
+explicitly captures the snapshot before metadata classification. Ledgers with
+parents or descendants in that snapshot return Incomplete/InheritedMigrationLedgers.
+Supported standalone ledgers use ONLY so a later attachment cannot change the
+read relation set. Enabled ledger RLS is a finding, and local
+`row_security = off` prevents silently filtered reads without granting bypass.
+`verify_migrations` covers only the ledger; `verify_authority` omits the ledger
+read and lock. All three entrypoints share the same execution and retirement
+rules. They never execute DDL, take a migrator advisory lock or repair ACLs.
+
+Authority checks cover authenticated-login-rooted SET/INHERIT/ADMIN potential,
+including target-specific ADMIN and CREATEROLE management, separately from
+`required_privileges` of the current role through direct/PUBLIC/INHERIT grants.
+Bounded discovery can cover every supported object in selected user schemas;
+per-kind defaults and exact role/PUBLIC overrides remain application policy.
+Discovery preserves each selected array/multirange identity while resolving
+its effective source ACL, even across the schema boundary. Shared ACL data
+does not merge exact policies or erase coverage. Qualified finding names quote
+each identifier component, including routine argument identities.
+Unlisted relation, column, sequence, routine and ownership authority is therefore
+inspectable without an application-maintained second ACL engine. Required
+privileges do not prove schema visibility unless USAGE is also required, nor do
+they prove RLS-visible data, accepted parameter values or function behavior.
+
+Captured evaluation yields every 64 object/role visits under the same owned
+operation. It rejects more than one million visits, 100,000 findings or 16 MiB
+of finding payload with `EvaluationCapacity`, followed by unsuccessful client
+retirement. Policy validation bounds original nested input to 10,000 entries
+and each privilege list to 32 entries. These limits do not preempt native SQLx
+polls, OS scheduling, allocation or destruction. Idle checkout normalization
+emits PostgreSQL's expected ROLLBACK warning through SQLx's native notice target;
+raw empty, written and aborted transaction recovery remains mandatory.
+
+Migration rows and checksum bytes are capped before client materialization.
+Catalog queries, including ACL expansion, reject a 10,001st row instead of
+returning a partial report; parameter names have a 1,024-byte capacity and
+case-normalized comparison keys. Declared absent custom placeholders retain
+implicit SET authority; loaded extension parameters retain visible context.
+An unobservable requested parameter produces `ParameterUnobservable` and
+`Incomplete`, retaining other findings. Hidden metadata cannot become a fabricated
+missing-object or missing-privilege verdict. A privileged boolean-only existence
+probe can distinguish absent built-ins, but cannot supply hidden parameter context.
+For an absent custom definition, conservative potential SET authority does not
+prove a required privilege: required custom targets also produce Incomplete.
+Reserved prefixes and hidden extension definitions remain indistinguishable from
+ordinary placeholders without observable context; verification never probes SET.
+These are finite retained-input limits, not a server execution-memory bound.
+Cluster-wide role, membership or parameter ACL growth can reject even a small
+policy; the checker never turns a truncated catalog into a passing report.
+
+`VerificationReport` distinguishes policy violations from incomplete coverage
+and typed operation/native failures. Its coverage identifies the actual stage.
+Requested unsupported surfaces produce `Incomplete`. Exact application ledger
+shape, function body/search-path and trigger protocols, extension semantics and
+unsupported ownership classes remain application/native checks. Future sessions,
+grants or schema changes are not certified. See the [adapter contract](../crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
+
 Retirement releases local pool capacity without awaiting interrupted SQL or
 SQLx's pool-return ping. It does not prove remote cancellation, rollback or server
 session termination. Detached sessions may outnumber max_connections and survive
@@ -1134,3 +1204,14 @@ retains SQLx begin/commit sources and a separately returned rollback failure.
 Reports cover returned outcomes, not every intermediate value inside a cancelled
 native future. Real commit rejection and interruption during readback are covered
 by PostgreSQL 18.6 probes; full redesign acceptance remains tracked separately.
+
+The PostgreSQL verifier explicitly rejects selected temporary namespaces
+(`pg_temp`, `pg_temp_*`, `pg_toast_temp_*`), their objects and routine argument
+identities with Incomplete/TemporaryNamespaces before ledger locking or ACL
+evaluation. This is an unsupported surface, not a claim of absent authority.
+Exact PUBLIC relation declarations suppress column defaults, while explicit
+column exceptions remain expressible. Whole-relation allowances still imply
+column allowances. Required-policy validation and discovery share that rule.
+Native privilege inquiry functions can observe newer catalog state than a
+repeatable-read ACL query; required and excess checks therefore use the same
+captured data and native inquiries serve as differential test references.

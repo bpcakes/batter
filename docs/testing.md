@@ -134,15 +134,28 @@ it cannot promise remote effect reversal or termination of arbitrary spawned tas
 The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
 `DATABASE_URL` identifying an externally provisioned disposable PostgreSQL
-database and `BATTER_SQLX_AUTH_ACCEPT_URL` identifying a known-good password-
-authenticated endpoint, run
-`bash scripts/test_sqlx_live.sh`. The runner rejects either missing
-configuration and case-inventory mismatches, then executes the exact ten-case
-disposition target and fourteen-case pool-ownership target serially under the
-existing Unix process watchdog. Python controls reject missing, skipped,
+database, `BATTER_SQLX_AUTH_ACCEPT_URL` identifying a known-good password-
+authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying its
+administrative connection on a dedicated disposable cluster, run
+`bash scripts/test_sqlx_live.sh`. The runner rejects any missing
+configuration and case-inventory mismatches, then executes the exact eleven-case
+disposition target, fourteen-case pool-ownership target and twenty-seven-case restricted-
+login verification target serially under the existing Unix process watchdog.
+The identity controls compare cross-schema multirange grants with native
+has_type_privilege and retain exact alias policies. The notice control runs all
+three verifier entrypoints and requires their expected idle reset warning. Pure
+production-snapshot tests cover cooperative cancellation/deadline, combined
+role/object scale, and explicit work/report/policy limits.
+Python controls reject missing, skipped,
 duplicated, summary-only, or newly unlisted cases. It requires up to six simultaneous
 server sessions, visibility of its own `pg_stat_activity` rows, advisory locks
-and TEMP-table privilege. It does not create databases or persistent objects.
+and CREATE-on-database privilege. It does not create databases. The restricted-login
+verification fixture creates uniquely named roles and schemas, cleans them on
+normal/error/panic paths and uses finite credentials. Its parameter ACL names
+are unique per fixture, so cleanup cannot revoke an operator's pre-existing
+PUBLIC grant. PostgreSQL roles and parameter ACLs are cluster-wide; process
+death can leave disposable residue until expiry or external cleanup, which is
+why the administrative endpoint must belong to a disposable cluster.
 
 The pool-ownership target proves Command and legacy Startup query composition,
 reservation rejection before construction, native option/callback preservation,
@@ -1216,6 +1229,17 @@ the marker from both output streams. The missing-configuration control also
 requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
+The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
+an exact 53-case inventory: eleven PostgreSQL lease/disposition and
+read-only-verification cases, fourteen owned-pool cases and twenty-eight authority-
+verification cases. Its verification controls use committed uniquely named
+fixture objects, exercise an explicitly allowed later migration,
+missing/checksum/unsuccessful rows, bounded oversized-ledger rejection,
+read-only ledger preservation, role and
+PUBLIC authority, two policies and required unsupported coverage. It does not
+claim application-specific SECURITY DEFINER, durable-history or profile-grant
+checks; those remain in the consuming suite.
+
 Three live tests are explicitly ignored during ordinary runs, because database
 provisioning is external. With `DATABASE_URL` configured for a test database:
 
@@ -1409,3 +1433,16 @@ withheld readiness and successful SIGTERM cleanup across actual HTTP requests.
 Full workspace/two-toolchain and fresh
 agent/review acceptance remain separate requirements; see the current validation
 entry for what actually executed.
+
+Verifier semantic-boundary controls cover temporary namespace rejection through
+combined, migration-only and authority-only entrypoints; exact PUBLIC relation
+overrides against column defaults and explicit exceptions; and concurrent
+schema grants after snapshot capture. The last test also demonstrates why a
+native privilege inquiry is not a snapshot-equivalent replacement: a freshly
+prepared inquiry sees the grant while the repeatable-read ACL row remains old.
+
+The late-ledger-attachment live control holds a namespace catalog barrier after
+explicit snapshot capture, deletes a required row from an unrelated table and
+attaches it atomically. Both combined and migration-only verification must retain
+the missing migration. A fresh check rejects both inherited parents and children
+with Incomplete, preserves serving identity and reuses the acknowledged session.

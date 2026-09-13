@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-09-12. Typed settings and the atomic reference command have complete
+Updated: 2026-09-13. Typed settings and the atomic reference command have complete
 Linux evidence on Rust 1.94.0 and 1.98.1, including the current 56-case
 PostgreSQL 18.6 live inventory and both offline signal entries (58 runner entries).
 The Axum operational-default and later HTTP-lifetime/fixture changes pass the complete Rust
@@ -21,11 +21,20 @@ capabilities and deliberate differences from the broader proposal. This page
 records implemented facts and limits; [Beads](roadmap.md) owns delivery status,
 priorities, acceptance and dependencies.
 
-The optional `batter-sqlx` adapter has Linux execution evidence on Rust 1.94.0
-and 1.98.1 against PostgreSQL 18.6, including ten live disposition cases and
-fourteen owned-pool cases per toolchain. Its macOS and hosted execution remain
-unverified; prior platform
-evidence for the foundation does not establish this new adapter's behavior.
+The optional `batter-sqlx` verifier owns a serving-pool lease, locks its ledger
+before the snapshot, and separates required current privileges from allowed
+login-reachable authority. The current semantic-boundary repair explicitly
+rejects temporary namespace requests and shares PUBLIC relation/column default
+precedence between validation and discovery. Required and excess evaluation
+retain the same captured ACL snapshot; native inquiry functions are test
+references because catalog caches can observe newer grants. All 54 focused
+library tests, both full toolchain matrices, both 53-case PostgreSQL18.6 live
+runs, HTTP smokes and example outcomes pass. The loop stopped on unknown Jig
+receipts after the inheritance repair. Subsequent merged-root verification has
+fresh passing Jig gates; a fresh independent review remains open.
+Low residuals are batter-mzi and batter-6ye. See [validation](validation.md).
+Previous recovery and focused consumer evidence remain recorded with their
+original source scope. New macOS and hosted verifier execution remain unverified.
 The [backend review evidence assessment](design-evidence.md) records the rationale
 for the intended application composition without adding implemented capabilities.
 
@@ -77,6 +86,7 @@ execution evidence; the updated hosted workflows remain unexecuted.
 | Request metadata / ambient context | Server correlation implemented; authority remains external | Opt-in `operational_http` generates an opaque UUID `CorrelationId`, replaces inbound and response identities, and retains event-local IDs with INFO spans disabled. Target `batter::request` independently retains nested operation/application correlation under quiet filters; repeated forged headers and never-polled entry are covered by operational tests. Explicit propagation only; no task-local tenant/principal or inbound trace-parent handling. |
 | Typed settings / redacted secrets | Implemented; Linux verified | Shared bounded sources and redacted diagnostics feed reference native constructors and the configured HTTP example. Worker settings expose validated JobsConfig only; the configuration consumer prepares native work, registers it with the adapter and awaits managed shutdown. Offline tests cover source policy, bounds, consumers, retained startup failures, private fixture directories and hostile parent PG* state. Native handoff regressions cover encoded hosts, credentials, database names, TLS spelling, empty-password passfile isolation and rejection of unsupported live IPv6 literals; direct native IPv6 remains tested. The historical 49-case inventory passed on Linux/Rust 1.98.1; its minimum-toolchain follow-up covered Clippy/compilation only. The current 56-case database inventory replaces hosted-control protocol cases with native initialization, settlement, retirement and production-root probes; the 58-entry runner includes two offline signal entries. Earlier inventories retain historical scope. Current evidence is recorded in [validation](validation.md). No configuration framework or deployed adoption claim. |
 | SQLx native pool integration | Optional adapter and examples; Linux post-review verified | `pool_in` consumes a reserved cleanup slot and returns a native lazy pool only after publishing awaited close; it preserves native options and claims no connectivity or remote-session result. Live ownership oracles require the exact reservation failure before construction, a successful password-authenticated query followed by exact PostgreSQL `28P01` after changing only that connection's password, an unfinished owner while a checkout is held, and zero-size/`PoolClosed` completion for every successful pool; `is_closed()` alone cannot pass. Explicit tests cover fourteen owned-pool and ten lease-disposition cases on both toolchains. The four verification batches have a failure control at all nine command positions. `PgLease` still retires on drop while acknowledged success permits native pool return. No SQLx dependency enters the foundation; [validation](validation.md). |
+| PostgreSQL schema and runtime-authority verification | Implemented; Linux two-toolchain verified; post-repair review pending | The owned serving-pool entrypoints preserve identity, snapshot, rollback and client disposition. Required current-role privileges are separate from login-reachable excess authority. Discovery and evaluation are bounded; PUBLIC defaults and exact overrides share precedence. Selected temporary namespaces and inherited migration ledgers are explicitly unsupported; ONLY ledger reads prevent late attachment from changing the snapshot relation set. Both full toolchain matrices, 53-case live suites, HTTP smokes and examples pass. The subsequent merged-root Jig gates pass; the stopped loop's last repair still awaits independent review. Low residuals: batter-mzi and batter-6ye. See [validation](validation.md). |
 | Native upstream compatibility | Reference probes implemented; native source pinned to pushed Git revision | SQLx 0.9, Runledger `d57ec6be61e9f00ccce373b19ca356cafe98f206` and the external-only harness retain one native type graph. Both root and consumer archive resolve without sibling overrides. Ignored probes cover migrations, transactional idempotency, isolated durable execution, native lifecycle and offline retirement. Pin follow-up: `batter-vly`; see [manifest](reference-compatibility.md) and [validation](validation.md). |
 | SQLx transactional Runledger reference path | Implemented staged example; Linux two-toolchain live verified | The authenticated generic delivery command retains owner/key/record/generation/canonical payload and immutable enqueue inputs. Command identity, delivery and native Runledger enqueue share one READ COMMITTED SQLx transaction and one disposition-aware lease. Exact replay preserves identity without re-enqueue; owner-scoped query reconciliation and closed durable-state projection are implemented. The production native registry intentionally omits the delivery handler, so delivery remains pending and application readiness remains unapproved until `batter-8q8.2`. Submission automatically retries nothing and represents lost commit/rollback acknowledgement as uncertain. Full concurrent/fault proof remains with `batter-8q8.1`/`batter-fms`; current evidence is in [validation](validation.md). |
 | Runledger host/trace adapter | Optional native lifecycle adapter implemented; local acceptance executed | `batter-runledger::register_in` consumes owned inert native preparation through protected registration; exact legacy `register` remains source-compatible and shares the implementation. Runledger acknowledges loop initialization and retains actual descendant settlement; Batter owns the independent managed waiter, shared stop budget and conservative cleanup decision. A protected local-runtime regression proves acknowledged initialization and complete two-loop settlement without a database. Production startup has no durable control job; dependency health and explicit application approval remain separate. Earlier live and two-toolchain evidence remains historical. Trace/export work remains `batter-8jr`; real provider execution remains `batter-8q8.2`. |

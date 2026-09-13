@@ -25,6 +25,8 @@
 
 mod failure;
 
+pub mod verification;
+
 pub use failure::{FailureClass, SqlxFailure};
 
 use batter::{

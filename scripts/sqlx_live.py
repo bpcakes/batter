@@ -18,6 +18,7 @@ TARGETS = {
         "blocked_outer_drop_releases_capacity",
         "repeated_interruptions_leave_independent_residual_sessions",
         "success_and_acknowledged_transactions_reuse",
+        "verification_uses_one_read_only_snapshot_and_preserves_ledger_policy",
         "native_database_failure_retires_and_preserves_cause",
         "rejected_commit_preserves_native_cause_and_retires",
         "ordinary_return_control_retains_blocked_capacity",
@@ -38,6 +39,36 @@ TARGETS = {
         "work_and_cleanup_failures_are_both_retained",
         "ownership_oracles_reject_missing_and_premature_cleanup",
     },
+    "verification_live": {
+        "verification_temporary_namespace_requests_are_incomplete",
+        "verification_public_relation_overrides_control_column_defaults",
+        "verification_required_and_excess_authority_share_captured_snapshot",
+        "verification_cross_schema_aliases_preserve_scope_and_exact_policy",
+        "verification_idle_reset_has_one_expected_native_notice",
+        "verification_checks_real_login_reachability_and_two_fixture_policies",
+        "verification_cancellation_releases_one_slot_capacity",
+        "verification_uses_one_snapshot_for_concurrent_acl_changes",
+        "verification_keeps_many_declared_objects_set_oriented",
+        "verification_uses_the_initial_authenticated_role",
+        "verification_detects_createrole_admin_across_unusable_memberships",
+        "verification_rejects_row_security_on_the_migration_ledger",
+        "verification_preserves_separate_caller_raw_transactions",
+        "verification_occupied_pool_acquisition_preserves_caller_transaction",
+        "verification_normalizes_abandoned_pooled_raw_transactions",
+        "verification_ledger_ddl_before_lock_is_observed",
+        "verification_ledger_ddl_after_lock_waits_for_snapshot",
+        "verification_catalog_resolution_preserves_serving_state",
+        "verification_ledger_descendant_truncate_waits_for_snapshot",
+        "verification_late_ledger_attachment_cannot_supply_snapshot_rows",
+        "verification_checks_mixed_case_builtin_parameter_names",
+        "verification_rejects_oversized_parameter_acl_catalog",
+        "verification_rejects_oversized_parameter_name",
+        "verification_required_privileges_follow_current_inheritance",
+        "verification_discovery_checks_unlisted_objects_and_exact_overrides",
+        "verification_distinguishes_hidden_parameters_from_missing_objects",
+        "verification_reserved_custom_parameter_requirement",
+        "verification_discovery_dependent_types_follow_native_acl",
+    },
 }
 
 
@@ -53,24 +84,26 @@ def invoke(target, arguments):
 
 
 def complete_inventory(output, cases):
-    names = set(re.findall(rb"^([a-z_]+): test$", output, re.MULTILINE))
+    names = set(re.findall(rb"^(?:[a-z_]+::)*([a-z_]+): test$", output, re.MULTILINE))
     return names == {case.encode() for case in cases}
 
 
 def complete_execution(output, cases):
-    completed = set(re.findall(rb"^test ([a-z_]+) \.\.\. ok$", output, re.MULTILINE))
+    completed = set(re.findall(rb"^test (?:[a-z_]+::)*([a-z_]+) \.\.\. ok$", output, re.MULTILINE))
     summary = (f"test result: ok. {len(cases)} passed; 0 failed; 0 ignored; "
                "0 measured; 0 filtered out;").encode()
     return completed == {case.encode() for case in cases} and summary in output
 
 
 def main():
-    missing = [name for name in ("DATABASE_URL", "BATTER_SQLX_AUTH_ACCEPT_URL")
+    missing = [name for name in ("DATABASE_URL", "BATTER_SQLX_AUTH_ACCEPT_URL",
+                                 "BATTER_SQLX_ADMIN_URL")
                if not os.environ.get(name)]
     if missing:
         print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +
                "; provide an ordinary disposable database and a known-good "
-               "password-authenticated endpoint"), file=sys.stderr)
+               "password-authenticated endpoint plus an administrative "
+               "connection to a dedicated disposable cluster"), file=sys.stderr)
         return 1
     for target, cases in TARGETS.items():
         inventory = invoke(target, ["--ignored", "--list", "--format", "terse"])

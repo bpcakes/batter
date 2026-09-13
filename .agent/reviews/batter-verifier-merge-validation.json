@@ -1,0 +1,313 @@
+{
+  "remote_base": "8456ffccd729ca6f22b510075320b2e40d5bf59c",
+  "platform": "Linux x86_64",
+  "database": "task-owned PostgreSQL18.6; removed after validation",
+  "results": [
+    {
+      "label": "scope-focused",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "batter-sqlx",
+        "--test",
+        "verification_live",
+        "verification_live_scope::",
+        "--locked",
+        "--",
+        "--ignored",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 9.03,
+      "log": "/tmp/batter-push-final-scope-focused.log"
+    },
+    {
+      "label": "verify-1.98.1",
+      "command": [
+        "bash",
+        "scripts/verify.sh"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 127.19,
+      "log": "/tmp/batter-push-final-verify-1.98.1.log"
+    },
+    {
+      "label": "live-1.98.1",
+      "command": [
+        "bash",
+        "scripts/test_sqlx_live.sh"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 34.76,
+      "log": "/tmp/batter-push-final-live-1.98.1.log"
+    },
+    {
+      "label": "http-build-1.98.1",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "batter-axum",
+        "--example",
+        "http_service",
+        "--locked"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 3.64,
+      "log": "/tmp/batter-push-final-http-build-1.98.1.log"
+    },
+    {
+      "label": "http-1.98.1-term",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.18,
+      "log": "/tmp/batter-push-final-http-1.98.1-term.log"
+    },
+    {
+      "label": "http-1.98.1-int",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--signal",
+        "SIGINT"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.18,
+      "log": "/tmp/batter-push-final-http-1.98.1-int.log"
+    },
+    {
+      "label": "http-1.98.1-deadline",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--deadline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.16,
+      "log": "/tmp/batter-push-final-http-1.98.1-deadline.log"
+    },
+    {
+      "label": "http-1.98.1-warn",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--warn-filter"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.18,
+      "log": "/tmp/batter-push-final-http-1.98.1-warn.log"
+    },
+    {
+      "label": "http-1.98.1-warn-deadline",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--warn-filter",
+        "--deadline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.15,
+      "log": "/tmp/batter-push-final-http-1.98.1-warn-deadline.log"
+    },
+    {
+      "label": "example-1.98.1-normal",
+      "command": [
+        "cargo",
+        "run",
+        "-p",
+        "batter-sqlx",
+        "--example",
+        "verification",
+        "--locked"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.81,
+      "log": "/tmp/batter-push-final-example-1.98.1-normal.log"
+    },
+    {
+      "label": "example-1.98.1-violation",
+      "command": [
+        "cargo",
+        "run",
+        "-p",
+        "batter-sqlx",
+        "--example",
+        "verification",
+        "--locked"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "seconds": 0.22,
+      "log": "/tmp/batter-push-final-example-1.98.1-violation.log"
+    },
+    {
+      "label": "verify-1.94.0",
+      "command": [
+        "bash",
+        "scripts/verify.sh"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 120.04,
+      "log": "/tmp/batter-push-final-verify-1.94.0.log"
+    },
+    {
+      "label": "live-1.94.0",
+      "command": [
+        "bash",
+        "scripts/test_sqlx_live.sh"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 39.45,
+      "log": "/tmp/batter-push-final-live-1.94.0.log"
+    },
+    {
+      "label": "http-build-1.94.0",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "batter-axum",
+        "--example",
+        "http_service",
+        "--locked"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 3.53,
+      "log": "/tmp/batter-push-final-http-build-1.94.0.log"
+    },
+    {
+      "label": "http-1.94.0-term",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.17,
+      "log": "/tmp/batter-push-final-http-1.94.0-term.log"
+    },
+    {
+      "label": "http-1.94.0-int",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--signal",
+        "SIGINT"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.17,
+      "log": "/tmp/batter-push-final-http-1.94.0-int.log"
+    },
+    {
+      "label": "http-1.94.0-deadline",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--deadline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.15,
+      "log": "/tmp/batter-push-final-http-1.94.0-deadline.log"
+    },
+    {
+      "label": "http-1.94.0-warn",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--warn-filter"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.17,
+      "log": "/tmp/batter-push-final-http-1.94.0-warn.log"
+    },
+    {
+      "label": "http-1.94.0-warn-deadline",
+      "command": [
+        "python3",
+        "scripts/smoke_http.py",
+        "--binary",
+        "target/debug/examples/http_service",
+        "--warn-filter",
+        "--deadline"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.14,
+      "log": "/tmp/batter-push-final-http-1.94.0-warn-deadline.log"
+    },
+    {
+      "label": "example-1.94.0-normal",
+      "command": [
+        "cargo",
+        "run",
+        "-p",
+        "batter-sqlx",
+        "--example",
+        "verification",
+        "--locked"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.74,
+      "log": "/tmp/batter-push-final-example-1.94.0-normal.log"
+    },
+    {
+      "label": "example-1.94.0-violation",
+      "command": [
+        "cargo",
+        "run",
+        "-p",
+        "batter-sqlx",
+        "--example",
+        "verification",
+        "--locked"
+      ],
+      "exit": 1,
+      "expected": 1,
+      "seconds": 0.22,
+      "log": "/tmp/batter-push-final-example-1.94.0-violation.log"
+    }
+  ],
+  "jig_plan": "plan_01M2DEZQF68QZZWR3CJXE0FAHX",
+  "jig_api_test": "receipt_01M2DKSBBHYQFNWVBKKXEANX3R",
+  "jig_validation": "receipt_01M2DKSHDZCFD9CYFYGDG7ZVD3",
+  "independent_post_repair_review": "pending; no new review loop requested"
+}

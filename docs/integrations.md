@@ -189,6 +189,54 @@ automatic migration during a health probe. Size pool capacity alongside admitted
 HTTP work, Runledger concurrency, harness test admission, and maintenance tasks.
 A semaphore bound is not a database-capacity calculation by itself.
 
+Use `batter_sqlx::verification::verify` with the actual serving `PgPool`, its
+`OperationContext` and application policy before readiness. Acquisition,
+transaction-state normalization, inspection, rollback and lease disposition are
+library-owned. Do not substitute owner credentials or duplicate cancellation and
+lease-return logic around the checker. Pool session options and serving identity
+are preserved. Catalog SQL uses a trusted transaction-local search path, restored
+by rollback, so an application helper cannot redirect inspection. Thread the existing context through the application facade;
+protected startup internals need no additional exposure.
+
+For applications with separate schema and privilege stages, use
+`verify_migrations` with `MigrationPolicy` and `verify_authority` with
+`AuthorityPolicy`. Setup credentials can perform migration checks without a
+fabricated authority allowance, and missing required ledger privileges can be
+reported without reading that ledger. These bounded calls need not share a
+transaction with application-specific checks. Their reports disclose different
+coverage.
+
+Keep per-profile required and allowed privileges in application policy data.
+Required grants describe current-role direct/PUBLIC/INHERIT access; excess checks
+include authenticated-login SET/ADMIN potential. Select schema discovery plus
+per-kind defaults to catch unexpected supported objects, then use exact object
+and PUBLIC overrides for exceptions. Check native application behavior alongside
+policy findings; an ACL is not proof of RLS-visible rows or function safety.
+The shared implementation bounds catalog rows/bytes, locks a migration ledger
+before its snapshot, rejects ledger RLS, and restores local transaction settings
+before reuse. It does not migrate, repair grants, or acknowledge remote session
+termination. See the [canonical adapter example](../crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
+
+The generic coverage intentionally does not replace application checks that are
+narrower or more specific: exact SQLx ledger columns and primary-key shape,
+application migration history, canonical `search_path` on SECURITY DEFINER and
+trigger routines, durable application schema/history, and per-profile grant
+manifests remain local to the consuming application. SECURITY DEFINER bodies, extension
+semantics and role defaults are explicit unsupported report surfaces; selected
+ACLs on extension-owned objects are still checked. Add the corresponding
+`AuthorityPolicy::required_surfaces` value when an application requires one of
+those unsupported surfaces; that requested boundary produces `Incomplete`
+instead of a passing result. Declared relation policies can explicitly allow
+their composite row type's default PUBLIC `USAGE` with
+`RelationPolicy::allow_row_type_public_usage`; unexpected row-type ACLs remain
+visible when that flag is false. Direct role grants on a row type and standalone
+user-defined types remain explicit `TypePolicy` entries.
+Automatic array and multirange aliases use their element/range authority; they do
+not acquire independent default PUBLIC grants. Requested parameters with hidden
+metadata produce `Incomplete` with `ParameterVisibility`, preserving known findings.
+Unknown custom-parameter definitions likewise cannot satisfy required privileges;
+their conservative potential SET authority remains separate from positive proof.
+
 For the durable reference path, application writes and Runledger submission must
 use the SAME native SQLx transaction. Preserve upstream error distinctions,
 especially outcomes around commit. A caller deadline or lost connection does not
@@ -547,3 +595,27 @@ boundary, and the matrix requires success with hostile PG* parent variables.
 The acquisition, cleanup-failure, pool-failure and primary/secondary observation
 fixture roots all consume the shared handoff; their custom budgets do not re-read
 the original URL.
+
+### PostgreSQL verifier identity and evaluation limits
+
+The SQLx verifier preserves discovered identities separately from their effective
+permission sources; cross-schema multiranges remain covered. Qualified finding
+names use individually quoted components and canonical routine signatures.
+Captured evaluation cooperates with the existing OperationContext and fails
+with EvaluationCapacity instead of returning partial results when work or report
+limits are exceeded. The canonical pool/context entrypoints and client retirement
+remain unchanged. See the adapter README for exact policy, row, work and payload
+limits and the expected native idle-rollback warning.
+
+Verifier scope is an explicit PostgreSQL18 capability contract. Selected temporary
+namespaces and dependencies yield Incomplete/TemporaryNamespaces through every
+entrypoint. Consumers should declare supported persistent objects and handle
+unsupported results; they should not recreate missing namespace rules. PUBLIC
+relation declarations replace column defaults unless a column is explicitly
+declared, matching required-policy validation. The adapter preserves snapshot
+evaluation because native privilege inquiry caches may observe newer grants.
+
+Migration verification supports standalone ordinary ledgers. Inheritance in the
+captured snapshot returns Incomplete/InheritedMigrationLedgers; ONLY reads prevent
+late attachment from changing the snapshot relation set. Consumers retain native
+migration policy and must not treat an unsupported ledger as verified.

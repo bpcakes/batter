@@ -5,7 +5,14 @@ use batter::{
     BoxError,
     operation::{Interruption, OperationContext, OperationError},
 };
-use batter_sqlx::{FailureClass, PgLease, SqlxFailure, probe};
+use batter_sqlx::{
+    FailureClass, PgLease, SqlxFailure, probe,
+    verification::{
+        AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, DatabasePolicy, Identifier,
+        MigrationExpectation, MigrationPolicy, ObjectPrivilege, PublicGrant, PublicObject,
+        RolePolicy, SchemaPolicy, VerificationPolicy, VerificationStatus, verify,
+    },
+};
 use sqlx::Connection;
 use std::time::Duration;
 use support::{Fixture, Result, bounded, require};
@@ -222,6 +229,271 @@ async fn success_and_acknowledged_transactions_reuse() -> Result {
     let mut fixture = Fixture::new().await?;
     let body = success(&mut fixture).await;
     fixture.finish(body).await
+}
+
+#[tokio::test]
+#[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
+#[allow(clippy::too_many_lines)]
+async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() -> Result {
+    use futures_util::FutureExt as _;
+    let url = std::env::var("DATABASE_URL")
+        .map_err(|_| std::io::Error::other("live checks require DATABASE_URL"))?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await?;
+    let schema = format!(
+        "batter_ledger_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    );
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+        .execute(&pool)
+        .await?;
+    let context = OperationContext::new(Duration::from_secs(30))?;
+    let body = std::panic::AssertUnwindSafe(async {
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("CREATE TABLE {schema}._batter_verification_migrations (
+                version BIGINT NOT NULL,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMPTZ NOT NULL,
+                checksum BYTEA NOT NULL,
+                execution_time BIGINT NOT NULL,
+                success BOOLEAN NOT NULL,
+                PRIMARY KEY (version)
+            )")),
+        )
+        .execute(&pool),
+    )
+    .await??;
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("INSERT INTO {schema}._batter_verification_migrations
+                (version, description, installed_on, checksum, execution_time, success)
+             VALUES (1, 'required', now(), $1, 1, true),
+                    (2, 'later', now(), $2, 1, true)")),
+        )
+        .bind(vec![1_u8])
+        .bind(vec![2_u8])
+        .execute(&pool),
+    )
+    .await??;
+
+    let policy = VerificationPolicy::new(
+        MigrationPolicy {
+            ledger: batter_sqlx::verification::QualifiedName::new(
+                &schema,
+                "_batter_verification_migrations",
+            )?,
+            required: vec![MigrationExpectation::new(1, vec![1_u8])],
+            additional: AdditionalMigrations::AllowSuccessful,
+        },
+        AuthorityPolicy {
+            roles: RolePolicy {
+                allow_superuser: true,
+                allow_create_database: true,
+                allow_create_role: true,
+                allow_replication: true,
+                allow_bypass_rls: true,
+                allowed_admin_roles: Vec::new(),
+                allowed_predefined_roles: [
+                    "pg_checkpoint",
+                    "pg_create_subscription",
+                    "pg_database_owner",
+                    "pg_execute_server_program",
+                    "pg_maintain",
+                    "pg_monitor",
+                    "pg_read_all_data",
+                    "pg_read_all_settings",
+                    "pg_read_all_stats",
+                    "pg_read_server_files",
+                    "pg_signal_autovacuum_worker",
+                    "pg_signal_backend",
+                    "pg_stat_scan_tables",
+                    "pg_use_reserved_connections",
+                    "pg_write_all_data",
+                    "pg_write_server_files",
+                ]
+                .into_iter()
+                .map(Identifier::new)
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            },
+            relations: Vec::new(),
+            sequences: Vec::new(),
+            schemas: vec![SchemaPolicy {
+                schema: batter_sqlx::verification::Identifier::new("public")?,
+                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
+                allow_owner: true,
+            }],
+            routines: Vec::new(),
+            types: Vec::new(),
+            parameters: Vec::new(),
+            database: DatabasePolicy {
+                privileges: vec![
+                    AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+                    AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                ],
+                allow_owner: true,
+            },
+            public_grants: vec![
+                PublicGrant {
+                    object: PublicObject::Database,
+                    privilege: AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+                },
+                PublicGrant {
+                    object: PublicObject::Database,
+                    privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+                },
+                PublicGrant {
+                    object: PublicObject::Schema(batter_sqlx::verification::Identifier::new(
+                        "public",
+                    )?),
+                    privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
+                },
+            ],
+            required_surfaces: Vec::new(),
+            ..AuthorityPolicy::default()
+        },
+    );
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::WithinDeclaredPolicy,
+        "successful read-only verification did not match its declared policy",
+    )?;
+    require(
+        report
+            .unsupported()
+            .contains(&batter_sqlx::verification::UnsupportedSurface::SecurityDefinerBody),
+        "unsupported security-definer coverage was not explicit",
+    )?;
+    let count: i64 = support::bounded(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {schema}._batter_verification_migrations")))
+            .fetch_one(&pool),
+    )
+    .await??;
+    require(count == 2, "verification changed the migration ledger")?;
+
+    let mut incomplete_policy = policy.clone();
+    incomplete_policy.authority.required_surfaces =
+        vec![batter_sqlx::verification::RequiredSurface::SecurityDefinerBody];
+    let report = verify(&pool, &context, &incomplete_policy).await?;
+    require(
+        report.status() == VerificationStatus::Incomplete,
+        "required unsupported coverage did not produce an incomplete result",
+    )?;
+
+    let mut reject_later = policy.clone();
+    reject_later.migration.additional = AdditionalMigrations::Reject;
+    let report = verify(&pool, &context, &reject_later).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::UnexpectedMigration
+            }),
+        "an unlisted later migration was not rejected",
+    )?;
+
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("UPDATE {schema}._batter_verification_migrations
+             SET checksum = $1 WHERE version = 1")),
+        )
+        .bind(vec![9_u8])
+        .execute(&pool),
+    )
+    .await??;
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::MigrationChecksumMismatch
+            }),
+        "checksum mismatch was not rejected",
+    )?;
+
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("UPDATE {schema}._batter_verification_migrations SET success = false WHERE version = 2")),
+        )
+        .execute(&pool),
+    )
+    .await??;
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::UnexpectedMigration
+            }),
+        "an unsuccessful allowed-later migration was not rejected",
+    )?;
+
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("UPDATE {schema}._batter_verification_migrations
+             SET checksum = $1, success = false WHERE version = 1")),
+        )
+        .bind(vec![1_u8])
+        .execute(&pool),
+    )
+    .await??;
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::UnsuccessfulMigration
+            }),
+        "unsuccessful migration was not rejected",
+    )?;
+
+    support::bounded(
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {schema}._batter_verification_migrations WHERE version = 1")))
+            .execute(&pool),
+    )
+    .await??;
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::MissingMigration
+            }),
+        "a missing required migration was not rejected",
+    )?;
+
+    support::bounded(
+        sqlx::query(
+            sqlx::AssertSqlSafe(format!("INSERT INTO {schema}._batter_verification_migrations
+                (version, description, installed_on, checksum, execution_time, success)
+             SELECT version, 'capacity', now(), decode('01', 'hex'), 1, true
+             FROM generate_series(10, 10010) AS version")),
+        )
+        .execute(&pool),
+    )
+    .await??;
+    let report = verify(&pool, &context, &policy).await?;
+    require(
+        report.status() == VerificationStatus::Violations
+            && report.findings().iter().any(|finding| {
+                finding.kind == batter_sqlx::verification::FindingKind::MigrationLedgerLimit
+            }),
+        "an oversized migration ledger was not rejected at the bounded row limit",
+    )?;
+    Ok(())
+    }).catch_unwind().await;
+    let cleanup: Result = async {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await?;
+        Ok(())
+    }
+    .await;
+    pool.close().await;
+    let body = body.unwrap_or_else(|_| {
+        Err(std::io::Error::other("verification ledger control panicked").into())
+    });
+    support::combine(body, cleanup)
 }
 
 async fn native_failure(fixture: &mut Fixture) -> Result {

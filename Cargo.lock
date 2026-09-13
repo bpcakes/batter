@@ -207,6 +207,8 @@ dependencies = [
  "postgres-test-harness",
  "sqlx",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

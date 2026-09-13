@@ -47,7 +47,9 @@ class SqlxLiveControls(unittest.TestCase):
 
     def test_missing_environment_fails_before_invocation(self):
         for environment in ({}, {"DATABASE_URL": "ordinary"},
-                            {"BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"}):
+                            {"BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"},
+                            {"DATABASE_URL": "ordinary",
+                             "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted"}):
             with self.subTest(environment=environment), \
                     patch.dict("os.environ", environment, clear=True), \
                     patch.object(sqlx_live, "run_parallel") as run:
@@ -64,6 +66,7 @@ class SqlxLiveControls(unittest.TestCase):
         with patch.dict("os.environ", {
                     "DATABASE_URL": "ordinary-redacted",
                     "BATTER_SQLX_AUTH_ACCEPT_URL": "accepted-redacted",
+                    "BATTER_SQLX_ADMIN_URL": "admin-redacted",
                 }, clear=True), \
                 patch.object(sqlx_live, "run_parallel",
                              side_effect=[([result]) for result in results]) as run, \

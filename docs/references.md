@@ -6,6 +6,171 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL 18 schema and runtime-authority verification, 2026-09-13
+
+The verifier targets PostgreSQL **18.x** and rejects other server-version
+families before issuing the version-specific catalog queries. Its role graph
+follows the PostgreSQL 18 [`pg_auth_members` catalog](https://www.postgresql.org/docs/18/catalog-pg-auth-members.html)
+and the documented [`INHERIT`, `SET` and `ADMIN` role-membership semantics](https://www.postgresql.org/docs/18/role-membership.html):
+object ACLs are evaluated from captured catalog rows, `SET` reachability is a
+separate path, and role attributes are not treated as inherited object grants.
+An `ADMIN TRUE` edge is usable by its member regardless of that edge's
+`INHERIT` value. Ordinary membership grants follow privilege reachability, while
+the PostgreSQL 18 [`ALTER ROLE` rules](https://www.postgresql.org/docs/18/sql-alterrole.html)
+also let an active CREATEROLE identity manage a target for which it holds ADMIN
+through membership edges even when those edges grant neither SET nor INHERIT.
+Because ADMIN lets that target be granted back with SET and INHERIT enabled,
+the verifier retains target identities and audits each target's potential
+authority instead of reducing ADMIN to one boolean.
+The [`GRANT` reference](https://www.postgresql.org/docs/18/sql-grant.html)
+also establishes PUBLIC grants and grant options as independent authority
+surfaces. The current database owner's implicit `pg_database_owner` membership
+is accounted for alongside explicit membership rows.
+[`SET SESSION AUTHORIZATION`](https://www.postgresql.org/docs/18/sql-set-session-authorization.html)
+allows an initially authenticated superuser to mask `session_user` and later
+reset it. The verifier therefore records the call-entry effective role, uses
+`SET LOCAL SESSION AUTHORIZATION DEFAULT` to recover the initial database role
+for authority inspection, then reconstructs the call-entry session/current
+identity before catalog and ledger reads. Rollback restores the caller's
+session-level identity state.
+
+The [`pg_parameter_acl` catalog](https://www.postgresql.org/docs/18/catalog-pg-parameter-acl.html)
+is cluster-wide. Live fixtures therefore use unique custom parameter names and
+require their administrative connection to target a dedicated disposable
+cluster; cleanup never revokes a fixed operator-owned parameter grant.
+
+ACL rows are captured with [`aclexplode`](https://www.postgresql.org/docs/18/functions-info.html)
+and catalog defaults inside one repeatable-read, read-only transaction. The
+transaction-isolation contract does not make internal privilege helpers a
+repeatable snapshot, so the implementation evaluates captured ACL, role and
+catalog rows locally rather than calling `has_*_privilege` or `pg_has_role`.
+Routine identity is reconstructed from the captured [`pg_proc`](https://www.postgresql.org/docs/18/catalog-pg-proc.html)
+input-type OIDs and [`pg_type`](https://www.postgresql.org/docs/18/catalog-pg-type.html)
+rows; formatted catalog strings are display-only. True arrays require
+`array_subscript_handler` and the element type's reverse `typarray` link, keeping
+subscriptable `oidvector`/`int2vector` identities distinct. PostgreSQL's single
+array type OID cannot represent source-level dimensionality. PostgreSQL's
+[`MVCC caveats`](https://www.postgresql.org/docs/18/mvcc-caveats.html)
+and [`transaction isolation`](https://www.postgresql.org/docs/18/transaction-iso.html)
+documentation bound this choice.
+
+Protected-parameter ACLs use the PostgreSQL 18 [`pg_parameter_acl` catalog](https://www.postgresql.org/docs/18/catalog-pg-parameter-acl.html),
+including PUBLIC and grant-option entries. [`pg_settings`](https://www.postgresql.org/docs/18/view-pg-settings.html)
+is only an auxiliary source for visible parameter context: a requested name
+may have an ACL row while remaining hidden from that view, and is not reported
+as missing for that reason. PostgreSQL also accepts unknown custom names with
+two or more identifier components. Its [`valid_custom_variable_name` implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc.c)
+does not apply the 63-byte catalog-identifier limit to the complete name, so a
+caller-declared custom placeholder retains implicit SET authority even when an
+unrelated ACL is its only catalog row. Context-wide defaults are evaluated only for
+parameters named by the caller, while every explicit parameter ACL row remains
+in scope. PUBLIC parameter allowances are declared independently from the
+reachable-role allowance. The generic result explicitly lists supported ACL
+surfaces and unsupported classes; application-owned ledger shape/history,
+SECURITY DEFINER search paths and bodies, extension upgrade semantics and
+profile-specific grants remain additive local checks.
+
+The migration reader checks the ledger's
+[`pg_class`](https://www.postgresql.org/docs/18/catalog-pg-class.html)
+row-security flags before reading rows. PostgreSQL row-level security can
+silently filter `SELECT` results, so an enabled policy is a finding
+rather than evidence for a complete migration comparison.
+
+### Owned execution and downstream policy correction, 2026-09-13
+
+Rechecked PostgreSQL 18 [LOCK ordering and privileges](https://www.postgresql.org/docs/18/sql-lock.html),
+[MVCC caveats](https://www.postgresql.org/docs/18/mvcc-caveats.html),
+[row_security](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-ROW-SECURITY)
+and [membership semantics](https://www.postgresql.org/docs/18/role-membership.html).
+ACCESS SHARE requires SELECT (or a stronger listed privilege), survives until
+transaction end, and allows ordinary row writers. Taking it before the first
+SELECT establishes the intended DDL ordering. `row_security = off` requests a
+failure for filtered reads; it does not bypass policies.
+
+The installed SQLx 0.9.0 PostgreSQL `transaction.rs` and `connection/mod.rs`
+separate managed transaction depth from private protocol transaction status.
+Consequently the protected verifier owns a fresh pool checkout and acknowledges
+ROLLBACK of residual raw state; it cannot infer arbitrary borrowed-connection
+idleness from managed depth. The serving pool's session configuration remains
+application-owned. Migration-only and authority-only entrypoints share this
+executor and expose only their inspected coverage.
+
+Current-role required ACLs follow PUBLIC and INHERIT, not SET/ADMIN potential.
+Table privileges also supply corresponding column privileges; revoked owner
+ordinary privileges remain revoked until explicitly restored. These semantics
+are evaluated from captured catalog rows, with native SQL controls in the live
+suite and disposable consumer. Schema discovery extends selection, not the
+meaning of a privilege. Per-kind defaults and exact overrides replace duplicate
+consumer catalog queries; application/native function and history checks remain
+outside the shared evaluator.
+
+Parameter names use case-normalized comparison keys for both `pg_settings` and
+`pg_parameter_acl`. Each materialized catalog query, including expanded ACLs,
+uses a 10,001-row sentinel and rejects counts above 10,000. Variable-length
+parameter names are checked before transfer against 1,024 bytes; fixed catalog
+identifiers retain PostgreSQL's native limits. These are client retention limits,
+not an assertion about server execution resources. Executed results and the
+unexecuted platform limits are recorded in [validation](validation.md).
+
+### Catalog resolution and dependent type ACL correction, 2026-09-13
+
+PostgreSQL 18 [schema resolution](https://www.postgresql.org/docs/18/ddl-schemas.html#DDL-SCHEMAS-PATH)
+permits application overloads on the search path to intercept unqualified
+functions and operators. An exact overload can win over an implicitly cast
+built-in even when pg_catalog appears first. The owned transaction therefore
+sets a trusted path containing only pg_catalog and the explicit trailing
+pg_temp position before inspection, and rollback restores application settings.
+Native controls cover both current_database redirection and an exact left(name,
+integer) overload that could hide discovered schemas.
+
+The [LOCK reference](https://www.postgresql.org/docs/18/sql-lock.html) distinguishes
+parent-only from descendant-inclusive locking. The earlier descendant lock repair
+prevented child TRUNCATE after capture, but did not freeze inheritance membership.
+PostgreSQL18 [inheritance DDL](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/tablecmds.c)
+takes ShareUpdateExclusive on the parent for attachment, compatible with AccessShare.
+[Planner descendant discovery](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/pg_inherits.c)
+uses a fresh catalog snapshot. A PostgreSQL18.6 two-session reproduction deletes
+a required row from an unrelated table and attaches it in one commit: the ledger
+is empty before and after, but the earlier row snapshot reads that deleted row
+through the new membership. The adapter therefore rejects inheritance present in
+the captured snapshot and reads supported standalone ledgers with ONLY. It does
+not require stronger serving-role privileges or reconstruct an inheritance engine.
+
+PostgreSQL's [type ACL implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/aclchk.c)
+resolves automatic array access through the element and multirange access through
+the range. Their own synthesized default ACLs are not independent effective
+authority. Discovery and explicit type policy must retain effective element/range
+checks without mistaking aliases for standalone types. The reverse array link
+keeps automatically generated aliases separate from catalog vector identities
+in discovery and routine signatures. Effective ACL resolution follows PostgreSQL's
+element/subscript-handler rule, including vectors, without that reverse-link condition.
+
+The [pg_settings visibility contract](https://www.postgresql.org/docs/18/view-pg-settings.html)
+allows superuser-only settings to be hidden without pg_read_all_settings. A
+restricted native probe confirms session_preload_libraries and dynamic_library_path
+are absent from the view. Absence alone is not evidence that the setting does
+not exist; declared-but-unobservable parameters need explicit incomplete coverage.
+Even privileged pg_settings omits NO_SHOW_ALL settings such as role. For absent
+noncustom names, only captured current superuser or INHERIT pg_read_all_settings
+visibility permits a bounded `current_setting(name, true) IS NOT NULL` existence
+probe. It returns no values and supplies no missing context or ACL authority.
+Existing settings without observable context remain Incomplete; positively absent
+names become MissingObject. Restricted sessions do not run that probe. ACL and
+role rows use the catalog snapshot; the existence probe describes the serving session.
+
+The final required-parameter correction separates possible excess authority from
+positive current-role requirements. PostgreSQL's
+[custom-name assignment check](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc.c)
+rejects reserved prefixes even for syntactically valid dotted names;
+[PL/pgSQL initialization](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/pl/plpgsql/src/pl_handler.c)
+reserves plpgsql. Native execution loads that language, rejects an unknown setting
+under its prefix, and demonstrates that syntax alone cannot prove required SET.
+[Configuration visibility](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc_funcs.c)
+can also hide custom definitions. A required custom name without observable
+context therefore yields Incomplete, including when a separate ACL is present.
+Ordinary placeholder potential remains conservative; a visible loaded parameter
+still supports a positive requirement. No live SET probe enters verification.
+
 ## Pushed native source, 2026-09-12
 
 Verified the clean local Runledger checkout and remote HEAD with `git status`,
@@ -151,6 +316,15 @@ compatibility graph.
 The package retains Rust 1.94 and SQLx runtime-tokio/PostgreSQL features; consumers
 select TLS. No upstream external package or checksum changed in the Cargo-generated
 lockfile. Linux execution and unverified platforms are recorded in [validation](validation.md).
+
+## PostgreSQL schema and authority verification, reviewed 2026-09-12 (superseded)
+
+The initial design notes for `batter-7r3.5` are superseded by the 2026-09-13
+review above. They described an earlier coverage boundary that treated every
+extension-owned object as unsupported and did not yet account for changed
+session authorization, migration-ledger row security, or custom-parameter
+placeholders. The current contract inspects declared extension-owned ACLs while
+leaving extension membership and upgrade semantics application-owned.
 
 ## Exit boundaries and subprocess controls: 2026-09-09
 
@@ -2857,3 +3031,32 @@ only, proves its command owner remains unfinished while a checkout is held, and
 requires zero pool size plus `PoolClosed` from a later acquisition for completion.
 No server-session termination or authentication-method introspection is inferred
 from SQLx's public API. No dependency changed.
+
+## PostgreSQL verifier identity and cooperative evaluation, 2026-09-13
+
+Rechecked PostgreSQL 18 source: [DefineRange](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/typecmds.c) resolves multirangeNamespace separately from the range namespace; [pg_type_aclmask_ext](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/aclchk.c) follows true array elements and then multirange source ranges. Selection must therefore preserve object identity independently of the effective ACL source. The native [privilege inquiry functions](https://www.postgresql.org/docs/18/functions-info.html) provide independent live type-USAGE oracles.
+
+[ROLLBACK](https://www.postgresql.org/docs/18/sql-rollback.html) emits a warning outside a transaction. Pinned SQLx 0.9.0 source (connection/mod.rs and connection/stream.rs in the resolved Cargo registry) retains ReadyForQuery transaction status privately and forwards PostgreSQL WARNING at WARN on sqlx::postgres::notice. Its public managed-depth check cannot detect abandoned raw transaction state. The verifier retains this acknowledged reset and tests the expected native notice. No upstream API change is assumed.
+
+Post-repair review verification, 2026-09-13: PostgreSQL 18
+[pg_namespace_aclmask_ext](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/aclchk.c)
+uses database TEMP authority for CREATE on the current temporary namespace and
+provides USAGE even without TEMP; namespace ACLs are bypassed for this case.
+[Namespace initialization](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/namespace.c)
+retains the connection's temporary namespace separately. A dedicated native
+public-API probe confirms that the current verifier does not model this case;
+batter-7r3.12 owns the unresolved medium finding. No repair is claimed.
+
+Verifier scope implementation, 2026-09-13: PostgreSQL18
+[privilege inquiry functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE),
+[ACL implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/aclchk.c),
+[namespace implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/namespace.c)
+and [catalog snapshots](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/time/snapmgr.c)
+were rechecked. A two-session PostgreSQL18.6 probe observes nspacl unchanged but
+has_schema_privilege changed after a concurrent grant in REPEATABLE READ. The
+live regression retains that distinction and the verifier's captured required
+and excess answers. Native inquiries remain test references, not a replacement
+for the snapshot model. Temporary namespace selection is now explicitly
+unsupported; this resolves the formerly unclassified surface without extending
+Batter into session-specific namespace authorization. Final verification and
+review evidence are recorded separately in validation.md.

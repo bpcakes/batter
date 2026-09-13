@@ -1,0 +1,1 @@
+Owners batter-7r3.12 and batter-7r3.13 under batter-7r3.5. Implement explicit unsupported namespace boundary and shared PUBLIC precedence; native required-privilege observations and independent live regressions; both toolchains and Jig; then bounded comprehensive review-fix-loop with all reviewers and terminal residual logging.
