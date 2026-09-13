@@ -53,6 +53,22 @@ original source scope. New macOS and hosted verifier execution remain unverified
 The [backend review evidence assessment](design-evidence.md) records the rationale
 for the intended application composition without adding implemented capabilities.
 
+The optional adapter now also has a pure exact-role manifest compiler. Grouped
+database, schema, relation, column and structural routine declarations normalize
+into the existing `AuthorityPolicy` plus an inert deterministic `GrantPlan`.
+Required-and-provisioned and allowed-only purpose, exact PUBLIC delivery,
+ownership, grant-option ceilings, row-type usage and per-routine definer allowance
+remain distinct. The renderer quotes identifiers and emits only role-targeted
+PostgreSQL `GRANT` statements; it performs no I/O or provisioning. Focused local
+tests cover normalization, conflicts, capacity, database context, table/column
+grouping, structural routine identities and special role-target rejection. Both
+toolchain matrices and ten HTTP smokes pass locally. The comprehensive
+all-reviewer loop converged after repairing exact PUBLIC translation across
+relation, column and composite row-type policy. Its remaining low regression
+gaps are tracked by `batter-h2r`; live grant application remains with the pinned
+consumer task. Execution details and unverified boundaries are recorded in
+[validation](validation.md).
+
 CI now configures adapter runtime tests and all five HTTP process smoke profiles
 on macOS, and includes both WARN-filtered profiles on Linux. The added filtering,
 middleware-order and readiness-phase regressions have Linux and local macOS

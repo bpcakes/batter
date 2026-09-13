@@ -32,6 +32,19 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+The `batter-sqlx` offline library suite includes the pure exact-role manifest
+compiler and grant renderer. Its cases compare differently grouped inputs,
+idempotent and conflicting duplicates, required versus allowed-only authority,
+PUBLIC precedence, relation/column separation, row-type and SECURITY DEFINER
+options, structural scalar/array routine identities, identifier quoting,
+database rendering context, invalid privilege/object pairs and both retained
+input and expanded capacity bounds. These tests perform no database I/O; live
+provisioning and protected-request acceptance belong to later delivery tasks.
+
+```sh
+cargo test -p batter-sqlx --features test-support --locked
+```
+
 The component and real HTTP/1.1 ownership suites run in normal Cargo discovery:
 
 ```sh
@@ -1470,6 +1483,14 @@ overrides against column defaults and explicit exceptions; and concurrent
 schema grants after snapshot capture. The last test also demonstrates why a
 native privilege inquiry is not a snapshot-equivalent replacement: a freshly
 prepared inquiry sees the grant while the repeatable-read ACL row remains old.
+
+Exact-role manifest controls separately require an explicit parent relation for
+column groups, reject special/reserved role targets before rendering, and assert
+column-specific `GRANT` text remains role-targeted even when PUBLIC delivery is
+allowed for verification. These are pure compiler/renderer cases and do not claim
+that PostgreSQL executed the output. Boundary controls also cover the exact
+generated-policy capacity limit, mixed required/allowed purpose on one target,
+multi-column/multi-privilege rendering and parent/column PUBLIC contradictions.
 
 The late-ledger-attachment live control holds a namespace catalog barrier after
 explicit snapshot capture, deletes a required row from an unrelated table and

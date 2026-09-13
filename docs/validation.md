@@ -8449,3 +8449,69 @@ passed all five documented smoke modes on each toolchain. Consumer guidance now
 names `register_http_in` and accurately assigns budgets and signal selection to
 their owning PostgreSQL example files. No live PostgreSQL, new Linux, hosted CI,
 publication or deployment evidence was added by this follow-up.
+
+## Exact-role manifest and grant-plan compiler: 2026-09-13
+
+Delivery Bead `batter-9jh`; Jig plan
+`plan_01M2E09QTETN4D2PDX2913E9Q3`; baseline
+`ca12c994df8ef5ca9edd89ae6b44736ad1ac5473`. The SQLx adapter now owns a
+bounded, pure exact-role manifest compiler into the existing
+`AuthorityPolicy` and a separately invoked deterministic PostgreSQL grant-plan
+renderer. It does not connect to PostgreSQL, execute SQL, create roles, revoke
+privileges, manage credentials or supply transaction policy. No dependency or
+lockfile change was made. Cargo.lock SHA-256 remained
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02), and locked
+SQLx 0.9.0.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --features test-support --locked` | All 87 library unit tests passed, including 20 manifest/compiler/renderer cases and two pure expanded-verifier integrations; offline and fixture targets passed, 53 credentialed live cases remained explicitly ignored, and all 23 doctests passed. |
+| `cargo clippy -p batter-sqlx --all-targets --features test-support --locked -- -D warnings` and `cargo check -p batter-sqlx --example verification --locked` | Strict package Clippy and the generic runnable example check passed. |
+| `bash scripts/verify.sh` | The default-toolchain core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and rustdoc matrix passed. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | The same complete matrix passed on the retained minimum toolchain. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten rebuilt process smokes passed, five per toolchain, with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `scripts/jig work check --plan-id plan_01M2E09QTETN4D2PDX2913E9Q3`, followed by evidence/gates inspection | All five required sibling targets passed on the final test-module layout: api:test receipt `receipt_01M2E8HRNPY0Y4N1SX9P6G1QJK`, plus fresh Clippy, formatting and contract receipts and reused fresh file-budget receipt `receipt_01M2E7YW538NXT7TH0QR09SY3D`. |
+
+The pure cases prove input-order and exact-duplicate normalization, conflict
+rejection, independent required/allowed/PUBLIC/ownership/grant-option/row-type
+and definer-security semantics, invalid object/privilege rejection, and bounded
+input and expansion. Expanded-verifier cases prove relation and composite
+row-type PUBLIC choices override permissive discovery defaults. Renderer cases
+prove stable structural ordering, quoted
+identifiers, scalar/array/zero-argument `ON ROUTINE` signatures and explicit
+database context only for database grants. The runnable example builds its
+authority policy through the high-level manifest and still invokes the existing
+read-only verifier; the lower-level policy construction remains documented.
+
+No live PostgreSQL suite, hosted CI, new Linux target, consumer-agent exercise,
+grant execution, publication or deployment was performed for this delivery.
+PostgreSQL 18 grant syntax was rechecked against the primary manual, but the
+renderer remains an inert application-consumed plan and makes no atomicity or
+remote-effect claim.
+
+The comprehensive working-tree review/fix loop used all three reviewers and a
+minimum low severity. Four ordinary repair rounds corrected special role-target
+handling, high-level error compatibility, exact column-parent PUBLIC semantics,
+empty-plan validation, generated-policy capacity accounting and composite
+row-type PUBLIC precedence. Repeated PUBLIC translation findings triggered the
+ADR-010 consumer/API assessment; the evidence classified them as compiler
+implementation mistakes because the existing low-level policy already expresses
+the required exact overrides. After the fourth round still found a medium issue,
+the user's workflow extended the loop with a fresh all-reviewer pass on frozen
+fingerprint
+`35b9751ac2d8a38ce3ef108072d19fab578d4f5beb43e038755e8d8f88dd5e3a`.
+Claude and Codex returned no actionable findings. Cursor's only medium report
+claimed a typed table's row type could have a different name; PostgreSQL 18's
+`CREATE TABLE` and `pg_class` contracts show that typed tables still receive a
+new same-name row type and use `reloftype` only for the separate underlying
+type. No code change was warranted. Remaining low test/evidence gaps were
+recorded in `batter-h2r`, with live render/apply/verifier proof already owned by
+`batter-r2a`.
+
+The two full toolchain matrices and all ten rebuilt HTTP smokes in the table
+above were rerun after the final row-type repair and review pass. The live
+PostgreSQL prerequisites were absent, so the 53-case credentialed inventory was
+not executed and no live renderer claim is made.

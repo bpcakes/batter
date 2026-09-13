@@ -3060,3 +3060,34 @@ for the snapshot model. Temporary namespace selection is now explicitly
 unsupported; this resolves the formerly unclassified surface without extending
 Batter into session-specific namespace authorization. Final verification and
 review evidence are recorded separately in validation.md.
+
+## Exact-role grant rendering, 2026-09-13
+
+PostgreSQL 18's primary [`GRANT` reference](https://www.postgresql.org/docs/18/sql-grant.html)
+was rechecked for the pure exact-role renderer. It defines the distinct database,
+schema, table, column and routine statement forms, permits `ROUTINE` to name
+functions or procedures without requiring the compiler to classify the routine,
+and restricts routine privileges to `EXECUTE`. The renderer therefore validates
+privileges against the selected object kind, renders structural overload argument
+types through the existing `RoutineSignature`, uses `ON ROUTINE`, and never
+turns verification-only grant-option ceilings into `WITH GRANT OPTION`. The same
+reference states that PostgreSQL does not grant grant options to PUBLIC; PUBLIC
+delivery remains verifier policy rather than renderer output. No database
+connection or server behavior is inferred from this syntax-only contract.
+
+The PostgreSQL 18 [`CREATE ROLE` reference](https://www.postgresql.org/docs/18/sql-createrole.html)
+and [predefined-role inventory](https://www.postgresql.org/docs/18/predefined-roles.html)
+were also checked for renderer target boundaries. The high-level renderer rejects
+the PUBLIC/NONE special spellings and PostgreSQL's reserved `pg_` namespace. This
+does not prove an ordinary target has no members; application role selection and
+membership remain outside the pure plan.
+
+Post-review row-type identity was rechecked against PostgreSQL 18's
+[`CREATE TABLE` reference](https://www.postgresql.org/docs/18/sql-createtable.html)
+and [`pg_class` catalog](https://www.postgresql.org/docs/18/catalog-pg-class.html).
+Every table receives a same-name composite row type, including a typed table
+created with `OF`: `reltype` identifies that table row type, while `reloftype`
+separately identifies the stand-alone composite type from which a typed table is
+derived. A relation-name exact PUBLIC type override therefore addresses the
+same row type that the verifier selects through `typrelid`; it does not stand in
+for policy on the underlying stand-alone type.

@@ -72,8 +72,14 @@ files.
 - [ ] Complete the independently owned post-repair review of the committed
   `batter-7r3.5` verifier baseline and settle its `.12` blocker before extending
   verifier execution or completing adoption; pure manifest work may proceed.
-- [ ] Add the high-level exact-role manifest and deterministic grant-plan API to
-  `batter-sqlx` without changing the existing low-level verifier entrypoints.
+- [x] (2026-09-13) Added the pure high-level exact-role manifest compiler and
+  deterministic grant-plan API for `batter-9jh` without changing existing
+  low-level verifier entrypoints. Grouping, conflicts, PUBLIC precedence,
+  capacity, structural routine rendering and the generic example have focused
+  offline coverage. Both supported toolchain matrices, all ten rebuilt HTTP
+  smokes and the comprehensive all-reviewer loop passed; low residual coverage
+  is recorded in `batter-h2r`, while live grant application remains with the
+  later adoption milestone.
 - [ ] Add generic SQLx-ledger shape, scoped SECURITY DEFINER search-path, and
   coarse current-database ownership safeguards needed to remove the remaining
   downstream catalog queries.

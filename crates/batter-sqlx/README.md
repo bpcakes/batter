@@ -166,6 +166,61 @@ validation and discovery use this same precedence. Invoker and definer routine d
 separate. Keep application grant manifests as data and add exact exceptions
 there; do not duplicate the generic ACL evaluator downstream.
 
+For the common exact-role case, `ExactRoleManifest` owns that application data
+in grouped Rust declarations and compiles it into the same low-level
+`AuthorityPolicy`. `RequiredAndProvisioned` privileges also enter an inert,
+normalized `GrantPlan`; `AllowedOnly` privileges, discovery defaults, ownership
+allowances and grant-option ceilings never produce SQL. PUBLIC delivery is an
+exact verification allowance, not a provisioning instruction. The pure renderer
+requires validated role/database identifiers, quotes every identifier component,
+uses `ON ROUTINE` for structural overload identities, and emits only role-targeted
+`GRANT` statements. It rejects PostgreSQL's special PUBLIC/NONE spellings and
+reserved `pg_` role namespace case-insensitively. PUBLIC delivery defaults to
+deny, so applications retaining PostgreSQL's built-in PUBLIC defaults must opt
+in for each exact declaration. A column group requires a relation group for the
+same parent so relation ownership, row-type and PUBLIC policy are explicit. It
+also rejects a column PUBLIC deny paired with the same parent-relation PUBLIC
+allowance because a table privilege already reaches that column. It never
+connects, creates roles, revokes authority, wraps a transaction or executes the
+output. Applications still own exact object choices, role membership and
+selection, transaction wrapping, any global PUBLIC revocation and explicit
+operator execution.
+
+```rust
+use batter_sqlx::verification::{
+    DeclarationPurpose, DiscoveryScope, ExactRoleManifest, Identifier,
+    ObjectPrivilege, QualifiedName, RelationGrantGroup,
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = ExactRoleManifest::new(
+        Identifier::new("service")?,
+        DiscoveryScope::Declared,
+    )?;
+    manifest.add_relations(
+        RelationGrantGroup::new(
+            [QualifiedName::new("service", "records")?],
+            [ObjectPrivilege::Select],
+            DeclarationPurpose::RequiredAndProvisioned,
+        )?
+        .allow_row_type_public_usage(true),
+    )?;
+    let compiled = manifest.compile()?;
+    let sql = compiled
+        .grant_plan()
+        .render(&Identifier::new("service_reader")?, None)?;
+    assert_eq!(
+        sql,
+        "GRANT SELECT ON TABLE \"service\".\"records\" TO \"service_reader\";\n"
+    );
+    Ok(())
+}
+```
+
+PostgreSQL ordinary table row types grant PUBLIC USAGE by default. The example
+opts into that observed default explicitly; omit the builder call only when the
+application expects the verifier to require its revocation.
+
 The supported authorization model is PostgreSQL 18 catalog ACLs, ownership,
 listed role attributes/predefined capabilities, and bounded role reachability
 for the selected object kinds. Ordinary persistent and unlogged objects are
@@ -215,6 +270,10 @@ Ordinary object ACL evaluation considers actual reachable grantees, the owner
 and active superusers instead of visiting every reachable role per object.
 Parameter context defaults still require active-role evaluation. These are
 cooperative work limits, not hard wall-clock, allocator or destruction bounds.
+Manifest retention, raw grouped expansion and the generated low-level policy are
+bounded separately. Generated exact PUBLIC overrides and required-privilege rows
+count toward the policy's 10,000-entry limit, so fitting the retained-declaration
+limit alone does not guarantee that compilation fits the generated-policy limit.
 
 The owned checkout always receives an acknowledged `ROLLBACK` before its new
 transaction. With an idle checkout PostgreSQL emits the expected warning
@@ -246,8 +305,9 @@ Connection establishment and the complete verification transaction share one
 This is additive inspection machinery, not a replacement for application
 policy. Consumers must continue to run narrower checks such as exact six-column
 SQLx ledger shape, application migration history, canonical SECURITY DEFINER
-`search_path` and durable-history/schema checks. Profile-specific grants remain
-application-owned policy inputs to the shared authority checker.
+`search_path` and durable-history/schema checks. Profile-specific objects and
+privileges remain application-owned inputs even when expressed through the
+shared exact-role compiler.
 Declaring a relation can explicitly allow its owning composite row type's
 default PUBLIC `USAGE` with `RelationPolicy::allow_row_type_public_usage`; the
 field is deliberately visible so an unexpected row-type ACL is not hidden.

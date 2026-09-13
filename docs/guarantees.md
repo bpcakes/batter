@@ -746,6 +746,31 @@ inspectable without an application-maintained second ACL engine. Required
 privileges do not prove schema visibility unless USAGE is also required, nor do
 they prove RLS-visible data, accepted parameter values or function behavior.
 
+`ExactRoleManifest` is a pure, bounded compiler into that existing authority
+policy. Required-and-provisioned declarations become current-role requirements,
+role allowances and normalized grant-plan atoms; allowed-only declarations and
+all verification ceilings produce no SQL. Exact PUBLIC allow/deny choices remain
+separate from role delivery. Compilation normalizes input order and identical
+duplicates, rejects conflicting declarations and invalid object/privilege pairs,
+and applies both pre-expansion and low-level policy capacity checks. `GrantPlan`
+only renders deterministic, quoted, role-targeted PostgreSQL `GRANT` text. It
+does not connect, execute, create roles, revoke grants, wrap transactions or prove
+that rendered SQL was applied. Database grants require an explicit validated
+database identifier; routine grants retain structural scalar/array overload
+identity and use `ON ROUTINE`. Column groups require an explicit parent relation
+group, preventing discovery defaults from silently choosing that relation's
+ownership, row-type or PUBLIC behavior. A column PUBLIC deny that contradicts a
+parent-relation PUBLIC allowance for the same privilege is rejected because the
+relation grant already reaches the column. Rendering rejects PUBLIC/NONE and the
+reserved `pg_` role namespace; arbitrary application role membership remains
+caller-owned policy.
+
+The 10,000-entry bounds apply independently to retained manifest input, raw
+group expansion and the generated low-level policy. Each generated exact PUBLIC
+override and required-privilege row is charged before policy construction, so a
+manifest below its retained-input limit can still be rejected without producing
+a partial compiled value.
+
 Captured evaluation yields every 64 object/role visits under the same owned
 operation. It rejects more than one million visits, 100,000 findings or 16 MiB
 of finding payload with `EvaluationCapacity`, followed by unsuccessful client

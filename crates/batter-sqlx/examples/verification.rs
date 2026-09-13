@@ -4,10 +4,10 @@
 use batter::operation::{Interruption, OperationContext, OperationError};
 use batter_sqlx::verification::VerificationError;
 use batter_sqlx::verification::{
-    AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, DatabasePolicy, Identifier,
-    MigrationExpectation, MigrationPolicy, ObjectPrivilege, PublicGrant, PublicObject,
-    QualifiedName, RelationPolicy, RolePolicy, SchemaPolicy, VerificationPolicy,
-    VerificationStatus, verify,
+    AdditionalMigrations, AuthorityPolicy, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope,
+    ExactRoleManifest, Identifier, ManifestError, MigrationExpectation, MigrationPolicy,
+    ObjectPrivilege, PublicDelivery, QualifiedName, RelationGrantGroup, RolePolicy,
+    SchemaGrantSpec, VerificationPolicy, VerificationStatus, verify,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{process::ExitCode, str::FromStr, time::Duration};
@@ -76,12 +76,6 @@ async fn main() -> ExitCode {
     let allow_later = flag("BATTER_VERIFY_ALLOW_LATER");
     let allow_superuser = flag("BATTER_VERIFY_ALLOW_SUPERUSER");
     let schema = Identifier::new(ledger.schema()).expect("validated ledger schema");
-    let public_schema = PublicObject::Schema(schema.clone());
-    let relation_privileges = if deliberate_violation {
-        Vec::new()
-    } else {
-        vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)]
-    };
     let migration = MigrationPolicy {
         ledger: ledger.clone(),
         required: vec![MigrationExpectation::new(
@@ -98,76 +92,18 @@ async fn main() -> ExitCode {
             AdditionalMigrations::Reject
         },
     };
-    let authority = AuthorityPolicy {
-        roles: RolePolicy {
-            allow_superuser,
-            allow_create_database: allow_superuser,
-            allow_create_role: allow_superuser,
-            allow_replication: allow_superuser,
-            allow_bypass_rls: allow_superuser,
-            allowed_admin_roles: Vec::new(),
-            allowed_predefined_roles: if allow_superuser {
-                [
-                    "pg_checkpoint",
-                    "pg_create_subscription",
-                    "pg_database_owner",
-                    "pg_execute_server_program",
-                    "pg_maintain",
-                    "pg_monitor",
-                    "pg_read_all_data",
-                    "pg_read_all_settings",
-                    "pg_read_all_stats",
-                    "pg_read_server_files",
-                    "pg_signal_autovacuum_worker",
-                    "pg_signal_backend",
-                    "pg_stat_scan_tables",
-                    "pg_use_reserved_connections",
-                    "pg_write_all_data",
-                    "pg_write_server_files",
-                ]
-                .into_iter()
-                .map(|name| Identifier::new(name).expect("catalog predefined role identifier"))
-                .collect()
-            } else if allow_owner {
-                vec![Identifier::new("pg_database_owner").expect("catalog role identifier")]
-            } else {
-                Vec::new()
-            },
-        },
-        relations: vec![RelationPolicy {
-            relation: ledger,
-            privileges: relation_privileges,
-            columns: Vec::new(),
-            allow_owner,
-            allow_row_type_public_usage: true,
-        }],
-        schemas: vec![SchemaPolicy {
-            schema,
-            privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)],
-            allow_owner,
-        }],
-        database: DatabasePolicy {
-            privileges: vec![
-                AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-                AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
-            ],
-            allow_owner,
-        },
-        public_grants: vec![
-            PublicGrant {
-                object: PublicObject::Database,
-                privilege: AllowedPrivilege::new(ObjectPrivilege::Connect, false),
-            },
-            PublicGrant {
-                object: PublicObject::Database,
-                privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
-            },
-            PublicGrant {
-                object: public_schema,
-                privilege: AllowedPrivilege::new(ObjectPrivilege::Usage, false),
-            },
-        ],
-        ..AuthorityPolicy::default()
+    let authority = match build_authority(
+        schema,
+        ledger,
+        allow_owner,
+        allow_superuser,
+        deliberate_violation,
+    ) {
+        Ok(policy) => policy,
+        Err(_) => {
+            eprintln!("PostgreSQL verification manifest is invalid");
+            return ExitCode::FAILURE;
+        }
     };
     let policy = VerificationPolicy::new(migration, authority);
     let context = OperationContext::new(Duration::from_secs(30))
@@ -225,6 +161,86 @@ fn flag(name: &str) -> bool {
         std::env::var(name).as_deref(),
         Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
     )
+}
+
+fn build_authority(
+    schema: Identifier,
+    ledger: QualifiedName,
+    allow_owner: bool,
+    allow_superuser: bool,
+    deliberate_violation: bool,
+) -> Result<AuthorityPolicy, ManifestError> {
+    let mut manifest = ExactRoleManifest::new(schema.clone(), DiscoveryScope::Declared)?;
+    manifest.set_role_policy(role_policy(allow_owner, allow_superuser))?;
+    manifest.add_database(
+        DatabaseGrantSpec::new(
+            [ObjectPrivilege::Connect, ObjectPrivilege::Temporary],
+            DeclarationPurpose::AllowedOnly,
+        )?
+        .public_delivery(PublicDelivery::AllowDeclared)
+        .allow_owner(allow_owner),
+    )?;
+    manifest.add_schema(
+        SchemaGrantSpec::new(
+            schema,
+            [ObjectPrivilege::Usage],
+            DeclarationPurpose::AllowedOnly,
+        )?
+        .public_delivery(PublicDelivery::AllowDeclared)
+        .allow_owner(allow_owner),
+    )?;
+    manifest.add_relations(
+        RelationGrantGroup::new(
+            [ledger],
+            if deliberate_violation {
+                Vec::new()
+            } else {
+                vec![ObjectPrivilege::Select]
+            },
+            DeclarationPurpose::AllowedOnly,
+        )?
+        .allow_owner(allow_owner)
+        .allow_row_type_public_usage(true),
+    )?;
+    Ok(manifest.compile()?.authority_policy().clone())
+}
+
+fn role_policy(allow_owner: bool, allow_superuser: bool) -> RolePolicy {
+    RolePolicy {
+        allow_superuser,
+        allow_create_database: allow_superuser,
+        allow_create_role: allow_superuser,
+        allow_replication: allow_superuser,
+        allow_bypass_rls: allow_superuser,
+        allowed_admin_roles: Vec::new(),
+        allowed_predefined_roles: if allow_superuser {
+            [
+                "pg_checkpoint",
+                "pg_create_subscription",
+                "pg_database_owner",
+                "pg_execute_server_program",
+                "pg_maintain",
+                "pg_monitor",
+                "pg_read_all_data",
+                "pg_read_all_settings",
+                "pg_read_all_stats",
+                "pg_read_server_files",
+                "pg_signal_autovacuum_worker",
+                "pg_signal_backend",
+                "pg_stat_scan_tables",
+                "pg_use_reserved_connections",
+                "pg_write_all_data",
+                "pg_write_server_files",
+            ]
+            .into_iter()
+            .map(|name| Identifier::new(name).expect("catalog predefined role identifier"))
+            .collect()
+        } else if allow_owner {
+            vec![Identifier::new("pg_database_owner").expect("catalog role identifier")]
+        } else {
+            Vec::new()
+        },
+    }
 }
 
 fn parse_hex(value: &str) -> Option<Vec<u8>> {

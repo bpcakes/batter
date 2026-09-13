@@ -213,6 +213,11 @@ impl RoutineSignature {
         &self.display
     }
 
+    /// Return the structurally constructed, identifier-quoted SQL identity.
+    pub(crate) fn quoted(&self) -> &str {
+        &self.display
+    }
+
     pub(crate) fn schema(&self) -> &str {
         self.schema.as_str()
     }

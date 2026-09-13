@@ -6,11 +6,17 @@
 //! run migrations, repair ACLs, or acknowledge server-session termination.
 
 mod authority;
+mod manifest;
 mod migration;
 mod policy;
 mod report;
 mod work;
 
+pub use manifest::{
+    ColumnGrantGroup, CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, ExactRoleManifest,
+    GrantPlan, GrantRenderError, ManifestError, PublicDelivery, RelationGrantGroup,
+    RoutineGrantSpec, SchemaGrantSpec,
+};
 pub use policy::{
     AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, ColumnPolicy, DatabasePolicy,
     DiscoveryDefaults, DiscoveryScope, Identifier, MigrationExpectation, MigrationPolicy,

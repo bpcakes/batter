@@ -18,7 +18,9 @@ transactions remain application-owned. Follow the root Unix-only policy.
 Keep connection ownership mechanics here and migration, replay, SQL contents,
 transaction completion and provisioning policy in applications. Generic read-only
 verification owns its lease, snapshot and disposition; exact application ledger
-shape, routine protocols and grant manifests remain downstream. The runnable
+shape, routine protocols and grant-manifest contents remain downstream. The pure
+exact-role compiler and inert grant renderer live here; they must not acquire a
+connection, execute SQL or become a provisioner. The runnable
 consumer is `examples/postgres-lifecycle`.
 
 ## Invariants

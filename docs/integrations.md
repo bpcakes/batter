@@ -217,11 +217,23 @@ before its snapshot, rejects ledger RLS, and restores local transaction settings
 before reuse. It does not migrate, repair grants, or acknowledge remote session
 termination. See the [canonical adapter example](../crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
 
+Use `ExactRoleManifest` when one grouped, application-owned role declaration
+should feed both startup verification and an operator-visible grant plan. Compile
+once, pass `compiled.authority_policy()` to the existing authority verifier, and
+render `compiled.grant_plan()` only at an explicit operator boundary. Required
+and provisioned privileges enter both outputs; allowed-only ceilings, ownership,
+grant options, discovery defaults and PUBLIC policy do not become grants. The
+renderer performs no I/O and deliberately omits role creation, revocation,
+credentials and transaction control. The application supplies the target role,
+the database name only when needed, surrounding transaction text and any global
+PUBLIC-schema policy.
+
 The generic coverage intentionally does not replace application checks that are
 narrower or more specific: exact SQLx ledger columns and primary-key shape,
 application migration history, canonical `search_path` on SECURITY DEFINER and
-trigger routines, durable application schema/history, and per-profile grant
-manifests remain local to the consuming application. SECURITY DEFINER bodies, extension
+trigger routines, and durable application schema/history remain local to the
+consuming application. Exact role declarations remain local application data
+even when their compilation is shared. SECURITY DEFINER bodies, extension
 semantics and role defaults are explicit unsupported report surfaces; selected
 ACLs on extension-owned objects are still checked. Add the corresponding
 `AuthorityPolicy::required_surfaces` value when an application requires one of
@@ -619,3 +631,10 @@ Migration verification supports standalone ordinary ledgers. Inheritance in the
 captured snapshot returns Incomplete/InheritedMigrationLedgers; ONLY reads prevent
 late attachment from changing the snapshot relation set. Consumers retain native
 migration policy and must not treat an unsupported ledger as verified.
+
+When a manifest declares column authority, also declare its parent relation even
+when no relation-level privilege is allowed. This makes the relation's ownership,
+row-type and PUBLIC settings explicit and is enforced by compilation. Grant-plan
+rendering rejects PostgreSQL's PUBLIC/NONE spellings and reserved `pg_` role
+namespace, but applications still own membership and selection for ordinary role
+targets.

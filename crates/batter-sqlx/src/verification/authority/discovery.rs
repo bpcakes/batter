@@ -285,11 +285,14 @@ async fn expand_relations(
 
 #[cfg(test)]
 mod tests {
-    use super::super::requests::inspect_relations;
+    use super::super::requests::{inspect_relations, inspect_types};
     use super::super::required::tests::snapshot;
-    use super::super::{AclEntry, RoleGraph};
+    use super::super::{AclEntry, RoleGraph, TypeObject};
     use super::*;
     use crate::verification::report::FindingKind;
+    use crate::verification::{
+        DeclarationPurpose, ExactRoleManifest, PublicDelivery, RelationGrantGroup,
+    };
 
     #[test]
     fn discovered_undeclared_grant_is_rejected_and_default_or_exact_allowance_is_applied() {
@@ -410,6 +413,133 @@ mod tests {
         .unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].subject.as_deref(), Some("public"));
+    }
+
+    #[test]
+    fn compiled_manifest_public_delivery_controls_expanded_verifier_findings() {
+        let mut snapshot = snapshot();
+        snapshot.relations[0].acl.push(AclEntry {
+            grantee: 0,
+            privilege: ObjectPrivilege::Select,
+            grant_option: false,
+        });
+        let graph = RoleGraph::new(
+            &snapshot.roles,
+            &snapshot.memberships,
+            snapshot.root,
+            snapshot.database.owner,
+        );
+        let check = |delivery| {
+            let mut manifest = ExactRoleManifest::new(
+                Identifier::new("service").unwrap(),
+                DiscoveryScope::UserSchemas,
+            )
+            .unwrap();
+            let mut defaults = DiscoveryDefaults::default();
+            defaults.relations.public_privileges =
+                vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+            manifest.set_discovery_defaults(defaults).unwrap();
+            manifest
+                .add_relations(
+                    RelationGrantGroup::new(
+                        [QualifiedName::new("service", "records").unwrap()],
+                        [ObjectPrivilege::Select],
+                        DeclarationPurpose::AllowedOnly,
+                    )
+                    .unwrap()
+                    .public_delivery(delivery)
+                    .allow_row_type_public_usage(true),
+                )
+                .unwrap();
+            let compiled = manifest.compile().unwrap();
+            let expanded = crate::verification::authority::evaluation::tests::run(expand(
+                &mut crate::verification::authority::evaluation::Evaluation::new(),
+                &snapshot,
+                compiled.authority_policy(),
+            ))
+            .unwrap();
+            let mut findings = Vec::new();
+            crate::verification::authority::evaluation::tests::run(inspect_relations(
+                &mut crate::verification::authority::evaluation::Evaluation::new(),
+                &snapshot,
+                &graph,
+                &expanded,
+                &mut findings,
+            ))
+            .unwrap();
+            findings
+        };
+
+        let denied = check(PublicDelivery::Deny);
+        assert_eq!(denied.len(), 1);
+        assert_eq!(denied[0].subject.as_deref(), Some("public"));
+        assert!(check(PublicDelivery::AllowDeclared).is_empty());
+    }
+
+    #[test]
+    fn compiled_manifest_row_type_choice_overrides_type_public_defaults() {
+        let mut snapshot = snapshot();
+        snapshot.types.push(TypeObject {
+            schema: "service".to_owned(),
+            name: "records".to_owned(),
+            owner: 3,
+            relation_oid: 20,
+            acl: std::sync::Arc::from([AclEntry {
+                grantee: 0,
+                privilege: ObjectPrivilege::Usage,
+                grant_option: false,
+            }]),
+        });
+        let graph = RoleGraph::new(
+            &snapshot.roles,
+            &snapshot.memberships,
+            snapshot.root,
+            snapshot.database.owner,
+        );
+        let check = |allow_row_type_public_usage| {
+            let mut manifest = ExactRoleManifest::new(
+                Identifier::new("service").unwrap(),
+                DiscoveryScope::UserSchemas,
+            )
+            .unwrap();
+            let mut defaults = DiscoveryDefaults::default();
+            defaults.types.public_privileges =
+                vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)];
+            manifest.set_discovery_defaults(defaults).unwrap();
+            manifest
+                .add_relations(
+                    RelationGrantGroup::new(
+                        [QualifiedName::new("service", "records").unwrap()],
+                        [],
+                        DeclarationPurpose::AllowedOnly,
+                    )
+                    .unwrap()
+                    .allow_row_type_public_usage(allow_row_type_public_usage),
+                )
+                .unwrap();
+            let compiled = manifest.compile().unwrap();
+            let expanded = crate::verification::authority::evaluation::tests::run(expand(
+                &mut crate::verification::authority::evaluation::Evaluation::new(),
+                &snapshot,
+                compiled.authority_policy(),
+            ))
+            .unwrap();
+            let mut findings = Vec::new();
+            crate::verification::authority::evaluation::tests::run(inspect_types(
+                &mut crate::verification::authority::evaluation::Evaluation::new(),
+                &snapshot,
+                &graph,
+                &expanded,
+                &mut findings,
+            ))
+            .unwrap();
+            findings
+        };
+
+        let denied = check(false);
+        assert_eq!(denied.len(), 1);
+        assert_eq!(denied[0].subject.as_deref(), Some("public"));
+        assert!(check(true).is_empty());
     }
 }
 
