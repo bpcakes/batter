@@ -9,6 +9,7 @@ use crate::verification::policy::{
     AllowedPrivilege, AuthorityPolicy, ObjectPrivilege, PublicObject, RolePolicy, RoutinePolicy,
     RoutineSignature, RoutineType,
 };
+use crate::verification::{FindingKind, RoleAttribute};
 use std::collections::HashMap;
 
 fn role(oid: i64, name: &str) -> RoleInfo {
@@ -197,6 +198,73 @@ fn admin_option_is_separate_from_unrelated_createrole() {
     }];
     let graph = RoleGraph::new(&roles, &memberships, Some(1), 99);
     assert!(graph.can_admin_any_role());
+}
+
+#[test]
+fn admin_option_on_superuser_target_is_not_usable_authority() {
+    let root = role(1, "root");
+    let mut target = role(2, "superuser_target");
+    target.superuser = true;
+    let roles = vec![root, target];
+    let memberships = [Membership {
+        role: 2,
+        member: 1,
+        admin: true,
+        inherit: false,
+        set: false,
+    }];
+    let graph = RoleGraph::new(&roles, &memberships, Some(1), 99);
+
+    assert!(!graph.can_admin_any_role());
+    assert!(graph.admin_target_roles().is_empty());
+    assert!(!graph.has_active_superuser());
+    assert_eq!(
+        graph
+            .active_roles()
+            .iter()
+            .map(|role| role.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root"]
+    );
+}
+
+#[test]
+fn set_reachable_superuser_target_remains_active_authority() {
+    let root = role(1, "root");
+    let mut target = role(2, "superuser_target");
+    target.superuser = true;
+    let roles = vec![root, target];
+    let memberships = [Membership {
+        role: 2,
+        member: 1,
+        admin: false,
+        inherit: false,
+        set: true,
+    }];
+    let graph = RoleGraph::new(&roles, &memberships, Some(1), 99);
+
+    assert!(graph.has_active_superuser());
+    assert_eq!(
+        graph
+            .active_roles()
+            .iter()
+            .map(|role| role.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "superuser_target"]
+    );
+    let mut findings = Vec::new();
+    crate::verification::authority::evaluation::tests::run(inspect_roles(
+        &mut crate::verification::authority::evaluation::Evaluation::new(),
+        &graph,
+        &AuthorityPolicy::default(),
+        &mut findings,
+    ))
+    .unwrap();
+    assert!(findings.iter().any(|finding| {
+        finding.kind == FindingKind::RoleAttribute
+            && finding.object.as_deref() == Some("superuser_target")
+            && finding.role_attribute == Some(RoleAttribute::Superuser)
+    }));
 }
 
 #[test]

@@ -733,15 +733,23 @@ read and lock. All three entrypoints share the same execution and retirement
 rules. They never execute DDL, take a migrator advisory lock or repair ACLs.
 
 Authority checks cover authenticated-login-rooted SET/INHERIT/ADMIN potential,
-including target-specific ADMIN and CREATEROLE management, separately from
-`required_privileges` of the current role through direct/PUBLIC/INHERIT grants.
+including target-specific ADMIN and CREATEROLE management of ordinary roles,
+separately from `required_privileges` of the current role through
+direct/PUBLIC/INHERIT grants. An ADMIN-only membership in a superuser role is not
+promoted: PostgreSQL requires an already active superuser to grant or revoke
+membership in that target. A separate SET path to a superuser remains visible as
+superuser authority, and an INHERIT path still contributes that role's ordinary
+object ACLs.
 Bounded discovery can cover every supported object in selected user schemas;
 per-kind defaults and exact role/PUBLIC overrides remain application policy.
 Discovery preserves each selected array/multirange identity while resolving
 its effective source ACL, even across the schema boundary. Shared ACL data
 does not merge exact policies or erase coverage. Qualified finding names quote
 each identifier component, including routine argument identities.
-Unlisted relation, column, sequence, routine and ownership authority is therefore
+Relation ownership is reported at the relation rather than repeated for every
+column; independently granted column privileges, grant options and PUBLIC
+authority remain distinct findings. Unlisted relation, column, sequence, routine
+and ownership authority is therefore
 inspectable without an application-maintained second ACL engine. Required
 privileges do not prove schema visibility unless USAGE is also required, nor do
 they prove RLS-visible data, accepted parameter values or function behavior.

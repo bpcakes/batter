@@ -1,6 +1,6 @@
 use super::policy::{
     AdditionalMigrations, MAX_MIGRATION_CHECKSUM_BYTES, MAX_MIGRATION_LEDGER_ROWS,
-    MigrationExpectation, MigrationPolicy,
+    MigrationExpectation, MigrationPolicy, quote_identifier,
 };
 use super::report::{Finding, FindingKind};
 use super::{PgTransaction, VerificationError};
@@ -227,12 +227,16 @@ async fn ledger_shape_is_valid(
         shape_ok = false;
         findings.push(Finding::new(
             kind,
-            Some(format!("{}.{}", policy.ledger.quoted(), name)),
+            Some(ledger_column_name(policy, name)),
             None::<String>,
             None,
         ));
     }
     Ok(shape_ok)
+}
+
+fn ledger_column_name(policy: &MigrationPolicy, name: &str) -> String {
+    format!("{}.{}", policy.ledger.quoted(), quote_identifier(name))
 }
 
 fn compare_rows(
@@ -407,6 +411,14 @@ mod tests {
             findings
                 .iter()
                 .any(|finding| finding.kind == FindingKind::DuplicateMigrationRow)
+        );
+    }
+
+    #[test]
+    fn ledger_column_findings_quote_every_identifier_component() {
+        assert_eq!(
+            ledger_column_name(&policy(AdditionalMigrations::Reject), "version"),
+            "\"public\".\"ledger\".\"version\""
         );
     }
 

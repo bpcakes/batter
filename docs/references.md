@@ -14,8 +14,12 @@ follows the PostgreSQL 18 [`pg_auth_members` catalog](https://www.postgresql.org
 and the documented [`INHERIT`, `SET` and `ADMIN` role-membership semantics](https://www.postgresql.org/docs/18/role-membership.html):
 object ACLs are evaluated from captured catalog rows, `SET` reachability is a
 separate path, and role attributes are not treated as inherited object grants.
-An `ADMIN TRUE` edge is usable by its member regardless of that edge's
-`INHERIT` value. Ordinary membership grants follow privilege reachability, while
+An `ADMIN TRUE` edge to an ordinary role is usable by its member regardless of
+that edge's `INHERIT` value. PostgreSQL 18's
+[`membership authorization check`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/user.c#L2110-L2173)
+instead reserves grants and revocations of membership in a superuser role to an
+already active superuser, so an ADMIN-only superuser target is not promoted to
+usable authority. Ordinary membership grants follow privilege reachability, while
 the PostgreSQL 18 [`ALTER ROLE` rules](https://www.postgresql.org/docs/18/sql-alterrole.html)
 also let an active CREATEROLE identity manage a target for which it holds ADMIN
 through membership edges even when those edges grant neither SET nor INHERIT.

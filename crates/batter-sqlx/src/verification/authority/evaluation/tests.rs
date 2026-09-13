@@ -1,7 +1,8 @@
 use super::*;
 use crate::verification::authority::{AclEntry, Membership, TypeObject, evaluate_snapshot};
 use crate::verification::{
-    AllowedPrivilege, AuthorityPolicy, DiscoveryScope, FindingKind, ObjectPrivilege,
+    AllowedPrivilege, AuthorityPolicy, DiscoveryScope, FindingKind, ObjectPrivilege, QualifiedName,
+    RelationPolicy,
 };
 use batter::operation::{Interruption, OperationContext, OperationError};
 use std::future::Future;
@@ -266,6 +267,99 @@ fn findings_preserve_distinct_dotted_and_quoted_catalog_identities() {
         names,
         std::collections::HashSet::from(["\"a.b\".\"c\"", "\"a\".\"b.c\"", "\"a\"\"b\".\"c\""])
     );
+}
+
+#[test]
+fn relation_ownership_is_reported_once_without_column_amplification() {
+    use crate::verification::authority::{ColumnObject, RelationObject};
+
+    let mut snapshot = crate::verification::authority::required::tests::snapshot();
+    snapshot.relations = (0..1_000)
+        .map(|ordinal| RelationObject {
+            oid: 10_000 + ordinal,
+            schema: "service".to_owned(),
+            name: format!("records_{ordinal}"),
+            kind: "r".to_owned(),
+            owner: 1,
+            acl: Vec::new(),
+            columns: (0..10)
+                .map(|column| ColumnObject {
+                    name: format!("value_{column}"),
+                    acl: Vec::new(),
+                })
+                .collect(),
+        })
+        .collect();
+    snapshot.types = snapshot
+        .relations
+        .iter()
+        .map(|relation| TypeObject {
+            schema: relation.schema.clone(),
+            name: relation.name.clone(),
+            owner: relation.owner,
+            relation_oid: relation.oid,
+            acl: Vec::new().into(),
+        })
+        .collect();
+    let policy = AuthorityPolicy {
+        discovery: DiscoveryScope::UserSchemas,
+        ..AuthorityPolicy::default()
+    };
+
+    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    assert_eq!(
+        report
+            .findings()
+            .iter()
+            .filter(|finding| finding.kind == FindingKind::Ownership)
+            .count(),
+        1_000
+    );
+    assert!(!report.findings().iter().any(|finding| {
+        finding.kind == FindingKind::Ownership
+            && finding
+                .object
+                .as_deref()
+                .is_some_and(|object| object.matches('.').count() == 2)
+    }));
+}
+
+#[test]
+fn allowed_relation_owner_may_hold_an_explicit_column_grant() {
+    use crate::verification::authority::{ColumnObject, RelationObject};
+
+    let mut snapshot = crate::verification::authority::required::tests::snapshot();
+    snapshot.relations = vec![RelationObject {
+        oid: 20,
+        schema: "service".to_owned(),
+        name: "records".to_owned(),
+        kind: "r".to_owned(),
+        owner: 1,
+        acl: Vec::new(),
+        columns: vec![ColumnObject {
+            name: "status".to_owned(),
+            acl: vec![AclEntry {
+                grantee: 1,
+                privilege: ObjectPrivilege::Update,
+                grant_option: true,
+            }],
+        }],
+    }];
+    let policy = AuthorityPolicy {
+        relations: vec![RelationPolicy {
+            relation: QualifiedName::new("service", "records").unwrap(),
+            privileges: Vec::new(),
+            columns: Vec::new(),
+            allow_owner: true,
+            allow_row_type_public_usage: false,
+        }],
+        ..AuthorityPolicy::default()
+    };
+
+    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+    assert!(!report.findings().iter().any(|finding| {
+        finding.object.as_deref() == Some("\"service\".\"records\".\"status\"")
+    }));
 }
 
 #[tokio::test]

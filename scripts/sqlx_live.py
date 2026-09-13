@@ -102,7 +102,7 @@ def main():
     if missing:
         print(("missing live PostgreSQL prerequisites: " + ", ".join(missing) +
                "; provide an ordinary disposable database and a known-good "
-               "password-authenticated endpoint plus an administrative "
+               "password-authenticated endpoint plus a PostgreSQL superuser "
                "connection to a dedicated disposable cluster"), file=sys.stderr)
         return 1
     for target, cases in TARGETS.items():

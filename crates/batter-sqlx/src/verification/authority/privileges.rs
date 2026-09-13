@@ -93,7 +93,8 @@ pub(super) async fn inspect_acl_object(
         &mut ignored,
         findings,
         object,
-        owner,
+        Some(owner),
+        None,
         &[acl],
         &[allowed],
         allow_owner,
@@ -129,7 +130,8 @@ pub(super) async fn inspect_acl_object_collect(
         collected,
         findings,
         object,
-        owner,
+        Some(owner),
+        None,
         &[acl],
         &[allowed],
         allow_owner,
@@ -149,7 +151,8 @@ pub(super) async fn inspect_acl_object_parts(
     graph: &RoleGraph<'_>,
     findings: &mut Vec<Finding>,
     object: &str,
-    owner: i64,
+    owner: Option<i64>,
+    allowed_acl_owner: Option<i64>,
     acl: &[&[AclEntry]],
     allowed: &[&[AllowedPrivilege]],
     allow_owner: bool,
@@ -166,6 +169,7 @@ pub(super) async fn inspect_acl_object_parts(
         findings,
         object,
         owner,
+        allowed_acl_owner,
         acl,
         allowed,
         allow_owner,
@@ -186,7 +190,8 @@ async fn inspect_acl_object_parts_collect(
     collected: &mut Vec<(i64, ObjectPrivilege, bool, bool)>,
     findings: &mut Vec<Finding>,
     object: &str,
-    owner: i64,
+    owner: Option<i64>,
+    allowed_acl_owner: Option<i64>,
     acl: &[&[AclEntry]],
     allowed: &[&[AllowedPrivilege]],
     allow_owner: bool,
@@ -198,17 +203,18 @@ async fn inspect_acl_object_parts_collect(
     let indexed_acl = IndexedAcl::new(acl);
     for role in graph.acl_sources(
         indexed_acl.grants.keys().map(|(grantee, _)| *grantee),
-        Some(owner),
+        owner,
     ) {
         evaluation.checkpoint(findings).await?;
         let active_superuser = role.superuser && graph.is_active_role(role.oid);
-        let owner_applies = role.oid == owner;
-        let actual = indexed_acl.actual_for(role.oid, Some(owner), graph, privileges);
+        let owner_applies = owner == Some(role.oid);
+        let actual = indexed_acl.actual_for(role.oid, owner, graph, privileges);
         collected.extend(actual.iter().filter(|(_, granted, _)| *granted).map(
             |(privilege, granted, grant_option)| (role.oid, *privilege, *granted, *grant_option),
         ));
-        let authority_allowed =
-            (active_superuser && allow_superuser) || (owner_applies && allow_owner);
+        let authority_allowed = (active_superuser && allow_superuser)
+            || (owner_applies && allow_owner)
+            || allowed_acl_owner == Some(role.oid);
         if owner_applies && !allow_owner && !(active_superuser && allow_superuser) {
             findings.push(Finding::new(
                 FindingKind::Ownership,

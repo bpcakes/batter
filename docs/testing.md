@@ -148,8 +148,8 @@ The optional SQLx adapter's offline contracts run with ordinary workspace gates.
 Its live tests are explicitly ignored even with all features/targets. With
 `DATABASE_URL` identifying an externally provisioned disposable PostgreSQL
 database, `BATTER_SQLX_AUTH_ACCEPT_URL` identifying a known-good password-
-authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying its
-administrative connection on a dedicated disposable cluster, run
+authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
+superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the exact eleven-case
 disposition target, fourteen-case pool-ownership target and twenty-eight-case restricted-

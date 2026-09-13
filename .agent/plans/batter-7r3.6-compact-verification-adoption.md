@@ -624,23 +624,27 @@ coverage.
 
 ### Milestone 0: Settle the inherited-verifier prerequisite independently
 
-The selected Batter baseline contains the lower-level verifier and is sufficient
-to begin the pure manifest/compiler/renderer work, but its owning Bead
-`batter-7r3.5` is still in progress. Its retained review history says the
-committed inherited-ledger repair has full validation but has not received the
-required fresh post-repair independent review. `batter-7r3.12` remains the
-blocking defect record, and `batter-7r3.13` is related evidence whose implemented
-PUBLIC-precedence behavior is already in the baseline.
+The inherited verifier prerequisite was settled independently on 2026-09-14.
+`batter-7r3.12` was reviewed and closed first. The complete `batter-7r3.5`
+baseline then received fresh Claude, Codex and Cursor review, repair and closure
+passes at recorded fingerprints `e8db1344ab4c75fc97e992430979327e9cb6bb339d4f61f5590dc37b7ed823f2`,
+`f93e980234eda91d2aec126131cb1b755e324d5e63162e6da707d115477353c3`
+and `7115f8b50f746849928d898713aed05f6c2c9f4a0e249cfa918dfe49a94f7826`.
+After the file-budget compaction and residual bookkeeping, all three reviewers
+also confirmed complete fingerprint
+`5d7f0561fafbf3b0e43e6577a3e85d4631cb073689a5e4f10e49223ded91c840`
+with no actionable finding.
+No terminal medium- or high-severity defect remained. Terminal low diagnostic
+and live-oracle gaps are explicitly retained as `batter-mzi` and `batter-lod`.
 
-Resume `.5` through its own bounded comprehensive review-fix-loop and retained
-handoff, reviewing the complete committed verifier baseline including the
-inherited-ledger, temporary-namespace, PUBLIC-precedence, capacity, and
-connection-disposition changes. Do not count a review of `.6`'s later diff as
-review of those existing bytes. If that prerequisite loop converges, record the
-fresh fingerprint/evidence and settle `.12` and `.5` through their owning tracker
-workflow. If it does not converge, stop the safeguard/executor and final-adoption
-tracks, retain the manifest's pure offline work separately, and flag the exact
-finding. Do not create a `.5`/`.6` dependency cycle.
+The review covered inherited-ledger, temporary-namespace, PUBLIC-precedence,
+capacity, role-authority, finding-identity and connection-disposition behavior.
+Current-source validation includes both supported Rust toolchain matrices, all
+ten rebuilt HTTP smokes, and passing standalone Jig test/format/Clippy/contract/
+file-budget receipts. Credentialed PostgreSQL execution remains earlier Linux
+evidence; changed live fixture bytes were not executed on the macOS closure host.
+This evidence is prerequisite settlement only and is not a review of `.6`'s
+later delivery diff.
 
 This milestone is accepted when `.5`'s own tracker and retained review artifact
 show a converged review of the selected immutable verifier baseline, its blocking

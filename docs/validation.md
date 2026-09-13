@@ -8515,3 +8515,70 @@ The two full toolchain matrices and all ten rebuilt HTTP smokes in the table
 above were rerun after the final row-type repair and review pass. The live
 PostgreSQL prerequisites were absent, so the 53-case credentialed inventory was
 not executed and no live renderer claim is made.
+
+## PostgreSQL verifier post-review repair: 2026-09-13
+
+Delivery Bead `batter-7r3.5`; review base
+`8456ffccd729ca6f22b510075320b2e40d5bf59c`. A comprehensive branch review of
+the committed verifier baseline used Claude, Codex and Cursor on matching
+fingerprint `e8db1344ab4c75fc97e992430979327e9cb6bb339d4f61f5590dc37b7ed823f2`.
+Codex found that an ADMIN-only membership in a superuser role was promoted to
+usable authority even though PostgreSQL reserves membership grants and revocations
+for such a target to an active superuser. Claude found an unquoted ledger-column
+component, and Codex repeated the already tracked relation-owner diagnostic
+amplification. Claude and Cursor also identified the stale package live count.
+
+The repair excludes only superuser targets from ADMIN-derived promotion; separate
+SET reachability and inherited ordinary object ACLs remain intact. The live fixture
+now creates an ADMIN-only superuser target, resets to the ordinary login, proves
+that login can grant an ordinary ADMIN target, requires native `GRANT` and
+`SET ROLE` attempts for the superuser target to fail with SQLSTATE `42501`, and
+requires the verifier not to report usable ADMIN or superuser authority. A
+1,000-relation, ten-column evaluator regression proves that column traversal no
+longer repeats relation ownership or exhausts the global finding budget. An allowed-owner regression separately proves that an
+explicit column ACL does not turn allowed relation ownership into a violation.
+Ledger-column findings now quote
+all three identifier components, with a pure exact-name regression. The package
+README's independently enforced inventory is corrected to 53 cases.
+
+The first repaired tree was reviewed again by all three reviewers at matching
+fingerprint `f93e980234eda91d2aec126131cb1b755e324d5e63162e6da707d115477353c3`.
+No reviewer found a medium- or high-severity defect. Low findings drove the
+row-type/explicit-column regressions above, a `RESET ROLE` plus ordinary-target
+grant control in the live scenario, an early superuser prerequisite check on
+the fixture connection, and evidence wording that distinguishes current offline
+macOS execution from historical Linux live execution. A SET-reachable superuser
+regression preserves the independent authority path.
+
+A final Claude/Codex/Cursor closure pass used matching complete fingerprint
+`7115f8b50f746849928d898713aed05f6c2c9f4a0e249cfa918dfe49a94f7826`.
+It found no medium- or high-severity defect. Per the requested terminal-low
+workflow, the remaining synthesized-owner row-type diagnostic amplification is
+retained on `batter-mzi`; current-user preflight, RESET ROLE assertion and live
+execution hardening are recorded on `batter-lod`. These are not represented as
+completed repairs or live evidence.
+
+After the required file-budget compaction and terminal-low bookkeeping, a
+focused Claude/Codex/Cursor closure confirmation matched complete fingerprint
+`5d7f0561fafbf3b0e43e6577a3e85d4631cb073689a5e4f10e49223ded91c840`.
+All three reviewers found no actionable issue at low severity or above and
+confirmed that the compacted standalone/relation-backed type path preserves the
+reviewed semantics. The tracker-only close follows this immutable code checkpoint.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02), and locked
+SQLx 0.9.0. No dependency or Cargo.lock change was made.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| Focused SQLx regressions, then `cargo test -p batter-sqlx --features test-support --locked` | The ADMIN-superuser, SET-superuser, fully quoted ledger-column, explicit owner-column ACL and near-capacity relation/column/row-type cases passed. After the second-review repair, the complete package result was 92 unit, nine fixture-offline and seven offline cases passed; 53 live cases remained explicitly ignored; all 23 doctests passed. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings` | Strict package Clippy passed. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Both complete core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and rustdoc matrices passed. |
+| Rebuild `batter-axum` example `http_service`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | All ten process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| Final standalone Jig checks after the file-budget compaction | `api:test` `receipt_01M2EDC3GREG30RNQZSTMRAXFC`, `api:fmt` `receipt_01M2EDC9GK0E3RMKWTV96P9AJ7`, `api:clippy` `receipt_01M2EDCJ3RHS6WSK5M0E61HJ6Y`, `repo:contract` `receipt_01M2EDCPDXCYGJBJFYRYP24H1H` and `repo:file-budget` `receipt_01M2EDCVJJQA62988A93MN7Z9X` all passed against the same 17-file worktree. The first file-budget attempt exposed six lines of debt growth; a behavior-preserving single-path ACL inspection compaction removed it before these final receipts and the repeated two-toolchain/HTTP validation. |
+
+`DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL` and `BATTER_SQLX_ADMIN_URL` were
+absent. The new native superuser-target control compiled but was not executed;
+the earlier 53-case PostgreSQL18.6 runs remain historical evidence and do not
+verify these changed fixture bytes. No hosted CI, new Linux run, publication or
+deployment is claimed.

@@ -329,10 +329,13 @@ Requiring its privilege produces Incomplete until its definition is observable;
 syntax alone cannot distinguish an assignable placeholder, a reserved prefix or
 a hidden extension parameter. The verifier never executes SET to test a value.
 Reachable ADMIN authority includes both ordinary grant reachability and the
-PostgreSQL 18 path where an active CREATEROLE identity can manage a target via
-ADMIN across membership edges that grant neither SET nor INHERIT. Each target
-requires its own `RolePolicy::allowed_admin_roles` entry. Even an allowed target
-is audited as authority the login can grant back to itself with SET and INHERIT.
+PostgreSQL 18 path where an active CREATEROLE identity can manage a non-superuser
+target via ADMIN across membership edges that grant neither SET nor INHERIT.
+Each usable target requires its own `RolePolicy::allowed_admin_roles` entry.
+Even an allowed ordinary target is audited as authority the login can grant back
+to itself with SET and INHERIT. PostgreSQL reserves grants and revocations of
+membership in superuser roles to an already active superuser, so an ADMIN-only
+edge to such a target does not create usable superuser authority.
 Routine policies use `RoutineSignature::new` with canonical `RoutineType`
 components from `pg_type`; aliases do not resolve to their underlying catalog
 identity, and named argument declarations or arbitrary SQL type expressions are
@@ -346,8 +349,8 @@ Run `cargo test -p batter-sqlx --features test-support --locked` for offline
 contracts. Live cases are ignored in ordinary all-feature checks. Configure
 `DATABASE_URL` for an external disposable database and
 `BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
-and `BATTER_SQLX_ADMIN_URL` for the fixture's administrative connection on a
-dedicated disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
+and `BATTER_SQLX_ADMIN_URL` for a PostgreSQL superuser connection on a dedicated
+disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
 prerequisites fail. Roles and parameter ACLs are cluster-wide. Custom parameter
 names are unique per fixture, while process death can still leave test-owned
 cluster residue for external cleanup. The
@@ -355,8 +358,8 @@ authentication case first completes a query with those parsed connection options
 then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
 A trust endpoint, missing role or connection refusal is not equivalent.
 The runner verifies
-an exact 52-case inventory across the eleven PostgreSQL lease/read-only
-verification cases, fourteen pool ownership cases and twenty-seven authority-
+an exact 53-case inventory across the eleven PostgreSQL lease/read-only
+verification cases, fourteen pool ownership cases and twenty-eight authority-
 verification cases,
 executes each target serially, and bounds every child process.
 Cases can use up to six simultaneous server sessions, including retired sessions

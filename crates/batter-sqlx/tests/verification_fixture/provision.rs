@@ -15,6 +15,7 @@ pub(super) async fn provision(
         &names.nested,
         &names.settable,
         &names.admin_target,
+        &names.superuser_target,
         &names.unrelated_creator,
         &names.owner,
     ] {
@@ -35,6 +36,11 @@ pub(super) async fn provision(
             literal(password),
         ),
         password,
+    )
+    .await?;
+    exec(
+        &mut *connection,
+        format!("ALTER ROLE {} SUPERUSER", quote(&names.superuser_target)),
     )
     .await?;
     exec_secret(
@@ -90,6 +96,15 @@ pub(super) async fn provision(
         format!(
             "GRANT {} TO {} WITH INHERIT FALSE, SET TRUE, ADMIN TRUE",
             quote(&names.admin_target),
+            quote(&names.login_a),
+        ),
+    )
+    .await?;
+    exec(
+        &mut *connection,
+        format!(
+            "GRANT {} TO {} WITH INHERIT FALSE, SET FALSE, ADMIN TRUE",
+            quote(&names.superuser_target),
             quote(&names.login_a),
         ),
     )

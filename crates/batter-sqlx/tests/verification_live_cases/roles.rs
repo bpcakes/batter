@@ -98,6 +98,62 @@ pub(super) async fn check(
             .any(|item| item.kind == FindingKind::RoleAttribute),
         "inherited-only role attributes were treated as inherited",
     )?;
+    require(
+        !report.findings().iter().any(|finding| {
+            finding.object.as_deref() == Some(names.superuser_target.as_str())
+                && (finding.kind == FindingKind::RoleAdminOption
+                    || finding.role_attribute == Some(RoleAttribute::Superuser))
+        }),
+        "an unusable ADMIN edge promoted a superuser target",
+    )?;
+    sqlx::query("RESET ROLE").execute(login_a).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT {} TO {} WITH INHERIT FALSE, SET FALSE, ADMIN FALSE",
+        quote(&names.admin_target),
+        quote(&names.login_b),
+    )))
+    .execute(login_a)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "REVOKE {} FROM {}",
+        quote(&names.admin_target),
+        quote(&names.login_b),
+    )))
+    .execute(login_a)
+    .await?;
+    let denied_grant = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT {} TO {} WITH INHERIT TRUE, SET TRUE, ADMIN FALSE",
+        quote(&names.superuser_target),
+        quote(&names.login_b),
+    )))
+    .execute(login_a)
+    .await;
+    require(
+        denied_grant
+            .as_ref()
+            .err()
+            .and_then(sqlx::Error::as_database_error)
+            .and_then(|error| error.code())
+            .as_deref()
+            == Some("42501"),
+        "the ADMIN-only login unexpectedly granted a superuser role",
+    )?;
+    let denied_set = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SET ROLE {}",
+        quote(&names.superuser_target)
+    )))
+    .execute(login_a)
+    .await;
+    require(
+        denied_set
+            .as_ref()
+            .err()
+            .and_then(sqlx::Error::as_database_error)
+            .and_then(|error| error.code())
+            .as_deref()
+            == Some("42501"),
+        "the ADMIN-only login unexpectedly set an ungranted superuser role",
+    )?;
 
     exec(
         &mut fixture.admin,

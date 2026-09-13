@@ -28,6 +28,7 @@ pub(crate) struct Names {
     pub(crate) nested: String,
     pub(crate) settable: String,
     pub(crate) admin_target: String,
+    pub(crate) superuser_target: String,
     pub(crate) unrelated_creator: String,
     pub(crate) owner: String,
     pub(crate) ledger_a: String,
@@ -63,6 +64,7 @@ impl Names {
             nested: name("nested"),
             settable: name("settable"),
             admin_target: name("admin_target"),
+            superuser_target: name("superuser_target"),
             unrelated_creator: name("unrelated_creator"),
             owner: name("owner"),
             ledger_a: name("ledger_a"),
@@ -92,6 +94,17 @@ impl AuthorityFixture {
             std::io::Error::other("live verification requires BATTER_SQLX_ADMIN_URL")
         })?;
         let mut admin = bounded(PgConnection::connect(&url)).await??;
+        let superuser: bool = bounded(
+            sqlx::query_scalar(
+                "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = session_user",
+            )
+            .fetch_one(&mut admin),
+        )
+        .await??;
+        support::require(
+            superuser,
+            "BATTER_SQLX_ADMIN_URL must authenticate as a PostgreSQL superuser",
+        )?;
         let names = Names::new();
         let password = random_password()?;
         if let Err(error) = provision(&mut admin, &names, &password).await {
@@ -224,6 +237,7 @@ async fn cleanup(connection: &mut PgConnection, names: &Names) -> Result {
         &names.nested,
         &names.settable,
         &names.admin_target,
+        &names.superuser_target,
         &names.unrelated_creator,
         &names.owner,
     ] {

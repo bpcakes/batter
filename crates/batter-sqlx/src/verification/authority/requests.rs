@@ -409,7 +409,6 @@ async fn inspect_relation_columns(
     public: &PublicPolicy,
     findings: &mut Vec<Finding>,
 ) -> Result<(), VerificationError> {
-    let allow_owner = relation_policy.is_some_and(|entry| entry.allow_owner);
     let column_policies: HashMap<&str, &ColumnPolicy> = relation_policy
         .into_iter()
         .flat_map(|entry| {
@@ -435,10 +434,13 @@ async fn inspect_relation_columns(
             graph,
             findings,
             &column_name,
-            relation.owner,
+            None,
+            relation_policy
+                .is_some_and(|entry| entry.allow_owner)
+                .then_some(relation.owner),
             &[&column.acl],
             &[relation_allowed, column_allowed],
-            allow_owner,
+            false,
             policy.roles.allow_superuser,
             public,
             column_object,
@@ -521,14 +523,16 @@ pub(super) async fn inspect_types(
         let allowed = configured.map_or(&[][..], |entry| entry.privileges.as_slice());
         let allow_owner = configured.is_some_and(|entry| entry.allow_owner)
             || relation_policy.is_some_and(|entry| entry.allow_owner);
-        inspect_acl_object(
+        let relation_backed = relation_policy.is_some();
+        inspect_acl_object_parts(
             evaluation,
             graph,
             findings,
             &public_object_name(&public_object),
-            type_object.owner,
-            &type_object.acl,
-            allowed,
+            (!relation_backed).then_some(type_object.owner),
+            (relation_backed && allow_owner).then_some(type_object.owner),
+            &[&type_object.acl],
+            &[allowed],
             allow_owner,
             policy.roles.allow_superuser,
             &public,

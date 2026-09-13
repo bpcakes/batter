@@ -307,7 +307,10 @@ impl<'a> RoleGraph<'a> {
                     if edge.inherit {
                         capability_queue.push_back(edge.role);
                     }
-                    if edge.admin && admin_targets.insert(edge.role) {
+                    if edge.admin
+                        && self.usable_admin_target(edge.role)
+                        && admin_targets.insert(edge.role)
+                    {
                         // The holder can grant this target back to the login
                         // with SET and INHERIT enabled.
                         active_queue.push_back(edge.role);
@@ -331,13 +334,23 @@ impl<'a> RoleGraph<'a> {
                     .flatten()
                 {
                     management_queue.push_back(edge.role);
-                    if edge.admin && admin_targets.insert(edge.role) {
+                    if edge.admin
+                        && self.usable_admin_target(edge.role)
+                        && admin_targets.insert(edge.role)
+                    {
                         active_queue.push_back(edge.role);
                     }
                 }
             }
         }
         (active, capabilities, admin_targets)
+    }
+
+    fn usable_admin_target(&self, oid: i64) -> bool {
+        // PostgreSQL reserves grants and revocations of membership in a
+        // superuser role to an already active superuser. An ADMIN-only edge
+        // cannot be used to grant that target back with SET or INHERIT.
+        self.role(oid).is_some_and(|role| !role.superuser)
     }
 
     fn role(&self, oid: i64) -> Option<&RoleInfo> {
