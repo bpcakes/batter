@@ -1,5 +1,224 @@
+use super::super::work::{Work, WorkMap, WorkSet};
 use super::*;
 use std::collections::HashSet;
+
+pub(super) trait ValidationWork: Copy + Work {}
+
+#[derive(Clone, Copy)]
+pub(super) struct UncountedWork;
+
+impl ValidationWork for UncountedWork {}
+
+impl Work for UncountedWork {
+    fn record(&self) {}
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(super) struct CountingWork<'a>(&'a std::sync::atomic::AtomicUsize);
+
+#[cfg(test)]
+impl<'a> CountingWork<'a> {
+    pub(super) fn new(operations: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self(operations)
+    }
+}
+
+#[cfg(test)]
+impl ValidationWork for CountingWork<'_> {}
+
+#[cfg(test)]
+impl Work for CountingWork<'_> {
+    fn record(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+enum DiscoveryIndex<'a, W> {
+    Declared,
+    Schemas(WorkSet<&'a str, W>),
+    UserSchemas,
+}
+
+fn index_discovery<W: ValidationWork>(policy: &AuthorityPolicy, work: W) -> DiscoveryIndex<'_, W> {
+    match &policy.discovery {
+        DiscoveryScope::Declared => DiscoveryIndex::Declared,
+        DiscoveryScope::Schemas(names) => {
+            let mut indexed = WorkSet::with_capacity(names.len(), work);
+            for name in names {
+                work.record();
+                indexed.insert(name.as_str());
+            }
+            DiscoveryIndex::Schemas(indexed)
+        }
+        DiscoveryScope::UserSchemas => DiscoveryIndex::UserSchemas,
+    }
+}
+
+struct PolicyIndex<'a, W> {
+    allow_superuser: bool,
+    defaults: &'a DiscoveryDefaults,
+    database: &'a DatabasePolicy,
+    relations: WorkMap<(&'a str, &'a str), &'a RelationPolicy, W>,
+    columns: WorkMap<(&'a str, &'a str, &'a str), &'a ColumnPolicy, W>,
+    sequences: WorkMap<(&'a str, &'a str), &'a SequencePolicy, W>,
+    schemas: WorkMap<&'a str, &'a SchemaPolicy, W>,
+    routines: WorkMap<&'a RoutineSignature, &'a RoutinePolicy, W>,
+    types: WorkMap<(&'a str, &'a str), &'a TypePolicy, W>,
+    parameters: WorkMap<&'a str, &'a ParameterPolicy, W>,
+    public_grants: WorkSet<&'a PublicObject, W>,
+    public: PublicDeclarations<'a>,
+    discovery: DiscoveryIndex<'a, W>,
+    work: W,
+}
+
+impl<'a, W: ValidationWork> PolicyIndex<'a, W> {
+    fn new(policy: &'a AuthorityPolicy, work: W) -> Result<Self, PolicyError> {
+        let mut relations = WorkMap::with_capacity(policy.relations.len(), work);
+        let mut columns = WorkMap::with_capacity(0, work);
+        for relation in &policy.relations {
+            work.record();
+            let relation_key = (relation.relation.schema(), relation.relation.name());
+            if relations.insert(relation_key, relation).is_some() {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+            for column in &relation.columns {
+                work.record();
+                let column_key = (
+                    relation.relation.schema(),
+                    relation.relation.name(),
+                    column.column.as_str(),
+                );
+                if columns.insert(column_key, column).is_some() {
+                    return Err(PolicyError::DuplicateAuthorityObject);
+                }
+            }
+        }
+
+        let mut sequences = WorkMap::with_capacity(policy.sequences.len(), work);
+        for sequence in &policy.sequences {
+            work.record();
+            if sequences
+                .insert(
+                    (sequence.sequence.schema(), sequence.sequence.name()),
+                    sequence,
+                )
+                .is_some()
+            {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+        }
+
+        let mut schemas = WorkMap::with_capacity(policy.schemas.len(), work);
+        for schema in &policy.schemas {
+            work.record();
+            if schemas.insert(schema.schema.as_str(), schema).is_some() {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+        }
+
+        let mut routines = WorkMap::with_capacity(policy.routines.len(), work);
+        for routine in &policy.routines {
+            work.record();
+            if routines.insert(&routine.routine, routine).is_some() {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+        }
+
+        let mut types = WorkMap::with_capacity(policy.types.len(), work);
+        for type_policy in &policy.types {
+            work.record();
+            if types
+                .insert(
+                    (type_policy.type_name.schema(), type_policy.type_name.name()),
+                    type_policy,
+                )
+                .is_some()
+            {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+        }
+
+        let mut parameters = WorkMap::with_capacity(policy.parameters.len(), work);
+        for parameter in &policy.parameters {
+            work.record();
+            if parameters
+                .insert(parameter.parameter.as_str(), parameter)
+                .is_some()
+            {
+                return Err(PolicyError::DuplicateAuthorityObject);
+            }
+        }
+
+        let mut public_grants = WorkSet::with_capacity(policy.public_grants.len(), work);
+        for grant in &policy.public_grants {
+            work.record();
+            public_grants.insert(&grant.object);
+        }
+        let discovery = index_discovery(policy, work);
+
+        Ok(Self {
+            allow_superuser: policy.roles.allow_superuser,
+            defaults: &policy.defaults,
+            database: &policy.database,
+            relations,
+            columns,
+            sequences,
+            schemas,
+            routines,
+            types,
+            parameters,
+            public_grants,
+            public: PublicDeclarations::new(policy),
+            discovery,
+            work,
+        })
+    }
+
+    fn discovery_includes(&self, schema: &str) -> bool {
+        match &self.discovery {
+            DiscoveryIndex::Declared => {
+                self.work.record();
+                false
+            }
+            DiscoveryIndex::Schemas(names) => names.contains(schema),
+            DiscoveryIndex::UserSchemas => {
+                self.work.record();
+                schema != "information_schema" && !schema.starts_with("pg_")
+            }
+        }
+    }
+
+    fn relation(&self, name: &QualifiedName) -> Option<&'a RelationPolicy> {
+        self.relations.get(&(name.schema(), name.name())).copied()
+    }
+
+    fn column(&self, name: &QualifiedName, column: &Identifier) -> Option<&'a ColumnPolicy> {
+        self.columns
+            .get(&(name.schema(), name.name(), column.as_str()))
+            .copied()
+    }
+
+    fn sequence(&self, name: &QualifiedName) -> Option<&'a SequencePolicy> {
+        self.sequences.get(&(name.schema(), name.name())).copied()
+    }
+
+    fn schema(&self, name: &Identifier) -> Option<&'a SchemaPolicy> {
+        self.schemas.get(name.as_str()).copied()
+    }
+
+    fn routine(&self, name: &RoutineSignature) -> Option<&'a RoutinePolicy> {
+        self.routines.get(name).copied()
+    }
+
+    fn type_policy(&self, name: &QualifiedName) -> Option<&'a TypePolicy> {
+        self.types.get(&(name.schema(), name.name())).copied()
+    }
+
+    fn parameter(&self, name: &ParameterName) -> Option<&'a ParameterPolicy> {
+        self.parameters.get(name.as_str()).copied()
+    }
+}
 
 /// Objects to discover in addition to explicitly declared policy targets.
 /// Discovery is bounded by the verifier's catalog capacity and uses its snapshot.
@@ -99,26 +318,24 @@ impl DiscoveryScope {
     }
 }
 
-pub(super) fn validate_authority(policy: &AuthorityPolicy) -> Result<(), PolicyError> {
+pub(super) fn validate_authority<W: ValidationWork>(
+    policy: &AuthorityPolicy,
+    work: W,
+) -> Result<(), PolicyError> {
+    let index = PolicyIndex::new(policy, work)?;
     let mut overrides = HashSet::new();
     for entry in &policy.public_overrides {
-        if !overrides.insert(&entry.object)
-            || policy
-                .public_grants
-                .iter()
-                .any(|grant| grant.object == entry.object)
-        {
+        if !overrides.insert(&entry.object) || index.public_grants.contains(&entry.object) {
             return Err(PolicyError::DuplicateAuthorityObject);
         }
     }
-    let public = PublicDeclarations::new(policy);
     let mut seen = HashSet::new();
     for required in &policy.required_privileges {
         if !seen.insert((&required.object, required.privilege)) {
             return Err(PolicyError::DuplicateRequiredPrivilege);
         }
         if !valid_privilege(&required.object, required.privilege)
-            || !requirement_allowed(policy, required, &public)
+            || !requirement_allowed(&index, required)
         {
             return Err(PolicyError::ContradictoryRequiredPrivilege);
         }
@@ -130,18 +347,17 @@ fn contains(allowed: &[AllowedPrivilege], privilege: ObjectPrivilege) -> bool {
     allowed.iter().any(|entry| entry.privilege == privilege)
 }
 
-fn requirement_allowed(
-    policy: &AuthorityPolicy,
+fn requirement_allowed<W: ValidationWork>(
+    index: &PolicyIndex<'_, W>,
     required: &RequiredPrivilege,
-    public: &PublicDeclarations<'_>,
 ) -> bool {
-    if policy.roles.allow_superuser
-        || public_requirement_allowed(policy, public, &required.object, required.privilege)
+    if index.allow_superuser
+        || public_requirement_allowed(index, &required.object, required.privilege)
     {
         return true;
     }
     let mut choices: Vec<(&[AllowedPrivilege], bool)> = Vec::new();
-    let defaults = collect_allowances(policy, &required.object, &mut choices);
+    let defaults = collect_allowances(index, &required.object, &mut choices);
     if let Some(defaults) = defaults {
         choices.push((&defaults.privileges, defaults.allow_owner));
     }
@@ -150,135 +366,113 @@ fn requirement_allowed(
         .any(|(privileges, owner)| *owner || contains(privileges, required.privilege))
 }
 
-fn public_requirement_allowed(
-    policy: &AuthorityPolicy,
-    public: &PublicDeclarations<'_>,
+fn public_requirement_allowed<W: ValidationWork>(
+    index: &PolicyIndex<'_, W>,
     object: &PublicObject,
     privilege: ObjectPrivilege,
 ) -> bool {
     if let PublicObject::Column(relation, _) = object
-        && public_requirement_allowed(
-            policy,
-            public,
-            &PublicObject::Relation(relation.clone()),
-            privilege,
-        )
+        && public_requirement_allowed(index, &PublicObject::Relation(relation.clone()), privilege)
     {
         return true;
     }
-    if public.allows_exact(object, privilege) {
+    if index.public.allows_exact(object, privilege) {
         return true;
     }
-    if !public.defaults_apply(object) {
+    if !index.public.defaults_apply(object) {
         return false;
     }
     let (schema, defaults) = match object {
-        PublicObject::Relation(name) => (name.schema(), &policy.defaults.relations),
-        PublicObject::Column(name, _) => (name.schema(), &policy.defaults.columns),
-        PublicObject::Sequence(name) => (name.schema(), &policy.defaults.sequences),
-        PublicObject::Schema(name) => (name.as_str(), &policy.defaults.schemas),
-        PublicObject::Type(name) => (name.schema(), &policy.defaults.types),
+        PublicObject::Relation(name) => (name.schema(), &index.defaults.relations),
+        PublicObject::Column(name, _) => (name.schema(), &index.defaults.columns),
+        PublicObject::Sequence(name) => (name.schema(), &index.defaults.sequences),
+        PublicObject::Schema(name) => (name.as_str(), &index.defaults.schemas),
+        PublicObject::Type(name) => (name.schema(), &index.defaults.types),
         PublicObject::Routine(name) => {
-            if policy.discovery.includes(name.schema())
+            if index.discovery_includes(name.schema())
                 && contains(
-                    &policy.defaults.definer_routines.public_privileges,
+                    &index.defaults.definer_routines.public_privileges,
                     privilege,
                 )
             {
                 return true;
             }
-            (name.schema(), &policy.defaults.invoker_routines)
+            (name.schema(), &index.defaults.invoker_routines)
         }
         PublicObject::Parameter(_) | PublicObject::Database => return false,
     };
-    policy.discovery.includes(schema) && contains(&defaults.public_privileges, privilege)
+    index.discovery_includes(schema) && contains(&defaults.public_privileges, privilege)
 }
 
-fn collect_allowances<'a>(
-    policy: &'a AuthorityPolicy,
+fn collect_allowances<'a, W: ValidationWork>(
+    index: &'a PolicyIndex<'a, W>,
     object: &PublicObject,
     choices: &mut Vec<(&'a [AllowedPrivilege], bool)>,
 ) -> Option<&'a ObjectDefaults> {
     let mut defaults = None;
     match object {
         PublicObject::Relation(name) => {
-            if let Some(entry) = policy
-                .relations
-                .iter()
-                .find(|entry| entry.relation == *name)
-            {
+            if let Some(entry) = index.relation(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-            } else if policy.discovery.includes(name.schema()) {
-                defaults = Some(&policy.defaults.relations);
+            } else if index.discovery_includes(name.schema()) {
+                defaults = Some(&index.defaults.relations);
             }
         }
         PublicObject::Column(name, column) => {
-            if let Some(entry) = policy
-                .relations
-                .iter()
-                .find(|entry| entry.relation == *name)
-            {
+            if let Some(entry) = index.relation(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-                if let Some(column) = entry.columns.iter().find(|entry| entry.column == *column) {
+                if let Some(column) = index.column(name, column) {
                     choices.push((&column.privileges, false));
                 }
-            } else if policy.discovery.includes(name.schema()) {
+            } else if index.discovery_includes(name.schema()) {
                 choices.push((
-                    &policy.defaults.relations.privileges,
-                    policy.defaults.relations.allow_owner,
+                    &index.defaults.relations.privileges,
+                    index.defaults.relations.allow_owner,
                 ));
-                defaults = Some(&policy.defaults.columns);
+                defaults = Some(&index.defaults.columns);
             }
         }
         PublicObject::Sequence(name) => {
-            if let Some(entry) = policy
-                .sequences
-                .iter()
-                .find(|entry| entry.sequence == *name)
-            {
+            if let Some(entry) = index.sequence(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-            } else if policy.discovery.includes(name.schema()) {
-                defaults = Some(&policy.defaults.sequences);
+            } else if index.discovery_includes(name.schema()) {
+                defaults = Some(&index.defaults.sequences);
             }
         }
         PublicObject::Schema(name) => {
-            if let Some(entry) = policy.schemas.iter().find(|entry| entry.schema == *name) {
+            if let Some(entry) = index.schema(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-            } else if policy.discovery.includes(name.as_str()) {
-                defaults = Some(&policy.defaults.schemas);
+            } else if index.discovery_includes(name.as_str()) {
+                defaults = Some(&index.defaults.schemas);
             }
         }
         PublicObject::Type(name) => {
-            if let Some(entry) = policy.types.iter().find(|entry| entry.type_name == *name) {
+            if let Some(entry) = index.type_policy(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-            } else if policy.discovery.includes(name.schema()) {
-                defaults = Some(&policy.defaults.types);
+            } else if index.discovery_includes(name.schema()) {
+                defaults = Some(&index.defaults.types);
             }
         }
         PublicObject::Routine(name) => {
-            if let Some(entry) = policy.routines.iter().find(|entry| entry.routine == *name) {
+            if let Some(entry) = index.routine(name) {
                 choices.push((&entry.privileges, entry.allow_owner));
-            } else if policy.discovery.includes(name.schema()) {
+            } else if index.discovery_includes(name.schema()) {
                 // The catalog determines which routine default applies; any
                 // forbidden observed authority is still reported during inspection.
                 choices.push((
-                    &policy.defaults.definer_routines.privileges,
-                    policy.defaults.definer_routines.allow_owner,
+                    &index.defaults.definer_routines.privileges,
+                    index.defaults.definer_routines.allow_owner,
                 ));
-                defaults = Some(&policy.defaults.invoker_routines);
+                defaults = Some(&index.defaults.invoker_routines);
             }
         }
         PublicObject::Parameter(name) => {
-            if let Some(entry) = policy
-                .parameters
-                .iter()
-                .find(|entry| entry.parameter == *name)
-            {
+            if let Some(entry) = index.parameter(name) {
                 choices.push((&entry.privileges, false));
             }
         }
         PublicObject::Database => {
-            choices.push((&policy.database.privileges, policy.database.allow_owner))
+            choices.push((&index.database.privileges, index.database.allow_owner))
         }
     }
     defaults

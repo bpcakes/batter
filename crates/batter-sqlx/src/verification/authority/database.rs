@@ -1,4 +1,5 @@
 mod parameters;
+pub(in crate::verification::authority) use parameters::ParameterCatalog;
 use parameters::{load_parameters, settings_visible};
 
 use super::super::PgTransaction;

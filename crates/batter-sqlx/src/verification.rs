@@ -9,6 +9,7 @@ mod authority;
 mod migration;
 mod policy;
 mod report;
+mod work;
 
 pub use policy::{
     AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, ColumnPolicy, DatabasePolicy,

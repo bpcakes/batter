@@ -5,7 +5,7 @@ use super::super::policy::{
     RoutineType,
 };
 use super::super::report::{Finding, FindingKind, VerificationError};
-use super::{AclEntry, CatalogSnapshot, RoleGraph, RoutineObject, TypeName};
+use super::{AclEntry, CatalogSnapshot, ParameterIndex, RoleGraph, RoutineObject, TypeName};
 pub(super) use public::PublicPolicy;
 use std::collections::HashMap;
 
@@ -363,7 +363,11 @@ pub(super) fn routine_signature_from_catalog(
     RoutineSignature::new(routine.schema.clone(), routine.name.clone(), arguments)
 }
 
-pub(super) fn public_object_exists(snapshot: &CatalogSnapshot, object: &PublicObject) -> bool {
+pub(super) fn public_object_exists(
+    snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
+    object: &PublicObject,
+) -> bool {
     match object {
         PublicObject::Relation(name) => snapshot.relations.iter().any(|candidate| {
             candidate.kind != "S" && name.matches(&candidate.schema, &candidate.name)
@@ -391,10 +395,9 @@ pub(super) fn public_object_exists(snapshot: &CatalogSnapshot, object: &PublicOb
             .types
             .iter()
             .any(|candidate| name.matches(&candidate.schema, &candidate.name)),
-        PublicObject::Parameter(name) => snapshot
-            .parameters
-            .iter()
-            .any(|candidate| candidate.name == name.as_str() && candidate.exists),
+        PublicObject::Parameter(name) => parameters
+            .get(name.as_str())
+            .is_some_and(|candidate| candidate.exists),
         PublicObject::Database => true,
     }
 }

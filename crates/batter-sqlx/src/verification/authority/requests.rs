@@ -6,7 +6,8 @@ use super::super::report::{Finding, FindingKind, RoleAttribute, VerificationErro
 use super::evaluation::Evaluation;
 use super::privileges::*;
 use super::{
-    CatalogSnapshot, PREDEFINED_ROLES, ParameterObject, RelationObject, RoleGraph, RoleInfo,
+    CatalogSnapshot, PREDEFINED_ROLES, ParameterIndex, ParameterObject, RelationObject, RoleGraph,
+    RoleInfo,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -96,6 +97,7 @@ pub(super) async fn inspect_admin_options(
 pub(super) async fn inspect_requested_objects(
     evaluation: &mut Evaluation,
     snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
     policy: &AuthorityPolicy,
     findings: &mut Vec<Finding>,
 ) -> Result<(), VerificationError> {
@@ -142,12 +144,21 @@ pub(super) async fn inspect_requested_objects(
             push_missing(findings, &mut missing, sequence.sequence.quoted());
         }
     }
-    inspect_other_requested(evaluation, snapshot, policy, findings, &mut missing).await
+    inspect_other_requested(
+        evaluation,
+        snapshot,
+        parameters,
+        policy,
+        findings,
+        &mut missing,
+    )
+    .await
 }
 
 async fn inspect_other_requested(
     evaluation: &mut Evaluation,
     snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
     policy: &AuthorityPolicy,
     findings: &mut Vec<Finding>,
     missing: &mut HashSet<String>,
@@ -201,11 +212,11 @@ async fn inspect_other_requested(
         .chain(policy.public_overrides.iter().map(|entry| &entry.object))
     {
         evaluation.checkpoint(findings).await?;
-        if matches!(object, PublicObject::Parameter(name) if snapshot.parameters.iter().any(|parameter| parameter.name == name.as_str() && !parameter.observable))
+        if matches!(object, PublicObject::Parameter(name) if parameters.get(name.as_str()).is_some_and(|parameter| !parameter.observable))
         {
             continue;
         }
-        if !public_object_exists(snapshot, object) {
+        if !public_object_exists(snapshot, parameters, object) {
             push_missing(findings, missing, public_object_name(object));
         }
     }
@@ -594,6 +605,7 @@ pub(super) async fn inspect_routines(
 pub(super) async fn inspect_parameters(
     evaluation: &mut Evaluation,
     snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
     graph: &RoleGraph<'_>,
     policy: &AuthorityPolicy,
     allow_superuser: bool,
@@ -629,7 +641,7 @@ pub(super) async fn inspect_parameters(
             _ => None,
         })
         .collect();
-    for parameter in &snapshot.parameters {
+    for parameter in snapshot.parameters.iter() {
         evaluation.checkpoint(findings).await?;
         // An unknown custom name is conservative potential authority, not
         // proof of a currently assignable parameter. Reserved prefixes and
@@ -661,10 +673,12 @@ pub(super) async fn inspect_parameters(
     }
     for parameter in &policy.parameters {
         evaluation.checkpoint(findings).await?;
-        if !snapshot.parameters.iter().any(|candidate| {
-            candidate.name == parameter.parameter.as_str()
-                && (candidate.exists || !candidate.observable)
-        }) {
+        // Hidden metadata cannot prove absence, so only an observable known-
+        // absent entry is a missing object.
+        if !parameters
+            .get(parameter.parameter.as_str())
+            .is_some_and(|parameter| parameter.exists || !parameter.observable)
+        {
             findings.push(Finding::new(
                 FindingKind::MissingObject,
                 Some(parameter.parameter.as_str().to_owned()),

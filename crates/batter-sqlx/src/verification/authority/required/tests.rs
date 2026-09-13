@@ -1,3 +1,4 @@
+use super::super::database::ParameterCatalog;
 use super::super::{DatabaseObject, Membership, RelationObject, RoleInfo};
 use super::*;
 use crate::verification::policy::QualifiedName;
@@ -68,7 +69,7 @@ pub(crate) fn snapshot() -> CatalogSnapshot {
             owner: 99,
             acl: Vec::new(),
         },
-        parameters: Vec::new(),
+        parameters: ParameterCatalog::default(),
     }
 }
 
@@ -80,6 +81,7 @@ fn required_privilege_uses_effective_current_role_inheritance_without_set_or_adm
         privilege: ObjectPrivilege::Select,
     };
     let inherited = inherited_roles(&snapshot, 2);
+    let parameters = super::super::index_parameters(&snapshot.parameters);
     assert_eq!(inherited, HashSet::from([2, 3]));
     for grantee in [0, 2, 3, 1, 4, 5] {
         snapshot.relations[0].acl = vec![AclEntry {
@@ -88,14 +90,14 @@ fn required_privilege_uses_effective_current_role_inheritance_without_set_or_adm
             grant_option: false,
         }];
         assert_eq!(
-            has_privilege(&snapshot, &inherited, false, &required),
+            has_privilege(&snapshot, &parameters, &inherited, false, &required),
             [0, 2, 3].contains(&grantee),
             "grantee {grantee}"
         );
     }
     snapshot.relations[0].acl.clear();
     assert!(
-        !has_privilege(&snapshot, &inherited, false, &required),
+        !has_privilege(&snapshot, &parameters, &inherited, false, &required),
         "ownership must not restore a revoked ordinary privilege"
     );
     let policy = AuthorityPolicy {
@@ -106,6 +108,7 @@ fn required_privilege_uses_effective_current_role_inheritance_without_set_or_adm
     crate::verification::authority::evaluation::tests::run(inspect(
         &mut crate::verification::authority::evaluation::Evaluation::new(),
         &snapshot,
+        &parameters,
         &policy,
         &mut findings,
     ))
@@ -134,7 +137,7 @@ fn unknown_custom_context_cannot_prove_required_authority_even_with_an_acl() {
         ..AuthorityPolicy::default()
     };
     for explicit_acl in [false, true] {
-        snapshot.parameters = vec![ParameterObject {
+        snapshot.parameters = ParameterCatalog::try_from_objects(vec![ParameterObject {
             name: "extension.hidden_setting".to_owned(),
             context: None,
             observable: true,
@@ -149,17 +152,20 @@ fn unknown_custom_context_cannot_prove_required_authority_even_with_an_acl() {
             } else {
                 Vec::new()
             },
-        }];
+        }])
+        .unwrap();
         let graph = RoleGraph::new(
             &snapshot.roles,
             &snapshot.memberships,
             snapshot.root,
             snapshot.database.owner,
         );
+        let parameters = super::super::index_parameters(&snapshot.parameters);
         let mut findings = Vec::new();
         crate::verification::authority::evaluation::tests::run(requests::inspect_parameters(
             &mut crate::verification::authority::evaluation::Evaluation::new(),
             &snapshot,
+            &parameters,
             &graph,
             &policy,
             false,
@@ -169,6 +175,7 @@ fn unknown_custom_context_cannot_prove_required_authority_even_with_an_acl() {
         crate::verification::authority::evaluation::tests::run(inspect(
             &mut crate::verification::authority::evaluation::Evaluation::new(),
             &snapshot,
+            &parameters,
             &policy,
             &mut findings,
         ))

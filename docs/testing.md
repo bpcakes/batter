@@ -139,13 +139,43 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying its
 administrative connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the exact eleven-case
-disposition target, fourteen-case pool-ownership target and twenty-seven-case restricted-
+disposition target, fourteen-case pool-ownership target and twenty-eight-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
 has_type_privilege and retain exact alias policies. The notice control runs all
 three verifier entrypoints and requires their expected idle reset warning. Pure
 production-snapshot tests cover cooperative cancellation/deadline, combined
-role/object scale, and explicit work/report/policy limits.
+role/object scale, near-capacity parameter assembly and missing-object lookup
+with counted catalog visits and name lookups, the checked captured-parameter uniqueness boundary,
+and explicit work/report/policy limits. A full `AuthorityPolicy::validate` path at
+the 10,000-entry aggregate limit covers relation, nested-column, sequence, schema,
+routine, type, parameter and database allowances with an explicit logical-work
+counter independent of `HashMap` internals. Every keyed kind has hundreds of
+distinct required lookups, including two independently necessary columns per
+relation; singleton success cannot stand in for scale coverage. The fixture also
+rejects one-entry overflow and a late column denial. The parameter scale oracle also
+retains hidden, custom-placeholder, absent-object and late ACL/grant-option
+verdicts without using elapsed wall time or standard-library hashing counts.
+Its observer follows the private catalog into the full production evaluator;
+each traversal visit and index lookup counts, so repeated builds and per-item
+scans remain visible. Catalog assembly counts each deduplication decision and
+catalog visit through the same observer. The observer is inert outside tests.
+Two additional full-evaluator fixtures each capture 10,000 parameters and fill
+the policy budget. One exercises 3,000 required parameters (including ordinary
+current-role/inherited ACL checks); the other exercises 4,000 PUBLIC grants and
+3,001 overrides. They retain known-absent versus uncaptured identities, hidden
+metadata, custom requirements, denied required privileges, PUBLIC denial and
+grant-option findings. All five indexed parameter caller sites have independent
+scan-mutation evidence. The original 29,993-operation declared-parameter
+regression is retained unchanged.
+Private work-counted map/set boundaries also measure traversal in scan-mutation
+controls; production callers cannot obtain a raw collection iterator. The policy
+tests additionally fill the aggregate limit with PUBLIC grants, overrides,
+explicit discovery schemas and required privileges. They check late conflicts,
+unselected schemas and the `UserSchemas` exclusion of system schemas. A separate
+collection control forces growth and distinguishes one lookup from visiting
+every entry. These counters cover the named indexing paths, not every operation
+in policy validation or native hash-table implementation work.
 Python controls reject missing, skipped,
 duplicated, summary-only, or newly unlisted cases. It requires up to six simultaneous
 server sessions, visibility of its own `pg_stat_activity` rows, advisory locks

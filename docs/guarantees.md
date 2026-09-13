@@ -758,7 +758,33 @@ raw empty, written and aborted transaction recovery remains mandatory.
 Migration rows and checksum bytes are capped before client materialization.
 Catalog queries, including ACL expansion, reject a 10,001st row instead of
 returning a partial report; parameter names have a 1,024-byte capacity and
-case-normalized comparison keys. Declared absent custom placeholders retain
+case-normalized comparison keys. Parameter catalog assembly indexes names across
+ACL, visible-settings and selected-name sources; declared missing-object checks
+index known or hidden captured names once. Captured parameter objects can enter
+evaluation only through the private catalog boundary, which retains at most one
+object for each normalized name; tests reject a conflicting duplicate fixture.
+Authority-policy validation builds one checked declaration index for relations,
+columns, sequences, schemas, routines, types and parameters, plus indexed schema
+discovery and PUBLIC declarations. Duplicate validation and required-allowance
+resolution share that index; the database allowance remains a singleton field.
+The all-kind scale regression uses hundreds of distinct required lookups per
+keyed kind, with separately required nested columns, and rejects counted scan
+mutations of each index. It also checks the exact input-capacity boundary.
+The number of logical index visits is therefore linear in the bounded policy and
+catalog inventories, while hashing still examines the bounded name bytes.
+Parameter scale regressions count catalog traversal and name decisions at private
+production boundaries, including repeated traversal or index construction. They
+do not prescribe standard-library hashing, allocation or rehash schedules.
+Separate full-evaluator scale fixtures exercise ordinary required authority,
+PUBLIC observability/existence and declared existence lookups. Each has an exact
+policy-capacity control and retains explicit missing, denied and incomplete
+verdicts; independently restored caller scans fail their work assertions.
+Policy and captured-parameter lookup callers now use private collection wrappers
+that expose indexed operations in production. Their test-only traversal records
+each visited entry, so replacing a caller's lookup with a map/set scan is visible
+to the oracle. PUBLIC override conflicts and schema-discovery membership have
+separate scale controls, including late conflicts and out-of-scope requirements.
+Declared absent custom placeholders retain
 implicit SET authority; loaded extension parameters retain visible context.
 An unobservable requested parameter produces `ParameterUnobservable` and
 `Incomplete`, retaining other findings. Hidden metadata cannot become a fabricated

@@ -2,6 +2,340 @@
 
 Latest evidence: 2026-09-13. Earlier sections retain their historical scope.
 
+## Parameter caller scale coverage (batter-akt continuation), 2026-09-13
+
+The user authorized staging all files and a third repair attempt for the
+remaining verified low-severity gap. The prior terminal Claude/Codex review was
+reused after a complete matching fingerprint check, before the authorized
+staging operation. This continuation retains the earlier finding and cumulative
+attempt history; staging is not an evidence-transport workaround.
+
+The existing parameter fixture exercises declared lookups and one custom
+requirement, but no PUBLIC target or ordinary required-authority lookup. The
+prior independent reviewer separately restored a counted catalog scan in
+`required::has_privilege` and `public_object_exists`; both mutations passed all
+63 tests and the unchanged 29,993-operation assertion. The shared counter is
+working; missing caller workloads made that oracle incomplete. No production
+lookup or verdict change is necessary for this repair.
+
+Two added full-evaluator fixtures each capture 10,000 parameter objects and fill
+the 10,000-entry aggregate policy budget. The required fixture has 3,000
+requirements, matching SET allowances and 1,000 additional empty declarations.
+It records 29,998 operations: 20,000 catalog visits, 4,000 declared probes,
+3,000 classification probes and 2,998 ordinary authority lookups. Exact findings
+distinguish known-absent, uncaptured, hidden and custom parameters and a late
+denied privilege; current-role and inherited ACL successes create no findings.
+The PUBLIC fixture has 4,000 grants, 3,001 overrides and 2,999 allowance entries.
+It records 34,000 operations: 20,000 catalog visits, 7,001 observability probes
+and 6,999 existence lookups. It preserves missing identities and hidden metadata
+under both PUBLIC forms, plus an explicit deny and retained grant options. Both
+fixtures assert complete expected findings and incomplete report status, and
+reject one extra policy entry with `AuthorityCapacity`.
+
+Each temporary mutation replaces just one caller's indexed lookup with the
+existing counted catalog iterator and `find`; unused argument names are adjusted
+only where necessary. All five compile without warnings and fail the intended
+work assertion (exit 101), with no changed counter or expected count:
+
+| Mutated caller | Observed work / expected bound |
+| --- | --- |
+| Required observability/custom classification | 25,528,500 / 29,998 |
+| Required privilege authority | 25,514,497 / 29,998 |
+| PUBLIC observability classification | 24,546,505 / 34,000 |
+| PUBLIC existence | 24,535,511 / 34,000 |
+| Declared existence | 26,028,000 / 29,998 |
+
+Each command used `cargo test -p batter-sqlx --features test-support --lib
+--locked --target-dir /tmp/batter-review-loop.EFps7u/target` with either
+`near_capacity_required_parameter_callers_remain_indexed` or
+`near_capacity_public_parameter_callers_remain_indexed`. A positive control
+forced both wrapped map/set types to initial capacity zero; all 65 library tests
+passed, including unchanged earlier scale regressions. Temporary mutations were
+restored; no included source-content differences remain in the validation copy.
+
+Both `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` pass, including all 65 SQLx
+library tests, runtime/doctest matrices, formatting, strict Clippy and rustdoc.
+Each run sets `CARGO_TARGET_DIR=/tmp/batter-review-loop.EFps7u/target` and
+`PYTHONDONTWRITEBYTECODE=1`. Each toolchain rebuilt
+`cargo build -p batter-axum --example http_service --locked`, followed by all
+five `python3 scripts/smoke_http.py --binary
+/tmp/batter-review-loop.EFps7u/target/debug/examples/http_service` modes:
+default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and
+`--warn-filter --deadline`. All ten pass; the minimum-toolchain build and runner
+inherit `RUSTUP_TOOLCHAIN=1.94.0`. Platform, versions and unchanged Cargo.lock
+digest match the earlier entries. No new live PostgreSQL, macOS or hosted-CI
+execution is claimed. Independent review remains separate from these execution
+results. Artifacts and exact mutation patches are
+in the temporary directory `/tmp/batter-param-gap.c3EGdC`. The same `.agent`
+review exclusion and isolated-copy Jig boundary described below remain active.
+
+The matching isolated copy passes all five required Jig targets for
+`plan_01M2DYMHAMS96Q1BH3C9JNN07K`, including `api:test` receipt
+`receipt_01M2DYSR68QXCE13D7DJC26YWC`. `work evidence` and `work gates` readback
+with `--freshness-timeout-ms 30000` reports fresh passes. Commands use the same
+external target and bytecode environment, and the main checkout's already
+installed pinned binary through `JIG_DEV_BIN`, as in the earlier copy recipe.
+Documentation/tracker closeout refreshes the repository policy targets while
+reusing unchanged Rust receipts. These are isolated-copy receipts; no main
+`.agent` receipt was written. All working files are staged at user request before
+the independent review of the repaired snapshot.
+
+## All-kind scale-fixture review repair, 2026-09-13
+
+The second independent Claude/Codex pass found a remaining scale-oracle gap:
+the policy fixture had thousands of parameters but singleton inventories for
+most other kinds. In an independent temporary copy, a counted sequence-map scan
+still passed all 63 library tests and the 8,001-work assertion. This reopened the
+same bounded-work oracle finding; its repair history was not reset. The first
+repair's traversal accounting remains necessary, but the fixture also needs
+nontrivial inventory cardinalities to distinguish a lookup from a scan.
+
+Repair round 2 uses 400 relation, sequence, schema, routine, type and required
+parameter declarations, plus 800 columns (two repeated names per relation) and
+398 unused parameters. Their declarations, allowances and requirements plus
+two database entries fill the exact 10,000-entry aggregate budget. The production
+validation path counts 3,598 indexed declarations and 8,000 lookup/discovery
+decisions, for 11,598 operations. A one-entry overflow must fail with
+`AuthorityCapacity`; removing the last column's SELECT allowance must fail with
+`ContradictoryRequiredPrivilege`. Relation DELETE cannot satisfy column SELECT,
+so column allowances are independently necessary.
+
+Each of seven isolated-copy mutations replaces only the named `PolicyIndex`
+lookup with its counted collection iterator and `find_map`. All compile and
+fail the intended 11,598-work assertion (exit 101), without changing verdicts,
+instrumentation or expected counts. The command is
+`cargo test -p batter-sqlx --features test-support --lib --locked --target-dir
+/tmp/batter-review-loop.EFps7u/target
+near_capacity_validation_indexes_every_declared_object_kind_once`.
+
+| Scanned index | Observed work |
+| --- | --- |
+| Relation | 250,998 |
+| Column | 331,198 |
+| Sequence, schema, routine, type (four separate mutations) | 91,398 each |
+| Parameter | 167,226 |
+
+The parameter scan total depends on hash iteration order; only the bounded
+unmutated count is asserted. A positive control forces both wrapped collection
+types to initial capacity zero; all 63 library tests still pass. All mutations
+were removed. Logs use the `round-2-` prefix under the temporary artifact
+directory below. The first full matrix reached Clippy and rejected the fixture
+builder for exceeding the 100-line function limit. The single within-round
+correction extracts one eight-object group into a helper without changing its
+inputs or assertions. The corrected implementation passes both complete
+`bash scripts/verify.sh` matrices (default Rust 1.98.1 and
+`RUSTUP_TOOLCHAIN=1.94.0`), including 63 SQLx library tests, formatting, strict
+Clippy, runtime/doctest targets and rustdoc. Both HTTP binaries were rebuilt and
+all five smoke modes rerun on each toolchain; all ten pass. Commands, external
+Cargo target, bytecode setting, binary path and platform/toolchain limits are
+the same as the round-1 entry below; logs use the `round-2-` prefix. This is
+execution evidence, not a claim that the repaired snapshot has completed review.
+
+The matching isolated copy passes all five required Jig targets for
+`plan_01M2DX5QY920AE436N45XE9K3F`, including `api:test` receipt
+`receipt_01M2DXBW1EA1FHMTV93HB7NKDC`. The `work check`, `work evidence` and
+`work gates` commands and environment follow the round-1 recipe below, with
+this new plan ID. Evidence/gates readback reports fresh passes. Documentation
+and tracker closeout refreshes the two inexpensive repository policy targets
+while reusing the unchanged Rust receipts. Checksum-based copy comparison and
+index comparison preserve the validation/input and staging boundaries; no
+main-checkout `.agent` receipt was written.
+
+## Policy scale-oracle review repair, 2026-09-13
+
+An independent comprehensive working-tree review (Claude and Codex, inclusive
+low threshold) identified two test-oracle defects. A scan inside a policy lookup
+still counted as one invocation; separately, PUBLIC conflict probes were not
+counted and the scale fixture omitted explicit schema discovery and PUBLIC
+declarations. No production verdict regression was identified.
+
+Repair round 1 places policy and captured-parameter indexes behind private
+work-counted map/set boundaries. Production callers receive indexed operations;
+test-only traversal records each candidate. Raw hashing, growth and rehashing
+remain uncounted. The shared boundary also covers captured-parameter lookup and
+catalog deduplication callers with the same exposure. This prevents a caller's
+map/set scan from being mistaken for a single indexed lookup; it is not a claim
+that instrumentation cannot itself be changed or that every validation operation
+is measured. Existing catalog scans and repeated builds remain observable.
+
+A new exact-10,000-entry policy fixture includes 2,000 PUBLIC grants, 2,000 empty
+overrides, 2,000 schema names and 3,999 requirements plus one default privilege.
+It checks 17,994 named indexing decisions, a late PUBLIC conflict and an
+out-of-scope requirement. A `UserSchemas` variant checks 15,994 decisions and
+system-schema rejection. The existing declaration oracle remains at 8,001.
+The focused SQLx library target passes all 63 tests on Rust 1.98.1 using
+`cargo test -p batter-sqlx --features test-support --lib --locked --target-dir
+/tmp/batter-review-loop.EFps7u/target`. Temporary mutations in the isolated copy
+replaced indexed calls with the collections' test traversal. Each command used
+that same Cargo prefix and the named test filter below; all failed at the
+intended work assertion (exit 101), rather than at compilation or a verdict check.
+
+| Mutation | Test filter | Observed work / expected bound |
+| --- | --- | --- |
+| `PolicyIndex::parameter` scans its map | `near_capacity_validation_indexes_every_declared_object_kind_once` | 5,997,096 / 8,001 |
+| PUBLIC conflict check scans its set | `near_capacity_validation_counts_public_conflicts_and_schema_discovery` | 4,015,994 / 17,994 |
+| Explicit schema membership scans its set | Same PUBLIC/schema filter | 8,008,814 / 17,994 |
+| Captured-parameter lookup scans its map | `near_capacity_parameter_inventory_indexes_missing_checks_linearly` | 50,006,351 / 29,993 |
+
+The observed scan totals depend on iteration order and are not fixed test
+expectations. A positive control forced both wrapped map/set types to initial
+capacity zero; all 63 tests passed with unchanged work assertions. All mutations
+were removed, and a checksum-based dry-run copy comparison found no differences
+between the included working files and validation copy before broader checks.
+
+On Linux x86_64, `bash scripts/verify.sh` and
+`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` both pass, including all 63 SQLx
+library tests, the full runtime/doctest matrices, formatting, strict Clippy and
+rustdoc. Both runs set `CARGO_TARGET_DIR=/tmp/batter-review-loop.EFps7u/target`
+and `PYTHONDONTWRITEBYTECODE=1`. Each toolchain then rebuilt
+`cargo build -p batter-axum --example http_service --locked`; all five
+`python3 scripts/smoke_http.py --binary
+/tmp/batter-review-loop.EFps7u/target/debug/examples/http_service` modes passed:
+default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and
+`--warn-filter --deadline`. The minimum-toolchain build and runner inherited
+`RUSTUP_TOOLCHAIN=1.94.0`. The toolchain versions and unchanged Cargo.lock digest
+are identical to the `batter-akt` entry below. Independent review results are
+separate from this execution evidence.
+
+Review/validation artifacts are outside the repository at
+`/tmp/batter-review-loop.EFps7u`. The trusted `.reviewignore` excludes `.agent`;
+the review-fix skill forbids writing excluded paths even through validation.
+Jig checks therefore run in an isolated copy with matching application/check
+inputs. In `/tmp/batter-review-loop.EFps7u/validation`, the default-toolchain
+`scripts/jig work check --plan-id plan_01M2DVTNZVE393J49HAJWNZ7FG --json` passes
+all five required targets, including `api:test` receipt
+`receipt_01M2DWCM8A3B1WJ01N8V78T0AQ`. `work evidence` and `work gates` readback
+with the same plan and `--freshness-timeout-ms 30000` reports fresh passes.
+These commands retain the external Cargo target and bytecode environment above
+and set `JIG_DEV_BIN` to the main checkout's already installed pinned Jig binary.
+Documentation closeout refreshes only the inexpensive repository policy checks;
+the unchanged Rust receipts are reused. These are isolated-copy receipts, not
+refreshed main-checkout receipts. The index and main-checkout
+`.agent` state are preserved. Earlier sections, including the 58/60-test and
+hasher-count evidence, describe historical source states superseded by the
+later entries. No new live PostgreSQL, macOS or hosted-CI evidence is claimed.
+
+## Parameter logical-work oracles (batter-akt), 2026-09-13
+
+The two parameter scale tests now measure explicit catalog visits and name
+decisions, replacing exact `BuildHasher` construction counts. A private observer
+follows the catalog through assembly, index construction, lookup and traversal;
+it has no counter state outside test builds. The evaluation regression calls the
+complete production evaluator and expects 29,993 logical operations: two visits
+per captured parameter, one lookup per declaration and one custom-requirement
+lookup. The assembly regression expects 17,500 deduplication decisions. Both
+retain near-capacity inventories, hidden/missing/custom semantics, and explicit
+ACL/grant-option controls. The previous policy-validation oracle is unchanged.
+
+On Linux 7.0.11-76070011-generic x86_64, the three focused scale tests pass using
+`cargo test -p batter-sqlx --features test-support --lib --locked near_capacity`.
+The first added ACL assertion used an incorrect fixture role name and failed;
+the fixture names role 1 `login`, and correcting that expected identity passed.
+The assertions for the original verdicts were retained.
+
+Temporary production mutations were applied individually and removed. Each
+focused command used `cargo test -p batter-sqlx --features test-support --lib
+--locked` followed by its exact scale-test name. Replacing assembly deduplication
+with a catalog scan failed at 65,641,250 versus 17,500 operations; rebuilding the
+name set per insertion failed at 84,424,302 versus 17,500. Replacing indexed
+evaluation lookup with a catalog scan failed at 50,014,995 versus 29,993;
+rebuilding its index on each lookup failed at 99,989,996 versus 29,993. A positive
+control changed both parameter name tables to initial capacity zero, forcing
+growth and rehashing: all three scale tests still passed with unchanged counts.
+Normal preallocation was then restored. These
+are observed counts for these runs, not required hash-table iteration orders.
+
+`bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+both pass on the restored implementation, including all 60 SQLx library tests,
+the complete runtime/doctest matrices, formatting, strict Clippy and rustdoc.
+For each toolchain, `cargo build -p batter-axum --example http_service --locked`
+preceded all five `python3 scripts/smoke_http.py --binary
+target/debug/examples/http_service` modes: default, `--signal SIGINT`,
+`--deadline`, `--warn-filter`, and `--warn-filter --deadline`. All ten smokes
+passed; the minimum-toolchain build and runner inherited
+`RUSTUP_TOOLCHAIN=1.94.0`. The default-toolchain `scripts/jig work check
+--plan-id plan_01M2DSPPKF3X2X0YJFEQ2SP8EW` passes all five required targets;
+evidence/gates readback reports fresh passes, including `api:test` receipt
+`receipt_01M2DTD1MD1VNCM405R1618XE9`. Documentation/tracker closeout refreshes the
+whole-repository policy checks while retaining the unchanged Rust receipts.
+
+The toolchains are rustc 1.98.1 (`48a229cea`, 2026-09-01), Cargo 1.98.1
+(`797e8a9bc`, 2026-08-05), rustc 1.94.0 (`4a4ef493e`, 2026-03-02), and
+Cargo 1.94.0 (`85eff7c80`, 2026-01-15). The unchanged Cargo.lock SHA-256 is
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+Jig plan: `plan_01M2DSPPKF3X2X0YJFEQ2SP8EW`; command logs are under
+`/tmp/batter-akt.Wxqvmc`. No dependency or PostgreSQL semantics changed. No new
+live PostgreSQL, macOS or hosted-CI execution is claimed.
+
+## Parameter-catalog and policy-index hardening (batter-soi, batter-1og), 2026-09-13
+
+Captured parameter objects now cross evaluation through a private
+`ParameterCatalog`. Its production builder retains one object per normalized
+name while merging ACL, visible-settings and requested-name sources; immutable
+consumers cannot introduce a second identity. A checked fixture constructor
+rejects two objects with the same name even when their visibility, context and
+existence fields conflict. The previously added captured-name evaluation index
+now accepts only this catalog, so its release-mode cardinality no longer depends
+on a debug assertion.
+
+`AuthorityPolicy::validate` now constructs one private checked `PolicyIndex`.
+The index rejects duplicate relations, nested columns, sequences, schemas,
+routines, types and parameters, and supplies every exact lookup performed by
+required-allowance collection; PUBLIC declarations were already indexed and
+schema discovery membership is indexed in the same validation boundary. The
+database policy remains a singleton field. Existing precedence, owner allowance,
+contradictory-requirement and duplicate diagnostics remain unchanged.
+
+The SQLx library target now passes 60 tests. The new conflicting-parameter case
+exercises the checked catalog boundary. The new full-path regression fills the
+10,000-entry aggregate policy budget, validates direct requirements for relation,
+nested column, sequence, schema, routine, type, parameter and database objects,
+and observes exactly 8,001 declaration/index decisions through an explicit
+logical-work counter independent of standard-library hash implementation details.
+Focused library, all-target/all-feature Clippy and native file-budget checks pass.
+
+On Linux 7.0.11 x86_64, complete `bash scripts/verify.sh` executions pass on
+Rust 1.98.1 and the exact Rust 1.94.0 minimum. The HTTP example was rebuilt on
+each toolchain and all five process profiles pass on each rebuilt binary: default
+SIGTERM, SIGINT, deadline, WARN filter and WARN-filtered deadline (ten executions).
+`DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL` and `BATTER_SQLX_ADMIN_URL` were
+absent, so no new live PostgreSQL run is claimed; the 53-case live evidence below
+remains tied to its earlier source snapshot. No dependency or lockfile change,
+macOS execution, hosted-CI run, publication or deployment is claimed.
+
+## Parameter-name lookup indexing (batter-6ye), 2026-09-13
+
+Catalog assembly now retains one name set while merging parameter ACL rows,
+visible `pg_settings` context and selected names. Declared missing-object
+evaluation builds one captured-name map and reuses it for declared and PUBLIC
+missing-object checks, required-privilege checks and parameter-policy evaluation,
+instead of rescanning the captured vector for each policy entry. Context,
+existing-hidden, custom-placeholder, missing-object and ACL merge semantics are
+unchanged.
+
+Two production-path scale regressions provide work-count oracles independent of
+elapsed time. A 10,000-name catalog assembled from 2,500 ACL sources, 5,000
+visible settings and all 10,000 selected names performs exactly 17,500 measured
+index operations and retains hidden and known-absent controls. A policy at its
+10,000-entry aggregate budget evaluates 9,998 distinct parameter declarations
+against 9,997 captured objects with exactly one measured hash operation per
+captured name and policy probe. The latter retains distinct unobservable-hidden,
+unobservable-custom and late missing-object findings. The complete 58-test SQLx
+library target passes.
+
+On Linux 7.0.11 x86_64, both complete `bash scripts/verify.sh` matrices pass with
+Rust 1.98.1 and Rust 1.94.0. A rebuilt Rust 1.98.1 HTTP example passes all five
+process profiles (default SIGTERM, SIGINT, deadline, WARN filter and WARN-filtered
+deadline), its twelve example tests, and the `process_owned` and
+`operation_budget` demonstrations. Jig plan
+`plan_01M2DMG3BMR32GWJQT2SXSSTHY` passes `api:test`, `api:clippy`, `api:fmt`,
+`repo:contract` and `repo:file-budget`; final receipt identifiers are retained in
+the append-only Jig state. `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL` and
+`BATTER_SQLX_ADMIN_URL` were absent, so no new live PostgreSQL run is claimed.
+The prior live PostgreSQL evidence remains tied to its earlier source snapshot.
+No macOS or hosted-CI execution is claimed for this change.
+
 ## Merged commit verification, 2026-09-13
 
 The user explicitly requested commit and push after the stopped review loop.

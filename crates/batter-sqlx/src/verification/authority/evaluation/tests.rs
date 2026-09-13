@@ -5,8 +5,12 @@ use crate::verification::{
 };
 use batter::operation::{Interruption, OperationContext, OperationError};
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Waker};
 use std::time::Duration;
+
+mod parameter_paths;
 
 /// Pure snapshot oracles poll the production future without database IO.
 pub(crate) fn run<F: Future>(future: F) -> F::Output {
@@ -118,6 +122,95 @@ fn many_roles_and_objects_finish_and_retain_a_late_grant_option() {
     assert_eq!(finding.subject.as_deref(), Some("role_12047"));
 }
 
+#[test]
+fn near_capacity_parameter_inventory_indexes_missing_checks_linearly() {
+    use crate::verification::authority::ParameterObject;
+    use crate::verification::authority::database::ParameterCatalog;
+    use crate::verification::authority::parameter_index::ParameterWork;
+    use crate::verification::{ParameterName, ParameterPolicy, PublicObject, RequiredPrivilege};
+
+    const POLICY_PARAMETER_COUNT: usize = 9_998;
+    let mut snapshot = crate::verification::authority::required::tests::snapshot();
+    snapshot.relations.clear();
+    let mut policy = AuthorityPolicy::default();
+    let mut captured_parameters = Vec::with_capacity(POLICY_PARAMETER_COUNT - 1);
+    for ordinal in 0..POLICY_PARAMETER_COUNT {
+        let name = if ordinal == 1 {
+            "extension.placeholder".to_owned()
+        } else {
+            format!("parameter_{ordinal}")
+        };
+        let mut privileges = Vec::new();
+        if ordinal == 1 {
+            privileges.push(AllowedPrivilege::new(ObjectPrivilege::Set, false));
+        }
+        policy.parameters.push(ParameterPolicy {
+            parameter: ParameterName::new(name.clone()).unwrap(),
+            privileges,
+        });
+        if ordinal + 1 < POLICY_PARAMETER_COUNT {
+            captured_parameters.push(ParameterObject {
+                name,
+                observable: ordinal != 0,
+                context: (ordinal > 1).then(|| "sighup".to_owned()),
+                exists: true,
+                custom: ordinal == 1,
+                acl: if ordinal + 2 == POLICY_PARAMETER_COUNT {
+                    vec![AclEntry {
+                        grantee: 1,
+                        privilege: ObjectPrivilege::Set,
+                        grant_option: true,
+                    }]
+                } else {
+                    Vec::new()
+                },
+            });
+        }
+    }
+    let operations = Arc::new(AtomicUsize::new(0));
+    snapshot.parameters = ParameterCatalog::try_from_objects(captured_parameters)
+        .unwrap()
+        .with_work(ParameterWork::counted(Arc::clone(&operations)));
+    policy.required_privileges.push(RequiredPrivilege {
+        object: PublicObject::Parameter(policy.parameters[1].parameter.clone()),
+        privilege: ObjectPrivilege::Set,
+    });
+    policy.validate().unwrap();
+
+    let captured_count = snapshot.parameters.len();
+    let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
+
+    // The full evaluator visits captured objects once to index and once to
+    // inspect, probes each declaration and checks the one custom requirement.
+    // A repeated build or per-declaration catalog scan records extra visits.
+    assert_eq!(
+        operations.load(Ordering::Relaxed),
+        2 * captured_count + policy.parameters.len() + 1
+    );
+    let findings = report.findings();
+    assert_eq!(findings.len(), 5);
+    for kind in [FindingKind::ProtectedParameter, FindingKind::GrantOption] {
+        assert!(findings.iter().any(|finding| {
+            finding.kind == kind
+                && finding.object.as_deref() == Some("parameter_9996")
+                && finding.subject.as_deref() == Some("login")
+                && finding.privilege == Some(ObjectPrivilege::Set)
+        }));
+    }
+    assert!(findings.iter().any(|finding| {
+        finding.kind == FindingKind::ParameterUnobservable
+            && finding.object.as_deref() == Some("parameter_0")
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding.kind == FindingKind::ParameterUnobservable
+            && finding.object.as_deref() == Some("extension.placeholder")
+    }));
+    assert!(findings.iter().any(|finding| {
+        finding.kind == FindingKind::MissingObject
+            && finding.object.as_deref() == Some("parameter_9997")
+    }));
+}
+
 #[tokio::test]
 async fn evaluation_capacity_rejects_excess_work_and_report_bytes() {
     let mut evaluation = Evaluation::new();
@@ -178,6 +271,7 @@ fn findings_preserve_distinct_dotted_and_quoted_catalog_identities() {
 #[tokio::test]
 async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report() {
     use crate::verification::authority::ParameterObject;
+    use crate::verification::authority::database::ParameterCatalog;
     use crate::verification::{ParameterName, ParameterPolicy};
     let (mut snapshot, mut policy) = large_snapshot();
     snapshot.types.clear();
@@ -186,9 +280,10 @@ async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report(
     for edge in &mut snapshot.memberships {
         edge.set = true;
     }
+    let mut captured_parameters = Vec::with_capacity(600);
     for ordinal in 0..600 {
         let name = format!("service.parameter_{ordinal}");
-        snapshot.parameters.push(ParameterObject {
+        captured_parameters.push(ParameterObject {
             name: name.clone(),
             observable: true,
             context: Some("user".into()),
@@ -201,6 +296,7 @@ async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report(
             privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Set, false)],
         });
     }
+    snapshot.parameters = ParameterCatalog::try_from_objects(captured_parameters).unwrap();
     policy.validate().unwrap();
     assert!(matches!(
         evaluate_snapshot(snapshot, &policy, Vec::new(), false).await,

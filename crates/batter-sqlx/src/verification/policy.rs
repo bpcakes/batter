@@ -655,55 +655,19 @@ impl MigrationPolicy {
 
 impl AuthorityPolicy {
     pub(crate) fn validate(&self) -> Result<(), PolicyError> {
+        self.validate_with_work(discovery::UncountedWork)
+    }
+
+    fn validate_with_work<W: discovery::ValidationWork>(&self, work: W) -> Result<(), PolicyError> {
         limits::validate(self)?;
-        let mut relations = std::collections::HashSet::new();
-        for relation in &self.relations {
-            if !relations.insert((relation.relation.schema(), relation.relation.name())) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-            let mut columns = std::collections::HashSet::new();
-            for column in &relation.columns {
-                if !columns.insert(column.column.as_str()) {
-                    return Err(PolicyError::DuplicateAuthorityObject);
-                }
-            }
-        }
+        discovery::validate_authority(self, work)
+    }
 
-        let mut sequences = std::collections::HashSet::new();
-        for sequence in &self.sequences {
-            if !sequences.insert((sequence.sequence.schema(), sequence.sequence.name())) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-        }
-
-        let mut schemas = std::collections::HashSet::new();
-        for schema in &self.schemas {
-            if !schemas.insert(schema.schema.as_str()) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-        }
-
-        let mut routines = std::collections::HashSet::new();
-        for routine in &self.routines {
-            if !routines.insert(&routine.routine) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-        }
-
-        let mut types = std::collections::HashSet::new();
-        for type_policy in &self.types {
-            if !types.insert((type_policy.type_name.schema(), type_policy.type_name.name())) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-        }
-
-        let mut parameters = std::collections::HashSet::new();
-        for parameter in &self.parameters {
-            if !parameters.insert(parameter.parameter.as_str()) {
-                return Err(PolicyError::DuplicateAuthorityObject);
-            }
-        }
-        discovery::validate_authority(self)?;
-        Ok(())
+    #[cfg(test)]
+    pub(crate) fn validate_counted(
+        &self,
+        operations: &std::sync::atomic::AtomicUsize,
+    ) -> Result<(), PolicyError> {
+        self.validate_with_work(discovery::CountingWork::new(operations))
     }
 }

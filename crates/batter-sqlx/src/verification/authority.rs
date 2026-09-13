@@ -8,10 +8,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 mod database;
 mod discovery;
 mod evaluation;
+mod parameter_index;
 mod privileges;
 mod requests;
 mod required;
 mod selection;
+
+use parameter_index::{ParameterIndex, index_parameters};
 
 const PREDEFINED_ROLES: &[&str] = &[
     "pg_checkpoint",
@@ -139,7 +142,7 @@ struct CatalogSnapshot {
     type_names: HashMap<i64, TypeName>,
     routines: Vec<RoutineObject>,
     database: DatabaseObject,
-    parameters: Vec<ParameterObject>,
+    parameters: database::ParameterCatalog,
 }
 
 struct RoleGraph<'a> {
@@ -444,8 +447,10 @@ async fn evaluate_snapshot(
     includes_migrations: bool,
 ) -> Result<VerificationReport, VerificationError> {
     let evaluation = &mut evaluation::Evaluation::new();
-    requests::inspect_requested_objects(evaluation, &snapshot, policy, &mut findings).await?;
-    required::inspect(evaluation, &snapshot, policy, &mut findings).await?;
+    let parameters = index_parameters(&snapshot.parameters);
+    requests::inspect_requested_objects(evaluation, &snapshot, &parameters, policy, &mut findings)
+        .await?;
+    required::inspect(evaluation, &snapshot, &parameters, policy, &mut findings).await?;
     let expanded_authority = discovery::expand(evaluation, &snapshot, policy).await?;
     let Some(root) = snapshot.root else {
         return Err(VerificationError::MissingSessionUser);
@@ -501,6 +506,7 @@ async fn evaluate_snapshot(
     requests::inspect_parameters(
         evaluation,
         &snapshot,
+        &parameters,
         &graph,
         &expanded_authority,
         policy.roles.allow_superuser,

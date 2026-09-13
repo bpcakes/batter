@@ -2,12 +2,13 @@ use super::super::policy::{AuthorityPolicy, ObjectPrivilege, PublicObject, Requi
 use super::super::report::{Finding, FindingKind, VerificationError};
 use super::evaluation::Evaluation;
 use super::privileges::{public_object_name, routine_signature_matches};
-use super::{AclEntry, CatalogSnapshot};
+use super::{AclEntry, CatalogSnapshot, ParameterIndex};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(super) async fn inspect(
     evaluation: &mut Evaluation,
     snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
     policy: &AuthorityPolicy,
     findings: &mut Vec<Finding>,
 ) -> Result<(), VerificationError> {
@@ -19,11 +20,17 @@ pub(super) async fn inspect(
     let inherited = inherited_roles(snapshot, current.oid);
     for required in &policy.required_privileges {
         evaluation.checkpoint(findings).await?;
-        if matches!(&required.object, PublicObject::Parameter(name) if snapshot.parameters.iter().any(|parameter| parameter.name == name.as_str() && (!parameter.observable || parameter.custom)))
+        if matches!(&required.object, PublicObject::Parameter(name) if parameters.get(name.as_str()).is_some_and(|parameter| !parameter.observable || parameter.custom))
         {
             continue;
         }
-        if !has_privilege(snapshot, &inherited, current.superuser, required) {
+        if !has_privilege(
+            snapshot,
+            parameters,
+            &inherited,
+            current.superuser,
+            required,
+        ) {
             findings.push(Finding::new(
                 FindingKind::MissingPrivilege,
                 Some(public_object_name(&required.object)),
@@ -72,6 +79,7 @@ fn acl_grants(acl: &[AclEntry], inherited: &HashSet<i64>, privilege: ObjectPrivi
 
 fn has_privilege(
     snapshot: &CatalogSnapshot,
+    parameters: &ParameterIndex<'_>,
     inherited: &HashSet<i64>,
     superuser: bool,
     required: &RequiredPrivilege,
@@ -125,8 +133,8 @@ fn has_privilege(
             .iter()
             .any(|object| name.matches(&object.schema, &object.name) && granted(&object.acl)),
         PublicObject::Database => granted(&snapshot.database.acl),
-        PublicObject::Parameter(name) => snapshot.parameters.iter().any(|object| {
-            object.name == name.as_str() && object.exists && {
+        PublicObject::Parameter(name) => parameters.get(name.as_str()).is_some_and(|object| {
+            object.exists && {
                 // This is parameter ACL/context authority, not proof that a value
                 // can be changed in an already-running session or accepted by a hook.
                 let default_set = privilege == ObjectPrivilege::Set
