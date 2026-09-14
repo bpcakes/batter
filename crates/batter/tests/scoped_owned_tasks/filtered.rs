@@ -87,7 +87,6 @@ async fn process_tasks(abort: bool) {
             Ok(())
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     let running = driver.within("driver", || supervisor.start());
     running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();

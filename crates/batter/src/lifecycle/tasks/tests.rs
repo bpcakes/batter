@@ -5,11 +5,11 @@ use tokio::sync::oneshot;
 
 #[test]
 fn registered_startup_pairs_acknowledgement_and_shutdown_observation() {
-    let coordinator = LifecycleCoordinator::new(false);
+    let (coordinator, approval) = LifecycleCoordinator::new(false);
     let handle = coordinator.shutdown_handle();
     let startup = ComponentStartup::registered(&coordinator);
     coordinator.shared.start_driver();
-    assert!(handle.mark_ready());
+    approval.approve();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
 
     let shutdown = startup.acknowledge_started();
@@ -25,11 +25,10 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         TaskOutcome::Failed,
         TaskOutcome::Panicked,
     ] {
-        let coordinator = LifecycleCoordinator::new(false);
-        let handle = coordinator.shutdown_handle();
+        let (coordinator, approval) = LifecycleCoordinator::new(false);
         let lifecycle = RegisteredComponent::new(&coordinator);
         coordinator.shared.start_driver();
-        handle.mark_ready();
+        approval.approve();
         let (process, _queued) = ProcessHandle::new(
             coordinator.clone(),
             super::super::process::ProcessCapacity::new(1).unwrap(),

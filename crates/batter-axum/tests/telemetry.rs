@@ -44,8 +44,8 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
         .with_max_level(tracing::Level::INFO)
         .finish();
     async {
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let router = Router::new()
             .route(
                 "/records/{id}",
@@ -164,7 +164,7 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         .route("/work", get(|| async { "must not execute" }))
         .layer(middleware::from_fn_with_state(
             RequestPolicy::new(
-                ShutdownHandle::new().operation_admission(),
+                ShutdownHandle::new_unapproved().operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
             request_scope,

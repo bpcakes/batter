@@ -32,8 +32,8 @@ impl Drop for Resource {
 }
 
 fn router(mode: Boundary) -> Router {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     mode.apply(
         Router::new().route(
             "/work",
@@ -181,8 +181,8 @@ fn handler_unwind_propagates_and_preserves_dropped_observation_and_context_cance
             let escaped = Arc::new(Mutex::new(None));
             let saved = escaped.clone();
             ambient.block_on(async {
-                let handle = ShutdownHandle::new();
-                handle.mark_ready();
+                let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+                approval.approve();
                 let app = mode.apply(
                     Router::new().route(
                         "/panic",

@@ -150,7 +150,6 @@ impl Fixture {
             })
             .unwrap();
         let running = supervisor.start();
-        handle.mark_ready();
         // Return ownership before readiness waiting: the driver must retain
         // this running supervisor even when the startup deadline expires.
         let fixture = Self {

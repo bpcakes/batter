@@ -33,11 +33,13 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
             Ok(())
         })
         .unwrap();
-    if order == 0 {
-        handle.mark_ready();
-    }
     assert_eq!(handle.status().readiness(), Readiness::Starting);
-    let running = supervisor.start();
+    let mut pending = Some(supervisor.start_unapproved());
+    let mut running = if order == 0 {
+        Some(pending.take().unwrap().approve_readiness())
+    } else {
+        None
+    };
     first.send(()).unwrap();
     first_acked.await.unwrap();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
@@ -45,7 +47,7 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
         handle.request();
     }
     if order != 0 {
-        assert_eq!(handle.mark_ready(), order != 2);
+        running = Some(pending.take().unwrap().approve_readiness());
     }
     second.send(()).unwrap();
     second_acked.await.unwrap();
@@ -54,13 +56,12 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
         assert_eq!(handle.status().readiness(), Readiness::Ready);
         handle.request();
     }
-    assert!(!handle.mark_ready());
     // Keep the acknowledged component alive: Stopped cannot hide an invalid
     // Ready publication after drain while the coordinator finishes its report.
     assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert!(handle.status().wait_ready().await.is_err());
     release.send(()).unwrap();
-    let report = running.wait().await.unwrap();
+    let report = running.unwrap().wait().await.unwrap();
     assert!(report.is_success());
     assert_eq!(handle.status().readiness(), Readiness::Stopped);
     case.event("ordered-readiness-checked");
@@ -85,7 +86,7 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
             Ok(())
         })
         .unwrap();
-    let running = supervisor.start();
+    let pending = supervisor.start_unapproved();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     let request_barrier = barrier.clone();
     let requesting = handle.clone();
@@ -95,18 +96,16 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
         requesting.request();
     });
     let approval_barrier = barrier.clone();
-    let approving = handle.clone();
     let approval = tokio::spawn(async move {
         approval_barrier.wait().await;
         yields(delay.rotate_left(21)).await;
-        approving.mark_ready();
+        pending.approve_readiness()
     });
     barrier.wait().await;
     drain.await.unwrap();
     ack.await.unwrap();
-    approval.await.unwrap();
+    let running = approval.await.unwrap();
     case.event("drain-and-ack-returned");
-    assert!(!handle.mark_ready());
     assert_eq!(handle.status().readiness(), Readiness::Draining);
     release.send(()).unwrap();
     assert!(running.wait().await.unwrap().is_success());
@@ -120,13 +119,11 @@ pub async fn critical_exit(case: Case) {
         .register("uninitialized-exit", |_| async { Ok(()) })
         .unwrap();
     let handle = supervisor.handle();
-    handle.mark_ready();
     let running = supervisor.start();
     assert!(handle.status().wait_ready().await.is_err());
     let report = running.wait().await.unwrap();
     assert!(!report.is_success());
     assert_eq!(report.tasks.len(), 1);
     assert_eq!(report.tasks[0].outcome, TaskOutcome::UnexpectedExit);
-    assert!(!handle.mark_ready());
     case.event("critical-exit-without-ready");
 }

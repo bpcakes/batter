@@ -132,7 +132,6 @@ impl<R: ManagedSettlement> ManagedComponent<R> {
     ///     ))
     /// })?;
     /// let running = supervisor.start();
-    /// running.handle().mark_ready(); // Explicit application approval.
     /// running.status().wait_ready().await.unwrap();
     /// batter::lifecycle::check_shutdown(running.shutdown().await)?;
     /// # Ok(()) }

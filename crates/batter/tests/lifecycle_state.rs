@@ -30,7 +30,7 @@ fn supervisor() -> Supervisor {
 
 #[test]
 fn operation_admission_returns_the_observed_lifecycle_state() {
-    let control = batter::lifecycle::ShutdownHandle::new();
+    let (control, approval) = batter::lifecycle::ShutdownHandle::new_with_readiness_approval();
     let admission = control.operation_admission();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
 
@@ -38,7 +38,7 @@ fn operation_admission_returns_the_observed_lifecycle_state() {
         admission.admit(deadline),
         Err(Readiness::Starting)
     ));
-    assert!(control.mark_ready());
+    approval.approve();
     let expired = admission.admit(tokio::time::Instant::now()).unwrap();
     assert_eq!(
         expired.check(),
@@ -60,7 +60,6 @@ async fn operation_admission_is_downward_only_and_closes_after_stop() {
     let status = process.status();
     let admission = process.operation_admission();
     let shutdown = control.signal();
-    assert!(control.mark_ready());
     let running = process.start();
     status.wait_ready().await.unwrap();
 
@@ -99,7 +98,6 @@ async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
     let control = process.handle();
     let status = process.status();
     let admission = process.operation_admission();
-    assert!(control.mark_ready());
     let running = process.start();
     status.wait_ready().await.unwrap();
 
@@ -168,7 +166,6 @@ fn abandoned_startup_wakes_registered_readiness_waiter() {
         waiter.as_mut().poll(&mut cx),
         Poll::Ready(Err(Readiness::Draining))
     );
-    assert!(!handle.mark_ready());
 }
 
 struct ObserveAbandonment(ShutdownSignal);
@@ -182,7 +179,17 @@ impl Drop for ObserveAbandonment {
 
 #[test]
 fn abandonment_signals_before_dropping_inert_application_captures() {
-    for transfer in [false, true] {
+    enum Path {
+        Unstarted,
+        OrdinaryDriver,
+        UnapprovedDriver,
+    }
+
+    for path in [
+        Path::Unstarted,
+        Path::OrdinaryDriver,
+        Path::UnapprovedDriver,
+    ] {
         let mut supervisor = supervisor();
         let captured = ObserveAbandonment(supervisor.handle().signal());
         supervisor
@@ -206,10 +213,10 @@ fn abandonment_signals_before_dropping_inert_application_captures() {
                 }
             })
             .unwrap();
-        if transfer {
-            drop(supervisor.run_until(pending()));
-        } else {
-            drop(supervisor);
+        match path {
+            Path::Unstarted => drop(supervisor),
+            Path::OrdinaryDriver => drop(supervisor.run_until(pending())),
+            Path::UnapprovedDriver => drop(supervisor.run_until_unapproved(pending())),
         }
     }
 }
@@ -219,7 +226,6 @@ fn unpolled_driver_retains_startup_ownership_until_dropped() {
     let supervisor = supervisor();
     let process = supervisor.process_handle().unwrap();
     let handle = supervisor.handle();
-    assert!(handle.mark_ready());
     let driver = supervisor.run_until(pending());
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(!handle.signal().is_cancelled());
@@ -295,14 +301,18 @@ async fn admission_precedence_covers_startup_capacity_drain_and_completion() {
     let handle = supervisor.handle();
     let process = supervisor.process_handle().unwrap();
     assert_rejections(&process, ProcessAdmissionError::NotRunning);
-    let mut driver = Box::pin(supervisor.run_until(pending()));
+    let mut pending_driver = supervisor.run_until_unapproved(pending());
     poll_fn(|cx| {
-        assert!(driver.as_mut().poll(cx).is_pending());
+        assert!(
+            std::pin::Pin::new(&mut pending_driver)
+                .poll(cx)
+                .is_pending()
+        );
         Poll::Ready(())
     })
     .await;
     assert_rejections(&process, ProcessAdmissionError::NotReady);
-    assert!(handle.mark_ready());
+    let driver = pending_driver.approve_readiness();
     // Keep the admitted task queued so its only permit cannot be released yet.
     let receipt = process
         .try_spawn("queued", |_| async { Ok::<_, Infallible>(7) })
@@ -314,4 +324,18 @@ async fn admission_precedence_covers_startup_capacity_drain_and_completion() {
     assert_eq!(receipt.wait().await.unwrap(), 7);
     assert_eq!(handle.status().readiness(), Readiness::Stopped);
     assert_rejections(&process, ProcessAdmissionError::Closed);
+}
+
+#[tokio::test]
+async fn caller_owned_unapproved_driver_can_finish_without_publishing_ready() {
+    let supervisor = supervisor();
+    let status = supervisor.status();
+    let process = supervisor.process_handle().unwrap();
+    let report = supervisor
+        .run_until_unapproved(async move {
+            assert_rejections(&process, ProcessAdmissionError::NotReady);
+        })
+        .await;
+    assert!(report.is_success());
+    assert_eq!(status.readiness(), Readiness::Stopped);
 }

@@ -1,119 +1,61 @@
 use super::{
-    InitializationError, PanicPayload, ProtectedStartupScope, ScopedStartup, Startup, StartupCause,
-    StartupError, StartupFailure, StartupFuture, StartupScope,
+    DeferredScopedStartup, DeferredStartup, InitializationError, PanicPayload,
+    ProtectedStartupScope, ScopedStartup, Startup, StartupCause, StartupFailure, StartupFuture,
+    StartupScope,
+    handoff::{StartingSupervisor, StartupHandoff, start_driver},
 };
 use crate::{
-    completion::wait_published,
     lifecycle::{
-        InstalledSignals, Readiness, RunningSupervisor, ShutdownHandle, SignalRegistrationError,
-        SupervisorObserver, install_reserved_signals,
+        InstalledSignals, Readiness, ShutdownHandle, SignalRegistrationError, UnapprovedSupervisor,
+        install_reserved_signals,
     },
     operation::OperationContext,
-    scoped_dispatch,
 };
 use std::{
     future::{Future, poll_fn},
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::{oneshot, watch};
-use tracing::Instrument;
-
-/// Startup observation, with no ownership of the running service.
-pub enum StartupOutcome<E> {
-    /// Initialization succeeded; observe the separately owned shutdown driver.
-    /// This does not imply every critical component has acknowledged readiness.
-    Running(SupervisorObserver),
-    /// Startup failed, with retained failure or coordinator termination.
-    Failed(StartupError<E>),
-}
-impl<E> Clone for StartupOutcome<E> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Running(observer) => Self::Running(observer.clone()),
-            Self::Failed(error) => Self::Failed(error.clone()),
-        }
-    }
-}
-
-/// Cloneable observation of owned startup, independent of handoff ownership.
-pub struct StartupObserver<E> {
-    completion: watch::Receiver<Option<StartupOutcome<E>>>,
-}
-impl<E> Clone for StartupObserver<E> {
-    fn clone(&self) -> Self {
-        Self {
-            completion: self.completion.clone(),
-        }
-    }
-}
-impl<E> StartupObserver<E> {
-    /// Await the retained outcome. Cancelling this waiter changes no ownership.
-    /// Panics if the runtime destroys the monitor before publication; no cleanup
-    /// report can be fabricated after runtime death. Published results survive.
-    pub async fn wait(&self) -> StartupOutcome<E> {
-        wait_published(self.completion.clone())
-            .await
-            .expect("owned startup monitor retains publication")
-    }
-}
-
-/// Sole owner of initialization and its pending running-driver handoff.
-/// Drop requests drain; the startup coordinator continues through cleanup on
-/// the live runtime. Observers never keep this owner or a running owner alive.
-pub struct StartingSupervisor<E> {
-    handle: Option<ShutdownHandle>,
-    receiver: oneshot::Receiver<Result<RunningSupervisor, StartupError<E>>>,
-    observer: StartupObserver<E>,
-}
-impl<E> StartingSupervisor<E> {
-    /// Clone a startup observer without prolonging service ownership.
-    pub fn observer(&self) -> StartupObserver<E> {
-        self.observer.clone()
-    }
-
-    /// Borrow the handoff waiter. Cancellation leaves this owner and receiver
-    /// intact. Call only until its first completed result; a second completed
-    /// wait panics, as with the underlying one-shot receiver.
-    pub async fn wait(&mut self) -> Result<RunningSupervisor, StartupError<E>> {
-        let result = (&mut self.receiver)
-            .await
-            .expect("owned startup monitor retains handoff");
-        self.handle.take();
-        result
-    }
-}
-impl<E> Drop for StartingSupervisor<E> {
-    fn drop(&mut self) {
-        if let Some(handle) = &self.handle {
-            handle.request();
-        }
-        // A running owner already queued in receiver is dropped after this
-        // method and requests drain too; the native owned driver remains alive.
-    }
-}
 
 pub(super) fn start<F, E>(startup: Startup<F>) -> StartingSupervisor<E>
 where
     F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, E> + Send + 'static,
     E: Send + Sync + 'static,
 {
+    start_with(startup, UnapprovedSupervisor::approve_readiness)
+}
+
+pub(super) fn start_deferred<F, E>(
+    startup: DeferredStartup<F>,
+) -> StartingSupervisor<E, UnapprovedSupervisor>
+where
+    F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    E: Send + Sync + 'static,
+{
+    start_with(startup.startup, std::convert::identity)
+}
+
+fn start_with<F, E, R>(
+    startup: Startup<F>,
+    handoff: fn(UnapprovedSupervisor) -> R,
+) -> StartingSupervisor<E, R>
+where
+    F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    E: Send + Sync + 'static,
+    R: StartupHandoff + Send + 'static,
+{
     let Startup {
         supervisor,
         context,
         cleanup,
-        approve_readiness,
         initialize,
     } = startup;
     let handle = supervisor.handle();
-    start_driver(
-        handle,
+    start_driver(handle, async move {
         drive(
             supervisor,
             context,
             cleanup,
-            approve_readiness,
             OwnedInitialization {
                 state: Initialization::Callback(initialize),
                 signals: None::<NoSignals>,
@@ -123,8 +65,10 @@ where
                 stage: "startup",
             },
             |error| error,
-        ),
-    )
+        )
+        .await
+        .map(handoff)
+    })
 }
 
 pub(super) fn start_scoped<F, E>(
@@ -137,6 +81,20 @@ where
     start_scoped_with(startup, install_reserved_signals)
 }
 
+pub(super) fn start_scoped_deferred<F, E>(
+    startup: DeferredScopedStartup<F>,
+) -> StartingSupervisor<InitializationError<E>, UnapprovedSupervisor>
+where
+    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    E: Send + Sync + 'static,
+{
+    start_scoped_mapped(
+        startup.startup,
+        install_reserved_signals,
+        std::convert::identity,
+    )
+}
+
 fn start_scoped_with<F, E, G>(
     startup: ScopedStartup<F>,
     install: impl FnOnce(&'static str) -> Result<G, SignalRegistrationError>,
@@ -146,11 +104,24 @@ where
     E: Send + Sync + 'static,
     G: StartupSignals + Send + 'static,
 {
+    start_scoped_mapped(startup, install, UnapprovedSupervisor::approve_readiness)
+}
+
+fn start_scoped_mapped<F, E, G, R>(
+    startup: ScopedStartup<F>,
+    install: impl FnOnce(&'static str) -> Result<G, SignalRegistrationError>,
+    handoff: fn(UnapprovedSupervisor) -> R,
+) -> StartingSupervisor<InitializationError<E>, R>
+where
+    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    E: Send + Sync + 'static,
+    G: StartupSignals + Send + 'static,
+    R: StartupHandoff + Send + 'static,
+{
     let ScopedStartup {
         mut supervisor,
         context,
         cleanup,
-        approve_readiness,
         signals,
         initialize,
     } = startup;
@@ -195,13 +166,11 @@ where
             },
         },
     };
-    start_driver(
-        handle,
+    start_driver(handle, async move {
         drive(
             supervisor,
             context,
             cleanup,
-            approve_readiness,
             OwnedInitialization {
                 state: initialization,
                 signals: installed_signals,
@@ -211,8 +180,10 @@ where
                 stage: "startup",
             },
             InitializationError::Application,
-        ),
-    )
+        )
+        .await
+        .map(handoff)
+    })
 }
 
 enum Initialization<F, E> {
@@ -250,39 +221,6 @@ impl StartupSignals for NoSignals {
     fn register_reserved(self, _supervisor: &mut crate::lifecycle::Supervisor) {}
 }
 
-fn start_driver<E>(
-    handle: ShutdownHandle,
-    drive: impl Future<Output = Result<RunningSupervisor, StartupFailure<E>>> + Send + 'static,
-) -> StartingSupervisor<E>
-where
-    E: Send + Sync + 'static,
-{
-    let (handoff, receiver) = oneshot::channel();
-    let (publication, completion) = watch::channel(None);
-    let coordinator = tokio::spawn(scoped_dispatch::scope(drive.in_current_span()));
-    let monitor = async move {
-        let result = match coordinator.await {
-            Ok(result) => result.map_err(|failure| StartupError::Failed(Arc::new(failure))),
-            Err(error) => Err(StartupError::Coordinator(Arc::new(error))),
-        };
-        let observation = match &result {
-            Ok(running) => StartupOutcome::Running(running.observer()),
-            Err(error) => StartupOutcome::Failed(error.clone()),
-        };
-        publication.send_replace(Some(observation));
-        // Failed delivery drops RunningSupervisor and requests native drain.
-        drop(handoff.send(result));
-    };
-    drop(tokio::spawn(scoped_dispatch::scope(
-        monitor.in_current_span(),
-    )));
-    StartingSupervisor {
-        handle: Some(handle),
-        receiver,
-        observer: StartupObserver { completion },
-    }
-}
-
 // Keep the full initialization/destruction/cleanup report until the monitor
 // wraps it in Arc. Its native layout exceeds 128 bytes on macOS; boxing here
 // would add an allocation immediately before that existing shared allocation.
@@ -291,11 +229,10 @@ async fn drive<F, I, E, S, C, M, G>(
     supervisor: crate::lifecycle::Supervisor,
     context: OperationContext,
     cleanup: crate::cleanup::CleanupBudget,
-    approve_readiness: bool,
     initialization: OwnedInitialization<F, E, G>,
     construct_scope: C,
     map_error: M,
-) -> Result<RunningSupervisor, StartupFailure<E>>
+) -> Result<UnapprovedSupervisor, StartupFailure<E>>
 where
     F: for<'a> FnOnce(&'a mut S) -> StartupFuture<'a, I>,
     S: DriverScope,
@@ -328,11 +265,8 @@ where
         result = check(&context, &handle);
     }
     if result.is_ok() && destruction_panic.is_none() {
-        if approve_readiness {
-            handle.mark_ready();
-        }
         let (supervisor, _) = scope.into_parts();
-        return Ok(supervisor.start());
+        return Ok(supervisor.start_unapproved());
     }
     let cause = result.err().unwrap_or(StartupCause::DestructionPanicked);
     handle.request();
@@ -487,6 +421,7 @@ mod tests {
         RegistrationError,
         cleanup::{CleanupBudget, CleanupOutcome},
         lifecycle::{ShutdownBudget, Supervisor},
+        startup::{StartupError, StartupOutcome},
     };
     use std::{
         io,

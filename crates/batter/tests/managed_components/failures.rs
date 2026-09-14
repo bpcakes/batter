@@ -124,7 +124,6 @@ async fn native_report_is_retained_before_its_future_destructor_panics() {
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     let outcome = &report.managed[0].outcome;
@@ -173,7 +172,6 @@ async fn dropped_service_owner_keeps_managed_driver_and_cleanup_alive() {
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     let observer = running.observer();
     // Cancel a borrowed waiter without sending a stop request.
@@ -307,7 +305,6 @@ async fn report_classifier_panic_preserves_original_native_evidence_and_skips_cl
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     let outcome = &report.managed[0].outcome;

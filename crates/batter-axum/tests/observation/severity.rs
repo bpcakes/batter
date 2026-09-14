@@ -43,8 +43,8 @@ fn explicit_response_levels_preserve_status_fields_identity_and_response() {
             let capture = Capture::with_max_level(Level::TRACE);
             let ambient = Capture::new();
             ambient.block_on(async {
-                let handle = ShutdownHandle::new();
-                handle.mark_ready();
+                let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+                approval.approve();
                 let router = mode
                     .apply(
                         Router::new().route(
@@ -105,8 +105,8 @@ fn defaults_ignore_request_extensions_and_client_level_headers() {
         ] {
             let capture = Capture::new();
             capture.block_on(async {
-                let handle = ShutdownHandle::new();
-                handle.mark_ready();
+                let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+                approval.approve();
                 let router = mode.apply(
                     Router::new().route("/work", get(move || async move { status })),
                     RequestPolicy::new(
@@ -142,9 +142,9 @@ fn readiness_policy_is_explicit_and_does_not_demote_other_unguarded_failures() {
         for (path, expected_level) in [("/ready", Level::INFO), ("/failure", Level::WARN)] {
             let capture = Capture::new();
             capture.block_on(async {
-                let handle = ShutdownHandle::new();
+                let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
                 if phase != "starting" {
-                    handle.mark_ready();
+                    approval.approve();
                 }
                 if phase == "draining" {
                     handle.request();
@@ -196,9 +196,9 @@ async fn failure_renderers_select_severity_for_admission_and_deadline_responses(
     for mode in [Boundary::Split, Boundary::Combined] {
         for phase in ["starting", "draining", "deadline"] {
             let capture = Capture::new();
-            let handle = ShutdownHandle::new();
+            let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
             if phase != "starting" {
-                handle.mark_ready();
+                approval.approve();
             }
             if phase == "draining" {
                 handle.request();

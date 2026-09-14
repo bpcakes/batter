@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Replace clone-wide `ShutdownHandle::mark_ready` with one-shot readiness
+  ownership. `Supervisor::start` and `run_until` consume approval automatically;
+  only explicitly exceptional `start_unapproved` and `run_until_unapproved`
+  paths withhold it. They return non-cloneable `UnapprovedSupervisor` and
+  `UnapprovedDriver` owners; consume `approve_readiness()` to choose the normal
+  transition. The caller-owned form remains movable after polling without
+  separating the approval capability. Canonical
+  `Startup` performs the same transition after successful initialization, while
+  `without_readiness_approval()` changes its successful handoff type so deferred
+  policy cannot be mistaken for an approved driver. Standalone lifecycles can
+  explicitly construct a paired `ReadinessApproval`. Repeated approval, approval
+  through shutdown/status/admission projections, and approval after transition
+  no longer compile.
+  Migration: callers that intentionally withheld approval must replace ordinary
+  `start`/`run_until` with the corresponding explicitly unapproved path.
+  `ShutdownHandle::new` and `Default` are removed: use `new_unapproved` only for
+  a deliberately permanent Starting lifecycle, or construct the handle together
+  with its one-shot approval for standalone admission.
 - Split root lifecycle authority from consumer projections. `ShutdownHandle`
   now requests shutdown and constructs purpose-qualified views:
   `LifecycleStatus` for readiness/status, `OperationAdmission` for creating a

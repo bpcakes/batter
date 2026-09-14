@@ -20,54 +20,71 @@ pub enum Readiness {
 /// Completion observation requires an owned driver: call
 /// [`super::RunningSupervisor::observer`] after [`super::Supervisor::start`]. A
 /// control handle can exist without a driver, so it cannot construct a completion
-/// observer. Give readiness consumers [`LifecycleStatus`] and operation
-/// entrypoints [`OperationAdmission`] instead of cloning this root authority.
+/// observer or application-readiness approval. Give readiness consumers
+/// [`LifecycleStatus`] and operation entrypoints [`OperationAdmission`] instead
+/// of cloning this root authority.
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let handle = ShutdownHandle::new();
+/// let handle = ShutdownHandle::new_unapproved();
 /// let observer = handle.observer();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let control = ShutdownHandle::new();
+/// let control = ShutdownHandle::new_unapproved();
 /// let readiness = control.readiness();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let control = ShutdownHandle::new();
+/// let control = ShutdownHandle::new_unapproved();
 /// let token = control.operation_token();
+/// ```
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::ShutdownHandle;
+///
+/// let control = ShutdownHandle::new_unapproved();
+/// control.mark_ready();
 /// ```
 #[derive(Clone)]
 pub struct ShutdownHandle {
     shared: Arc<Shared>,
 }
 
-impl Default for ShutdownHandle {
-    fn default() -> Self {
+impl ShutdownHandle {
+    /// Create an independent lifecycle that deliberately has no readiness
+    /// approval capability and therefore remains Starting until shutdown.
+    ///
+    /// This is for cancellation-only composition and tests. Use
+    /// [`Self::new_with_readiness_approval`] whenever admission may become Ready.
+    pub fn new_unapproved() -> Self {
         Self {
             shared: Arc::new(Shared::new(false)),
         }
     }
-}
 
-impl ShutdownHandle {
-    /// An independent, initially unready lifecycle.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Declare application initialization complete. For a supervisor this arms
-    /// readiness: it remains Starting until every component consumes its
-    /// [`ComponentStartup`] acknowledgement. Returns true only for the first
-    /// accepted declaration; never revives a draining/stopped service.
-    pub fn mark_ready(&self) -> bool {
-        self.shared.mark_ready()
+    /// Create an independent lifecycle together with its one application-
+    /// readiness decision.
+    ///
+    /// This lower-level composition path has no owned process driver. Prefer
+    /// [`super::Supervisor::start`] for supervised work; it keeps approval
+    /// paired inside [`super::UnapprovedSupervisor`].
+    ///
+    /// ```
+    /// use batter::lifecycle::{Readiness, ShutdownHandle};
+    ///
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// approval.approve();
+    /// assert_eq!(control.status().readiness(), Readiness::Ready);
+    /// ```
+    pub fn new_with_readiness_approval() -> (Self, ReadinessApproval) {
+        let (coordinator, approval) = LifecycleCoordinator::new(false);
+        (coordinator.shutdown_handle(), approval)
     }
 
     /// Atomically withdraw readiness and signal drain. Does not immediately
@@ -111,7 +128,7 @@ impl ShutdownHandle {
 /// ```
 /// use batter::lifecycle::{Readiness, ShutdownHandle};
 ///
-/// let control = ShutdownHandle::new();
+/// let control = ShutdownHandle::new_unapproved();
 /// let status = control.status();
 /// assert_eq!(status.readiness(), Readiness::Starting);
 /// ```
@@ -119,21 +136,21 @@ impl ShutdownHandle {
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let status = ShutdownHandle::new().status();
+/// let status = ShutdownHandle::new_unapproved().status();
 /// status.request();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let status = ShutdownHandle::new().status();
+/// let status = ShutdownHandle::new_unapproved().status();
 /// status.mark_ready();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let status = ShutdownHandle::new().status();
+/// let status = ShutdownHandle::new_unapproved().status();
 /// let token = status.operation_token();
 /// ```
 #[derive(Clone)]
@@ -168,38 +185,37 @@ impl LifecycleStatus {
 /// readiness. A readiness read is the admission point: drain racing after that
 /// read does not cancel the admitted context until forced cancellation.
 ///
-/// ```no_run
+/// ```
 /// use batter::lifecycle::ShutdownHandle;
 /// use tokio::time::{Duration, Instant};
 ///
-/// # fn example() -> Result<(), batter::lifecycle::Readiness> {
-/// let control = ShutdownHandle::new();
-/// control.mark_ready();
+/// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+/// approval.approve();
 /// let admission = control.operation_admission();
-/// let context = admission.admit(Instant::now() + Duration::from_secs(1))?;
-/// # let _ = context;
-/// # Ok(())
-/// # }
+/// let context = admission
+///     .admit(Instant::now() + Duration::from_secs(1))
+///     .expect("application approval admits the operation");
+/// assert!(context.check().is_ok());
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let admission = ShutdownHandle::new().operation_admission();
+/// let admission = ShutdownHandle::new_unapproved().operation_admission();
 /// admission.request();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let admission = ShutdownHandle::new().operation_admission();
+/// let admission = ShutdownHandle::new_unapproved().operation_admission();
 /// admission.mark_ready();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let admission = ShutdownHandle::new().operation_admission();
+/// let admission = ShutdownHandle::new_unapproved().operation_admission();
 /// let token = admission.operation_token();
 /// ```
 #[derive(Clone)]
@@ -235,28 +251,28 @@ impl OperationAdmission {
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let shutdown = ShutdownHandle::new().signal();
+/// let shutdown = ShutdownHandle::new_unapproved().signal();
 /// shutdown.acknowledge_started();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let shutdown = ShutdownHandle::new().signal();
+/// let shutdown = ShutdownHandle::new_unapproved().signal();
 /// shutdown.request();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let shutdown = ShutdownHandle::new().signal();
+/// let shutdown = ShutdownHandle::new_unapproved().signal();
 /// shutdown.mark_ready();
 /// ```
 ///
 /// ```compile_fail,E0599
 /// use batter::lifecycle::ShutdownHandle;
 ///
-/// let shutdown = ShutdownHandle::new().signal();
+/// let shutdown = ShutdownHandle::new_unapproved().signal();
 /// let token = shutdown.operation_token();
 /// ```
 #[derive(Clone)]
@@ -296,10 +312,14 @@ pub(super) struct LifecycleCoordinator {
 }
 
 impl LifecycleCoordinator {
-    pub(super) fn new(supervised: bool) -> Self {
-        Self {
-            shared: Arc::new(Shared::new(supervised)),
-        }
+    pub(super) fn new(supervised: bool) -> (Self, ReadinessApproval) {
+        let shared = Arc::new(Shared::new(supervised));
+        (
+            Self {
+                shared: shared.clone(),
+            },
+            ReadinessApproval { shared },
+        )
     }
 
     pub(super) fn shutdown_handle(&self) -> ShutdownHandle {
@@ -319,6 +339,41 @@ impl LifecycleCoordinator {
             self.shared.readiness(),
             Readiness::Draining | Readiness::Stopped
         )
+    }
+}
+
+/// One application-readiness decision for a lifecycle.
+///
+/// This capability is non-cloneable and [`Self::approve`] consumes it, so safe
+/// Rust cannot approve the same decision twice. Ordinary supervised composition
+/// receives it paired inside [`super::UnapprovedSupervisor`]; the standalone
+/// constructor on [`ShutdownHandle`] returns it explicitly for low-level
+/// integrations without an owned driver.
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::ReadinessApproval;
+/// fn cannot_clone(approval: ReadinessApproval) {
+///     let duplicate = approval.clone();
+/// }
+/// ```
+///
+/// ```compile_fail,E0382
+/// use batter::lifecycle::ReadinessApproval;
+/// fn cannot_approve_twice(approval: ReadinessApproval) {
+///     approval.approve();
+///     approval.approve();
+/// }
+/// ```
+#[must_use = "consume the approval decision or explicitly leave the lifecycle unready"]
+pub struct ReadinessApproval {
+    shared: Arc<Shared>,
+}
+
+impl ReadinessApproval {
+    /// Record application initialization approval. Pending component startup
+    /// can still keep the process Starting; drain and stop remain irreversible.
+    pub fn approve(self) {
+        let _accepted = self.shared.mark_ready();
     }
 }
 

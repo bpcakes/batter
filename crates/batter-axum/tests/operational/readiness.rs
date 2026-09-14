@@ -90,12 +90,12 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
                 }
             },
         );
-        let handle = ShutdownHandle::new();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
         let policy = ReadinessPolicy::new(handle.status(), monitor.reader());
         assert_response(&policy, ReadinessReason::Starting).await;
-        handle.mark_ready();
+        approval.approve();
         assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Unknown)).await;
-        let probe_handle = ShutdownHandle::new();
+        let probe_handle = ShutdownHandle::new_unapproved();
         let mut run = Box::pin(monitor.run(probe_handle.signal()));
         sample(&mut run).await;
         assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Failed)).await;
@@ -179,7 +179,7 @@ async fn explicit_severity_override_preserves_reason_status_body_and_http_outcom
         .unwrap(),
         || async { Ok::<_, std::io::Error>(()) },
     );
-    let policy = ReadinessPolicy::new(ShutdownHandle::new().status(), monitor.reader());
+    let policy = ReadinessPolicy::new(ShutdownHandle::new_unapproved().status(), monitor.reader());
     let captures: Vec<_> = (0..2).map(|_| Capture::new()).collect();
     for (policy, capture, level) in [
         (policy.clone(), &captures[0], "INFO"),
@@ -271,7 +271,6 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             })
             .unwrap();
         let running = supervisor.start();
-        handle.mark_ready();
         tokio::time::timeout(second, handle.status().wait_ready())
             .await
             .unwrap()

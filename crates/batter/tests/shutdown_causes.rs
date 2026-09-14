@@ -23,10 +23,7 @@ fn supervisor(capacity: usize) -> Supervisor {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor =
-        Supervisor::with_process_capacity(budget, ProcessCapacity::new(capacity).unwrap());
-    assert!(supervisor.handle().mark_ready());
-    supervisor
+    Supervisor::with_process_capacity(budget, ProcessCapacity::new(capacity).unwrap())
 }
 
 async fn bounded(future: impl Future<Output = ()>) {

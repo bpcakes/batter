@@ -13,7 +13,7 @@ async fn construction_and_unpolled_run_are_inert_and_writer_loss_is_immediate() 
         assert_eq!(reader.snapshot().status(), HealthStatus::Unknown);
         assert!(!reader.is_healthy());
         if start {
-            drop(monitor.run(ShutdownHandle::new().signal()));
+            drop(monitor.run(ShutdownHandle::new_unapproved().signal()));
         } else {
             drop(monitor);
         }
@@ -83,8 +83,8 @@ async fn drain_during_delay_stops_before_another_probe_and_overrides_cached_succ
         async { Ok::<_, Infallible>(()) }
     });
     let reader = monitor.reader();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let mut run = Box::pin(monitor.run(handle.signal()));
     assert!(poll_once(run.as_mut()).await.is_pending());
     assert!(reader.is_healthy());
@@ -117,7 +117,7 @@ impl Drop for DrainOnDrop {
 
 #[tokio::test]
 async fn drain_immediately_before_publication_cannot_publish_success() {
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     let request = handle.clone();
     let monitor = HealthMonitor::new(policy(), move || DrainOnDrop(request.clone()));
     let reader = monitor.reader();
@@ -171,7 +171,7 @@ async fn outer_task_abort_drops_active_probe_and_invalidates_readers() {
         }
     });
     let reader = monitor.reader();
-    let task = tokio::spawn(monitor.run(ShutdownHandle::new().signal()));
+    let task = tokio::spawn(monitor.run(ShutdownHandle::new_unapproved().signal()));
     entered_rx.await.unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
@@ -205,7 +205,7 @@ async fn probe_panic_remains_a_critical_failure_and_stops_the_writer() {
 
 #[tokio::test]
 async fn already_draining_run_never_invokes_its_factory() {
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     handle.request();
     let monitor = HealthMonitor::new(policy(), || {
         panic!("a drained monitor must not construct a probe");

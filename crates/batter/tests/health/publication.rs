@@ -41,7 +41,7 @@ async fn replacing_a_failure_allows_reads_while_its_application_destructor_runs(
     });
     let reader = monitor.reader();
     *reader_slot.lock().unwrap() = Some(reader.clone());
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     let mut run = Box::pin(monitor.run(handle.signal()));
     assert!(poll_once(run.as_mut()).await.is_pending());
     assert_eq!(reader.snapshot().status(), HealthStatus::Failed);

@@ -597,7 +597,7 @@ async fn successful_initialization_can_withhold_application_readiness_approval()
     .await
     .unwrap();
     assert_eq!(running.status().readiness(), Readiness::Starting);
-    assert!(running.handle().mark_ready());
+    let running = running.approve_readiness();
     running.status().wait_ready().await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
 }

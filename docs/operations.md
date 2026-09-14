@@ -15,8 +15,12 @@ normal path, and perform readiness checks. Set readiness only when dependencies
 and required initialization are complete. Each registered critical component
 receives one `ComponentStartup` value and consumes `acknowledge_started` only
 after actual initialization; the returned `ShutdownSignal` observes its running
-phase. The application's `mark_ready` arms Ready, which is published only once
-the driver runs and every component acknowledges.
+phase. Application approval consumes `UnapprovedSupervisor` and yields
+`RunningSupervisor`; Ready is published only once the driver runs and every
+component acknowledges. Canonical `Startup` performs this transition after
+successful initialization. A composition root that deliberately selects
+`without_readiness_approval` must consume `approve_readiness` after its additional
+checks pass.
 Keep `ShutdownHandle` at the composition root. Pass `LifecycleStatus` to probes
 and waiters, `OperationAdmission` to request/operation entrypoints, and
 `ShutdownSignal` to standalone shutdown observers. None of those projections can

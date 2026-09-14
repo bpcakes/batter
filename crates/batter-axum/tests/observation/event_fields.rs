@@ -152,8 +152,8 @@ async fn completion_fields_belong_to_events_at_every_level_with_independent_span
             ),
         ] {
             let events = Events::default();
-            let handle = ShutdownHandle::new();
-            handle.mark_ready();
+            let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+            approval.approve();
             let router = mode.apply(
                 Router::new().route(
                     "/records/{id}",
@@ -203,7 +203,7 @@ async fn rejected_and_unmatched_requests_keep_event_fields_without_info_spans() 
         let router = mode.apply(
             Router::new().route("/work", get(must_not_run)),
             RequestPolicy::new(
-                ShutdownHandle::new().operation_admission(),
+                ShutdownHandle::new_unapproved().operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
         );
@@ -243,8 +243,8 @@ fn dropped_future_keeps_event_fields_and_first_poll_dispatch_without_info_spans(
         let events = Events::default();
         let ambient = Capture::new();
         ambient.block_on(async {
-            let handle = ShutdownHandle::new();
-            handle.mark_ready();
+            let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+            approval.approve();
             let router = mode.apply(
                 Router::new().route(
                     "/records/{id}",

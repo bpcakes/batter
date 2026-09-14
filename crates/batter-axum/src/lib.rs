@@ -97,8 +97,8 @@ pub struct RequestPolicy {
 /// use std::time::Duration;
 ///
 /// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
-/// let control = ShutdownHandle::new();
-/// control.mark_ready();
+/// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+/// approval.approve();
 /// let policy = RequestPolicy::new(control.operation_admission(), budget);
 /// # let _ = policy;
 /// # Ok::<(), batter::ConfigurationError>(())
@@ -302,8 +302,8 @@ impl IntoResponse for HttpFailure {
 /// };
 /// use std::time::Duration;
 /// # fn main() -> Result<(), batter::ConfigurationError> {
-/// let control = ShutdownHandle::new();
-/// control.mark_ready();
+/// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+/// approval.approve();
 /// let status = control.status();
 /// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
 /// let guarded = Router::new()

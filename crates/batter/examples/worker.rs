@@ -22,7 +22,6 @@ async fn main() -> Result<(), BoxError> {
         }
         Ok(())
     })?;
-    supervisor.handle().mark_ready();
     let running = supervisor.start();
     let report = running.wait().await?;
     if !report.is_success() {

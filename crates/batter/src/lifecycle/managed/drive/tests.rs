@@ -108,7 +108,6 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
     let coordinator = process.coordinator.clone();
     let running = process.start();
     let handle = running.handle();
-    handle.mark_ready();
     handle.status().wait_ready().await.unwrap();
     let native_started = Instant::now();
     tokio::time::advance(second).await;

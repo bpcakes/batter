@@ -4,6 +4,7 @@
 //! finite. Task-level errors initiate shutdown; ordinary business rejection can
 //! remain a typed successful task value. No automatic restart is provided.
 
+mod caller_owned;
 mod capability;
 mod driver;
 mod managed;
@@ -13,16 +14,18 @@ mod state;
 mod tasks;
 mod unix;
 
+use caller_owned::SupervisorOwnership;
 use capability::LifecycleCoordinator;
 use tasks::TaskSet;
 
+pub use caller_owned::UnapprovedDriver;
 pub use capability::{
-    ComponentStartup, LifecycleStatus, OperationAdmission, Readiness, ShutdownHandle,
-    ShutdownSignal,
+    ComponentStartup, LifecycleStatus, OperationAdmission, Readiness, ReadinessApproval,
+    ShutdownHandle, ShutdownSignal,
 };
 pub use driver::{
     DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
-    check_shutdown,
+    UnapprovedSupervisor, check_shutdown,
 };
 pub use process::{
     ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt, ProcessScope,
@@ -42,12 +45,7 @@ use crate::{
     cleanup::{CleanupBudget, CleanupStack, SkipReason},
     scoped_dispatch, validation,
 };
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{future::Future, pin::Pin, time::Duration};
 use tokio::sync::mpsc;
 
 /// Phase budgets, measured from one recorded stop time. Scheduling delays consume
@@ -173,16 +171,17 @@ struct Component {
 
 /// Own the process's critical tasks and dependency finalizers.
 ///
-/// Registration is inert: factories start only when run_until is polled.
-/// Application readiness must be declared explicitly through the handle.
+/// Registration is inert: factories start only when a driver is polled. Ordinary
+/// `start`/`run_until` consume application approval once; explicitly named
+/// unapproved variants retain the non-cloneable decision with the driver.
 /// Registered tasks must own and account for their own asynchronous children.
 /// Dropping an unstarted supervisor signals drain and cancellation before
 /// dropping its captures. It wakes readiness waiters but invokes no factories
 /// or finalizers and publishes no completion report.
 pub struct Supervisor {
     // First field: signal abandonment before dropping any application captures.
-    // run_until transfers this guard into the outer driver future.
-    ownership: Option<EmergencyShutdown>,
+    // Starting transfers this guard and the paired approval into the driver.
+    ownership: Option<SupervisorOwnership>,
     components: Vec<Component>,
     managed: Vec<managed::Registration>,
     reserved_components: Vec<&'static str>,
@@ -196,9 +195,9 @@ pub struct Supervisor {
 impl Supervisor {
     /// Build an initially unready supervisor, without spawning anything.
     pub fn new(budget: ShutdownBudget) -> Self {
-        let coordinator = LifecycleCoordinator::new(true);
+        let (coordinator, approval) = LifecycleCoordinator::new(true);
         Self {
-            ownership: Some(EmergencyShutdown(coordinator.clone())),
+            ownership: Some(SupervisorOwnership::new(coordinator.clone(), approval)),
             components: Vec::new(),
             managed: Vec::new(),
             reserved_components: Vec::new(),
@@ -234,7 +233,7 @@ impl Supervisor {
         self.process.clone()
     }
 
-    /// Clone root shutdown and application-readiness control.
+    /// Clone root shutdown control.
     /// Prefer [`Self::status`] or [`Self::operation_admission`] for consumers
     /// that do not need those mutations.
     pub fn handle(&self) -> ShutdownHandle {
@@ -385,27 +384,102 @@ impl Supervisor {
         std::mem::take(&mut self.cleanup)
     }
 
-    /// Observe failures, stop admission, drain, cancel, abort/reap, then close
-    /// dependencies. A panic, requested abort, or unjoined direct task causes
-    /// conservative skipping of resource finalizers (not false success).
+    /// Approve application readiness once, then observe failures, stop admission,
+    /// drain, cancel, abort/reap, and close dependencies. A panic, requested abort,
+    /// or unjoined direct task causes conservative skipping of resource finalizers
+    /// (not false success).
     ///
     /// Construction takes ownership immediately, while factories and readiness
     /// remain inert until polling. Dropping even a never-polled driver signals
     /// drain and cancellation. Once polled, JoinSet also requests abortion, but
     /// Drop cannot await children or finalizers. Use the normal shutdown protocol
     /// or [`Supervisor::start`] for awaited cleanup; a hard kill cannot run it.
-    pub fn run_until<F>(mut self, shutdown: F) -> impl Future<Output = ShutdownReport>
+    ///
+    /// ```no_run
+    /// use batter::{
+    ///     BoxError,
+    ///     cleanup::CleanupBudget,
+    ///     lifecycle::{ShutdownBudget, Supervisor},
+    /// };
+    /// use std::time::Duration;
+    ///
+    /// # async fn example() -> Result<(), BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let mut supervisor = Supervisor::new(ShutdownBudget::new(
+    ///     second, second, second, cleanup,
+    /// )?);
+    /// supervisor.register("worker", |startup| async move {
+    ///     let shutdown = startup.acknowledge_started();
+    ///     shutdown.draining().await;
+    ///     Ok(())
+    /// })?;
+    /// let report = supervisor.run_until(std::future::ready(())).await;
+    /// assert!(report.is_success());
+    /// # Ok(()) }
+    /// ```
+    pub fn run_until<F>(self, shutdown: F) -> impl Future<Output = ShutdownReport>
     where
         F: Future<Output = ()>,
     {
-        let emergency = self
+        let (approval, driver) = self.into_unapproved_driver(shutdown);
+        async move {
+            approval.approve();
+            driver.await
+        }
+    }
+
+    /// Drive the caller-owned shutdown protocol without approving application
+    /// readiness.
+    ///
+    /// This exceptional path keeps admission Starting while the returned
+    /// [`UnapprovedDriver`] is polled. Prefer [`Self::run_until`] unless a separate
+    /// policy stage deliberately withholds approval. The outer typestate remains
+    /// movable after polling, so its consuming approval transition can happen at
+    /// that later boundary without detaching authority from the driver. The
+    /// future remains inert until polled, and consuming the supervisor prevents
+    /// any second driver.
+    ///
+    /// ```no_run
+    /// # use batter::{cleanup::CleanupBudget, lifecycle::{Readiness, ShutdownBudget, Supervisor}};
+    /// # use std::{future::pending, time::Duration};
+    /// # async fn example() -> Result<(), batter::BoxError> {
+    /// # let second = Duration::from_secs(1);
+    /// # let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let supervisor = Supervisor::new(ShutdownBudget::new(
+    ///     second, second, second, cleanup,
+    /// )?);
+    /// let status = supervisor.status();
+    /// let driver = supervisor.run_until_unapproved(pending());
+    /// assert_eq!(status.readiness(), Readiness::Starting);
+    /// let driver = driver.approve_readiness();
+    /// drop(driver); // Abandonment still requests drain and cancellation.
+    /// # Ok(()) }
+    /// ```
+    pub fn run_until_unapproved<F>(
+        self,
+        shutdown: F,
+    ) -> UnapprovedDriver<impl Future<Output = ShutdownReport>>
+    where
+        F: Future<Output = ()>,
+    {
+        let (approval, driver) = self.into_unapproved_driver(shutdown);
+        UnapprovedDriver::new(driver, approval)
+    }
+
+    fn into_unapproved_driver<F>(
+        mut self,
+        shutdown: F,
+    ) -> (ReadinessApproval, impl Future<Output = ShutdownReport>)
+    where
+        F: Future<Output = ()>,
+    {
+        let ownership = self
             .ownership
             .take()
             .expect("supervisor owns shutdown signaling before driver transfer");
-        CallerOwnedDriver {
-            _ownership: emergency,
-            future: async move { scoped_dispatch::scope(self.drive_until(shutdown)).await },
-        }
+        ownership
+            .into_driver(async move { scoped_dispatch::scope(self.drive_until(shutdown)).await })
     }
 
     async fn drive_until<F>(mut self, shutdown: F) -> ShutdownReport
@@ -503,31 +577,6 @@ impl Supervisor {
                 }
             }
         }
-    }
-}
-
-struct EmergencyShutdown(LifecycleCoordinator);
-impl Drop for EmergencyShutdown {
-    fn drop(&mut self) {
-        self.0.shared.force_cancel();
-    }
-}
-
-pin_project_lite::pin_project! {
-    // Struct field order makes signaling precede inner-future destruction,
-    // including before the first poll; async capture drop order is not needed.
-    struct CallerOwnedDriver<F> {
-        _ownership: EmergencyShutdown,
-        #[pin]
-        future: F,
-    }
-}
-
-impl<F: Future> Future for CallerOwnedDriver<F> {
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().future.poll(cx)
     }
 }
 

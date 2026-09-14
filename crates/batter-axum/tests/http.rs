@@ -25,6 +25,11 @@ fn request(path: &str) -> Request<Body> {
 fn response_budget(duration: Duration) -> ResponseConstructionBudget {
     ResponseConstructionBudget::new(duration).unwrap()
 }
+fn ready_handle() -> ShutdownHandle {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    handle
+}
 fn application(handle: ShutdownHandle) -> Router {
     Router::new()
         .route(
@@ -63,7 +68,7 @@ fn request_budget_preserves_the_positive_representable_one_year_limit() {
 
 #[tokio::test]
 async fn starting_process_is_not_admitted() {
-    let response = application(ShutdownHandle::new())
+    let response = application(ShutdownHandle::new_unapproved())
         .oneshot(request("/work"))
         .await
         .unwrap();
@@ -83,16 +88,14 @@ async fn starting_process_is_not_admitted() {
 
 #[tokio::test]
 async fn admitted_handler_receives_native_operation_extension() {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let response = application(handle).oneshot(request("/work")).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn draining_rejects_new_requests() {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let router = application(handle.clone());
     handle.request();
     assert_eq!(
@@ -103,8 +106,7 @@ async fn draining_rejects_new_requests() {
 
 #[tokio::test]
 async fn drain_during_handler_does_not_interrupt_admitted_request() {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let inside = handle.clone();
     let router = Router::new()
         .route(
@@ -133,8 +135,7 @@ async fn drain_during_handler_does_not_interrupt_admitted_request() {
 
 #[tokio::test(start_paused = true)]
 async fn total_handler_deadline_returns_sanitized_problem() {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let router = Router::new()
         .route(
             "/slow",
@@ -165,8 +166,7 @@ async fn total_handler_deadline_returns_sanitized_problem() {
 async fn request_context_is_cancelled_after_response_construction() {
     let escaped = Arc::new(Mutex::new(None));
     let inside = escaped.clone();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let router = Router::new()
         .route(
             "/work",
@@ -194,7 +194,7 @@ async fn request_context_is_cancelled_after_response_construction() {
 
 #[tokio::test]
 async fn probes_remain_reachable_without_readiness() {
-    let handle = ShutdownHandle::new();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     let router = application(handle.clone()).merge(
         Router::new()
             .route("/live", get(liveness))
@@ -219,7 +219,7 @@ async fn probes_remain_reachable_without_readiness() {
             .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    handle.mark_ready();
+    approval.approve();
     assert_eq!(
         router.oneshot(request("/ready")).await.unwrap().status(),
         StatusCode::OK
@@ -296,9 +296,9 @@ async fn readiness_and_drain_rejections_use_application_renderer_without_respons
         panic!("rejected handler must not run");
     }
     for draining in [false, true] {
-        let handle = ShutdownHandle::new();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
         if draining {
-            handle.mark_ready();
+            approval.approve();
             handle.request();
         }
         let router = Router::new().route("/work", get(rejected_handler)).layer(
@@ -311,8 +311,7 @@ async fn readiness_and_drain_rejections_use_application_renderer_without_respons
 
 #[tokio::test(start_paused = true)]
 async fn timeout_renderer_keeps_original_trusted_metadata_after_handler_takes_the_request() {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let handle = ready_handle();
     let router = Router::new()
         .route(
             "/work",
@@ -334,7 +333,7 @@ async fn timeout_renderer_keeps_original_trusted_metadata_after_handler_takes_th
 #[tokio::test]
 async fn custom_renderer_owns_status_and_headers_as_well_as_the_error_body() {
     let policy = RequestPolicy::new(
-        ShutdownHandle::new().operation_admission(),
+        ShutdownHandle::new_unapproved().operation_admission(),
         response_budget(Duration::from_secs(1)),
     )
     .with_failure_renderer(|failure, _parts| {
@@ -391,7 +390,6 @@ async fn forced_process_cancellation_uses_application_renderer_with_original_cor
             Ok(())
         })
         .unwrap();
-    handle.mark_ready();
     let supervisor = tokio::spawn(supervisor.run_until(std::future::pending()));
     startup.await.unwrap();
     let inside = handle.clone();

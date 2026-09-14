@@ -229,7 +229,6 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
             Ok(())
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     let running = tracing::dispatcher::with_default(&driver_dispatch, || {
         let span = tracing::info_span!("driver.scope", driver_marker = "driver-1");
         let _entered = span.enter();

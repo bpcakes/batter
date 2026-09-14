@@ -47,11 +47,11 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
         .unwrap();
 
     // No await on this current-thread runtime: the coordinator has not polled.
-    let running = supervisor.start();
-    assert_eq!(running.status().readiness(), Readiness::Starting);
-    let observer = running.observer();
+    let pending_owner = supervisor.start();
+    assert_eq!(pending_owner.status().readiness(), Readiness::Starting);
+    let observer = pending_owner.observer();
     let another_observer = observer.clone();
-    drop(running);
+    drop(pending_owner);
     assert_eq!(started.load(Ordering::SeqCst), 0);
     assert_eq!(finalized.load(Ordering::SeqCst), 0);
 
@@ -96,11 +96,11 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
         .unwrap();
 
     // The coordinator cannot poll until this current-thread test yields.
-    let running = supervisor.start();
-    assert_eq!(running.status().readiness(), Readiness::Starting);
-    let observer = running.observer();
+    let pending_owner = supervisor.start();
+    assert_eq!(pending_owner.status().readiness(), Readiness::Starting);
+    let observer = pending_owner.observer();
     let another_observer = observer.clone();
-    drop(running);
+    drop(pending_owner);
     assert_eq!(captures_dropped.load(Ordering::SeqCst), 0);
 
     let error = tokio::time::timeout(Duration::from_secs(5), observer.wait())

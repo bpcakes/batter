@@ -16,11 +16,12 @@
 //! but does not turn this initializer into a finite-command owner.
 
 mod driver;
+mod handoff;
 mod report;
 mod signals;
 
 pub use crate::{PanicPayload, PanicPayloadBusy};
-pub use driver::{StartingSupervisor, StartupObserver, StartupOutcome};
+pub use handoff::{StartingSupervisor, StartupObserver, StartupOutcome};
 pub use report::{InitializationError, StartupCause, StartupError, StartupFailure};
 
 use crate::{
@@ -104,7 +105,6 @@ pub struct Startup<F> {
     supervisor: Supervisor,
     context: OperationContext,
     cleanup: CleanupBudget,
-    approve_readiness: bool,
     initialize: F,
 }
 
@@ -124,7 +124,6 @@ impl<F> Startup<F> {
             supervisor,
             context,
             cleanup,
-            approve_readiness: true,
             initialize,
         }
     }
@@ -132,7 +131,8 @@ impl<F> Startup<F> {
     /// Hand off a successfully initialized driver without approving application
     /// readiness. Registered components may still acknowledge their own startup;
     /// admission remains [`crate::lifecycle::Readiness::Starting`] until the
-    /// caller explicitly invokes [`crate::lifecycle::ShutdownHandle::mark_ready`].
+    /// caller consumes the returned
+    /// [`crate::lifecycle::UnapprovedSupervisor`] approval capability.
     ///
     /// This is useful for a staged composition root that can run infrastructure
     /// before its business handler is available. Initialization failure retains
@@ -166,17 +166,16 @@ impl<F> Startup<F> {
     /// )
     /// .without_readiness_approval()
     /// .start();
-    /// let running = starting.wait().await?;
-    /// assert_eq!(running.status().readiness(), Readiness::Starting);
-    /// assert!(running.handle().mark_ready());
+    /// let pending = starting.wait().await?;
+    /// assert_eq!(pending.status().readiness(), Readiness::Starting);
+    /// let running = pending.approve_readiness();
     /// running.status().wait_ready().await.unwrap();
     /// assert!(running.shutdown().await?.is_success());
     /// # Ok(()) }
     /// ```
     #[must_use = "the returned startup specification contains the selected approval policy"]
-    pub fn without_readiness_approval(mut self) -> Self {
-        self.approve_readiness = false;
-        self
+    pub fn without_readiness_approval(self) -> DeferredStartup<F> {
+        DeferredStartup { startup: self }
     }
 
     /// Launch owned startup on the current Tokio runtime.
@@ -188,6 +187,26 @@ impl<F> Startup<F> {
         E: Send + Sync + 'static,
     {
         driver::start(self)
+    }
+}
+
+/// An inert startup specification whose successful handoff retains the one-shot
+/// application-readiness decision. Obtain this through
+/// [`Startup::without_readiness_approval`]; that method's example demonstrates
+/// the complete pending-to-running transition.
+#[must_use = "start the specification or explicitly abandon deferred startup"]
+pub struct DeferredStartup<F> {
+    startup: Startup<F>,
+}
+
+impl<F> DeferredStartup<F> {
+    /// Launch owned startup and return an unapproved running owner on success.
+    pub fn start<E>(self) -> StartingSupervisor<E, crate::lifecycle::UnapprovedSupervisor>
+    where
+        F: for<'a> FnOnce(&'a mut StartupScope) -> StartupFuture<'a, E> + Send + 'static,
+        E: Send + Sync + 'static,
+    {
+        driver::start_deferred(self)
     }
 }
 
@@ -238,7 +257,6 @@ impl Startup<()> {
             supervisor,
             context,
             cleanup,
-            approve_readiness: true,
             signals: signals::SignalPolicy::default(),
             initialize,
         }
@@ -250,7 +268,6 @@ pub struct ScopedStartup<F> {
     supervisor: Supervisor,
     context: OperationContext,
     cleanup: CleanupBudget,
-    approve_readiness: bool,
     signals: signals::SignalPolicy,
     initialize: F,
 }
@@ -258,9 +275,8 @@ pub struct ScopedStartup<F> {
 impl<F> ScopedStartup<F> {
     /// Keep readiness application-controlled after successful initialization.
     #[must_use = "the returned startup specification contains the selected approval policy"]
-    pub fn without_readiness_approval(mut self) -> Self {
-        self.approve_readiness = false;
-        self
+    pub fn without_readiness_approval(self) -> DeferredScopedStartup<F> {
+        DeferredScopedStartup { startup: self }
     }
 
     /// Select library-owned Unix SIGTERM/SIGINT handling for this startup.
@@ -302,6 +318,35 @@ impl<F> ScopedStartup<F> {
         E: Send + Sync + 'static,
     {
         driver::start_scoped(self)
+    }
+}
+
+/// A protected startup specification whose successful handoff retains the
+/// one-shot application-readiness decision. Obtain this through
+/// [`ScopedStartup::without_readiness_approval`] and consume the handed-off
+/// [`crate::lifecycle::UnapprovedSupervisor`] after the extra readiness checks.
+#[must_use = "start the specification or explicitly abandon deferred startup"]
+pub struct DeferredScopedStartup<F> {
+    startup: ScopedStartup<F>,
+}
+
+impl<F> DeferredScopedStartup<F> {
+    /// Select library-owned Unix signals while retaining deferred approval.
+    #[must_use = "the returned startup specification contains the selected Unix signal policy"]
+    pub fn with_unix_signals(mut self, name: &'static str) -> Self {
+        self.startup = self.startup.with_unix_signals(name);
+        self
+    }
+
+    /// Launch protected startup and return an unapproved running owner on success.
+    pub fn start<E>(
+        self,
+    ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::UnapprovedSupervisor>
+    where
+        F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+        E: Send + Sync + 'static,
+    {
+        driver::start_scoped_deferred(self)
     }
 }
 

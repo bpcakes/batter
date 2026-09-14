@@ -87,7 +87,6 @@ async fn completion_boundary(completion: Completion) {
         })
         .unwrap();
     let running = process.start();
-    running.handle().mark_ready();
     let ready = running.status().wait_ready().await;
     // Always drain and join even when the original defect allowed readiness.
     let report = running.shutdown().await.unwrap();
@@ -191,7 +190,6 @@ async fn early_exit_before_initialization(exit: EarlyExit) {
         })
         .unwrap();
     let running = process.start();
-    running.handle().mark_ready();
     if exit == EarlyExit::ProcessDrain {
         entering.await.unwrap();
         running.handle().request();

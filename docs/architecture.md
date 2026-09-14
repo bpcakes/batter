@@ -143,17 +143,23 @@ Observers retain outcomes without keeping a running owner alive. Initializer
 construction, polling and destructor unwinds are caught separately; original
 application failures and destructor panics coexist in the startup report.
 
-By default, successful initialization arms readiness and starts the existing
-owned driver. `without_readiness_approval` deliberately leaves application
-approval to the running owner. Registration creates one non-cloneable
+By default, successful initialization consumes the application-readiness
+decision and starts the existing owned driver. `without_readiness_approval`
+changes the successful handoff type to `UnapprovedSupervisor`; the running owner
+must consume `approve_readiness` to obtain `RunningSupervisor`. Registration
+creates one non-cloneable
 `ComponentStartup` for each critical component. The component observes shutdown
 through that value during initialization, then consumes
 `acknowledge_started()` after actual initialization and receives a read-only
 `ShutdownSignal` for its running phase. A standalone signal cannot acknowledge
 startup, repeated acknowledgement does not type-check, and drain cannot be
 reversed by a late acknowledgement or application approval.
-The composition root retains `ShutdownHandle` only for shutdown requests and
-application-start approval. It projects `LifecycleStatus` for readiness probes
+The composition root retains `ShutdownHandle` only for shutdown requests. The
+one-shot application-start approval remains paired with an unapproved driver
+owner. Spawned ownership uses `UnapprovedSupervisor`; caller-owned execution uses
+`UnapprovedDriver`, whose independently pinned inner future leaves the linear
+outer approval owner movable after policy polls. The handle projects
+`LifecycleStatus` for readiness probes
 and waiters, `OperationAdmission` for readiness-gated transient contexts, and
 `ShutdownSignal` for drain/cancellation observation. Policies cannot recover the
 root mutations from those values. Managed components receive a separate private

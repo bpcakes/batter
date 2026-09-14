@@ -42,7 +42,6 @@ pub async fn descendant_closure(
             Ok(())
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();

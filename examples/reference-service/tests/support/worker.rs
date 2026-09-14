@@ -86,7 +86,6 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
         },
     )?;
     let running = process.start();
-    running.handle().mark_ready();
     let witnessed = tokio::time::timeout(Duration::from_secs(20), receiver.recv()).await;
     // The witness proves durable test execution, never production initialization.
     batter::lifecycle::check_shutdown(running.shutdown().await)?;

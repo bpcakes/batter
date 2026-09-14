@@ -46,8 +46,8 @@ fn abort_preserves_observer_and_handler_destruction_under_the_first_poll_subscri
         let scoped = Capture::new();
         let ambient = Capture::new();
         ambient.block_on(async {
-            let handle = ShutdownHandle::new();
-            handle.mark_ready();
+            let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+            approval.approve();
             let (started_tx, started_rx) = tokio::sync::oneshot::channel();
             let started = Arc::new(Mutex::new(Some(started_tx)));
             let escaped = Arc::new(Mutex::new(None));
@@ -137,8 +137,8 @@ fn abort_preserves_observer_and_handler_destruction_under_the_first_poll_subscri
 }
 
 async fn discard_unpolled(State(mode): State<Boundary>, request: Request, next: Next) -> Response {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let policy = RequestPolicy::new(
         handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
@@ -216,8 +216,8 @@ async fn standalone_observation_adds_no_context_or_deadline_and_ends_before_body
 #[tokio::test]
 async fn split_admission_allows_drain_then_cancels_the_context_at_response_completion() {
     let capture = Capture::new();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let inside = handle.clone();
     let escaped = Arc::new(Mutex::new(None));
     let saved = escaped.clone();

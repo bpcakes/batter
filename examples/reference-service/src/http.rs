@@ -452,8 +452,8 @@ mod tests {
     fn app() -> Router {
         let settings = settings();
         let prepared_http = settings.prepare_http();
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let pool = settings
             .pool_options()
             .connect_lazy_with(settings.connect_options_from_process().unwrap());

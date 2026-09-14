@@ -1,4 +1,7 @@
-use super::{LifecycleStatus, OperationAdmission, ShutdownHandle, ShutdownReport, Supervisor};
+use super::{
+    LifecycleStatus, OperationAdmission, ReadinessApproval, ShutdownHandle, ShutdownReport,
+    Supervisor,
+};
 use crate::{completion::wait_published, scoped_dispatch};
 use std::{future::pending, ops::Deref, sync::Arc};
 use tokio::{sync::watch, task::JoinError};
@@ -146,8 +149,10 @@ impl std::error::Error for SharedShutdownReport {
 
 /// A cloneable completion observer. It does not extend ownership of the running
 /// process, and cancelling a waiter cannot cancel its driver or finalizers.
-/// Obtain one from [`RunningSupervisor::observer`] after [`Supervisor::start`];
-/// unstarted supervisors and caller-owned `run_until` drivers have no observer.
+/// Obtain one from [`RunningSupervisor::observer`] after [`Supervisor::start`]
+/// or from [`UnapprovedSupervisor::observer`] after
+/// [`Supervisor::start_unapproved`]; unstarted supervisors and caller-owned
+/// `run_until` drivers have no observer.
 #[derive(Clone)]
 pub struct SupervisorObserver {
     completion: watch::Receiver<Option<DriverOutcome>>,
@@ -172,9 +177,108 @@ impl SupervisorObserver {
     }
 }
 
-/// Ownership of an explicitly started process driver. Clones share ownership;
+/// A started process whose one application-readiness decision is still pending.
+///
+/// This non-cloneable value keeps the decision paired with its driver. Consuming
+/// [`Self::approve_readiness`] records application approval and returns ordinary
+/// [`RunningSupervisor`] ownership. The process can still remain Starting while
+/// registered components initialize. Dropping this value requests shutdown like
+/// dropping the last running owner; approval during drain cannot revive readiness.
+///
+/// ```no_run
+/// use batter::{
+///     cleanup::CleanupBudget,
+///     lifecycle::{ShutdownBudget, Supervisor, UnapprovedSupervisor},
+/// };
+/// use std::time::Duration;
+///
+/// # async fn example() -> Result<(), batter::BoxError> {
+/// let second = Duration::from_secs(1);
+/// let cleanup = CleanupBudget::new(second, second, second)?;
+/// let pending: UnapprovedSupervisor = Supervisor::new(ShutdownBudget::new(
+///     second, second, second, cleanup,
+/// )?)
+/// .start_unapproved();
+/// let running = pending.approve_readiness();
+/// let _report = running.shutdown().await?;
+/// # Ok(()) }
+/// ```
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::UnapprovedSupervisor;
+/// fn cannot_clone(pending: UnapprovedSupervisor) {
+///     let duplicate = pending.clone();
+/// }
+/// ```
+///
+/// ```compile_fail,E0382
+/// use batter::lifecycle::UnapprovedSupervisor;
+/// fn cannot_approve_twice(pending: UnapprovedSupervisor) {
+///     let running = pending.approve_readiness();
+///     let again = pending.approve_readiness();
+/// }
+/// ```
+#[must_use = "retain the process owner and decide whether to approve readiness"]
+pub struct UnapprovedSupervisor {
+    running: RunningSupervisor,
+    approval: ReadinessApproval,
+}
+
+impl UnapprovedSupervisor {
+    /// Consume the process's only application-readiness decision.
+    ///
+    /// Approval arms readiness but does not bypass pending component startup.
+    /// A concurrent drain remains irreversible.
+    pub fn approve_readiness(self) -> RunningSupervisor {
+        let Self { running, approval } = self;
+        approval.approve();
+        running
+    }
+
+    /// Clone root shutdown control without exposing readiness approval.
+    pub fn handle(&self) -> ShutdownHandle {
+        self.running.handle()
+    }
+
+    /// Clone read-only readiness and lifecycle status.
+    pub fn status(&self) -> LifecycleStatus {
+        self.running.status()
+    }
+
+    /// Clone readiness-gated admission. It rejects while approval is pending.
+    pub fn operation_admission(&self) -> OperationAdmission {
+        self.running.operation_admission()
+    }
+
+    /// Observe completion without retaining process ownership.
+    pub fn observer(&self) -> SupervisorObserver {
+        self.running.observer()
+    }
+
+    /// Await completion without approving readiness or requesting shutdown.
+    pub async fn wait(&self) -> DriverOutcome {
+        self.running.wait().await
+    }
+
+    /// Request shutdown and observe its retained report without approving readiness.
+    pub async fn shutdown(&self) -> DriverOutcome {
+        self.running.shutdown().await
+    }
+}
+
+/// Ownership of an explicitly started process driver after application approval.
+/// Clones share ownership;
 /// dropping the last owner requests graceful shutdown, while a separate owned
 /// coordinator and monitor continue through cleanup on the live runtime.
+///
+/// Application approval is no longer available after this transition:
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::RunningSupervisor;
+/// fn cannot_approve_again(running: RunningSupervisor) {
+///     running.approve_readiness();
+/// }
+/// ```
 #[derive(Clone)]
 pub struct RunningSupervisor {
     owner: Arc<DriverOwner>,
@@ -241,16 +345,31 @@ impl Supervisor {
     /// Start an owned driver on the current Tokio runtime. Calling this method
     /// is the explicit execution boundary; registration itself remains inert.
     ///
+    /// Application readiness is approved once at this boundary. The process can
+    /// still remain Starting until the driver polls and every registered
+    /// component acknowledges its own initialization. Use
+    /// [`Self::start_unapproved`] only when a separate policy stage deliberately
+    /// withholds application approval.
+    ///
     /// A bounded pair of tasks drives and observes the coordinator. The monitor
     /// intentionally survives handle drop so it can retain coordinator panic and
     /// successful cleanup reports. Runtime/process termination cannot be shielded.
     pub fn start(self) -> RunningSupervisor {
+        self.start_unapproved().approve_readiness()
+    }
+
+    /// Start an owned driver while deliberately retaining application-readiness
+    /// approval in the returned typestate.
+    ///
+    /// Consume [`UnapprovedSupervisor::approve_readiness`] after the additional
+    /// checks pass. Dropping the owner requests shutdown; a late approval cannot
+    /// reverse drain.
+    pub fn start_unapproved(self) -> UnapprovedSupervisor {
         let handle = self.handle();
+        let (approval, driver) = self.into_unapproved_driver(pending());
         let (sender, completion) = watch::channel(None);
         let observer = SupervisorObserver { completion };
-        let coordinator = tokio::spawn(scoped_dispatch::scope(
-            self.run_until(pending()).in_current_span(),
-        ));
+        let coordinator = tokio::spawn(scoped_dispatch::scope(driver.in_current_span()));
         let monitor = async move {
             let outcome = coordinator
                 .await
@@ -269,9 +388,12 @@ impl Supervisor {
         drop(tokio::spawn(scoped_dispatch::scope(
             monitor.in_current_span(),
         )));
-        RunningSupervisor {
-            owner: Arc::new(DriverOwner { handle }),
-            observer,
+        UnapprovedSupervisor {
+            running: RunningSupervisor {
+                owner: Arc::new(DriverOwner { handle }),
+                observer,
+            },
+            approval,
         }
     }
 }

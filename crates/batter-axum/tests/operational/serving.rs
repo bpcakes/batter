@@ -255,7 +255,6 @@ async fn streaming_abort(register: RegisterHttp) {
     let address = listener.local_addr().unwrap();
     register(&mut supervisor, "http", listener, app).unwrap();
     let running = supervisor.start();
-    handle.mark_ready();
     timeout(Duration::from_secs(1), handle.status().wait_ready())
         .await
         .unwrap()

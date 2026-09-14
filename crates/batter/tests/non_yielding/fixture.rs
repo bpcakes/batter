@@ -93,7 +93,6 @@ fn supervisor(
             }
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     supervisor
 }
 

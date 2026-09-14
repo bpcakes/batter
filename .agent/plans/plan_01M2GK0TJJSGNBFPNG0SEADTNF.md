@@ -72,7 +72,21 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   `edc0ed55db27bd2ac30f0a57579ecf63386fa798b956c21d33b8c96aa136006f`.
 - [x] Slice 2: purpose-qualify lifecycle status, admission, and shutdown control,
   migrate callers, validate, converge the review loop, and commit.
-- [ ] Slice 3: replace clone-wide deferred application approval with a one-shot
+- [x] (2026-09-14T22:53:02Z) Slice 3 replaced clone-wide application readiness
+  mutation with a single linear decision paired with lifecycle ownership.
+  Ordinary start/run paths approve automatically; deliberately deferred spawned,
+  caller-owned and Startup paths expose distinct non-cloneable typestates.
+- [x] (2026-09-14T22:53:02Z) Slice 3 repair validation passed the locked full
+  workspace test suite, 30 positive and 35 compile-fail foundation doctests,
+  warning-denied workspace/foundation Clippy, workspace all-target compilation,
+  formatting, diff hygiene and repeated native file-budget checks.
+- [x] (2026-09-14T22:53:02Z) Slice 3 converged after three complete
+  comprehensive Claude/Codex passes, two ordinary repair rounds and one bounded
+  supporting closure with its permitted correction. Both focused terminal
+  reviewers marked the abandonment obligations satisfied, reported no remaining
+  defect, and matched terminal fingerprint
+  `1e8357ff4f3418b8ccfcbcf5207153063748672f2340506e300cd5ec8887a151`.
+- [x] Slice 3: replace clone-wide deferred application approval with a one-shot
   capability, migrate callers, validate, converge the review loop, and commit.
 - [ ] Slice 4: update contracts, status, examples, exhaustive Jig scopes and final
   evidence; run the full two-toolchain and HTTP verification, converge, and commit.
@@ -127,6 +141,25 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   Evidence: the deterministic state table and a barrier-controlled race prove
   that admission concurrent with drain yields only rejection or a context that
   remains active through drain and is cancelled by forced shutdown.
+
+- Observation: a caller-owned future cannot both stay pinnable across polls and
+  later consume a linear outer readiness typestate if the future itself is pinned
+  in place.
+  Evidence: the first Slice 3 review caught discarded approval, and the next
+  review showed that splitting the capability back out reintroduced detached
+  authority. Pinning only the inner exceptional driver leaves the combined outer
+  `UnapprovedDriver` movable and consumable after polling.
+
+- Observation: an innocently named standalone constructor can recreate an
+  unapprovable admission path even after mutation methods are removed.
+  Evidence: review traced `ShutdownHandle::new()` to `Shared::new(false)` with no
+  approval token. Removing `new`/`Default` forces callers to choose explicitly
+  between permanently Starting `new_unapproved` and paired approval construction.
+
+- Observation: post-drop state assertions do not prove destructor ordering.
+  Evidence: the first focused closure verification demonstrated that cancellation
+  after captured-value destruction would still satisfy the initial assertions;
+  the corrected test observes drain and cancellation from inside those destructors.
 
 ## Decision Log
 
@@ -211,6 +244,30 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   tests rather than this explicitly historical oracle.
   Date/Author: 2026-09-14 / Codex.
 
+- Decision: make ordinary `Supervisor::start`, `Supervisor::run_until`, and
+  successful Startup handoff consume application approval automatically, while
+  explicitly named unapproved methods and builder types retain the sole pending
+  decision.
+  Rationale: the canonical agent-generated path has no coordination instruction
+  to forget, while exceptional delayed policy remains visible in the type and
+  method name and cannot be cloned or repeated.
+  Date/Author: 2026-09-14 / Codex.
+
+- Decision: represent caller-owned delayed approval as `UnapprovedDriver` with a
+  pinned boxed inner driver and a movable, consuming outer typestate; do not expose
+  an `into_parts` capability split.
+  Rationale: policy can poll before deciding without ever representing approval
+  authority detached from its driver. Only the exceptional caller-owned path pays
+  the allocation; ordinary `run_until` retains its allocation-free wrapper.
+  Date/Author: 2026-09-14 / Codex.
+
+- Decision: remove `ShutdownHandle::new` and `Default`; retain an explicitly named
+  `new_unapproved` constructor and the paired standalone constructor.
+  Rationale: migration cannot silently produce an admission source that remains
+  Starting forever. Cancellation-only uses remain possible but must state their
+  permanent lack of readiness approval.
+  Date/Author: 2026-09-14 / Codex.
+
 ## Outcomes & Retrospective
 
 Slices 1 and 2 are implemented, validated and independently converged. Slice 1's
@@ -224,8 +281,12 @@ coverage. Slice 2 removes ambient root authority from policies, probes,
 components and transient-operation entrypoints. Its review rounds made the
 private coordinator boundary explicit, closed race and compile-fail gaps, and
 preserved the historical consumer archive through an immutable dependency pin.
-The terminal reviewers found no actionable issue. The broader capability
-cutover remains in progress through Slices 3-4.
+The terminal reviewers found no actionable issue. Slice 3 removes clone-wide
+application readiness mutation, pairs the sole decision with spawned,
+caller-owned or startup handoff ownership, and makes the ordinary agent path
+automatic. Review exposed and eliminated both a permanently unapprovable
+caller-owned driver and a detached capability escape hatch. The final slice now
+owns final-tree two-toolchain, process-smoke, Jig and tracker evidence.
 
 ## Context and Orientation
 

@@ -250,8 +250,8 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
     .without_readiness_approval()
     .with_unix_signals("signals")
     .start();
-    let running = starting.wait().await.map_err(startup_failure)?;
-    check_application_shutdown(running.wait().await)?;
+    let pending = starting.wait().await.map_err(startup_failure)?;
+    check_application_shutdown(pending.wait().await)?;
     Ok(())
 }
 

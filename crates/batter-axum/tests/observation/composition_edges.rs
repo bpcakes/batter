@@ -18,8 +18,8 @@ use tower::ServiceExt;
 use tracing::Level;
 
 fn ready_policy() -> RequestPolicy {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     RequestPolicy::new(
         handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),

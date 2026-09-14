@@ -1,6 +1,48 @@
 # Validation evidence
 
-Latest evidence: 2026-09-14. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-15. Earlier sections retain their historical scope.
+
+## One-shot application readiness, Slice 3, 2026-09-14
+
+Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 toolchains. This slice removes
+clone-wide `ShutdownHandle::mark_ready`. Each lifecycle constructs one
+non-cloneable readiness decision with its coordinator and transfers it with
+supervisor ownership; private coordinator clones cannot mint another. Ordinary
+`start` and `run_until` consume it automatically. Explicitly deferred paths use
+`UnapprovedSupervisor`, whose consuming transition produces `RunningSupervisor`.
+
+| Slice 3 command | Executed outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on the pinned Rust 1.98.1 toolchain: runner controls, the complete core/workspace and hostile-environment runtime matrix, doctests, formatting, strict Clippy and warning-denied rustdoc completed. Foundation rustdoc ran 29 positive and 33 compile-fail cases. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
+| Focused lifecycle, startup, process-ownership and scheduling tests, followed by `cargo test --workspace --all-features --locked` | PASS. The focused runs cover default approval, explicitly deferred admission, default and deferred Startup handoff, concurrent approval/drain, component acknowledgement and owner abandonment. The complete workspace run passed before the internal token-pairing refinement; both complete verifiers cover that refinement. The later source-only handoff-module extraction is covered by warning-free workspace compilation, focused startup/library/signal tests and foundation doctests; a final complete rerun remains pending. |
+| Foundation doctests in both complete verifiers | PASS: 29 positive and 33 compile-fail cases. The new negative cases reject approval through shutdown/status/admission projections, cloning either approval carrier, consuming either carrier twice, and approving an already-approved `RunningSupervisor`. |
+| Fresh `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS in all five modes on Rust 1.98.1 and again after a fresh Rust 1.94.0 build, for ten passing process smokes. |
+| `cargo test --locked --manifest-path docs/evidence/batter-gi4/Cargo.toml` | PASS on Rust 1.98.1 and Rust 1.94.0: five integration and two modification tests preserve the immutable historical consumer oracle at pinned Batter revision `034ce0085220044dcf5f3561b00a0bfce96a801f`. |
+| `scripts/jig check repo:file-budget --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | The first run rejected 46 lines of new debt in `startup/driver.rs`. Extracting generic handoff ownership/publication into `startup/handoff.rs` removed that debt; the repeated check passed. |
+
+The first comprehensive Claude/Codex low-severity review pass found one
+substantive caller-owned-driver mismatch: `run_until_unapproved` discarded the
+pending approval it claimed to retain. `UnapprovedDriver` now owns that decision,
+with an independently pinned inner future so policy can poll and later consume
+the still-combined approval owner; the admission regression deterministically
+drives both states. The same repair batch made the public admission example
+executable and corrected observer/outcome and validation-status wording. Focused
+tests, doctests (30 positive and 35 compile-fail), strict foundation Clippy,
+formatting, diff checks and the repeated native file-budget gate pass. The final
+full-scope review and complete final-tree matrices remain pending. This evidence
+does not claim hosted CI, current Linux, live PostgreSQL, publication, deployment,
+push, or fresh current-API external consumer generation.
+
+The third complete review pass found no substantive defect. Its sole material
+supporting gap was direct abandonment coverage for the two new unapproved owners.
+The bounded closure batch adds caller-owned never-polled drop ordering and
+spawned-owner pre-poll drain controls. Its first focused verification found the
+post-drop assertions did not themselves prove ordering, so the one permitted
+supporting correction extends the existing destructor-time witness to the
+unapproved driver. Repeated focused verification and the final complete matrices
+remain pending.
 
 ## Purpose-qualified lifecycle authority, Slice 2, 2026-09-14
 

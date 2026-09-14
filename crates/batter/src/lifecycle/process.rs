@@ -203,7 +203,6 @@ impl ProcessHandle {
     /// let capacity = batter::lifecycle::ProcessCapacity::new(1)?;
     /// let supervisor = Supervisor::with_process_capacity(budget, capacity);
     /// let process = supervisor.process_handle().unwrap();
-    /// supervisor.handle().mark_ready();
     /// let running = supervisor.start();
     /// running.status().wait_ready().await.unwrap();
     /// let receipt = process.try_spawn("refresh", |_| async {

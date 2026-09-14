@@ -148,7 +148,6 @@ impl Server {
             cleanup_state.record("cleanup");
             Ok(())
         })?;
-        handle.mark_ready();
         let running = supervisor.start();
         // Transfer the owner before waiting for readiness, so a timed-out
         // initialization can still drive and inspect shutdown separately.

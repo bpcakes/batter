@@ -176,7 +176,7 @@ async fn two_thousand_concurrent_reads_start_no_additional_probes() {
         async { Ok::<_, Infallible>(()) }
     });
     let reader = monitor.reader();
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     let running = tokio::spawn(monitor.run(handle.signal()));
     wait_status(&reader, HealthStatus::Healthy).await;
     let completed_at = reader.snapshot().last_probe().unwrap().completed_at();
@@ -218,7 +218,7 @@ async fn a_stalled_owner_expires_at_the_boundary_and_never_catches_up() {
         async { Ok::<_, Infallible>(()) }
     });
     let reader = monitor.reader();
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     let mut run = Box::pin(monitor.run(handle.signal()));
     assert!(poll_once(run.as_mut()).await.is_pending());
     let first = reader.snapshot();
@@ -290,7 +290,7 @@ async fn timeout_covers_acquisition_plus_query_and_probes_never_overlap() {
         }
     });
     let reader = monitor.reader();
-    let handle = ShutdownHandle::new();
+    let handle = ShutdownHandle::new_unapproved();
     let mut run = Box::pin(monitor.run(handle.signal()));
     assert!(poll_once(run.as_mut()).await.is_pending());
     assert_eq!(reader.snapshot().status(), HealthStatus::Unknown);
@@ -345,7 +345,6 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
         Ok(())
     })
     .unwrap();
-    handle.mark_ready();
     let running = base.start();
     handle.status().wait_ready().await.unwrap();
     wait_status(&reader, HealthStatus::Failed).await;
@@ -406,7 +405,7 @@ async fn construction_and_polling_overruns_cannot_publish_healthy_results() {
             SlowPoll(!slow_factory)
         });
         let reader = monitor.reader();
-        let handle = ShutdownHandle::new();
+        let handle = ShutdownHandle::new_unapproved();
         let task = tokio::spawn(monitor.run(handle.signal()));
         wait_status(&reader, HealthStatus::TimedOut).await;
         assert!(!reader.is_healthy());

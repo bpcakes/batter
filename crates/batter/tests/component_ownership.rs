@@ -99,7 +99,6 @@ async fn conforming_component() {
             Ok(())
         })
         .unwrap();
-    handle.mark_ready();
     let running = supervisor.start();
     entered_rx.await.unwrap();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
@@ -171,7 +170,6 @@ async fn nonconforming_component() {
             Ok(())
         })
         .unwrap();
-    handle.mark_ready();
     let running = supervisor.start();
     let child = child_rx.await.unwrap();
     handle.status().wait_ready().await.unwrap();

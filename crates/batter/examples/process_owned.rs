@@ -30,7 +30,6 @@ async fn main() -> Result<(), BoxError> {
         Ok(())
     })?;
     let handle = supervisor.handle();
-    handle.mark_ready();
     let running = supervisor.start();
     // Keep body errors inside this block so they cannot return from main and
     // destroy the runtime before the separately owned cleanup has been awaited.

@@ -134,10 +134,12 @@ non-cloneable `ComponentStartup`, consumes `acknowledge_started()` after actual
 initialization, and uses the returned read-only `ShutdownSignal` while running;
 supported adapters own this transition for their components. The driver publishes
 Ready only after every registered component acknowledges. Use
-`without_readiness_approval()` only when
-application policy deliberately defers approval, then call `handle.mark_ready()`
-after those checks pass. Fresh dependency health remains a separate readiness
-condition. A one-shot warmup belongs in the initializer, not the critical task set.
+`without_readiness_approval()` only when application policy deliberately defers
+approval. Its successful handoff is an `UnapprovedSupervisor`; consume
+`approve_readiness()` after those checks pass to obtain the ordinary
+`RunningSupervisor`. The transition cannot be cloned or repeated. Fresh
+dependency health remains a separate readiness condition. A one-shot warmup
+belongs in the initializer, not the critical task set.
 A maintenance loop needs an intentional missed-tick, error and cancellation policy.
 
 For Runledger workers, select the implemented
@@ -173,9 +175,14 @@ Display does not sanitize Debug or arbitrary errors propagated through `?`.
 
 The [worker example](../crates/batter/examples/worker.rs) illustrates direct
 registration and supervisor driving, not the complete owned-startup/error-retention
-path above. Direct `Supervisor::start()` leaves acquisition failure cleanup and
-application readiness approval with the caller. Do not copy its count-only error
-conversion when original shutdown causes must be retained. Do not add a bare spawn
+path above. Direct `Supervisor::start()` approves readiness once; only
+`start_unapproved()` returns `UnapprovedSupervisor` for an additional policy
+stage. Direct `run_until()` does the same on its first poll;
+`run_until_unapproved()` returns a linear, movable `UnapprovedDriver`, allowing
+policy to poll before consuming `approve_readiness()` without separating the
+decision from its driver. The caller still owns acquisition-failure cleanup. Do not copy the
+example's count-only error conversion when original shutdown causes must be
+retained. Do not add a bare spawn
 inside a component to make borrowing convenient; use composed futures or an
 explicitly owned JoinSet and await its shutdown.
 

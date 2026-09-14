@@ -28,8 +28,8 @@ fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     ambient.block_on(async {
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let started = Arc::new(Mutex::new(Some(started_tx)));
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let router = Router::new()
             .route(
                 "/pending",

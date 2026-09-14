@@ -79,8 +79,8 @@ fn completion_fields(text: &str) -> Vec<&str> {
 fn concurrent_requests_replace_forged_identity_and_agree_with_body_and_nested_operations() {
     let capture = Capture::new();
     let ids = capture.block_on(async {
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let barrier = Arc::new(Barrier::new(16));
         let app = boundary(Router::new().route("/work", get(move |
             headers: HeaderMap,
@@ -149,7 +149,7 @@ fn concurrent_requests_replace_forged_identity_and_agree_with_body_and_nested_op
 fn assembled_routes_probes_405_fallback_and_admission_emit_once_with_sanitized_fields() {
     let capture = Capture::new();
     let observations = capture.block_on(async {
-        let handle = ShutdownHandle::new();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
         let app = boundary(
             Router::new().route("/work", get(|| async { "ok" })),
             handle.clone(),
@@ -171,7 +171,7 @@ fn assembled_routes_probes_405_fallback_and_admission_emit_once_with_sanitized_f
             }
             observations.push((id, status, route, method));
         }
-        handle.mark_ready();
+        approval.approve();
         let response = app.oneshot(request("/work")).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let (id, body) = id_and_body(response).await;
@@ -226,7 +226,7 @@ fn replayed_adapter_extension_is_replaced_and_custom_renderer_remains_in_control
             .clone();
         let old_id = old.as_str().to_owned();
         let policy = RequestPolicy::new(
-            ShutdownHandle::new().operation_admission(),
+            ShutdownHandle::new_unapproved().operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         )
         .with_infrastructure_json()
@@ -264,8 +264,8 @@ async fn dropped_request_retains_event_local_id_with_info_disabled_under_another
     for capture in &captures {
         let seen = Arc::new(Mutex::new(None));
         let saved = seen.clone();
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let app = boundary(
             Router::new().route(
                 "/work",
@@ -312,8 +312,8 @@ async fn dropped_request_retains_event_local_id_with_info_disabled_under_another
 #[tokio::test(start_paused = true)]
 async fn deadline_failure_uses_generated_id_even_when_info_spans_are_disabled() {
     let capture = Capture::with_max_level(tracing::Level::WARN);
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let app = boundary(
         Router::new().route("/work", get(std::future::pending::<Response>)),
         handle,
@@ -341,7 +341,7 @@ async fn deadline_failure_uses_generated_id_even_when_info_spans_are_disabled() 
 #[tokio::test]
 async fn missing_typed_correlation_never_falls_back_to_untrusted_headers() {
     let policy = RequestPolicy::new(
-        ShutdownHandle::new().operation_admission(),
+        ShutdownHandle::new_unapproved().operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     )
     .with_infrastructure_json();
@@ -386,7 +386,6 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
         })
         .unwrap();
     let running = supervisor.start();
-    handle.mark_ready();
     handle.status().wait_ready().await.unwrap();
     let seen = Arc::new(Mutex::new(None));
     let saved = seen.clone();
@@ -435,8 +434,8 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
 fn request_context_target_keeps_nested_events_without_enabling_operation_info() {
     let capture = Capture::with_filter("info,batter=warn,batter::request=info");
     let id = capture.block_on(async {
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let app = boundary(
             Router::new().route(
                 "/work",

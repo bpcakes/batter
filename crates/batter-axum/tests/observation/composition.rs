@@ -141,13 +141,14 @@ async fn check(
 
 #[tokio::test]
 async fn complete_router_observes_probes_rejections_fallback_and_new_routes_once() {
-    let handle = ShutdownHandle::new();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    let mut approval = Some(approval);
     let calls = Arc::new(AtomicUsize::new(0));
     let router = assemble(handle.clone(), calls.clone());
     for phase in ["starting", "ready", "draining"] {
         match phase {
             "ready" => {
-                handle.mark_ready();
+                approval.take().unwrap().approve();
             }
             "draining" => handle.request(),
             _ => {}

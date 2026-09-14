@@ -90,7 +90,9 @@ async fn readiness_responses() -> [String; 4] {
             })
             .await
     });
-    let running = supervisor.start();
+    let pending = supervisor.start_unapproved();
+    let observer = pending.observer();
+    let exercise_observer = observer.clone();
     let result: Result<_, Box<dyn std::error::Error + Send + Sync>> = async {
         timeout(Duration::from_secs(2), started_rx).await??;
         timeout(Duration::from_secs(2), async {
@@ -100,12 +102,12 @@ async fn readiness_responses() -> [String; 4] {
         })
         .await?;
         let starting = get(address).await?;
-        handle.mark_ready();
+        let _running = pending.approve_readiness();
         let ready = get(address).await?;
         handle.request();
         let draining = get(address).await?;
         let _ = release.take().unwrap().send(());
-        let report = timeout(Duration::from_secs(5), running.wait()).await??;
+        let report = timeout(Duration::from_secs(5), exercise_observer.wait()).await??;
         let stopped = get(address).await?;
         Ok(([starting, ready, draining, stopped], report.is_success()))
     }
@@ -116,7 +118,7 @@ async fn readiness_responses() -> [String; 4] {
     if let Some(release) = release.take() {
         let _ = release.send(());
     }
-    let report = timeout(Duration::from_secs(5), running.wait()).await;
+    let report = timeout(Duration::from_secs(5), observer.wait()).await;
     let _ = stop_tx.send(());
     let server_result = timeout(Duration::from_secs(5), &mut server).await;
     if server_result.is_err() {
@@ -222,8 +224,8 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
         }
     });
     let health = monitor.reader();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let app = router(
         handle.status(),
         handle.operation_admission(),

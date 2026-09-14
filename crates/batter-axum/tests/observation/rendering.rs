@@ -71,9 +71,9 @@ async fn custom_readiness_and_drain_rejections_preserve_responses_and_observe_ac
     for mode in [Boundary::Split, Boundary::Combined] {
         for draining in [false, true] {
             let capture = Capture::new();
-            let handle = ShutdownHandle::new();
+            let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
             if draining {
-                handle.mark_ready();
+                approval.approve();
                 handle.request();
             }
             let router = mode
@@ -97,8 +97,8 @@ async fn custom_readiness_and_drain_rejections_preserve_responses_and_observe_ac
 async fn timeout_retains_original_metadata_and_cancels_admitted_context() {
     for mode in [Boundary::Split, Boundary::Combined] {
         let capture = Capture::new();
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let escaped = Arc::new(Mutex::new(None));
         let saved = escaped.clone();
         let router = mode
@@ -152,7 +152,6 @@ async fn forced_cancellation_retains_original_metadata_and_actual_rendered_statu
                 Ok(())
             })
             .unwrap();
-        handle.mark_ready();
         let running = supervisor.start();
         handle.status().wait_ready().await.unwrap();
         let inside = handle.clone();

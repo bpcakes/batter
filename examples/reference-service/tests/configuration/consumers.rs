@@ -33,8 +33,8 @@ async fn configured_request_policy_changes_actual_response_deadline() {
         ("50", StatusCode::OK),
     ] {
         let root = load(&[("BATTER_REQUEST_TIMEOUT_MS", millis)]).unwrap();
-        let handle = ShutdownHandle::new();
-        handle.mark_ready();
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
         let app = Router::new()
             .route(
                 "/held",
@@ -83,7 +83,6 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
             .unwrap();
         let process = supervisor.process_handle().unwrap();
         let handle = supervisor.handle();
-        handle.mark_ready();
         let running = supervisor.start();
         handle.status().wait_ready().await.unwrap();
         let mut finishes = Vec::new();
@@ -162,7 +161,6 @@ pub(crate) async fn native_worker() {
     )
     .unwrap();
     let running = process.start();
-    running.handle().mark_ready();
     let initialized =
         tokio::time::timeout(Duration::from_secs(3), running.status().wait_ready()).await;
     let report = running.shutdown().await.unwrap();

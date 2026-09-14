@@ -130,18 +130,19 @@ not start work. All direct JoinSet completions are observed by name, including
 factory panics and early successful exits. Errors continue to be collected during
 shutdown. Completion captures whether drain had started; a later drain cannot
 reclassify an earlier successful critical exit as expected. There is no restart.
-Application `mark_ready` arms readiness: Ready requires a running driver plus
-every registered critical component consuming its one `ComponentStartup`
-acknowledgement after actual initialization. `ShutdownSignal` has observation
-authority only, while the startup capability is non-cloneable and consumed by
-`acknowledge_started`; unauthorized and repeated acknowledgements therefore do
-not compile. For direct `register`, acknowledgement is an application assertion,
-not an inspection of its internal descendants. Forgotten acknowledgement leaves
-Starting.
+Application approval is a one-shot ownership transition from
+`UnapprovedSupervisor` to `RunningSupervisor`: Ready requires that transition, a
+running driver, and every registered critical component consuming its one
+`ComponentStartup` acknowledgement after actual initialization. `ShutdownSignal`
+has observation authority only, while both startup capabilities are
+non-cloneable and consumed by their transitions; unauthorized and repeated
+acknowledgements therefore do not compile. For direct `register`, acknowledgement
+is an application assertion, not an inspection of its internal descendants.
+Forgotten application or component acknowledgement leaves Starting.
 
-`ShutdownHandle` is retained at the composition root for shutdown requests and
-application readiness approval. It no
-longer exposes readiness reads, waits, or raw operation cancellation tokens.
+`ShutdownHandle` is retained at the composition root for shutdown requests. It
+does not expose application approval, readiness reads, waits, or raw operation
+cancellation tokens.
 `LifecycleStatus` can only read or wait for lifecycle state;
 `OperationAdmission` can only create an `OperationContext` after observing Ready;
 `ShutdownSignal` can only observe drain and forced cancellation. Axum request
@@ -418,12 +419,15 @@ and never signals after reaping. This is test-runner containment, not a new
 application guarantee for detached descendants. See [testing](testing.md#jig-verification)
 for execution bounds and the final-evidence reuse conditions.
 
-`start` explicitly launches an owned coordinator and completion monitor, creating
-their completion channel at that boundary. Obtain a `SupervisorObserver` only
-from `RunningSupervisor::observer`, available immediately after `start` even
-before the coordinator's first poll. `ShutdownHandle` provides root shutdown
-control and constructs status, admission, and signal projections, not completion
-observation. Migrate former
+`start` explicitly approves application readiness and launches an owned
+coordinator and completion monitor, creating their completion channel at that
+boundary. It returns the cloneable `RunningSupervisor`. The exceptional
+`start_unapproved` path instead returns a non-cloneable `UnapprovedSupervisor`;
+consume `approve_readiness` to obtain the ordinary owner. A `SupervisorObserver`
+is available from either owner immediately after its start boundary, even before
+the coordinator's first poll.
+`ShutdownHandle` provides root shutdown control and constructs status, admission,
+and signal projections, not completion observation. Migrate former
 `handle.observer()` calls to `running.observer()` after starting the supervisor.
 `RunningSupervisor::wait`/`shutdown` and `SupervisorObserver::wait` may be cancelled
 without cancelling the driver or finalizers. Last-owner drop requests graceful
@@ -466,6 +470,11 @@ asynchronous finalizers. Never put an outer timeout
 around run_until and then describe the result as completed graceful shutdown.
 Drive its own phased protocol and inspect the report. A process watchdog may
 terminate an unresponsive binary, but no cleanup guarantee survives that action.
+Ordinary `run_until` consumes application approval on its first poll. The
+explicit `run_until_unapproved` returns a linear `UnapprovedDriver` that retains
+the approval while it drives a Starting lifecycle. Its inner driver is pinned
+independently, so policy can poll that state and later consume the still-combined
+outer value to approve without exposing a detached approval capability.
 
 ## Owned finite commands
 
@@ -549,10 +558,11 @@ requests drain. A successful initializer observed with a signal transfers the
 consumed reception into reserved registration, whose drain request is caught by
 the final check, so it cannot publish readiness or require a second signal. An
 independent destruction panic does not suppress that final lifecycle classification.
-By default success arms readiness; the running driver and every critical
-acknowledgement are still required. `Startup::without_readiness_approval` instead
-hands off the running driver while application readiness remains Starting, so a
-later composition stage can approve admission explicitly. Component
+By default success consumes the one-shot application approval; the running driver
+and every critical acknowledgement are still required.
+`Startup::without_readiness_approval` instead hands off an
+`UnapprovedSupervisor` while application readiness remains Starting, so a later
+composition stage can consume it into `RunningSupervisor`. Component
 acknowledgement does not substitute for that approval. A drain request cannot
 revive Ready. Failure preserves the
 application's concrete error and static stage, interruption or unwind payload,

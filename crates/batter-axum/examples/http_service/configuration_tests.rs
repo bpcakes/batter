@@ -13,8 +13,8 @@ fn config(pairs: &[(&str, &str)]) -> Config {
     Config::from_sources(None, SettingsSource::default(), source(pairs)).unwrap()
 }
 fn app(config: &Config) -> axum::Router {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let monitor = HealthMonitor::new(
         HealthPolicy::new(
             Duration::from_secs(1),

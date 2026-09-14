@@ -84,7 +84,6 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
             .prepare()?
     })?;
     let running = supervisor.start();
-    running.handle().mark_ready();
     let observed: Result<HashSet<Uuid>, BoxError> = async {
         running
             .status()

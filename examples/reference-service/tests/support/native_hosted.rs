@@ -107,7 +107,6 @@ pub async fn queue_independent_initialization(pool: PgPool) -> ProbeResult {
         },
     )?;
     let running = process.start();
-    running.handle().mark_ready();
     let initialized =
         tokio::time::timeout(Duration::from_secs(1), running.status().wait_ready()).await;
     let rollback = blocked.rollback().await;
@@ -195,7 +194,6 @@ async fn held(pool: PgPool, drop_owner: bool) -> ProbeResult {
         },
     )?;
     let running = process.start();
-    running.handle().mark_ready();
     let entry = tokio::time::timeout(Duration::from_secs(5), entering.recv()).await;
     let observer = running.observer();
     if drop_owner {
@@ -251,7 +249,6 @@ pub async fn business_failure(pool: PgPool) -> ProbeResult {
         },
     )?;
     let running = process.start();
-    running.handle().mark_ready();
     let body: ProbeResult = async {
         tokio::time::timeout(Duration::from_secs(5), async {
             while status(&pool, job).await? != "DEAD_LETTERED" {

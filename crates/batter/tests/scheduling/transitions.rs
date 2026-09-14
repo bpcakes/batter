@@ -189,7 +189,6 @@ pub async fn forced_descendant(case: Case) {
     .unwrap();
     let supervisor = Supervisor::with_process_capacity(forced, ProcessCapacity::new(2).unwrap());
     let process = supervisor.process_handle().unwrap();
-    supervisor.handle().mark_ready();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();

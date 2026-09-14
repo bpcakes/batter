@@ -64,8 +64,8 @@ async fn service_wrapper_before_routing_has_no_matched_path_at_entry() {
 #[tokio::test]
 async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
     let capture = Capture::new();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let router = Boundary::Combined
         .apply(
             Router::new().route("/work", get(|| async { "ok" })),
@@ -93,8 +93,8 @@ async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
 #[tokio::test]
 async fn admission_alone_does_not_emit_http_observations() {
     let capture = Capture::new();
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let router = Boundary::Admission.apply(
         Router::new().route("/work", get(|| async { "ok" })),
         RequestPolicy::new(

@@ -49,8 +49,8 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings
 }
 
 fn app(settings: &ServingSettings, pool: PgPool) -> Router {
-    let handle = ShutdownHandle::new();
-    handle.mark_ready();
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
     let second = std::time::Duration::from_secs(1);
     let monitor = batter::health::HealthMonitor::new(
         batter::health::HealthPolicy::new(
@@ -564,7 +564,6 @@ async fn assert_process_capacity() -> TestResult {
         .process_handle()
         .ok_or("configured supervisor omitted process admission")?;
     let handle = supervisor.handle();
-    handle.mark_ready();
     let running = supervisor.start();
     handle
         .status()

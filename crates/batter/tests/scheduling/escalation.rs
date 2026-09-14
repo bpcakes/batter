@@ -29,9 +29,7 @@ fn supervisor() -> Supervisor {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor = Supervisor::with_process_capacity(budget, ProcessCapacity::new(2).unwrap());
-    supervisor.handle().mark_ready();
-    supervisor
+    Supervisor::with_process_capacity(budget, ProcessCapacity::new(2).unwrap())
 }
 
 struct Dropped(Arc<AtomicBool>);

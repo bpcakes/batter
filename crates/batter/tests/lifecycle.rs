@@ -31,14 +31,28 @@ fn budget() -> ShutdownBudget {
 }
 
 #[test]
-fn readiness_cannot_revive_a_draining_process() {
-    let handle = ShutdownHandle::new();
+fn one_shot_readiness_approval_cannot_revive_a_draining_process() {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
-    assert!(handle.mark_ready());
-    assert!(!handle.mark_ready());
     handle.request();
-    assert!(!handle.mark_ready());
+    approval.approve();
     assert_eq!(handle.status().readiness(), Readiness::Draining);
+}
+
+#[tokio::test]
+async fn unapproved_owner_cannot_revive_a_stopped_process() {
+    let mut supervisor = Supervisor::new(budget());
+    supervisor
+        .register("short-lived", |_| async { Ok(()) })
+        .unwrap();
+    let pending = supervisor.start_unapproved();
+    let status = pending.status();
+    let report = pending.wait().await.unwrap();
+    assert_eq!(report.cause, ShutdownCause::ComponentExit("short-lived"));
+    assert_eq!(status.readiness(), Readiness::Stopped);
+
+    let running = pending.approve_readiness();
+    assert_eq!(running.status().readiness(), Readiness::Stopped);
 }
 
 #[tokio::test(start_paused = true)]
@@ -62,7 +76,6 @@ async fn graceful_shutdown_stops_work_before_closing_dependencies() {
         })
         .unwrap();
     let handle = supervisor.handle();
-    handle.mark_ready();
     let report = supervisor.run_until(async {}).await;
     assert!(report.is_success());
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Stopped);
@@ -128,7 +141,6 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
             Ok(())
         })
         .unwrap();
-    handle.mark_ready();
     let report = supervisor.run_until(pending()).await;
     assert_eq!(
         report
@@ -221,7 +233,6 @@ async fn noncooperative_async_task_is_aborted_and_reported() {
 #[tokio::test(start_paused = true)]
 async fn drain_does_not_cancel_previously_admitted_contexts() {
     let mut supervisor = Supervisor::new(budget());
-    let handle = supervisor.handle();
     let admitted = Arc::new(std::sync::Mutex::new(None::<OperationContext>));
     let inside = admitted.clone();
     supervisor
@@ -232,7 +243,6 @@ async fn drain_does_not_cancel_previously_admitted_contexts() {
             Ok(())
         })
         .unwrap();
-    handle.mark_ready();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     let context = running
@@ -320,8 +330,7 @@ async fn partial_startup_can_extract_and_close_registered_resources() {
     assert!(supervisor.take_cleanup().is_empty());
 }
 
-#[test]
-fn dropping_unpolled_driver_signals_shutdown_without_starting_factories() {
+fn assert_unpolled_caller_owned_drop(unapproved: bool) {
     let called = Arc::new(AtomicBool::new(false));
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let mut supervisor = Supervisor::new(budget());
@@ -341,15 +350,48 @@ fn dropping_unpolled_driver_signals_shutdown_without_starting_factories() {
         .unwrap();
     let handle = supervisor.handle();
     let cancellation = handle.signal();
-    handle.mark_ready();
-    let driver = supervisor.run_until(pending());
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(!cancellation.is_cancelled());
-    drop(driver);
+    if unapproved {
+        drop(supervisor.run_until_unapproved(pending()));
+    } else {
+        drop(supervisor.run_until(pending()));
+    }
     assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert!(cancellation.is_cancelled());
     assert!(!called.load(Ordering::SeqCst));
     assert!(!cleanup_called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn dropping_unpolled_ordinary_driver_signals_before_application_captures() {
+    assert_unpolled_caller_owned_drop(false);
+}
+
+#[test]
+fn dropping_unpolled_unapproved_driver_signals_before_application_captures() {
+    assert_unpolled_caller_owned_drop(true);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_unapproved_started_owner_requests_drain_before_driver_poll() {
+    let mut supervisor = Supervisor::new(budget());
+    supervisor
+        .register("drain-observer", |startup| async move {
+            let shutdown = startup.acknowledge_started();
+            shutdown.draining().await;
+            Ok(())
+        })
+        .unwrap();
+    let status = supervisor.status();
+    let pending = supervisor.start_unapproved();
+    let observer = pending.observer();
+    assert_eq!(status.readiness(), Readiness::Starting);
+
+    drop(pending);
+    assert_eq!(status.readiness(), Readiness::Draining);
+    assert!(observer.wait().await.unwrap().is_success());
+    assert_eq!(status.readiness(), Readiness::Stopped);
 }
 
 #[tokio::test]
@@ -360,7 +402,6 @@ async fn aborting_driver_before_first_poll_notifies_readiness_waiters() {
     );
     let handle = supervisor.handle();
     let cancellation = handle.signal();
-    handle.mark_ready();
     // On this current-thread runtime, abort runs before the coordinator polls.
     let task = tokio::spawn(supervisor.run_until(pending()));
     task.abort();

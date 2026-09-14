@@ -143,7 +143,6 @@ async fn critical_abort_drops_captures_under_driver_subscriber_and_retains_cance
             pending::<Result<(), BoxError>>().await
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     let running = driver.within("driver", || supervisor.start());
     ready.await.unwrap();
     let report = running.shutdown().await.unwrap();
@@ -186,7 +185,6 @@ async fn finite_abort_keeps_submitter_context_while_driver_and_skipped_cleanup_k
             Ok(())
         })
         .unwrap();
-    supervisor.handle().mark_ready();
     let running = driver.within("driver", || supervisor.start());
     running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();

@@ -24,10 +24,7 @@ pub fn budget() -> ShutdownBudget {
 }
 
 pub fn supervisor(capacity: usize) -> Supervisor {
-    let supervisor =
-        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap());
-    assert!(supervisor.handle().mark_ready());
-    supervisor
+    Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap())
 }
 
 #[derive(Clone, Copy)]

@@ -43,10 +43,7 @@ fn budget() -> ShutdownBudget {
 }
 
 fn finite_supervisor(capacity: usize) -> Supervisor {
-    let supervisor =
-        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap());
-    assert!(supervisor.handle().mark_ready());
-    supervisor
+    Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap())
 }
 
 async fn poll_driver_once(driver: Pin<&mut impl Future<Output = ShutdownReport>>) {
@@ -525,7 +522,6 @@ async fn forced_cancellation_closes_descendant_admission() {
     let supervisor =
         Supervisor::with_process_capacity(shutdown_budget, ProcessCapacity::new(2).unwrap());
     let process = supervisor.process_handle().unwrap();
-    supervisor.handle().mark_ready();
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     let (started_tx, started_rx) = oneshot::channel();
@@ -783,7 +779,6 @@ async fn startup_acknowledgement_racing_drain_cannot_restore_readiness() {
             handle.status().readiness(),
             Readiness::Draining | Readiness::Stopped
         ));
-        assert!(!handle.mark_ready());
         assert!(handle.status().wait_ready().await.is_err());
         assert!(running.wait().await.unwrap().is_success());
     }

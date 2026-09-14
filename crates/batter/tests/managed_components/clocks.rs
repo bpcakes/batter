@@ -26,7 +26,6 @@ async fn delayed_native_stop_uses_its_original_time_for_process_escalation() {
         })
         .unwrap();
     let running = process.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     tokio::time::advance(Duration::from_secs(2)).await;
     stopped.send(()).unwrap();

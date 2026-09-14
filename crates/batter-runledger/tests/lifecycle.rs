@@ -68,9 +68,9 @@ async fn native_local_initialization_requires_no_database_or_durable_witness() {
         .prepare()
         .unwrap();
     register(&mut process, "native", context(), prepared).unwrap();
-    let running = process.start();
-    assert_eq!(running.status().readiness(), Readiness::Starting);
-    running.handle().mark_ready();
+    let pending = process.start_unapproved();
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    let running = pending.approve_readiness();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success(), "{report}");

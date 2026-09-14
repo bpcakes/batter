@@ -102,13 +102,13 @@ async fn native_ack_requires_approval_and_cleanup_follows_actual_descendant_join
             ))
         })
         .unwrap();
-    let running = supervisor.start();
+    let pending = supervisor.start_unapproved();
     entering.await.unwrap();
-    assert_eq!(running.status().readiness(), Readiness::Starting);
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
     initialize.send(()).unwrap();
     // Approval is independent of the initialization acknowledgement.
-    assert_eq!(running.status().readiness(), Readiness::Starting);
-    running.handle().mark_ready();
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    let running = pending.approve_readiness();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success(), "{report}");
@@ -148,7 +148,6 @@ async fn native_stop_drains_process_before_settlement_and_preserves_late_report(
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     native_stop.send(()).unwrap();
     running.handle().signal().draining().await;
@@ -200,7 +199,6 @@ async fn wrapper_abortion_keeps_settlement_owned_and_never_runs_cleanup_later() 
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert_eq!(report.abort_requested, ["native"]);
@@ -329,7 +327,6 @@ async fn native_stop_callback_receives_the_original_parent_stop_time() {
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().mark_ready();
     running.status().wait_ready().await.unwrap();
     let started = Instant::now();
     running.handle().request();
