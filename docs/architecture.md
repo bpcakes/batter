@@ -145,9 +145,13 @@ application failures and destructor panics coexist in the startup report.
 
 By default, successful initialization arms readiness and starts the existing
 owned driver. `without_readiness_approval` deliberately leaves application
-approval to the running owner. Each registered component must still acknowledge
-actual initialization with `ShutdownSignal::mark_started`. Drain cannot be
-reversed by late approval.
+approval to the running owner. Registration creates one non-cloneable
+`ComponentStartup` for each critical component. The component observes shutdown
+through that value during initialization, then consumes
+`acknowledge_started()` after actual initialization and receives a read-only
+`ShutdownSignal` for its running phase. A standalone signal cannot acknowledge
+startup, repeated acknowledgement does not type-check, and drain cannot be
+reversed by a late acknowledgement or application approval.
 Canonical protected startup selects native SIGTERM/SIGINT ownership with
 `with_unix_signals`; installation occurs synchronously before the owner returns,
 and reception during initialization enters owned drain and cleanup. The lower-level
@@ -227,7 +231,7 @@ guard, never mutable fields. Startup history is named `driver_started`; it does
 not claim that a completed driver is still running.
 
 ```text
-Starting --driver + mark_ready + all mark_started--> Ready
+Starting --driver + application approval + all ComponentStartup acknowledgements--> Ready
     \                     |
      `------request-------' --> Draining
                                   |

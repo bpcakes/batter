@@ -76,8 +76,8 @@ fn supervisor(task_failure: bool) -> Supervisor {
     let mut supervisor = Supervisor::new(support::shutdown_budget());
     let handle = supervisor.handle();
     supervisor
-        .register("component", move |shutdown| async move {
-            shutdown.mark_started();
+        .register("component", move |startup| async move {
+            let _shutdown = startup.acknowledge_started();
             if task_failure {
                 Err(std::io::Error::other("task-credential-marker").into())
             } else {

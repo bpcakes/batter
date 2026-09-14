@@ -433,7 +433,8 @@ mod tests {
     async fn checked_outcome(cleanup: Option<&'static str>) -> DriverOutcome {
         let mut supervisor = Supervisor::new(shutdown_budget());
         supervisor
-            .register("component", |shutdown| async move {
+            .register("component", |startup| async move {
+                let shutdown = startup.shutdown().clone();
                 shutdown.draining().await;
                 Ok(())
             })

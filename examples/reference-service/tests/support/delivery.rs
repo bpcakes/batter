@@ -549,8 +549,8 @@ async fn assert_bulkhead(options: PgConnectOptions, missing: &str) -> TestResult
 async fn assert_process_capacity() -> TestResult {
     let process_settings = settings(OWNER_A, TOKEN_A, &[("BATTER_PROCESS_CAPACITY", "1")]);
     let mut supervisor = process_settings.supervisor(shutdown_budget());
-    supervisor.register("initialized", |signal| async move {
-        signal.mark_started();
+    supervisor.register("initialized", |startup| async move {
+        let signal = startup.acknowledge_started();
         signal.draining().await;
         Ok(())
     })?;

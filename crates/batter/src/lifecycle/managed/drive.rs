@@ -1,10 +1,10 @@
 use super::{
     BoxFuture, ManagedComponent, ManagedFailure, ManagedInitialization, ManagedOutcome,
-    ManagedShutdownBudget, Registration, SettlementEvidence,
+    ManagedShutdownBudget, PreparedRegistration, SettlementEvidence,
 };
 use crate::{
     PanicPayload,
-    lifecycle::{ShutdownBudget, ShutdownSignal},
+    lifecycle::{ComponentStartup, PendingComponentStart, ShutdownBudget, ShutdownSignal},
     operation::Interruption,
     scoped_dispatch,
 };
@@ -22,14 +22,15 @@ use tracing::Instrument;
 mod tests;
 
 pub(super) fn start(
-    registration: Registration,
+    registration: PreparedRegistration,
     budget: ShutdownBudget,
-    signal: ShutdownSignal,
+    startup: ComponentStartup,
     publication: watch::Sender<ManagedOutcome>,
 ) {
+    let (signal, pending_start) = startup.into_parts();
     let updates = publication.clone();
     let coordinator = tokio::spawn(scoped_dispatch::scope(
-        drive(registration, budget, signal, updates).in_current_span(),
+        drive(registration, budget, signal, pending_start, updates).in_current_span(),
     ));
     // Neither the wrapper nor a report observer owns this join. Wrapper abortion
     // cannot destroy the native report's only driver or completion publication.
@@ -50,9 +51,10 @@ pub(super) fn start(
 }
 
 async fn drive(
-    registration: Registration,
+    registration: PreparedRegistration,
     budget: ShutdownBudget,
     signal: ShutdownSignal,
+    pending_start: PendingComponentStart,
     publication: watch::Sender<ManagedOutcome>,
 ) {
     let Some((component, context)) = construct(registration, budget, &signal, &publication) else {
@@ -66,6 +68,7 @@ async fn drive(
     } = component;
     let mut outcome = publication.borrow().clone();
     let mut initialized = Some(Guarded::new(initialized));
+    let mut pending_start = Some(pending_start);
     let mut stopping = Guarded::new(stopping);
     let mut settlement = Guarded::new(settlement);
     let mut settled = false;
@@ -110,7 +113,10 @@ async fn drive(
                 if !matches!(outcome.initialization, ManagedInitialization::Initialized) || !outcome.failures.is_empty() {
                     break;
                 }
-                signal.mark_started();
+                pending_start
+                    .take()
+                    .expect("managed component acknowledges initialization once")
+                    .acknowledge();
             }
         }
     }
@@ -189,7 +195,7 @@ async fn settle_with_clock(
 }
 
 fn construct(
-    registration: Registration,
+    registration: PreparedRegistration,
     budget: ShutdownBudget,
     signal: &ShutdownSignal,
     publication: &watch::Sender<ManagedOutcome>,
@@ -197,7 +203,7 @@ fn construct(
     ManagedComponent<SettlementEvidence>,
     crate::operation::OperationContext,
 )> {
-    let Registration {
+    let PreparedRegistration {
         context, factory, ..
     } = registration;
     let mut outcome = ManagedOutcome::default();

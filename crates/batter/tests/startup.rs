@@ -44,7 +44,7 @@ fn supervisor() -> Supervisor {
     );
     supervisor
         .register("component", |shutdown| async move {
-            shutdown.mark_started();
+            let shutdown = shutdown.acknowledge_started();
             shutdown.draining().await;
             Ok(())
         })
@@ -552,7 +552,7 @@ async fn successful_initialization_still_requires_actual_component_acknowledgeme
                 .supervisor()
                 .register("delayed", move |shutdown| async move {
                     release_rx.await.unwrap();
-                    shutdown.mark_started();
+                    let shutdown = shutdown.acknowledge_started();
                     shutdown.draining().await;
                     Ok(())
                 })
@@ -577,7 +577,7 @@ async fn successful_initialization_can_withhold_application_readiness_approval()
             scope
                 .supervisor()
                 .register("staged", move |shutdown| async move {
-                    assert!(shutdown.mark_started());
+                    let shutdown = shutdown.acknowledge_started();
                     component_acknowledged.store(1, Ordering::SeqCst);
                     shutdown.draining().await;
                     Ok(())

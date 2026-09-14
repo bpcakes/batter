@@ -75,8 +75,8 @@ async fn run() -> Result<(), BoxError> {
                     batter_sqlx::probe(&pool, &probe).await?;
                     scope
                         .registration()
-                        .register("application", |shutdown| async move {
-                            shutdown.mark_started();
+                        .register("application", |startup| async move {
+                            let shutdown = startup.acknowledge_started();
                             shutdown.draining().await;
                             Ok(())
                         })?;

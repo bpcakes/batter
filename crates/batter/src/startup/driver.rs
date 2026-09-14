@@ -536,8 +536,8 @@ mod tests {
                     .fetch_add(1, Ordering::SeqCst);
             }
             let handle = supervisor.handle();
-            supervisor.register_reserved("signals", |shutdown| async move {
-                shutdown.mark_started();
+            supervisor.register_reserved("signals", |startup| async move {
+                let shutdown = startup.acknowledge_started();
                 shutdown.draining().await;
                 Ok(())
             });

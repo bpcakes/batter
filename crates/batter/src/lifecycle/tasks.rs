@@ -7,10 +7,7 @@ use super::{
     Component, ShutdownCause, ShutdownHandle, TaskOutcome, TaskRecord, process, receive_process,
 };
 use crate::{BoxError, scoped_dispatch};
-use std::{
-    collections::HashMap,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::collections::HashMap;
 use tokio::{
     sync::mpsc,
     task::{AbortHandle, Id, JoinError, JoinSet},
@@ -39,15 +36,17 @@ pub(super) struct TaskSet {
 }
 
 impl TaskSet {
-    pub(super) fn spawn_component(&mut self, component: Component, handle: &ShutdownHandle) {
-        let name = component.name;
-        let mut signal = handle.signal();
-        signal.startup = Some(Arc::new(AtomicBool::new(false)));
-        let handle = handle.clone();
+    pub(super) fn spawn_component(&mut self, component: Component) {
+        let Component {
+            name,
+            startup,
+            factory,
+        } = component;
+        let handle = startup.shutdown.handle.clone();
         let span = tracing::info_span!(target: "batter", "batter.task", task = name).or_current();
         let abort = self.set.spawn(scoped_dispatch::scope(
             async move {
-                let result = (component.factory)(signal).await;
+                let result = factory(startup).await;
                 // Capture the state at completion, never at delayed observation.
                 let expected = handle.is_draining();
                 TaskExit { result, expected }

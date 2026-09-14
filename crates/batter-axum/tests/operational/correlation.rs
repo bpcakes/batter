@@ -379,8 +379,8 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
     let mut supervisor = Supervisor::new(budget);
     let handle = supervisor.handle();
     supervisor
-        .register("control", |signal| async move {
-            signal.mark_started();
+        .register("control", |startup| async move {
+            let signal = startup.acknowledge_started();
             signal.cancelled().await;
             Ok(())
         })

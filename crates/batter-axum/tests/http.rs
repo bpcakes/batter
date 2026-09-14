@@ -370,8 +370,8 @@ async fn forced_process_cancellation_uses_application_renderer_with_original_cor
     let handle = supervisor.handle();
     let (started, startup) = tokio::sync::oneshot::channel();
     supervisor
-        .register("http-owner", |shutdown| async move {
-            shutdown.mark_started();
+        .register("http-owner", |startup| async move {
+            let shutdown = startup.acknowledge_started();
             started.send(()).unwrap();
             shutdown.cancelled().await;
             Ok(())

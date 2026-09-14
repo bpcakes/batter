@@ -75,8 +75,8 @@ fn start(
                 evidence.spawns.fetch_add(1, Ordering::SeqCst);
                 scope
                     .supervisor()
-                    .register("application", |signal| async move {
-                        signal.mark_started();
+                    .register("application", |startup| async move {
+                        let signal = startup.acknowledge_started();
                         signal.draining().await;
                         Ok(())
                     })

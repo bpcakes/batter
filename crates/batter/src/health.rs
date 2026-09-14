@@ -29,7 +29,11 @@ mod policy;
 pub use observation::{HealthReader, HealthSnapshot, HealthStatus, ProbeObservation, ProbeOutcome};
 pub use policy::HealthPolicy;
 
-use crate::{RegistrationError, lifecycle::ShutdownSignal, registration::RegistrationTarget};
+use crate::{
+    RegistrationError,
+    lifecycle::{ComponentStartup, ShutdownSignal},
+    registration::RegistrationTarget,
+};
 use observation::Publication;
 use std::{future::Future, sync::Arc};
 use tokio::time::{Instant, sleep_until};
@@ -71,8 +75,10 @@ impl<F, E> HealthMonitor<F, E> {
     ///
     /// Registration validates `name` before the component factory can run. If
     /// registration fails, the writer is dropped, no probe is invoked, and no
-    /// reader is returned. The registered component acknowledges its own startup
-    /// when [`Self::run`] is first polled and returns success after drain.
+    /// reader is returned. The registered driver acknowledges its own startup on
+    /// its first live poll and returns success after drain. The lower-level
+    /// [`Self::run`] method accepts only read-only shutdown observation and does
+    /// not perform this acknowledgement.
     ///
     /// ```
     /// use batter::{
@@ -104,8 +110,8 @@ impl<F, E> HealthMonitor<F, E> {
         let reader = self.reader();
         target
             .registration()
-            .register(name, move |shutdown| async move {
-                self.run(shutdown).await;
+            .register(name, move |startup| async move {
+                self.run_registered(startup).await;
                 Ok(())
             })?;
         Ok(reader)
@@ -113,10 +119,11 @@ impl<F, E> HealthMonitor<F, E> {
 
     /// Sample sequentially until drain or cancellation, then invalidate readers.
     ///
-    /// Acknowledges monitor initialization on first poll; this does not claim a
-    /// healthy dependency. Failures/timeouts publish unready observations and
-    /// permit another attempt after the configured completion-to-next delay.
-    /// Native panics propagate to the supervised task boundary and stop the writer.
+    /// This lower-level driver has no component-startup authority. The canonical
+    /// [`Self::register_in`] path owns its separate acknowledgement. Failures and
+    /// timeouts publish unready observations and permit another attempt after the
+    /// configured completion-to-next delay. Native panics propagate to the
+    /// supervised task boundary and stop the writer.
     ///
     /// The whole supplied future is bounded, with drain/cancellation checked
     /// before deadlines and results. Active work is destroyed before publication
@@ -132,6 +139,18 @@ impl<F, E> HealthMonitor<F, E> {
         crate::scoped_dispatch::scope(self.run_inner(shutdown)).await;
     }
 
+    async fn run_registered<Fut>(self, startup: ComponentStartup)
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+    {
+        if stopping(startup.shutdown()) {
+            return;
+        }
+        let shutdown = startup.acknowledge_started();
+        crate::scoped_dispatch::scope(self.run_inner(shutdown)).await;
+    }
+
     async fn run_inner<Fut>(mut self, shutdown: ShutdownSignal)
     where
         F: FnMut() -> Fut,
@@ -140,7 +159,6 @@ impl<F, E> HealthMonitor<F, E> {
         if stopping(&shutdown) {
             return;
         }
-        shutdown.mark_started();
         loop {
             if stopping(&shutdown) {
                 return;

@@ -217,7 +217,7 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
     supervisor
         .register("component", |signal| async move {
             tracing::info!("driver component started");
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             signal.draining().await;
             tracing::info!("driver component stopping");
             Ok(())

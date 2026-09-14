@@ -51,14 +51,13 @@ fn all_startup_orders_require_the_driver_approval_and_acknowledgement() {
         [2, 0, 1],
         [2, 1, 0],
     ] {
-        let state = Shared::new(true);
-        state.register_component();
-        let startup = AtomicBool::new(false);
+        let state = Arc::new(Shared::new(true));
+        let mut startup = Some(state.register_component());
         for (index, event) in order.into_iter().enumerate() {
             match event {
                 0 => state.start_driver(),
                 1 => assert!(state.mark_ready()),
-                2 => assert!(state.mark_started(&startup)),
+                2 => startup.take().unwrap().acknowledge(),
                 _ => unreachable!(),
             }
             assert_eq!(
@@ -71,7 +70,6 @@ fn all_startup_orders_require_the_driver_approval_and_acknowledgement() {
                 "startup order {order:?}, step {index}"
             );
         }
-        assert!(!state.mark_started(&startup));
         assert!(!state.mark_ready());
     }
 }
@@ -119,8 +117,8 @@ fn transition_table_keeps_drain_and_stop_irreversible() {
 #[test]
 fn late_component_acknowledgement_cannot_revive_shutdown() {
     for stopped in [false, true] {
-        let state = Shared::new(true);
-        state.register_component();
+        let state = Arc::new(Shared::new(true));
+        let startup = state.register_component();
         state.mark_ready();
         state.start_driver();
         state.request();
@@ -128,7 +126,7 @@ fn late_component_acknowledgement_cannot_revive_shutdown() {
             state.stop_driver();
         }
         let terminal = state.readiness();
-        assert!(state.mark_started(&AtomicBool::new(false)));
+        startup.acknowledge();
         assert_eq!(state.readiness(), terminal);
     }
 }

@@ -100,8 +100,8 @@ async fn shutdown_failure_path_retains_the_complete_report() {
         })
         .unwrap();
     supervisor
-        .register("component", |shutdown| async move {
-            shutdown.mark_started();
+        .register("component", |startup| async move {
+            let _shutdown = startup.acknowledge_started();
             Err(std::io::Error::other(SHUTDOWN_DETAIL).into())
         })
         .unwrap();

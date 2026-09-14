@@ -123,8 +123,8 @@ fn register_http_impl(
     application: Router,
     direct_peer: bool,
 ) -> Result<(), RegistrationError> {
-    registration.register(name, move |shutdown| async move {
-        shutdown.mark_started();
+    registration.register(name, move |startup| async move {
+        let shutdown = startup.acknowledge_started();
         let draining = async move { shutdown.draining().await };
         if direct_peer {
             axum::serve(

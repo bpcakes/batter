@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Replace provenance-dependent `ShutdownSignal::mark_started` with a linear
+  component-start boundary. `Supervisor::register` and constrained
+  `Registration::register` factories now receive a non-cloneable
+  `ComponentStartup`; consume `acknowledge_started()` after actual initialization
+  and retain its returned observation-only `ShutdownSignal` while running.
+  `HealthMonitor::run` no longer acknowledges a registered component: prefer
+  `HealthMonitor::register_in`, or explicitly acknowledge the factory's
+  `ComponentStartup` and pass the returned signal to `run`. Passing a clone from
+  `startup.shutdown()` compiles but deliberately leaves readiness pending.
 - Hard-cut SQLx verification to compiled inputs. `AuthorityPolicyBuilder::build`
   now returns the only executable generic authority value, migration construction
   and mutation are fallible, and non-empty `VerificationPlan` constructors plus

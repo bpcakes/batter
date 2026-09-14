@@ -4,6 +4,9 @@ mod error_sources;
 #[path = "process_ownership/report_usage.rs"]
 mod report_usage;
 
+#[path = "process_ownership/startup_capability.rs"]
+mod startup_capability;
+
 #[path = "process_ownership/terminal_admission.rs"]
 mod terminal_admission;
 
@@ -227,7 +230,7 @@ async fn completed_critical_stop_is_observed_after_deadline_without_false_abort(
     let (stopped, stopped_rx) = oneshot::channel();
     supervisor
         .register("component", move |signal| async move {
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             finished.await.unwrap();
             stopped.send(()).unwrap();
             Ok(())
@@ -289,8 +292,7 @@ async fn readiness_waits_for_every_component_acknowledgement() {
     let (initialize_tx, initialize_rx) = oneshot::channel();
     supervisor
         .register("first", move |signal| async move {
-            assert!(signal.mark_started());
-            assert!(!signal.mark_started());
+            let signal = signal.acknowledge_started();
             first_tx.send(()).unwrap();
             signal.draining().await;
             Ok(())
@@ -299,7 +301,7 @@ async fn readiness_waits_for_every_component_acknowledgement() {
     supervisor
         .register("second", move |signal| async move {
             initialize_rx.await.unwrap();
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             signal.draining().await;
             Ok(())
         })
@@ -682,7 +684,7 @@ async fn cancelling_explicit_coordinator_aborts_owned_task_and_skips_async_clean
     supervisor
         .register("direct-task", move |signal| async move {
             let _guard = NotifyDrop(Some(dropped_tx));
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             started_tx.send(()).unwrap();
             pending::<Result<(), BoxError>>().await
         })
@@ -760,7 +762,7 @@ async fn startup_acknowledgement_racing_drain_cannot_restore_readiness() {
         supervisor
             .register("starting-component", move |signal| async move {
                 startup_barrier.wait().await;
-                signal.mark_started();
+                let signal = signal.acknowledge_started();
                 started_tx.send(()).unwrap();
                 signal.draining().await;
                 Ok(())

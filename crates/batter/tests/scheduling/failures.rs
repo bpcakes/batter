@@ -82,7 +82,7 @@ async fn errors_inner(case: Case, delay: u64) {
         let started = started.clone();
         supervisor
             .register(name, move |signal| async move {
-                signal.mark_started();
+                let _shutdown = signal.acknowledge_started();
                 started.send(()).await.unwrap();
                 let _permit = gate.acquire().await.unwrap();
                 yields(delay.wrapping_add(id)).await;

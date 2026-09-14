@@ -254,7 +254,8 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
         let policy = ReadinessPolicy::new(handle.clone(), reader.clone());
         let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
         supervisor
-            .register("health", move |signal| async move {
+            .register("health", move |startup| async move {
+                let signal = startup.acknowledge_started();
                 monitor.run(signal).await;
                 stopped_tx.send(()).unwrap();
                 Ok(())
@@ -262,8 +263,8 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             .unwrap();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         supervisor
-            .register("drain-control", move |signal| async move {
-                signal.mark_started();
+            .register("drain-control", move |startup| async move {
+                let signal = startup.acknowledge_started();
                 signal.draining().await;
                 release_rx.await.unwrap();
                 Ok(())

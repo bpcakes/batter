@@ -186,8 +186,8 @@ async fn startup_query_joins_before_pool_close() -> Result {
                 });
             scope
                 .supervisor()
-                .register("worker", move |shutdown| async move {
-                    shutdown.mark_started();
+                .register("worker", move |startup| async move {
+                    let shutdown = startup.acknowledge_started();
                     shutdown.draining().await;
                     stopped.lock().unwrap().push("worker");
                     Ok(())

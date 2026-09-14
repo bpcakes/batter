@@ -47,7 +47,8 @@ async fn graceful_shutdown_stops_work_before_closing_dependencies() {
     let mut supervisor = Supervisor::new(budget());
     let flag = stopped.clone();
     supervisor
-        .register("worker", move |shutdown| async move {
+        .register("worker", move |startup| async move {
+            let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
             assert!(!shutdown.is_cancelled());
             flag.store(true, Ordering::SeqCst);
@@ -113,7 +114,7 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
     let requesting = handle.clone();
     supervisor
         .register("requestor", move |signal| async move {
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             completed_rx.await.unwrap();
             assert!(!requesting.is_draining());
             requesting.request();
@@ -122,7 +123,7 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
         .unwrap();
     supervisor
         .register("early", move |signal| async move {
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             completed_tx.send(()).unwrap();
             Ok(())
         })
@@ -183,7 +184,8 @@ async fn component_factory_panic_is_observed_by_name() {
 async fn forced_cooperative_cancellation_can_still_join_cleanly() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("drain-resistant", |shutdown| async move {
+        .register("drain-resistant", |startup| async move {
+            let shutdown = startup.acknowledge_started();
             shutdown.cancelled().await;
             assert!(shutdown.is_draining());
             Ok(())
@@ -225,7 +227,8 @@ async fn drain_does_not_cancel_previously_admitted_contexts() {
         OperationContext::under(tokio::time::Instant::now() + Duration::from_secs(1), &token);
     let inside = context.clone();
     supervisor
-        .register("admitted", |shutdown| async move {
+        .register("admitted", |startup| async move {
+            let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
             assert!(inside.check().is_ok());
             Ok(())
@@ -240,7 +243,8 @@ async fn drain_does_not_cancel_previously_admitted_contexts() {
 async fn cleanup_failure_makes_otherwise_clean_shutdown_unsuccessful() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("worker", |shutdown| async move {
+        .register("worker", |startup| async move {
+            let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
             Ok(())
         })
@@ -268,9 +272,10 @@ async fn registration_is_inert_until_run() {
     let flag = started.clone();
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("worker", move |shutdown| {
+        .register("worker", move |startup| {
             flag.store(true, Ordering::SeqCst);
             async move {
+                let shutdown = startup.acknowledge_started();
                 shutdown.draining().await;
                 Ok(())
             }
@@ -366,7 +371,8 @@ async fn driver_still_accepts_a_borrowed_non_send_shutdown_future() {
     let mut requested = std::rc::Rc::new(false);
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("component", |signal| async move {
+        .register("component", |startup| async move {
+            let signal = startup.acknowledge_started();
             signal.draining().await;
             Ok(())
         })

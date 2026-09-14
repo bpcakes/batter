@@ -1,7 +1,21 @@
 use super::*;
-use crate::lifecycle::{ProcessAdmissionError, ProcessHandle};
+use crate::lifecycle::{ComponentStartup, ProcessAdmissionError, ProcessHandle, Readiness};
 use std::{convert::Infallible, future::poll_fn, io, task::Poll};
 use tokio::sync::oneshot;
+
+#[test]
+fn registered_startup_pairs_acknowledgement_and_shutdown_observation() {
+    let handle = ShutdownHandle::new();
+    let startup = ComponentStartup::registered(&handle);
+    handle.shared.start_driver();
+    assert!(handle.mark_ready());
+    assert_eq!(handle.readiness(), Readiness::Starting);
+
+    let shutdown = startup.acknowledge_started();
+    assert_eq!(handle.readiness(), Readiness::Ready);
+    handle.request();
+    assert!(shutdown.is_draining());
+}
 
 #[tokio::test]
 async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
@@ -11,6 +25,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         TaskOutcome::Panicked,
     ] {
         let handle = ShutdownHandle::new();
+        let startup = ComponentStartup::registered(&handle);
         handle.shared.start_driver();
         handle.mark_ready();
         let (process, _queued) = ProcessHandle::new(
@@ -19,23 +34,21 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         );
         let (release, released) = oneshot::channel();
         let mut tasks = TaskSet::default();
-        tasks.spawn_component(
-            Component {
-                name: "component",
-                factory: Box::new(move |_| {
-                    Box::pin(async move {
-                        released.await.unwrap();
-                        match outcome {
-                            TaskOutcome::UnexpectedExit => Ok(()),
-                            TaskOutcome::Failed => Err(io::Error::other("retained failure").into()),
-                            TaskOutcome::Panicked => panic!("component panic"),
-                            _ => unreachable!(),
-                        }
-                    })
-                }),
-            },
-            &handle,
-        );
+        tasks.spawn_component(Component {
+            name: "component",
+            startup,
+            factory: Box::new(move |_| {
+                Box::pin(async move {
+                    released.await.unwrap();
+                    match outcome {
+                        TaskOutcome::UnexpectedExit => Ok(()),
+                        TaskOutcome::Failed => Err(io::Error::other("retained failure").into()),
+                        TaskOutcome::Panicked => panic!("component panic"),
+                        _ => unreachable!(),
+                    }
+                })
+            }),
+        });
         {
             let wait = tasks.next_exit(&handle);
             tokio::pin!(wait);

@@ -138,7 +138,7 @@ async fn critical_abort_drops_captures_under_driver_subscriber_and_retains_cance
                 name: "critical.capture",
                 dropped: None,
             };
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             started.send(()).unwrap();
             pending::<Result<(), BoxError>>().await
         })

@@ -117,8 +117,8 @@ impl InstalledSignals {
             received,
         } = self;
         let handle = supervisor.handle();
-        supervisor.register(name, move |shutdown| async move {
-            shutdown.mark_started();
+        supervisor.register(name, move |startup| async move {
+            let shutdown = startup.acknowledge_started();
             tokio::select! {
                 biased;
                 _ = shutdown.draining() => {},
@@ -141,8 +141,8 @@ impl InstalledSignals {
             received,
         } = self;
         let handle = supervisor.handle();
-        supervisor.register_reserved(name, move |shutdown| async move {
-            shutdown.mark_started();
+        supervisor.register_reserved(name, move |startup| async move {
+            let shutdown = startup.acknowledge_started();
             tokio::select! {
                 biased;
                 _ = shutdown.draining() => {},

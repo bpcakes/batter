@@ -1,6 +1,38 @@
 # Validation evidence
 
-Latest evidence: 2026-09-13. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-14. Earlier sections retain their historical scope.
+
+## Linear component-start capability, Slice 1, 2026-09-14
+
+Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 toolchains.
+This slice replaces provenance-dependent startup acknowledgement with the
+non-cloneable `ComponentStartup`, migrates every workspace consumer, and keeps
+standalone `ShutdownSignal` and `HealthMonitor::run` observation-only.
+
+| Slice 1 command | Executed outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on the pinned Rust 1.98.1 toolchain: workspace check, tests and doctests, strict Clippy, formatting and rustdoc completed. Foundation rustdoc ran 23 positive and 16 compile-fail cases, including rejection of acknowledgement through `ShutdownSignal`, cloning `ComponentStartup`, and acknowledging it twice. Externally provisioned PostgreSQL tests remained explicitly ignored. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
+| Fresh `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS in all five modes on Rust 1.98.1 and again after a fresh Rust 1.94.0 build, for ten passing process smokes. |
+| `scripts/jig work check --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | PASS on the current worktree after moving the new process-ownership regression to its own module to satisfy the file budget. All five required targets passed; fresh verify receipt `receipt_01M2GNWWTSBKT8E21703XDB0TC` covers 55 changed paths. |
+
+The first requested independent review pass used complete working-tree
+fingerprint `482f44dd80be5ac2ee07e26d60b722a104312676adc556784099880dab6a8cd9`.
+It found that the initial private representation stored the acknowledgement
+token separately and combined it with a shutdown handle at task spawn. The
+repair stores the already-paired `ComponentStartup`, removes the independent
+spawn-time handle input, and adds a regression proving the returned observer and
+acknowledged readiness share a lifecycle. The same pass identified the changelog
+and health-driver wording now included in this slice. Post-repair review is not
+claimed by this entry.
+
+The second review pass found no substantive issue. It requested this complete
+local matrix, direct documentation for the read-only projection and a regression
+for dropping an unacknowledged `ComponentStartup`; those are now present. A
+third fresh review pass remains pending at the time of this execution entry.
+Hosted CI, current Linux, and live PostgreSQL were not executed for this slice.
+No publication, deployment, push, or consumer re-adoption is claimed.
 
 ## Parameter caller scale coverage (batter-akt continuation), 2026-09-13
 

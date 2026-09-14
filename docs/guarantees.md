@@ -131,9 +131,13 @@ factory panics and early successful exits. Errors continue to be collected durin
 shutdown. Completion captures whether drain had started; a later drain cannot
 reclassify an earlier successful critical exit as expected. There is no restart.
 Application `mark_ready` arms readiness: Ready requires a running driver plus
-every registered critical component's `mark_started` acknowledgement after
-actual initialization. For direct `register`, acknowledgement is an application assertion, not an
-inspection of its internal descendants. Forgotten acknowledgement leaves Starting.
+every registered critical component consuming its one `ComponentStartup`
+acknowledgement after actual initialization. `ShutdownSignal` has observation
+authority only, while the startup capability is non-cloneable and consumed by
+`acknowledge_started`; unauthorized and repeated acknowledgements therefore do
+not compile. For direct `register`, acknowledgement is an application assertion,
+not an inspection of its internal descendants. Forgotten acknowledgement leaves
+Starting.
 
 The [component ownership comparisons](../crates/batter/tests/component_ownership.rs)
 gate actual child initialization before acknowledgement, then gate child stopping

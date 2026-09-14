@@ -12,7 +12,7 @@ mod state;
 mod tasks;
 mod unix;
 
-use state::Shared;
+use state::{PendingComponentStart, Shared};
 use tasks::TaskSet;
 
 pub use driver::{
@@ -40,7 +40,7 @@ use crate::{
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -92,9 +92,9 @@ impl ShutdownHandle {
     }
 
     /// Declare application initialization complete. For a supervisor this arms
-    /// readiness: it remains Starting until every component calls
-    /// [`ShutdownSignal::mark_started`]. Returns true only for the first accepted
-    /// declaration; never revives a draining/stopped service.
+    /// readiness: it remains Starting until every component consumes its
+    /// [`ComponentStartup`] acknowledgement. Returns true only for the first
+    /// accepted declaration; never revives a draining/stopped service.
     pub fn mark_ready(&self) -> bool {
         self.shared.mark_ready()
     }
@@ -126,11 +126,14 @@ impl ShutdownHandle {
         self.shared.operation_token()
     }
 
-    /// Read-only signals for a managed component.
+    /// Create standalone read-only shutdown observation.
+    ///
+    /// This neither registers nor acknowledges a component. A direct registered
+    /// component must obtain its running observer by consuming the
+    /// [`ComponentStartup`] supplied to its factory.
     pub fn signal(&self) -> ShutdownSignal {
         ShutdownSignal {
             handle: self.clone(),
-            startup: None,
         }
     }
 
@@ -146,24 +149,24 @@ impl ShutdownHandle {
     }
 }
 
-/// Two distinct shutdown notifications for a managed component.
+/// Read-only drain and forced-cancellation observation.
+///
+/// This value carries no component-start or application-readiness authority.
+/// Registered components receive [`ComponentStartup`] and consume its one
+/// acknowledgement before entering their running phase.
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::ShutdownHandle;
+///
+/// let shutdown = ShutdownHandle::new().signal();
+/// shutdown.acknowledge_started();
+/// ```
 #[derive(Clone)]
 pub struct ShutdownSignal {
     handle: ShutdownHandle,
-    startup: Option<Arc<AtomicBool>>,
 }
 
 impl ShutdownSignal {
-    /// Acknowledge that this registered component completed its initialization.
-    /// Call only after the listener/worker is usable. Clones share one ack;
-    /// returns false for repeated acknowledgements or an unregistered signal.
-    pub fn mark_started(&self) -> bool {
-        let Some(startup) = &self.startup else {
-            return false;
-        };
-        self.handle.shared.mark_started(startup)
-    }
-
     /// Stop accepting/claiming new work, then drain admitted work.
     pub async fn draining(&self) {
         self.handle.draining().await;
@@ -182,6 +185,77 @@ impl ShutdownSignal {
     /// Whether forced cooperative cancellation has already been requested.
     pub fn is_cancelled(&self) -> bool {
         self.handle.shared.is_cancelled()
+    }
+}
+
+/// The one pending startup obligation of a registered critical component.
+///
+/// Observe shutdown during initialization through [`Self::shutdown`]. After the
+/// listener, worker, or other component is actually usable, consume this value
+/// with [`Self::acknowledge_started`]. The returned [`ShutdownSignal`] carries
+/// only the observation authority needed by the running component.
+///
+/// ```no_run
+/// use batter::{BoxError, lifecycle::ComponentStartup};
+///
+/// async fn run_component(startup: ComponentStartup) -> Result<(), BoxError> {
+///     if startup.shutdown().is_draining() {
+///         return Ok(());
+///     }
+///     let shutdown = startup.acknowledge_started();
+///     shutdown.draining().await;
+///     Ok(())
+/// }
+/// ```
+///
+/// The capability is intentionally non-cloneable, and acknowledgement consumes
+/// it so safe Rust cannot acknowledge the same registration twice:
+///
+/// ```compile_fail,E0599
+/// use batter::lifecycle::ComponentStartup;
+/// fn cannot_clone(startup: ComponentStartup) {
+///     let duplicate = startup.clone();
+/// }
+/// ```
+///
+/// ```compile_fail,E0382
+/// use batter::lifecycle::ComponentStartup;
+/// fn cannot_acknowledge_twice(startup: ComponentStartup) {
+///     let shutdown = startup.acknowledge_started();
+///     let again = startup.acknowledge_started();
+/// }
+/// ```
+pub struct ComponentStartup {
+    shutdown: ShutdownSignal,
+    pending: PendingComponentStart,
+}
+
+impl ComponentStartup {
+    fn registered(handle: &ShutdownHandle) -> Self {
+        Self {
+            shutdown: handle.signal(),
+            pending: handle.shared.register_component(),
+        }
+    }
+
+    /// Borrow read-only shutdown observation while initialization is pending.
+    pub fn shutdown(&self) -> &ShutdownSignal {
+        &self.shutdown
+    }
+
+    /// Record actual component initialization and enter the running phase.
+    ///
+    /// Acknowledgement during drain remains recorded but cannot revive readiness.
+    /// Dropping this value without calling this method leaves startup pending.
+    #[must_use = "retain the returned shutdown signal for the running component"]
+    pub fn acknowledge_started(self) -> ShutdownSignal {
+        let Self { shutdown, pending } = self;
+        pending.acknowledge();
+        shutdown
+    }
+
+    fn into_parts(self) -> (ShutdownSignal, PendingComponentStart) {
+        (self.shutdown, self.pending)
     }
 }
 
@@ -287,7 +361,8 @@ pub enum ShutdownCause {
 type ComponentFuture = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'static>>;
 struct Component {
     name: &'static str,
-    factory: Box<dyn FnOnce(ShutdownSignal) -> ComponentFuture + Send + 'static>,
+    startup: ComponentStartup,
+    factory: Box<dyn FnOnce(ComponentStartup) -> ComponentFuture + Send + 'static>,
 }
 
 /// Own the process's critical tasks and dependency finalizers.
@@ -368,15 +443,16 @@ impl Supervisor {
         factory: F,
     ) -> Result<(), RegistrationError>
     where
-        F: FnOnce(ShutdownSignal) -> Fut + Send + 'static,
+        F: FnOnce(ComponentStartup) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         self.check_component_name(name)?;
+        let startup = ComponentStartup::registered(&self.handle);
         self.components.push(Component {
             name,
-            factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
+            startup,
+            factory: Box::new(move |startup| Box::pin(factory(startup)) as ComponentFuture),
         });
-        self.handle.shared.register_component();
         Ok(())
     }
 
@@ -405,7 +481,7 @@ impl Supervisor {
 
     pub(crate) fn register_reserved<F, Fut>(&mut self, name: &'static str, factory: F)
     where
-        F: FnOnce(ShutdownSignal) -> Fut + Send + 'static,
+        F: FnOnce(ComponentStartup) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         let position = self
@@ -414,11 +490,12 @@ impl Supervisor {
             .position(|reserved| *reserved == name)
             .expect("internal component reservation must exist exactly once");
         self.reserved_components.swap_remove(position);
+        let startup = ComponentStartup::registered(&self.handle);
         self.components.push(Component {
             name,
-            factory: Box::new(move |signal| Box::pin(factory(signal)) as ComponentFuture),
+            startup,
+            factory: Box::new(move |startup| Box::pin(factory(startup)) as ComponentFuture),
         });
-        self.handle.shared.register_component();
     }
 
     /// Register a native runtime through its adapter, retaining settlement even
@@ -445,9 +522,9 @@ impl Supervisor {
         R: ManagedSettlement,
     {
         self.check_component_name(name)?;
+        let startup = ComponentStartup::registered(&self.handle);
         self.managed
-            .push(managed::Registration::new(name, context, factory));
-        self.handle.shared.register_component();
+            .push(managed::Registration::new(name, startup, context, factory));
         Ok(())
     }
 
@@ -520,10 +597,10 @@ impl Supervisor {
             let name = registration.name;
             let (component, observer) = registration.prepare(self.budget);
             managed.push((name, observer));
-            tasks.spawn_component(component, &self.handle);
+            tasks.spawn_component(component);
         }
         for component in self.components.drain(..) {
-            tasks.spawn_component(component, &self.handle);
+            tasks.spawn_component(component);
         }
         tokio::pin!(shutdown);
         let cause = self.wait_for_shutdown(shutdown.as_mut(), &mut tasks).await;

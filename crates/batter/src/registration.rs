@@ -9,7 +9,7 @@ use crate::{
     BoxError, RegistrationError,
     cleanup::CleanupSlot,
     lifecycle::{
-        ManagedComponent, ManagedSettlement, ManagedShutdownBudget, ShutdownSignal, Supervisor,
+        ComponentStartup, ManagedComponent, ManagedSettlement, ManagedShutdownBudget, Supervisor,
     },
     operation::OperationContext,
 };
@@ -44,7 +44,7 @@ impl<'a> Registration<'a> {
         factory: F,
     ) -> Result<(), RegistrationError>
     where
-        F: FnOnce(ShutdownSignal) -> Fut + Send + 'static,
+        F: FnOnce(ComponentStartup) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         self.supervisor.register(name, factory)

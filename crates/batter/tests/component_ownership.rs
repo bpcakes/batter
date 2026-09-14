@@ -83,7 +83,7 @@ async fn conforming_component() {
                 stop_rx.await.unwrap();
             });
             initialized_rx.await.unwrap();
-            assert!(signal.mark_started());
+            let signal = signal.acknowledge_started();
             component_events.lock().unwrap().push("acknowledged");
             signal.draining().await;
             drained_tx.send(()).unwrap();
@@ -159,7 +159,7 @@ async fn nonconforming_component() {
             initialized_rx.await.unwrap();
             // Only the test retains this handle. The registered wrapper never joins it.
             child_tx.send(child).unwrap();
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             signal.draining().await;
             Ok(())
         })
@@ -214,7 +214,7 @@ async fn check_exit(exit: Exit) {
     let mut supervisor = Supervisor::new(budget());
     supervisor
         .register("component", move |signal| async move {
-            signal.mark_started();
+            let _shutdown = signal.acknowledge_started();
             match exit {
                 Exit::Early => Ok(()),
                 Exit::Error => Err(ComponentFailure.into()),

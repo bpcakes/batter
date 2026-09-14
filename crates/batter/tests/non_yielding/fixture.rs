@@ -67,7 +67,7 @@ fn supervisor(
         .register("worker", move |signal| async move {
             let lifetime = TaskLifetime(active.clone());
             active.store(true, Ordering::SeqCst);
-            assert!(signal.mark_started());
+            let signal = signal.acknowledge_started();
             assert_eq!(handle.readiness(), Readiness::Ready);
             emit("task-entered");
             entered.send(()).unwrap();

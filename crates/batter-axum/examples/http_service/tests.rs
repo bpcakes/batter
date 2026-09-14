@@ -58,8 +58,8 @@ async fn readiness_responses() -> [String; 4] {
     let (release_tx, release_rx) = oneshot::channel();
     let mut release = Some(release_tx);
     supervisor
-        .register("phase-control", move |shutdown| async move {
-            shutdown.mark_started();
+        .register("phase-control", move |startup| async move {
+            let shutdown = startup.acknowledge_started();
             let _ = started_tx.send(());
             shutdown.draining().await;
             let _ = release_rx.await;

@@ -48,7 +48,8 @@ async fn drain_destroys_active_probe_before_monitor_return_and_dependency_cleanu
     let reader = monitor.reader();
     let mut base = supervisor();
     let completed = events.clone();
-    base.register("health", move |shutdown| async move {
+    base.register("health", move |startup| async move {
+        let shutdown = startup.acknowledge_started();
         monitor.run(shutdown).await;
         completed.lock().unwrap().push("monitor-returned");
         Ok(())
@@ -187,7 +188,8 @@ async fn probe_panic_remains_a_critical_failure_and_stops_the_writer() {
     });
     let reader = monitor.reader();
     let mut base = supervisor();
-    base.register("health", move |shutdown| async move {
+    base.register("health", move |startup| async move {
+        let shutdown = startup.acknowledge_started();
         monitor.run(shutdown).await;
         Ok(())
     })

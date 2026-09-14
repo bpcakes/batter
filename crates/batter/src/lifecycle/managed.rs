@@ -8,7 +8,7 @@ pub use report::{
     SettlementEvidence,
 };
 
-use super::{Component, ComponentFuture, ShutdownBudget};
+use super::{Component, ComponentFuture, ComponentStartup, ShutdownBudget};
 use crate::{BoxError, operation::OperationContext};
 use std::{
     future::Future,
@@ -178,6 +178,7 @@ impl<R: ManagedSettlement> Future for EraseSettlement<R> {
 
 pub(super) struct Registration {
     pub(super) name: &'static str,
+    startup: ComponentStartup,
     context: OperationContext,
     factory: Box<
         dyn FnOnce(ManagedShutdownBudget) -> Result<ManagedComponent<SettlementEvidence>, BoxError>
@@ -186,28 +187,42 @@ pub(super) struct Registration {
 }
 
 impl Registration {
-    pub(super) fn new<F, R>(name: &'static str, context: OperationContext, factory: F) -> Self
+    pub(super) fn new<F, R>(
+        name: &'static str,
+        startup: ComponentStartup,
+        context: OperationContext,
+        factory: F,
+    ) -> Self
     where
         F: FnOnce(ManagedShutdownBudget) -> Result<ManagedComponent<R>, BoxError> + Send + 'static,
         R: ManagedSettlement,
     {
         Self {
             name,
+            startup,
             context,
             factory: Box::new(move |budget| factory(budget).map(ManagedComponent::erase)),
         }
     }
 
     pub(super) fn prepare(self, budget: ShutdownBudget) -> (Component, ManagedObserver) {
+        let Self {
+            name,
+            startup,
+            context,
+            factory,
+        } = self;
+        let registration = PreparedRegistration { context, factory };
         // Completion observation exists only once the supervisor driver starts.
         let (publication, completion) = tokio::sync::watch::channel(ManagedOutcome::default());
         let observer = ManagedObserver { completion };
         let waiter = observer.clone();
         let component = Component {
-            name: self.name,
-            factory: Box::new(move |signal| {
+            name,
+            startup,
+            factory: Box::new(move |startup| {
                 Box::pin(async move {
-                    drive::start(self, budget, signal, publication);
+                    drive::start(registration, budget, startup, publication);
                     let outcome = waiter.wait().await;
                     if outcome.is_success() {
                         Ok(())
@@ -219,6 +234,14 @@ impl Registration {
         };
         (component, observer)
     }
+}
+
+pub(super) struct PreparedRegistration {
+    context: OperationContext,
+    factory: Box<
+        dyn FnOnce(ManagedShutdownBudget) -> Result<ManagedComponent<SettlementEvidence>, BoxError>
+            + Send,
+    >,
 }
 
 #[derive(Debug, thiserror::Error)]

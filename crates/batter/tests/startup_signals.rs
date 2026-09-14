@@ -87,7 +87,7 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
         if case == "occupied" {
             process
                 .register("signals", |shutdown| async move {
-                    shutdown.mark_started();
+                    let shutdown = shutdown.acknowledge_started();
                     shutdown.draining().await;
                     Ok(())
                 })
@@ -489,7 +489,7 @@ fn run_running_child() {
                     scope
                         .registration()
                         .register("worker", move |shutdown| async move {
-                            shutdown.mark_started();
+                            let shutdown = shutdown.acknowledge_started();
                             shutdown.draining().await;
                             stopped.lock().unwrap().push("worker");
                             Ok(())
@@ -525,7 +525,7 @@ fn run_unapproved_child() {
                     scope
                         .registration()
                         .register("worker", |shutdown| async move {
-                            shutdown.mark_started();
+                            let shutdown = shutdown.acknowledge_started();
                             shutdown.draining().await;
                             Ok(())
                         })?;

@@ -126,8 +126,8 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
                 let _ = publish.send(pool.clone());
                 scope
                     .registration()
-                    .register("database-task", move |shutdown| async move {
-                        shutdown.mark_started();
+                    .register("database-task", move |startup| async move {
+                        let _shutdown = startup.acknowledge_started();
                         sqlx::query("SELECT 1 / 0").execute(&pool).await?;
                         Ok(())
                     })?;

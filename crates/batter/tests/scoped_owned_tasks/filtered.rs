@@ -68,7 +68,7 @@ async fn process_tasks(abort: bool) {
                 dropped: None,
             };
             tracing::info!(marker = "critical.capture", "callback entered");
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             if abort {
                 pending::<()>().await;
             } else {

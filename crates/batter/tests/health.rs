@@ -339,7 +339,8 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
     let reader = monitor.reader();
     let mut base = supervisor();
     let handle = base.handle();
-    base.register("health", move |shutdown| async move {
+    base.register("health", move |startup| async move {
+        let shutdown = startup.acknowledge_started();
         monitor.run(shutdown).await;
         Ok(())
     })

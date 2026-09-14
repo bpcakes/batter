@@ -31,9 +31,9 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
     let started = Arc::new(AtomicUsize::new(0));
     let in_component = started.clone();
     supervisor
-        .register("worker", move |signal| async move {
+        .register("worker", move |startup| async move {
             in_component.fetch_add(1, Ordering::SeqCst);
-            signal.draining().await;
+            startup.shutdown().draining().await;
             Ok(())
         })
         .unwrap();

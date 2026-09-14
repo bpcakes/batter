@@ -9,7 +9,7 @@ mod tests;
 
 use super::{ProcessAdmissionError, Readiness};
 use std::sync::{
-    Mutex, MutexGuard,
+    Arc, Mutex, MutexGuard,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use tokio::{sync::Notify, time::Instant};
@@ -21,6 +21,21 @@ pub(super) struct Shared {
     drain: CancellationToken,
     cancel: CancellationToken,
     changed: Notify,
+}
+
+/// One pending component-start acknowledgement paired with its lifecycle.
+///
+/// The token is created only while registering a component, cannot be cloned,
+/// and consumes itself when acknowledging. Dropping it deliberately leaves the
+/// component pending; only actual initialization may remove that readiness gate.
+pub(super) struct PendingComponentStart {
+    shared: Arc<Shared>,
+}
+
+impl PendingComponentStart {
+    pub(super) fn acknowledge(self) {
+        self.shared.acknowledge_component_start();
+    }
 }
 
 struct AdmissionState {
@@ -120,22 +135,24 @@ impl Shared {
         true
     }
 
-    pub(super) fn register_component(&self) {
+    pub(super) fn register_component(self: &Arc<Self>) -> PendingComponentStart {
         self.lock().pending_startups += 1;
+        PendingComponentStart {
+            shared: self.clone(),
+        }
     }
 
-    pub(super) fn mark_started(&self, startup: &AtomicBool) -> bool {
+    fn acknowledge_component_start(&self) {
         {
             let mut state = self.lock();
-            if startup.swap(true, Ordering::AcqRel) {
-                return false;
-            }
-            state.pending_startups -= 1;
+            state.pending_startups = state
+                .pending_startups
+                .checked_sub(1)
+                .expect("component start token must match a pending registration");
             state.publish_ready();
             self.publish_readiness(&state);
         }
         self.changed.notify_waiters();
-        true
     }
 
     pub(super) fn start_driver(&self) {

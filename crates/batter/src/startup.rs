@@ -67,8 +67,9 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 ///     let slot = scope.reserve_cleanup("service.capacity")?;
 ///     let permit = acquiring.acquire_owned().await.expect("capacity remains open");
 ///     slot.register(move || async move { drop(permit); Ok(()) });
-///     scope.registration().register("doubler", move |shutdown| async move {
-///         shutdown.mark_started(); // The initialized inbox is now owned by this task.
+///     scope.registration().register("doubler", move |startup| async move {
+///         // The initialized inbox is now owned by this task.
+///         let shutdown = startup.acknowledge_started();
 ///         loop {
 ///             tokio::select! {
 ///                 biased;
@@ -152,9 +153,9 @@ impl<F> Startup<F> {
     /// let mut supervisor = Supervisor::new(ShutdownBudget::new(
     ///     second, second, second, cleanup,
     /// )?);
-    /// supervisor.register("worker", |signal| async move {
-    ///     signal.mark_started();
-    ///     signal.draining().await;
+    /// supervisor.register("worker", |startup| async move {
+    ///     let shutdown = startup.acknowledge_started();
+    ///     shutdown.draining().await;
     ///     Ok(())
     /// })?;
     /// let mut starting = Startup::new(
@@ -212,8 +213,8 @@ impl Startup<()> {
     /// let mut starting = Startup::scoped(process, OperationContext::new(second)?, cleanup,
     ///     |scope| Box::pin(async move {
     ///         scope.reserve_cleanup("dependency")?.register(|| async { Ok(()) });
-    ///         scope.registration().register("worker", |shutdown| async move {
-    ///             shutdown.mark_started();
+    ///         scope.registration().register("worker", |startup| async move {
+    ///             let shutdown = startup.acknowledge_started();
     ///             shutdown.draining().await;
     ///             Ok(())
     ///         })?;

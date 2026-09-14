@@ -102,12 +102,14 @@ impl Server {
         let startup_stuck = scenario == "http-startup-stuck";
         let unresponsive = startup_stuck || scenario == "http-teardown-stuck";
         let dispatch = capture.dispatch.clone();
-        supervisor.register("http.server", move |signal| async move {
+        supervisor.register("http.server", move |startup| async move {
             let _lifetime = Lifetime(server_state.clone(), "server-dropped");
             let graceful_state = server_state.clone();
-            if !startup_stuck {
-                signal.mark_started();
-            }
+            let signal = if startup_stuck {
+                startup.shutdown().clone()
+            } else {
+                startup.acknowledge_started()
+            };
             if unresponsive {
                 std::future::pending::<()>().await;
             }

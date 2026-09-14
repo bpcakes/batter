@@ -74,7 +74,7 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
                 scope
                     .registration()
                     .register("service", move |shutdown| async move {
-                        shutdown.mark_started();
+                        let shutdown = shutdown.acknowledge_started();
                         loop {
                             tokio::select! {
                                 biased;
@@ -240,7 +240,7 @@ async fn cancelling_a_protected_borrowed_waiter_leaves_initialization_owned() {
                 scope
                     .registration()
                     .register("worker", |shutdown| async move {
-                        shutdown.mark_started();
+                        let shutdown = shutdown.acknowledge_started();
                         shutdown.draining().await;
                         Ok(())
                     })?;

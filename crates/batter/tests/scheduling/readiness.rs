@@ -16,8 +16,7 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
         .register("first", move |signal| async move {
             first_rx.await.unwrap();
             yields(delay).await;
-            assert!(signal.mark_started());
-            assert!(!signal.mark_started());
+            let signal = signal.acknowledge_started();
             first_ack.send(()).unwrap();
             signal.draining().await;
             Ok(())
@@ -27,7 +26,7 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
         .register("second", move |signal| async move {
             second_rx.await.unwrap();
             yields(delay.rotate_left(7)).await;
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             second_ack.send(()).unwrap();
             released.await.unwrap();
             signal.draining().await;
@@ -79,7 +78,7 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
         .register("racing-startup", move |signal| async move {
             component_barrier.wait().await;
             yields(delay).await;
-            signal.mark_started();
+            let signal = signal.acknowledge_started();
             acked.send(()).unwrap();
             released.await.unwrap();
             signal.draining().await;

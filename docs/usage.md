@@ -129,10 +129,12 @@ root deliberately needs full supervisor access. Its additional caller
 obligations are not the canonical agent-consumer integration contract.
 
 Successful `Startup` initialization supplies application readiness approval by
-default and starts the owned driver. Each direct critical component still calls
-`shutdown.mark_started()` after actual initialization; supported adapters own
-their component acknowledgement. The driver publishes Ready only after every
-registered component acknowledges. Use `without_readiness_approval()` only when
+default and starts the owned driver. Each direct critical component receives a
+non-cloneable `ComponentStartup`, consumes `acknowledge_started()` after actual
+initialization, and uses the returned read-only `ShutdownSignal` while running;
+supported adapters own this transition for their components. The driver publishes
+Ready only after every registered component acknowledges. Use
+`without_readiness_approval()` only when
 application policy deliberately defers approval, then call `handle.mark_ready()`
 after those checks pass. Fresh dependency health remains a separate readiness
 condition. A one-shot warmup belongs in the initializer, not the critical task set.

@@ -75,8 +75,8 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
         ));
         let mut supervisor = root.supervisor(budget());
         supervisor
-            .register("initialized", |signal| async move {
-                signal.mark_started();
+            .register("initialized", |startup| async move {
+                let signal = startup.acknowledge_started();
                 signal.draining().await;
                 Ok(())
             })

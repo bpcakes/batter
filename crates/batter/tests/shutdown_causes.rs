@@ -38,7 +38,7 @@ async fn bounded(future: impl Future<Output = ()>) {
 fn register_healthy_component(supervisor: &mut Supervisor) {
     supervisor
         .register("component", |signal| async move {
-            assert!(signal.mark_started());
+            let signal = signal.acknowledge_started();
             signal.draining().await;
             Ok(())
         })
@@ -93,7 +93,7 @@ async fn ready_request_precedes_an_unobserved_critical_error() {
         let (failed, observed) = oneshot::channel();
         supervisor
             .register("component", move |signal| async move {
-                assert!(signal.mark_started());
+                let _shutdown = signal.acknowledge_started();
                 failed.send(()).unwrap();
                 Err(std::io::Error::other("component error").into())
             })
@@ -163,7 +163,7 @@ async fn first_failure_is_retained_when_the_other_task_kind_fails_during_drain()
             let (release, admitted) = oneshot::channel();
             supervisor
                 .register("component", move |signal| async move {
-                    assert!(signal.mark_started());
+                    let signal = signal.acknowledge_started();
                     admitted.await.unwrap();
                     if finite_first {
                         signal.draining().await;

@@ -267,11 +267,13 @@ fn register_server(
     let withheld = case == "admission_with_graceful_withheld";
     let acknowledge = case != "startup_timeout";
     supervisor
-        .register("http", move |shutdown| async move {
+        .register("http", move |startup| async move {
             let _drop = DropEvent(events.clone(), "server-drop");
-            if acknowledge {
-                shutdown.mark_started();
-            }
+            let shutdown = if acknowledge {
+                startup.acknowledge_started()
+            } else {
+                startup.shutdown().clone()
+            };
             let signal_events = events.clone();
             let listener = TrackedListener {
                 inner: listener,

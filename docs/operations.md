@@ -12,9 +12,11 @@ Example shutdown listeners register SIGINT and SIGTERM directly. See
 Parse and validate configuration without logging secrets. Acquire dependencies,
 register finalizers, run migrations/schema checks through the application's
 normal path, and perform readiness checks. Set readiness only when dependencies
-and required initialization are complete. Each critical component calls
-`mark_started` after initialization. The application's `mark_ready` arms Ready,
-which is published only once the driver runs and every component acknowledges.
+and required initialization are complete. Each registered critical component
+receives one `ComponentStartup` value and consumes `acknowledge_started` only
+after actual initialization; the returned `ShutdownSignal` observes its running
+phase. The application's `mark_ready` arms Ready, which is published only once
+the driver runs and every component acknowledges.
 
 Registration is inert. Use ordinary awaited startup work before the supervisor.
 On failure, explicitly drive all registered cleanup and retain the primary
