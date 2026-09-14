@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{ConfigMode, RootSettings};
+use crate::config::MaintenanceSettings;
 use batter::{
     cleanup::CleanupBudget,
     command::{Command, CommandCause},
@@ -12,13 +12,12 @@ use sqlx::{Connection, PgConnection, postgres::PgSslMode};
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn maintenance_session_replacement_is_refused() -> Result<(), batter::BoxError> {
     let url = std::env::var("POSTGRES_TEST_ADMIN_URL")?;
-    let settings = RootSettings::from_sources(
-        ConfigMode::Setup,
+    let settings = MaintenanceSettings::from_sources(
         None,
         SettingsSource::default(),
         SettingsSource::from_pairs([("DATABASE_URL".into(), url.into())])?,
     )?;
-    let options = settings.connect_options_from_process()?;
+    let options = settings.prepare()?.into_connect_options();
     assert!(matches!(options.get_host(), "127.0.0.1" | "localhost"));
     assert!(matches!(options.get_ssl_mode(), PgSslMode::Disable));
     let mut observer = PgConnection::connect_with(&options).await?;

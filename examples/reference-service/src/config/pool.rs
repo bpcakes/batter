@@ -66,6 +66,11 @@ impl PoolSettings {
         )
     }
     /// Build native options used directly by `connect_with` or fixture ConnectionPlan.
+    ///
+    /// This section-level probe escape hatch does not register a pool. A caller
+    /// creating a live process resource must reserve cleanup before construction,
+    /// register awaited `Pool::close`, and inspect the complete cleanup report.
+    /// The protected service path uses `PreparedServing` instead.
     pub fn pool_options(&self) -> PgPoolOptions {
         PgPoolOptions::new()
             .max_connections(self.max)

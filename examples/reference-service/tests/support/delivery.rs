@@ -10,10 +10,7 @@ use batter::{
     settings::SettingsSource,
 };
 use batter_example_reference_service::{
-    config::{ConfigMode, RootSettings},
-    delivery::DELIVERY_JOB_TYPE,
-    http::router,
-    schema::initialize_schema,
+    config::ServingSettings, delivery::DELIVERY_JOB_TYPE, http::router, schema::initialize_schema,
 };
 use serde_json::Value;
 use sqlx::{PgPool, postgres::PgConnectOptions};
@@ -28,7 +25,7 @@ const OWNER_B: &str = "00000000-0000-0000-0000-000000000102";
 const TOKEN_A: &str = "reference-live-token-a";
 const TOKEN_B: &str = "reference-live-token-b";
 
-fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> RootSettings {
+fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings {
     let mut pairs: Vec<(OsString, OsString)> = vec![
         (
             "DATABASE_URL".into(),
@@ -43,8 +40,7 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> RootSettings {
             .iter()
             .map(|(name, value)| ((*name).into(), (*value).into())),
     );
-    RootSettings::from_sources(
-        ConfigMode::Serve,
+    ServingSettings::from_sources(
         None,
         SettingsSource::default(),
         SettingsSource::from_pairs(pairs).expect("live settings names are valid"),
@@ -52,7 +48,7 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> RootSettings {
     .expect("live settings are valid")
 }
 
-fn app(settings: &RootSettings, pool: PgPool) -> Router {
+fn app(settings: &ServingSettings, pool: PgPool) -> Router {
     let handle = ShutdownHandle::new();
     handle.mark_ready();
     let second = std::time::Duration::from_secs(1);
@@ -66,7 +62,7 @@ fn app(settings: &RootSettings, pool: PgPool) -> Router {
         .unwrap(),
         || async { Ok::<_, std::convert::Infallible>(()) },
     );
-    router(settings, handle, pool, monitor.reader()).expect("validated settings build the router")
+    router(settings.prepare_http(), handle, pool, monitor.reader())
 }
 
 async fn request(

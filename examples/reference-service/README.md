@@ -104,8 +104,14 @@ Offline legacy controls retire through `retirement::prepare` or the
 use a direct PostgreSQL endpoint and the expected cluster identifier/database OID
 from the known deployment target. Production startup never runs retirement.
 
+The `service.env` path below is a dedicated database-only file, not the serving
+process file. A minimal file contains only
+`DATABASE_URL=postgres://operator@localhost/database?sslmode=disable`. The command
+unsets the higher-precedence environment `DATABASE_URL` so this file selects the
+operator endpoint.
+
 ```bash
-cargo run -p batter-example-reference-service --example retire_startup_controls -- \
+env -u DATABASE_URL cargo run -p batter-example-reference-service --example retire_startup_controls -- \
   "$EXPECTED_SYSTEM_IDENTIFIER" "$EXPECTED_DATABASE_OID" service.env
 ```
 
@@ -124,7 +130,7 @@ cleanup disposition when available. Cancellation failures include `job_id`,
 `readback_attempted: false`, and sanitized native classification; a session-replacement
 wrapper retains these under `original`. Pass that job ID and the independently
 verified target to `retirement::readback`. Native SQL/error/panic bodies are never
-formatted by this projection. Setup failures give the fixed usage without printing
+formatted by this projection. Preparation failures give the fixed usage without printing
 configuration contents. JSON facts do not authorize retry or replace the retained
 library report. The report describes database observations, not deployment completion.
 
@@ -152,7 +158,7 @@ check authentication, server version and privileges before any database fixture.
 Use explicit username, database and sslmode=disable. PG* environment entries and
 unsupported query keys are rejected for both endpoints before either connection
 opens. The complete suite requires SCRAM on the primary and explicit credentials
-in its URL. The native Setup constructor also permits operator-selected passwordless
+in its URL. `MaintenanceSettings` also permits operator-selected passwordless
 endpoints for focused probes; neither preflight nor configured probes read a passfile. Python owns only command
 budgets and exact test inventory, not a second URL parser or client policy.
 
@@ -198,14 +204,17 @@ live waiter loss from actual runtime destruction and native lease Drop.
 
 ## Typed settings and native constructors
 
-`config::RootSettings` loads application-owned policy before resource acquisition.
-`from_process(mode, selected_file, overrides)` captures environment once and reads
-only that optional path (64 KiB limit). `from_sources` accepts injected sources.
+`config::ServingSettings` and `config::MaintenanceSettings` load distinct
+application-owned command schemas before resource acquisition. Their
+`from_process(selected_file, overrides)` constructors capture environment once
+and read only that optional path (64 KiB limit). `from_sources` accepts injected sources.
 Precedence is defaults < selected file < captured environment < explicit overrides.
 Every source is structurally validated before values merge. Invalid winners fail;
 invalid shadowed scalar values may be replaced, but malformed/duplicate/unknown
 file or override entries cannot. Unknown BATTER_/JOBS_ environment names and all
-PG* entries fail; unrelated environment names are ignored.
+PG* entries fail; unrelated environment names are ignored. Maintenance also
+ignores known serving-only environment names without parsing them, while its
+dedicated file and overrides reject those same names.
 
 The shared literal dotenv dialect is UTF-8 LF/CRLF `KEY=VALUE` with ASCII identifier
 keys, outer space/tab trimming, full-line comments and matching optional outer
@@ -218,13 +227,13 @@ there is no interpolation, escaping, export, multiline or inline-comment syntax.
 | BATTER_REQUEST_TIMEOUT_MS | 2000; positive, at most one year |
 | BATTER_BULKHEAD_CAPACITY | 32; 1..=Tokio Semaphore::MAX_PERMITS |
 | BATTER_PROCESS_CAPACITY | 32; independent finite-task bound, same range |
-| BATTER_AUTH_OWNER_ID | Required non-nil UUID in Serve; optional only as an owner/token pair in Setup |
-| BATTER_AUTH_TOKEN | Required visible-ASCII token, 1..=256 bytes in Serve; redacted from application diagnostics |
+| BATTER_AUTH_OWNER_ID | Required non-nil UUID in serving; outside the maintenance schema |
+| BATTER_AUTH_TOKEN | Required visible-ASCII token, 1..=256 bytes in serving; redacted from application diagnostics; outside the maintenance schema |
 | BATTER_POOL_MAX_CONNECTIONS | 8; positive u32 |
 | BATTER_POOL_MIN_CONNECTIONS | 0; u32, at most maximum |
 | BATTER_POOL_ACQUIRE_TIMEOUT_MS | 3000; positive, at most one year |
 | DATABASE_URL | Required; supported TCP URL subset below |
-| JOBS_WORKER_ID | Required and nonblank in Serve; optional in Setup |
+| JOBS_WORKER_ID | Required and nonblank in serving; outside the maintenance schema |
 | JOBS_POLL_INTERVAL_MS | 500; positive, at most one year |
 | JOBS_CLAIM_BATCH_SIZE | 16; 1..=native JOBS_CLAIM_BATCH_SIZE_MAX (1000) |
 | JOBS_LEASE_TTL_SECONDS | 60; positive i32 |
@@ -247,18 +256,23 @@ UTF-8 and are decoded once; query `+` means space. DNS, IPv4 and IPv6 TCP hosts
 are supported; socket URLs and additional libpq parameters are outside this
 reference subset. Application name defaults to `reference-service`.
 
-Serve requires an explicit nonempty password. Setup permits a passwordless
-endpoint selected by the operator and may omit worker identity; attempting a
-worker constructor then fails. Both modes validate every supplied setting.
+Serving requires an explicit nonempty password. Maintenance permits a
+passwordless endpoint selected by the operator and recognizes only DATABASE_URL.
+Pool, HTTP, authentication, worker and lifecycle keys are rejected
+by that schema rather than parsed into optional capabilities. Both types validate
+every supplied setting, and maintenance has no conversion into serving.
 `PoolSettings::new`/`from_source` and `WorkerSettings::from_source` expose the same
 section validation to current probes without pretending they are serving roots.
 
-Use `request_policy`, `pool_options`, `connect_options_from_process`, `bulkhead`, `supervisor`
-and `worker().jobs_config()` for validated native inputs. The composition root
-passes worker configuration to native `prepare()` and transfers the owned result
-to `batter_runledger::register`; settings expose no supervisor builder or live
-worker convenience API. The returned native connection options can expose secrets
-through Debug and URL conversion.
+The protected service path consumes `ServingSettings` through `runtime::prepare`,
+which creates a must-use, non-cloneable `PreparedServing` without connecting,
+binding, migrating or spawning. `runtime::run` accepts only that value. The router
+similarly consumes an opaque `PreparedHttp`; it cannot reconstruct missing
+authentication or accept maintenance inputs. Offline commands consume
+`MaintenanceSettings::prepare` and receive only native database inputs.
+Focused probes retain explicit low-level accessors for the validated serving
+values, but those accessors are not the canonical runtime handoff. Native SQLx
+options can expose secrets through Debug and URL conversion.
 The selected graph has no SQLx TLS backend: settings preserve requested modes,
 but TLS connection execution requires the application's native SQLx TLS feature;
 no TLS negotiation result is claimed. SQLx 0.9's URL formatter cannot represent
@@ -282,6 +296,7 @@ hosting is implemented; delivery-provider execution remains a separate task.
 Offline native-option, IPv6 and worker-builder checks execute in cleared child
 processes. The normal matrix repeats this target with hostile parent PG* values;
 no test mutates process-wide environment. Supported encoded identifier and
-application-name spaces remain literal after one decoding pass. Setup omission
-of worker identity still forbids building a worker; the pinned JobsConfig has no
-cross-field validation rule beyond the bounds already checked in both modes.
+application-name spaces remain literal after one decoding pass. Maintenance
+does not parse worker settings at all; serving constructs and validates the native
+JobsConfig before preparation. The pinned JobsConfig has no additional
+cross-field validation rule beyond those checked by the serving schema.

@@ -44,13 +44,14 @@ socket, or register work.
   defect.
 - [x] (2026-09-14) Started Jig work as
   `plan_01M2FJAAJ6PTC67CW9PYFCBGQH` against baseline `3b4364f`.
-- [ ] Slice 1: add Batter- and Axum-owned validated capability types, migrate all
+- [x] (2026-09-14) Slice 1: added Batter- and Axum-owned validated capability types, migrated all
   workspace consumers, update their contracts/examples/tests, validate narrowly,
-  and converge the comprehensive low-severity review/fix loop before committing.
-- [ ] Slice 2: replace `ConfigMode`/`RootSettings` with purpose-specific settings
+  and converged the comprehensive low-severity review/fix loop before commit
+  `d52a733`.
+- [x] (2026-09-14) Slice 2: replaced `ConfigMode`/`RootSettings` with purpose-specific settings
   and inert prepared serving/maintenance owners; narrow runtime/router/pool/worker
   boundaries, migrate every reference consumer, validate, review to convergence,
-  and commit.
+  and prepare the converged slice for commit.
 - [ ] Slice 3: complete cross-cutting contracts, status, validation evidence,
   compile-fail/failure-path coverage, and fresh consumer assessment; run final
   two-toolchain, HTTP, live-suite/Jig verification, review to convergence, and
@@ -82,6 +83,43 @@ socket, or register work.
   later calls.
   Evidence: `RootSettings::from_sources`, `Bulkhead::new`,
   `Supervisor::with_process_capacity`, and `RequestPolicy::new`.
+- Observation: slice 1 converged after one ordinary repair round, two complete
+  Claude/Codex comprehensive passes, one supporting closure edit batch, and one
+  focused closure verification pass. The terminal included fingerprint was
+  `e11a07e9d4bef075af8924627612cc6e550f80918f0a1b1d67315b547a216dd3`;
+  both focused reviewers satisfied the compile-fail and execution-evidence
+  obligations without findings.
+- Observation: both supported Rust matrices and all ten rebuilt HTTP process
+  profiles passed on the terminal witness bytes. The reference live runner
+  stopped before fixtures because both explicit PostgreSQL endpoints were absent,
+  so no live execution is claimed for slice 1.
+- Observation: slice 2 review round 3 used matching fingerprint
+  `75ba2ef5ed7686ea5ce9618c912c8619acfccbcf7e161b8f6017ac08e6a08691`.
+  The external reviewer was clean; the native reviewer found only one stale
+  setup-mode phrase in a migrated maintenance test comment. The fourth complete
+  pass follows that supporting repair.
+- Observation: slice 2 review round 4 used matching fingerprint
+  `d46878af9c97a251a2a841cce0bacb9ac14cfccd5fe52f0851a28fd9ab0c8c43`.
+  Both reviewers found no substantive defect and identified serving source-policy
+  coverage as a remaining supporting obligation; the native reviewer also found
+  that password-bearing prepared-maintenance redaction lacked direct coverage.
+  The loop's one supporting closure batch is consumed by those two tests and the
+  associated evidence updates.
+- Observation: the first focused closure verification satisfied the serving
+  source-policy and prepared-maintenance redaction obligations. Both reviewers
+  marked the evidence obligation uncertain because the chronology did not record
+  the already completed post-closure configuration suite on Rust 1.98.1 and
+  1.94.0. The closure's one correction batch records those exact 23/23 outcomes
+  and scopes the earlier full-matrix claim to the production bytes it exercised.
+- Observation: the second and final focused closure verification satisfied all
+  three obligations without actionable findings. Its matching terminal included
+  fingerprint is
+  `c1fc17e8fc3910fe47d1040bbc57a9df1b6d5b897b49bafb8453872ad6cda4ff`;
+  the comprehensive baseline remains
+  `d46878af9c97a251a2a841cce0bacb9ac14cfccd5fe52f0851a28fd9ab0c8c43`.
+  Slice 2 therefore converged after four complete comprehensive passes, one
+  supporting closure batch, one supporting correction and two focused closure
+  verification passes.
 
 ## Decision Log
 

@@ -202,13 +202,20 @@ autovacuum settings, authentication and distinct-cluster checks. The strict runn
 rejects unmet prerequisites before inventory and executes the complete case set
 serially.
 
-## Typed configuration constructor extension (batter-5pm)
+## Purpose-qualified configuration and native preparation
 
 The selected upstream pins remain unchanged. The reference package now owns
-validated RootSettings/PoolSettings/WorkerSettings and explicit native constructor
-methods. Native runtime preparation and fixture pool creation consume those methods.
-The foundation supplies only std-based source/bounds/redaction mechanics; direct
-Axum/Batter/url/percent-encoding edges belong to this example package.
+distinct validated `ServingSettings` and `MaintenanceSettings`, section-level
+`PoolSettings`/`WorkerSettings`, and inert prepared ownership values. The serving
+schema requires a password-qualified endpoint, concrete authentication, a native
+validated worker configuration and Batter/Axum operational witnesses. The
+database-only maintenance schema permits passwordless local trust authentication,
+ignores known serving-only values in captured environment without parsing them,
+but rejects those keys in dedicated inputs and cannot be converted into serving. Native runtime
+preparation and fixture pool creation consume their corresponding purpose types.
+The foundation supplies only source/bounds/redaction mechanics and reusable
+operational witnesses; direct Axum/Batter/url/percent-encoding policy remains in
+this application package.
 
 Offline configuration tests execute native field assertions, HTTP deadline and
 admission behavior, partial startup failure, child-process PG*/passfile policy,
@@ -241,12 +248,12 @@ lease-monitor case, producing 54 live cases and 56 total entries. Those hosted
 protocol cases were later replaced by native lifecycle and offline retirement
 acceptance under `batter-gi4`; current inventory and execution are recorded above
 and in validation.
-Passwordless Setup has separate focused evidence; the complete suite continues
+Passwordless maintenance has separate focused evidence; the complete suite continues
 to require the primary SCRAM controls.
 
 The current runner's preflight is `examples/reference_preflight.rs`, sharing
-`tests/support/live_endpoint.rs` with fixture acquisition. It reuses RootSettings
-and `connect_options_from_process` and performs the version/privilege check through
+`tests/support/live_endpoint.rs` with fixture acquisition. It reuses
+`MaintenanceSettings::prepare` and performs the version/privilege check through
 native SQLx before the exact live inventory. The held-worker configuration probe
 now checks committed LEASED rows while handlers are held, rather than inferring
 capacity from a 150 ms quiet period. The pinned worker commits a complete claim

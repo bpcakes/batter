@@ -14,7 +14,7 @@ mod configuration {
 }
 
 use batter::settings::SettingsSource;
-use batter_example_reference_service::config::{ConfigMode, RootSettings};
+use batter_example_reference_service::config::ServingSettings;
 
 fn source(pairs: &[(&str, &str)]) -> SettingsSource {
     SettingsSource::from_pairs(
@@ -24,7 +24,7 @@ fn source(pairs: &[(&str, &str)]) -> SettingsSource {
     )
     .unwrap()
 }
-fn load(pairs: &[(&str, &str)]) -> Result<RootSettings, batter::settings::SettingsError> {
+fn load(pairs: &[(&str, &str)]) -> Result<ServingSettings, batter::settings::SettingsError> {
     let mut values = source(&[
         (
             "DATABASE_URL",
@@ -38,7 +38,7 @@ fn load(pairs: &[(&str, &str)]) -> Result<RootSettings, batter::settings::Settin
         ("BATTER_AUTH_TOKEN", "fake-configured-token"),
     ]);
     values.overlay(source(pairs));
-    RootSettings::from_sources(ConfigMode::Serve, None, SettingsSource::default(), values)
+    ServingSettings::from_sources(None, SettingsSource::default(), values)
 }
 
 #[test]

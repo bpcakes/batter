@@ -566,24 +566,33 @@ explicit recovery; the timeout grants no remote-cleanup or async-drop guarantee.
 The foundation's `settings` module has no SQLx, Axum or Runledger dependency.
 The runnable HTTP example uses its literal source reader and bounds, retains
 `BulkheadCapacity` and `ResponseConstructionBudget`, and passes those witnesses
-into the actual router. The reference package owns
-`config::{RootSettings, PoolSettings, WorkerSettings, ConfigMode}`. Its constructors
-retain Batter `BulkheadCapacity`/`ProcessCapacity` and Axum
-`ResponseConstructionBudget`, then return infallibly constructed native
-`RequestPolicy`, `Bulkhead`, Batter `Supervisor`, and separately constructed
-`PgPoolOptions`, `PgConnectOptions`, and `JobsConfig`/Runledger
-`SupervisorBuilder` values, retaining their own native validation errors where
-those constructors are fallible.
+into the actual router. The reference package owns concrete
+`config::{ServingSettings, MaintenanceSettings, PreparedServing, PreparedHttp,
+PreparedMaintenance, PoolSettings, WorkerSettings}`. Serving construction retains
+Batter `BulkheadCapacity`/`ProcessCapacity`, Axum `ResponseConstructionBudget`, a
+password-qualified endpoint, a concrete authenticator, and a validated native
+`JobsConfig`. Maintenance recognizes only its database schema and has no
+promotion or conversion into the serving types.
 
-Use `RootSettings::from_process(mode, selected_path, overrides)` once before
-acquisition. Tests can inject file/environment/override sources directly.
+Use `ServingSettings::from_process(selected_path, overrides)` once, then transfer
+the result through `runtime::prepare` before acquisition. The returned must-use,
+non-cloneable `PreparedServing` owns inert `PgPoolOptions`, `PgConnectOptions`,
+`Supervisor`, `JobsConfig`, bind address and `PreparedHttp`; `runtime::run`
+accepts only that owner. Router construction consumes only `PreparedHttp` and is
+infallible because authentication and local operational values are already
+concrete. Offline commands separately consume `MaintenanceSettings::prepare`.
+Tests can inject file/environment/override sources directly.
 Precedence is defaults < explicit file < captured environment < explicit
 in-memory overrides. Dedicated files/overrides reject every unknown key;
 environment ignores unrelated names but rejects unknown BATTER_/JOBS_ names and
-all PG* entries. `connect_options_from_process` also rejects actual PG* entries even when the
+all PG* entries. Maintenance additionally ignores known serving-only names from
+captured environment without parsing them; its dedicated file and overrides
+remain database-only. Native preparation also rejects actual PG* entries even when a
 settings loader was injected. Keep process environment unchanged during native
 construction; no passfile, native URL fallback or `JobsConfig::from_env` path is
-used. The application owns schema names and password/TLS policy; see the
+used. The application owns command schemas and password/TLS policy; Batter owns
+the reusable operational witnesses rather than a generic configuration mode or
+typestate framework. See the
 [reference settings schema](../examples/reference-service/README.md).
 
 The reference fixture paths and delivery command root consume these outputs.
@@ -618,12 +627,12 @@ superuser/autovacuum/track_counts requirements and reject equal signed cluster
 identities. Each read-only pool closes before its result is interpreted. The
 entrypoint returns only a fixed success marker or sanitized error. The validated URL
 handed to the harness encodes query `+` as `%20`, so the harness's native
-tokio-postgres parser receives the same spaces as the root and SQLx. It also
+tokio-postgres parser receives the same spaces as maintenance preparation and SQLx. It also
 serializes the validated hostname and database, canonicalizes the disabled TLS
 mode and retains an explicit empty password instead of permitting SQLx passfile
 fallback. IPv6 literals are rejected at this private live boundary: the locked
 SQLx URL parser retains brackets during TCP lookup. Use `localhost` or
-`127.0.0.1`; direct root construction still supports native IPv6 options. Userinfo
+`127.0.0.1`; direct application construction still supports native IPv6 options. Userinfo
 `+` and existing percent escapes retain their meaning. The Python runner
 owns budgets and exact case inventory, not endpoint parsing or credential
 fallback. Ordinary native-constructor tests cross a cleared-environment child

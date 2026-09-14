@@ -1,10 +1,9 @@
-use super::ConfigMode;
 use batter::settings::{SecretString, SettingsError};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
 // Never derive Debug over native options or an unredacted URL aggregate.
 #[derive(Clone)]
-pub(super) struct Endpoint {
+struct Endpoint {
     host: SecretString,
     port: u16,
     username: SecretString,
@@ -50,7 +49,7 @@ fn decode(value: &str, query: bool) -> Result<String, SettingsError> {
 }
 
 impl Endpoint {
-    pub fn parse(value: &str, mode: ConfigMode) -> Result<Self, SettingsError> {
+    fn parse(value: &str) -> Result<Self, SettingsError> {
         // URL parsers normalize some whitespace; reject it rather than hide mistakes.
         if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err(error("invalid URL syntax"));
@@ -116,9 +115,6 @@ impl Endpoint {
             }
         }
         let ssl = ssl.ok_or_else(|| error("explicit sslmode required"))?;
-        if mode == ConfigMode::Serve && password.as_ref().is_none_or(String::is_empty) {
-            return Err(error("serving requires explicit nonempty password"));
-        }
         Ok(Self {
             host: SecretString::new(host),
             port,
@@ -131,7 +127,7 @@ impl Endpoint {
             ),
         })
     }
-    pub fn connect_options_from_process(&self) -> Result<PgConnectOptions, SettingsError> {
+    fn connect_options_from_process(&self) -> Result<PgConnectOptions, SettingsError> {
         // Defend even injected loaders from SQLx's ambient native defaults.
         // The application must not mutate process environment during construction.
         if std::env::vars_os().any(|(key, _)| key.as_encoded_bytes().starts_with(b"PG")) {
@@ -148,5 +144,37 @@ impl Endpoint {
             .database(self.database.expose_secret())
             .ssl_mode(self.ssl)
             .application_name(self.application.expose_secret()))
+    }
+}
+
+/// A PostgreSQL endpoint qualified for the serving process.
+#[derive(Clone)]
+pub(super) struct ServingEndpoint(Endpoint);
+
+impl ServingEndpoint {
+    pub(super) fn parse(value: &str) -> Result<Self, SettingsError> {
+        let endpoint = Endpoint::parse(value)?;
+        if endpoint.password.expose_secret().is_empty() {
+            return Err(error("serving requires explicit nonempty password"));
+        }
+        Ok(Self(endpoint))
+    }
+
+    pub(super) fn connect_options_from_process(&self) -> Result<PgConnectOptions, SettingsError> {
+        self.0.connect_options_from_process()
+    }
+}
+
+/// A PostgreSQL endpoint qualified only for offline maintenance.
+#[derive(Clone)]
+pub(super) struct MaintenanceEndpoint(Endpoint);
+
+impl MaintenanceEndpoint {
+    pub(super) fn parse(value: &str) -> Result<Self, SettingsError> {
+        Endpoint::parse(value).map(Self)
+    }
+
+    pub(super) fn connect_options_from_process(&self) -> Result<PgConnectOptions, SettingsError> {
+        self.0.connect_options_from_process()
     }
 }

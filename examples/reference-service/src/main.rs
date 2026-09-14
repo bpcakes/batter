@@ -1,10 +1,7 @@
 //! Runnable staged reference service. Provider execution is added later.
 
 use batter::{BoxError, settings::SettingsSource};
-use batter_example_reference_service::{
-    config::{ConfigMode, RootSettings},
-    runtime,
-};
+use batter_example_reference_service::{config::ServingSettings, runtime};
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 #[derive(Debug, thiserror::Error)]
@@ -30,12 +27,9 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), BoxError> {
     let file = selected_settings_file(std::env::args_os())?;
-    let settings = RootSettings::from_process(
-        ConfigMode::Serve,
-        file.as_deref(),
-        SettingsSource::default(),
-    )?;
-    runtime::run(settings).await
+    let settings = ServingSettings::from_process(file.as_deref(), SettingsSource::default())?;
+    let prepared = runtime::prepare(settings)?;
+    runtime::run(prepared).await
 }
 
 fn report_exit(result: Result<(), BoxError>) -> ExitCode {

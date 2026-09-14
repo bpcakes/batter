@@ -325,6 +325,17 @@ environment, or own application field names. HTTP and reference roots keep their
 schemas and pass validated values into native constructors. See
 [guarantees](guarantees.md#explicit-settings-and-redacted-diagnostics).
 
+Purpose is represented where it is known. Batter and its adapters own opaque
+validated operational values such as capacities and response-construction
+budgets. An application root owns concrete command schemas and creates a
+non-cloneable inert preparation containing only the capabilities admitted to
+that command. Serving entrypoints consume the serving preparation; maintenance
+has a separate database-only preparation and no promotion path. A generic mode
+parameter, `Validated<T, Mode>` wrapper, DI container, or foundation-owned
+application schema would carry less evidence: Batter cannot know which remote
+credentials, worker identity, or routes a particular application requires.
+The reference application is the executable contract for this division.
+
 ## Why there is no resource graph yet
 
 Explicit constructors and cleanup ordering are easier to inspect than an

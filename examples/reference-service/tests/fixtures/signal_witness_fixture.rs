@@ -1,10 +1,7 @@
 //! Process-only signal witness for the reference integration tests.
 
 use batter::{BoxError, settings::SettingsSource};
-use batter_example_reference_service::{
-    config::{ConfigMode, RootSettings},
-    runtime,
-};
+use batter_example_reference_service::{config::ServingSettings, runtime};
 use std::{io::Write, process::ExitCode};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -23,10 +20,11 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), BoxError> {
-    let settings = RootSettings::from_process(ConfigMode::Serve, None, SettingsSource::default())?;
+    let settings = ServingSettings::from_process(None, SettingsSource::default())?;
+    let prepared = runtime::prepare(settings)?;
     let mut terminate = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
-    let application = runtime::run(settings);
+    let application = runtime::run(prepared);
     tokio::pin!(application);
     let event = tokio::select! {
         biased;

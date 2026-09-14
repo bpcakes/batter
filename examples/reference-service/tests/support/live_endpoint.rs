@@ -1,6 +1,6 @@
 //! One endpoint policy shared by the live runner preflight and fixture acquisition.
 use batter::settings::{SecretString, SettingsError, SettingsSource};
-use batter_example_reference_service::config::{ConfigMode, RootSettings};
+use batter_example_reference_service::config::MaintenanceSettings;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
 pub fn from_process() -> Result<(SecretString, PgConnectOptions), SettingsError> {
@@ -19,13 +19,12 @@ pub fn from_named_process(
 
 pub fn from_url_in_process(url: &str) -> Result<(SecretString, PgConnectOptions), SettingsError> {
     // Reuse the application validator; no second URL grammar or PG policy.
-    let settings = RootSettings::from_sources(
-        ConfigMode::Setup,
+    let settings = MaintenanceSettings::from_sources(
         None,
         SettingsSource::default(),
         SettingsSource::from_pairs([("DATABASE_URL".into(), url.into())])?,
     )?;
-    let options = settings.connect_options_from_process()?;
+    let options = settings.prepare()?.into_connect_options();
     if options.get_host() == "::1" {
         return Err(SettingsError::new(
             "POSTGRES_TEST_ADMIN_URL",
@@ -65,7 +64,7 @@ pub fn from_url_in_process(url: &str) -> Result<(SecretString, PgConnectOptions)
             (key.into_owned(), value.to_owned())
         })
         .collect();
-    // Root Setup selects an explicit empty password. Retain that choice so
+    // Maintenance preparation selects an explicit empty password. Retain that choice so
     // SQLx's URL parser cannot fall back to an ambient passfile for fixture pools.
     if handoff.password().is_none() && !pairs.iter().any(|(key, _)| key == "password") {
         pairs.push(("password".into(), String::new()));

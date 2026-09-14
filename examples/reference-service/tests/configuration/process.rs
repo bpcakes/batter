@@ -2,6 +2,31 @@ pub(crate) use crate::process_runtime::{ExpectedExit, launch, run};
 use crate::temp_dir;
 
 #[test]
+fn maintenance_ignores_known_serving_process_environment() {
+    use std::ffi::OsString;
+
+    run(
+        "maintenance-serving-environment",
+        &[
+            (
+                "DATABASE_URL",
+                "postgres://user@localhost/database?sslmode=disable".into(),
+            ),
+            ("BATTER_BIND", "not-an-address".into()),
+            ("BATTER_AUTH_TOKEN", "secret-marker".into()),
+            ("BATTER_POOL_MAX_CONNECTIONS", "not-a-number".into()),
+            ("JOBS_WORKER_ID", OsString::new()),
+        ],
+    )
+    .validate_text(
+        ExpectedExit::Success,
+        &["configuration-child:maintenance-environment-ignored"],
+        &["secret-marker", "panicked"],
+    )
+    .unwrap();
+}
+
+#[test]
 fn captured_process_environment_and_passfile_policy_fail_closed() {
     use std::{
         ffi::OsString,

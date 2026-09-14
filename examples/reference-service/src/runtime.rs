@@ -1,6 +1,10 @@
 //! Owned startup and native runtime registration for the staged reference service.
 
-use crate::{config::RootSettings, http::router, schema::initialize_schema};
+use crate::{
+    config::{PreparedServing, ServingSettings},
+    http::router,
+    schema::initialize_schema,
+};
 use batter::{
     BoxError,
     cleanup::CleanupBudget,
@@ -56,6 +60,18 @@ fn shutdown_budget() -> ShutdownBudget {
         cleanup_budget(),
     )
     .expect("static shutdown budget is valid")
+}
+
+/// Prepare the fixed serving runtime without starting application work.
+///
+/// This is the only public constructor for [`PreparedServing`], so callers cannot
+/// substitute an application-specific shutdown budget before entering [`run`].
+/// Native PostgreSQL option construction occurs here so an ambient PG* conflict
+/// is rejected before startup acquires resources or starts its driver.
+pub fn prepare(
+    settings: ServingSettings,
+) -> Result<PreparedServing, batter::settings::SettingsError> {
+    settings.prepare(shutdown_budget())
 }
 
 /// Failed protected startup returned, boxed, by [`run`].
@@ -160,7 +176,7 @@ impl std::error::Error for RuntimePoolCleanupFailure {
     }
 }
 
-/// Run until a registered Unix signal or component failure initiates shutdown.
+/// Run a purpose-qualified preparation until shutdown.
 /// Native loop acknowledgement, fresh PostgreSQL health and explicit application
 /// approval are separate. No production startup control job is created.
 /// The delivery handler is still absent, so the root withholds approval and
@@ -171,8 +187,19 @@ impl std::error::Error for RuntimePoolCleanupFailure {
 /// running failures downcast to [`batter::lifecycle::ShutdownFailure`]; an
 /// otherwise successful report without its required pool-cleanup record
 /// downcasts to [`RuntimePoolCleanupFailure`].
-pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
-    let supervisor = settings.supervisor(shutdown_budget());
+///
+/// Maintenance preparation cannot cross this boundary:
+///
+/// ```compile_fail,E0308
+/// use batter_example_reference_service::{config::PreparedMaintenance, runtime};
+///
+/// fn cannot_serve(prepared: PreparedMaintenance) {
+///     let future = runtime::run(prepared);
+/// }
+/// ```
+pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
+    let parts = prepared.into_parts();
+    let supervisor = parts.supervisor;
     let readiness = supervisor.handle();
     let context = OperationContext::new(STARTUP_ALLOWANCE)?;
     let native_startup = context.clone();
@@ -180,21 +207,20 @@ pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 scope.stage("postgres.acquire")?;
-                let pool = register_pool(scope, &settings)?;
+                let pool = register_pool(scope, parts.pool_options, parts.connect_options)?;
                 drop(pool.acquire().await?);
                 scope.stage("postgres.schema")?;
                 initialize_schema(&pool).await?;
                 let health = register_health(scope.registration(), pool.clone())?;
 
                 scope.stage("http.bind")?;
-                let application = router(&settings, readiness.clone(), pool.clone(), health)?;
-                let listener = tokio::net::TcpListener::bind(settings.bind()).await?;
+                let application = router(parts.http, readiness.clone(), pool.clone(), health);
+                let listener = tokio::net::TcpListener::bind(parts.bind).await?;
                 batter_axum::register_http_in(scope, "http", listener, application)?;
 
                 scope.stage("worker.register")?;
-                let config = settings.worker().jobs_config()?;
                 batter_runledger::register_in(scope, "worker", native_startup, {
-                    runledger_runtime::Supervisor::builder(&pool, config)?
+                    runledger_runtime::Supervisor::builder(&pool, parts.jobs)?
                         .with_registry(runledger_runtime::registry::JobRegistry::new())
                         .prepare()?
                 })?;
@@ -231,11 +257,11 @@ fn check_application_shutdown(outcome: DriverOutcome) -> Result<(), BoxError> {
 /// and schema stages that follow establish connectivity.
 fn register_pool(
     scope: &mut ProtectedStartupScope,
-    settings: &RootSettings,
+    pool_options: sqlx::postgres::PgPoolOptions,
+    connect_options: sqlx::postgres::PgConnectOptions,
 ) -> Result<sqlx::PgPool, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
-    let options = settings.connect_options_from_process()?;
-    Ok(batter_sqlx::pool_in(slot, settings.pool_options(), options))
+    Ok(batter_sqlx::pool_in(slot, pool_options, connect_options))
 }
 
 fn register_health(

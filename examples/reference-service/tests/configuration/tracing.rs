@@ -36,7 +36,11 @@ fn tracing_projects_static_configuration_metadata_without_native_url_warnings() 
             ("JOBS_WORKER_ID", "secret-marker"),
         ])
         .unwrap();
-        tracing::info!(settings = ?root, worker = ?root.worker(), "configuration accepted");
+        let worker = batter_example_reference_service::config::WorkerSettings::from_source(
+            &crate::source(&[("JOBS_WORKER_ID", "secret-worker-marker")]),
+        )
+        .unwrap();
+        tracing::info!(settings = ?root, worker = ?worker, "configuration accepted");
         for url in [
             "postgres://user:secret-marker@host/db?sslmode=disable&secret-marker=secret-marker",
             "postgres://user:secret-marker@host/db?sslmode=secret-marker",
@@ -51,6 +55,7 @@ fn tracing_projects_static_configuration_metadata_without_native_url_warnings() 
     assert!(text.contains("DATABASE_URL: unsupported query setting"));
     assert!(text.contains("DATABASE_URL: invalid TLS mode"));
     assert!(!text.contains("secret-marker"));
+    assert!(!text.contains("secret-worker-marker"));
     assert!(!text.contains("%2540"));
     assert!(!text.contains("ignoring unrecognized connect parameter"));
 }

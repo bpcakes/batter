@@ -2,7 +2,7 @@
 
 use crate::{
     auth::{AuthenticationError, BearerAuthenticator},
-    config::RootSettings,
+    config::PreparedHttp,
     delivery::{
         Delivery, DeliveryService, OwnerId, QueryError, SubmitDelivery, SubmitDisposition,
         SubmitError, SubmitRejection, SubmitResult, UncertainSubmission,
@@ -23,7 +23,8 @@ use batter::{
     operation::{Interruption, OperationContext},
 };
 use batter_axum::{
-    HttpFailure, liveness, operational_http, render_infrastructure_failure, request_admission,
+    HttpFailure, RequestPolicy, liveness, operational_http, render_infrastructure_failure,
+    request_admission,
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -39,15 +40,7 @@ struct AppState {
     database: Bulkhead,
 }
 
-/// Failure while composing the production router from validated settings.
-#[derive(Debug, thiserror::Error)]
-pub enum RouterBuildError {
-    /// Serving authentication was not configured.
-    #[error("router authentication construction failed")]
-    Authentication(#[from] batter::settings::SettingsError),
-}
-
-/// Build the production command router from the application pool and settings.
+/// Build the production command router from prepared HTTP inputs.
 ///
 /// Business routes require configured bearer authentication, then lifecycle
 /// admission/deadline, then process-local database admission. Health endpoints
@@ -55,32 +48,62 @@ pub enum RouterBuildError {
 /// server-generated diagnostics; it cannot select `OwnerId`.
 /// Production composition with fresh dependency health in addition to native
 /// initialization acknowledgement and explicit application readiness approval.
+///
+/// ```
+/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_example_reference_service::{config::PreparedHttp, http::router};
+/// use sqlx::PgPool;
+///
+/// fn can_route(
+///     prepared: PreparedHttp,
+///     handle: ShutdownHandle,
+///     pool: PgPool,
+///     health: HealthReader<()>,
+/// ) -> axum::Router {
+///     router(prepared, handle, pool, health)
+/// }
+/// ```
+///
+/// Maintenance preparation cannot cross this boundary:
+///
+/// ```compile_fail,E0308
+/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_example_reference_service::{config::PreparedMaintenance, http::router};
+/// use sqlx::PgPool;
+///
+/// fn cannot_route(
+///     prepared: PreparedMaintenance,
+///     handle: ShutdownHandle,
+///     pool: PgPool,
+///     health: HealthReader<()>,
+/// ) {
+///     let application = router(prepared, handle, pool, health);
+/// }
+/// ```
 pub fn router<E: Send + Sync + 'static>(
-    settings: &RootSettings,
+    prepared: PreparedHttp,
     handle: ShutdownHandle,
     pool: PgPool,
     health: batter::health::HealthReader<E>,
-) -> Result<Router, RouterBuildError> {
+) -> Router {
     let probes = Router::new()
         .route("/live", get(liveness))
         .route("/ready", get(batter_axum::dependency_readiness::<E>))
         .with_state(batter_axum::ReadinessPolicy::new(handle.clone(), health));
-    router_with_probes(settings, handle, pool, probes)
+    router_with_probes(prepared, handle, pool, probes)
 }
 
 fn router_with_probes(
-    settings: &RootSettings,
+    prepared: PreparedHttp,
     handle: ShutdownHandle,
     pool: PgPool,
     probes: Router,
-) -> Result<Router, RouterBuildError> {
-    let authenticator = settings.authenticator()?;
-    let policy = settings
-        .request_policy(handle.clone())
-        .with_infrastructure_json();
+) -> Router {
+    let policy =
+        RequestPolicy::new(handle.clone(), prepared.request_budget).with_infrastructure_json();
     let state = AppState {
         deliveries: DeliveryService::new(pool),
-        database: settings.bulkhead(),
+        database: Bulkhead::new(prepared.bulkhead_capacity),
     };
     let business = Router::new()
         .route("/records/{record_id}/deliveries", post(submit_delivery))
@@ -92,11 +115,14 @@ fn router_with_probes(
         .with_state(state)
         .layer(DefaultBodyLimit::max(REQUEST_BODY_MAX_BYTES))
         .route_layer(middleware::from_fn_with_state(policy, request_admission))
-        .route_layer(middleware::from_fn_with_state(authenticator, authenticate));
-    Ok(business
+        .route_layer(middleware::from_fn_with_state(
+            prepared.authenticator,
+            authenticate,
+        ));
+    business
         .merge(probes)
         .fallback(|| async { StatusCode::NOT_FOUND })
-        .layer(middleware::from_fn(operational_http)))
+        .layer(middleware::from_fn(operational_http))
 }
 
 async fn authenticate(
@@ -378,7 +404,7 @@ const fn interruption_failure(interruption: Interruption) -> HttpFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ConfigMode;
+    use crate::config::ServingSettings;
     use axum::{
         body::to_bytes,
         http::{Request, header},
@@ -387,9 +413,8 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    fn settings() -> RootSettings {
-        RootSettings::from_sources(
-            ConfigMode::Serve,
+    fn settings() -> ServingSettings {
+        ServingSettings::from_sources(
             None,
             SettingsSource::default(),
             SettingsSource::from_pairs([
@@ -411,6 +436,7 @@ mod tests {
 
     fn app() -> Router {
         let settings = settings();
+        let prepared_http = settings.prepare_http();
         let handle = ShutdownHandle::new();
         handle.mark_ready();
         let pool = settings
@@ -423,7 +449,7 @@ mod tests {
                 .unwrap(),
             || async { Ok::<_, std::convert::Infallible>(()) },
         );
-        router(&settings, handle, pool, monitor.reader()).unwrap()
+        router(prepared_http, handle, pool, monitor.reader())
     }
 
     #[tokio::test]

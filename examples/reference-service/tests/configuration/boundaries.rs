@@ -2,7 +2,7 @@ use crate::{load, source};
 use axum::http::HeaderValue;
 use batter::settings::{SettingsSource, read_literal};
 use batter_example_reference_service::config::{
-    ConfigMode, PoolSettings, RootSettings, WorkerSettings,
+    MaintenanceSettings, PoolSettings, ServingSettings, WorkerSettings,
 };
 use std::{error::Error, io::Cursor, time::Duration};
 
@@ -14,7 +14,7 @@ fn root_defaults_and_all_worker_fields_reach_native_values() {
     assert_eq!(pool.get_max_connections(), 8);
     assert_eq!(pool.get_min_connections(), 0);
     assert_eq!(pool.get_acquire_timeout(), Duration::from_secs(3));
-    let jobs = root.worker().jobs_config().unwrap();
+    let jobs = root.jobs_config();
     assert_eq!(jobs.worker_id, "configured-worker");
     assert_eq!(jobs.poll_interval, Duration::from_millis(500));
     assert_eq!(jobs.claim_batch_size, 16);
@@ -25,7 +25,6 @@ fn root_defaults_and_all_worker_fields_reach_native_values() {
     assert_eq!(jobs.reaper_retry_delay_ms, 30_000);
     let owner = root
         .authenticator()
-        .unwrap()
         .authenticate(Some(&HeaderValue::from_static(
             "Bearer fake-configured-token",
         )))
@@ -34,6 +33,11 @@ fn root_defaults_and_all_worker_fields_reach_native_values() {
         owner.as_uuid().to_string(),
         "00000000-0000-0000-0000-000000000001"
     );
+}
+
+#[test]
+fn complete_serving_preparation_is_inert_before_runtime_transfer() {
+    super::process::native("inert-serving-preparation");
 }
 
 #[test]
@@ -58,7 +62,7 @@ fn explicit_values_reach_all_native_worker_and_pool_fields() {
     assert_eq!(pool.get_max_connections(), 3);
     assert_eq!(pool.get_min_connections(), 2);
     assert_eq!(pool.get_acquire_timeout(), Duration::from_millis(73));
-    let jobs = root.worker().jobs_config().unwrap();
+    let jobs = root.jobs_config();
     assert_eq!(jobs.worker_id, "explicit-worker");
     assert_eq!(jobs.poll_interval, Duration::from_millis(7));
     assert_eq!(jobs.claim_batch_size, 9);
@@ -138,35 +142,41 @@ fn numeric_edges_are_rejected_before_native_clamping_or_truncation() {
     ]))
     .unwrap();
     assert_eq!(
-        standalone_worker.jobs_config().unwrap().poll_interval,
+        standalone_worker.jobs_config().poll_interval,
         Duration::from_millis(year_ms)
     );
 }
 
 #[test]
-fn application_source_order_and_mode_requirements_are_explicit() {
+fn serving_and_maintenance_schemas_are_purpose_specific() {
     let endpoint = "postgres://user@localhost/database?sslmode=disable";
-    let setup = RootSettings::from_sources(
-        ConfigMode::Setup,
+    let maintenance = MaintenanceSettings::from_sources(
         None,
         SettingsSource::default(),
         source(&[("DATABASE_URL", endpoint)]),
     )
     .unwrap();
-    assert!(setup.worker().jobs_config().is_err());
-    assert!(setup.authenticator().is_err());
+    assert_eq!(
+        format!("{maintenance:?}"),
+        "MaintenanceSettings([REDACTED])"
+    );
     assert!(
-        RootSettings::from_sources(
-            ConfigMode::Serve,
+        ServingSettings::from_sources(
             None,
             SettingsSource::default(),
             source(&[("DATABASE_URL", endpoint), ("JOBS_WORKER_ID", "worker")])
         )
         .is_err()
     );
+    for passwordless in [
+        "postgres://user@localhost/database?sslmode=disable",
+        "postgres://user:@localhost/database?sslmode=disable",
+    ] {
+        let error = load(&[("DATABASE_URL", passwordless)]).unwrap_err();
+        assert_eq!(error.field(), "DATABASE_URL");
+    }
     assert!(
-        RootSettings::from_sources(
-            ConfigMode::Setup,
+        MaintenanceSettings::from_sources(
             None,
             SettingsSource::default(),
             source(&[("DATABASE_URL", endpoint), ("JOBS_LEASE_TTL_SECONDS", "-1")])
@@ -174,8 +184,7 @@ fn application_source_order_and_mode_requirements_are_explicit() {
         .is_err()
     );
     assert!(
-        RootSettings::from_sources(
-            ConfigMode::Setup,
+        MaintenanceSettings::from_sources(
             None,
             SettingsSource::default(),
             source(&[("DATABASE_URL", endpoint), ("JOBS_WORKER_ID", "")])
@@ -184,8 +193,7 @@ fn application_source_order_and_mode_requirements_are_explicit() {
     );
     let serving_endpoint = "postgres://user:fake-password@localhost/database?sslmode=disable";
     assert!(
-        RootSettings::from_sources(
-            ConfigMode::Serve,
+        ServingSettings::from_sources(
             None,
             SettingsSource::default(),
             source(&[
@@ -204,10 +212,7 @@ fn application_source_order_and_mode_requirements_are_explicit() {
     ] {
         let mut setup = source(&[("DATABASE_URL", endpoint)]);
         setup.overlay(source(authentication));
-        assert!(
-            RootSettings::from_sources(ConfigMode::Setup, None, SettingsSource::default(), setup)
-                .is_err()
-        );
+        assert!(MaintenanceSettings::from_sources(None, SettingsSource::default(), setup).is_err());
     }
     assert!(
         load(&[(
@@ -220,34 +225,72 @@ fn application_source_order_and_mode_requirements_are_explicit() {
 }
 
 #[test]
-fn source_order_and_unknown_key_policy_are_explicit() {
-    let endpoint = "postgres://user@localhost/database?sslmode=disable";
+fn serving_shaped_inputs_cannot_promote_maintenance() {
+    let endpoint = "postgres://user:fake@localhost/database?sslmode=disable";
+    let serving_only = [
+        ("BATTER_BIND", "127.0.0.1:3000"),
+        ("BATTER_REQUEST_TIMEOUT_MS", "2000"),
+        ("BATTER_BULKHEAD_CAPACITY", "32"),
+        ("BATTER_PROCESS_CAPACITY", "32"),
+        ("BATTER_POOL_MAX_CONNECTIONS", "8"),
+        (
+            "BATTER_AUTH_OWNER_ID",
+            "00000000-0000-0000-0000-000000000001",
+        ),
+        ("BATTER_AUTH_TOKEN", "fake-token"),
+        ("JOBS_WORKER_ID", "worker"),
+    ];
+    for pair in serving_only {
+        let mut values = source(&[("DATABASE_URL", endpoint)]);
+        values.overlay(source(&[pair]));
+        let error =
+            MaintenanceSettings::from_sources(None, SettingsSource::default(), values).unwrap_err();
+        assert_eq!(error.field(), "source", "{} entered maintenance", pair.0);
+    }
+
+    let mut environment = source(&[("DATABASE_URL", endpoint)]);
+    environment.overlay(source(&serving_only));
+    assert!(
+        MaintenanceSettings::from_sources(None, environment, SettingsSource::default()).is_ok()
+    );
+
     let file = read_literal(
         Cursor::new(format!(
-            "DATABASE_URL={endpoint}\nBATTER_POOL_MAX_CONNECTIONS=invalid-shadowed\n"
+            "DATABASE_URL={endpoint}\nBATTER_BIND=127.0.0.1:3000\n"
         )),
         1024,
     )
     .unwrap();
-    let root = RootSettings::from_sources(
-        ConfigMode::Setup,
-        Some(file.clone()),
-        source(&[
-            ("BATTER_POOL_MAX_CONNECTIONS", "2"),
-            ("UNRELATED", "ignored"),
-        ]),
-        source(&[("BATTER_POOL_MAX_CONNECTIONS", "5")]),
-    )
-    .unwrap();
-    assert_eq!(root.pool_options().get_max_connections(), 5);
     assert!(
-        RootSettings::from_sources(
-            ConfigMode::Setup,
+        MaintenanceSettings::from_sources(
             Some(file),
-            source(&[("BATTER_POOL_MAX_CONNECTIONS", "2")]),
-            source(&[("BATTER_POOL_MAX_CONNECTIONS", "invalid-winning")])
+            SettingsSource::default(),
+            SettingsSource::default(),
         )
         .is_err()
+    );
+}
+
+fn serving_values(endpoint: &str) -> SettingsSource {
+    source(&[
+        ("DATABASE_URL", endpoint),
+        ("JOBS_WORKER_ID", "configured-worker"),
+        (
+            "BATTER_AUTH_OWNER_ID",
+            "00000000-0000-0000-0000-000000000001",
+        ),
+        ("BATTER_AUTH_TOKEN", "fake-configured-token"),
+    ])
+}
+
+fn assert_serving_unknown_key_policy(endpoint: &str) {
+    assert!(
+        ServingSettings::from_sources(
+            None,
+            source(&[("UNRELATED", "ignored")]),
+            serving_values(endpoint),
+        )
+        .is_ok()
     );
     for name in [
         "BATTER_UNKNOWN",
@@ -257,8 +300,88 @@ fn source_order_and_unknown_key_policy_are_explicit() {
         "PGPASSFILE",
     ] {
         assert!(
-            RootSettings::from_sources(
-                ConfigMode::Setup,
+            ServingSettings::from_sources(None, source(&[(name, "")]), serving_values(endpoint),)
+                .is_err(),
+            "serving environment accepted {name}"
+        );
+        assert!(
+            ServingSettings::from_sources(
+                Some(source(&[(name, "")])),
+                SettingsSource::default(),
+                serving_values(endpoint),
+            )
+            .is_err(),
+            "serving file accepted {name}"
+        );
+        let mut overrides = serving_values(endpoint);
+        overrides.overlay(source(&[(name, "")]));
+        assert!(
+            ServingSettings::from_sources(None, SettingsSource::default(), overrides).is_err(),
+            "serving overrides accepted {name}"
+        );
+    }
+}
+
+#[test]
+fn source_order_and_unknown_key_policy_are_explicit() {
+    let endpoint = "postgres://user@localhost/database?sslmode=disable";
+    let file = read_literal(Cursor::new("DATABASE_URL=invalid-file-value\n"), 1024).unwrap();
+    assert!(
+        MaintenanceSettings::from_sources(
+            Some(file.clone()),
+            source(&[("DATABASE_URL", "invalid-environment-value")]),
+            source(&[("DATABASE_URL", endpoint)]),
+        )
+        .is_ok()
+    );
+    assert!(
+        MaintenanceSettings::from_sources(
+            Some(file),
+            source(&[("DATABASE_URL", endpoint)]),
+            source(&[("DATABASE_URL", "invalid-winning")]),
+        )
+        .is_err()
+    );
+    assert!(
+        MaintenanceSettings::from_sources(
+            None,
+            source(&[("UNRELATED", "ignored")]),
+            source(&[("DATABASE_URL", endpoint)]),
+        )
+        .is_ok()
+    );
+    let serving_endpoint = "postgres://user:fake@localhost/database?sslmode=disable";
+    let serving_file = read_literal(
+        Cursor::new("DATABASE_URL=invalid-file-value\nBATTER_POOL_MAX_CONNECTIONS=1\n"),
+        1024,
+    )
+    .unwrap();
+    let serving = ServingSettings::from_sources(
+        Some(serving_file),
+        source(&[
+            ("DATABASE_URL", serving_endpoint),
+            ("BATTER_POOL_MAX_CONNECTIONS", "2"),
+            ("JOBS_WORKER_ID", "environment-worker"),
+            (
+                "BATTER_AUTH_OWNER_ID",
+                "00000000-0000-0000-0000-000000000001",
+            ),
+            ("BATTER_AUTH_TOKEN", "environment-token"),
+        ]),
+        source(&[("BATTER_POOL_MAX_CONNECTIONS", "5")]),
+    )
+    .unwrap();
+    assert_eq!(serving.pool_options().get_max_connections(), 5);
+    assert_serving_unknown_key_policy(serving_endpoint);
+    for name in [
+        "BATTER_UNKNOWN",
+        "JOBS_INTENT_PROMOTER_BATCH_SIZE",
+        "PGPASSWORD",
+        "PGSSLMODE",
+        "PGPASSFILE",
+    ] {
+        assert!(
+            MaintenanceSettings::from_sources(
                 None,
                 source(&[(name, "")]),
                 source(&[("DATABASE_URL", endpoint)])
@@ -279,13 +402,7 @@ fn source_order_and_unknown_key_policy_are_explicit() {
             )
         };
         assert!(
-            RootSettings::from_sources(
-                ConfigMode::Setup,
-                file,
-                SettingsSource::default(),
-                overrides
-            )
-            .is_err()
+            MaintenanceSettings::from_sources(file, SettingsSource::default(), overrides).is_err()
         );
     }
 }

@@ -18,7 +18,7 @@ use batter::{
         StartupFailure, StartupOutcome,
     },
 };
-use batter_example_reference_service::config::{ConfigMode, RootSettings};
+use batter_example_reference_service::config::ServingSettings;
 use sqlx::PgPool;
 use std::{
     sync::{
@@ -44,7 +44,7 @@ struct Held {
 }
 
 fn start() -> Held {
-    let settings = RootSettings::from_process(ConfigMode::Serve, None, SettingsSource::default())
+    let settings = ServingSettings::from_process(None, SettingsSource::default())
         .expect("child settings are valid");
     let second = Duration::from_secs(1);
     let cleanup = CleanupBudget::new(second * 3, second * 3, second).unwrap();

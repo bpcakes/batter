@@ -51,11 +51,17 @@ independent. Update `../../docs/reference-compatibility.md` with executed eviden
 ## Invariants
 
 Settings names/defaults/precedence and required passwords stay in this root.
-Use shared `batter::settings` mechanics, retain concrete causes behind static
-diagnostics, and pass validated outputs to native constructors without fallback.
-Worker settings return validated configuration data. Keep native preparation and
-managed registration in the composition root; do not add a settings convenience
-method that exposes immediate worker launch.
+Keep `ServingSettings` and database-only `MaintenanceSettings` concrete and
+separate; do not restore a shared mode enum, optional serving capability, or
+conversion from maintenance into serving. `runtime::run` accepts only the inert,
+non-cloneable `PreparedServing` owner, and `http::router` consumes only
+`PreparedHttp`. Maintenance ignores known serving-only names from captured
+environment without parsing them, but dedicated files/overrides reject those
+names and unknown reserved or PG* names still fail. Use shared `batter::settings` mechanics, retain concrete causes
+behind static diagnostics, and pass validated outputs to native constructors
+without fallback. Worker settings return validated configuration data. Keep
+native preparation and managed registration in the composition root; do not add
+a settings convenience method that exposes immediate worker launch.
 Never use native from_env/builder_from_env or raw URL parsing after this validation.
 The private live-endpoint handoff canonicalizes selected host/database/TLS values,
 preserves explicit empty passwords and encodes query spaces as `%20` for the

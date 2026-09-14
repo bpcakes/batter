@@ -1264,15 +1264,23 @@ traversal are explicit trusted operations. The original native causes remain
 available; arbitrary source-chain reporters can expose them. No encryption,
 zeroization, process-wide logging policy or panic-hook redaction follows.
 
-The reference root owns defaults, precedence and serve/setup password policy.
-Its private validated fields feed native request, pool, connection, Bulkhead,
-finite-process and Runledger constructors. Its supported TCP URL subset requires
-explicit host, username, database and sslmode; only password, sslmode and
-application_name query settings are accepted, once each. Credentials are decoded
-once, invalid percent/UTF-8 encodings fail, and unknown query settings are rejected
-before any SQLx URL parser can warn. Serve requires a nonempty password and worker
-identity; Setup permits passwordless externally provisioned endpoints and no
-worker identity, but cannot manufacture a worker in that state.
+The reference root owns defaults, precedence and two concrete command schemas.
+`ServingSettings` contains a password-qualified endpoint, concrete
+authentication and validated `JobsConfig`, plus Batter/Axum capacity and budget
+witnesses. `MaintenanceSettings` recognizes only its database endpoint field,
+permits a passwordless externally provisioned endpoint, and has no conversion to
+serving. Dedicated maintenance files and overrides reject serving-only fields.
+Known serving fields may coexist in captured process environment and are ignored
+by maintenance without parsing; unknown reserved names and every PG* name fail.
+`runtime::prepare` consumes serving settings into a must-use non-cloneable inert
+owner; only that owner can enter `runtime::run`, while `http::router` consumes its
+narrower opaque `PreparedHttp`. These local types cannot prove remote database
+authentication or availability.
+
+The supported TCP URL subset requires explicit host, username, database and
+sslmode; only password, sslmode and application_name query settings are accepted,
+once each. Credentials are decoded once, invalid percent/UTF-8 encodings fail,
+and unknown query settings are rejected before any SQLx URL parser can warn.
 
 SQLx 0.9 lacks an environment-free default constructor. The reference rejects
 all captured PG* entries, even empty/non-Unicode ones, and rechecks the actual

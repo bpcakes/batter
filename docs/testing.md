@@ -406,7 +406,7 @@ SQLx options as the configured startup probe. It rejects PG* environment entries
 missing/remote/TLS-required endpoints and unsupported query parameters before
 fixture creation. Both endpoints are validated before either connection opens.
 The full suite requires SCRAM on the primary; use explicit URL credentials.
-The native Setup constructor also supports separately selected passwordless
+The database-only maintenance constructor also supports separately selected passwordless
 endpoints for focused probes; passfiles are not consulted. The runner
 checks the server and ignored-case inventory, and requires every named case to run.
 The existing Unix process owner allows 300 seconds for preflight compilation/run,
@@ -1362,12 +1362,22 @@ change the demonstration work outcome. Child entrypoint failures require useful
 sanitized stderr and a nonzero exit, using the shared Unix watchdog/capture.
 
 `examples/reference-service/tests/configuration.rs` covers all native worker/pool
-fields, signed/unsigned conversion edges, Serve/Setup policy, separate finite-task
-and Bulkhead capacities, response deadlines, real file acquisition/cleanup
+fields, signed/unsigned conversion edges, purpose-specific serving/maintenance
+schemas, separate finite-task and Bulkhead capacities, response deadlines, real file acquisition/cleanup
 failures, tracing redaction, PG* rejection and fake passfile isolation in bounded
-children. A loopback IPv6 native PostgreSQL handshake verifies decoded startup
+children. A cleared-environment child also proves that maintenance ignores known
+serving-only process variables without parsing their invalid or secret values,
+while dedicated maintenance sources reject the same names. A loopback IPv6 native PostgreSQL handshake verifies decoded startup
 and password bytes independently of SQLx's URL formatter. This is a protocol
 fixture, not PostgreSQL server or TLS verification.
+
+The same cleared-environment child constructs complete `PreparedServing` outside
+a Tokio runtime while its configured TCP address is already bound. Successful
+preparation therefore proves that this boundary neither spawns a Tokio task nor
+binds the listener. Compile-fail rustdocs separately reject maintenance at the
+runtime and router signatures and reject cloning the serving preparation. These
+checks do not prove that native SQLx construction avoids all process-local work or
+that a remote database will accept the resulting options.
 
 The exact live inventory includes `configured_command_root_bounds`,
 `configured_pool_capacity_and_acquire_timeout`,

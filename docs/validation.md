@@ -9269,3 +9269,93 @@ suites, PostgreSQL executable smokes, current Linux PostgreSQL execution and
 fresh-agent acceptance remain unexecuted. Upstream records macOS evidence for its
 operational-witness change; it is not new execution evidence for these local
 consumer changes. No publication, deployment, commit or push is claimed.
+## Purpose-qualified serving preparation: 2026-09-14
+
+Delivery Bead `batter-k8m`; Jig plan
+`plan_01M2FJAAJ6PTC67CW9PYFCBGQH`; slice baseline
+`306fc7686e166743beac51e2ef0248c6cc51d894`. The reference application now
+loads disjoint `ServingSettings` and database-endpoint-only
+`MaintenanceSettings` schemas. The serving boundary consumes a must-use,
+non-cloneable `PreparedServing`; its router consumes the narrower opaque
+`PreparedHttp`. Maintenance preparation has no conversion into either serving
+type. The protected path performs one purpose check before any connection,
+binding, migration, or task spawn. Cargo.lock was unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02), using locked
+SQLx 0.9.0.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | Seven library tests passed and one live case remained ignored; the binary test, all 23 configuration cases, three diagnostic cases, two offline live-runner controls, three preflight tests, and four retirement controls passed. Fifty-six database cases remained explicitly ignored. |
+| `cargo test -p batter-example-reference-service --doc --all-features --locked` | All eleven positive doctests and seven compile-fail boundary/ownership proofs passed. The negative cases prove that maintenance preparation cannot enter the runtime or router, both prepared roots cannot be cloned, and all three prepared types retain `must_use`; the router's positive type-check uses the same public dependencies as its negative case. The same command also passed on both toolchains with an ambient `PGUSER`, because the injected maintenance example compiles without executing native preparation. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings` | Strict package Clippy passed. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Both complete core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and warning-free rustdoc matrices passed after every ordinary code repair through round 3. The first 1.98.1 attempt exposed an environment-sensitive test assertion and unresolved rustdoc links; both were corrected before the first complete passing runs. The later closure changed only test assertions and supporting evidence; its focused executions are recorded below rather than described as complete matrix reruns. |
+| Rebuild `cargo build -p batter-axum --example http_service --locked`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes for each toolchain | All ten rebuilt process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `bash scripts/test_reference_live.sh` without external endpoint variables | Expected native preflight failure before any fixture started: `POSTGRES_TEST_ADMIN_URL` was absent. This did not count as live PostgreSQL execution. |
+
+The maintenance schema rejects pool, HTTP, authentication, worker and lifecycle
+settings in its dedicated file and overrides rather than accepting a
+serving-shaped superset. It ignores known serving-only process-environment values
+without parsing them, while unknown reserved names and every PG* name fail. The
+serving schema requires a password-qualified endpoint, concrete authentication,
+native validated worker settings, and Batter/Axum capacity and response-budget
+witnesses. An inertness test prepares the full service while its configured TCP
+address is already occupied and outside a Tokio runtime, proving that preparation
+does not bind the socket or spawn Tokio work. These local types do not claim that
+the remote database used password authentication or is available.
+
+The first complete Claude/Codex review used matching working-tree fingerprint
+`1f2e5d98fdcfdb54b684b25080562e47e3ded95009f424ba66a07252fc23d449`.
+It found that the initial maintenance environment policy also rejected known
+serving variables, blocking the offline command from a normal serving deployment
+environment. The repaired source policy ignores those known environment entries
+without parsing them, retains strict dedicated inputs, and has both injected and
+cleared-process coverage. Supporting findings restored worker-identity redaction
+tests, current operator guidance, direct escape-hatch obligations, a positive
+router rustdoc, and direct serving source-precedence coverage. Both complete
+toolchain matrices and all ten HTTP smokes above passed after this repair. A fresh
+complete review follows the repaired tree.
+
+That second complete pass used matching fingerprint
+`eafd567ccc77ab91ac26ace3b8be552b6b86b46332b3e3eef4621e91bfac2af4`.
+It found no substantive defect. Its low supporting findings made the selected
+maintenance file authoritative in the documented command by unsetting the
+higher-precedence environment endpoint, made `runtime::prepare` the sole public
+`PreparedServing` constructor, completed all public probe escape-hatch
+obligations, made the injected maintenance doctest ambient-PG-independent, and
+added negative clone/`must_use` coverage. Isolated serving-password and injected
+PG-recheck tests plus exact source-precedence values close the reported test gaps.
+Both complete toolchain matrices, ambient-PG doctests on both toolchains and all
+ten HTTP smokes passed after this repair.
+
+The third complete pass used matching fingerprint
+`75ba2ef5ed7686ea5ce9618c912c8619acfccbcf7e161b8f6017ac08e6a08691`.
+The external reviewer found no actionable defect or test gap. The native reviewer
+found one low supporting defect: a migrated passfile test comment still called a
+maintenance password a setup password. The current wording removes that final
+non-historical reference to the erased mode. A fourth complete review follows
+these bytes.
+
+That fourth complete pass used matching fingerprint
+`d46878af9c97a251a2a841cce0bacb9ac14cfccd5fe52f0851a28fd9ab0c8c43`.
+Neither reviewer found a substantive defect. Both identified the same low
+supporting gap: source-policy rejection was exercised directly only through the
+maintenance loader after the split. The native reviewer also identified missing
+direct redaction coverage for password-bearing `PreparedMaintenance`. The
+supporting closure expands the existing source-policy matrix across serving
+environment, file and override inputs and formats prepared maintenance directly,
+pretty and inside a nested aggregate. Focused closure verification follows those
+test-only changes and this evidence update.
+
+After those closure edits,
+`cargo test -p batter-example-reference-service --test configuration --all-features --locked`
+passed all 23 cases on Rust 1.98.1. The same command prefixed with
+`RUSTUP_TOOLCHAIN=1.94.0` passed all 23 cases on the minimum supported toolchain.
+`cargo fmt --all -- --check` and `git diff --check` also passed. The complete
+matrices and HTTP smokes were not repeated for this test-and-evidence-only closure;
+their recorded production inputs and runtime code were unchanged.
+
+No hosted CI, new Linux execution, live PostgreSQL execution, publication, or
+deployment is claimed.

@@ -68,7 +68,7 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
     let ids = enqueue_jobs(pool, limit, total).await?;
 
     let settings = configured_settings(limit)?;
-    let config = settings.jobs_config()?;
+    let config = settings.jobs_config();
     let second = Duration::from_secs(1);
     let cleanup = CleanupBudget::new(second, second, second)?;
     let mut supervisor = Supervisor::new(ShutdownBudget::new(

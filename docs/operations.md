@@ -149,10 +149,16 @@ operation takes 25 ms. The selected capacity applies to actual concurrent work.
 Response streaming remains outside this deadline.
 
 The reference package's validated constructors have a larger application schema,
-listed in its [README](../examples/reference-service/README.md). It has no serving
-command yet. Serving configuration requires an explicit database password and
-worker ID; Setup allows externally provisioned passwordless local TCP fixtures.
-Remove native PG* variables from the process launch environment when using this
-root, select sslmode explicitly, and keep the environment unchanged thereafter.
+listed in its [README](../examples/reference-service/README.md). Its binary is the
+serving root: `ServingSettings` requires an explicit database password, bearer
+authentication and worker ID. Offline retirement instead consumes the distinct
+database-only `MaintenanceSettings`, which permits an operator-selected
+passwordless local TCP endpoint. Known serving variables in captured environment
+are ignored by maintenance without being parsed, but its selected file and
+overrides must contain only `DATABASE_URL`. Remove native PG* variables from the
+process launch environment, select sslmode explicitly, and keep the environment
+unchanged thereafter.
+An environment `DATABASE_URL` outranks a selected file; unset it when the
+operator-selected maintenance endpoint must come from that file.
 Native connection option Debug/URL output and source-chain inspection may reveal
 credentials. Automatic root formatting does not make those exposures redacted.

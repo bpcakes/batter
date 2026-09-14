@@ -4,7 +4,7 @@ use batter::{
     settings::SettingsSource,
 };
 use batter_example_reference_service::{
-    config::{ConfigMode, RootSettings},
+    config::MaintenanceSettings,
     retirement::{self, DatabaseIdentity, RetirementError, RetirementReport},
 };
 use std::{path::PathBuf, process::ExitCode, time::Duration};
@@ -44,14 +44,11 @@ async fn run() -> Result<CommandOutcome<RetirementReport, RetirementError>, BoxE
         return Err("usage: retire_startup_controls SYSTEM_ID DATABASE_OID [settings-file]".into());
     }
     let expected = DatabaseIdentity::new(system, database)?;
-    let settings = RootSettings::from_process(
-        ConfigMode::Setup,
-        file.as_deref(),
-        SettingsSource::default(),
-    )?;
+    let settings = MaintenanceSettings::from_process(file.as_deref(), SettingsSource::default())?;
+    let prepared = settings.prepare()?;
     let second = Duration::from_secs(1);
     let command = retirement::prepare(
-        settings.connect_options_from_process()?,
+        prepared.into_connect_options(),
         expected,
         OperationContext::new(second * 30)?,
         CleanupBudget::new(second * 3, second * 3, second)?,

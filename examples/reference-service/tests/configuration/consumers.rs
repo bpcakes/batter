@@ -143,7 +143,7 @@ pub(crate) async fn native_worker() {
     // Local native initialization needs no database. Settings supply data; the
     // adapter owns launch and settlement through the process lifecycle.
     let catalog = runledger_runtime::catalog::JobCatalog::new();
-    let config = root.worker().jobs_config().unwrap();
+    let config = root.jobs_config();
     assert_eq!(config.worker_id, "configured-worker");
     assert_eq!(config.max_global_concurrency, 2);
     let prepared = runledger_runtime::Supervisor::builder(&pool, config)

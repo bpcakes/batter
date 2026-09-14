@@ -645,15 +645,16 @@ async fn signal_broadcast(scenario: &str) {
     tokio::join!(observed, peer);
 }
 
-fn settings() -> batter_example_reference_service::config::RootSettings {
+fn prepared() -> batter_example_reference_service::config::PreparedServing {
     use batter::settings::SettingsSource;
-    use batter_example_reference_service::config::{ConfigMode, RootSettings};
-    RootSettings::from_process(ConfigMode::Serve, None, SettingsSource::default())
-        .expect("child settings are valid")
+    use batter_example_reference_service::{config::ServingSettings, runtime};
+    let settings = ServingSettings::from_process(None, SettingsSource::default())
+        .expect("child settings are valid");
+    runtime::prepare(settings).expect("child preparation is valid")
 }
 
 async fn production() {
-    batter_example_reference_service::runtime::run(settings())
+    batter_example_reference_service::runtime::run(prepared())
         .await
         .expect("clean production shutdown");
 }
@@ -679,7 +680,7 @@ async fn startup_drain(stage: &str) {
     } else {
         None
     };
-    let error = runtime::run(settings())
+    let error = runtime::run(prepared())
         .await
         .expect_err("startup must drain");
     if let Some(observer) = signal_observer {

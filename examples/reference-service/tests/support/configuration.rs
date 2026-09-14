@@ -3,12 +3,12 @@ mod configuration_report;
 use super::{ProbeResult, fixture_run};
 use batter::{
     cleanup::CleanupBudget,
-    lifecycle::{Readiness, ShutdownBudget},
+    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
     settings::SettingsSource,
     startup::{Startup, StartupError},
 };
-use batter_example_reference_service::config::{ConfigMode, PoolSettings, RootSettings};
+use batter_example_reference_service::config::{MaintenanceSettings, PoolSettings};
 use batter_sqlx::test_support::ConnectionPlan;
 use std::time::Duration;
 
@@ -74,37 +74,38 @@ pub async fn failed_startup_closes_pool_before_lease() -> ProbeResult {
     Ok(())
 }
 
-fn startup_settings(database_url: &str) -> Result<RootSettings, batter::BoxError> {
+fn startup_settings(database_url: &str) -> Result<MaintenanceSettings, batter::BoxError> {
     // The fixture supplies an explicit endpoint; add its known local TLS
     // policy only when absent, without altering another requested mode.
     let mut url = url::Url::parse(database_url)?;
     if !url.query_pairs().any(|(key, _)| key == "sslmode") {
         url.query_pairs_mut().append_pair("sslmode", "disable");
     }
-    Ok(RootSettings::from_sources(
-        ConfigMode::Setup,
+    Ok(MaintenanceSettings::from_sources(
         None,
         SettingsSource::default(),
-        SettingsSource::from_pairs([
-            ("DATABASE_URL".into(), url.as_str().into()),
-            ("BATTER_POOL_MAX_CONNECTIONS".into(), "1".into()),
-        ])?,
+        SettingsSource::from_pairs([("DATABASE_URL".into(), url.as_str().into())])?,
     )?)
 }
 
 async fn observe_failed_startup(database_url: &str) -> ProbeResult {
     let settings = startup_settings(database_url)?;
+    let connect_options = settings.prepare()?.into_connect_options();
+    let pool_options = PoolSettings::new(1, 0, Duration::from_secs(3))?.pool_options();
     let cleanup = CleanupBudget::new(
         Duration::from_secs(2),
         Duration::from_secs(2),
         Duration::from_secs(1),
     )?;
-    let supervisor = settings.supervisor(ShutdownBudget::new(
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        Duration::from_secs(1),
-        cleanup,
-    )?);
+    let supervisor = Supervisor::with_process_capacity(
+        ShutdownBudget::new(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            cleanup,
+        )?,
+        ProcessCapacity::new(32)?,
+    );
     let handle = supervisor.handle();
     let (pool_tx, pool_rx) = tokio::sync::oneshot::channel();
     let mut starting = Startup::new(
@@ -123,10 +124,8 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
                         batter::settings::SettingsError::new("startup", "invalid reservation")
                             .with_cause(e)
                     })?;
-                let options = settings.connect_options_from_process()?;
-                let pool = settings
-                    .pool_options()
-                    .connect_with(options)
+                let pool = pool_options
+                    .connect_with(connect_options)
                     .await
                     .map_err(|e| {
                         batter::settings::SettingsError::new("pool", "acquisition failed")

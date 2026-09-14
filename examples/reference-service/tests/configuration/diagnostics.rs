@@ -1,6 +1,6 @@
 use crate::{load, source};
 use batter::settings::SettingsSource;
-use batter_example_reference_service::config::{ConfigMode, RootSettings};
+use batter_example_reference_service::config::{MaintenanceSettings, WorkerSettings};
 use sqlx::{ConnectOptions, postgres::PgSslMode};
 use std::error::Error;
 
@@ -47,6 +47,26 @@ pub(crate) fn native_options() {
         "fake+password space"
     );
     assert!(matches!(options.get_ssl_mode(), PgSslMode::Require));
+
+    let maintenance = MaintenanceSettings::from_sources(
+        None,
+        SettingsSource::default(),
+        source(&[(
+            "DATABASE_URL",
+            "postgres://user:secret-maintenance-marker@host/db?sslmode=disable",
+        )]),
+    )
+    .unwrap()
+    .prepare()
+    .unwrap();
+    for text in [
+        format!("{maintenance:?}"),
+        format!("{maintenance:#?}"),
+        format!("{:?}", vec![&maintenance]),
+    ] {
+        assert!(!text.contains("secret-maintenance-marker"));
+        assert!(text.contains("PreparedMaintenance([REDACTED])"));
+    }
 }
 
 #[test]
@@ -90,11 +110,20 @@ fn rejected_urls_and_nested_aggregates_never_format_input() {
         format!("{root:#?}"),
         format!("{root}"),
         format!("{:?}", vec![&root]),
-        format!("{} {:?}", root.worker(), root.worker()),
-        format!("{:?}", root.authenticator().unwrap()),
+        format!("{:?}", root.authenticator()),
     ] {
         assert!(!text.contains("secret-marker"));
         assert!(!text.contains("secret-auth-marker"));
+    }
+    let worker =
+        WorkerSettings::from_source(&source(&[("JOBS_WORKER_ID", "secret-worker-marker")]))
+            .unwrap();
+    for text in [
+        format!("{worker:#?}"),
+        format!("{worker}"),
+        format!("{:?}", vec![&worker]),
+    ] {
+        assert!(!text.contains("secret-worker-marker"));
     }
     let error = load(&[("BATTER_AUTH_TOKEN", "secret auth marker")]).unwrap_err();
     assert!(!format!("{error} {error:#?}").contains("secret auth marker"));
@@ -115,6 +144,7 @@ fn rejected_urls_and_nested_aggregates_never_format_input() {
 
 pub(crate) fn child(scenario: &str) {
     match scenario {
+        "inert-serving-preparation" => inert_serving_preparation(),
         "native-options" => native_options(),
         "native-live-endpoint" => super::live_endpoint::check_policy(),
         "native-live-credentials" => super::live_endpoint::check_credentials(),
@@ -133,13 +163,32 @@ pub(crate) fn child(scenario: &str) {
     eprintln!("configuration-child:native-complete");
 }
 
+fn inert_serving_preparation() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let settings = load(&[("BATTER_BIND", &address.to_string())]).unwrap();
+
+    // This function intentionally runs without a Tokio runtime. Spawning would
+    // panic, and attempting to bind the configured address would fail because
+    // this test owns it already.
+    let prepared = batter_example_reference_service::runtime::prepare(settings).unwrap();
+    assert_eq!(format!("{prepared:?}"), "PreparedServing([REDACTED])");
+    drop(prepared);
+    drop(listener);
+}
+
 fn environment_child(scenario: &str) {
-    let loaded = RootSettings::from_process(ConfigMode::Setup, None, SettingsSource::default());
+    let loaded = MaintenanceSettings::from_process(None, SettingsSource::default());
     match scenario {
+        "maintenance-serving-environment" => {
+            let settings = loaded.unwrap();
+            assert_eq!(format!("{settings:?}"), "MaintenanceSettings([REDACTED])");
+            eprintln!("configuration-child:maintenance-environment-ignored");
+        }
         "valid-passfile-ignored" => {
             let settings = loaded.unwrap();
             let options = settings.connect_options_from_process().unwrap();
-            // Empty explicit setup password must not pick up the fake .pgpass value.
+            // Empty explicit maintenance password must not pick up the fake .pgpass value.
             assert!(options.to_url_lossy().password().is_none_or(str::is_empty));
             super::live_endpoint::check_no_passfile(&std::env::var("DATABASE_URL").unwrap());
             eprintln!("configuration-child:passfile-ignored");
@@ -150,15 +199,20 @@ fn environment_child(scenario: &str) {
             std::process::exit(42);
         }
         "injected-pg" => {
-            let settings = RootSettings::from_sources(
-                ConfigMode::Setup,
+            let maintenance = MaintenanceSettings::from_sources(
                 None,
                 SettingsSource::default(),
                 source(&[("DATABASE_URL", "postgres://user@host/db?sslmode=disable")]),
             )
             .unwrap();
-            let error = settings.connect_options_from_process().unwrap_err();
-            eprintln!("configuration-child:rejected {error}");
+            let maintenance_error = maintenance.prepare().unwrap_err();
+            let serving_error = batter_example_reference_service::runtime::prepare(
+                load(&[]).expect("injected serving settings are valid"),
+            )
+            .unwrap_err();
+            assert_eq!(maintenance_error.field(), "environment");
+            assert_eq!(serving_error.field(), "environment");
+            eprintln!("configuration-child:rejected {maintenance_error}");
             std::process::exit(42);
         }
         _ => panic!("unknown configuration fixture"),
