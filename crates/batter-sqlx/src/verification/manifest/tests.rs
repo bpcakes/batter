@@ -668,3 +668,12 @@ fn normalized_public_overrides_include_one_exact_row_type_target() {
         ]
     );
 }
+
+#[test]
+fn ownership_safeguard_is_retained_outside_the_low_level_policy() {
+    let mut manifest = exact_manifest();
+    manifest.deny_current_database_ownership(true);
+    let compiled = manifest.compile().unwrap();
+    assert!(compiled.denies_current_database_ownership());
+    assert!(!compiled.authority_policy().database.allow_owner);
+}

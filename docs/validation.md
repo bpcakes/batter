@@ -8582,3 +8582,162 @@ absent. The new native superuser-target control compiled but was not executed;
 the earlier 53-case PostgreSQL18.6 runs remain historical evidence and do not
 verify these changed fixture bytes. No hosted CI, new Linux run, publication or
 deployment is claimed.
+
+## Protected SQLx, schema and ownership requests: 2026-09-14
+
+Delivery Bead `batter-g19`; Jig plan
+`plan_01M2EE1MCEQ3BKF29GKCGRQA44`; baseline
+`fbfa041eb1945085650f776c45532bca89ee5b72`. The adapter adds protected SQLx
+0.9 ledger, explicit-schema SECURITY DEFINER configuration, and current-database
+ownership requests through its existing owned verifier executor. The
+implementation does not run migrations, provision roles, interpret routine
+bodies, or inspect other databases. Cargo.lock was unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02), using locked
+SQLx 0.9.0.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --features test-support --locked` | All 123 library unit tests, nine fixture-offline tests and nine adapter-offline tests passed. The exact 36-case verification-live target compiled and remained ignored; all 25 doctests passed. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings` | Strict package Clippy passed on the final repaired source. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Both complete core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and rustdoc matrices passed. |
+| Rebuild `cargo build -p batter-axum --example http_service --locked`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes for each toolchain | All ten rebuilt process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `cargo test -p batter-sqlx --features test-support --test verification_live --locked -- --ignored --list --format terse` | The target listed exactly 36 ignored verification cases, including protected absent-lock, pre-cursor and post-snapshot name replacement, post-snapshot attachment, RLS, inheritance, overflow, unusual-identifier/string-GUC and catalog-type-identity controls. Together with eleven disposition and fourteen pool-ownership cases, the checked runner inventory is 61. |
+| `python3 scripts/sqlx_live.py` before external fixture selection | Expected preflight failure before any target execution: `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL`, and `BATTER_SQLX_ADMIN_URL` were absent. This did not count as live execution. |
+| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_sqlx_live.sh` with all three URLs selecting one loopback-only disposable PostgreSQL 18.4 container | The first complete execution exposed two test-support defects after 59 cases passed: one permission oracle submitted two commands as one SQLx prepared statement, and the descendant barrier still expected the superseded metadata query instead of the retained-OID lock-attestation query. After splitting the fixture commands and matching the actual protected phase, both focused cases passed and the required complete rerun passed all eleven disposition, fourteen pool-ownership and 36 verification cases: 61 passed, zero failed/ignored/filtered, in 13.06 seconds. The live inventory was not repeated on Rust 1.94.0. |
+| `scripts/jig work check --plan-id plan_01M2EE1MCEQ3BKF29GKCGRQA44`, then `work evidence` and `work gates` | Supporting-closure run `run_01M2EZFCVRGPWVGBWQQT9V4KJ5` executed and passed all five targets before the delivery close: API tests `receipt_01M2EZH6KJ6A75DBJK03JKJ2NY`, Clippy `receipt_01M2EZH6H4T269255515ZQVGSH`, formatting `receipt_01M2EZH6JDKK530DSSWJJPCFFP`, contract `receipt_01M2EZH6MQB5FEJF19FS749MME`, and file budget `receipt_01M2EZH6NSXYGMD0502XAKAT1N`. A subsequent tracker/documentation-only work refresh passed contract and file budget before `work finish`; this paragraph does not call the earlier target receipt evidence for its own later bytes. |
+| Final standalone `scripts/jig check contract` and `scripts/jig check --no-receipt repo:file-budget` | Post-documentation policy checks passed on the final candidate. The contract receipt stays in `.agent` state rather than being copied back into this whole-repository input; file budget deliberately ran without a receipt because the owning plan was already closed. |
+
+Three temporary guard-removal mutations were executed before the first frozen
+review. Relaxing the SQLx exact-shape equality made
+`sqlx_shape_requires_exact_columns_types_nullability_and_primary_key` fail;
+removing the exact stored search-path comparison made
+`exact_search_path_is_required_once_and_unrelated_settings_are_ignored` fail;
+and inverting reachable-owner selection made
+`reachable_owners_are_findings_and_nonownership_rows_are_ignored` fail. Each
+focused command exited 101 at its intended assertion. The exact production
+source was restored after every mutation, and the package and both complete
+toolchain matrices above passed on the restored tree.
+
+After the recurring ledger-identity assessment, two further temporary mutations
+separately bypassed the cursor's resolved-name OID check and its returned-row
+`tableoid` check. Each made
+`protected_rows_require_the_resolved_and_heap_relation_oids` fail at the intended
+assertion with exit 101. The exact production predicates were restored; the
+focused test and strict package Clippy then passed.
+
+After the fourth comprehensive pass, two further temporary mutations separately
+made cursor relation-lock attestation unconditional and restored a
+policy-controlled regclass SQL string literal. The dedicated lock-set and
+literal-absence tests each failed at the intended assertion with exit 101. The
+exact production predicates were restored. After the next review, disabling the
+stored-`pg_database_owner` membership check made
+`stored_database_owner_memberships_are_incomplete_catalog_evidence` fail at its
+intended assertion with exit 101. A later mutation made an impossible
+tablespace-to-role dependency look ignorable again;
+`impossible_and_malformed_nonowner_rows_are_incomplete` then failed at its
+intended assertion with exit 101. Both production predicates were restored
+before the then-current package run,
+strict package Clippy, both complete toolchain matrices and all ten rebuilt HTTP
+smokes recorded above.
+
+The first comprehensive all-reviewer pass used working-tree fingerprint
+`d9cc7cb307289ede4e71c0d2a937b55d91efee7fe0954a2cc0a050ab7db998ad`.
+Repairs make selected-schema existence explicit, bound constructor iteration
+before full collection, share the evaluator's work/report budget across every
+protected fragment, fail ownership inspection incomplete for reachable pinned
+role capabilities, and add deterministic protected-ledger race/guard controls.
+The second pass drove current-database-owner, ownership-overflow, schema-bound,
+combined-request, checksum-bound and pre-snapshot name-replacement repairs. The
+third pass used fingerprint
+`f560a8f7187be73bf2d4f356686380f8833ec668618e4fe7aa85ee46aaf1f539`.
+It exposed that the first race repair discarded its proven relation OID before
+the later history query. The ADR-010 assessment is recorded on `batter-g19`.
+The redesign retains that OID in a private capability, opens a transaction-local
+history cursor, and reads metadata and shape by OID. A fourth scope-stable pass
+at `f978ec53bc5243ba86eed354b0cab7b7fee3aa1a9501895c3c536f0a8cbc0a3a`
+found a remaining policy-name SQL literal, an empty-replacement attestation gap,
+non-catalog lookalike types, UTF-8 bound drift and an unwarmed live barrier. The
+root-cause repair removes policy names from SQL literals, attests the relation
+locks acquired while the portal is planned, requires `pg_catalog` common types,
+measures the retained UTF-8 bytes and warms both test connections. The final
+all-reviewer pass at
+`29637f231630fcfa89108f4a160be80076f2f07f9638ebff4cb22e74af07deac`
+found that the ownership graph did not distinguish PostgreSQL's implicit
+`pg_database_owner` edge from impossible stored membership rows, that one live
+barrier still matched the old query order, and that legacy ledger shape checked
+type names without their `pg_catalog` namespace. PostgreSQL 18 forbids grants
+both into and out of `pg_database_owner`; the repaired graph models its sole
+implicit current-owner edge separately and fails incomplete if such a stored
+row is nevertheless observed. The live barrier now matches the first blocked
+shape query, and legacy shape reports lookalike user types as a fixed column
+violation. Both complete toolchain matrices and the 117-test package command
+passed after this repair. The next comprehensive pass at
+`adac311ba3f3eba366f2cdc9f11049aa32027b48c19ffd3de35cb495c58ae106`
+found one medium fail-open: structurally impossible `pg_shdepend` forms could be
+discarded as known non-owner evidence before validation. It also found low
+cursor-name collision, declaration-error mapping, test-pause poisoning,
+snapshot wording and example-input limitations. The repaired ownership query
+filters only structurally valid ACL/initial-ACL/policy rows before its bound and
+fails incomplete on malformed or tablespace-to-role rows. The cursor chooses a
+bounded name absent from the session's `pg_cursors` inventory, replacement
+permission/type errors are incomplete, the pause mutex remains usable after a
+duplicate-install panic, and absence claims are limited to the captured
+snapshot. The example limitation remains tracked as `batter-86p`.
+
+The next comprehensive pass used matching working-tree fingerprint
+`ac7d9a23a92cd5064ba0dda7d4d39a4c90a1990c56b6c9c2dfa98a06d7edf76a`.
+Cursor found no actionable issue. Claude and Codex independently found that the
+ownership request still bounded all well-formed owner rows before capability
+selection and that absent role identities could be treated as merely
+unreachable. Claude also found that `42501` during cursor declaration conflated
+missing SELECT on the protected heap with a permission failure on a replacement;
+Codex found the schema-only report did not disclose routine bodies. The coupled
+repair now filters well-formed unreachable owners in SQL, retains malformed or
+missing-role rows, and requires the database owner, membership endpoints, every
+retained owner and `pg_database_owner` to resolve in one bounded role snapshot.
+Cursor declaration checks SELECT on the retained OID so denial on the protected
+heap remains a native `42501`, while denial on a replacement is still an
+unprotected ledger. Schema-only reports disclose `SecurityDefinerBody`, and the
+existing protected live case now contains the native-permission oracle. Two
+temporary mutations separately removed the retained-owner identity check and
+the SQL capability filter; both focused tests failed with exit 101 at their
+intended assertions before exact restoration. The 123-test package, strict
+Clippy, both full toolchain matrices, all ten rebuilt HTTP smokes and the Jig
+receipts above passed after this repair. The live PostgreSQL oracle compiled but
+could not execute without the three external URLs. Independent review is not
+execution evidence; a fresh all-reviewer pass follows this repaired tree.
+
+That fresh Claude/Codex/Cursor pass completed against unchanged working-tree
+fingerprint
+`ff22d9e94e1a01e4bf1e481c6c9e8f1a7982e04ad00d25e4cd802c0819aaa016`.
+Cursor found no actionable defect. Codex found low-severity public-error
+documentation and broader live-boundary coverage gaps. Claude found low-severity
+coarse owner-row classification and concurrent-index false-incomplete risks;
+its medium item was the then-missing PostgreSQL 18 execution evidence rather
+than an implementation defect. The low items are retained as `batter-k2d`,
+`batter-m8x`, `batter-1rt`, and `batter-g9l` under the requested terminal-low
+workflow; the previously identified complete example input remains
+`batter-86p`.
+
+A disposable loopback-only PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) Linux arm64
+container then supplied the three explicit live endpoints without adding a
+provisioner to this workspace. Rust 1.98.1 built and ran the live inventory; it
+was not repeated under Rust 1.94.0. Its first exact runner execution established the
+two test-support failures recorded in the table. Server statement logging showed
+the descendant barrier stopped at the post-lock `pg_class`/`pg_locks`
+attestation, before the superseded `pg_attribute` assertion. The supporting
+repair changes no production query: it gives each permission command its own
+prepared execution and checks the attestation phase the test actually protects.
+Both focused cases and the complete 61-case rerun passed. Both full toolchain
+matrices also passed again against these exact final test bytes. The previously
+recorded ten HTTP smokes remain applicable because this closure changed only
+live-test statements and assertions. No hosted, production, or new Linux-host
+execution is claimed.
+
+The guard-removal mutations above exercised pure/offline predicates only; they
+were restored before PostgreSQL execution and are not live mutation evidence.
+`batter-m8x` retains the missing PostgreSQL 18 guard-removal controls alongside
+the broader protected catalog-boundary matrix.

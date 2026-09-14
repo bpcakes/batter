@@ -217,6 +217,7 @@ fn build_compiled(
         primary_schema: manifest.primary_schema,
         authority_policy: policy,
         grant_plan: GrantPlan { atoms: grants },
+        deny_current_database_ownership: manifest.deny_current_database_ownership,
     })
 }
 

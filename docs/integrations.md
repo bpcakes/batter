@@ -219,8 +219,9 @@ termination. See the [canonical adapter example](../crates/batter-sqlx/README.md
 
 Use `ExactRoleManifest` when one grouped, application-owned role declaration
 should feed both startup verification and an operator-visible grant plan. Compile
-once, pass `compiled.authority_policy()` to the existing authority verifier, and
-render `compiled.grant_plan()` only at an explicit operator boundary. Required
+once, pass the compiled value to `verify_exact_role`, and render
+`compiled.grant_plan()` only at an explicit operator boundary. The lower-level
+`compiled.authority_policy()` accessor omits protected safeguards. Required
 and provisioned privileges enter both outputs; allowed-only ceilings, ownership,
 grant options, discovery defaults and PUBLIC policy do not become grants. The
 renderer performs no I/O and deliberately omits role creation, revocation,
@@ -228,12 +229,24 @@ credentials and transaction control. The application supplies the target role,
 the database name only when needed, surrounding transaction text and any global
 PUBLIC-schema policy.
 
-The generic coverage intentionally does not replace application checks that are
-narrower or more specific: exact SQLx ledger columns and primary-key shape,
-application migration history, canonical `search_path` on SECURITY DEFINER and
-trigger routines, and durable application schema/history remain local to the
-consuming application. Exact role declarations remain local application data
-even when their compilation is shared. SECURITY DEFINER bodies, extension
+Use `SqlxMigrationManifest` for an exact or installed-subset SQLx 0.9 ledger and
+`SchemaInspectionPolicy` for the exact stored `search_path` on every definer in
+explicit existing schemas. Unrelated stored settings are accepted only within
+the bounded captured configuration inventory. `VerificationRequest` combines either with a compiled role in
+one protected transaction, or runs schema-only under setup credentials. Opt into
+the compiled role's current-database ownership denial when that profile must own
+no local object. The generic coverage intentionally does not choose migrations,
+provision roles, inspect durable application protocols, interpret SECURITY
+DEFINER bodies or trigger execution, or inspect other databases. Exact role
+declarations remain local application data even when their compilation is shared.
+Reachable superuser or predefined-role capability other than the implicit
+`pg_database_owner` leaves the ownership-specific result incomplete because
+pinned-role ownership dependencies are not exhaustive. An impossible stored
+membership into or out of `pg_database_owner`, a missing database, owner, or
+membership role identity, or a malformed retained dependency is likewise
+incomplete, not an implicit-owner fact. The verification example's
+superuser opt-in disables this narrower ownership conclusion accordingly.
+SECURITY DEFINER bodies, extension
 semantics and role defaults are explicit unsupported report surfaces; selected
 ACLs on extension-owned objects are still checked. Add the corresponding
 `AuthorityPolicy::required_surfaces` value when an application requires one of

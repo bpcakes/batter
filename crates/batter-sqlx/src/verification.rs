@@ -6,10 +6,14 @@
 //! run migrations, repair ACLs, or acknowledge server-session termination.
 
 mod authority;
+mod executor;
 mod manifest;
 mod migration;
 mod policy;
 mod report;
+mod request;
+mod schema_inspection;
+mod sqlx_migration;
 mod work;
 
 pub use manifest::{
@@ -29,9 +33,20 @@ pub use report::{
     Finding, FindingKind, RoleAttribute, SupportedSurface, UnsupportedSurface, VerificationError,
     VerificationReport, VerificationStatus,
 };
+pub use request::{
+    SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationRequest,
+};
 
 use batter::operation::{OperationContext, OperationError};
-use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
+
+#[derive(Default)]
+struct InspectionFragment {
+    findings: Vec<Finding>,
+    supported: Vec<SupportedSurface>,
+    unsupported: Vec<UnsupportedSurface>,
+    evaluated_items: usize,
+}
 
 /// Verify the serving pool under one total deadline and cancellation lineage.
 ///
@@ -92,7 +107,7 @@ pub async fn verify(
     context: &OperationContext,
     policy: &VerificationPolicy,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    execute(pool, context, Inspection::Combined(policy)).await
+    executor::execute(pool, context, executor::Inspection::Combined(policy)).await
 }
 
 /// Verify only migration history, using the same owned operation as [`verify`].
@@ -150,7 +165,7 @@ pub async fn verify_migrations(
     context: &OperationContext,
     policy: &MigrationPolicy,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    execute(pool, context, Inspection::Migrations(policy)).await
+    executor::execute(pool, context, executor::Inspection::Migrations(policy)).await
 }
 
 /// Verify only serving authority, using the same owned operation as [`verify`].
@@ -195,188 +210,82 @@ pub async fn verify_authority(
     context: &OperationContext,
     policy: &AuthorityPolicy,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    execute(pool, context, Inspection::Authority(policy)).await
+    executor::execute(pool, context, executor::Inspection::Authority(policy)).await
 }
 
-#[derive(Clone, Copy)]
-enum Inspection<'a> {
-    Combined(&'a VerificationPolicy),
-    Migrations(&'a MigrationPolicy),
-    Authority(&'a AuthorityPolicy),
+/// Verify one SQLx 0.9 ledger's exact shape and selected history through the
+/// protected verifier executor.
+///
+/// The ledger is locked before the repeatable-read snapshot when it exists.
+/// [`SqlxLedgerMode::InstalledSubset`] permits absence only when the captured
+/// snapshot also proves absence; a relation visible in that snapshot after the
+/// lock attempt makes the report incomplete. A later commit is outside that
+/// historical snapshot. Verification never runs migrations.
+///
+/// # Errors
+/// Returns the same typed policy, database, rollback, and interruption errors
+/// as [`verify`].
+pub async fn verify_sqlx_migrations(
+    pool: &PgPool,
+    context: &OperationContext,
+    manifest: &SqlxMigrationManifest,
+) -> Result<VerificationReport, OperationError<VerificationError>> {
+    executor::execute(
+        pool,
+        context,
+        executor::Inspection::SqlxMigrations(manifest),
+    )
+    .await
 }
 
-impl<'a> Inspection<'a> {
-    fn validate(self) -> Result<(), PolicyError> {
-        match self {
-            Self::Combined(policy) => policy.validate(),
-            Self::Migrations(policy) => policy.validate(),
-            Self::Authority(policy) => policy.validate(),
-        }
-    }
-
-    fn requests_temporary_namespace(self) -> bool {
-        let authority = match self {
-            Self::Combined(policy) => Some(&policy.authority),
-            Self::Authority(policy) => Some(policy),
-            Self::Migrations(_) => None,
-        };
-        authority.is_some_and(AuthorityPolicy::requests_temporary_namespace)
-            || self
-                .migration()
-                .is_some_and(|policy| policy::coverage::temporary_namespace(policy.ledger.schema()))
-    }
-
-    fn migration(self) -> Option<&'a MigrationPolicy> {
-        match self {
-            Self::Combined(policy) => Some(&policy.migration),
-            Self::Migrations(policy) => Some(policy),
-            Self::Authority(_) => None,
-        }
-    }
+/// Verify a compiled exact role, including its selected ownership safeguard.
+///
+/// The low-level [`CompiledExactRole::authority_policy`] accessor intentionally
+/// omits safeguards; use this entrypoint or [`verify_request`] for the protected
+/// high-level contract.
+///
+/// # Errors
+/// Returns the same typed policy, database, rollback, and interruption errors
+/// as [`verify`].
+pub async fn verify_exact_role(
+    pool: &PgPool,
+    context: &OperationContext,
+    role: &CompiledExactRole,
+) -> Result<VerificationReport, OperationError<VerificationError>> {
+    executor::execute(pool, context, executor::Inspection::ExactRole(role)).await
 }
 
-fn execute<'a>(
-    pool: &'a PgPool,
-    context: &'a OperationContext,
-    inspection: Inspection<'a>,
-) -> std::pin::Pin<
-    Box<
-        dyn std::future::Future<
-                Output = Result<VerificationReport, OperationError<VerificationError>>,
-            > + Send
-            + 'a,
-    >,
-> {
-    // A single erased future keeps SQLx's nested acquisition/transaction types
-    // out of downstream async layouts, including strict Clippy configurations.
-    Box::pin(async move {
-        let outcome = context
-            .run("postgres.verification", |scope| async move {
-                inspection.validate().map_err(|error| {
-                    OperationError::Failed(VerificationError::InvalidPolicy(error))
-                })?;
-                let mut lease = crate::PgLease::acquire(pool, &scope)
-                    .await
-                    .map_err(|error| match error {
-                        OperationError::Failed(error) => {
-                            OperationError::Failed(VerificationError::Native(error))
-                        }
-                        OperationError::Interrupted(reason) => OperationError::Interrupted(reason),
-                    })?;
-                let report = inspect_checkout(lease.connection(), inspection)
-                    .await
-                    .map_err(OperationError::Failed)?;
-                Ok((report, lease))
-            })
-            .await;
-        match outcome {
-            Ok((report, lease)) => {
-                lease.return_to_pool();
-                Ok(report)
-            }
-            Err(OperationError::Failed(error)) => Err(error),
-            Err(OperationError::Interrupted(reason)) => Err(OperationError::Interrupted(reason)),
-        }
-    })
-}
-
-async fn inspect_checkout(
-    connection: &mut PgConnection,
-    inspection: Inspection<'_>,
-) -> Result<VerificationReport, VerificationError> {
-    // SQLx's depth does not detect raw BEGIN. It only rejects inconsistent
-    // managed state; the acknowledged ROLLBACK below clears raw state on this
-    // exclusively owned checkout, never on a borrowed caller transaction.
-    if connection.is_in_transaction() {
-        return Err(VerificationError::ConnectionState);
-    }
-    sqlx::query("ROLLBACK")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| VerificationError::Native(error.into()))?;
-    let mut transaction = connection
-        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .await
-        .map_err(|error| VerificationError::Native(error.into()))?;
-    let inspection = async {
-        // Serving paths can contain user-defined overloads even when pg_catalog
-        // appears first. Catalog inspection uses only trusted resolution; the
-        // acknowledged rollback restores the application's path.
-        sqlx::query("SET LOCAL search_path = pg_catalog, pg_temp")
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| VerificationError::Native(error.into()))?;
-        if inspection.requests_temporary_namespace() {
-            let (session_user, current_user) =
-                authority::inspect_identities(&mut transaction).await?;
-            return Ok(VerificationReport::incomplete(
-                vec![UnsupportedSurface::TemporaryNamespaces],
-                session_user,
-                current_user,
-            ));
-        }
-        let ledger = if let Some(policy) = inspection.migration() {
-            let lock = migration::lock_before_snapshot(&mut transaction, policy).await?;
-            Some((policy, lock))
-        } else {
-            None
-        };
-        // This SELECT fixes the transaction snapshot after ledger locking and
-        // before any metadata-dependent classification or planner expansion.
-        let version: i32 =
-            sqlx::query_scalar("SELECT current_setting('server_version_num')::integer")
-                .fetch_one(&mut *transaction)
-                .await
-                .map_err(|error| VerificationError::Native(error.into()))?;
-        if !authority::supports_postgres_18(version) {
-            return Ok(VerificationReport::incomplete(
-                vec![UnsupportedSurface::PostgresVersion],
-                String::new(),
-                String::new(),
-            ));
-        }
-        if let Some((policy, migration::LedgerLock::Ready)) = &ledger
-            && migration::has_inheritance(&mut transaction, policy).await?
-        {
-            let (session_user, current_user) =
-                authority::inspect_identities(&mut transaction).await?;
-            return Ok(VerificationReport::incomplete(
-                vec![UnsupportedSurface::InheritedMigrationLedgers],
-                session_user,
-                current_user,
-            ));
-        }
-        sqlx::query("SET LOCAL row_security = off")
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| VerificationError::Native(error.into()))?;
-        match inspection {
-            Inspection::Combined(policy) => {
-                authority::inspect(&mut transaction, &policy.authority, ledger).await
-            }
-            Inspection::Migrations(policy) => {
-                let (_, lock) = ledger.expect("migration inspection acquired its ledger lock");
-                authority::inspect_migrations(&mut transaction, policy, lock).await
-            }
-            Inspection::Authority(policy) => {
-                authority::inspect(&mut transaction, policy, None).await
-            }
-        }
-    }
-    .await;
-    let rollback = transaction.rollback().await;
-    match (inspection, rollback) {
-        (Ok(report), Ok(())) => Ok(report),
-        (Err(primary), Ok(())) => Err(primary),
-        (Ok(_), Err(error)) => Err(VerificationError::Rollback {
-            primary: None,
-            source: error.into(),
-        }),
-        (Err(primary), Err(error)) => Err(VerificationError::Rollback {
-            primary: Some(Box::new(primary)),
-            source: error.into(),
-        }),
-    }
+/// Verify independently optional SQLx-ledger, schema-setting, and compiled-role
+/// components through one owned checkout and captured transaction snapshot.
+///
+/// Schema-only requests do not apply serving-role authority restrictions. An
+/// empty request is rejected inside the supplied operation boundary.
+///
+/// ```no_run
+/// use batter_sqlx::verification::{
+///     Identifier, SchemaInspectionPolicy, VerificationRequest, verify_request,
+/// };
+/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
+/// # -> Result<(), Box<dyn std::error::Error>> {
+/// let schema = SchemaInspectionPolicy::canonical([Identifier::new("service")?])?;
+/// let report = verify_request(
+///     pool,
+///     context,
+///     VerificationRequest::new().with_schema(&schema),
+/// ).await?;
+/// assert!(report.is_within_declared_policy());
+/// # Ok(()) }
+/// ```
+///
+/// # Errors
+/// Returns the same typed policy, database, rollback, and interruption errors
+/// as [`verify`].
+pub async fn verify_request(
+    pool: &PgPool,
+    context: &OperationContext,
+    request: VerificationRequest<'_>,
+) -> Result<VerificationReport, OperationError<VerificationError>> {
+    executor::execute(pool, context, executor::Inspection::Protected(request)).await
 }
 
 pub(crate) type PgTransaction<'c> = Transaction<'c, Postgres>;

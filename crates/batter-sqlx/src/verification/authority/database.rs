@@ -69,7 +69,7 @@ impl super::CatalogSnapshot {
     }
 }
 
-async fn load_roles(
+pub(super) async fn load_roles(
     transaction: &mut PgTransaction<'_>,
     session_user: &str,
 ) -> Result<(Vec<RoleInfo>, Vec<Membership>, Option<i64>), VerificationError> {

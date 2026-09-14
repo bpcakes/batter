@@ -1,44 +1,85 @@
 use super::policy::{
     AdditionalMigrations, MAX_MIGRATION_CHECKSUM_BYTES, MAX_MIGRATION_LEDGER_ROWS,
-    MigrationExpectation, MigrationPolicy, quote_identifier,
+    MigrationExpectation, MigrationPolicy, QualifiedName, quote_identifier,
 };
 use super::report::{Finding, FindingKind};
 use super::{PgTransaction, VerificationError};
 use std::collections::{HashMap, HashSet};
 
-type MigrationRow<'a> = &'a (i64, Vec<u8>, bool);
+mod portal;
+
+pub(super) type LedgerRow = (i64, Vec<u8>, bool);
+type MigrationRow<'a> = &'a LedgerRow;
+type CursorLedgerRow = (
+    i64,
+    Option<i64>,
+    Option<Vec<u8>>,
+    Option<i64>,
+    Option<bool>,
+    Option<i64>,
+);
+
+/// Relation identity retained from the backend's pre-snapshot lock proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ProtectedLedger {
+    oid: i64,
+    history: HistoryCursor,
+}
+
+impl ProtectedLedger {
+    pub(super) const fn oid(self) -> i64 {
+        self.oid
+    }
+
+    const fn history_cursor(self) -> Option<u64> {
+        match self.history {
+            HistoryCursor::Open(id) => Some(id),
+            HistoryCursor::Unavailable => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HistoryCursor {
+    Open(u64),
+    Unavailable,
+}
+
+pub(super) enum ProtectedRows {
+    Rows(Vec<LedgerRow>),
+    Unprotected,
+}
 
 /// Inheritance membership is read from the transaction snapshot, unlike the
 /// planner's descendant expansion. Only ordinary standalone ledgers are covered.
 pub(super) async fn has_inheritance(
     transaction: &mut PgTransaction<'_>,
-    policy: &MigrationPolicy,
+    ledger: ProtectedLedger,
 ) -> Result<bool, VerificationError> {
     sqlx::query_scalar(
         "SELECT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_class AS c
-            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-            JOIN pg_catalog.pg_inherits AS i
-              ON i.inhparent = c.oid OR i.inhrelid = c.oid
-            WHERE n.nspname = $1 AND c.relname = $2)",
+            SELECT 1 FROM pg_catalog.pg_inherits AS i
+            WHERE i.inhparent = $1::bigint::oid
+               OR i.inhrelid = $1::bigint::oid)",
     )
-    .bind(policy.ledger.schema())
-    .bind(policy.ledger.name())
+    .bind(ledger.oid())
     .fetch_one(&mut **transaction)
     .await
     .map_err(|error| VerificationError::Native(error.into()))
 }
 
 /// Result of protecting the ledger before the transaction's first snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LedgerLock {
-    Ready,
+    Ready(ProtectedLedger),
     Missing,
     WrongKind,
+    Unprotected,
 }
 
 pub(super) async fn lock_before_snapshot(
     transaction: &mut PgTransaction<'_>,
-    policy: &MigrationPolicy,
+    ledger: &QualifiedName,
 ) -> Result<LedgerLock, VerificationError> {
     use sqlx::Connection;
 
@@ -54,8 +95,9 @@ pub(super) async fn lock_before_snapshot(
         .map_err(|error| VerificationError::Native(error.into()))?;
     let locked = sqlx::query(sqlx::AssertSqlSafe(format!(
         "LOCK TABLE {} IN ACCESS SHARE MODE",
-        policy.ledger.quoted()
+        ledger.quoted()
     )))
+    .persistent(false)
     .execute(&mut *guard)
     .await;
     match locked {
@@ -64,7 +106,41 @@ pub(super) async fn lock_before_snapshot(
                 .commit()
                 .await
                 .map_err(|error| VerificationError::Native(error.into()))?;
-            Ok(LedgerLock::Ready)
+            #[cfg(feature = "test-support")]
+            crate::test_support::pause_after_verification_ledger_lock().await;
+            let protected: Option<(i64, String, bool)> = sqlx::query_as(
+                "SELECT c.oid::bigint, c.relkind::text, c.relrowsecurity
+                    FROM pg_catalog.pg_class AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                    JOIN pg_catalog.pg_locks AS l ON l.relation = c.oid
+                    WHERE n.nspname = $1 AND c.relname = $2
+                      AND l.pid = pg_catalog.pg_backend_pid()
+                      AND l.locktype = 'relation'
+                      AND l.mode = 'AccessShareLock'
+                      AND l.granted",
+            )
+            .bind(ledger.schema())
+            .bind(ledger.name())
+            .fetch_optional(&mut **transaction)
+            .await
+            .map_err(|error| VerificationError::Native(error.into()))?;
+            let Some((oid, relkind, row_security)) = protected else {
+                return Ok(LedgerLock::Unprotected);
+            };
+            let history = if relkind == "r"
+                && !row_security
+                && common_history_shape_is_valid(transaction, oid).await?
+            {
+                #[cfg(feature = "test-support")]
+                crate::test_support::pause_before_verification_ledger_history().await;
+                match portal::declare_history_cursor(transaction, ledger, oid).await? {
+                    Some(id) => HistoryCursor::Open(id),
+                    None => HistoryCursor::Unavailable,
+                }
+            } else {
+                HistoryCursor::Unavailable
+            };
+            Ok(LedgerLock::Ready(ProtectedLedger { oid, history }))
         }
         Err(error) => {
             let code = error.as_database_error().and_then(|error| error.code());
@@ -79,6 +155,10 @@ pub(super) async fn lock_before_snapshot(
                     source: rollback.into(),
                 });
             }
+            #[cfg(feature = "test-support")]
+            if outcome == Some(LedgerLock::Missing) {
+                crate::test_support::pause_after_verification_ledger_lock().await;
+            }
             outcome.ok_or_else(|| VerificationError::Native(error.into()))
         }
     }
@@ -87,31 +167,22 @@ pub(super) async fn lock_before_snapshot(
 pub(crate) async fn inspect(
     transaction: &mut PgTransaction<'_>,
     policy: &MigrationPolicy,
+    protected: ProtectedLedger,
     findings: &mut Vec<Finding>,
-) -> Result<(), VerificationError> {
+) -> Result<bool, VerificationError> {
     let ledger = policy.ledger.quoted();
-    let metadata = sqlx::query_as::<_, (i64, String, bool)>(
-        "SELECT c.oid::bigint, c.relkind::text, c.relrowsecurity
+    let metadata = sqlx::query_as::<_, (String, bool)>(
+        "SELECT c.relkind::text, c.relrowsecurity
          FROM pg_catalog.pg_class AS c
-         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-         WHERE (n.nspname = $1
-                OR ($1 = 'pg_temp' AND n.oid = pg_catalog.pg_my_temp_schema()))
-           AND c.relname = $2",
+         WHERE c.oid = $1::bigint::oid",
     )
-    .bind(policy.ledger.schema())
-    .bind(policy.ledger.name())
+    .bind(protected.oid())
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|error| VerificationError::Native(error.into()))?;
 
-    let Some((ledger_oid, relkind, row_security)) = metadata else {
-        findings.push(Finding::new(
-            FindingKind::MissingMigration,
-            Some(ledger),
-            None::<String>,
-            None,
-        ));
-        return Ok(());
+    let Some((relkind, row_security)) = metadata else {
+        return Ok(true);
     };
 
     if relkind != "r" {
@@ -121,7 +192,7 @@ pub(crate) async fn inspect(
             None::<String>,
             None,
         ));
-        return Ok(());
+        return Ok(false);
     }
 
     if row_security {
@@ -131,30 +202,16 @@ pub(crate) async fn inspect(
             None::<String>,
             None,
         ));
-        return Ok(());
+        return Ok(false);
     }
 
-    if !ledger_shape_is_valid(transaction, policy, ledger_oid, findings).await? {
-        return Ok(());
+    if !ledger_shape_is_valid(transaction, policy, protected.oid(), findings).await? {
+        return Ok(false);
     }
-
-    // `ledger` is made only from individually validated identifiers and is
-    // quoted as a complete qualified name above; SQLx 0.9 requires this
-    // explicit assertion for the one unavoidable identifier interpolation.
-    let rows = sqlx::query_as::<_, (i64, Vec<u8>, i64, bool)>(sqlx::AssertSqlSafe(format!(
-        "SELECT version,
-                substring(checksum FROM 1 FOR $1),
-                octet_length(checksum)::bigint,
-                success
-         FROM ONLY {ledger}
-         ORDER BY version
-         LIMIT $2"
-    )))
-    .bind(i32::try_from(MAX_MIGRATION_CHECKSUM_BYTES).expect("checksum limit fits i32"))
-    .bind(i64::try_from(MAX_MIGRATION_LEDGER_ROWS + 1).expect("ledger limit fits i64"))
-    .fetch_all(&mut **transaction)
-    .await
-    .map_err(|error| VerificationError::Native(error.into()))?;
+    let rows = match load_protected_rows(transaction, protected).await? {
+        ProtectedRows::Rows(rows) => rows,
+        ProtectedRows::Unprotected => return Ok(true),
+    };
 
     if rows.len() > MAX_MIGRATION_LEDGER_ROWS {
         findings.push(Finding::new(
@@ -163,26 +220,82 @@ pub(crate) async fn inspect(
             None::<String>,
             None,
         ));
-        return Ok(());
+        return Ok(false);
     }
 
-    let rows = rows
-        .into_iter()
-        .map(|(version, mut checksum, checksum_length, success)| {
-            if checksum_length
-                > i64::try_from(MAX_MIGRATION_CHECKSUM_BYTES).expect("checksum limit fits i64")
-            {
-                // Policy checksums cannot exceed the cap, so one extra byte
-                // preserves a definite mismatch without materializing the
-                // remainder of an oversized database value.
-                checksum.push(0);
-            }
-            (version, checksum, success)
-        })
-        .collect::<Vec<_>>();
-
     compare_rows(policy, &rows, findings);
-    Ok(())
+    Ok(false)
+}
+
+pub(super) async fn load_protected_rows(
+    transaction: &mut PgTransaction<'_>,
+    protected: ProtectedLedger,
+) -> Result<ProtectedRows, VerificationError> {
+    let Some(cursor_id) = protected.history_cursor() else {
+        return Ok(ProtectedRows::Unprotected);
+    };
+    let rows = sqlx::query_as::<_, CursorLedgerRow>(sqlx::AssertSqlSafe(format!(
+        "FETCH FORWARD {} FROM {}",
+        MAX_MIGRATION_LEDGER_ROWS + 1,
+        portal::history_cursor_name(protected.oid(), cursor_id),
+    )))
+    .persistent(false)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|error| VerificationError::Native(error.into()))?;
+    Ok(normalize_protected_rows(rows, protected))
+}
+
+fn normalize_protected_rows(
+    rows: Vec<CursorLedgerRow>,
+    protected: ProtectedLedger,
+) -> ProtectedRows {
+    if rows.is_empty() {
+        return ProtectedRows::Unprotected;
+    }
+    let mut normalized = Vec::with_capacity(rows.len());
+    for (resolved, version, checksum, checksum_length, success, table_oid) in rows {
+        if resolved != protected.oid() {
+            return ProtectedRows::Unprotected;
+        }
+        match (version, checksum, checksum_length, success, table_oid) {
+            (None, None, None, None, None) => {}
+            (Some(version), Some(mut checksum), Some(length), Some(success), Some(table_oid))
+                if table_oid == protected.oid() =>
+            {
+                if length
+                    > i64::try_from(MAX_MIGRATION_CHECKSUM_BYTES).expect("checksum limit fits i64")
+                {
+                    checksum.push(0);
+                }
+                normalized.push((version, checksum, success));
+            }
+            _ => return ProtectedRows::Unprotected,
+        }
+    }
+    ProtectedRows::Rows(normalized)
+}
+
+async fn common_history_shape_is_valid(
+    transaction: &mut PgTransaction<'_>,
+    oid: i64,
+) -> Result<bool, VerificationError> {
+    sqlx::query_scalar(
+        "SELECT count(*) = 3
+         FROM pg_catalog.pg_attribute AS a
+         JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid
+         JOIN pg_catalog.pg_namespace AS type_namespace
+           ON type_namespace.oid = t.typnamespace
+         WHERE a.attrelid = $1::bigint::oid
+           AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull
+           AND type_namespace.nspname = 'pg_catalog'
+           AND (a.attname, t.typname) IN (
+               ('version', 'int8'), ('checksum', 'bytea'), ('success', 'bool'))",
+    )
+    .bind(oid)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| VerificationError::Native(error.into()))
 }
 
 async fn ledger_shape_is_valid(
@@ -191,12 +304,15 @@ async fn ledger_shape_is_valid(
     ledger_oid: i64,
     findings: &mut Vec<Finding>,
 ) -> Result<bool, VerificationError> {
-    let columns = sqlx::query_as::<_, (String, String, bool)>(
+    let columns = sqlx::query_as::<_, (String, String, String, bool)>(
         "SELECT a.attname::text,
+                type_namespace.nspname::text,
                 t.typname::text,
                 a.attnotnull
          FROM pg_catalog.pg_attribute AS a
          JOIN pg_catalog.pg_type AS t ON t.oid = a.atttypid
+         JOIN pg_catalog.pg_namespace AS type_namespace
+           ON type_namespace.oid = t.typnamespace
          WHERE a.attrelid = $1::oid
            AND a.attnum > 0
            AND NOT a.attisdropped",
@@ -207,7 +323,7 @@ async fn ledger_shape_is_valid(
     .map_err(|error| VerificationError::Native(error.into()))?;
     let by_name = columns
         .into_iter()
-        .map(|(name, ty, not_null)| (name, (ty, not_null)))
+        .map(|(name, schema, ty, not_null)| (name, (schema, ty, not_null)))
         .collect::<HashMap<_, _>>();
 
     // Compare stable pg_type names rather than `format_type`, whose internal
@@ -220,7 +336,11 @@ async fn ledger_shape_is_valid(
     let mut shape_ok = true;
     for (name, expected_type) in required_columns {
         let kind = match by_name.get(name) {
-            Some((actual_type, not_null)) if actual_type == expected_type && *not_null => continue,
+            Some((schema, actual_type, not_null))
+                if schema == "pg_catalog" && actual_type == expected_type && *not_null =>
+            {
+                continue;
+            }
             Some(_) => FindingKind::LedgerColumnShape,
             None => FindingKind::MissingLedgerColumn,
         };
@@ -352,6 +472,38 @@ mod tests {
             required: vec![MigrationExpectation::new(1, vec![1, 2, 3])],
             additional,
         }
+    }
+
+    #[test]
+    fn protected_rows_require_the_resolved_and_heap_relation_oids() {
+        let protected = ProtectedLedger {
+            oid: 42,
+            history: HistoryCursor::Open(0),
+        };
+        let rows = normalize_protected_rows(
+            vec![(42, Some(1), Some(vec![1]), Some(1), Some(true), Some(42))],
+            protected,
+        );
+        let ProtectedRows::Rows(rows) = rows else {
+            panic!("matching relation identities were rejected");
+        };
+        assert_eq!(rows, [(1, vec![1], true)]);
+
+        assert!(matches!(
+            normalize_protected_rows(vec![(43, None, None, None, None, None)], protected),
+            ProtectedRows::Unprotected
+        ));
+        assert!(matches!(
+            normalize_protected_rows(
+                vec![(42, Some(1), Some(vec![1]), Some(1), Some(true), Some(43))],
+                protected
+            ),
+            ProtectedRows::Unprotected
+        ));
+        assert!(matches!(
+            normalize_protected_rows(vec![(42, None, None, None, None, None)], protected),
+            ProtectedRows::Rows(rows) if rows.is_empty()
+        ));
     }
 
     #[test]

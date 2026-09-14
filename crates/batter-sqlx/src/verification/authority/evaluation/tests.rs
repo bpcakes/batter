@@ -233,6 +233,31 @@ async fn evaluation_capacity_rejects_excess_work_and_report_bytes() {
         evaluation.checkpoint(&[finding]).await,
         Err(VerificationError::EvaluationCapacity)
     ));
+
+    let mut evaluation = Evaluation::new();
+    let mut cumulative = vec![
+        Finding::new(
+            FindingKind::MissingObject,
+            None::<String>,
+            None::<String>,
+            None,
+        );
+        MAX_FINDINGS
+    ];
+    evaluation
+        .checkpoint_many(10_000, &cumulative)
+        .await
+        .unwrap();
+    cumulative.push(Finding::new(
+        FindingKind::MissingObject,
+        None::<String>,
+        None::<String>,
+        None,
+    ));
+    assert!(matches!(
+        evaluation.checkpoint_many(10_000, &cumulative).await,
+        Err(VerificationError::EvaluationCapacity)
+    ));
 }
 
 #[test]

@@ -245,7 +245,10 @@ Discovery retains dependent array and multirange identities, including when a
 multirange's source range lives outside the selected schemas. Type loading
 resolves and shares the source ACL separately; an exact policy on one alias
 still applies to that alias. Finding object names quote schema, object and
-column components individually, and routines use `RoutineSignature::as_str()`.
+column components individually, and declared routines use
+`RoutineSignature::as_str()`. Security-definer configuration findings instead
+append `#<oid>` to the quoted schema and routine name; that identity distinguishes
+overloads within the captured snapshot and is not stable across object recreation.
 Do not construct expected finding names with unquoted dot concatenation.
 
 A caller can explicitly permit successful later migrations (`AllowSuccessful`
@@ -287,27 +290,77 @@ the declared or discovered objects; `unsupported()` names bounded classes that a
 but not inferred. Add `RequiredSurface` values to
 `AuthorityPolicy::required_surfaces` when an application needs an unsupported
 surface to make the report `Incomplete`. Merely allowing a routine ACL does not
-request a proof of its SECURITY DEFINER body or `search_path`. Extension-owned
+request a proof of its SECURITY DEFINER body or stored settings. Extension-owned
 objects still have their declared ACLs inspected; extension membership and
 upgrade semantics remain unsupported.
 
 The runnable `verification` example requires an explicit migration boundary:
 set `BATTER_VERIFY_REQUIRED_VERSION` and
 `BATTER_VERIFY_REQUIRED_CHECKSUM_HEX` (even-length hexadecimal bytes). It builds
-a concrete database/schema/ledger policy. Set `BATTER_VERIFY_ALLOW_LATER=1` to
-allow successful rows after that boundary, and
-`BATTER_VERIFY_DELIBERATE_VIOLATION=1` to remove the ledger SELECT allowance
+a protected compiled-role request and exact SQLx 0.9 ledger manifest.
+The retired `BATTER_VERIFY_ALLOW_LATER` flag is rejected rather than silently
+weakening or misrepresenting that one-entry exact manifest; complete
+multi-migration example input remains tracked separately.
+Set `BATTER_VERIFY_DELIBERATE_VIOLATION=1` to remove the ledger SELECT allowance
 and exercise the non-success path against the same database. Owner and
 superuser allowances are opt-in environment flags, not hidden defaults.
 Connection establishment and the complete verification transaction share one
 30-second `OperationContext`; interruption retires the verifier-owned lease.
 
+### Protected SQLx, schema, and ownership requests
+
+`SqlxMigrationManifest` opts into the SQLx 0.9 ledger contract: exactly six
+non-dropped, non-null `pg_catalog` columns and one primary key containing only
+`version`. `Exact` requires the complete successful version/checksum set.
+`InstalledSubset` permits an absent ledger or any set-membership subset of the
+expected successful rows; it is intentionally not prefix matching. Both modes
+retain the 10,000-row and 1,024-byte checksum bounds, ACCESS SHARE locking,
+inheritance rejection, `ONLY` reads, and RLS detection. A relation visible in
+the captured snapshot after an absent-name lock attempt, or one that replaces a
+locked relation after its schema is renamed, is incomplete rather than inspected
+without a lock. A later commit remains outside that historical snapshot. Batter proves the
+relation visible by the requested name carries its backend's pre-snapshot lock;
+it does not choose migrations or run a migrator.
+
+`SchemaInspectionPolicy` independently selects explicit schemas and requires
+exactly one stored `search_path=...` entry on every SECURITY DEFINER routine in
+them, including ungranted and trigger routines. `canonical` selects the exact
+`search_path=pg_catalog, pg_temp` representation. Other stored settings are
+accepted subject to the same fail-closed row, entry-size, and aggregate retained-
+byte bounds. Every selected schema must exist; an absent name is a structured
+missing-object violation, not an empty successful scope. Equivalent whitespace,
+quoting, order, or extra path entries are not normalized. This verifies catalog
+configuration, not routine bodies, trigger behavior, or future DDL.
+
+Call `ExactRoleManifest::deny_current_database_ownership(true)` before compiling
+to reject current-database ownership held by the authenticated login or a role
+reachable through the verifier's INHERIT/SET/ADMIN capability graph. The check
+uses the current database owner and database-local `pg_shdepend` owner records,
+retains class/object/subobject addresses, excludes structurally valid non-owner
+role dependencies and unreachable well-formed owners before the bound, and
+returns incomplete for unknown, malformed, impossible, or missing-role record
+forms or a bounded relevant catalog overflow. Database ownership, membership
+endpoints, owner records, and the required `pg_database_owner` role must all
+resolve in the same bounded role snapshot. Because
+PostgreSQL omits ordinary dependency records for pinned roles,
+a capability-reachable superuser or predefined role other than the implicit
+`pg_database_owner` also makes this ownership-specific conclusion incomplete.
+PostgreSQL 18 forbids stored memberships into or out of `pg_database_owner`;
+if such a row is nevertheless observed, the ownership catalog is incomplete
+rather than being interpreted as the implicit current-owner edge.
+It does not inspect other databases or grant application-specific ownership
+exceptions.
+
+`verify_sqlx_migrations`, `verify_exact_role`, and `verify_request` reuse the same
+executor, lease, snapshot, rollback, and retirement contract as the low-level
+entrypoints. `VerificationRequest` may combine ledger, schema, and compiled-role
+components without merging schema-only inspection into serving authority. The
+`CompiledExactRole::authority_policy` escape hatch remains ACL-only and does not
+carry the ownership safeguard.
+
 This is additive inspection machinery, not a replacement for application
-policy. Consumers must continue to run narrower checks such as exact six-column
-SQLx ledger shape, application migration history, canonical SECURITY DEFINER
-`search_path` and durable-history/schema checks. Profile-specific objects and
-privileges remain application-owned inputs even when expressed through the
-shared exact-role compiler.
+policy. Profile-specific objects, migrations, privileges, provisioning, routine
+semantics, and durable-history protocols remain application-owned.
 Declaring a relation can explicitly allow its owning composite row type's
 default PUBLIC `USAGE` with `RelationPolicy::allow_row_type_public_usage`; the
 field is deliberately visible so an unexpected row-type ACL is not hidden.
@@ -358,9 +411,9 @@ authentication case first completes a query with those parsed connection options
 then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
 A trust endpoint, missing role or connection refusal is not equivalent.
 The runner verifies
-an exact 53-case inventory across the eleven PostgreSQL lease/read-only
-verification cases, fourteen pool ownership cases and twenty-eight authority-
-verification cases,
+an exact 61-case inventory across the eleven PostgreSQL lease/read-only
+verification cases, fourteen pool ownership cases and thirty-six authority-
+and-protected-verification cases,
 executes each target serially, and bounds every child process.
 Cases can use up to six simultaneous server sessions, including retired sessions
 and session advisory locks. Provisioning stays external.

@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 mod database;
 mod discovery;
 mod evaluation;
+mod ownership;
 mod parameter_index;
 mod privileges;
 mod requests;
@@ -146,11 +147,13 @@ struct CatalogSnapshot {
 }
 
 struct RoleGraph<'a> {
-    roles: &'a [RoleInfo],
     role_by_oid: HashMap<i64, &'a RoleInfo>,
     memberships_by_member: HashMap<i64, Vec<Membership>>,
     root: Option<i64>,
     database_owner: i64,
+    database_owner_role: Option<i64>,
+    invalid_ownership_role_catalog: bool,
+    invalid_database_owner_membership: bool,
     active_role_oids: HashSet<i64>,
     active_role_infos: Vec<&'a RoleInfo>,
     capability_role_infos: Vec<&'a RoleInfo>,
@@ -166,6 +169,25 @@ impl<'a> RoleGraph<'a> {
         root: Option<i64>,
         database_owner: i64,
     ) -> Self {
+        let database_owner_role = roles
+            .iter()
+            .find(|role| role.name == "pg_database_owner")
+            .map(|role| role.oid);
+        let role_oids = roles.iter().map(|role| role.oid).collect::<HashSet<_>>();
+        let invalid_ownership_role_catalog = database_owner_role.is_none()
+            || !role_oids.contains(&database_owner)
+            || memberships
+                .iter()
+                .any(|edge| !role_oids.contains(&edge.role) || !role_oids.contains(&edge.member));
+        // PostgreSQL 18 represents this role's sole member implicitly and
+        // forbids stored memberships both into and out of it. Keep the
+        // implicit edge separate from catalog evidence so a malformed row
+        // cannot be mistaken for the current-database-owner exception.
+        let invalid_database_owner_membership = database_owner_role.is_some_and(|role| {
+            memberships
+                .iter()
+                .any(|edge| edge.role == role || edge.member == role)
+        });
         let role_by_oid = roles.iter().map(|role| (role.oid, role)).collect();
         let mut memberships_by_member: HashMap<i64, Vec<Membership>> = HashMap::new();
         for edge in memberships.iter().copied() {
@@ -175,11 +197,13 @@ impl<'a> RoleGraph<'a> {
                 .push(edge);
         }
         let mut graph = Self {
-            roles,
             role_by_oid,
             memberships_by_member,
             root,
             database_owner,
+            database_owner_role,
+            invalid_ownership_role_catalog,
+            invalid_database_owner_membership,
             active_role_oids: HashSet::new(),
             active_role_infos: Vec::new(),
             capability_role_infos: Vec::new(),
@@ -248,11 +272,6 @@ impl<'a> RoleGraph<'a> {
     }
 
     fn potential_reachability(&self, root: i64) -> (HashSet<i64>, HashSet<i64>, HashSet<i64>) {
-        let database_owner_role = self
-            .roles
-            .iter()
-            .find(|role| role.name == "pg_database_owner")
-            .map(|role| role.oid);
         let mut active = HashSet::new();
         let mut capabilities = HashSet::new();
         let mut management = HashSet::new();
@@ -274,7 +293,7 @@ impl<'a> RoleGraph<'a> {
                     management_queue.push_back(member);
                 }
                 if member == self.database_owner
-                    && let Some(database_owner_role) = database_owner_role
+                    && let Some(database_owner_role) = self.database_owner_role
                 {
                     active_queue.push_back(database_owner_role);
                 }
@@ -294,7 +313,7 @@ impl<'a> RoleGraph<'a> {
                     continue;
                 }
                 if member == self.database_owner
-                    && let Some(database_owner_role) = database_owner_role
+                    && let Some(database_owner_role) = self.database_owner_role
                 {
                     capability_queue.push_back(database_owner_role);
                 }
@@ -323,7 +342,7 @@ impl<'a> RoleGraph<'a> {
                     continue;
                 }
                 if member == self.database_owner
-                    && let Some(database_owner_role) = database_owner_role
+                    && let Some(database_owner_role) = self.database_owner_role
                 {
                     management_queue.push_back(database_owner_role);
                 }
@@ -375,6 +394,14 @@ impl<'a> RoleGraph<'a> {
         &self.capability_role_infos
     }
 
+    fn is_capability_role(&self, oid: i64) -> bool {
+        self.capability_role_oids.contains(&oid)
+    }
+
+    fn role_name(&self, oid: i64) -> Option<&str> {
+        self.role(oid).map(|role| role.name.as_str())
+    }
+
     fn predefined_roles(&self) -> impl Iterator<Item = &'a RoleInfo> + '_ {
         self.capability_role_infos.iter().copied()
     }
@@ -385,6 +412,16 @@ impl<'a> RoleGraph<'a> {
 
     fn has_active_superuser(&self) -> bool {
         self.active_role_infos.iter().any(|role| role.superuser)
+    }
+
+    fn has_unrecorded_ownership_capability(&self) -> bool {
+        self.invalid_ownership_role_catalog
+            || self.invalid_database_owner_membership
+            || self.capability_role_infos.iter().any(|role| {
+                role.superuser
+                    || (Some(role.oid) != self.database_owner_role
+                        && PREDEFINED_ROLES.contains(&role.name.as_str()))
+            })
     }
 
     #[cfg(test)]
@@ -441,25 +478,54 @@ pub(crate) async fn inspect(
     policy: &AuthorityPolicy,
     migration: Option<(&MigrationPolicy, migration::LedgerLock)>,
 ) -> Result<VerificationReport, VerificationError> {
+    let mut evaluation = evaluation::Evaluation::new();
+    inspect_with_evaluation(transaction, policy, migration, &mut evaluation).await
+}
+
+pub(crate) async fn inspect_with_evaluation(
+    transaction: &mut PgTransaction<'_>,
+    policy: &AuthorityPolicy,
+    migration: Option<(&MigrationPolicy, migration::LedgerLock)>,
+    evaluation: &mut evaluation::Evaluation,
+) -> Result<VerificationReport, VerificationError> {
     let (session_user, current_user) = inspect_identities(transaction).await?;
 
     let mut findings = Vec::new();
     let includes_migrations = migration.is_some();
     if let Some((migration_policy, ledger_lock)) = migration {
-        inspect_ledger(transaction, migration_policy, ledger_lock, &mut findings).await?;
+        let unprotected =
+            inspect_ledger(transaction, migration_policy, ledger_lock, &mut findings).await?;
+        if unprotected {
+            return Ok(VerificationReport::incomplete(
+                vec![UnsupportedSurface::UnprotectedMigrationLedger],
+                session_user,
+                current_user,
+            ));
+        }
     }
     let snapshot = CatalogSnapshot::load(transaction, policy, session_user, current_user).await?;
-    evaluate_snapshot(snapshot, policy, findings, includes_migrations).await
+    evaluate_snapshot_with(snapshot, policy, findings, includes_migrations, evaluation).await
 }
 
 /// The same production evaluator is used by loaded-snapshot runtime oracles.
+#[cfg(test)]
 async fn evaluate_snapshot(
+    snapshot: CatalogSnapshot,
+    policy: &AuthorityPolicy,
+    findings: Vec<super::report::Finding>,
+    includes_migrations: bool,
+) -> Result<VerificationReport, VerificationError> {
+    let evaluation = &mut evaluation::Evaluation::new();
+    evaluate_snapshot_with(snapshot, policy, findings, includes_migrations, evaluation).await
+}
+
+async fn evaluate_snapshot_with(
     snapshot: CatalogSnapshot,
     policy: &AuthorityPolicy,
     mut findings: Vec<super::report::Finding>,
     includes_migrations: bool,
+    evaluation: &mut evaluation::Evaluation,
 ) -> Result<VerificationReport, VerificationError> {
-    let evaluation = &mut evaluation::Evaluation::new();
     let parameters = index_parameters(&snapshot.parameters);
     requests::inspect_requested_objects(evaluation, &snapshot, &parameters, policy, &mut findings)
         .await?;
@@ -592,10 +658,10 @@ async fn inspect_ledger(
     policy: &MigrationPolicy,
     ledger_lock: migration::LedgerLock,
     findings: &mut Vec<super::report::Finding>,
-) -> Result<(), VerificationError> {
+) -> Result<bool, VerificationError> {
     match ledger_lock {
-        migration::LedgerLock::Ready => {
-            migration::inspect(&mut *transaction, policy, findings).await?
+        migration::LedgerLock::Ready(protected) => {
+            return migration::inspect(&mut *transaction, policy, protected, findings).await;
         }
         migration::LedgerLock::Missing | migration::LedgerLock::WrongKind => {
             findings.push(super::report::Finding::new(
@@ -609,8 +675,11 @@ async fn inspect_ledger(
                 None,
             ))
         }
+        migration::LedgerLock::Unprotected => {
+            unreachable!("unprotected ledgers return before inspection")
+        }
     }
-    Ok(())
+    Ok(false)
 }
 
 pub(crate) async fn inspect_migrations(
@@ -620,7 +689,13 @@ pub(crate) async fn inspect_migrations(
 ) -> Result<VerificationReport, VerificationError> {
     let (session_user, current_user) = inspect_identities(transaction).await?;
     let mut findings = Vec::new();
-    inspect_ledger(transaction, policy, ledger_lock, &mut findings).await?;
+    if inspect_ledger(transaction, policy, ledger_lock, &mut findings).await? {
+        return Ok(VerificationReport::incomplete(
+            vec![UnsupportedSurface::UnprotectedMigrationLedger],
+            session_user,
+            current_user,
+        ));
+    }
     Ok(VerificationReport::new(
         findings,
         vec![SupportedSurface::MigrationLedger],
@@ -634,5 +709,8 @@ pub(crate) async fn inspect_migrations(
 pub(super) fn supports_postgres_18(server_version_num: i32) -> bool {
     (180_000..190_000).contains(&server_version_num)
 }
+
+pub(crate) use evaluation::Evaluation;
+pub(crate) use ownership::inspect as inspect_ownership;
 #[cfg(test)]
 mod tests;

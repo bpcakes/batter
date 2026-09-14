@@ -4,7 +4,7 @@ use std::task::Poll;
 /// One budget shared by every phase of captured-catalog evaluation.
 /// Checkpoints count object/role visits, not elapsed time. The owned operation
 /// observes its cancellation and clock whenever a checkpoint returns Pending.
-pub(super) struct Evaluation {
+pub(crate) struct Evaluation {
     visits: usize,
     observed_findings: usize,
     finding_bytes: usize,
@@ -16,7 +16,7 @@ const MAX_FINDING_BYTES: usize = 16 * 1024 * 1024;
 const VISITS_PER_POLL: usize = 64;
 
 impl Evaluation {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             visits: 0,
             observed_findings: 0,
@@ -28,7 +28,16 @@ impl Evaluation {
         &mut self,
         findings: &[Finding],
     ) -> Result<(), VerificationError> {
-        self.visits += 1;
+        self.checkpoint_many(1, findings).await
+    }
+
+    pub(crate) async fn checkpoint_many(
+        &mut self,
+        visits: usize,
+        findings: &[Finding],
+    ) -> Result<(), VerificationError> {
+        let previous_visits = self.visits;
+        self.visits = self.visits.saturating_add(visits.max(1));
         // Expansion has no findings argument, so an empty slice does not reset
         // the accounting for the shared report assembled by other phases.
         for finding in findings.iter().skip(self.observed_findings) {
@@ -45,7 +54,8 @@ impl Evaluation {
         {
             return Err(VerificationError::EvaluationCapacity);
         }
-        if self.visits.is_multiple_of(VISITS_PER_POLL) {
+        let yields = self.visits / VISITS_PER_POLL - previous_visits / VISITS_PER_POLL;
+        for _ in 0..yields {
             let mut yielded = false;
             std::future::poll_fn(|cx| {
                 if yielded {

@@ -39,7 +39,9 @@ PUBLIC precedence, relation/column separation, row-type and SECURITY DEFINER
 options, structural scalar/array routine identities, identifier quoting,
 database rendering context, invalid privilege/object pairs and both retained
 input and expanded capacity bounds. These tests perform no database I/O; live
-provisioning and protected-request acceptance belong to later delivery tasks.
+provisioning remains external. Protected SQLx ledger, schema-setting, ownership,
+and pre-cancelled wrapper controls are registered in the same package and live
+inventory; credentialed PostgreSQL cases remain ignored in ordinary gates.
 
 ```sh
 cargo test -p batter-sqlx --features test-support --locked
@@ -152,7 +154,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the exact eleven-case
-disposition target, fourteen-case pool-ownership target and twenty-eight-case restricted-
+disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
 has_type_privilege and retain exact alias policies. The notice control runs all
@@ -1273,15 +1275,15 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 53-case inventory: eleven PostgreSQL lease/disposition and
-read-only-verification cases, fourteen owned-pool cases and twenty-eight authority-
-verification cases. Its verification controls use committed uniquely named
+an exact 61-case inventory: eleven PostgreSQL lease/disposition and
+read-only-verification cases, fourteen owned-pool cases and thirty-six authority-
+and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
 missing/checksum/unsuccessful rows, bounded oversized-ledger rejection,
 read-only ledger preservation, role and
 PUBLIC authority, two policies and required unsupported coverage. It does not
-claim application-specific SECURITY DEFINER, durable-history or profile-grant
-checks; those remain in the consuming suite.
+claim SECURITY DEFINER body behavior, durable application history, provisioning,
+or profile-grant equivalence; those remain in the consuming suite.
 
 Three live tests are explicitly ignored during ordinary runs, because database
 provisioning is external. With `DATABASE_URL` configured for a test database:

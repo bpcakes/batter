@@ -373,6 +373,7 @@ pub struct ExactRoleManifest {
     relations: Vec<RelationGrantGroup>,
     columns: Vec<ColumnGrantGroup>,
     routines: Vec<RoutineGrantSpec>,
+    deny_current_database_ownership: bool,
 }
 
 impl ExactRoleManifest {
@@ -393,6 +394,7 @@ impl ExactRoleManifest {
             relations: Vec::new(),
             columns: Vec::new(),
             routines: Vec::new(),
+            deny_current_database_ownership: false,
         };
         manifest.ensure_input_capacity(0)?;
         Ok(manifest)
@@ -457,6 +459,12 @@ impl ExactRoleManifest {
         Ok(())
     }
 
+    /// Reject ownership of the current database or any current-database object
+    /// by a role reachable from the authenticated login.
+    pub const fn deny_current_database_ownership(&mut self, deny: bool) {
+        self.deny_current_database_ownership = deny;
+    }
+
     /// Validate and normalize the manifest into one verifier policy and grant
     /// plan. Failure returns no partial compiled value or rendered SQL.
     pub fn compile(self) -> Result<CompiledExactRole, ManifestError> {
@@ -494,13 +502,16 @@ impl ExactRoleManifest {
     }
 }
 
-/// Normalized exact-role output. The policy remains the sole verifier input and
-/// the grant plan remains inert data until a caller explicitly renders it.
+/// Normalized exact-role output. Protected verification consumes this value so
+/// its policy and ownership safeguard stay coupled; [`Self::authority_policy`]
+/// is the lower-level ACL-only escape hatch. The grant plan remains inert data
+/// until a caller explicitly renders it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExactRole {
     primary_schema: Identifier,
     authority_policy: AuthorityPolicy,
     grant_plan: GrantPlan,
+    deny_current_database_ownership: bool,
 }
 
 impl CompiledExactRole {
@@ -517,6 +528,10 @@ impl CompiledExactRole {
     /// Borrow the deterministic, non-executing role grant plan.
     pub fn grant_plan(&self) -> &GrantPlan {
         &self.grant_plan
+    }
+
+    pub(crate) const fn denies_current_database_ownership(&self) -> bool {
+        self.deny_current_database_ownership
     }
 }
 

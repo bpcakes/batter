@@ -574,6 +574,13 @@ pub enum PolicyError {
     DuplicateMigrationVersion,
     MigrationChecksumTooLarge,
     DuplicateAuthorityObject,
+    /// A protected schema request did not provide one bounded stored
+    /// `search_path=...` value.
+    InvalidSearchPathSetting,
+    /// A protected verification request contained no inspection component.
+    EmptyVerificationRequest,
+    /// A schema-configuration request selected no schema.
+    EmptySchemaInspection,
 }
 
 impl fmt::Display for PolicyError {
@@ -593,6 +600,9 @@ impl fmt::Display for PolicyError {
                 "migration checksum exceeds the verification byte limit"
             }
             Self::DuplicateAuthorityObject => "duplicate authority object in verification policy",
+            Self::InvalidSearchPathSetting => "invalid exact SECURITY DEFINER search_path setting",
+            Self::EmptyVerificationRequest => "protected verification request is empty",
+            Self::EmptySchemaInspection => "schema verification scope is empty",
         })
     }
 }

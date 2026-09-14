@@ -723,7 +723,21 @@ redirecting catalog helpers; rollback restores the serving path.
 Combined and migration-only verification take an ACCESS SHARE ledger lock
 including inherited descendants before any snapshot-taking SELECT. Conflicting
 DDL waits; ordinary migration row writes remain possible. The shared executor
-explicitly captures the snapshot before metadata classification. Ledgers with
+then proves that the relation visible under the requested name carries that
+backend lock. For an ordinary, RLS-free ledger with the common history columns,
+it then opens a transaction-local cursor whose declaration plans the quoted row
+source while retaining the proven OID as a numeric constant; policy-controlled
+names are never copied into SQL string literals. The executor records its
+relation locks before the declaration and rejects any newly acquired non-catalog
+lock outside the protected heap, indexes and TOAST relations. This catches an
+empty replacement as well as one returning rows. The later bounded history fetch
+also requires every returned row's `tableoid` to match the locked OID. A
+schema-renamed-and-replaced name before the cursor opens therefore returns
+Incomplete/UnprotectedMigrationLedger, while a successfully attested portal
+continues to address the relation planned by its declaration. The protected
+SQLx subset path also
+returns that incomplete result when an absent lock is followed by a visible late
+ledger; the legacy path retains its MissingMigration violation. Ledgers with
 parents or descendants in that snapshot return Incomplete/InheritedMigrationLedgers.
 Supported standalone ledgers use ONLY so a later attachment cannot change the
 read relation set. Enabled ledger RLS is a finding, and local
@@ -731,6 +745,31 @@ read relation set. Enabled ledger RLS is a finding, and local
 `verify_migrations` covers only the ledger; `verify_authority` omits the ledger
 read and lock. All three entrypoints share the same execution and retirement
 rules. They never execute DDL, take a migrator advisory lock or repair ACLs.
+
+The additive protected entrypoints use that same executor. SQLx exact and
+installed-subset manifests require the six SQLx 0.9 columns with `pg_catalog`
+type identities, all NOT NULL, and an exact `version` primary key. Subset means
+set membership and permits absence only when the captured snapshot also sees no
+relation. Their cursor-backed history read has the same retained-OID and
+`tableoid` checks as the legacy ledger path. Scoped schema inspection compares
+every SECURITY DEFINER routine's
+stored `search_path` entry exactly while accepting unrelated settings within the
+same fail-closed UTF-8 byte bounds; every selected schema must exist. Routine bodies
+and trigger execution remain unsupported. A compiled exact role may opt
+into login-rooted current-database ownership denial using the database owner and
+database-local `pg_shdepend` owner addresses. Unknown owner classes remain
+coarse findings; unreachable well-formed owners do not consume the relevant-row
+bound. Unknown, malformed, impossible, or missing role-reference forms,
+inconsistent database ownership or membership endpoints, bounded relevant
+catalog overflow, and reachable pinned-role capabilities other
+than implicit `pg_database_owner` are incomplete
+because PostgreSQL does not retain ordinary dependency records for pinned roles.
+PostgreSQL forbids stored membership grants into or out of
+`pg_database_owner`; observing such a catalog row is also incomplete rather
+than being treated as the implicit current-owner edge.
+Other databases and application-specific ownership semantics
+remain outside the claim. All protected fragments share the authority
+evaluator's visit, finding-count, retained-byte, and cooperative-yield budget.
 
 Authority checks cover authenticated-login-rooted SET/INHERIT/ADMIN potential,
 including target-specific ADMIN and CREATEROLE management of ordinary roles,
@@ -833,9 +872,9 @@ policy; the checker never turns a truncated catalog into a passing report.
 
 `VerificationReport` distinguishes policy violations from incomplete coverage
 and typed operation/native failures. Its coverage identifies the actual stage.
-Requested unsupported surfaces produce `Incomplete`. Exact application ledger
-shape, function body/search-path and trigger protocols, extension semantics and
-unsupported ownership classes remain application/native checks. Future sessions,
+Requested unsupported surfaces produce `Incomplete`. Function bodies and trigger
+protocols, extension semantics, other-database ownership, and application durable
+schema rules remain application/native checks. Future sessions,
 grants or schema changes are not certified. See the [adapter contract](../crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
 
 Retirement releases local pool capacity without awaiting interrupted SQL or

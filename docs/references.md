@@ -28,8 +28,11 @@ the verifier retains target identities and audits each target's potential
 authority instead of reducing ADMIN to one boolean.
 The [`GRANT` reference](https://www.postgresql.org/docs/18/sql-grant.html)
 also establishes PUBLIC grants and grant options as independent authority
-surfaces. The current database owner's implicit `pg_database_owner` membership
-is accounted for alongside explicit membership rows.
+surfaces. The [`pg_database_owner` contract](https://www.postgresql.org/docs/18/predefined-roles.html)
+gives that role exactly one implicit member, the current database owner, and
+forbids stored membership grants both into and out of the role. The verifier
+therefore models that implicit edge separately and treats any `pg_auth_members`
+row involving `pg_database_owner` as uninterpretable catalog evidence.
 [`SET SESSION AUTHORIZATION`](https://www.postgresql.org/docs/18/sql-set-session-authorization.html)
 allows an initially authenticated superuser to mask `session_user` and later
 reset it. The verifier therefore records the call-entry effective role, uses
@@ -3035,6 +3038,70 @@ only, proves its command owner remains unfinished while a checkout is held, and
 requires zero pool size plus `PoolClosed` from a later acquisition for completion.
 No server-session termination or authentication-method introspection is inferred
 from SQLx's public API. No dependency changed.
+
+## Protected PostgreSQL catalog safeguards, 2026-09-14
+
+The selected SQLx 0.9.0 source in the locked Cargo registry creates
+`_sqlx_migrations` with `version bigint` as its sole primary key plus non-null
+`description text`, `installed_on timestamptz`, `success boolean`, `checksum
+bytea`, and `execution_time bigint`. The protected manifest copies only bounded
+version/checksum expectations; it does not enable SQLx's migrate feature, retain
+SQL bodies, or run `Migrator`.
+
+PostgreSQL 18's [`pg_proc`](https://www.postgresql.org/docs/18/catalog-pg-proc.html)
+stores per-routine settings in `proconfig` and marks SECURITY DEFINER routines
+with `prosecdef`. The [CREATE FUNCTION security guidance](https://www.postgresql.org/docs/18/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY)
+recommends excluding writable schemas from a definer's search path and placing
+`pg_temp` last. Batter verifies the application-selected exact stored string for
+every definer in explicit schemas; it does not infer body safety from that fact.
+
+PostgreSQL 18's [`pg_shdepend`](https://www.postgresql.org/docs/18/catalog-pg-shdepend.html)
+retains database-local object addresses as `classid`, `objid`, and `objsubid`,
+the referenced role in `refobjid`, and distinguishes owner (`o`) rows from ACL,
+initial-ACL, policy, and tablespace dependency kinds. The protected ownership
+check excludes structurally valid rows of the three non-owner role-reference
+kinds and well-formed owners outside the login's capability graph before applying
+its bound. Missing referenced roles remain retained evidence. The evaluator
+requires the database owner, every membership endpoint, every retained owner and
+the predefined `pg_database_owner` identity to resolve in the same bounded role
+snapshot; it reports reachable owner addresses coarsely and fails incomplete on
+unknown, malformed, impossible, or missing role-reference forms. In particular, a
+tablespace dependency cannot reference `pg_authid`. The same catalog
+documentation states that pinned roles have no
+dependency records; capability reachability to a superuser or predefined role
+therefore also makes the ownership-specific result incomplete. Other databases
+and application-specific object semantics remain outside the result.
+
+PostgreSQL 18's [`DECLARE`](https://www.postgresql.org/docs/18/sql-declare.html)
+and [`FETCH`](https://www.postgresql.org/docs/18/sql-fetch.html) references define
+a non-holdable cursor as transaction-local and make later row retrieval operate
+through that previously created cursor. The
+[`pg_cursors` view](https://www.postgresql.org/docs/18/view-pg-cursors.html)
+lists the current session's available cursor names. The verifier chooses a
+bounded generated name absent from that inventory so a caller's surviving
+holdable cursor cannot collide with its transaction-local portal. The
+[`pg_locks` view](https://www.postgresql.org/docs/18/view-pg-locks.html) exposes
+granted relation locks for the current backend independently of ordinary catalog
+snapshot visibility. At the same pinned source revision,
+[`FirstNormalObjectId`](https://github.com/postgres/postgres/blob/c66a31c21595a88ec5f38e4c92c51dbd8d42846e/src/include/access/transam.h)
+is 16,384 and the surrounding contract reserves lower OIDs for initdb/catalog
+objects; normal multiuser allocation resumes at that boundary after wraparound.
+The rechecked PostgreSQL 18 source at
+[`c66a31c2`, `PerformCursorOpen`](https://github.com/postgres/postgres/blob/c66a31c21595a88ec5f38e4c92c51dbd8d42846e/src/backend/commands/portalcmds.c#L39-L139)
+plans the cursor query, copies that plan into the cursor's portal, starts the
+portal, and defers actual row execution until fetch; its
+[`AtSubCommit_Portals`](https://github.com/postgres/postgres/blob/c66a31c21595a88ec5f38e4c92c51dbd8d42846e/src/backend/utils/mmgr/portalmem.c#L937-L964)
+reparents a cursor created in a successfully released savepoint. The protected
+migration path therefore opens its non-holdable history cursor immediately after
+proving the declared name resolves to the locked OID. Before and after that
+declaration it inventories the current backend's ACCESS SHARE relation locks. A
+new non-catalog lock is accepted only for the protected heap or its snapshot-known
+indexes and TOAST relations, so planning the quoted RangeVar against an empty
+replacement is observable even though no row can supply `tableoid`. The portal
+uses a numeric retained-OID identity constant rather than putting a
+policy-controlled name in an SQL string literal. The later fetch checks every
+returned `tableoid`; resolution failure, an unexpected planning lock or an OID
+mismatch is incomplete rather than a read of a purportedly protected replacement.
 
 ## PostgreSQL verifier identity and cooperative evaluation, 2026-09-13
 

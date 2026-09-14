@@ -216,9 +216,9 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
         }
         let query: String = sqlx::query_scalar("SELECT query FROM pg_catalog.pg_stat_activity WHERE pid=$1")
             .bind(pid).fetch_one(&mut fixture.admin).await?;
-        require(query.contains("SELECT EXISTS")
-            && query.contains("JOIN pg_catalog.pg_inherits AS i"),
-            "barrier did not pause the snapshot's explicit ledger metadata read")?;
+        require(query.contains("FROM pg_catalog.pg_class AS c")
+            && query.contains("JOIN pg_catalog.pg_locks AS l"),
+            "barrier did not pause the ledger lock-attestation read")?;
         let truncate = format!("TRUNCATE {child}");
         let change = sqlx::query(sqlx::AssertSqlSafe(truncate)).execute(&mut mutator);
         tokio::pin!(change);

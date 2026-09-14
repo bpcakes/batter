@@ -68,12 +68,23 @@ TARGETS = {
         "verification_distinguishes_hidden_parameters_from_missing_objects",
         "verification_reserved_custom_parameter_requirement",
         "verification_discovery_dependent_types_follow_native_acl",
+        "protected_sqlx_ledger_checks_exact_shape_and_nonprefix_subset",
+        "protected_schema_checks_all_definers_and_exact_stored_search_path",
+        "protected_exact_role_rejects_set_reachable_ownership",
+        "protected_sqlx_absent_lock_cannot_admit_late_ledger",
+        "protected_sqlx_history_rejects_post_snapshot_name_replacement",
+        "protected_sqlx_name_replacement_is_not_mistaken_for_locked_ledger",
+        "protected_sqlx_guards_reject_rls_inheritance_and_overflow",
+        "protected_sqlx_late_attachment_cannot_supply_snapshot_rows",
     },
 }
 
 
 def command(target):
-    return ["cargo", "test", "-p", "batter-sqlx", "--test", target, "--locked", "--"]
+    command = ["cargo", "test", "-p", "batter-sqlx"]
+    if target == "verification_live":
+        command += ["--features", "test-support"]
+    return command + ["--test", target, "--locked", "--"]
 
 
 def invoke(target, arguments):

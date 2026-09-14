@@ -29,6 +29,7 @@ mod acquisition;
 mod report;
 mod runner;
 mod sessions;
+mod verification;
 
 pub use sessions::{CleanupPhase, DatabaseProgress, SessionObserver};
 
@@ -36,6 +37,10 @@ pub use report::{
     AcquisitionFailure, BodyFailure, DatabaseCleanup, FixtureReport, FixtureReportRef,
 };
 pub use runner::{FixtureBody, FixtureDatabase, FixtureRun, FixtureScope};
+pub use verification::{
+    VerificationLedgerPause, pause_next_verification_ledger_history,
+    pause_next_verification_ledger_lock,
+};
 
 use std::{fmt, future::Future, sync::Arc, time::Duration};
 
@@ -44,6 +49,9 @@ use postgres_test_harness::{
     DatabaseLease, DatabaseTemplate, FingerprintBuilder, PostgresHarness, TemplateSpec,
 };
 use sqlx::{PgConnection, PgPool, postgres::PgPoolOptions};
+pub(crate) use verification::{
+    pause_after_verification_ledger_lock, pause_before_verification_ledger_history,
+};
 
 /// One ordered migration input; the consumer must execute the declared content.
 pub struct MigrationInput<'a> {

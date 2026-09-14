@@ -2,6 +2,12 @@ use batter::{
     lifecycle::{ShutdownBudget, Supervisor},
     operation::{Interruption, OperationContext, OperationError},
 };
+use batter_sqlx::verification::{
+    DiscoveryScope, ExactRoleManifest, Identifier, MigrationExpectation, PolicyError,
+    QualifiedName, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest,
+    VerificationError, VerificationRequest, verify_exact_role, verify_request,
+    verify_sqlx_migrations,
+};
 use batter_sqlx::{FailureClass, PgLease, SqlxFailure, pool_in, probe, register_pool_close};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, time::Duration};
@@ -58,6 +64,64 @@ async fn inert_and_interrupted_calls_do_not_acquire() {
         probe(&pool, &expired).await,
         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
     ));
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn interrupted_protected_wrappers_do_not_acquire_or_validate_first() {
+    let pool = lazy_pool();
+    let ledger = SqlxMigrationManifest::new(
+        QualifiedName::new("public", "_sqlx_migrations").unwrap(),
+        SqlxLedgerMode::Exact,
+        [MigrationExpectation::new(1, [1])],
+    )
+    .unwrap();
+    let schema = SchemaInspectionPolicy::canonical([Identifier::new("service").unwrap()]).unwrap();
+    let role = ExactRoleManifest::new(
+        Identifier::new("service").unwrap(),
+        DiscoveryScope::Declared,
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    context.cancel();
+    assert!(matches!(
+        verify_sqlx_migrations(&pool, &context, &ledger).await,
+        Err(OperationError::Interrupted(Interruption::Cancelled))
+    ));
+    assert!(matches!(
+        verify_exact_role(&pool, &context, &role).await,
+        Err(OperationError::Interrupted(Interruption::Cancelled))
+    ));
+    assert!(matches!(
+        verify_request(
+            &pool,
+            &context,
+            VerificationRequest::new().with_schema(&schema),
+        )
+        .await,
+        Err(OperationError::Interrupted(Interruption::Cancelled))
+    ));
+    assert!(matches!(
+        verify_request(&pool, &context, VerificationRequest::new()).await,
+        Err(OperationError::Interrupted(Interruption::Cancelled))
+    ));
+    assert_eq!(pool.size(), 0);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn empty_protected_request_fails_before_acquisition() {
+    let pool = lazy_pool();
+    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        verify_request(&pool, &context, VerificationRequest::new()).await,
+        Err(OperationError::Failed(VerificationError::InvalidPolicy(
+            PolicyError::EmptyVerificationRequest
+        )))
+    ));
+    assert_eq!(pool.size(), 0);
     pool.close().await;
 }
 

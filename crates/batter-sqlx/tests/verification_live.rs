@@ -17,6 +17,7 @@ mod verification_live_inheritance;
 mod verification_live_notice;
 mod verification_live_ownership;
 mod verification_live_parameters;
+mod verification_live_protected;
 mod verification_live_public;
 mod verification_live_recovery;
 mod verification_live_scope;

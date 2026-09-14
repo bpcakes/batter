@@ -4,10 +4,10 @@
 use batter::operation::{Interruption, OperationContext, OperationError};
 use batter_sqlx::verification::VerificationError;
 use batter_sqlx::verification::{
-    AdditionalMigrations, AuthorityPolicy, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope,
-    ExactRoleManifest, Identifier, ManifestError, MigrationExpectation, MigrationPolicy,
-    ObjectPrivilege, PublicDelivery, QualifiedName, RelationGrantGroup, RolePolicy,
-    SchemaGrantSpec, VerificationPolicy, VerificationStatus, verify,
+    CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope, ExactRoleManifest,
+    Identifier, ManifestError, MigrationExpectation, ObjectPrivilege, PublicDelivery,
+    QualifiedName, RelationGrantGroup, RolePolicy, SchemaGrantSpec, SqlxLedgerMode,
+    SqlxMigrationManifest, VerificationRequest, VerificationStatus, verify_request,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{process::ExitCode, str::FromStr, time::Duration};
@@ -15,6 +15,12 @@ use std::{process::ExitCode, str::FromStr, time::Duration};
 #[tokio::main(flavor = "current_thread")]
 #[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
+    if std::env::var_os("BATTER_VERIFY_ALLOW_LATER").is_some() {
+        eprintln!(
+            "BATTER_VERIFY_ALLOW_LATER is unsupported; provide the complete expected migration manifest"
+        );
+        return ExitCode::FAILURE;
+    }
     let Some(url) = std::env::var_os("DATABASE_URL") else {
         eprintln!("DATABASE_URL is required");
         return ExitCode::FAILURE;
@@ -73,12 +79,12 @@ async fn main() -> ExitCode {
     };
     let allow_owner = flag("BATTER_VERIFY_ALLOW_OWNER");
     let deliberate_violation = flag("BATTER_VERIFY_DELIBERATE_VIOLATION");
-    let allow_later = flag("BATTER_VERIFY_ALLOW_LATER");
     let allow_superuser = flag("BATTER_VERIFY_ALLOW_SUPERUSER");
     let schema = Identifier::new(ledger.schema()).expect("validated ledger schema");
-    let migration = MigrationPolicy {
-        ledger: ledger.clone(),
-        required: vec![MigrationExpectation::new(
+    let migration = match SqlxMigrationManifest::new(
+        ledger.clone(),
+        SqlxLedgerMode::Exact,
+        [MigrationExpectation::new(
             version,
             if deliberate_violation {
                 vec![0]
@@ -86,13 +92,14 @@ async fn main() -> ExitCode {
                 checksum
             },
         )],
-        additional: if allow_later {
-            AdditionalMigrations::AllowSuccessful
-        } else {
-            AdditionalMigrations::Reject
-        },
+    ) {
+        Ok(manifest) => manifest,
+        Err(_) => {
+            eprintln!("SQLx migration manifest is invalid");
+            return ExitCode::FAILURE;
+        }
     };
-    let authority = match build_authority(
+    let role = match build_role(
         schema,
         ledger,
         allow_owner,
@@ -105,14 +112,16 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let policy = VerificationPolicy::new(migration, authority);
     let context = OperationContext::new(Duration::from_secs(30))
         .expect("constant verification budget is valid");
     // Lazy pool construction performs no connection work outside the operation.
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect_lazy_with(options);
-    let result = verify(&pool, &context, &policy).await;
+    let request = VerificationRequest::new()
+        .with_exact_role(&role)
+        .with_sqlx_migrations(&migration);
+    let result = verify_request(&pool, &context, request).await;
     pool.close().await;
     let report = match result {
         Ok(report) => report,
@@ -163,13 +172,13 @@ fn flag(name: &str) -> bool {
     )
 }
 
-fn build_authority(
+fn build_role(
     schema: Identifier,
     ledger: QualifiedName,
     allow_owner: bool,
     allow_superuser: bool,
     deliberate_violation: bool,
-) -> Result<AuthorityPolicy, ManifestError> {
+) -> Result<CompiledExactRole, ManifestError> {
     let mut manifest = ExactRoleManifest::new(schema.clone(), DiscoveryScope::Declared)?;
     manifest.set_role_policy(role_policy(allow_owner, allow_superuser))?;
     manifest.add_database(
@@ -202,7 +211,11 @@ fn build_authority(
         .allow_owner(allow_owner)
         .allow_row_type_public_usage(true),
     )?;
-    Ok(manifest.compile()?.authority_policy().clone())
+    // A superuser can own arbitrary objects through catalog paths whose pinned-role
+    // dependencies are not exhaustively visible. Its explicit opt-in therefore
+    // disables the narrower current-database ownership conclusion too.
+    manifest.deny_current_database_ownership(!allow_owner && !allow_superuser);
+    manifest.compile()
 }
 
 fn role_policy(allow_owner: bool, allow_superuser: bool) -> RolePolicy {

@@ -42,6 +42,7 @@ name = "pool_ownership_live"
 
 [[test]]
 name = "verification_live"
+required-features = ["test-support"]
 
 [[test]]
 name = "fixture_offline"

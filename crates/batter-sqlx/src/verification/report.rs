@@ -42,6 +42,14 @@ pub enum FindingKind {
     ParameterUnobservable,
     /// Effective current role lacks a required catalog privilege.
     MissingPrivilege,
+    /// A SQLx ledger did not have exactly the six SQLx 0.9 columns and exact
+    /// `version` primary key.
+    SqlxLedgerShape,
+    /// A scoped SECURITY DEFINER routine did not store exactly the required
+    /// `search_path` configuration.
+    SecurityDefinerSearchPath,
+    /// A capability-reachable role owns the current database or an object in it.
+    ReachableOwnership,
 }
 
 /// The exact non-inherited role attribute carried by a reachable execution
@@ -69,9 +77,11 @@ pub struct Finding {
     /// Stable category for this observation.
     pub kind: FindingKind,
     /// Catalog or policy object identity, when the category has one.
-    /// Schema-qualified objects and columns quote each identifier component;
-    /// routines use the canonical `RoutineSignature` rendering. Database,
-    /// parameter and role names retain their category-specific spelling.
+    /// Schema-qualified objects and columns quote each identifier component.
+    /// Declared routines use canonical `RoutineSignature` rendering; security-
+    /// definer configuration findings instead append `#` and the snapshot-local
+    /// routine OID to the quoted schema and name so overloads remain distinct.
+    /// Database, parameter and role names retain their category-specific spelling.
     pub object: Option<String>,
     /// Reachable role or PUBLIC identity, when the category has one.
     pub subject: Option<String>,
@@ -143,6 +153,12 @@ pub enum SupportedSurface {
     PublicAcl,
     /// Direct and inherited ownership authority for declared objects.
     Ownership,
+    /// Exact SQLx 0.9 ledger shape and selected history.
+    SqlxMigrationLedger,
+    /// Exact stored `search_path` configuration on scoped definer routines.
+    SecurityDefinerConfiguration,
+    /// Current-database ownership reachable from the authenticated login.
+    CurrentDatabaseOwnership,
 }
 
 /// A requested or known boundary that this generic checker does not prove.
@@ -158,8 +174,9 @@ pub enum UnsupportedSurface {
     /// Includes `pg_temp`, `pg_temp_*` and `pg_toast_temp_*`; any such request
     /// returns Incomplete through all verifier entrypoints before ledger reads.
     TemporaryNamespaces,
-    /// Function bodies, `search_path`, trigger behavior and SECURITY DEFINER
-    /// execution context are application-specific and not inferred here.
+    /// Function bodies, trigger behavior, and execution context are not inferred.
+    /// Stored settings outside an explicit protected schema request are also
+    /// outside the report.
     SecurityDefinerBody,
     /// Extension membership, upgrade behavior and extension-specific
     /// semantics are not inspected. ACLs for an extension-owned object are
@@ -191,6 +208,13 @@ pub enum UnsupportedSurface {
     /// whose existence alone does not establish parameter authority, and custom
     /// names that may be placeholders, reserved prefixes or hidden definitions.
     ParameterVisibility,
+    /// A requested protected ledger could not be coupled to the relation locked
+    /// before the snapshot, including absent-then-created and pre-cursor name-
+    /// replacement races.
+    UnprotectedMigrationLedger,
+    /// Current-database ownership catalog evidence had an unknown form and
+    /// could not safely be classified.
+    OwnershipCatalog,
 }
 
 /// A successful snapshot report.
@@ -260,7 +284,14 @@ impl VerificationReport {
         {
             unsupported.push(UnsupportedSurface::ParameterVisibility);
         }
-        let status = if parameter_unobservable {
+        let inherently_incomplete = unsupported.iter().any(|surface| {
+            matches!(
+                surface,
+                UnsupportedSurface::UnprotectedMigrationLedger
+                    | UnsupportedSurface::OwnershipCatalog
+            )
+        });
+        let status = if parameter_unobservable || inherently_incomplete {
             VerificationStatus::Incomplete
         } else if !findings.is_empty() {
             VerificationStatus::Violations
@@ -533,6 +564,24 @@ mod tests {
             report.unsupported(),
             &[UnsupportedSurface::ParameterVisibility]
         );
+    }
+
+    #[test]
+    fn unprotected_ledger_and_unknown_ownership_evidence_are_incomplete() {
+        for surface in [
+            UnsupportedSurface::UnprotectedMigrationLedger,
+            UnsupportedSurface::OwnershipCatalog,
+        ] {
+            let report = VerificationReport::new(
+                Vec::new(),
+                Vec::new(),
+                vec![surface],
+                "session".to_owned(),
+                "current".to_owned(),
+                &[],
+            );
+            assert_eq!(report.status(), VerificationStatus::Incomplete);
+        }
     }
 
     #[test]

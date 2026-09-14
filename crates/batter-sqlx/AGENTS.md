@@ -17,8 +17,10 @@ transactions remain application-owned. Follow the root Unix-only policy.
 
 Keep connection ownership mechanics here and migration, replay, SQL contents,
 transaction completion and provisioning policy in applications. Generic read-only
-verification owns its lease, snapshot and disposition; exact application ledger
-shape, routine protocols and grant-manifest contents remain downstream. The pure
+verification owns its lease, snapshot and disposition. Protected requests can
+check exact SQLx 0.9 ledger shape/history, scoped definer `search_path`, and
+coarse reachable current-database ownership; migration selection, routine
+protocols and grant-manifest contents remain downstream. The pure
 exact-role compiler and inert grant renderer live here; they must not acquire a
 connection, execute SQL or become a provisioner. The runnable
 consumer is `examples/postgres-lifecycle`.
@@ -40,6 +42,8 @@ newer grants through catalog caches. Use them as stable-fixture test references.
 PUBLIC relation/column default precedence belongs to the shared policy index.
 Ledger inheritance is unsupported; standalone ledger reads use ONLY so planner
 inheritance refresh cannot mix relation membership with older snapshot rows.
+High-level SQLx ledgers additionally require the exact six-column and primary-key
+shape. Schema-setting checks remain independent of serving-role authority.
 New supported semantics require primary PostgreSQL18 evidence and native tests.
 
 ## Common commands
