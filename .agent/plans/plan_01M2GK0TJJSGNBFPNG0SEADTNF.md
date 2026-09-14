@@ -123,9 +123,25 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   substantive defect. Their reports and the parent matched complete terminal
   closure fingerprint
   `e9f72b6e13e4046c0f75331c523711fa738b95cc457f3498acb2a50df657b30b`.
-- [ ] Slice 4: update contracts, status, examples, exhaustive Jig scopes and final
+- [x] (2026-09-15T01:31:00+02:00) Slice 4 updated status and validation evidence,
+  passed both supported-toolchain matrices, every required HTTP process profile,
+  both historical-consumer runs and the exact-input Jig gate, converged before
+  commit, and was committed as `b7db6dd`.
+- [x] Slice 4: update contracts, status, examples, exhaustive Jig scopes and final
   evidence; run the full two-toolchain and HTTP verification, converge, and commit.
-- [ ] Complete the Bead and Jig work only after a requirement-by-requirement audit
+- [x] (2026-09-15T01:36:00+02:00) The requirement audit matched every Bead
+  acceptance clause to source, negative/runtime coverage, contracts, the four
+  slice commits and executed evidence. Bead `batter-lp2.5` was closed only after
+  that audit.
+- [x] (2026-09-15T01:40:00+02:00) The post-close tracker/evidence review converged
+  in one complete Claude/Codex pass with no actionable finding or test gap at
+  fingerprint
+  `febd4a712925f72a936c2ee3f3b30d4b37b5b2ed44d6a28c675803684c11dac2`.
+  The final exact-input work check reused unchanged code receipts, reran both
+  repository targets and passed under target-validation receipt
+  `receipt_01M2H49DNSADMDKEV4GVC507RS`; final file-budget receipt
+  `receipt_01M2H49D469JQA2AQD13Q6JD08` matches the post-close worktree.
+- [x] Complete the Bead and Jig work only after a requirement-by-requirement audit
   proves every requested slice, review, commit, contract, and validation exists.
 
 ## Surprises & Discoveries
@@ -320,8 +336,13 @@ The terminal reviewers found no actionable issue. Slice 3 removes clone-wide
 application readiness mutation, pairs the sole decision with spawned,
 caller-owned or startup handoff ownership, and makes the ordinary agent path
 automatic. Review exposed and eliminated both a permanently unapprovable
-caller-owned driver and a detached capability escape hatch. The final slice now
-owns final-tree two-toolchain, process-smoke, Jig and tracker evidence.
+caller-owned driver and a detached capability escape hatch. Slice 4 records the
+complete supported-toolchain, process-smoke, Jig, contract and review evidence.
+The canonical path now carries no readiness instruction for an agent to remember:
+ordinary startup approves at the library-owned transition, while deliberately
+deferred policy is named and linear. This removes the original invalid state and
+reduces recurring review work without claiming that types can prove arbitrary
+application initialization, spawned-descendant settlement or remote effects.
 
 ## Context and Orientation
 

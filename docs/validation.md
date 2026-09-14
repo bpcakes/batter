@@ -68,6 +68,26 @@ comprehensive loop therefore converged after three complete passes and two
 supporting-only repair rounds, with no production-code change. This one bounded
 supporting closure batch records that result before focused verification.
 
+Both focused closure reviewers then marked the validation and Bead chronology
+obligations satisfied, found no substantive or collateral defect, and matched
+complete terminal closure fingerprint
+`e9f72b6e13e4046c0f75331c523711fa738b95cc457f3498acb2a50df657b30b`.
+The exact-input work check on that reviewed Slice 4 snapshot reused the unchanged
+Rust receipts and reran both repository targets successfully. Its fresh
+file-budget receipt is `receipt_01M2H3ZVWA5H91S8Z2SFABFMV6`; evidence and gate
+readback reported matching inputs and no unresolved condition. Slice 4 was then
+committed without another reviewable edit as `b7db6dd`.
+
+A requirement-by-requirement audit found all Bead acceptance clauses present:
+the three implementation commits and evidence commit exist; read-only signals
+cannot acknowledge; registration owns one linear component-start capability;
+application approval and root control are purpose-qualified; every workspace
+adapter and canonical example is migrated; runtime and compile-fail coverage is
+present; both supported-toolchain matrices, all ten HTTP profiles and Jig gates
+pass; and each slice converged before commit. The following tracker/plan closeout
+is bookkeeping over that accepted result and receives its own review and exact-
+input Jig refresh.
+
 This evidence does not claim hosted CI, current Linux, live PostgreSQL,
 publication, deployment, push, or fresh current-API external consumer generation.
 
