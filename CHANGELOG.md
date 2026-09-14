@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Replace the reference package's erased `ConfigMode`/`RootSettings` boundary
+  with disjoint `ServingSettings` and `MaintenanceSettings`. Serving now follows
+  the inert `runtime::prepare` to consuming `runtime::run` handoff, and the
+  infallible router consumes `PreparedHttp`. Maintenance accepts only its
+  database capability, ignores known serving-only environment values and has no
+  serving conversion. Ambient `PG*` conflicts now fail as settings errors during
+  preparation, before protected startup acquires resources.
 - Replace blocking retained-panic inspection with `PanicPayload::try_inspect`;
   concurrent or recursive inspection now returns `PanicPayloadBusy`.
 - Pin native runtime dependencies to pushed Git revision `d57ec6be61e9f00ccce373b19ca356cafe98f206`

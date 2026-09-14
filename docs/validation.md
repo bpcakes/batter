@@ -9359,3 +9359,85 @@ their recorded production inputs and runtime code were unchanged.
 
 No hosted CI, new Linux execution, live PostgreSQL execution, publication, or
 deployment is claimed.
+
+## Purpose-qualified reconciliation and final validation: 2026-09-14
+
+After slice commit `4db7029`, `git fetch origin --prune` found parallel commit
+`373001f` and a one-commit divergence. The local commits were rebased onto that
+commit. Four conflicts were resolved additively: the purpose-qualified runtime
+retains the parallel protected-startup failure and required pool-cleanup report;
+prepared pool inputs continue through `batter_sqlx::pool_in`; the production
+signal witness and waiter/owner-loss compositions now construct
+`ServingSettings` or `PreparedServing`; and both validation/status histories are
+retained. The resulting slice commit is `ac30b3f`, with local `master` two commits
+ahead and zero behind `origin/master` after a second fetch. No push occurred.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02). Cargo.lock remained
+unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS after reconciliation: 11 library cases passed with one live case ignored, the binary case passed, all 23 configuration cases passed, three fixture diagnostics passed, five reference process cases passed with 59 PostgreSQL cases ignored, three preflight cases passed and four retirement cases passed. |
+| Reference doctests and strict package Clippy | Thirteen positive and seven compile-fail doctests passed. The first strict Clippy run rejected the expanded source-policy test at 115 lines; extracting its serving matrix into a focused helper preserved the assertions and the next all-target/all-feature `-D warnings` run passed. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete runner-control, core/workspace, hostile-environment, doctest, formatting, strict Clippy and warning-denied rustdoc matrices passed on the reconciled bytes. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` | PASS: all ten process profiles across the two toolchains. |
+| `bash scripts/test_reference_live.sh` on each toolchain | Expected exit 1 before inventory or fixtures: `POSTGRES_TEST_ADMIN_URL` was absent. No PostgreSQL connection, fixture or live test is claimed. |
+
+A fresh coding agent then created an untracked standalone package in a detached
+temporary worktree at `ac30b3f`, using only public consumer guidance and APIs. It
+compiled and executed inert `BulkheadCapacity`, `ProcessCapacity` and
+`ResponseConstructionBudget` handoffs, serving settings through
+`runtime::prepare`, and passwordless maintenance preparation. It compile-checked
+the owned `PreparedServing` handoff to `runtime::run` but intentionally did not
+execute that resource-acquiring future. Its one test passed on Rust 1.98.1 and
+1.94.0; formatting also passed after ordinary line wrapping. The agent used no
+private fields or implementation behavior and found no impossible or materially
+ambiguous public step. It observed only that minimum serving inputs are described
+across both `docs/integrations.md` and the reference README, and that depending on
+the unpublished reference application necessarily resolves its full SQLx and
+Runledger graph. It did not compile a forbidden maintenance-to-serving conversion
+and therefore made no independent negative type-property claim.
+
+`scripts/jig work check --plan-id plan_01M2FJAAJ6PTC67CW9PYFCBGQH` then passed
+all five applicable targets on the reconciled tree: `api:clippy`, `api:fmt`,
+`api:test`, `repo:contract` and `repo:file-budget`. Its target-validation receipt
+is `receipt_01M2FWX9X7J3RDD3YAXS1PA080`; the required `verify` gate is fresh and
+has no unresolved gate. The evidence reader reported that all required target
+receipts match current inputs.
+
+The first final closeout review used branch scope from pinned base
+`4c85d527465145e8dffe69d81b1b986db28273fc` through pinned `HEAD`
+`ac30b3fcaa10c83f5aa3f54ad9e9c62a669a89ba`, including the working tree. Both
+independent reviewers and the parent matched complete fingerprint
+`d77b2e4f5e04664e04d5e8d094abeb724c088fad33135b410c401a45951b9a44` with
+no capture issue. Neither reviewer found a substantive defect. The native
+reviewer found nothing actionable; the external reviewer identified two low
+supporting obligations: record the public cutover in the Unreleased changelog,
+and prove directly that `MaintenanceSettings` cannot enter the sole public
+`runtime::prepare` constructor. The one permitted supporting closure batch adds
+that changelog entry and compile-fail proof before focused verification by both
+reviewers. No ordinary repair round has started.
+
+The first focused closure verification matched complete fingerprint
+`e035640074b493e6f1d58dd79c106952b1ba5a88fba00b5fcadb879768c0ced1`.
+Both reviewers marked both obligations satisfied and found no substantive or
+collateral defect. They identified one material supporting evidence gap: this
+chronology did not yet record validation performed after the new negative
+doctest was added. The one permitted supporting correction records it now:
+
+| Closure validation | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --doc --all-features --locked` | PASS on Rust 1.98.1: 13 positive and eight compile-fail doctests. |
+| `RUSTUP_TOOLCHAIN=1.94.0 cargo test -p batter-example-reference-service --doc --all-features --locked` | PASS on Rust 1.94.0: 13 positive and eight compile-fail doctests. |
+| `cargo fmt --all -- --check` and `git diff --check` | PASS after the first closure edit batch. |
+
+The complete matrices and HTTP process smokes were not repeated for this
+documentation-and-negative-doctest closure. Its only Rust change is the
+compile-fail example; production runtime bytes are unchanged from the previously
+validated reconciliation. A second and final focused verification follows the
+cumulative closure patch.
+
+No hosted CI, new Linux execution, live PostgreSQL execution, publication,
+deployment, or push is claimed.

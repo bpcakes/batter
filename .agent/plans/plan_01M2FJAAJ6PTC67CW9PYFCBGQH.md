@@ -51,12 +51,14 @@ socket, or register work.
 - [x] (2026-09-14) Slice 2: replaced `ConfigMode`/`RootSettings` with purpose-specific settings
   and inert prepared serving/maintenance owners; narrow runtime/router/pool/worker
   boundaries, migrate every reference consumer, validate, review to convergence,
-  and prepare the converged slice for commit.
-- [ ] Slice 3: complete cross-cutting contracts, status, validation evidence,
+  commit, and reconcile as `ac30b3f` on top of parallel protected-startup commit
+  `373001f`.
+- [x] (2026-09-14) Slice 3: completed cross-cutting contracts, status, validation evidence,
   compile-fail/failure-path coverage, and fresh consumer assessment; run final
   two-toolchain, HTTP, live-suite/Jig verification, review to convergence, and
-  commit.
-- [ ] Close `batter-k8m` only after all acceptance evidence is delivered. Do not
+  prepare the converged closeout commit.
+- [x] (2026-09-14) Closed `batter-k8m` after its implementation and execution
+  evidence were delivered. Do not
   publish or push.
 
 ## Surprises & Discoveries
@@ -120,6 +122,47 @@ socket, or register work.
   Slice 2 therefore converged after four complete comprehensive passes, one
   supporting closure batch, one supporting correction and two focused closure
   verification passes.
+- Observation: the required post-commit fetch found `origin/master` one commit
+  ahead at `373001f`. Rebase conflicts in the runtime, startup-process fixture,
+  status and validation records were resolved additively. Two newly arrived
+  protected-startup consumers were also migrated off the erased settings type.
+  The merged root retains `batter_sqlx::pool_in`, protected startup failure
+  inspection, required pool-cleanup evidence and the signal/waiter/owner-loss
+  process contracts while consuming `PreparedServing`.
+- Observation: both full toolchain matrices and all ten HTTP profiles pass after
+  reconciliation. Both live-suite invocations stopped in native preflight because
+  `POSTGRES_TEST_ADMIN_URL` was absent. The first strict Clippy run found the
+  expanded source-policy test over its line limit; extracting its serving matrix
+  preserved every assertion and the subsequent strict run passed.
+- Observation: a fresh agent built an external-style temporary consumer using
+  only public guidance and APIs. Its inert public-witness and serving/maintenance
+  preparation exercise passed on Rust 1.98.1 and 1.94.0 without private fields.
+  It found no blocked or materially ambiguous step; minimum serving inputs being
+  split across the integration guide and reference README was its only guidance
+  friction.
+- Observation: Jig target-validation receipt
+  `receipt_01M2FWX9X7J3RDD3YAXS1PA080` passed all five applicable targets after
+  reconciliation: `api:clippy`, `api:fmt`, `api:test`, `repo:contract` and
+  `repo:file-budget`. The required `verify` gate was fresh with no unresolved
+  gate before the final comprehensive review.
+- Observation: the final branch-wide review matched complete fingerprint
+  `d77b2e4f5e04664e04d5e8d094abeb724c088fad33135b410c401a45951b9a44` for
+  restricted Claude Opus, native Codex and the parent. Neither reviewer found a
+  substantive defect. Two low supporting obligations added the breaking
+  changelog entry and a direct compile-fail proof that `MaintenanceSettings`
+  cannot enter `runtime::prepare`.
+- Observation: the supporting closure converged at terminal fingerprint
+  `f742d631b979356d7c68a05aff4a390ff9ebe0f57f04159dde72ffdad7ec38d2`.
+  Both reviewers satisfied all three obligations after one evidence correction
+  and found no collateral defect. Accounting is zero ordinary repair rounds,
+  one complete comprehensive review, one closure edit batch, one supporting
+  correction and two focused verification passes. The closure doctests passed
+  as 13 positive and eight compile-fail cases on each supported toolchain.
+- Observation: final Jig target-validation receipt
+  `receipt_01M2FY0FR6W6C9F520H3PVT6JN` executed and passed all five targets after
+  closure. Its required `verify` gate uses `api:test` receipt
+  `receipt_01M2FY0F4PPYCAV6VACVKSF79F`, matches the four included changed paths
+  and has no unresolved gate.
 
 ## Decision Log
 
@@ -360,6 +403,34 @@ publish.
 
 ## Outcomes & Retrospective
 
-Not yet complete. Record delivered APIs, causal repair, prevention evidence,
-review rounds, exact verification outcomes, live/platform limits, commits, and
-remaining work here as slices finish.
+The erased mode was a consumer symptom of two related boundary defects. First,
+foundation and adapter constructors accepted interchangeable raw capacities and
+durations after applications had already validated them. Second, the example root
+collapsed commands with different capabilities into one cloneable schema and let
+the serving runtime rediscover missing requirements after acquisition began.
+
+The delivered architecture validates once and retains the proof. Batter now owns
+opaque `BulkheadCapacity` and `ProcessCapacity` witnesses, Batter Axum owns
+`ResponseConstructionBudget`, and their operational constructors consume those
+values infallibly. The reference root exposes disjoint `ServingSettings` and
+`MaintenanceSettings`; only serving can produce non-cloneable `PreparedServing`
+and `PreparedHttp`, and only the prepared serving owner can enter `runtime::run`.
+Preparation remains inert, while listener binding, database acquisition, schema
+work, native registration and cleanup remain inside protected startup. Offline
+maintenance retains passwordless PostgreSQL support without authentication or
+worker capabilities and has no promotion path into serving.
+
+Prevention evidence includes invalid-witness construction tests, serving and
+maintenance source/failure/redaction tests, inert preparation, eight compile-fail
+doctests covering command and ownership boundaries, migrated startup/signal/HTTP
+consumers, and a fresh public-API consumer on Rust 1.98.1 and 1.94.0. Slice 1 is
+commit `d52a733`; Slice 2 is reconciled commit `ac30b3f` on parallel origin commit
+`373001f`; the final closeout commit contains this plan outcome, changelog,
+validation receipts and Bead closure.
+
+Both complete supported-toolchain matrices, all ten rebuilt HTTP smoke profiles,
+strict checks and the final Jig gate passed. Native live-suite preflight stopped
+before fixtures on both toolchains because `POSTGRES_TEST_ADMIN_URL` was absent;
+no live PostgreSQL result is claimed. Execution evidence is macOS-only for this
+change; no new Linux, other-Unix, hosted-CI, publication, deployment or push claim
+is made. No implementation work remains under `batter-k8m`.

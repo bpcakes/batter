@@ -68,6 +68,16 @@ fn shutdown_budget() -> ShutdownBudget {
 /// substitute an application-specific shutdown budget before entering [`run`].
 /// Native PostgreSQL option construction occurs here so an ambient PG* conflict
 /// is rejected before startup acquires resources or starts its driver.
+///
+/// Maintenance settings cannot be promoted into serving preparation:
+///
+/// ```compile_fail,E0308
+/// use batter_example_reference_service::{config::MaintenanceSettings, runtime};
+///
+/// fn cannot_prepare(settings: MaintenanceSettings) {
+///     let prepared = runtime::prepare(settings);
+/// }
+/// ```
 pub fn prepare(
     settings: ServingSettings,
 ) -> Result<PreparedServing, batter::settings::SettingsError> {
