@@ -7,7 +7,7 @@ use batter_sqlx::verification::{
     CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope, ExactRoleManifest,
     Identifier, ManifestError, MigrationExpectation, ObjectPrivilege, PublicDelivery,
     QualifiedName, RelationGrantGroup, RolePolicy, SchemaGrantSpec, SqlxLedgerMode,
-    SqlxMigrationManifest, VerificationRequest, VerificationStatus, verify_request,
+    SqlxMigrationManifest, VerificationPlan, VerificationStatus, verify,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{process::ExitCode, str::FromStr, time::Duration};
@@ -118,10 +118,10 @@ async fn main() -> ExitCode {
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect_lazy_with(options);
-    let request = VerificationRequest::new()
-        .with_exact_role(&role)
-        .with_sqlx_migrations(&migration);
-    let result = verify_request(&pool, &context, request).await;
+    let plan = VerificationPlan::exact_role(&role)
+        .with_sqlx_migrations(&migration)
+        .expect("one role and one migration manifest compose");
+    let result = verify(&pool, &context, plan).await;
     pool.close().await;
     let report = match result {
         Ok(report) => report,

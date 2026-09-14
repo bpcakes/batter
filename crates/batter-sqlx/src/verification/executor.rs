@@ -1,39 +1,12 @@
 use super::*;
 use sqlx::{Connection, PgConnection};
 
-#[derive(Clone, Copy)]
-pub(super) enum Inspection<'a> {
-    Combined(&'a VerificationPolicy),
-    Migrations(&'a MigrationPolicy),
-    Authority(&'a AuthorityPolicy),
-    SqlxMigrations(&'a SqlxMigrationManifest),
-    ExactRole(&'a CompiledExactRole),
-    Protected(VerificationRequest<'a>),
-}
-
-impl<'a> Inspection<'a> {
-    fn validate(self) -> Result<(), PolicyError> {
-        match self {
-            Self::Combined(policy) => policy.validate(),
-            Self::Migrations(policy) => policy.validate(),
-            Self::Authority(policy) => policy.validate(),
-            Self::SqlxMigrations(manifest) => manifest.validate(),
-            Self::ExactRole(role) => role.authority_policy().validate(),
-            Self::Protected(request) => request.validate(),
-        }
-    }
-
+impl VerificationPlan<'_> {
     fn requests_temporary_namespace(self) -> bool {
-        let authority = match self {
-            Self::Combined(policy) => Some(&policy.authority),
-            Self::Authority(policy) => Some(policy),
-            Self::Migrations(_) | Self::SqlxMigrations(_) => None,
-            Self::ExactRole(role) => Some(role.authority_policy()),
-            Self::Protected(request) => request.exact_role.map(CompiledExactRole::authority_policy),
-        };
-        authority.is_some_and(AuthorityPolicy::requests_temporary_namespace)
+        self.authority_policy()
+            .is_some_and(AuthorityPolicy::requests_temporary_namespace)
             || self
-                .migration()
+                .migration_policy()
                 .is_some_and(|policy| policy::coverage::temporary_namespace(policy.ledger.schema()))
             || self.sqlx_migration().is_some_and(|manifest| {
                 policy::coverage::temporary_namespace(manifest.ledger().schema())
@@ -42,50 +15,12 @@ impl<'a> Inspection<'a> {
                 .schema()
                 .is_some_and(SchemaInspectionPolicy::requests_temporary_namespace)
     }
-
-    fn migration(self) -> Option<&'a MigrationPolicy> {
-        match self {
-            Self::Combined(policy) => Some(&policy.migration),
-            Self::Migrations(policy) => Some(policy),
-            _ => None,
-        }
-    }
-
-    fn sqlx_migration(self) -> Option<&'a SqlxMigrationManifest> {
-        match self {
-            Self::SqlxMigrations(manifest) => Some(manifest),
-            Self::Protected(request) => request.sqlx_migrations,
-            _ => None,
-        }
-    }
-
-    fn schema(self) -> Option<&'a SchemaInspectionPolicy> {
-        match self {
-            Self::Protected(request) => request.schema,
-            _ => None,
-        }
-    }
-
-    fn exact_role(self) -> Option<&'a CompiledExactRole> {
-        match self {
-            Self::ExactRole(role) => Some(role),
-            Self::Protected(request) => request.exact_role,
-            _ => None,
-        }
-    }
-
-    fn is_protected(self) -> bool {
-        matches!(
-            self,
-            Self::SqlxMigrations(_) | Self::ExactRole(_) | Self::Protected(_)
-        )
-    }
 }
 
 pub(super) fn execute<'a>(
     pool: &'a PgPool,
     context: &'a OperationContext,
-    inspection: Inspection<'a>,
+    plan: VerificationPlan<'a>,
 ) -> std::pin::Pin<
     Box<
         dyn std::future::Future<
@@ -97,9 +32,6 @@ pub(super) fn execute<'a>(
     Box::pin(async move {
         let outcome = context
             .run("postgres.verification", |scope| async move {
-                inspection.validate().map_err(|error| {
-                    OperationError::Failed(VerificationError::InvalidPolicy(error))
-                })?;
                 let mut lease = crate::PgLease::acquire(pool, &scope)
                     .await
                     .map_err(|error| match error {
@@ -108,7 +40,7 @@ pub(super) fn execute<'a>(
                         }
                         OperationError::Interrupted(reason) => OperationError::Interrupted(reason),
                     })?;
-                let report = inspect_checkout(lease.connection(), inspection)
+                let report = inspect_checkout(lease.connection(), plan)
                     .await
                     .map_err(OperationError::Failed)?;
                 Ok((report, lease))
@@ -127,7 +59,7 @@ pub(super) fn execute<'a>(
 
 async fn inspect_checkout(
     connection: &mut PgConnection,
-    inspection: Inspection<'_>,
+    plan: VerificationPlan<'_>,
 ) -> Result<VerificationReport, VerificationError> {
     if connection.is_in_transaction() {
         return Err(VerificationError::ConnectionState);
@@ -140,7 +72,7 @@ async fn inspect_checkout(
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .map_err(|error| VerificationError::Native(error.into()))?;
-    let inspection = inspect_transaction(&mut transaction, inspection).await;
+    let inspection = inspect_transaction(&mut transaction, plan).await;
     let rollback = transaction.rollback().await;
     match (inspection, rollback) {
         (Ok(report), Ok(())) => Ok(report),
@@ -158,13 +90,13 @@ async fn inspect_checkout(
 
 async fn inspect_transaction(
     transaction: &mut PgTransaction<'_>,
-    inspection: Inspection<'_>,
+    plan: VerificationPlan<'_>,
 ) -> Result<VerificationReport, VerificationError> {
     sqlx::query("SET LOCAL search_path = pg_catalog, pg_temp")
         .execute(&mut **transaction)
         .await
         .map_err(|error| VerificationError::Native(error.into()))?;
-    if inspection.requests_temporary_namespace() {
+    if plan.requests_temporary_namespace() {
         let (session_user, current_user) = authority::inspect_identities(transaction).await?;
         return Ok(VerificationReport::incomplete(
             vec![UnsupportedSurface::TemporaryNamespaces],
@@ -172,7 +104,7 @@ async fn inspect_transaction(
             current_user,
         ));
     }
-    let legacy_ledger = if let Some(policy) = inspection.migration() {
+    let legacy_ledger = if let Some(policy) = plan.migration_policy() {
         Some((
             policy,
             migration::lock_before_snapshot(transaction, &policy.ledger).await?,
@@ -180,7 +112,7 @@ async fn inspect_transaction(
     } else {
         None
     };
-    let sqlx_ledger = if let Some(manifest) = inspection.sqlx_migration() {
+    let sqlx_ledger = if let Some(manifest) = plan.sqlx_migration() {
         let lock = migration::lock_before_snapshot(transaction, manifest.ledger()).await?;
         Some((manifest, lock))
     } else {
@@ -217,20 +149,7 @@ async fn inspect_transaction(
         .execute(&mut **transaction)
         .await
         .map_err(|error| VerificationError::Native(error.into()))?;
-    match inspection {
-        Inspection::Combined(policy) => {
-            authority::inspect(transaction, &policy.authority, legacy_ledger).await
-        }
-        Inspection::Migrations(policy) => {
-            let (_, lock) = legacy_ledger.expect("migration inspection acquired its ledger lock");
-            authority::inspect_migrations(transaction, policy, lock).await
-        }
-        Inspection::Authority(policy) => authority::inspect(transaction, policy, None).await,
-        protected if protected.is_protected() => {
-            inspect_protected(transaction, protected, sqlx_ledger).await
-        }
-        _ => unreachable!("all verification inspection variants are dispatched"),
-    }
+    inspect_plan(transaction, plan, legacy_ledger, sqlx_ledger).await
 }
 
 fn has_unprotected_ledger(
@@ -255,20 +174,27 @@ async fn has_inherited_ledger(
     }
 }
 
-async fn inspect_protected(
+async fn inspect_plan(
     transaction: &mut PgTransaction<'_>,
-    inspection: Inspection<'_>,
+    plan: VerificationPlan<'_>,
+    legacy_ledger: Option<(&MigrationPolicy, migration::LedgerLock)>,
     sqlx_ledger: Option<(&SqlxMigrationManifest, migration::LedgerLock)>,
 ) -> Result<VerificationReport, VerificationError> {
-    let exact_role = inspection.exact_role();
+    let exact_role = plan.selected_exact_role();
     let mut evaluation = authority::Evaluation::new();
-    let (mut report, required): (VerificationReport, &[RequiredSurface]) = if let Some(role) =
-        exact_role
+    let authority_policy = plan.authority_policy();
+    let (mut report, required): (VerificationReport, &[RequiredSurface]) = if let Some(policy) =
+        authority_policy
     {
-        let policy = role.authority_policy();
         (
-            authority::inspect_with_evaluation(transaction, policy, None, &mut evaluation).await?,
+            authority::inspect_with_evaluation(transaction, policy, legacy_ledger, &mut evaluation)
+                .await?,
             policy.required_surfaces.as_slice(),
+        )
+    } else if let Some((policy, lock)) = legacy_ledger {
+        (
+            authority::inspect_migrations(transaction, policy, lock).await?,
+            &[],
         )
     } else {
         let (session_user, current_user) = authority::inspect_identities(transaction).await?;
@@ -288,7 +214,7 @@ async fn inspect_protected(
     if let Some((manifest, lock)) = sqlx_ledger {
         fragments.push(sqlx_migration::inspect(transaction, manifest, lock).await?);
     }
-    if let Some(policy) = inspection.schema() {
+    if let Some(policy) = plan.schema() {
         fragments.push(schema_inspection::inspect(transaction, policy).await?);
     }
     if exact_role.is_some_and(CompiledExactRole::denies_current_database_ownership) {
@@ -303,10 +229,6 @@ async fn inspect_protected(
             .checkpoint_many(evaluated_items, &report.findings)
             .await?;
     }
-    report.supported.sort_by_key(|surface| *surface as u8);
-    report.supported.dedup();
-    report.unsupported.sort_by_key(|surface| *surface as u8);
-    report.unsupported.dedup();
     Ok(VerificationReport::new(
         report.findings,
         report.supported,

@@ -1,8 +1,8 @@
 use super::*;
 use crate::verification::authority::{AclEntry, Membership, TypeObject, evaluate_snapshot};
 use crate::verification::{
-    AllowedPrivilege, AuthorityPolicy, DiscoveryScope, FindingKind, ObjectPrivilege, QualifiedName,
-    RelationPolicy,
+    AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, DiscoveryScope, FindingKind,
+    ObjectPrivilege, QualifiedName, RelationPolicy,
 };
 use batter::operation::{Interruption, OperationContext, OperationError};
 use std::future::Future;
@@ -133,7 +133,7 @@ fn near_capacity_parameter_inventory_indexes_missing_checks_linearly() {
     const POLICY_PARAMETER_COUNT: usize = 9_998;
     let mut snapshot = crate::verification::authority::required::tests::snapshot();
     snapshot.relations.clear();
-    let mut policy = AuthorityPolicy::default();
+    let mut policy = AuthorityPolicyBuilder::default();
     let mut captured_parameters = Vec::with_capacity(POLICY_PARAMETER_COUNT - 1);
     for ordinal in 0..POLICY_PARAMETER_COUNT {
         let name = if ordinal == 1 {
@@ -176,7 +176,7 @@ fn near_capacity_parameter_inventory_indexes_missing_checks_linearly() {
         object: PublicObject::Parameter(policy.parameters[1].parameter.clone()),
         privilege: ObjectPrivilege::Set,
     });
-    policy.validate().unwrap();
+    let policy = policy.build().unwrap();
 
     let captured_count = snapshot.parameters.len();
     let report = run(evaluate_snapshot(snapshot, &policy, Vec::new(), false)).unwrap();
@@ -425,18 +425,18 @@ async fn excessive_real_evaluation_returns_an_error_instead_of_a_partial_report(
 
 #[test]
 fn policy_limits_bound_nested_input_and_repeated_default_expansion() {
-    let mut policy = AuthorityPolicy::default();
-    policy.defaults.types.privileges =
+    let mut repeated_defaults = AuthorityPolicyBuilder::default();
+    repeated_defaults.defaults.types.privileges =
         vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false); 33];
     assert!(matches!(
-        policy.validate(),
+        repeated_defaults.build(),
         Err(crate::verification::PolicyError::AuthorityCapacity)
     ));
-    policy.defaults.types.privileges.clear();
-    policy.roles.allowed_admin_roles =
+    let mut repeated_roles = AuthorityPolicyBuilder::default();
+    repeated_roles.roles.allowed_admin_roles =
         vec![crate::verification::Identifier::new("role").unwrap(); 10_001];
     assert!(matches!(
-        policy.validate(),
+        repeated_roles.build(),
         Err(crate::verification::PolicyError::AuthorityCapacity)
     ));
 }

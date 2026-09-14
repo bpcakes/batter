@@ -3041,6 +3041,23 @@ from SQLx's public API. No dependency changed.
 
 ## Protected PostgreSQL catalog safeguards, 2026-09-14
 
+PostgreSQL 18's [schema contract](https://www.postgresql.org/docs/18/ddl-schemas.html)
+states that tables, sequences, indexes, views, materialized views, and foreign
+tables share one namespace within a schema. The
+[`pg_class` catalog](https://www.postgresql.org/docs/18/catalog-pg-class.html)
+stores those relation-like objects under one schema/name identity and separates
+ordinary tables (`r`), partitioned tables (`p`), views (`v`), materialized views
+(`m`), foreign tables (`f`), and sequences (`S`) with `relkind`. Batter therefore
+rejects one qualified policy identity that requires both relation and sequence
+semantics, including a migration ledger combined with a sequence declaration,
+before execution. This is a local representability rule; it does not claim that
+an independently changed database still matches a compiled policy. A captured
+opposite kind is therefore database drift: the declared kind remains a
+missing-object or missing-privilege finding, and discovery evaluates the catalog's one actual object
+with defaults for that actual kind. Only a structurally impossible captured
+snapshot containing both kinds for the same identity is a catalog-expansion
+failure.
+
 The selected SQLx 0.9.0 source in the locked Cargo registry creates
 `_sqlx_migrations` with `version bigint` as its sole primary key plus non-null
 `description text`, `installed_on timestamptz`, `success boolean`, `checksum
@@ -3050,7 +3067,11 @@ SQL bodies, or run `Migrator`.
 
 PostgreSQL 18's [`pg_proc`](https://www.postgresql.org/docs/18/catalog-pg-proc.html)
 stores per-routine settings in `proconfig` and marks SECURITY DEFINER routines
-with `prosecdef`. The [CREATE FUNCTION security guidance](https://www.postgresql.org/docs/18/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY)
+with `prosecdef`; its `proargtypes` entries reference `pg_type` OIDs and define
+the input call signature. Catalog-to-policy reconstruction therefore preserves
+an exact identifier or routine-type `PolicyError` as the source of a redacted
+catalog-identity failure rather than discarding the structural cause. The
+[CREATE FUNCTION security guidance](https://www.postgresql.org/docs/18/sql-createfunction.html#SQL-CREATEFUNCTION-SECURITY)
 recommends excluding writable schemas from a definer's search path and placing
 `pg_temp` last. Batter verifies the application-selected exact stored string for
 every definer in explicit schemas; it does not infer body safety from that fact.

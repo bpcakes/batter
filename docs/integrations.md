@@ -225,9 +225,10 @@ termination. See the [canonical adapter example](../crates/batter-sqlx/README.md
 
 Use `ExactRoleManifest` when one grouped, application-owned role declaration
 should feed both startup verification and an operator-visible grant plan. Compile
-once, pass the compiled value to `verify_exact_role`, and render
-`compiled.grant_plan()` only at an explicit operator boundary. The lower-level
-`compiled.authority_policy()` accessor omits protected safeguards. Required
+once, pass the compiled value to `verify_exact_role` or
+`VerificationPlan::exact_role`, and render `compiled.grant_plan()` only at an
+explicit operator boundary. Its underlying authority policy is intentionally
+private so protected safeguards cannot be dropped. Required
 and provisioned privileges enter both outputs; allowed-only ceilings, ownership,
 grant options, discovery defaults and PUBLIC policy do not become grants. The
 renderer performs no I/O and deliberately omits role creation, revocation,
@@ -238,8 +239,19 @@ PUBLIC-schema policy.
 Use `SqlxMigrationManifest` for an exact or installed-subset SQLx 0.9 ledger and
 `SchemaInspectionPolicy` for the exact stored `search_path` on every definer in
 explicit existing schemas. Unrelated stored settings are accepted only within
-the bounded captured configuration inventory. `VerificationRequest` combines either with a compiled role in
-one protected transaction, or runs schema-only under setup credentials. Opt into
+the bounded captured configuration inventory. A non-empty `VerificationPlan`
+has three independently optional axes: generic authority or a compiled exact role, generic
+or SQLx migration inspection, and optional schema inspection. Any supported
+combination runs in one protected transaction; schema inspection may also be the
+required first component under setup credentials. A second component on the
+same axis is rejected during plan composition. A migration ledger is a relation;
+composition also rejects authority that declares that exact schema-qualified
+identity as a sequence, regardless of which axis was selected first. Mutable generic authority
+configuration remains an `AuthorityPolicyBuilder`; execution accepts only its
+successfully built immutable policy. If the captured database has the opposite
+relation kind, retain the ordinary missing-object or missing-privilege finding; discovery still evaluates
+the actual object under defaults for its observed kind. Do not reinterpret this
+drift as a construction error or combine both kinds in downstream policy data. Opt into
 the compiled role's current-database ownership denial when that profile must own
 no local object. The generic coverage intentionally does not choose migrations,
 provision roles, inspect durable application protocols, interpret SECURITY
@@ -255,7 +267,7 @@ superuser opt-in disables this narrower ownership conclusion accordingly.
 SECURITY DEFINER bodies, extension
 semantics and role defaults are explicit unsupported report surfaces; selected
 ACLs on extension-owned objects are still checked. Add the corresponding
-`AuthorityPolicy::required_surfaces` value when an application requires one of
+`AuthorityPolicyBuilder::required_surfaces` value when an application requires one of
 those unsupported surfaces; that requested boundary produces `Incomplete`
 instead of a passing result. Declared relation policies can explicitly allow
 their composite row type's default PUBLIC `USAGE` with

@@ -8,6 +8,30 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Hard-cut SQLx verification to compiled inputs. `AuthorityPolicyBuilder::build`
+  now returns the only executable generic authority value, migration construction
+  and mutation are fallible, and non-empty `VerificationPlan` constructors plus
+  fallible cross-axis composition feed `verify`. This removes
+  `VerificationPolicy`, `VerificationRequest`, `verify_request`, mutable executable
+  policy fields, `CompiledExactRole::authority_policy`,
+  `VerificationError::InvalidPolicy`, and
+  `PolicyError::EmptyVerificationRequest`. Relation/sequence namespace conflicts,
+  duplicate/contradictory declarations, capacities, and migration-ledger kind
+  conflicts now fail during pure construction. Catalog-identity failures retain
+  their typed `PolicyError` cause, and report coverage has canonical ordering.
+  `MigrationPolicy` and `MigrationExpectation` fields are now private; use their
+  fallible constructors, modifiers, and read-only accessors instead of struct
+  literals or field access. Exhaustive matches must handle the new
+  `PolicyError::{ConflictingRelationKind, InvalidObjectPrivilege,
+  ContradictoryAuthorityPrivilege}` and
+  `VerificationError::{CatalogIdentity, CatalogPolicyExpansion}` variants.
+  Object-kind-invalid privileges now fail as `InvalidObjectPrivilege`, including
+  invalid required privileges that previously surfaced as
+  `ContradictoryRequiredPrivilege`; duplicate legacy PUBLIC privilege atoms with
+  conflicting grant-option values now fail instead of being merged. Internal
+  catalog-policy expansion now checks identities and appends normalized defaults
+  during cooperative traversal instead of synchronously sorting and re-indexing
+  the full generated policy in one executor poll.
 - Replace the reference package's erased `ConfigMode`/`RootSettings` boundary
   with disjoint `ServingSettings` and `MaintenanceSettings`. Serving now follows
   the inert `runtime::prepare` to consuming `runtime::run` handoff, and the

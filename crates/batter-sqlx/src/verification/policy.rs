@@ -1,7 +1,9 @@
+mod compiler;
 pub(crate) mod coverage;
 mod discovery;
 mod limits;
 mod public;
+pub(crate) use compiler::valid_privilege;
 pub use discovery::{
     DiscoveryDefaults, DiscoveryScope, ObjectDefaults, PublicAllowance, RequiredPrivilege,
 };
@@ -12,7 +14,7 @@ pub(crate) const MAX_MIGRATION_CHECKSUM_BYTES: usize = 1_024;
 pub(crate) const MAX_MIGRATION_LEDGER_ROWS: usize = 10_000;
 
 /// A validated PostgreSQL identifier.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Identifier(String);
 
 impl Identifier {
@@ -49,7 +51,7 @@ impl Identifier {
 /// assert_eq!(name.as_str().len(), 71);
 /// # Ok::<(), batter_sqlx::verification::PolicyError>(())
 /// ```
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ParameterName(String);
 
 impl ParameterName {
@@ -77,7 +79,7 @@ impl ParameterName {
 }
 
 /// A validated schema-qualified PostgreSQL name.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct QualifiedName {
     schema: Identifier,
     name: Identifier,
@@ -118,7 +120,7 @@ impl QualifiedName {
 /// arbitrary SQL type expressions. PostgreSQL stores every dimensionality of a
 /// true array under the same routine argument type OID, so this representation
 /// distinguishes only scalar from true array identity.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RoutineType {
     name: QualifiedName,
     array: bool,
@@ -172,7 +174,7 @@ impl RoutineType {
 /// signature string. This prevents named arguments, aliases, typmods and
 /// case-folding from silently selecting a different overload. The rendered
 /// string returned by [`Self::as_str`] is for diagnostics only.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RoutineSignature {
     schema: Identifier,
     name: Identifier,
@@ -252,9 +254,9 @@ pub enum AdditionalMigrations {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MigrationExpectation {
     /// Migration version recorded by the ledger.
-    pub version: i64,
+    pub(crate) version: i64,
     /// Expected migration checksum.
-    pub checksum: Vec<u8>,
+    pub(crate) checksum: Vec<u8>,
 }
 
 impl MigrationExpectation {
@@ -265,35 +267,88 @@ impl MigrationExpectation {
             checksum: checksum.into(),
         }
     }
+
+    /// Return the migration version.
+    pub const fn version(&self) -> i64 {
+        self.version
+    }
+
+    /// Return the expected checksum bytes.
+    pub fn checksum(&self) -> &[u8] {
+        &self.checksum
+    }
 }
 
 /// Generic SQLx-compatible migration policy.
 ///
-/// Verification accepts at most 10,000 ledger rows and expected checksums of
-/// at most 1,024 bytes. These fixed bounds keep the startup check from
-/// materializing an attacker-sized ledger or checksum value.
+/// Verification accepts at most 10,000 expected rows across the required and
+/// allowlisted sets, and expected checksums of at most 1,024 bytes. These fixed
+/// bounds keep the startup check from materializing an attacker-sized ledger or
+/// checksum value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MigrationPolicy {
     /// Qualified migration ledger relation.
-    pub ledger: QualifiedName,
+    pub(crate) ledger: QualifiedName,
     /// Rows that must exist, be successful and match their checksums.
-    pub required: Vec<MigrationExpectation>,
+    pub(crate) required: Vec<MigrationExpectation>,
     /// Compatibility policy for rows after the required set.
-    pub additional: AdditionalMigrations,
+    pub(crate) additional: AdditionalMigrations,
 }
 
 impl MigrationPolicy {
-    pub fn new(ledger: QualifiedName, required: Vec<MigrationExpectation>) -> Self {
-        Self {
+    /// Construct a validated generic migration-ledger policy.
+    pub fn new(
+        ledger: QualifiedName,
+        required: impl IntoIterator<Item = MigrationExpectation>,
+    ) -> Result<Self, PolicyError> {
+        let mut rows = required.into_iter();
+        let mut required = Vec::new();
+        for row in rows.by_ref().take(MAX_MIGRATION_LEDGER_ROWS + 1) {
+            if required.len() == MAX_MIGRATION_LEDGER_ROWS {
+                return Err(PolicyError::AuthorityCapacity);
+            }
+            required.push(row);
+        }
+        let policy = Self {
             ledger,
             required,
             additional: AdditionalMigrations::Reject,
-        }
+        };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Select how successful rows after the required boundary are handled.
+    ///
+    /// Required and allowlisted rows share the policy's 10,000-row capacity;
+    /// duplicate versions across both sets and oversized checksums are rejected.
+    pub fn with_additional(
+        mut self,
+        additional: AdditionalMigrations,
+    ) -> Result<Self, PolicyError> {
+        self.additional = additional;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Return the qualified migration ledger relation.
+    pub fn ledger(&self) -> &QualifiedName {
+        &self.ledger
+    }
+
+    /// Return the required migration rows.
+    pub fn required(&self) -> &[MigrationExpectation] {
+        &self.required
+    }
+
+    /// Return the additional-migration policy.
+    pub const fn additional(&self) -> &AdditionalMigrations {
+        &self.additional
     }
 }
 
 /// Privileges used by the generic object policy.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ObjectPrivilege {
     Select,
     Insert,
@@ -313,7 +368,7 @@ pub enum ObjectPrivilege {
 }
 
 /// One allowed privilege, optionally including the ability to grant it onward.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AllowedPrivilege {
     pub privilege: ObjectPrivilege,
     pub grant_option: bool,
@@ -432,7 +487,7 @@ pub struct RolePolicy {
 
 /// A PUBLIC grant target. PUBLIC is checked independently from each reachable
 /// login role; a role's inherited privilege does not silently authorize it.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PublicObject {
     /// A table, view, materialized view, partitioned table or foreign table.
     Relation(QualifiedName),
@@ -452,8 +507,28 @@ pub enum PublicObject {
     Database,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum PgClassKind {
+    Relation,
+    Sequence,
+}
+
+impl PublicObject {
+    pub(crate) fn pg_class_identity(&self) -> Option<(&QualifiedName, PgClassKind)> {
+        match self {
+            Self::Relation(name) | Self::Column(name, _) => Some((name, PgClassKind::Relation)),
+            Self::Sequence(name) => Some((name, PgClassKind::Sequence)),
+            Self::Schema(_)
+            | Self::Routine(_)
+            | Self::Type(_)
+            | Self::Parameter(_)
+            | Self::Database => None,
+        }
+    }
+}
+
 /// One explicitly permitted PUBLIC grant.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PublicGrant {
     /// The object whose PUBLIC entry is allowed.
     pub object: PublicObject,
@@ -461,19 +536,29 @@ pub struct PublicGrant {
     pub privilege: AllowedPrivilege,
 }
 
-/// Complete generic authority policy.
+/// Mutable input for compiling a generic authority policy.
 ///
 /// Required privileges describe current-role needs. Allowances constrain the
 /// authenticated login's potential authority, including reachable SET/ADMIN
-/// roles. Discovery defaults apply only inside the explicit schema scope.
+/// roles. Discovery defaults apply only inside the explicit schema scope. This
+/// builder is deliberately not accepted by verification execution; call
+/// [`Self::build`] to obtain an immutable [`AuthorityPolicy`].
+///
+/// Set-like inputs (`DiscoveryScope::Schemas`, allowed role names, and required
+/// unsupported surfaces) are sorted and deduplicated. Repeating an identical
+/// privilege atom in one allowance or legacy [`PublicGrant`] is idempotent;
+/// disagreeing grant-option atoms are rejected. Keyed policy declarations,
+/// exact [`PublicAllowance`] entries, and required object/privilege pairs must
+/// be unique and reject duplicates. A schema-qualified identity also cannot be
+/// declared as both a relation (including a column parent) and a sequence.
 ///
 /// ```
-/// use batter_sqlx::verification::{AuthorityPolicy, DiscoveryScope,
+/// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope,
 ///     AllowedPrivilege, ObjectPrivilege, PublicObject, QualifiedName,
 ///     RequiredPrivilege};
-/// let mut policy = AuthorityPolicy {
+/// let mut policy = AuthorityPolicyBuilder {
 ///     discovery: DiscoveryScope::UserSchemas,
-///     ..AuthorityPolicy::default()
+///     ..AuthorityPolicyBuilder::default()
 /// };
 /// policy.defaults.relations.privileges.push(
 ///     AllowedPrivilege::new(ObjectPrivilege::Select, false));
@@ -481,10 +566,12 @@ pub struct PublicGrant {
 ///     object: PublicObject::Relation(QualifiedName::new("service", "records")?),
 ///     privilege: ObjectPrivilege::Select,
 /// });
+/// let policy = policy.build()?;
+/// assert_eq!(policy.discovery(), &DiscoveryScope::UserSchemas);
 /// # Ok::<(), batter_sqlx::verification::PolicyError>(())
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AuthorityPolicy {
+pub struct AuthorityPolicyBuilder {
     /// Privileges required without SET ROLE or administrative changes.
     pub required_privileges: Vec<RequiredPrivilege>,
     /// Schema discovery boundary, in addition to explicitly named objects.
@@ -508,8 +595,40 @@ pub struct AuthorityPolicy {
     pub required_surfaces: Vec<RequiredSurface>,
 }
 
+/// An immutable, structurally valid PostgreSQL authority policy.
+///
+/// Values are produced by [`AuthorityPolicyBuilder::build`] or by compiling an
+/// [`crate::verification::ExactRoleManifest`]. Verification accepts this type,
+/// never the mutable builder, so policy errors are resolved before operation
+/// polling and connection acquisition.
+///
+/// ```compile_fail
+/// use batter_sqlx::verification::AuthorityPolicy;
+///
+/// // Executable policy fields are private; mutate a builder and rebuild.
+/// let mut policy = AuthorityPolicy::default();
+/// policy.relations.clear();
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorityPolicy {
+    pub(crate) required_privileges: Vec<RequiredPrivilege>,
+    pub(crate) discovery: DiscoveryScope,
+    pub(crate) defaults: DiscoveryDefaults,
+    pub(crate) roles: RolePolicy,
+    pub(crate) relations: Vec<RelationPolicy>,
+    pub(crate) sequences: Vec<SequencePolicy>,
+    pub(crate) schemas: Vec<SchemaPolicy>,
+    pub(crate) routines: Vec<RoutinePolicy>,
+    pub(crate) types: Vec<TypePolicy>,
+    pub(crate) parameters: Vec<ParameterPolicy>,
+    pub(crate) database: DatabasePolicy,
+    pub(crate) public_grants: Vec<PublicGrant>,
+    pub(crate) public_overrides: Vec<PublicAllowance>,
+    pub(crate) required_surfaces: Vec<RequiredSurface>,
+}
+
 /// An unsupported surface that must be inspected for a complete verdict.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RequiredSurface {
     /// SECURITY DEFINER body, search-path and trigger-context semantics.
     SecurityDefinerBody,
@@ -535,28 +654,6 @@ pub enum RequiredSurface {
     Languages,
 }
 
-/// All inputs for one verification snapshot.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerificationPolicy {
-    pub migration: MigrationPolicy,
-    pub authority: AuthorityPolicy,
-}
-
-impl VerificationPolicy {
-    /// Construct the migration and authority policy for one snapshot.
-    pub fn new(migration: MigrationPolicy, authority: AuthorityPolicy) -> Self {
-        Self {
-            migration,
-            authority,
-        }
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), PolicyError> {
-        self.migration.validate()?;
-        self.authority.validate()
-    }
-}
-
 /// Invalid policy input, before any network work begins.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyError {
@@ -574,11 +671,16 @@ pub enum PolicyError {
     DuplicateMigrationVersion,
     MigrationChecksumTooLarge,
     DuplicateAuthorityObject,
+    /// One schema-qualified `pg_class` identity was declared as both a
+    /// relation and a sequence.
+    ConflictingRelationKind,
+    /// A privilege cannot apply to the selected PostgreSQL object kind.
+    InvalidObjectPrivilege,
+    /// Repeated privilege declarations disagree about grant-option authority.
+    ContradictoryAuthorityPrivilege,
     /// A protected schema request did not provide one bounded stored
     /// `search_path=...` value.
     InvalidSearchPathSetting,
-    /// A protected verification request contained no inspection component.
-    EmptyVerificationRequest,
     /// A schema-configuration request selected no schema.
     EmptySchemaInspection,
 }
@@ -600,8 +702,16 @@ impl fmt::Display for PolicyError {
                 "migration checksum exceeds the verification byte limit"
             }
             Self::DuplicateAuthorityObject => "duplicate authority object in verification policy",
+            Self::ConflictingRelationKind => {
+                "PostgreSQL relation identity has conflicting object kinds"
+            }
+            Self::InvalidObjectPrivilege => {
+                "privilege is invalid for the PostgreSQL authority object"
+            }
+            Self::ContradictoryAuthorityPrivilege => {
+                "authority privilege declarations contradict one another"
+            }
             Self::InvalidSearchPathSetting => "invalid exact SECURITY DEFINER search_path setting",
-            Self::EmptyVerificationRequest => "protected verification request is empty",
             Self::EmptySchemaInspection => "schema verification scope is empty",
         })
     }
@@ -655,6 +765,9 @@ impl MigrationPolicy {
             AdditionalMigrations::AllowListed(rows) => rows.as_slice(),
             AdditionalMigrations::Reject | AdditionalMigrations::AllowSuccessful => &[],
         };
+        if self.required.len().saturating_add(listed.len()) > MAX_MIGRATION_LEDGER_ROWS {
+            return Err(PolicyError::AuthorityCapacity);
+        }
         for migration in self.required.iter().chain(listed.iter()) {
             if migration.checksum.len() > MAX_MIGRATION_CHECKSUM_BYTES {
                 return Err(PolicyError::MigrationChecksumTooLarge);
@@ -665,24 +778,5 @@ impl MigrationPolicy {
         }
 
         Ok(())
-    }
-}
-
-impl AuthorityPolicy {
-    pub(crate) fn validate(&self) -> Result<(), PolicyError> {
-        self.validate_with_work(discovery::UncountedWork)
-    }
-
-    fn validate_with_work<W: discovery::ValidationWork>(&self, work: W) -> Result<(), PolicyError> {
-        limits::validate(self)?;
-        discovery::validate_authority(self, work)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn validate_counted(
-        &self,
-        operations: &std::sync::atomic::AtomicUsize,
-    ) -> Result<(), PolicyError> {
-        self.validate_with_work(discovery::CountingWork::new(operations))
     }
 }

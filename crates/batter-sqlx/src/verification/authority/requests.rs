@@ -282,7 +282,7 @@ pub(super) async fn inspect_schemas(
         let configured = schemas.get(schema.name.as_str()).copied();
         let public_object = PublicObject::Schema(
             super::super::policy::Identifier::new(schema.name.clone())
-                .map_err(VerificationError::InvalidPolicy)?,
+                .map_err(VerificationError::CatalogIdentity)?,
         );
         let public_selected = public.contains(&public_object);
         if configured.is_none() && !public_selected {
@@ -328,7 +328,7 @@ pub(super) async fn inspect_relations(
     for relation in &snapshot.relations {
         evaluation.checkpoint(findings).await?;
         let qualified = QualifiedName::new(relation.schema.clone(), relation.name.clone())
-            .map_err(VerificationError::InvalidPolicy)?;
+            .map_err(VerificationError::CatalogIdentity)?;
         let key = (relation.schema.as_str(), relation.name.as_str());
         let relation_policy = relation_policies.get(&key).copied();
         let sequence_policy = sequence_policies.get(&key).copied();
@@ -423,7 +423,7 @@ async fn inspect_relation_columns(
         let column_object = PublicObject::Column(
             qualified.clone(),
             super::super::policy::Identifier::new(column.name.clone())
-                .map_err(VerificationError::InvalidPolicy)?,
+                .map_err(VerificationError::CatalogIdentity)?,
         );
         let column_name = public_object_name(&column_object);
         let column_policy = column_policies.get(column.name.as_str()).copied();
@@ -496,7 +496,7 @@ pub(super) async fn inspect_types(
             .copied();
         let object = PublicObject::Type(
             QualifiedName::new(type_object.schema.clone(), type_object.name.clone())
-                .map_err(VerificationError::InvalidPolicy)?,
+                .map_err(VerificationError::CatalogIdentity)?,
         );
         if relation_policy.is_some_and(|entry| entry.allow_row_type_public_usage)
             && !overrides.contains(&object)
@@ -514,7 +514,7 @@ pub(super) async fn inspect_types(
             .copied();
         let public_object = PublicObject::Type(
             QualifiedName::new(type_object.schema.clone(), type_object.name.clone())
-                .map_err(VerificationError::InvalidPolicy)?,
+                .map_err(VerificationError::CatalogIdentity)?,
         );
         let public_selected = public.contains(&public_object);
         if configured.is_none() && relation_policy.is_none() && !public_selected {
@@ -560,7 +560,7 @@ pub(super) async fn inspect_routines(
     for routine in &snapshot.routines {
         evaluation.checkpoint(findings).await?;
         let signature = routine_signature_from_catalog(routine, &snapshot.type_names)
-            .map_err(VerificationError::InvalidPolicy)?;
+            .map_err(VerificationError::CatalogIdentity)?;
         let configured = configured_routines.get(&signature).copied();
         let public_object = PublicObject::Routine(signature);
         let public_selected = public.contains(&public_object);

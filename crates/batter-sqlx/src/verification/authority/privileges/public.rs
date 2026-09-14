@@ -16,6 +16,9 @@ impl PublicPolicy {
         let mut indexed = Self::from_grants(&policy.public_grants);
         for entry in &policy.public_overrides {
             indexed.select(&entry.object);
+            for privilege in &entry.privileges {
+                indexed.add(entry.object.clone(), *privilege);
+            }
         }
         indexed
     }
@@ -103,13 +106,15 @@ impl PublicPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verification::policy::Identifier;
+    use crate::verification::policy::{AuthorityPolicyBuilder, Identifier, PublicAllowance};
 
     #[test]
     fn indexed_public_policy_preserves_parent_column_allowance_and_grant_options() {
         let relation = QualifiedName::new("service", "records").unwrap();
         let column = PublicObject::Column(relation.clone(), Identifier::new("id").unwrap());
-        let policy = AuthorityPolicy {
+        let override_column =
+            PublicObject::Column(relation.clone(), Identifier::new("state").unwrap());
+        let policy = AuthorityPolicyBuilder {
             public_grants: vec![
                 PublicGrant {
                     object: PublicObject::Relation(relation.clone()),
@@ -119,19 +124,24 @@ mod tests {
                     object: column.clone(),
                     privilege: AllowedPrivilege::new(ObjectPrivilege::Update, true),
                 },
-                PublicGrant {
-                    object: column.clone(),
-                    privilege: AllowedPrivilege::new(ObjectPrivilege::Update, false),
-                },
             ],
-            ..AuthorityPolicy::default()
-        };
+            public_overrides: vec![PublicAllowance {
+                object: override_column.clone(),
+                privileges: vec![AllowedPrivilege::new(ObjectPrivilege::References, false)],
+            }],
+            ..AuthorityPolicyBuilder::default()
+        }
+        .build()
+        .unwrap();
         let indexed = PublicPolicy::new(&policy);
         assert!(indexed.selects_relation(&relation));
         assert!(indexed.contains(&column));
+        assert!(indexed.contains(&override_column));
         assert!(indexed.allows(&column, ObjectPrivilege::Select, false));
         assert!(!indexed.allows(&column, ObjectPrivilege::Select, true));
         assert!(indexed.allows(&column, ObjectPrivilege::Update, true));
+        assert!(indexed.allows(&override_column, ObjectPrivilege::References, false));
+        assert!(!indexed.allows(&override_column, ObjectPrivilege::References, true));
         assert!(!indexed.allows(
             &PublicObject::Relation(relation),
             ObjectPrivilege::Update,

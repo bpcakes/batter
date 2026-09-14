@@ -53,10 +53,10 @@ check through an owned lease from the actual serving pool:
 
 ```rust,no_run
 use batter_sqlx::verification::{
-    AllowedPrivilege, AuthorityPolicy, DatabasePolicy, DiscoveryDefaults, DiscoveryScope,
+    AllowedPrivilege, AuthorityPolicyBuilder, DatabasePolicy, DiscoveryDefaults, DiscoveryScope,
     Identifier, MigrationExpectation, RequiredPrivilege,
     MigrationPolicy, ObjectPrivilege, PublicGrant, PublicObject, QualifiedName,
-    RelationPolicy, SchemaPolicy, VerificationPolicy, verify,
+    RelationPolicy, SchemaPolicy, VerificationPlan, verify,
 };
 
 # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext) -> Result<(), Box<dyn std::error::Error>> {
@@ -64,8 +64,8 @@ let ledger = QualifiedName::new("app", "_sqlx_migrations")?;
 let migration = MigrationPolicy::new(
     ledger.clone(),
     vec![MigrationExpectation::new(1, vec![0; 48])],
-);
-let authority = AuthorityPolicy {
+)?;
+let authority = AuthorityPolicyBuilder {
     discovery: DiscoveryScope::Schemas(vec![Identifier::new("app")?]),
     defaults: DiscoveryDefaults {
         allow_row_type_public_usage: true,
@@ -110,17 +110,17 @@ let authority = AuthorityPolicy {
             privilege: AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
         },
     ],
-    ..AuthorityPolicy::default()
-};
-let policy = VerificationPolicy::new(migration, authority);
-let report = verify(pool, context, &policy).await?;
+    ..AuthorityPolicyBuilder::default()
+}.build()?;
+let plan = VerificationPlan::migrations(&migration).with_authority(&authority)?;
+let report = verify(pool, context, plan).await?;
 if !report.is_within_declared_policy() {
     // Inspect structured findings and choose the application's readiness path.
 }
 # Ok(()) }
 ```
 
-`verify(pool, context, policy)` owns acquisition, transaction reset, inspection,
+`verify(pool, context, plan)` owns acquisition, transaction reset, inspection,
 rollback and lease disposition under the supplied `OperationContext`. It clears
 residual raw transaction state only on its newly acquired checkout. Separate
 application transactions are never borrowed. It preserves serving identity and
@@ -148,7 +148,7 @@ authority_policy)` for a serving-role stage. These share the same owned executor
 and report only their inspected surfaces. Authority-only inspection can report a
 missing required ledger SELECT privilege without trying to read that ledger.
 
-`AuthorityPolicy::required_privileges` states what the current role must already
+`AuthorityPolicyBuilder::required_privileges` states what the current role must already
 have through direct, PUBLIC or INHERIT grants. SET/ADMIN potential counts only
 for the excess-authority audit. Schema USAGE and each needed relation, column or
 routine privilege are independent requirements. These are catalog capabilities,
@@ -166,6 +166,23 @@ column deny cannot subtract a permitted whole-table grant. Required-policy
 validation and discovery use this same precedence. Invoker and definer routine defaults are
 separate. Keep application grant manifests as data and add exact exceptions
 there; do not duplicate the generic ACL evaluator downstream.
+
+Builder collections have two deliberate duplicate contracts. Set-like schema,
+role, and required-surface collections, identical privilege atoms, and identical
+legacy `PublicGrant` atoms normalize to one canonical entry. Keyed object
+policies, column policies, exact `PublicAllowance` entries, and required
+object/privilege pairs reject duplicates; repeated privilege atoms that disagree
+about grant option also fail. Tables, views, materialized views, foreign tables,
+and column parents are relation identities, while sequences are sequence
+identities. One schema-qualified name cannot declare both kinds. If the database
+later exposes the opposite kind for a valid declaration, verification retains
+the ordinary missing-object or missing-privilege finding and evaluates the observed object with its own
+discovery defaults. Catalog drift is not reclassified as invalid policy input.
+The private catalog-evaluation policy is assembled during the same cooperative
+catalog traversal: each selected schema, relation, column, type and routine
+identity is checked once before its already-normalized defaults are appended.
+It is not sent back through the external draft compiler for a global sort and
+second structural-index pass.
 
 For the common exact-role case, `ExactRoleManifest` owns that application data
 in grouped Rust declarations and compiles it into the same low-level
@@ -270,6 +287,8 @@ arguments and allowances, and at most 32 entries per privilege list
 and yields every 64 object/role visits. More than one million visits, 100,000
 findings, or 16 MiB of finding payload (struct sizes and object/subject string
 bytes) returns `EvaluationCapacity`; it never returns a partial policy pass.
+Catalog-default expansion participates in those checkpoints and has no
+post-traversal generated-policy canonicalization phase.
 Ordinary object ACL evaluation considers actual reachable grantees, the owner
 and active superusers instead of visiting every reachable role per object.
 Parameter context defaults still require active-role evaluation. These are
@@ -289,8 +308,9 @@ native notice; it does not suppress other warnings or change the subscriber.
 `VerificationReport::supported()` names the ACL and role surfaces evaluated for
 the declared or discovered objects; `unsupported()` names bounded classes that are disclosed
 but not inferred. Add `RequiredSurface` values to
-`AuthorityPolicy::required_surfaces` when an application needs an unsupported
-surface to make the report `Incomplete`. Merely allowing a routine ACL does not
+`AuthorityPolicyBuilder::required_surfaces` when an application needs an unsupported
+surface to make the report `Incomplete`; a compiled policy exposes the selection
+through `AuthorityPolicy::required_surfaces()`. Merely allowing a routine ACL does not
 request a proof of its SECURITY DEFINER body or stored settings. Extension-owned
 objects still have their declared ACLs inspected; extension membership and
 upgrade semantics remain unsupported.
@@ -352,12 +372,19 @@ rather than being interpreted as the implicit current-owner edge.
 It does not inspect other databases or grant application-specific ownership
 exceptions.
 
-`verify_sqlx_migrations`, `verify_exact_role`, and `verify_request` reuse the same
-executor, lease, snapshot, rollback, and retirement contract as the low-level
-entrypoints. `VerificationRequest` may combine ledger, schema, and compiled-role
-components without merging schema-only inspection into serving authority. The
-`CompiledExactRole::authority_policy` escape hatch remains ACL-only and does not
-carry the ownership safeguard.
+`verify_sqlx_migrations`, `verify_exact_role`, and non-empty `VerificationPlan`
+composition reuse the same executor, lease, snapshot, rollback, and retirement
+contract as the focused entrypoints. A plan starts from an authority, migration,
+SQLx manifest, exact role, or schema-inspection constructor and rejects a second
+component of the same semantic kind. `AuthorityPolicyBuilder` is mutable
+configuration input; only a successfully built immutable `AuthorityPolicy` is
+executable. Migration policies and the other plan components likewise validate
+at construction, before an operation future or database lease exists. The
+plan also rejects an authority/migration combination when authority declares the
+ledger's schema-qualified name as a sequence: PostgreSQL requires the ledger to
+be a relation, and those object kinds share one schema namespace. The
+compiled role's internal authority policy is deliberately not exposed, so its
+ownership safeguard cannot be discarded accidentally.
 
 This is additive inspection machinery, not a replacement for application
 policy. Profile-specific objects, migrations, privileges, provisioning, routine

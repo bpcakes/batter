@@ -741,6 +741,36 @@ session authorization cannot conceal recoverable superuser authority. A trusted
 transaction-local search path prevents application-defined overloads from
 redirecting catalog helpers; rollback restores the serving path.
 
+Executable verification input is valid by construction. Mutable generic
+authority configuration exists only as `AuthorityPolicyBuilder`; `build` (or
+`TryFrom`) checks aggregate and per-list capacities, every object/privilege
+pair, duplicate identities, conflicting grant-option declarations, and required
+privilege contradictions before returning an immutable `AuthorityPolicy`.
+Set-like discovery schemas, allowed roles and required unsupported surfaces are
+sorted and deduplicated. Identical privilege atoms within one allowance and
+identical legacy PUBLIC grant atoms normalize to one entry; conflicting grant
+options fail. Keyed object/column declarations, exact PUBLIC allowances and
+required object/privilege pairs reject duplicates. Relation targets (including
+column parents) and sequence targets share a checked physical-identity index, so
+one schema-qualified name cannot compile as both kinds. A later catalog mismatch
+does not invalidate that compiled value: the declared kind produces a
+`MissingObject` or `MissingPrivilege` finding, while a separate internal catalog-evaluation policy
+applies discovery defaults to the one observed kind. The runtime never combines
+the expected and observed kinds into one `AuthorityPolicy`. That internal view
+checks catalog identities and appends normalized defaults during the shared
+checkpointed traversal; it does not synchronously re-run external-draft
+normalization or construct a second whole-policy index after traversal.
+Generic migration policy construction likewise rejects duplicate versions,
+oversized checksums, and oversized combined required/allowlisted sets.
+`VerificationPlan` has no
+empty/default constructor: each constructor selects one validated component,
+and fallible composition rejects a second authority, migration, or schema
+component. Composition also rejects a migration ledger declared as a sequence
+by its authority component, in either construction order. The executor accepts
+only that plan and performs no caller-policy
+validation after polling starts. Raw nested declaration structs remain
+configuration DTOs and are not independently executable.
+
 Combined and migration-only verification take an ACCESS SHARE ledger lock
 including inherited descendants before any snapshot-taking SELECT. Conflicting
 DDL waits; ordinary migration row writes remain possible. The shared executor
@@ -764,10 +794,10 @@ Supported standalone ledgers use ONLY so a later attachment cannot change the
 read relation set. Enabled ledger RLS is a finding, and local
 `row_security = off` prevents silently filtered reads without granting bypass.
 `verify_migrations` covers only the ledger; `verify_authority` omits the ledger
-read and lock. All three entrypoints share the same execution and retirement
+read and lock. The focused helpers and plan-based entrypoint share the same execution and retirement
 rules. They never execute DDL, take a migrator advisory lock or repair ACLs.
 
-The additive protected entrypoints use that same executor. SQLx exact and
+The validated plan components use that same executor. SQLx exact and
 installed-subset manifests require the six SQLx 0.9 columns with `pg_catalog`
 type identities, all NOT NULL, and an exact `version` primary key. Subset means
 set membership and permits absence only when the captured snapshot also sees no
@@ -892,7 +922,11 @@ Cluster-wide role, membership or parameter ACL growth can reject even a small
 policy; the checker never turns a truncated catalog into a passing report.
 
 `VerificationReport` distinguishes policy violations from incomplete coverage
-and typed operation/native failures. Its coverage identifies the actual stage.
+and typed operation/native failures. Its coverage identifies the actual stage;
+supported and unsupported surface slices are unique and use their enums'
+declaration order independently of plan composition. Catalog identity failures
+retain the exact typed `PolicyError` source while their Display/Debug remain
+fixed and redacted.
 Requested unsupported surfaces produce `Incomplete`. Function bodies and trigger
 protocols, extension semantics, other-database ownership, and application durable
 schema rules remain application/native checks. Future sessions,

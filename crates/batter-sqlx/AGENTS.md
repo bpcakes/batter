@@ -10,14 +10,15 @@ transactions remain application-owned. Follow the root Unix-only policy.
 - `src/lib.rs`: default-retiring lease, bounded probe, pool cleanup registration.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and
-  serving-authority inspection; canonical policies and limits are in the README.
+  serving-authority inspection; validated policy construction and canonical
+  limits are in the README.
 - `tests/postgres_live.rs`: explicitly selected external-database contracts.
 
 ## Edit here for X
 
 Keep connection ownership mechanics here and migration, replay, SQL contents,
 transaction completion and provisioning policy in applications. Generic read-only
-verification owns its lease, snapshot and disposition. Protected requests can
+verification owns its lease, snapshot and disposition. Non-empty protected plans can
 check exact SQLx 0.9 ledger shape/history, scoped definer `search_path`, and
 coarse reachable current-database ownership; migration selection, routine
 protocols and grant-manifest contents remain downstream. The pure
@@ -40,6 +41,15 @@ temporary namespaces are unsupported, not ordinary ACL objects. Required and
 excess checks share captured catalog state: native privilege functions can see
 newer grants through catalog caches. Use them as stable-fixture test references.
 PUBLIC relation/column default precedence belongs to the shared policy index.
+Relation and sequence targets share PostgreSQL's `pg_class` namespace: reject
+cross-kind identities in pure authority compilation and when a migration ledger
+is composed with authority, regardless of plan construction order. A valid
+declaration that meets the opposite catalog kind is database drift: retain its
+ordinary missing-object or missing-privilege finding and apply discovery defaults to the observed kind through
+the separate catalog-evaluation policy; do not merge both kinds into one policy.
+Construct that private evaluation policy incrementally inside the shared
+checkpointed traversal. Do not route catalog-generated defaults back through the
+external draft compiler or add a synchronous whole-policy sort/index phase.
 Ledger inheritance is unsupported; standalone ledger reads use ONLY so planner
 inheritance refresh cannot mix relation membership with older snapshot rows.
 High-level SQLx ledgers additionally require the exact six-column and primary-key

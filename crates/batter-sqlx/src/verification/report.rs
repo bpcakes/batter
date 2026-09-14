@@ -121,7 +121,7 @@ impl Finding {
 /// A PostgreSQL capability whose catalog/ACL semantics are captured by this
 /// generic verifier. Application-specific migration shape and security
 /// policies remain outside this list.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SupportedSurface {
     /// Required privileges evaluated for current-role INHERIT/PUBLIC authority.
     RequiredPrivileges,
@@ -162,7 +162,7 @@ pub enum SupportedSurface {
 }
 
 /// A requested or known boundary that this generic checker does not prove.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UnsupportedSurface {
     /// A migration ledger participates in table inheritance in the captured
     /// snapshot. Combined and migration-only verification return Incomplete.
@@ -230,7 +230,7 @@ pub struct VerificationReport {
 impl VerificationReport {
     pub(crate) fn new(
         findings: Vec<Finding>,
-        supported: Vec<SupportedSurface>,
+        mut supported: Vec<SupportedSurface>,
         mut unsupported: Vec<UnsupportedSurface>,
         session_user: String,
         current_user: String,
@@ -300,6 +300,10 @@ impl VerificationReport {
         } else {
             VerificationStatus::WithinDeclaredPolicy
         };
+        supported.sort_unstable();
+        supported.dedup();
+        unsupported.sort_unstable();
+        unsupported.dedup();
         Self {
             status,
             findings,
@@ -311,10 +315,12 @@ impl VerificationReport {
     }
 
     pub(crate) fn incomplete(
-        unsupported: Vec<UnsupportedSurface>,
+        mut unsupported: Vec<UnsupportedSurface>,
         session_user: String,
         current_user: String,
     ) -> Self {
+        unsupported.sort_unstable();
+        unsupported.dedup();
         Self {
             status: VerificationStatus::Incomplete,
             findings: Vec::new(),
@@ -336,11 +342,17 @@ impl VerificationReport {
     }
 
     /// Return the explicitly bounded surfaces not proven by this checker.
+    ///
+    /// Entries are unique and use [`UnsupportedSurface`] declaration order,
+    /// independent of verification-plan composition or evaluation order.
     pub fn unsupported(&self) -> &[UnsupportedSurface] {
         &self.unsupported
     }
 
     /// Return the catalog and ACL surfaces evaluated by this report.
+    ///
+    /// Entries are unique and use [`SupportedSurface`] declaration order,
+    /// independent of verification-plan composition or evaluation order.
     pub fn supported(&self) -> &[SupportedSurface] {
         &self.supported
     }
@@ -378,10 +390,17 @@ impl fmt::Debug for VerificationReport {
     }
 }
 
-/// A redacted failure from validation, native SQLx, or transaction rollback.
+/// A redacted failure from catalog inspection, native SQLx, or rollback.
 pub enum VerificationError {
-    InvalidPolicy(PolicyError),
     Native(SqlxFailure),
+    /// PostgreSQL returned an identifier outside the verifier's bounded
+    /// catalog identity model. The exact structural [`PolicyError`] is retained
+    /// as this error's source without entering fixed Display/Debug output.
+    CatalogIdentity(PolicyError),
+    /// Catalog discovery could not preserve the verifier's structural policy
+    /// invariants. This is distinct from invalid caller input, which cannot
+    /// reach execution.
+    CatalogPolicyExpansion(PolicyError),
     /// The authenticated session identity was not present in the captured
     /// role catalog. Verification fails closed instead of treating OID zero or
     /// PUBLIC as the runtime principal.
@@ -403,8 +422,11 @@ pub enum VerificationError {
 impl fmt::Display for VerificationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidPolicy(_) => "invalid PostgreSQL verification policy",
             Self::Native(_) => "PostgreSQL verification query failed",
+            Self::CatalogIdentity(_) => "PostgreSQL verification catalog identity is unsupported",
+            Self::CatalogPolicyExpansion(_) => {
+                "PostgreSQL catalog expansion violated verification policy invariants"
+            }
             Self::ConnectionState => "verification checkout retained managed transaction state",
             Self::CatalogCapacity => "PostgreSQL verification catalog capacity exceeded",
             Self::EvaluationCapacity => "PostgreSQL verification evaluation capacity exceeded",
@@ -417,8 +439,9 @@ impl fmt::Display for VerificationError {
 impl fmt::Debug for VerificationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidPolicy(_) => "VerificationError::InvalidPolicy",
             Self::Native(_) => "VerificationError::Native",
+            Self::CatalogIdentity(_) => "VerificationError::CatalogIdentity",
+            Self::CatalogPolicyExpansion(_) => "VerificationError::CatalogPolicyExpansion",
             Self::ConnectionState => "VerificationError::ConnectionState",
             Self::CatalogCapacity => "VerificationError::CatalogCapacity",
             Self::EvaluationCapacity => "VerificationError::EvaluationCapacity",
@@ -434,8 +457,8 @@ impl fmt::Debug for VerificationError {
 impl std::error::Error for VerificationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidPolicy(error) => Some(error),
             Self::Native(error) => Some(error),
+            Self::CatalogIdentity(error) | Self::CatalogPolicyExpansion(error) => Some(error),
             Self::MissingSessionUser
             | Self::CatalogCapacity
             | Self::EvaluationCapacity
@@ -514,6 +537,57 @@ mod tests {
         );
         assert_eq!(report.status(), VerificationStatus::Incomplete);
         assert_eq!(report.unsupported(), &[UnsupportedSurface::PostgresVersion]);
+    }
+
+    #[test]
+    fn report_surfaces_are_canonical_and_unique() {
+        let report = VerificationReport::new(
+            Vec::new(),
+            vec![
+                SupportedSurface::Ownership,
+                SupportedSurface::RoleMembership,
+                SupportedSurface::Ownership,
+            ],
+            vec![
+                UnsupportedSurface::Languages,
+                UnsupportedSurface::SecurityDefinerBody,
+                UnsupportedSurface::Languages,
+            ],
+            "session".to_owned(),
+            "current".to_owned(),
+            &[],
+        );
+        assert_eq!(
+            report.supported(),
+            [
+                SupportedSurface::RoleMembership,
+                SupportedSurface::Ownership,
+            ]
+        );
+        assert_eq!(
+            report.unsupported(),
+            [
+                UnsupportedSurface::SecurityDefinerBody,
+                UnsupportedSurface::Languages,
+            ]
+        );
+
+        let incomplete = VerificationReport::incomplete(
+            vec![
+                UnsupportedSurface::Languages,
+                UnsupportedSurface::SecurityDefinerBody,
+                UnsupportedSurface::Languages,
+            ],
+            "session".to_owned(),
+            "current".to_owned(),
+        );
+        assert_eq!(
+            incomplete.unsupported(),
+            [
+                UnsupportedSurface::SecurityDefinerBody,
+                UnsupportedSurface::Languages,
+            ]
+        );
     }
 
     #[test]
@@ -596,6 +670,18 @@ mod tests {
                 .and_then(|source| source.downcast_ref::<SqlxFailure>())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn catalog_identity_failures_retain_typed_policy_causes() {
+        let error = VerificationError::CatalogIdentity(PolicyError::InvalidRoutineType);
+        assert_eq!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<PolicyError>()),
+            Some(&PolicyError::InvalidRoutineType)
+        );
+        assert_eq!(format!("{error:?}"), "VerificationError::CatalogIdentity");
     }
 
     #[test]

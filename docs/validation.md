@@ -9441,3 +9441,216 @@ cumulative closure patch.
 
 No hosted CI, new Linux execution, live PostgreSQL execution, publication,
 deployment, or push is claimed.
+
+## Compiled SQLx verification inputs: 2026-09-14
+
+Bead `batter-310` and ExecPlan
+`plan_01M2G0S939GNSK9ZVCFMCP24D6` cover the coordinated breaking cutover from
+mutable executable policy/request values to opaque compiled policies and a
+non-empty verification plan. The Git baseline is
+`8da44f97892021b4a538b1de9e8ed743dd056cf1`; all evidence below is for the
+uncommitted working tree on macOS arm64. No commit was created.
+
+The authority builder now performs pure structural validation, bounded
+canonicalization and contradiction detection before producing an opaque
+`AuthorityPolicy`. Migration and schema inputs are likewise validated at
+construction. `VerificationPlan` must start with one authority, migration or
+schema axis, rejects a second value for an occupied semantic axis, and retains
+supported mixed-axis plans. PostgreSQL execution accepts only these compiled
+inputs. Exact-role compilation feeds the same canonical authority
+representation, and its internal accessor cannot be used by ordinary consumers
+to discard the exact-role manifest's safeguards.
+
+Executed locally with rustc 1.98.1 (`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1. The final complete matrix passed runner controls, core/workspace tests, hostile-environment checks, all targets, strict Clippy, formatting, warning-denied rustdoc, 19 positive SQLx doctests and seven compile-fail doctests. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by the default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` smoke commands | PASS: all ten process profiles across the two toolchains. |
+| Toolchain-specific `cargo test -p batter-axum --example http_service --locked` | PASS: all 12 example cases on each toolchain. |
+| Toolchain-specific `cargo run -p batter --locked --example process_owned` and `cargo run -p batter --locked --example operation_budget` | PASS: both runnable foundation examples completed successfully on each toolchain. |
+| `env -u DATABASE_URL -u BATTER_SQLX_AUTH_ACCEPT_URL -u BATTER_SQLX_ADMIN_URL bash scripts/test_sqlx_live.sh` | Expected exit 1 at exact preflight: all three required PostgreSQL endpoints were absent. No connection, fixture or live PostgreSQL test is claimed. The 36-case live inventory compiles in both complete matrices; its protected-plan case now retains exact-role plus generic-migration plus schema, generic-authority plus SQLx-migration, and generic-migration plus schema combinations, but those combinations were not executed against PostgreSQL here. |
+| `scripts/jig work check --plan-id plan_01M2G0S939GNSK9ZVCFMCP24D6` | PASS before this evidence-only append: `api:clippy`, `api:fmt`, `api:test`, `repo:contract` and `repo:file-budget` all executed successfully. Target-validation receipt `receipt_01M2G5ZM7WV9V0SKQ5ZX7T80RR`; the evidence and gate readers reported no unresolved gate. |
+
+The first complete all-reviewer pass matched fingerprint
+`6eaf8cc07a1710c45619812373001e15099098d2e2c42087201db859f6e78121`.
+It found one substantive catalog-expansion defect: expanded discovery had
+reapplied catalog-dependent required-privilege checks and could misclassify a
+valid compiled policy as a catalog-identity failure. The repair separates pure
+expanded structural validation from findings that require a real catalog and
+adds regressions for column-owner defaults, permitted missing columns,
+invoker/definer routines, and malformed catalog expansion. Supporting repairs
+made documentation match the opaque API, strengthened compile-fail boundary
+proofs, corrected pool-acquisition claims, and covered cross-variant plan-axis
+conflicts.
+
+The second complete pass matched fingerprint
+`83439880fbf8e25be7677688eff3aa07ad60a05bcd083918aabc2e1916b2f7f3`.
+All three reviewers found no substantive defect. Its supporting closure routes
+the remaining normalization-sensitive tests through public construction, adds
+the mixed-plan live bodies described above, and records this exact validation
+and the unavailable external prerequisite. The first complete verification of
+that closure exposed only a Clippy line-budget violation in the added live-test
+helper; splitting the helper, followed by two mechanical borrow corrections,
+produced the final complete passing matrices reported above. Focused all-reviewer
+closure verification follows the cumulative patch.
+
+The existing consumer evidence pinned to immutable Batter revision
+`b062f92b7df6928fb7b954a57c31ccdee77c93f0` predates this breaking API. It is
+recorded in `batter-r2a` as historical evidence only and cannot certify adoption
+of the current compiled-policy boundary. A future immutable revision still
+requires refreshed consumer migration and independent oracles before that task
+can be claimed as evidence for this design.
+
+No hosted CI, new Linux execution, live PostgreSQL execution, consumer
+re-adoption, publication, deployment, commit, or push is claimed.
+
+### Post-review compiled-policy root-cause closure
+
+A subsequent fresh comprehensive review of working-tree fingerprint
+`2786f67770508ba3590e8c6e320a264e92719426d5e1c9674e1928d085378e87`
+identified one remaining pure invalid state: independent relation and sequence
+indexes allowed the same qualified `pg_class` identity to compile under both
+kinds. It also identified supporting contract gaps for the breaking changelog
+entry and per-collection duplicate semantics, and raised two design questions
+about report ordering and catalog-identity causes. No repair was made during that
+read-only review.
+
+The follow-up used ExecPlan `plan_01M2GA6VDKB72S353ZEKHTRS8N` under the same
+`batter-310` Bead. PostgreSQL 18 primary documentation resolves the questions:
+relation-like objects and sequences share one schema namespace with `relkind`
+separating their catalog kinds, while routine input identities are `pg_type` OIDs
+retained by `pg_proc.proargtypes`. Local history also shows that protected report
+composition already canonicalized surface order. The repair now checks one
+bounded physical-identity index across exact, column-parent, PUBLIC and required
+authority declarations; rejects a sequence/ledger collision in either plan
+composition order; retains the exact `PolicyError` behind a fixed redacted
+catalog-identity error; and centralizes unique enum-order report coverage in the
+report constructor. Duplicate normalization versus rejection is explicit in
+rustdoc and contracts. The combined required/allowlisted migration capacity and
+the complete breaking cutover are also covered.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0 (`4a4ef493e`, 2026-03-02):
+
+| Root-cause closure command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --all-targets --all-features --locked` | PASS on Rust 1.98.1: 136 library tests, 18 offline adapter/fixture tests and examples passed; 61 external PostgreSQL tests remained explicitly ignored. New pure cases cover every physical-identity declaration source, both plan composition orders, generic and SQLx ledgers, malformed catalog expansion, typed causes, canonical coverage, duplicate categories and combined migration capacity. |
+| `cargo test -p batter-sqlx --doc --all-features --locked` | PASS: 19 positive and seven compile-fail doctests. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` | The first Clippy attempt rejected one needless explicit lifetime in the new validator. After elision, strict Clippy, formatting and diff hygiene passed. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific HTTP example build followed by the default, SIGINT, deadline, WARN-filtered and WARN-filtered-deadline smoke profiles | PASS: all ten rebuilt process profiles across both toolchains. |
+| Toolchain-specific HTTP example tests and `process_owned` / `operation_budget` runs | PASS: 12 HTTP example cases per toolchain and both foundation examples per toolchain. |
+| `env -u DATABASE_URL -u BATTER_SQLX_AUTH_ACCEPT_URL -u BATTER_SQLX_ADMIN_URL bash scripts/test_sqlx_live.sh` | Expected exit 1 before connection or inventory execution because all three external PostgreSQL endpoints were absent. No live PostgreSQL execution is claimed. |
+| `scripts/jig work check --plan-id plan_01M2GA6VDKB72S353ZEKHTRS8N` | PASS before this receipt append: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. Target-validation receipt `receipt_01M2GB5RNWZ0M44FKE7QQR8TGV`; the evidence and gate readers reported fresh matching inputs and no unresolved gate. |
+
+No hosted CI, new Linux execution, live PostgreSQL execution, consumer
+re-adoption, publication, deployment, commit, or push is claimed by this closure.
+
+### Catalog-kind drift review closure
+
+A fresh Claude/Codex comprehensive review of working-tree fingerprint
+`701d0804f16055b0220dbfc033889330adc7e852e3ebe3668f55d207ed4e6654`
+found one behavioral defect and one supporting changelog gap. The defect was a
+boundary error: pure policy compilation correctly rejected a name declared as
+both a relation and a sequence, but catalog discovery reused that same check
+after combining valid caller intent with an independently observed opposite
+kind. The resulting `CatalogPolicyExpansion` error discarded the ordinary
+policy findings. Codex found no actionable defect; Claude identified this drift
+case and the incomplete migration guidance.
+
+PostgreSQL 18 primary documentation resolves the review's design question.
+Relation-like objects and sequences share one schema namespace, and one
+`pg_class` row carries the actual `relkind`. A caller policy requiring both kinds
+is impossible input, while a valid policy and a database exposing the opposite
+kind are two individually representable states whose mismatch is a policy
+violation. The repair retains the original compiled policy for requested and
+required findings, and derives a distinct internal catalog-evaluation policy.
+A single bounded catalog-kind index removes only incompatible declarations from
+that evaluation view before applying defaults for the observed object. It never
+constructs a cross-kind `AuthorityPolicy`, and it avoids per-object rescans of
+caller collections. A structurally impossible snapshot containing duplicate or
+cross-kind rows for one identity remains a catalog-expansion error. The
+Unreleased changelog now enumerates the private migration fields, new exhaustive
+match variants, invalid-privilege classification, and conflicting legacy PUBLIC
+grant-option behavior.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0 (`4a4ef493e`, 2026-03-02):
+
+| Catalog-kind closure command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --all-targets --all-features --locked` | PASS on Rust 1.98.1: 138 library tests, 18 offline adapter/fixture tests and examples passed; 61 external PostgreSQL tests remained explicitly ignored. New full-snapshot regressions cover both drift directions, observed-kind defaults, and incompatible PUBLIC/required targets. |
+| `cargo test -p batter-sqlx --doc --all-features --locked` | PASS: 19 positive and seven compile-fail doctests. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` | PASS. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific HTTP example build followed by the default, SIGINT, deadline, WARN-filtered and WARN-filtered-deadline smoke profiles | PASS: all ten rebuilt process profiles across both toolchains. |
+| Toolchain-specific HTTP example tests and `process_owned` / `operation_budget` runs | PASS: 12 HTTP example cases per toolchain and both foundation examples per toolchain. |
+| `env -u DATABASE_URL -u BATTER_SQLX_AUTH_ACCEPT_URL -u BATTER_SQLX_ADMIN_URL bash scripts/test_sqlx_live.sh` | Expected exit 1 before connection or inventory execution because all three external PostgreSQL endpoints were absent. No live PostgreSQL execution is claimed. |
+
+No hosted CI, new Linux execution, live PostgreSQL execution, consumer
+re-adoption, publication, deployment, commit, push, or independent post-repair
+external review is claimed by this closure.
+
+### Checkpointed catalog expansion review-fix closure
+
+The requested comprehensive review-fix loop then reviewed the working tree in
+comprehensive fix mode with Claude, Codex and Cursor, a low minimum severity,
+and complete working-tree fingerprints. Its first review used fingerprint
+`c443b5539a5a2d6a964fe635e533da5a103482e4cc837df4334f0a6dde06d87b`.
+Claude and Cursor found no substantive defect. Codex found one medium
+performance and cancellation-boundary defect: the private catalog expansion
+path reused the external draft compiler, so an executor poll could synchronously
+sort and rebuild indexes for a near-capacity catalog-derived authority policy
+after the checkpointed catalog traversal had completed.
+
+The causal repair removes that second compilation phase. Catalog expansion now
+validates schema, relation, column, type and routine identities incrementally in
+the already checkpointed one-pass traversal, retains the bounded relation-kind
+index, and transfers the completed private builder directly into the internal
+evaluation policy. No post-traversal global sort or re-index remains. New pure
+regressions reject duplicate identities of every catalog kind at the
+checkpointed boundary. The catalog-drift matrix now covers both exact-kind
+directions, sequence and relation PUBLIC/required defaults, relation column
+PUBLIC/override/required behavior against an observed sequence, and the
+declared-scope rule that intentionally applies no discovery defaults.
+
+After repair, all three reviewers completed a second comprehensive pass over
+fingerprint
+`57282000ed63b61ff075167e7d8fe268c69b531b6bc7051413feddb93222391c`
+without a substantive finding. Claude identified one low supporting wording
+error: the testing contract called all catalog identities malformed although
+the new controls primarily exercise duplicates. The first closure edit corrected
+that wording while preserving the separate malformed-routine and cross-kind
+snapshot claims. Focused Claude, Codex and Cursor verification of fingerprint
+`348ef7385c5f5f79d55481136a65641c2fbb8b2c72eaa15463990d1150ad49b5`
+marked that obligation satisfied and found no collateral or substantive defect.
+
+Final evidence for the repaired bytes was executed locally on macOS 26.6.2
+arm64 with rustc 1.98.1 (`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Checkpointed-expansion closure command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-sqlx --all-targets --all-features --locked` | PASS on Rust 1.98.1: 140 library tests and 18 offline adapter/fixture tests passed; examples compiled and 61 externally provisioned PostgreSQL tests remained explicitly ignored. |
+| `cargo test -p batter-sqlx --doc --all-features --locked` | PASS: 19 positive and seven compile-fail doctests. |
+| `cargo clippy -p batter-sqlx --all-targets --all-features --locked -- -D warnings`, `cargo fmt --all -- --check`, `git diff --check`, and `scripts/jig check repo:file-budget --plan-id plan_01M2GCZCCZCA0D9KVRASG68QRE` | PASS after splitting the catalog implementation and its focused regressions into owned modules. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. The first invocation's terminal result was lost with its execution cell, so this row records the single evidenced rerun, which exited 0. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific HTTP example build followed by the default, SIGINT, deadline, WARN-filtered and WARN-filtered-deadline smoke profiles | PASS: all ten rebuilt process profiles across both toolchains. |
+| Toolchain-specific HTTP example tests and `process_owned` / `operation_budget` runs | PASS: 12 HTTP example cases per toolchain and both foundation examples per toolchain. |
+| `env -u DATABASE_URL -u BATTER_SQLX_AUTH_ACCEPT_URL -u BATTER_SQLX_ADMIN_URL bash scripts/test_sqlx_live.sh` | Expected exit 1 before invocation because all three external PostgreSQL endpoints were absent. No connection, fixture or live PostgreSQL test is claimed. |
+| `scripts/jig work check --plan-id plan_01M2GCZCCZCA0D9KVRASG68QRE` | PASS before this evidence-only append: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. Target-validation receipt `receipt_01M2GGW0GS4JPGRPCGXQ3RB2PJ`; the evidence and gate readers reported fresh matching inputs and no unresolved gate. |
+
+This append and the accompanying Bead comment form the single supporting
+correction after the first focused closure pass. A second focused all-reviewer
+pass over the complete cumulative closure patch follows this recorded snapshot;
+no result from that not-yet-executed pass is claimed here. Bead `batter-310`
+remains in progress because authorized live PostgreSQL evidence and refreshed
+immutable-revision consumer adoption remain outstanding. No hosted CI, new
+Linux execution, publication, deployment, commit, push, or those external
+acceptance results are claimed.

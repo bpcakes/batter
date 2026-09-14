@@ -1,8 +1,10 @@
 use super::{
-    CompiledExactRole, Identifier, MigrationExpectation, PolicyError, QualifiedName,
+    AuthorityPolicy, CompiledExactRole, Identifier, MigrationExpectation, MigrationPolicy,
+    PolicyError, QualifiedName,
     policy::{MAX_MIGRATION_CHECKSUM_BYTES, MAX_MIGRATION_LEDGER_ROWS},
 };
 use std::collections::HashSet;
+use std::fmt;
 
 /// How a protected SQLx 0.9 migration ledger is compared with its manifest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,63 +164,248 @@ fn collect_bounded<T>(
     Ok(collected)
 }
 
-/// Borrowed components for one protected verification snapshot.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct VerificationRequest<'a> {
-    pub(crate) exact_role: Option<&'a CompiledExactRole>,
-    pub(crate) sqlx_migrations: Option<&'a SqlxMigrationManifest>,
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AuthorityInspection<'a> {
+    Policy(&'a AuthorityPolicy),
+    ExactRole(&'a CompiledExactRole),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MigrationInspection<'a> {
+    Generic(&'a MigrationPolicy),
+    Sqlx(&'a SqlxMigrationManifest),
+}
+
+impl<'a> AuthorityInspection<'a> {
+    fn policy(self) -> &'a AuthorityPolicy {
+        match self {
+            Self::Policy(policy) => policy,
+            Self::ExactRole(role) => role.authority_policy(),
+        }
+    }
+}
+
+impl<'a> MigrationInspection<'a> {
+    fn ledger(self) -> &'a QualifiedName {
+        match self {
+            Self::Generic(policy) => policy.ledger(),
+            Self::Sqlx(manifest) => manifest.ledger(),
+        }
+    }
+}
+
+/// An invalid semantic composition in a [`VerificationPlan`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlanError {
+    /// A generic authority policy or compiled exact role was already selected.
+    AuthorityAlreadySelected,
+    /// A generic or SQLx-specific migration policy was already selected.
+    MigrationAlreadySelected,
+    /// A schema-inspection policy was already selected.
+    SchemaInspectionAlreadySelected,
+    /// Authority requires the migration ledger's schema-qualified identity to
+    /// be a sequence, while migration verification requires a relation.
+    ConflictingRelationKind,
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::AuthorityAlreadySelected => "verification authority is already selected",
+            Self::MigrationAlreadySelected => "verification migration ledger is already selected",
+            Self::SchemaInspectionAlreadySelected => {
+                "verification schema inspection is already selected"
+            }
+            Self::ConflictingRelationKind => {
+                "migration ledger identity conflicts with authority object kind"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+/// A non-empty selection of already validated verification components.
+///
+/// Every constructor selects the first component, so an empty plan cannot be
+/// represented. Composition rejects a second authority, migration, or schema
+/// component instead of silently replacing the earlier selection. The three
+/// semantic axes are independently optional: either authority form may be
+/// combined with either migration form and with schema inspection in one
+/// snapshot. Composition rejects an authority policy that declares the
+/// migration ledger's identity as a sequence because PostgreSQL relations and
+/// sequences share one schema namespace.
+///
+/// ```compile_fail
+/// use batter_sqlx::verification::VerificationPlan;
+///
+/// // There is deliberately no empty or default verification plan.
+/// let _: VerificationPlan<'static> = Default::default();
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct VerificationPlan<'a> {
+    pub(crate) authority: Option<AuthorityInspection<'a>>,
+    pub(crate) migration: Option<MigrationInspection<'a>>,
     pub(crate) schema: Option<&'a SchemaInspectionPolicy>,
 }
 
-impl<'a> VerificationRequest<'a> {
-    /// Start an empty request and add independent components with the builder
-    /// methods below. An empty request is invalid when executed.
-    pub const fn new() -> Self {
+impl<'a> VerificationPlan<'a> {
+    /// Verify one compiled generic authority policy.
+    pub const fn authority(policy: &'a AuthorityPolicy) -> Self {
         Self {
-            exact_role: None,
-            sqlx_migrations: None,
+            authority: Some(AuthorityInspection::Policy(policy)),
+            migration: None,
             schema: None,
         }
     }
 
-    /// Add a compiled exact-role authority request and its safeguards.
-    pub const fn with_exact_role(mut self, role: &'a CompiledExactRole) -> Self {
-        self.exact_role = Some(role);
-        self
+    /// Verify one compiled generic migration policy.
+    pub const fn migrations(policy: &'a MigrationPolicy) -> Self {
+        Self {
+            authority: None,
+            migration: Some(MigrationInspection::Generic(policy)),
+            schema: None,
+        }
     }
 
-    /// Add SQLx 0.9 ledger shape and history verification.
-    pub const fn with_sqlx_migrations(mut self, manifest: &'a SqlxMigrationManifest) -> Self {
-        self.sqlx_migrations = Some(manifest);
-        self
+    /// Verify one compiled exact role, retaining all of its safeguards.
+    pub const fn exact_role(role: &'a CompiledExactRole) -> Self {
+        Self {
+            authority: Some(AuthorityInspection::ExactRole(role)),
+            migration: None,
+            schema: None,
+        }
+    }
+
+    /// Verify one validated SQLx 0.9 migration manifest.
+    pub const fn sqlx_migrations(manifest: &'a SqlxMigrationManifest) -> Self {
+        Self {
+            authority: None,
+            migration: Some(MigrationInspection::Sqlx(manifest)),
+            schema: None,
+        }
+    }
+
+    /// Verify SECURITY DEFINER configuration in an explicit schema scope.
+    pub const fn schema_inspection(policy: &'a SchemaInspectionPolicy) -> Self {
+        Self {
+            authority: None,
+            migration: None,
+            schema: Some(policy),
+        }
+    }
+
+    /// Add a compiled generic authority policy.
+    pub fn with_authority(mut self, policy: &'a AuthorityPolicy) -> Result<Self, PlanError> {
+        self.select_authority(AuthorityInspection::Policy(policy))?;
+        Ok(self)
+    }
+
+    /// Add a compiled exact role and all of its safeguards.
+    pub fn with_exact_role(mut self, role: &'a CompiledExactRole) -> Result<Self, PlanError> {
+        self.select_authority(AuthorityInspection::ExactRole(role))?;
+        Ok(self)
+    }
+
+    /// Add a compiled generic migration policy.
+    pub fn with_migrations(mut self, policy: &'a MigrationPolicy) -> Result<Self, PlanError> {
+        self.select_migration(MigrationInspection::Generic(policy))?;
+        Ok(self)
+    }
+
+    /// Add a validated SQLx 0.9 migration manifest.
+    pub fn with_sqlx_migrations(
+        mut self,
+        manifest: &'a SqlxMigrationManifest,
+    ) -> Result<Self, PlanError> {
+        self.select_migration(MigrationInspection::Sqlx(manifest))?;
+        Ok(self)
     }
 
     /// Add schema-only SECURITY DEFINER configuration verification.
-    pub const fn with_schema(mut self, policy: &'a SchemaInspectionPolicy) -> Self {
+    pub fn with_schema_inspection(
+        mut self,
+        policy: &'a SchemaInspectionPolicy,
+    ) -> Result<Self, PlanError> {
+        if self.schema.is_some() {
+            return Err(PlanError::SchemaInspectionAlreadySelected);
+        }
         self.schema = Some(policy);
-        self
+        Ok(self)
     }
 
-    pub(crate) fn validate(self) -> Result<(), PolicyError> {
-        if self.exact_role.is_none() && self.sqlx_migrations.is_none() && self.schema.is_none() {
-            return Err(PolicyError::EmptyVerificationRequest);
+    fn select_authority(&mut self, authority: AuthorityInspection<'a>) -> Result<(), PlanError> {
+        if self.authority.is_some() {
+            return Err(PlanError::AuthorityAlreadySelected);
         }
-        if let Some(role) = self.exact_role {
-            role.authority_policy().validate()?;
+        if self.migration.is_some_and(|migration| {
+            authority
+                .policy()
+                .requires_sequence_identity(migration.ledger())
+        }) {
+            return Err(PlanError::ConflictingRelationKind);
         }
-        if let Some(manifest) = self.sqlx_migrations {
-            manifest.validate()?;
-        }
-        if let Some(policy) = self.schema {
-            policy.validate()?;
-        }
+        self.authority = Some(authority);
         Ok(())
+    }
+
+    fn select_migration(&mut self, migration: MigrationInspection<'a>) -> Result<(), PlanError> {
+        if self.migration.is_some() {
+            return Err(PlanError::MigrationAlreadySelected);
+        }
+        if self.authority.is_some_and(|authority| {
+            authority
+                .policy()
+                .requires_sequence_identity(migration.ledger())
+        }) {
+            return Err(PlanError::ConflictingRelationKind);
+        }
+        self.migration = Some(migration);
+        Ok(())
+    }
+
+    pub(crate) fn authority_policy(self) -> Option<&'a AuthorityPolicy> {
+        match self.authority {
+            Some(AuthorityInspection::Policy(policy)) => Some(policy),
+            Some(AuthorityInspection::ExactRole(role)) => Some(role.authority_policy()),
+            None => None,
+        }
+    }
+
+    pub(crate) fn selected_exact_role(self) -> Option<&'a CompiledExactRole> {
+        match self.authority {
+            Some(AuthorityInspection::ExactRole(role)) => Some(role),
+            Some(AuthorityInspection::Policy(_)) | None => None,
+        }
+    }
+
+    pub(crate) fn migration_policy(self) -> Option<&'a MigrationPolicy> {
+        match self.migration {
+            Some(MigrationInspection::Generic(policy)) => Some(policy),
+            Some(MigrationInspection::Sqlx(_)) | None => None,
+        }
+    }
+
+    pub(crate) fn sqlx_migration(self) -> Option<&'a SqlxMigrationManifest> {
+        match self.migration {
+            Some(MigrationInspection::Sqlx(manifest)) => Some(manifest),
+            Some(MigrationInspection::Generic(_)) | None => None,
+        }
+    }
+
+    pub(crate) const fn schema(self) -> Option<&'a SchemaInspectionPolicy> {
+        self.schema
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verification::{
+        AllowedPrivilege, AuthorityPolicyBuilder, DiscoveryDefaults, DiscoveryScope,
+        ObjectDefaults, ObjectPrivilege, PublicAllowance, PublicGrant, PublicObject,
+        RelationPolicy, RequiredPrivilege, SequencePolicy,
+    };
 
     #[test]
     fn sqlx_manifest_rejects_duplicates_and_oversized_checksums() {
@@ -278,6 +465,170 @@ mod tests {
     }
 
     #[test]
+    fn plan_rejects_duplicate_semantic_components() {
+        let authority = AuthorityPolicy::default();
+        let migration =
+            MigrationPolicy::new(QualifiedName::new("service", "ledger").unwrap(), []).unwrap();
+        let sqlx = SqlxMigrationManifest::new(
+            QualifiedName::new("service", "_sqlx_migrations").unwrap(),
+            SqlxLedgerMode::Exact,
+            [],
+        )
+        .unwrap();
+        let schema =
+            SchemaInspectionPolicy::canonical([Identifier::new("service").unwrap()]).unwrap();
+        let role = crate::verification::ExactRoleManifest::new(
+            Identifier::new("service").unwrap(),
+            crate::verification::DiscoveryScope::Declared,
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+
+        assert!(matches!(
+            VerificationPlan::authority(&authority).with_authority(&authority),
+            Err(PlanError::AuthorityAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::authority(&authority).with_exact_role(&role),
+            Err(PlanError::AuthorityAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::exact_role(&role).with_authority(&authority),
+            Err(PlanError::AuthorityAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::migrations(&migration).with_migrations(&migration),
+            Err(PlanError::MigrationAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::migrations(&migration).with_sqlx_migrations(&sqlx),
+            Err(PlanError::MigrationAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::sqlx_migrations(&sqlx).with_migrations(&migration),
+            Err(PlanError::MigrationAlreadySelected)
+        ));
+        assert!(matches!(
+            VerificationPlan::schema_inspection(&schema).with_schema_inspection(&schema),
+            Err(PlanError::SchemaInspectionAlreadySelected)
+        ));
+
+        assert_supported_plan_combinations(&authority, &migration, &sqlx, &schema, &role);
+    }
+
+    #[test]
+    fn plan_rejects_a_migration_ledger_declared_as_a_sequence() {
+        let ledger = QualifiedName::new("service", "ledger").unwrap();
+        let generic = MigrationPolicy::new(ledger.clone(), []).unwrap();
+        let sqlx = SqlxMigrationManifest::new(ledger.clone(), SqlxLedgerMode::Exact, []).unwrap();
+        let usage = AllowedPrivilege::new(ObjectPrivilege::Usage, false);
+        let policies = [
+            AuthorityPolicyBuilder {
+                sequences: vec![SequencePolicy {
+                    sequence: ledger.clone(),
+                    privileges: Vec::new(),
+                    allow_owner: false,
+                }],
+                ..AuthorityPolicyBuilder::default()
+            },
+            AuthorityPolicyBuilder {
+                public_grants: vec![PublicGrant {
+                    object: PublicObject::Sequence(ledger.clone()),
+                    privilege: usage,
+                }],
+                ..AuthorityPolicyBuilder::default()
+            },
+            AuthorityPolicyBuilder {
+                public_overrides: vec![PublicAllowance {
+                    object: PublicObject::Sequence(ledger.clone()),
+                    privileges: Vec::new(),
+                }],
+                ..AuthorityPolicyBuilder::default()
+            },
+            AuthorityPolicyBuilder {
+                discovery: DiscoveryScope::UserSchemas,
+                defaults: DiscoveryDefaults {
+                    sequences: ObjectDefaults {
+                        privileges: vec![usage],
+                        ..ObjectDefaults::default()
+                    },
+                    ..DiscoveryDefaults::default()
+                },
+                required_privileges: vec![RequiredPrivilege {
+                    object: PublicObject::Sequence(ledger.clone()),
+                    privilege: ObjectPrivilege::Usage,
+                }],
+                ..AuthorityPolicyBuilder::default()
+            },
+        ]
+        .map(|policy| policy.build().unwrap());
+
+        for authority in &policies {
+            assert!(matches!(
+                VerificationPlan::authority(authority).with_migrations(&generic),
+                Err(PlanError::ConflictingRelationKind)
+            ));
+            assert!(matches!(
+                VerificationPlan::migrations(&generic).with_authority(authority),
+                Err(PlanError::ConflictingRelationKind)
+            ));
+        }
+        assert!(matches!(
+            VerificationPlan::authority(&policies[0]).with_sqlx_migrations(&sqlx),
+            Err(PlanError::ConflictingRelationKind)
+        ));
+        assert!(matches!(
+            VerificationPlan::sqlx_migrations(&sqlx).with_authority(&policies[0]),
+            Err(PlanError::ConflictingRelationKind)
+        ));
+
+        let relation = AuthorityPolicyBuilder {
+            relations: vec![RelationPolicy {
+                relation: ledger,
+                privileges: Vec::new(),
+                columns: Vec::new(),
+                allow_owner: false,
+                allow_row_type_public_usage: false,
+            }],
+            ..AuthorityPolicyBuilder::default()
+        }
+        .build()
+        .unwrap();
+        assert!(
+            VerificationPlan::authority(&relation)
+                .with_migrations(&generic)
+                .is_ok()
+        );
+    }
+
+    fn assert_supported_plan_combinations<'a>(
+        authority: &'a AuthorityPolicy,
+        migration: &'a MigrationPolicy,
+        sqlx: &'a SqlxMigrationManifest,
+        schema: &'a SchemaInspectionPolicy,
+        role: &'a crate::verification::CompiledExactRole,
+    ) {
+        let exact_generic = VerificationPlan::exact_role(role)
+            .with_migrations(migration)
+            .unwrap()
+            .with_schema_inspection(schema)
+            .unwrap();
+        assert!(exact_generic.selected_exact_role().is_some());
+        assert!(exact_generic.migration_policy().is_some());
+        assert!(exact_generic.schema().is_some());
+
+        let generic_sqlx = VerificationPlan::authority(authority)
+            .with_sqlx_migrations(sqlx)
+            .unwrap()
+            .with_schema_inspection(schema)
+            .unwrap();
+        assert!(generic_sqlx.authority_policy().is_some());
+        assert!(generic_sqlx.sqlx_migration().is_some());
+        assert!(generic_sqlx.schema().is_some());
+    }
+
+    #[test]
     fn constructors_stop_consuming_inputs_at_the_capacity_boundary() {
         let ledger = QualifiedName::new("public", "_sqlx_migrations").unwrap();
         let mut produced = 0usize;
@@ -294,6 +645,21 @@ mod tests {
             Err(PolicyError::AuthorityCapacity)
         );
         assert_eq!(produced, MAX_MIGRATION_LEDGER_ROWS + 1);
+
+        let mut generic_produced = 0usize;
+        let generic_expectations = std::iter::from_fn(|| {
+            generic_produced += 1;
+            assert!(generic_produced <= MAX_MIGRATION_LEDGER_ROWS + 1);
+            Some(MigrationExpectation::new(generic_produced as i64, [1]))
+        });
+        assert_eq!(
+            MigrationPolicy::new(
+                QualifiedName::new("public", "ledger").unwrap(),
+                generic_expectations,
+            ),
+            Err(PolicyError::AuthorityCapacity)
+        );
+        assert_eq!(generic_produced, MAX_MIGRATION_LEDGER_ROWS + 1);
 
         let schema = Identifier::new("service").unwrap();
         assert_eq!(

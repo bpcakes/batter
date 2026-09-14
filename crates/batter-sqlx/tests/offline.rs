@@ -3,10 +3,9 @@ use batter::{
     operation::{Interruption, OperationContext, OperationError},
 };
 use batter_sqlx::verification::{
-    DiscoveryScope, ExactRoleManifest, Identifier, MigrationExpectation, PolicyError,
-    QualifiedName, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest,
-    VerificationError, VerificationRequest, verify_exact_role, verify_request,
-    verify_sqlx_migrations,
+    AuthorityPolicyBuilder, DiscoveryScope, ExactRoleManifest, Identifier, MigrationExpectation,
+    QualifiedName, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationPlan,
+    verify, verify_exact_role, verify_sqlx_migrations,
 };
 use batter_sqlx::{FailureClass, PgLease, SqlxFailure, pool_in, probe, register_pool_close};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -68,7 +67,7 @@ async fn inert_and_interrupted_calls_do_not_acquire() {
 }
 
 #[tokio::test]
-async fn interrupted_protected_wrappers_do_not_acquire_or_validate_first() {
+async fn interrupted_valid_plans_do_not_acquire() {
     let pool = lazy_pool();
     let ledger = SqlxMigrationManifest::new(
         QualifiedName::new("public", "_sqlx_migrations").unwrap(),
@@ -95,34 +94,31 @@ async fn interrupted_protected_wrappers_do_not_acquire_or_validate_first() {
         Err(OperationError::Interrupted(Interruption::Cancelled))
     ));
     assert!(matches!(
-        verify_request(
+        verify(
             &pool,
             &context,
-            VerificationRequest::new().with_schema(&schema),
+            VerificationPlan::schema_inspection(&schema)
         )
         .await,
-        Err(OperationError::Interrupted(Interruption::Cancelled))
-    ));
-    assert!(matches!(
-        verify_request(&pool, &context, VerificationRequest::new()).await,
         Err(OperationError::Interrupted(Interruption::Cancelled))
     ));
     assert_eq!(pool.size(), 0);
     pool.close().await;
 }
 
-#[tokio::test]
-async fn empty_protected_request_fails_before_acquisition() {
-    let pool = lazy_pool();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
-    assert!(matches!(
-        verify_request(&pool, &context, VerificationRequest::new()).await,
-        Err(OperationError::Failed(VerificationError::InvalidPolicy(
-            PolicyError::EmptyVerificationRequest
-        )))
-    ));
-    assert_eq!(pool.size(), 0);
-    pool.close().await;
+#[test]
+fn invalid_policy_drafts_fail_before_an_executable_value_exists() {
+    let mut draft = AuthorityPolicyBuilder::default();
+    draft
+        .required_privileges
+        .push(batter_sqlx::verification::RequiredPrivilege {
+            object: batter_sqlx::verification::PublicObject::Database,
+            privilege: batter_sqlx::verification::ObjectPrivilege::Execute,
+        });
+    assert_eq!(
+        draft.build(),
+        Err(batter_sqlx::verification::PolicyError::InvalidObjectPrivilege)
+    );
 }
 
 #[tokio::test]

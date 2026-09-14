@@ -12,10 +12,11 @@ async fn inspect(
 ) -> Result<VerificationReport> {
     let context = OperationContext::new(Duration::from_secs(10))?;
     Ok(if combined {
+        let authority = AuthorityPolicy::default();
         verify(
             pool,
             &context,
-            &VerificationPolicy::new(policy.clone(), AuthorityPolicy::default()),
+            VerificationPlan::migrations(policy).with_authority(&authority)?,
         )
         .await?
     } else {
@@ -53,11 +54,10 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
             let mut barrier = blocker.begin().await?;
             sqlx::query("LOCK TABLE pg_catalog.pg_namespace IN ACCESS EXCLUSIVE MODE")
                 .execute(&mut *barrier).await?;
-            let policy = MigrationPolicy {
-                ledger: QualifiedName::new(&names.schema_a, &names.ledger_a)?,
-                required: vec![MigrationExpectation::new(1, vec![1])],
-                additional: AdditionalMigrations::Reject,
-            };
+            let policy = MigrationPolicy::new(
+                QualifiedName::new(&names.schema_a, &names.ledger_a)?,
+                [MigrationExpectation::new(1, [1])],
+            )?;
             let verification = inspect(&pool, &policy, combined);
             tokio::pin!(verification);
             tokio::select! {
@@ -79,7 +79,10 @@ async fn verification_late_ledger_attachment_cannot_supply_snapshot_rows() -> Re
                 .fetch_one(&mut mutator).await?;
             require(after == 0, "ledger was not empty after attachment")?;
             for selected in [&names.ledger_a, "late_records"] {
-                let inherited = MigrationPolicy { ledger: QualifiedName::new(&names.schema_a, selected)?, ..policy.clone() };
+                let inherited = MigrationPolicy::new(
+                    QualifiedName::new(&names.schema_a, selected)?,
+                    policy.required().iter().cloned(),
+                )?;
                 let report = inspect(&pool, &inherited, combined).await?;
                 require(report.status() == VerificationStatus::Incomplete
                     && report.unsupported() == [UnsupportedSurface::InheritedMigrationLedgers]

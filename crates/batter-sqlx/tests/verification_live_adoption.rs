@@ -2,17 +2,21 @@ use super::support::{Result, require};
 use super::{AuthorityFixture, exec, quote};
 use batter::operation::OperationContext;
 use batter_sqlx::verification::{
-    AllowedPrivilege, AuthorityPolicy, ColumnPolicy, DiscoveryScope, FindingKind, Identifier,
-    ObjectPrivilege, PublicObject, QualifiedName, RelationPolicy, RequiredPrivilege,
+    AllowedPrivilege, AuthorityPolicyBuilder, ColumnPolicy, DiscoveryScope, FindingKind,
+    Identifier, ObjectPrivilege, PublicObject, QualifiedName, RelationPolicy, RequiredPrivilege,
     SupportedSurface, VerificationReport, verify_authority,
 };
 use std::time::Duration;
 
-async fn inspect(pool: &sqlx::PgPool, policy: &AuthorityPolicy) -> Result<VerificationReport> {
+async fn inspect(
+    pool: &sqlx::PgPool,
+    draft: &AuthorityPolicyBuilder,
+) -> Result<VerificationReport> {
+    let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
         &OperationContext::new(Duration::from_secs(10))?,
-        policy,
+        &policy,
     )
     .await?)
 }
@@ -44,7 +48,7 @@ async fn verification_required_privileges_follow_current_inheritance() -> Result
         exec(&mut fixture.admin, format!("CREATE TABLE {table} (id integer, value integer)")).await?;
         exec(&mut fixture.admin, format!("GRANT SELECT ON {table} TO {}", quote(&names.settable))).await?;
         let pool = fixture.login(&names.login_a).await?;
-        let mut policy = AuthorityPolicy {
+        let mut policy = AuthorityPolicyBuilder {
             relations: vec![RelationPolicy {
                 relation: object.clone(),
                 privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)],
@@ -56,7 +60,7 @@ async fn verification_required_privileges_follow_current_inheritance() -> Result
                 RequiredPrivilege { object: PublicObject::Relation(object.clone()), privilege: ObjectPrivilege::Select },
                 RequiredPrivilege { object: PublicObject::Column(object, Identifier::new("value")?), privilege: ObjectPrivilege::Select },
             ],
-            ..AuthorityPolicy::default()
+            ..AuthorityPolicyBuilder::default()
         };
         let native = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {table}"))).execute(&pool).await;
         require(native.is_err(), "SET-only membership unexpectedly supplied current SELECT")?;
@@ -110,9 +114,9 @@ async fn verification_discovery_checks_unlisted_objects_and_exact_overrides() ->
         exec(&mut fixture.admin, format!("GRANT DELETE, UPDATE(id) ON {schema}.unlisted_records TO {}", quote(&names.login_a))).await?;
         exec(&mut fixture.admin, format!("GRANT SELECT ON {schema}.unlisted_sequence TO {} WITH GRANT OPTION", quote(&names.login_a))).await?;
         let pool = fixture.login(&names.login_a).await?;
-        let mut policy = AuthorityPolicy {
+        let mut policy = AuthorityPolicyBuilder {
             discovery: DiscoveryScope::Schemas(vec![Identifier::new(&names.schema_a)?]),
-            ..AuthorityPolicy::default()
+            ..AuthorityPolicyBuilder::default()
         };
         policy.defaults.sequences.privileges.push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
         policy.defaults.allow_row_type_public_usage = true;

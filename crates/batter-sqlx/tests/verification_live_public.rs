@@ -1,9 +1,9 @@
 use super::support::{Result, require};
-use super::{AuthorityFixture, Names, exec, quote};
+use super::{AuthorityFixture, Names, VerificationPolicy, exec, quote};
 use crate::verify_policy as verify;
 use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, ObjectPrivilege, PublicObject, QualifiedName, TypePolicy,
-    VerificationPolicy, VerificationStatus,
+    VerificationStatus,
 };
 use sqlx::PgPool;
 

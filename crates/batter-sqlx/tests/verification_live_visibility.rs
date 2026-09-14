@@ -195,7 +195,7 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
 async fn verification_reserved_custom_parameter_requirement() -> Result {
     use batter::operation::OperationContext;
     use batter_sqlx::verification::{
-        AuthorityPolicy, DatabasePolicy, PublicGrant, verify_authority,
+        AuthorityPolicyBuilder, DatabasePolicy, PublicGrant, verify_authority,
     };
     AuthorityFixture::create()
         .await?
@@ -215,7 +215,7 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                     AllowedPrivilege::new(ObjectPrivilege::Connect, false),
                     AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
                 ];
-                let mut policy = AuthorityPolicy {
+                let mut policy = AuthorityPolicyBuilder {
                     database: DatabasePolicy {
                         privileges: allowances.clone(),
                         allow_owner: false,
@@ -243,12 +243,13 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                         )?),
                         privilege: ObjectPrivilege::Set,
                     }],
-                    ..AuthorityPolicy::default()
+                    ..AuthorityPolicyBuilder::default()
                 };
+                let compiled = policy.clone().build()?;
                 let report = verify_authority(
                     &pool,
                     &OperationContext::new(std::time::Duration::from_secs(5))?,
-                    &policy,
+                    &compiled,
                 )
                 .await?;
                 require(
@@ -271,10 +272,11 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 policy.required_privileges[0].object = PublicObject::Parameter(ParameterName::new(
                     "verification_fixture.user_setting",
                 )?);
+                let compiled = policy.clone().build()?;
                 let report = verify_authority(
                     &pool,
                     &OperationContext::new(std::time::Duration::from_secs(5))?,
-                    &policy,
+                    &compiled,
                 )
                 .await?;
                 require(
@@ -286,10 +288,11 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 policy.parameters[1].parameter = ParameterName::new("plpgsql.print_strict_params")?;
                 policy.required_privileges[0].object =
                     PublicObject::Parameter(ParameterName::new("plpgsql.print_strict_params")?);
+                let compiled = policy.build()?;
                 let report = verify_authority(
                     &pool,
                     &OperationContext::new(std::time::Duration::from_secs(5))?,
-                    &policy,
+                    &compiled,
                 )
                 .await?;
                 require(

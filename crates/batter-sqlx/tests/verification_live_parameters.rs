@@ -1,9 +1,12 @@
 use super::support::{Result, require};
-use super::{AuthorityFixture, Names, exact_finding, exec, names_policy, quote};
+use super::{
+    AuthorityFixture, Names, VerificationPolicy, exact_finding, exec, names_policy, quote,
+    verify_combined as verify,
+};
 use batter::operation::{OperationContext, OperationError};
 use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, ObjectPrivilege, ParameterName, ParameterPolicy, RolePolicy,
-    VerificationError, VerificationPolicy, verify,
+    VerificationError,
 };
 use std::time::Duration;
 

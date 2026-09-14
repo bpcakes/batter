@@ -1,9 +1,10 @@
+use super::VerificationPolicy;
 use crate::support::{Result, require};
 use crate::verify_policy as verify;
 use crate::{AuthorityFixture, Names, exact_finding, exec, finding, names_policy, quote};
 use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, Identifier, ObjectPrivilege, RoleAttribute, RolePolicy,
-    RoutinePolicy, RoutineSignature, RoutineType, VerificationPolicy, VerificationStatus,
+    RoutinePolicy, RoutineSignature, RoutineType, VerificationStatus,
 };
 use sqlx::PgPool;
 

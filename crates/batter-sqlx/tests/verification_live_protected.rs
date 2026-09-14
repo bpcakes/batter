@@ -2,11 +2,12 @@ use super::support::{Result, require};
 use super::{AuthorityFixture, Names, exec, quote};
 use batter::operation::{OperationContext, OperationError};
 use batter_sqlx::verification::{
-    AdditionalMigrations, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope, ExactRoleManifest,
-    FindingKind, Identifier, MigrationExpectation, MigrationPolicy, ObjectPrivilege,
-    PublicDelivery, QualifiedName, RolePolicy, SchemaInspectionPolicy, SqlxLedgerMode,
+    AllowedPrivilege, AuthorityPolicyBuilder, DatabaseGrantSpec, DatabasePolicy,
+    DeclarationPurpose, DiscoveryScope, ExactRoleManifest, FindingKind, Identifier,
+    MigrationExpectation, MigrationPolicy, ObjectPrivilege, PublicDelivery, PublicGrant,
+    PublicObject, QualifiedName, RolePolicy, SchemaInspectionPolicy, SqlxLedgerMode,
     SqlxMigrationManifest, SupportedSurface, UnsupportedSurface, VerificationError,
-    VerificationRequest, VerificationStatus, verify_exact_role, verify_migrations, verify_request,
+    VerificationPlan, VerificationStatus, verify, verify_exact_role, verify_migrations,
     verify_sqlx_migrations,
 };
 use std::time::Duration;
@@ -220,11 +221,7 @@ async fn require_catalog_type_identity_guard(
             .any(|finding| finding.kind == FindingKind::SqlxLedgerShape),
         "user-defined types with built-in names reached history decoding",
     )?;
-    let legacy = MigrationPolicy {
-        ledger: QualifiedName::new(&names.schema_a, shadow_name)?,
-        required: Vec::new(),
-        additional: AdditionalMigrations::Reject,
-    };
+    let legacy = MigrationPolicy::new(QualifiedName::new(&names.schema_a, shadow_name)?, [])?;
     let legacy_report = verify_migrations(pool, &context()?, &legacy).await?;
     require(
         legacy_report
@@ -270,19 +267,19 @@ async fn require_combined_protected_request(
         )?
         .public_delivery(PublicDelivery::AllowDeclared),
     )?;
+    role.deny_current_database_ownership(true);
     let compiled = role.compile()?;
     let absent_subset = SqlxMigrationManifest::new(
         QualifiedName::new(&names.schema_a, "absent_combined_history")?,
         SqlxLedgerMode::InstalledSubset,
         Vec::<MigrationExpectation>::new(),
     )?;
-    let report = verify_request(
+    let report = verify(
         pool,
         &context()?,
-        VerificationRequest::new()
-            .with_exact_role(&compiled)
-            .with_sqlx_migrations(&absent_subset)
-            .with_schema(policy),
+        VerificationPlan::exact_role(&compiled)
+            .with_sqlx_migrations(&absent_subset)?
+            .with_schema_inspection(policy)?,
     )
     .await?;
     require(
@@ -301,6 +298,125 @@ async fn require_combined_protected_request(
     require(
         report.is_within_declared_policy(),
         "the canonical combined protected request did not pass cleanly",
+    )?;
+
+    require_exact_generic_schema(pool, names, policy, &compiled).await?;
+    require_generic_authority_sqlx_schema(pool, names, policy, &absent_subset).await?;
+    require_generic_migration_schema(pool, names, policy).await
+}
+
+async fn require_exact_generic_schema(
+    pool: &sqlx::PgPool,
+    names: &Names,
+    policy: &SchemaInspectionPolicy,
+    compiled: &batter_sqlx::verification::CompiledExactRole,
+) -> Result {
+    let missing_generic = MigrationPolicy::new(
+        QualifiedName::new(&names.schema_a, "absent_generic_history")?,
+        [],
+    )?;
+    let exact_generic = verify(
+        pool,
+        &context()?,
+        VerificationPlan::exact_role(compiled)
+            .with_migrations(&missing_generic)?
+            .with_schema_inspection(policy)?,
+    )
+    .await?;
+    require(
+        [
+            SupportedSurface::MigrationLedger,
+            SupportedSurface::SecurityDefinerConfiguration,
+            SupportedSurface::CurrentDatabaseOwnership,
+        ]
+        .iter()
+        .all(|surface| exact_generic.supported().contains(surface))
+            && exact_generic
+                .findings()
+                .iter()
+                .any(|finding| finding.kind == FindingKind::MissingMigration),
+        "exact-role, generic-ledger and schema evidence was not retained together",
+    )
+}
+
+async fn require_generic_authority_sqlx_schema(
+    pool: &sqlx::PgPool,
+    names: &Names,
+    policy: &SchemaInspectionPolicy,
+    absent_subset: &SqlxMigrationManifest,
+) -> Result {
+    let public_database = [ObjectPrivilege::Connect, ObjectPrivilege::Temporary]
+        .into_iter()
+        .map(|privilege| PublicGrant {
+            object: PublicObject::Database,
+            privilege: AllowedPrivilege::new(privilege, false),
+        })
+        .collect();
+    let authority = AuthorityPolicyBuilder {
+        roles: RolePolicy {
+            allowed_admin_roles: vec![Identifier::new(&names.admin_target)?],
+            ..RolePolicy::default()
+        },
+        database: DatabasePolicy {
+            privileges: vec![
+                AllowedPrivilege::new(ObjectPrivilege::Connect, false),
+                AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
+            ],
+            allow_owner: false,
+        },
+        public_grants: public_database,
+        ..AuthorityPolicyBuilder::default()
+    }
+    .build()?;
+    let generic_sqlx = verify(
+        pool,
+        &context()?,
+        VerificationPlan::authority(&authority)
+            .with_sqlx_migrations(absent_subset)?
+            .with_schema_inspection(policy)?,
+    )
+    .await?;
+    require(
+        [
+            SupportedSurface::RoleMembership,
+            SupportedSurface::DatabaseAcl,
+            SupportedSurface::SqlxMigrationLedger,
+            SupportedSurface::SecurityDefinerConfiguration,
+        ]
+        .iter()
+        .all(|surface| generic_sqlx.supported().contains(surface))
+            && generic_sqlx.is_within_declared_policy(),
+        "generic authority, SQLx migration and schema evidence was not retained together",
+    )
+}
+
+async fn require_generic_migration_schema(
+    pool: &sqlx::PgPool,
+    names: &Names,
+    policy: &SchemaInspectionPolicy,
+) -> Result {
+    let missing_generic = MigrationPolicy::new(
+        QualifiedName::new(&names.schema_a, "absent_generic_history")?,
+        [],
+    )?;
+    let generic_schema = verify(
+        pool,
+        &context()?,
+        VerificationPlan::migrations(&missing_generic).with_schema_inspection(policy)?,
+    )
+    .await?;
+    require(
+        [
+            SupportedSurface::MigrationLedger,
+            SupportedSurface::SecurityDefinerConfiguration,
+        ]
+        .iter()
+        .all(|surface| generic_schema.supported().contains(surface))
+            && generic_schema
+                .findings()
+                .iter()
+                .any(|finding| finding.kind == FindingKind::MissingMigration),
+        "generic migration and schema evidence was not retained together",
     )
 }
 
@@ -437,8 +553,8 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                 let pool = fixture.login(&names.login_a).await?;
                 let policy =
                     SchemaInspectionPolicy::canonical([Identifier::new(&names.schema_a)?])?;
-                let request = VerificationRequest::new().with_schema(&policy);
-                let report = verify_request(&pool, &context()?, request).await?;
+                let plan = VerificationPlan::schema_inspection(&policy);
+                let report = verify(&pool, &context()?, plan).await?;
                 require(
                     report.is_within_declared_policy()
                         && report.supported() == [SupportedSurface::SecurityDefinerConfiguration]
@@ -455,10 +571,10 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                     Identifier::new(&names.schema_a)?,
                     Identifier::new(&missing_schema)?,
                 ])?;
-                let missing_report = verify_request(
+                let missing_report = verify(
                     &pool,
                     &context()?,
-                    VerificationRequest::new().with_schema(&missing_policy),
+                    VerificationPlan::schema_inspection(&missing_policy),
                 )
                 .await?;
                 require(
@@ -475,7 +591,7 @@ async fn protected_schema_checks_all_definers_and_exact_stored_search_path() -> 
                 )
                 .await?;
                 require(
-                    verify_request(&pool, &context()?, request)
+                    verify(&pool, &context()?, plan)
                         .await?
                         .findings()
                         .iter()

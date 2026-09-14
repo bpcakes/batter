@@ -1,0 +1,1 @@
+Preserve pure relation/sequence policy invariants while separating valid caller intent from catalog-resolved ACL evaluation. Keep kind drift as findings, apply observed-kind discovery defaults, complete breaking-change guidance, and refresh repository evidence under batter-310.

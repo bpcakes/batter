@@ -3,8 +3,8 @@
 use crate::verify_policy as verify;
 
 use super::support::{Result, require};
-use super::{AuthorityFixture, exec, finding, names_policy, quote};
-use batter_sqlx::verification::{FindingKind, RoleAttribute, RolePolicy, VerificationPolicy};
+use super::{AuthorityFixture, VerificationPolicy, exec, finding, names_policy, quote};
+use batter_sqlx::verification::{FindingKind, RoleAttribute, RolePolicy};
 use sqlx::postgres::PgPoolOptions;
 
 mod narrow;

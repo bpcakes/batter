@@ -472,16 +472,6 @@ pub(super) async fn inspect_identities(
     Ok((session_user, current_user))
 }
 
-/// Inspect all generic surfaces in one explicit transaction snapshot.
-pub(crate) async fn inspect(
-    transaction: &mut PgTransaction<'_>,
-    policy: &AuthorityPolicy,
-    migration: Option<(&MigrationPolicy, migration::LedgerLock)>,
-) -> Result<VerificationReport, VerificationError> {
-    let mut evaluation = evaluation::Evaluation::new();
-    inspect_with_evaluation(transaction, policy, migration, &mut evaluation).await
-}
-
 pub(crate) async fn inspect_with_evaluation(
     transaction: &mut PgTransaction<'_>,
     policy: &AuthorityPolicy,

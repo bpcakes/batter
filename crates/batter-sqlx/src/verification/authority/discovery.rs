@@ -6,6 +6,9 @@ use super::privileges::routine_signature_from_catalog;
 use super::selection::CatalogSelection;
 use super::{CatalogSnapshot, PgTransaction};
 use std::collections::HashSet;
+use std::ops::Deref;
+
+mod catalog;
 
 struct DeclaredPolicies<'a> {
     schemas: HashSet<&'a Identifier>,
@@ -34,6 +37,19 @@ impl<'a> DeclaredPolicies<'a> {
             routines: policy.routines.iter().map(|entry| &entry.routine).collect(),
             public: PublicDeclarations::new(policy),
         }
+    }
+}
+
+/// Catalog-resolved policy used only for ACL evaluation. The original compiled
+/// policy remains the source of requested-object and required-privilege findings.
+#[derive(Debug)]
+pub(super) struct CatalogAuthorityPolicy(AuthorityPolicy);
+
+impl Deref for CatalogAuthorityPolicy {
+    type Target = AuthorityPolicy;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -96,7 +112,7 @@ pub(super) async fn select(
 }
 
 fn add_public(
-    policy: &mut AuthorityPolicy,
+    policy: &mut AuthorityPolicyBuilder,
     declared: &DeclaredPolicies<'_>,
     object: PublicObject,
     defaults: &ObjectDefaults,
@@ -121,26 +137,23 @@ pub(super) async fn expand(
     evaluation: &mut Evaluation,
     snapshot: &CatalogSnapshot,
     original: &AuthorityPolicy,
-) -> Result<AuthorityPolicy, VerificationError> {
+) -> Result<CatalogAuthorityPolicy, VerificationError> {
     let declared = DeclaredPolicies::new(original);
-    let mut policy = original.clone();
-    for entry in &original.public_overrides {
-        evaluation.checkpoint(&[]).await?;
-        policy
-            .public_grants
-            .extend(entry.privileges.iter().map(|privilege| PublicGrant {
-                object: entry.object.clone(),
-                privilege: *privilege,
-            }));
-    }
+    let mut policy = original.to_builder();
     let defaults = &original.defaults;
+    let mut catalog_schemas = HashSet::with_capacity(snapshot.schemas.len());
     for schema in &snapshot.schemas {
         evaluation.checkpoint(&[]).await?;
         if !original.discovery.includes(&schema.name) {
             continue;
         }
         let name =
-            Identifier::new(schema.name.clone()).map_err(VerificationError::InvalidPolicy)?;
+            Identifier::new(schema.name.clone()).map_err(VerificationError::CatalogIdentity)?;
+        if !catalog_schemas.insert(name.clone()) {
+            return Err(VerificationError::CatalogPolicyExpansion(
+                PolicyError::DuplicateAuthorityObject,
+            ));
+        }
         if !declared.schemas.contains(&name) {
             policy.schemas.push(SchemaPolicy {
                 schema: name.clone(),
@@ -155,14 +168,20 @@ pub(super) async fn expand(
             &defaults.schemas,
         );
     }
-    expand_relations(evaluation, snapshot, original, &declared, &mut policy).await?;
+    catalog::reconcile_relations(evaluation, snapshot, original, &declared, &mut policy).await?;
+    let mut catalog_types = HashSet::with_capacity(snapshot.types.len());
     for object in &snapshot.types {
         evaluation.checkpoint(&[]).await?;
         if !original.discovery.includes(&object.schema) {
             continue;
         }
         let name = QualifiedName::new(object.schema.clone(), object.name.clone())
-            .map_err(VerificationError::InvalidPolicy)?;
+            .map_err(VerificationError::CatalogIdentity)?;
+        if !catalog_types.insert(name.clone()) {
+            return Err(VerificationError::CatalogPolicyExpansion(
+                PolicyError::DuplicateAuthorityObject,
+            ));
+        }
         if !declared.types.contains(&name) {
             policy.types.push(TypePolicy {
                 type_name: name.clone(),
@@ -177,13 +196,19 @@ pub(super) async fn expand(
             &defaults.types,
         );
     }
+    let mut catalog_routines = HashSet::with_capacity(snapshot.routines.len());
     for object in &snapshot.routines {
         evaluation.checkpoint(&[]).await?;
         if !original.discovery.includes(&object.schema) {
             continue;
         }
         let name = routine_signature_from_catalog(object, &snapshot.type_names)
-            .map_err(VerificationError::InvalidPolicy)?;
+            .map_err(VerificationError::CatalogIdentity)?;
+        if !catalog_routines.insert(name.clone()) {
+            return Err(VerificationError::CatalogPolicyExpansion(
+                PolicyError::DuplicateAuthorityObject,
+            ));
+        }
         let defaults = if object.security_definer {
             &defaults.definer_routines
         } else {
@@ -206,93 +231,144 @@ pub(super) async fn expand(
             defaults,
         );
     }
-    Ok(policy)
-}
-
-async fn expand_relations(
-    evaluation: &mut Evaluation,
-    snapshot: &CatalogSnapshot,
-    original: &AuthorityPolicy,
-    declared: &DeclaredPolicies<'_>,
-    policy: &mut AuthorityPolicy,
-) -> Result<(), VerificationError> {
-    let defaults = &original.defaults;
-    for relation in &snapshot.relations {
-        evaluation.checkpoint(&[]).await?;
-        if !original.discovery.includes(&relation.schema) {
-            continue;
-        }
-        let name = QualifiedName::new(relation.schema.clone(), relation.name.clone())
-            .map_err(VerificationError::InvalidPolicy)?;
-        if relation.kind == "S" {
-            if !declared.sequences.contains(&name) {
-                policy.sequences.push(SequencePolicy {
-                    sequence: name.clone(),
-                    privileges: defaults.sequences.privileges.clone(),
-                    allow_owner: defaults.sequences.allow_owner,
-                });
-            }
-            add_public(
-                policy,
-                declared,
-                PublicObject::Sequence(name),
-                &defaults.sequences,
-            );
-        } else {
-            if !declared.relations.contains(&name) {
-                let columns = relation
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        Ok(ColumnPolicy {
-                            column: Identifier::new(column.name.clone())
-                                .map_err(VerificationError::InvalidPolicy)?,
-                            privileges: defaults.columns.privileges.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, VerificationError>>()?;
-                policy.relations.push(RelationPolicy {
-                    relation: name.clone(),
-                    privileges: defaults.relations.privileges.clone(),
-                    columns,
-                    allow_owner: defaults.relations.allow_owner,
-                    allow_row_type_public_usage: defaults.allow_row_type_public_usage,
-                });
-            }
-            add_public(
-                policy,
-                declared,
-                PublicObject::Relation(name.clone()),
-                &defaults.relations,
-            );
-            for column in &relation.columns {
-                evaluation.checkpoint(&[]).await?;
-                add_public(
-                    policy,
-                    declared,
-                    PublicObject::Column(
-                        name.clone(),
-                        Identifier::new(column.name.clone())
-                            .map_err(VerificationError::InvalidPolicy)?,
-                    ),
-                    &defaults.columns,
-                );
-            }
-        }
-    }
-    Ok(())
+    Ok(CatalogAuthorityPolicy(policy.finish_catalog_expansion()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::requests::{inspect_relations, inspect_types};
     use super::super::required::tests::snapshot;
-    use super::super::{AclEntry, RoleGraph, TypeObject};
+    use super::super::{AclEntry, ColumnObject, RoleGraph, RoutineObject, TypeObject};
     use super::*;
     use crate::verification::report::FindingKind;
     use crate::verification::{
         DeclarationPurpose, ExactRoleManifest, PublicDelivery, RelationGrantGroup,
     };
+
+    fn required_findings(
+        snapshot: &CatalogSnapshot,
+        policy: &AuthorityPolicy,
+    ) -> Vec<crate::verification::Finding> {
+        let expanded = crate::verification::authority::evaluation::tests::run(expand(
+            &mut crate::verification::authority::evaluation::Evaluation::new(),
+            snapshot,
+            policy,
+        ))
+        .unwrap();
+        let parameters = super::super::index_parameters(&snapshot.parameters);
+        let mut findings = Vec::new();
+        crate::verification::authority::evaluation::tests::run(super::super::required::inspect(
+            &mut crate::verification::authority::evaluation::Evaluation::new(),
+            snapshot,
+            &parameters,
+            &expanded,
+            &mut findings,
+        ))
+        .unwrap();
+        findings
+    }
+
+    #[test]
+    fn catalog_dependent_requirements_remain_report_findings_after_expansion() {
+        let mut snapshot = snapshot();
+        snapshot.relations[0].columns.push(ColumnObject {
+            name: "present".to_owned(),
+            acl: Vec::new(),
+        });
+
+        let relation = QualifiedName::new("service", "records").unwrap();
+        let column =
+            |name: &str| PublicObject::Column(relation.clone(), Identifier::new(name).unwrap());
+        let mut owner_draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
+        owner_draft.defaults.columns.allow_owner = true;
+        owner_draft.required_privileges.push(RequiredPrivilege {
+            object: column("present"),
+            privilege: ObjectPrivilege::Select,
+        });
+        let owner_findings = required_findings(&snapshot, &owner_draft.build().unwrap());
+        assert_eq!(owner_findings.len(), 1);
+        assert_eq!(owner_findings[0].kind, FindingKind::MissingPrivilege);
+
+        let mut missing_draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
+        missing_draft.defaults.columns.privileges =
+            vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
+        missing_draft.required_privileges.push(RequiredPrivilege {
+            object: column("missing"),
+            privilege: ObjectPrivilege::Select,
+        });
+        let missing_findings = required_findings(&snapshot, &missing_draft.build().unwrap());
+        assert_eq!(missing_findings.len(), 1);
+        assert_eq!(missing_findings[0].kind, FindingKind::MissingPrivilege);
+
+        snapshot.routines.push(RoutineObject {
+            schema: "service".to_owned(),
+            name: "perform".to_owned(),
+            owner: 3,
+            security_definer: true,
+            argument_types: Vec::new(),
+            acl: Vec::new(),
+        });
+        let routine =
+            RoutineSignature::new("service", "perform", std::iter::empty::<RoutineType>()).unwrap();
+        let mut routine_draft = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas);
+        routine_draft.defaults.invoker_routines.privileges =
+            vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)];
+        routine_draft.required_privileges.push(RequiredPrivilege {
+            object: PublicObject::Routine(routine),
+            privilege: ObjectPrivilege::Execute,
+        });
+        let routine_findings = required_findings(&snapshot, &routine_draft.build().unwrap());
+        assert_eq!(routine_findings.len(), 1);
+        assert_eq!(routine_findings[0].kind, FindingKind::MissingPrivilege);
+    }
+
+    #[test]
+    fn malformed_catalog_identity_retains_its_typed_cause() {
+        let mut snapshot = snapshot();
+        snapshot.routines.push(RoutineObject {
+            schema: "service".to_owned(),
+            name: "perform".to_owned(),
+            owner: 3,
+            security_definer: false,
+            argument_types: vec![i64::MAX],
+            acl: Vec::new(),
+        });
+        let policy = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas)
+            .build()
+            .unwrap();
+        let error = crate::verification::authority::evaluation::tests::run(expand(
+            &mut crate::verification::authority::evaluation::Evaluation::new(),
+            &snapshot,
+            &policy,
+        ))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::CatalogIdentity(PolicyError::InvalidRoutineType)
+        ));
+    }
+
+    #[test]
+    fn catalog_expansion_rejects_one_pg_class_identity_with_two_kinds() {
+        let mut snapshot = snapshot();
+        let mut conflicting = snapshot.relations[0].clone();
+        conflicting.kind = "S".to_owned();
+        conflicting.columns.clear();
+        snapshot.relations.push(conflicting);
+        let policy = AuthorityPolicyBuilder::new(DiscoveryScope::UserSchemas)
+            .build()
+            .unwrap();
+        let error = crate::verification::authority::evaluation::tests::run(expand(
+            &mut crate::verification::authority::evaluation::Evaluation::new(),
+            &snapshot,
+            &policy,
+        ))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::CatalogPolicyExpansion(PolicyError::ConflictingRelationKind)
+        ));
+    }
 
     #[test]
     fn discovered_undeclared_grant_is_rejected_and_default_or_exact_allowance_is_applied() {
@@ -545,3 +621,6 @@ mod tests {
 
 #[cfg(test)]
 mod scale_tests;
+
+#[cfg(test)]
+mod drift_tests;

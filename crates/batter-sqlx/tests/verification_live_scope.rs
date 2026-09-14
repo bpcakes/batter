@@ -1,17 +1,31 @@
 use super::support::{Result, bounded, combine, require};
 use super::{AuthorityFixture, exec, quote};
-use batter::operation::{OperationContext, OperationError};
+use batter::operation::OperationContext;
 use batter_sqlx::verification::*;
 use sqlx::Connection;
 use std::time::Duration;
 
-async fn inspect(pool: &sqlx::PgPool, policy: &AuthorityPolicy) -> Result<VerificationReport> {
+async fn inspect(
+    pool: &sqlx::PgPool,
+    draft: &AuthorityPolicyBuilder,
+) -> Result<VerificationReport> {
+    let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
         &OperationContext::new(Duration::from_secs(10))?,
-        policy,
+        &policy,
     )
     .await?)
+}
+
+async fn inspect_combined(
+    pool: &sqlx::PgPool,
+    migration: &MigrationPolicy,
+    draft: &AuthorityPolicyBuilder,
+) -> Result<VerificationReport> {
+    let authority = draft.clone().build()?;
+    let plan = VerificationPlan::migrations(migration).with_authority(&authority)?;
+    Ok(verify(pool, &OperationContext::new(Duration::from_secs(10))?, plan).await?)
 }
 
 fn incomplete(report: &VerificationReport) -> Result {
@@ -40,9 +54,9 @@ async fn verification_temporary_namespace_requests_are_incomplete() -> Result {
         let native: (bool, bool) = sqlx::query_as("SELECT has_schema_privilege(pg_my_temp_schema(), 'USAGE'), has_schema_privilege(pg_my_temp_schema(), 'CREATE')")
             .fetch_one(&pool).await?;
         require(native == (true, true), "native temporary namespace setup failed")?;
-        let mut policy = AuthorityPolicy {
+        let mut policy = AuthorityPolicyBuilder {
             schemas: vec![SchemaPolicy { schema: Identifier::new(&schema)?, privileges: Vec::new(), allow_owner: false }],
-            ..AuthorityPolicy::default()
+            ..AuthorityPolicyBuilder::default()
         };
         incomplete(&inspect(&pool, &policy).await?)?;
         policy.schemas[0].privileges = vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false), AllowedPrivilege::new(ObjectPrivilege::Create, false)];
@@ -57,17 +71,16 @@ async fn verification_temporary_namespace_requests_are_incomplete() -> Result {
         let other_schema: String = sqlx::query_scalar("SELECT nspname::text FROM pg_namespace WHERE oid=pg_my_temp_schema()")
             .fetch_one(&other).await?;
         for selected in [&schema, &other_schema, "pg_temp"] {
-            let discovery = AuthorityPolicy { discovery: DiscoveryScope::Schemas(vec![Identifier::new(selected)?]), ..AuthorityPolicy::default() };
+            let discovery = AuthorityPolicyBuilder { discovery: DiscoveryScope::Schemas(vec![Identifier::new(selected)?]), ..AuthorityPolicyBuilder::default() };
             incomplete(&inspect(&pool, &discovery).await?)?;
-            let migrations = MigrationPolicy { ledger: QualifiedName::new(selected, "absent_ledger")?, required: Vec::new(), additional: AdditionalMigrations::Reject };
+            let migrations = MigrationPolicy::new(QualifiedName::new(selected, "absent_ledger")?, [])?;
             incomplete(&verify_migrations(&pool, &OperationContext::new(Duration::from_secs(10))?, &migrations).await?)?;
-            let combined = VerificationPolicy::new(migrations, AuthorityPolicy::default());
-            incomplete(&verify(&pool, &OperationContext::new(Duration::from_secs(10))?, &combined).await?)?;
+            incomplete(&inspect_combined(&pool, &migrations, &AuthorityPolicyBuilder::default()).await?)?;
         }
         // An authority request must be rejected before even a missing ordinary
         // ledger can produce unrelated migration findings.
-        let combined = VerificationPolicy::new(MigrationPolicy { ledger: QualifiedName::new(&names.schema_a, "absent_ledger")?, required: Vec::new(), additional: AdditionalMigrations::Reject }, policy.clone());
-        incomplete(&verify(&pool, &OperationContext::new(Duration::from_secs(10))?, &combined).await?)?;
+        let missing = MigrationPolicy::new(QualifiedName::new(&names.schema_a, "absent_ledger")?, [])?;
+        incomplete(&inspect_combined(&pool, &missing, &policy).await?)?;
         let database: String = sqlx::query_scalar("SELECT current_database()::text").fetch_one(&pool).await?;
         let public_temp: bool = sqlx::query_scalar("SELECT has_database_privilege('public', current_database(), 'TEMP')")
             .fetch_one(&mut fixture.admin).await?;
@@ -111,7 +124,7 @@ async fn verification_public_relation_overrides_control_column_defaults() -> Res
         let native: (bool, bool) = sqlx::query_as("SELECT has_table_privilege($1::text, 'SELECT'), has_column_privilege($1::text, 'id', 'SELECT')")
             .bind(&table).fetch_one(&pool).await?;
         require(native == (false, true), "native column-only PUBLIC grant setup failed")?;
-        let mut policy = AuthorityPolicy { discovery: DiscoveryScope::Schemas(vec![Identifier::new(&names.schema_a)?]), ..AuthorityPolicy::default() };
+        let mut policy = AuthorityPolicyBuilder { discovery: DiscoveryScope::Schemas(vec![Identifier::new(&names.schema_a)?]), ..AuthorityPolicyBuilder::default() };
         policy.defaults.columns.public_privileges = vec![AllowedPrivilege::new(ObjectPrivilege::Select, false)];
         let column = PublicObject::Column(relation.clone(), Identifier::new("id")?);
         let selected = format!("{}.{}.{}", quote(&names.schema_a), quote("public_columns"), quote("id"));
@@ -126,7 +139,7 @@ async fn verification_public_relation_overrides_control_column_defaults() -> Res
         require(!inspect(&pool, &policy).await?.findings().iter().any(|f| f.kind == FindingKind::MissingPrivilege),
             "explicit PUBLIC column allowance and native requirement disagreed")?;
         policy.public_overrides[1].privileges.clear();
-        require(matches!(verify_authority(&pool, &OperationContext::new(Duration::from_secs(10))?, &policy).await, Err(OperationError::Failed(VerificationError::InvalidPolicy(PolicyError::ContradictoryRequiredPrivilege)))), "required validation disagreed with parent/column deny precedence")?;
+        require(matches!(policy.clone().build(), Err(PolicyError::ContradictoryRequiredPrivilege)), "required validation disagreed with parent/column deny precedence")?;
         policy.required_privileges.clear();
         policy.public_overrides.clear();
         policy.public_grants.push(PublicGrant { object: PublicObject::Relation(relation), privilege: AllowedPrivilege::new(ObjectPrivilege::Update, false) });
@@ -156,10 +169,10 @@ async fn verification_required_and_excess_authority_share_captured_snapshot() ->
         let before: (bool, bool) = sqlx::query_as("SELECT nspacl IS NULL, has_schema_privilege($1::text, oid, 'USAGE') FROM pg_namespace WHERE nspname=$2")
             .bind(&names.login_a).bind(&schema).fetch_one(&mut observer).await?;
         require(before == (true, false), "native snapshot reference setup failed")?;
-        let policy = AuthorityPolicy {
+        let policy = AuthorityPolicyBuilder {
             schemas: vec![SchemaPolicy { schema: Identifier::new(&schema)?, privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Usage, false)], allow_owner: false }],
             required_privileges: vec![RequiredPrivilege { object: PublicObject::Schema(Identifier::new(&schema)?), privilege: ObjectPrivilege::Usage }],
-            ..AuthorityPolicy::default()
+            ..AuthorityPolicyBuilder::default()
         };
         let verification = inspect(&pool, &policy);
         tokio::pin!(verification);

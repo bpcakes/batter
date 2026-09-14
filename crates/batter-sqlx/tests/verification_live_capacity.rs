@@ -242,7 +242,14 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
         let task_pool = pool.clone();
         let task_context = context.clone();
-        let mut task = tokio::spawn(async move { verify(&task_pool, &task_context, &policy).await });
+        let authority = policy.authority.build()?;
+        let migration = policy.migration;
+        let mut task = tokio::spawn(async move {
+            let plan = batter_sqlx::verification::VerificationPlan::migrations(&migration)
+                .with_authority(&authority)
+                .expect("capacity plan has one authority component");
+            verify(&task_pool, &task_context, plan).await
+        });
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
             let waiting: bool = sqlx::query_scalar(

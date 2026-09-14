@@ -1,27 +1,16 @@
 //! Pure construction of exact-role policies and PostgreSQL grant plans.
 //!
 //! [`ExactRoleManifest`] is a high-level, application-owned input. Compilation
-//! validates and normalizes it into the existing [`AuthorityPolicy`] plus a
+//! validates and normalizes it into an immutable [`AuthorityPolicy`] plus a
 //! deterministic [`GrantPlan`]. Neither compilation nor rendering connects to a
 //! database or executes SQL.
-//!
-//! The low-level policy remains available for unusual policies:
-//! ```
-//! use batter_sqlx::verification::{AuthorityPolicy, DiscoveryScope};
-//!
-//! let policy = AuthorityPolicy {
-//!     discovery: DiscoveryScope::Declared,
-//!     ..AuthorityPolicy::default()
-//! };
-//! assert!(policy.relations.is_empty());
-//! ```
 
 mod compile;
 mod render;
 
 use super::{
-    AuthorityPolicy, DiscoveryDefaults, DiscoveryScope, Identifier, ObjectPrivilege, PolicyError,
-    QualifiedName, RolePolicy, RoutineSignature,
+    AuthorityPolicy, AuthorityPolicyBuilder, DiscoveryDefaults, DiscoveryScope, Identifier,
+    ObjectPrivilege, PolicyError, QualifiedName, RolePolicy, RoutineSignature,
 };
 pub use render::GrantRenderError;
 use std::fmt;
@@ -502,10 +491,23 @@ impl ExactRoleManifest {
     }
 }
 
-/// Normalized exact-role output. Protected verification consumes this value so
-/// its policy and ownership safeguard stay coupled; [`Self::authority_policy`]
-/// is the lower-level ACL-only escape hatch. The grant plan remains inert data
-/// until a caller explicitly renders it.
+/// Normalized exact-role output. Verification consumes this value so its policy
+/// and ownership safeguard stay coupled. The grant plan remains inert data until
+/// a caller explicitly renders it.
+///
+/// ```compile_fail
+/// use batter_sqlx::verification::{DiscoveryScope, ExactRoleManifest, Identifier};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let role = ExactRoleManifest::new(
+///     Identifier::new("service")?,
+///     DiscoveryScope::Declared,
+/// )?.compile()?;
+/// // The authority policy cannot be detached from exact-role safeguards.
+/// let _ = role.authority_policy();
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExactRole {
     primary_schema: Identifier,
@@ -520,8 +522,7 @@ impl CompiledExactRole {
         &self.primary_schema
     }
 
-    /// Borrow the normalized low-level policy used by the existing verifier.
-    pub fn authority_policy(&self) -> &AuthorityPolicy {
+    pub(crate) fn authority_policy(&self) -> &AuthorityPolicy {
         &self.authority_policy
     }
 

@@ -2,30 +2,31 @@ use super::support::{Result, require};
 use super::{AuthorityFixture, exec, quote};
 use batter::operation::OperationContext;
 use batter_sqlx::verification::{
-    AllowedPrivilege, AuthorityPolicy, DatabasePolicy, DiscoveryScope, FindingKind, Identifier,
-    ObjectPrivilege, ParameterName, ParameterPolicy, PublicGrant, PublicObject, QualifiedName,
-    RequiredPrivilege, TypePolicy, VerificationReport, verify_authority,
+    AllowedPrivilege, AuthorityPolicyBuilder, DatabasePolicy, DiscoveryScope, FindingKind,
+    Identifier, ObjectPrivilege, ParameterName, ParameterPolicy, PublicGrant, PublicObject,
+    QualifiedName, RequiredPrivilege, TypePolicy, VerificationReport, verify_authority,
 };
 use std::time::Duration;
 
 pub(super) async fn inspect(
     pool: &sqlx::PgPool,
-    policy: &AuthorityPolicy,
+    draft: &AuthorityPolicyBuilder,
 ) -> Result<VerificationReport> {
+    let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
         &OperationContext::new(Duration::from_secs(10))?,
-        policy,
+        &policy,
     )
     .await?)
 }
 
-pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicy> {
+pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicyBuilder> {
     let privileges = vec![
         AllowedPrivilege::new(ObjectPrivilege::Connect, false),
         AllowedPrivilege::new(ObjectPrivilege::Temporary, false),
     ];
-    let mut policy = AuthorityPolicy {
+    let mut policy = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::Schemas(vec![Identifier::new(schema)?]),
         database: DatabasePolicy {
             privileges: privileges.clone(),
@@ -42,7 +43,7 @@ pub(super) fn clean_policy(schema: &str) -> Result<AuthorityPolicy> {
                 privilege,
             })
             .collect(),
-        ..AuthorityPolicy::default()
+        ..AuthorityPolicyBuilder::default()
     };
     policy
         .defaults

@@ -33,22 +33,43 @@ fn parameter_names_follow_postgres_custom_name_rules_without_a_total_identifier_
 #[test]
 fn migration_policy_rejects_duplicate_required_or_allowlisted_versions() {
     let ledger = QualifiedName::new("public", "ledger").unwrap();
-    let mut policy = VerificationPolicy::new(
-        MigrationPolicy::new(ledger.clone(), vec![MigrationExpectation::new(1, vec![1])]),
-        AuthorityPolicy::default(),
-    );
-    policy.migration.additional =
-        AdditionalMigrations::AllowListed(vec![MigrationExpectation::new(1, vec![2])]);
     assert_eq!(
-        policy.validate(),
+        MigrationPolicy::new(ledger.clone(), [MigrationExpectation::new(1, [1])],)
+            .unwrap()
+            .with_additional(AdditionalMigrations::AllowListed(vec![
+                MigrationExpectation::new(1, [2]),
+            ])),
         Err(PolicyError::DuplicateMigrationVersion)
     );
     assert_eq!(ledger.name(), "ledger");
 }
 
 #[test]
+fn migration_policy_bounds_required_and_allowlisted_rows_together() {
+    let required = (0..MAX_MIGRATION_LEDGER_ROWS - 1)
+        .map(|version| MigrationExpectation::new(i64::try_from(version).unwrap(), []));
+    let policy =
+        MigrationPolicy::new(QualifiedName::new("public", "ledger").unwrap(), required).unwrap();
+    assert!(
+        policy
+            .clone()
+            .with_additional(AdditionalMigrations::AllowListed(vec![
+                MigrationExpectation::new(i64::try_from(MAX_MIGRATION_LEDGER_ROWS).unwrap(), []),
+            ]))
+            .is_ok()
+    );
+    assert_eq!(
+        policy.with_additional(AdditionalMigrations::AllowListed(vec![
+            MigrationExpectation::new(i64::try_from(MAX_MIGRATION_LEDGER_ROWS).unwrap(), []),
+            MigrationExpectation::new(i64::try_from(MAX_MIGRATION_LEDGER_ROWS + 1).unwrap(), [],),
+        ])),
+        Err(PolicyError::AuthorityCapacity)
+    );
+}
+
+#[test]
 fn migration_policy_rejects_unbounded_expected_checksums() {
-    let policy = VerificationPolicy::new(
+    assert_eq!(
         MigrationPolicy::new(
             QualifiedName::new("public", "ledger").unwrap(),
             vec![MigrationExpectation::new(
@@ -56,17 +77,12 @@ fn migration_policy_rejects_unbounded_expected_checksums() {
                 vec![0; MAX_MIGRATION_CHECKSUM_BYTES + 1],
             )],
         ),
-        AuthorityPolicy::default(),
-    );
-    assert_eq!(
-        policy.validate(),
         Err(PolicyError::MigrationChecksumTooLarge)
     );
 }
 
 #[test]
 fn authority_policy_rejects_duplicate_object_and_column_identities() {
-    let ledger = QualifiedName::new("public", "ledger").unwrap();
     let relation = RelationPolicy {
         relation: QualifiedName::new("app", "records").unwrap(),
         privileges: Vec::new(),
@@ -74,19 +90,16 @@ fn authority_policy_rejects_duplicate_object_and_column_identities() {
         allow_owner: false,
         allow_row_type_public_usage: false,
     };
-    let mut policy = VerificationPolicy::new(
-        MigrationPolicy::new(ledger, Vec::new()),
-        AuthorityPolicy {
-            relations: vec![relation.clone(), relation],
-            ..AuthorityPolicy::default()
-        },
-    );
+    let mut policy = AuthorityPolicyBuilder {
+        relations: vec![relation.clone(), relation],
+        ..AuthorityPolicyBuilder::default()
+    };
     assert_eq!(
-        policy.validate(),
+        policy.clone().build(),
         Err(PolicyError::DuplicateAuthorityObject)
     );
 
-    policy.authority.relations = vec![RelationPolicy {
+    policy.relations = vec![RelationPolicy {
         relation: QualifiedName::new("app", "records").unwrap(),
         privileges: Vec::new(),
         columns: vec![
@@ -102,10 +115,54 @@ fn authority_policy_rejects_duplicate_object_and_column_identities() {
         allow_owner: false,
         allow_row_type_public_usage: false,
     }];
-    assert_eq!(
-        policy.validate(),
-        Err(PolicyError::DuplicateAuthorityObject)
-    );
+    assert_eq!(policy.build(), Err(PolicyError::DuplicateAuthorityObject));
+}
+
+#[test]
+fn authority_policy_rejects_cross_kind_pg_class_identities() {
+    let name = QualifiedName::new("service", "records").unwrap();
+    let relation = RelationPolicy {
+        relation: name.clone(),
+        privileges: Vec::new(),
+        columns: Vec::new(),
+        allow_owner: false,
+        allow_row_type_public_usage: false,
+    };
+    let sequence = SequencePolicy {
+        sequence: name.clone(),
+        privileges: Vec::new(),
+        allow_owner: false,
+    };
+    let policies = [
+        AuthorityPolicyBuilder {
+            relations: vec![relation],
+            sequences: vec![sequence.clone()],
+            ..AuthorityPolicyBuilder::default()
+        },
+        AuthorityPolicyBuilder {
+            public_grants: vec![PublicGrant {
+                object: PublicObject::Relation(name.clone()),
+                privilege: AllowedPrivilege::new(ObjectPrivilege::Select, false),
+            }],
+            public_overrides: vec![PublicAllowance {
+                object: PublicObject::Sequence(name.clone()),
+                privileges: Vec::new(),
+            }],
+            ..AuthorityPolicyBuilder::default()
+        },
+        AuthorityPolicyBuilder {
+            sequences: vec![sequence],
+            required_privileges: vec![RequiredPrivilege {
+                object: PublicObject::Column(name, Identifier::new("value").unwrap()),
+                privilege: ObjectPrivilege::Select,
+            }],
+            ..AuthorityPolicyBuilder::default()
+        },
+    ];
+
+    for policy in policies {
+        assert_eq!(policy.build(), Err(PolicyError::ConflictingRelationKind));
+    }
 }
 
 #[test]
@@ -130,19 +187,13 @@ fn requirements_reject_duplicates_contradictions_and_invalid_object_privileges()
         object: object.clone(),
         privilege: ObjectPrivilege::Select,
     };
-    let mut authority = AuthorityPolicy {
+    let mut authority = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::UserSchemas,
         required_privileges: vec![required.clone()],
-        ..AuthorityPolicy::default()
-    };
-    let make = |authority| {
-        VerificationPolicy::new(
-            MigrationPolicy::new(QualifiedName::new("service", "ledger").unwrap(), Vec::new()),
-            authority,
-        )
+        ..AuthorityPolicyBuilder::default()
     };
     assert_eq!(
-        make(authority.clone()).validate(),
+        authority.clone().build(),
         Err(PolicyError::ContradictoryRequiredPrivilege)
     );
     authority
@@ -150,48 +201,221 @@ fn requirements_reject_duplicates_contradictions_and_invalid_object_privileges()
         .relations
         .privileges
         .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
-    assert_eq!(make(authority.clone()).validate(), Ok(()));
+    assert!(authority.clone().build().is_ok());
     authority.required_privileges.push(required);
     assert_eq!(
-        make(authority.clone()).validate(),
+        authority.clone().build(),
         Err(PolicyError::DuplicateRequiredPrivilege)
     );
     authority.required_privileges.pop();
     authority.required_privileges[0].privilege = ObjectPrivilege::Execute;
     authority.roles.allow_superuser = true;
+    assert_eq!(authority.build(), Err(PolicyError::InvalidObjectPrivilege));
+}
+
+#[test]
+fn every_authority_object_accepts_only_its_postgres_privilege_set() {
+    use ObjectPrivilege::*;
+
+    let name = QualifiedName::new("service", "records").unwrap();
+    let routine = RoutineSignature::new("service", "perform", []).unwrap();
+    let cases: Vec<(PublicObject, &[ObjectPrivilege])> = vec![
+        (
+            PublicObject::Relation(name.clone()),
+            &[
+                Select, Insert, Update, Delete, Truncate, References, Trigger, Maintain,
+            ],
+        ),
+        (
+            PublicObject::Column(name.clone(), Identifier::new("value").unwrap()),
+            &[Select, Insert, Update, References],
+        ),
+        (
+            PublicObject::Sequence(name.clone()),
+            &[Usage, Select, Update],
+        ),
+        (
+            PublicObject::Schema(Identifier::new("service").unwrap()),
+            &[Usage, Create],
+        ),
+        (PublicObject::Routine(routine), &[Execute]),
+        (PublicObject::Type(name), &[Usage]),
+        (
+            PublicObject::Parameter(ParameterName::new("work_mem").unwrap()),
+            &[Set, AlterSystem],
+        ),
+        (PublicObject::Database, &[Connect, Create, Temporary]),
+    ];
+    let all = [
+        Select,
+        Insert,
+        Update,
+        Delete,
+        Truncate,
+        References,
+        Trigger,
+        Maintain,
+        Usage,
+        Create,
+        Connect,
+        Temporary,
+        Execute,
+        Set,
+        AlterSystem,
+    ];
+
+    for (object, allowed) in cases {
+        for privilege in all {
+            let result = AuthorityPolicyBuilder {
+                public_grants: vec![PublicGrant {
+                    object: object.clone(),
+                    privilege: AllowedPrivilege::new(privilege, false),
+                }],
+                ..AuthorityPolicyBuilder::default()
+            }
+            .build();
+            assert_eq!(
+                result.is_ok(),
+                allowed.contains(&privilege),
+                "unexpected {privilege:?} result for {object:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn generic_authority_duplicates_normalize_or_reject_one_meaning() {
+    let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
+    let relation = QualifiedName::new("service", "records").unwrap();
+    let normalized = AuthorityPolicyBuilder {
+        relations: vec![RelationPolicy {
+            relation: relation.clone(),
+            privileges: vec![select, select],
+            columns: Vec::new(),
+            allow_owner: false,
+            allow_row_type_public_usage: false,
+        }],
+        public_grants: vec![
+            PublicGrant {
+                object: PublicObject::Relation(relation.clone()),
+                privilege: select,
+            },
+            PublicGrant {
+                object: PublicObject::Relation(relation.clone()),
+                privilege: select,
+            },
+        ],
+        ..AuthorityPolicyBuilder::default()
+    }
+    .build()
+    .unwrap();
+    assert_eq!(normalized.relations()[0].privileges, [select]);
+    assert_eq!(normalized.public_grants().len(), 1);
+
+    let conflicting = AuthorityPolicyBuilder {
+        relations: vec![RelationPolicy {
+            relation: relation.clone(),
+            privileges: vec![select, AllowedPrivilege::new(ObjectPrivilege::Select, true)],
+            columns: Vec::new(),
+            allow_owner: false,
+            allow_row_type_public_usage: false,
+        }],
+        ..AuthorityPolicyBuilder::default()
+    };
     assert_eq!(
-        make(authority).validate(),
-        Err(PolicyError::ContradictoryRequiredPrivilege)
+        conflicting.build(),
+        Err(PolicyError::ContradictoryAuthorityPrivilege)
+    );
+
+    let conflicting_public = AuthorityPolicyBuilder {
+        public_grants: vec![
+            PublicGrant {
+                object: PublicObject::Relation(relation.clone()),
+                privilege: select,
+            },
+            PublicGrant {
+                object: PublicObject::Relation(relation),
+                privilege: AllowedPrivilege::new(ObjectPrivilege::Select, true),
+            },
+        ],
+        ..AuthorityPolicyBuilder::default()
+    };
+    assert_eq!(
+        conflicting_public.build(),
+        Err(PolicyError::ContradictoryAuthorityPrivilege)
+    );
+}
+
+#[test]
+fn set_like_inputs_normalize_while_exact_public_identities_reject_duplicates() {
+    let schema = Identifier::new("service").unwrap();
+    let role = Identifier::new("service_operator").unwrap();
+    let normalized = AuthorityPolicyBuilder {
+        discovery: DiscoveryScope::Schemas(vec![schema.clone(), schema]),
+        roles: RolePolicy {
+            allowed_admin_roles: vec![role.clone(), role.clone()],
+            allowed_predefined_roles: vec![role.clone(), role],
+            ..RolePolicy::default()
+        },
+        required_surfaces: vec![
+            RequiredSurface::SecurityDefinerBody,
+            RequiredSurface::SecurityDefinerBody,
+        ],
+        ..AuthorityPolicyBuilder::default()
+    }
+    .build()
+    .unwrap();
+    assert!(matches!(
+        normalized.discovery(),
+        DiscoveryScope::Schemas(schemas) if schemas.len() == 1
+    ));
+    assert_eq!(normalized.roles().allowed_admin_roles.len(), 1);
+    assert_eq!(normalized.roles().allowed_predefined_roles.len(), 1);
+    assert_eq!(normalized.required_surfaces().len(), 1);
+
+    let object = PublicObject::Relation(QualifiedName::new("service", "records").unwrap());
+    let duplicate = AuthorityPolicyBuilder {
+        public_overrides: vec![
+            PublicAllowance {
+                object: object.clone(),
+                privileges: Vec::new(),
+            },
+            PublicAllowance {
+                object,
+                privileges: Vec::new(),
+            },
+        ],
+        ..AuthorityPolicyBuilder::default()
+    };
+    assert_eq!(
+        duplicate.build(),
+        Err(PolicyError::DuplicateAuthorityObject)
     );
 }
 
 #[test]
 fn exact_empty_public_allowance_rejects_a_requirement_allowed_only_by_default_public() {
     let object = PublicObject::Relation(QualifiedName::new("service", "records").unwrap());
-    let mut authority = AuthorityPolicy {
+    let mut authority = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::UserSchemas,
         required_privileges: vec![RequiredPrivilege {
             object: object.clone(),
             privilege: ObjectPrivilege::Select,
         }],
-        ..AuthorityPolicy::default()
+        ..AuthorityPolicyBuilder::default()
     };
     authority
         .defaults
         .relations
         .public_privileges
         .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
-    let mut policy = VerificationPolicy::new(
-        MigrationPolicy::new(QualifiedName::new("service", "ledger").unwrap(), Vec::new()),
-        authority,
-    );
-    assert_eq!(policy.validate(), Ok(()));
-    policy.authority.public_overrides.push(PublicAllowance {
+    assert!(authority.clone().build().is_ok());
+    authority.public_overrides.push(PublicAllowance {
         object,
         privileges: Vec::new(),
     });
     assert_eq!(
-        policy.validate(),
+        authority.build(),
         Err(PolicyError::ContradictoryRequiredPrivilege)
     );
 }
@@ -200,7 +424,7 @@ fn exact_empty_public_allowance_rejects_a_requirement_allowed_only_by_default_pu
 fn required_column_can_use_public_relation_allowance_and_exact_role_override_keeps_public_default()
 {
     let name = QualifiedName::new("service", "records").unwrap();
-    let mut authority = AuthorityPolicy {
+    let mut authority = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::UserSchemas,
         relations: vec![RelationPolicy {
             relation: name.clone(),
@@ -213,17 +437,17 @@ fn required_column_can_use_public_relation_allowance_and_exact_role_override_kee
             object: PublicObject::Column(name, Identifier::new("value").unwrap()),
             privilege: ObjectPrivilege::Select,
         }],
-        ..AuthorityPolicy::default()
+        ..AuthorityPolicyBuilder::default()
     };
     authority
         .defaults
         .relations
         .public_privileges
         .push(AllowedPrivilege::new(ObjectPrivilege::Select, false));
-    assert_eq!(authority.validate(), Ok(()));
+    assert!(authority.build().is_ok());
 }
 
-fn add_all_kind_group(policy: &mut AuthorityPolicy, ordinal: usize) {
+fn add_all_kind_group(policy: &mut AuthorityPolicyBuilder, ordinal: usize) {
     let allowed = |privilege| vec![AllowedPrivilege::new(privilege, false)];
     let relation = QualifiedName::new("service", format!("records_{ordinal}")).unwrap();
     let columns = [
@@ -316,8 +540,8 @@ fn add_all_kind_group(policy: &mut AuthorityPolicy, ordinal: usize) {
     });
 }
 
-fn near_capacity_all_kind_policy() -> AuthorityPolicy {
-    let mut policy = AuthorityPolicy::default();
+fn near_capacity_all_kind_policy() -> AuthorityPolicyBuilder {
+    let mut policy = AuthorityPolicyBuilder::default();
     for ordinal in 0..400 {
         add_all_kind_group(&mut policy, ordinal);
     }
@@ -339,42 +563,44 @@ fn near_capacity_all_kind_policy() -> AuthorityPolicy {
 fn near_capacity_validation_indexes_every_declared_object_kind_once() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const EXPECTED_LOGICAL_OPERATIONS: usize = 11_598;
-    let mut policy = near_capacity_all_kind_policy();
+    const EXPECTED_LOGICAL_OPERATIONS: usize = 13_998;
+    let policy = near_capacity_all_kind_policy().build().unwrap();
     let operations = AtomicUsize::new(0);
 
     policy.validate_counted(&operations).unwrap();
 
     // 400 groups of eight declarations, allowances and requirements, plus
     // 398 unused declarations and two database entries fill the 10,000 budget.
-    // Index 3,598 declarations. Each group makes 20 decisions: relation 2,
+    // Check 2,400 relation-kind identities and index 3,598 declarations. Each
+    // group makes 20 decisions: relation 2,
     // columns 4 each, sequence 2, schema 2, routine 3, type 2, parameter 1.
     // Every keyed inventory has hundreds of distinct required lookups.
     assert_eq!(
         operations.load(Ordering::Relaxed),
         EXPECTED_LOGICAL_OPERATIONS
     );
-    policy.parameters.push(ParameterPolicy {
+    let mut overflow = policy.to_builder();
+    overflow.parameters.push(ParameterPolicy {
         parameter: ParameterName::new("overflow").unwrap(),
         privileges: Vec::new(),
     });
-    assert_eq!(policy.validate(), Err(PolicyError::AuthorityCapacity));
-    policy.parameters.pop();
-    policy.relations.last_mut().unwrap().columns[1]
+    assert_eq!(overflow.build(), Err(PolicyError::AuthorityCapacity));
+    let mut denied = policy.to_builder();
+    denied.relations.last_mut().unwrap().columns[1]
         .privileges
         .clear();
     assert_eq!(
-        policy.validate(),
+        denied.build(),
         Err(PolicyError::ContradictoryRequiredPrivilege)
     );
 }
 
-fn near_capacity_public_discovery_policy() -> AuthorityPolicy {
+fn near_capacity_public_discovery_policy() -> AuthorityPolicyBuilder {
     let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
     let object = |schema: &str, ordinal| {
         PublicObject::Relation(QualifiedName::new(schema, format!("record_{ordinal}")).unwrap())
     };
-    let mut policy = AuthorityPolicy {
+    let mut policy = AuthorityPolicyBuilder {
         discovery: DiscoveryScope::Schemas(
             (0..2_000)
                 .map(|ordinal| Identifier::new(format!("schema_{ordinal}")).unwrap())
@@ -398,7 +624,7 @@ fn near_capacity_public_discovery_policy() -> AuthorityPolicy {
                 privilege: ObjectPrivilege::Select,
             })
             .collect(),
-        ..AuthorityPolicy::default()
+        ..AuthorityPolicyBuilder::default()
     };
     policy.required_privileges.last_mut().unwrap().object = object("granted", 1_999);
     policy.defaults.relations.privileges.push(select);
@@ -409,27 +635,27 @@ fn near_capacity_public_discovery_policy() -> AuthorityPolicy {
 fn near_capacity_validation_counts_public_conflicts_and_schema_discovery() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let mut policy = near_capacity_public_discovery_policy();
+    let policy = near_capacity_public_discovery_policy().build().unwrap();
     let operations = AtomicUsize::new(0);
     policy.validate_counted(&operations).unwrap();
     // Exactly 10,000 aggregate entries. Index 2,000 grants and 2,000 schemas;
     // probe 2,000 overrides. Each of 3,998 default-backed requirements performs
     // two discovery decisions and one relation lookup; the final PUBLIC grant
     // supplies the remaining requirement without a discovery or role lookup.
-    assert_eq!(operations.load(Ordering::Relaxed), 6_000 + 3 * 3_998);
+    assert_eq!(operations.load(Ordering::Relaxed), 13_999 + 3 * 3_998);
 
-    let original = policy.public_overrides.last().unwrap().object.clone();
-    policy.public_overrides.last_mut().unwrap().object =
-        policy.public_grants.last().unwrap().object.clone();
+    let mut duplicate = policy.to_builder();
+    duplicate.public_overrides.last_mut().unwrap().object =
+        duplicate.public_grants.last().unwrap().object.clone();
     assert_eq!(
-        policy.validate(),
+        duplicate.build(),
         Err(PolicyError::DuplicateAuthorityObject)
     );
-    policy.public_overrides.last_mut().unwrap().object = original;
-    policy.required_privileges.last_mut().unwrap().object =
+    let mut outside = policy.to_builder();
+    outside.required_privileges.last_mut().unwrap().object =
         PublicObject::Relation(QualifiedName::new("outside_scope", "records").unwrap());
     assert_eq!(
-        policy.validate(),
+        outside.build(),
         Err(PolicyError::ContradictoryRequiredPrivilege)
     );
 }
@@ -438,16 +664,18 @@ fn near_capacity_validation_counts_public_conflicts_and_schema_discovery() {
 fn large_validation_preserves_user_schema_discovery_and_system_schema_rejection() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let mut policy = near_capacity_public_discovery_policy();
-    policy.discovery = DiscoveryScope::UserSchemas;
+    let mut draft = near_capacity_public_discovery_policy();
+    draft.discovery = DiscoveryScope::UserSchemas;
+    let policy = draft.build().unwrap();
     let operations = AtomicUsize::new(0);
     policy.validate_counted(&operations).unwrap();
     // UserSchemas needs no schema-name index; the other decisions are identical.
-    assert_eq!(operations.load(Ordering::Relaxed), 4_000 + 3 * 3_998);
-    policy.required_privileges.last_mut().unwrap().object =
+    assert_eq!(operations.load(Ordering::Relaxed), 11_999 + 3 * 3_998);
+    let mut rejected = policy.to_builder();
+    rejected.required_privileges.last_mut().unwrap().object =
         PublicObject::Relation(QualifiedName::new("pg_catalog", "records").unwrap());
     assert_eq!(
-        policy.validate(),
+        rejected.build(),
         Err(PolicyError::ContradictoryRequiredPrivilege)
     );
 }

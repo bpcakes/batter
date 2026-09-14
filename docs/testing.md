@@ -162,13 +162,15 @@ three verifier entrypoints and requires their expected idle reset warning. Pure
 production-snapshot tests cover cooperative cancellation/deadline, combined
 role/object scale, near-capacity parameter assembly and missing-object lookup
 with counted catalog visits and name lookups, the checked captured-parameter uniqueness boundary,
-and explicit work/report/policy limits. A full `AuthorityPolicy::validate` path at
+and explicit work/report/policy limits. A full `AuthorityPolicyBuilder::build` path at
 the 10,000-entry aggregate limit covers relation, nested-column, sequence, schema,
 routine, type, parameter and database allowances with an explicit logical-work
 counter independent of `HashMap` internals. Every keyed kind has hundreds of
 distinct required lookups, including two independently necessary columns per
-relation; singleton success cannot stand in for scale coverage. The fixture also
-rejects one-entry overflow and a late column denial. The parameter scale oracle also
+relation; singleton success cannot stand in for scale coverage. The fixture
+builds the complete draft before applying the independent logical-work observer,
+then rebuilds mutated drafts to reject one-entry overflow and a late column
+denial. The parameter scale oracle also
 retains hidden, custom-placeholder, absent-object and late ACL/grant-option
 verdicts without using elapsed wall time or standard-library hashing counts.
 Its observer follows the private catalog into the full production evaluator;
@@ -183,6 +185,31 @@ metadata, custom requirements, denied required privileges, PUBLIC denial and
 grant-option findings. All five indexed parameter caller sites have independent
 scan-mutation evidence. The original 29,993-operation declared-parameter
 regression is retained unchanged.
+Pure construction controls enumerate every supported authority object kind
+against every `ObjectPrivilege` variant, normalize identical privilege entries,
+reject conflicting grant-option declarations, and reject duplicate required or
+exact object identities. They also reject relation/sequence collisions across
+exact, PUBLIC, column-parent and required declarations. Plan tests cover both
+composition orders when a migration ledger conflicts with a sequence identity,
+while report tests require canonical unique coverage ordering and catalog
+identity tests retain exact typed causes. Full snapshot regressions require both
+directions of valid-policy/catalog kind drift to remain `MissingObject`
+violations while the observed object uses its own discovery defaults. They cover
+relation, sequence and column PUBLIC/required targets plus the stricter
+no-default behavior of declared-only scope. Duplicate catalog schema, relation,
+column, type and routine identities are rejected during checkpointed expansion;
+a malformed routine argument type retains its typed catalog-identity cause, and
+an impossible snapshot containing both relation kinds retains the distinct
+catalog-expansion error. The large discovery regression exercises the same
+one-pass internal policy constructor, so no post-expansion global
+canonicalization phase is outside its watchdog.
+Generic and SQLx migration constructors
+stop consuming input at the fixed row boundary; generic required and allowlisted
+rows are also bounded together. Compile-fail doctests prove callers cannot use
+executable authority fields, detach exact-role authority from its safeguards, or
+create an empty/default `VerificationPlan`. Pure construction tests prove invalid
+drafts cannot produce an executable value; already-cancelled valid plans still
+acquire no connection.
 Private work-counted map/set boundaries also measure traversal in scan-mutation
 controls; production callers cannot obtain a raw collection iterator. The policy
 tests additionally fill the aggregate limit with PUBLIC grants, overrides,

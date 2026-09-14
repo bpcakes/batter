@@ -51,6 +51,7 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                     false,
                     false,
                 )?;
+                let authority = policy.authority.clone().build()?;
                 let notices = Notices(Arc::new(Mutex::new(Vec::new())));
                 let dispatch =
                     tracing::Dispatch::new(tracing_subscriber::registry().with(notices.clone()));
@@ -63,8 +64,13 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                         batter::telemetry::with_current_dispatch(async {
                             match mode {
                                 0 => {
-                                    batter_sqlx::verification::verify(&pool, &context, &policy)
-                                        .await
+                                    let plan =
+                                        batter_sqlx::verification::VerificationPlan::migrations(
+                                            &policy.migration,
+                                        )
+                                        .with_authority(&authority)
+                                        .expect("notice plan has one authority component");
+                                    batter_sqlx::verification::verify(&pool, &context, plan).await
                                 }
                                 1 => {
                                     batter_sqlx::verification::verify_migrations(
@@ -76,9 +82,7 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                                 }
                                 _ => {
                                     batter_sqlx::verification::verify_authority(
-                                        &pool,
-                                        &context,
-                                        &policy.authority,
+                                        &pool, &context, &authority,
                                     )
                                     .await
                                 }

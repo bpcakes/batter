@@ -72,6 +72,54 @@ struct PolicyIndex<'a, W> {
     work: W,
 }
 
+fn record_pg_class_kind<'a, W: ValidationWork>(
+    kinds: &mut WorkMap<&'a QualifiedName, PgClassKind, W>,
+    work: W,
+    name: &'a QualifiedName,
+    kind: PgClassKind,
+) -> Result<(), PolicyError> {
+    work.record();
+    if kinds
+        .insert(name, kind)
+        .is_some_and(|previous| previous != kind)
+    {
+        return Err(PolicyError::ConflictingRelationKind);
+    }
+    Ok(())
+}
+
+fn validate_pg_class_kinds<W: ValidationWork>(
+    policy: &AuthorityPolicy,
+    work: W,
+) -> Result<(), PolicyError> {
+    let capacity = policy
+        .relations
+        .len()
+        .saturating_add(policy.sequences.len())
+        .saturating_add(policy.public_grants.len())
+        .saturating_add(policy.public_overrides.len())
+        .saturating_add(policy.required_privileges.len());
+    let mut kinds = WorkMap::with_capacity(capacity, work);
+    for relation in &policy.relations {
+        record_pg_class_kind(&mut kinds, work, &relation.relation, PgClassKind::Relation)?;
+    }
+    for sequence in &policy.sequences {
+        record_pg_class_kind(&mut kinds, work, &sequence.sequence, PgClassKind::Sequence)?;
+    }
+    for object in policy
+        .public_grants
+        .iter()
+        .map(|entry| &entry.object)
+        .chain(policy.public_overrides.iter().map(|entry| &entry.object))
+        .chain(policy.required_privileges.iter().map(|entry| &entry.object))
+    {
+        if let Some((name, kind)) = object.pg_class_identity() {
+            record_pg_class_kind(&mut kinds, work, name, kind)?;
+        }
+    }
+    Ok(())
+}
+
 impl<'a, W: ValidationWork> PolicyIndex<'a, W> {
     fn new(policy: &'a AuthorityPolicy, work: W) -> Result<Self, PolicyError> {
         let mut relations = WorkMap::with_capacity(policy.relations.len(), work);
@@ -224,11 +272,11 @@ impl<'a, W: ValidationWork> PolicyIndex<'a, W> {
 /// Discovery is bounded by the verifier's catalog capacity and uses its snapshot.
 ///
 /// ```
-/// use batter_sqlx::verification::{AuthorityPolicy, DiscoveryScope, ObjectDefaults,
+/// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope, ObjectDefaults,
 ///     AllowedPrivilege, ObjectPrivilege, PublicAllowance, PublicObject, QualifiedName};
-/// let mut policy = AuthorityPolicy {
+/// let mut policy = AuthorityPolicyBuilder {
 ///     discovery: DiscoveryScope::UserSchemas,
-///     ..AuthorityPolicy::default()
+///     ..AuthorityPolicyBuilder::default()
 /// };
 /// policy.defaults.invoker_routines = ObjectDefaults {
 ///     privileges: vec![AllowedPrivilege::new(ObjectPrivilege::Execute, false)],
@@ -239,6 +287,8 @@ impl<'a, W: ValidationWork> PolicyIndex<'a, W> {
 ///     object: PublicObject::Relation(QualifiedName::new("service", "private_records")?),
 ///     privileges: Vec::new(),
 /// });
+/// let policy = policy.build()?;
+/// assert_eq!(policy.discovery(), &DiscoveryScope::UserSchemas);
 /// # Ok::<(), batter_sqlx::verification::PolicyError>(())
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -302,7 +352,7 @@ pub struct PublicAllowance {
 /// };
 /// # Ok::<(), batter_sqlx::verification::PolicyError>(())
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RequiredPrivilege {
     pub object: PublicObject,
     pub privilege: ObjectPrivilege,
@@ -318,10 +368,11 @@ impl DiscoveryScope {
     }
 }
 
-pub(super) fn validate_authority<W: ValidationWork>(
+fn validate_structure<W: ValidationWork>(
     policy: &AuthorityPolicy,
     work: W,
-) -> Result<(), PolicyError> {
+) -> Result<PolicyIndex<'_, W>, PolicyError> {
+    validate_pg_class_kinds(policy, work)?;
     let index = PolicyIndex::new(policy, work)?;
     let mut overrides = HashSet::new();
     for entry in &policy.public_overrides {
@@ -329,6 +380,14 @@ pub(super) fn validate_authority<W: ValidationWork>(
             return Err(PolicyError::DuplicateAuthorityObject);
         }
     }
+    Ok(index)
+}
+
+pub(super) fn validate_authority<W: ValidationWork>(
+    policy: &AuthorityPolicy,
+    work: W,
+) -> Result<(), PolicyError> {
+    let index = validate_structure(policy, work)?;
     let mut seen = HashSet::new();
     for required in &policy.required_privileges {
         if !seen.insert((&required.object, required.privilege)) {
@@ -476,21 +535,4 @@ fn collect_allowances<'a, W: ValidationWork>(
         }
     }
     defaults
-}
-
-fn valid_privilege(object: &PublicObject, privilege: ObjectPrivilege) -> bool {
-    use ObjectPrivilege::*;
-    match object {
-        PublicObject::Relation(_) => matches!(
-            privilege,
-            Select | Insert | Update | Delete | Truncate | References | Trigger | Maintain
-        ),
-        PublicObject::Column(..) => matches!(privilege, Select | Insert | Update | References),
-        PublicObject::Sequence(_) => matches!(privilege, Usage | Select | Update),
-        PublicObject::Schema(_) => matches!(privilege, Usage | Create),
-        PublicObject::Routine(_) => privilege == Execute,
-        PublicObject::Type(_) => privilege == Usage,
-        PublicObject::Parameter(_) => matches!(privilege, Set | AlterSystem),
-        PublicObject::Database => matches!(privilege, Connect | Create | Temporary),
-    }
 }

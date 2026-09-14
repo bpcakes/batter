@@ -22,19 +22,19 @@ pub use manifest::{
     RoutineGrantSpec, SchemaGrantSpec,
 };
 pub use policy::{
-    AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, ColumnPolicy, DatabasePolicy,
-    DiscoveryDefaults, DiscoveryScope, Identifier, MigrationExpectation, MigrationPolicy,
-    ObjectDefaults, ObjectPrivilege, ParameterName, ParameterPolicy, PolicyError, PublicAllowance,
-    PublicGrant, PublicObject, QualifiedName, RelationPolicy, RequiredPrivilege, RequiredSurface,
-    RolePolicy, RoutinePolicy, RoutineSignature, RoutineType, SchemaPolicy, SequencePolicy,
-    TypePolicy, VerificationPolicy,
+    AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, ColumnPolicy,
+    DatabasePolicy, DiscoveryDefaults, DiscoveryScope, Identifier, MigrationExpectation,
+    MigrationPolicy, ObjectDefaults, ObjectPrivilege, ParameterName, ParameterPolicy, PolicyError,
+    PublicAllowance, PublicGrant, PublicObject, QualifiedName, RelationPolicy, RequiredPrivilege,
+    RequiredSurface, RolePolicy, RoutinePolicy, RoutineSignature, RoutineType, SchemaPolicy,
+    SequencePolicy, TypePolicy,
 };
 pub use report::{
     Finding, FindingKind, RoleAttribute, SupportedSurface, UnsupportedSurface, VerificationError,
     VerificationReport, VerificationStatus,
 };
 pub use request::{
-    SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationRequest,
+    PlanError, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationPlan,
 };
 
 use batter::operation::{OperationContext, OperationError};
@@ -87,10 +87,10 @@ struct InspectionFragment {
 ///
 /// ```no_run
 /// use batter::operation::OperationContext;
-/// use batter_sqlx::verification::{verify, VerificationPolicy, VerificationStatus};
+/// use batter_sqlx::verification::{verify, VerificationPlan, VerificationStatus};
 /// # async fn check(pool: &sqlx::PgPool, context: &OperationContext,
-/// # policy: &VerificationPolicy) -> Result<(), Box<dyn std::error::Error>> {
-/// let report = verify(pool, context, policy).await?;
+/// # plan: VerificationPlan<'_>) -> Result<(), Box<dyn std::error::Error>> {
+/// let report = verify(pool, context, plan).await?;
 /// if report.status() != VerificationStatus::WithinDeclaredPolicy {
 ///     return Err("database policy verification did not pass".into());
 /// }
@@ -105,9 +105,9 @@ struct InspectionFragment {
 pub async fn verify(
     pool: &PgPool,
     context: &OperationContext,
-    policy: &VerificationPolicy,
+    plan: VerificationPlan<'_>,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(pool, context, executor::Inspection::Combined(policy)).await
+    executor::execute(pool, context, plan).await
 }
 
 /// Verify only migration history, using the same owned operation as [`verify`].
@@ -145,12 +145,12 @@ pub async fn verify(
 /// ```no_run
 /// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
 /// # -> Result<(), Box<dyn std::error::Error>> {
-/// use batter_sqlx::verification::{AuthorityPolicy, DiscoveryScope, Identifier,
+/// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope, Identifier,
 ///     UnsupportedSurface, VerificationStatus, verify_authority};
-/// let policy = AuthorityPolicy {
+/// let policy = AuthorityPolicyBuilder {
 ///     discovery: DiscoveryScope::Schemas(vec![Identifier::new("pg_temp")?]),
-///     ..AuthorityPolicy::default()
-/// };
+///     ..AuthorityPolicyBuilder::default()
+/// }.build()?;
 /// let report = verify_authority(pool, context, &policy).await?;
 /// assert_eq!(report.status(), VerificationStatus::Incomplete);
 /// assert!(report.unsupported().contains(&UnsupportedSurface::TemporaryNamespaces));
@@ -158,14 +158,14 @@ pub async fn verify(
 /// ```
 ///
 /// # Errors
-/// Returns the typed policy, database, rollback and interruption errors
+/// Returns the typed database, rollback and interruption errors
 /// described by [`verify`].
 pub async fn verify_migrations(
     pool: &PgPool,
     context: &OperationContext,
     policy: &MigrationPolicy,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(pool, context, executor::Inspection::Migrations(policy)).await
+    verify(pool, context, VerificationPlan::migrations(policy)).await
 }
 
 /// Verify only serving authority, using the same owned operation as [`verify`].
@@ -190,12 +190,12 @@ pub async fn verify_migrations(
 /// ```no_run
 /// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
 /// # -> Result<(), Box<dyn std::error::Error>> {
-/// use batter_sqlx::verification::{AuthorityPolicy, DiscoveryScope, Identifier,
+/// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope, Identifier,
 ///     UnsupportedSurface, VerificationStatus, verify_authority};
-/// let policy = AuthorityPolicy {
+/// let policy = AuthorityPolicyBuilder {
 ///     discovery: DiscoveryScope::Schemas(vec![Identifier::new("pg_temp")?]),
-///     ..AuthorityPolicy::default()
-/// };
+///     ..AuthorityPolicyBuilder::default()
+/// }.build()?;
 /// let report = verify_authority(pool, context, &policy).await?;
 /// assert_eq!(report.status(), VerificationStatus::Incomplete);
 /// assert!(report.unsupported().contains(&UnsupportedSurface::TemporaryNamespaces));
@@ -203,14 +203,14 @@ pub async fn verify_migrations(
 /// ```
 ///
 /// # Errors
-/// Returns the typed policy, database, rollback and interruption errors
+/// Returns the typed database, rollback and interruption errors
 /// described by [`verify`].
 pub async fn verify_authority(
     pool: &PgPool,
     context: &OperationContext,
     policy: &AuthorityPolicy,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(pool, context, executor::Inspection::Authority(policy)).await
+    verify(pool, context, VerificationPlan::authority(policy)).await
 }
 
 /// Verify one SQLx 0.9 ledger's exact shape and selected history through the
@@ -223,69 +223,30 @@ pub async fn verify_authority(
 /// historical snapshot. Verification never runs migrations.
 ///
 /// # Errors
-/// Returns the same typed policy, database, rollback, and interruption errors
+/// Returns the same typed database, rollback, and interruption errors
 /// as [`verify`].
 pub async fn verify_sqlx_migrations(
     pool: &PgPool,
     context: &OperationContext,
     manifest: &SqlxMigrationManifest,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(
-        pool,
-        context,
-        executor::Inspection::SqlxMigrations(manifest),
-    )
-    .await
+    verify(pool, context, VerificationPlan::sqlx_migrations(manifest)).await
 }
 
 /// Verify a compiled exact role, including its selected ownership safeguard.
 ///
-/// The low-level [`CompiledExactRole::authority_policy`] accessor intentionally
-/// omits safeguards; use this entrypoint or [`verify_request`] for the protected
-/// high-level contract.
+/// Use this entrypoint or [`verify`] with [`VerificationPlan::exact_role`] so
+/// the compiled role's ownership safeguards remain part of execution.
 ///
 /// # Errors
-/// Returns the same typed policy, database, rollback, and interruption errors
+/// Returns the same typed database, rollback, and interruption errors
 /// as [`verify`].
 pub async fn verify_exact_role(
     pool: &PgPool,
     context: &OperationContext,
     role: &CompiledExactRole,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(pool, context, executor::Inspection::ExactRole(role)).await
-}
-
-/// Verify independently optional SQLx-ledger, schema-setting, and compiled-role
-/// components through one owned checkout and captured transaction snapshot.
-///
-/// Schema-only requests do not apply serving-role authority restrictions. An
-/// empty request is rejected inside the supplied operation boundary.
-///
-/// ```no_run
-/// use batter_sqlx::verification::{
-///     Identifier, SchemaInspectionPolicy, VerificationRequest, verify_request,
-/// };
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
-/// # -> Result<(), Box<dyn std::error::Error>> {
-/// let schema = SchemaInspectionPolicy::canonical([Identifier::new("service")?])?;
-/// let report = verify_request(
-///     pool,
-///     context,
-///     VerificationRequest::new().with_schema(&schema),
-/// ).await?;
-/// assert!(report.is_within_declared_policy());
-/// # Ok(()) }
-/// ```
-///
-/// # Errors
-/// Returns the same typed policy, database, rollback, and interruption errors
-/// as [`verify`].
-pub async fn verify_request(
-    pool: &PgPool,
-    context: &OperationContext,
-    request: VerificationRequest<'_>,
-) -> Result<VerificationReport, OperationError<VerificationError>> {
-    executor::execute(pool, context, executor::Inspection::Protected(request)).await
+    verify(pool, context, VerificationPlan::exact_role(role)).await
 }
 
 pub(crate) type PgTransaction<'c> = Transaction<'c, Postgres>;

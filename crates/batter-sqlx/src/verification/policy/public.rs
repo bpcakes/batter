@@ -44,8 +44,8 @@ impl<'a> PublicDeclarations<'a> {
 mod tests {
     use super::*;
     use crate::verification::{
-        DiscoveryScope, Identifier, PolicyError, PublicAllowance, PublicGrant, QualifiedName,
-        RequiredPrivilege,
+        AuthorityPolicyBuilder, DiscoveryScope, Identifier, PolicyError, PublicAllowance,
+        PublicGrant, QualifiedName, RequiredPrivilege,
     };
 
     #[test]
@@ -56,7 +56,7 @@ mod tests {
             Identifier::new("id").unwrap(),
         );
         let select = AllowedPrivilege::new(ObjectPrivilege::Select, false);
-        let mut policy = AuthorityPolicy {
+        let mut policy = AuthorityPolicyBuilder {
             discovery: DiscoveryScope::Schemas(vec![Identifier::new("service").unwrap()]),
             public_overrides: vec![PublicAllowance {
                 object: relation.clone(),
@@ -66,22 +66,22 @@ mod tests {
                 object: column.clone(),
                 privilege: ObjectPrivilege::Select,
             }],
-            ..AuthorityPolicy::default()
+            ..AuthorityPolicyBuilder::default()
         };
         policy.defaults.columns.public_privileges = vec![select];
         assert_eq!(
-            policy.validate(),
+            policy.clone().build(),
             Err(PolicyError::ContradictoryRequiredPrivilege)
         );
         policy.public_overrides.push(PublicAllowance {
             object: column.clone(),
             privileges: vec![select],
         });
-        assert_eq!(policy.validate(), Ok(()));
+        assert!(policy.clone().build().is_ok());
         // A column deny cannot undo a deliberately permitted whole-table grant.
         policy.public_overrides[0].privileges = vec![select];
         policy.public_overrides[1].privileges.clear();
-        assert_eq!(policy.validate(), Ok(()));
+        assert!(policy.clone().build().is_ok());
         // The older PublicGrant form has the same exact-parent precedence.
         policy.public_overrides.clear();
         policy.public_grants.push(PublicGrant {
@@ -89,7 +89,7 @@ mod tests {
             privilege: AllowedPrivilege::new(ObjectPrivilege::Update, false),
         });
         assert_eq!(
-            policy.validate(),
+            policy.build(),
             Err(PolicyError::ContradictoryRequiredPrivilege)
         );
     }

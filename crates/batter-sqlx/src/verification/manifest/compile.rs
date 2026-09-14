@@ -190,11 +190,11 @@ fn build_compiled(
     manifest: ExactRoleManifest,
     entries: Vec<(GrantTarget, Declaration)>,
 ) -> Result<CompiledExactRole, ManifestError> {
-    let mut policy = AuthorityPolicy {
+    let mut policy = AuthorityPolicyBuilder {
         discovery: manifest.discovery,
         defaults: manifest.defaults,
         roles: manifest.roles,
-        ..AuthorityPolicy::default()
+        ..AuthorityPolicyBuilder::default()
     };
     let mut grants = Vec::new();
     let mut relation_indices: HashMap<QualifiedName, usize> = HashMap::new();
@@ -212,7 +212,7 @@ fn build_compiled(
         );
     }
     sort_relation_columns(&mut policy.relations);
-    policy.validate()?;
+    let policy = policy.build()?;
     Ok(CompiledExactRole {
         primary_schema: manifest.primary_schema,
         authority_policy: policy,
@@ -222,7 +222,7 @@ fn build_compiled(
 }
 
 fn add_public_overrides(
-    policy: &mut AuthorityPolicy,
+    policy: &mut AuthorityPolicyBuilder,
     target: &GrantTarget,
     declaration: &Declaration,
 ) {
@@ -254,7 +254,7 @@ fn add_public_overrides(
 }
 
 fn add_requirements_and_grants(
-    policy: &mut AuthorityPolicy,
+    policy: &mut AuthorityPolicyBuilder,
     grants: &mut Vec<GrantAtom>,
     target: &GrantTarget,
     declaration: &Declaration,
@@ -274,7 +274,7 @@ fn add_requirements_and_grants(
 }
 
 fn add_object_policy(
-    policy: &mut AuthorityPolicy,
+    policy: &mut AuthorityPolicyBuilder,
     relation_indices: &mut HashMap<QualifiedName, usize>,
     target: GrantTarget,
     options: TargetOptions,
@@ -330,7 +330,7 @@ fn add_object_policy(
 }
 
 fn relation_entry(
-    policy: &mut AuthorityPolicy,
+    policy: &mut AuthorityPolicyBuilder,
     indices: &mut HashMap<QualifiedName, usize>,
     relation: QualifiedName,
 ) -> usize {

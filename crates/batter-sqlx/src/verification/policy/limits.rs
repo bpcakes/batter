@@ -1,8 +1,8 @@
-use super::{AuthorityPolicy, DiscoveryScope, PolicyError, PublicObject};
+use super::{AuthorityPolicyBuilder, DiscoveryScope, PolicyError, PublicObject};
 
 /// Bound validation and default expansion before either walks caller data.
 /// The entry budget includes nested columns, arguments and allowance entries.
-pub(super) fn validate(policy: &AuthorityPolicy) -> Result<(), PolicyError> {
+pub(super) fn validate_builder(policy: &AuthorityPolicyBuilder) -> Result<(), PolicyError> {
     let mut remaining = 10_000usize;
     let mut charge = |count: usize| {
         remaining = remaining

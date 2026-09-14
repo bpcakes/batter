@@ -3,9 +3,9 @@ use crate::verification::authority::database::ParameterCatalog;
 use crate::verification::authority::parameter_index::ParameterWork;
 use crate::verification::authority::{AclEntry, ParameterObject, evaluate_snapshot};
 use crate::verification::{
-    AllowedPrivilege, AuthorityPolicy, Finding, FindingKind, ObjectPrivilege, ParameterName,
-    ParameterPolicy, PolicyError, PublicAllowance, PublicGrant, PublicObject, RequiredPrivilege,
-    VerificationReport, VerificationStatus,
+    AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, Finding, FindingKind,
+    ObjectPrivilege, ParameterName, ParameterPolicy, PolicyError, PublicAllowance, PublicGrant,
+    PublicObject, RequiredPrivilege, VerificationReport, VerificationStatus,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -43,12 +43,12 @@ fn evaluate(
 ) -> (VerificationReport, usize) {
     assert_eq!(objects.len(), CAPTURED_PARAMETERS);
     policy.validate().unwrap();
-    let mut overflow = policy.clone();
+    let mut overflow = policy.to_builder();
     overflow.public_overrides.push(PublicAllowance {
         object: parameter_target("overflow"),
         privileges: Vec::new(),
     });
-    assert_eq!(overflow.validate(), Err(PolicyError::AuthorityCapacity));
+    assert_eq!(overflow.build(), Err(PolicyError::AuthorityCapacity));
 
     let mut snapshot = crate::verification::authority::required::tests::snapshot();
     snapshot.relations.clear();
@@ -76,7 +76,7 @@ fn assert_findings(report: &VerificationReport, expected: &[Finding]) {
 fn required_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
     let mut objects = captured_parameters();
     objects[7_002].name = "extension.placeholder".to_owned();
-    let mut policy = AuthorityPolicy::default();
+    let mut policy = AuthorityPolicyBuilder::default();
     for (ordinal, object) in objects.iter_mut().enumerate().skip(7_000) {
         // The effective current role is 2, with role 3 inherited. Neither is
         // reachable from the login root, so these are required-authority checks.
@@ -108,7 +108,7 @@ fn required_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
     objects[9_997].name = "unselected_replacement".to_owned();
     objects[9_997].acl.clear();
     objects[9_999].acl.clear();
-    (objects, policy)
+    (objects, policy.build().unwrap())
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn near_capacity_required_parameter_callers_remain_indexed() {
 
 fn public_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
     let mut objects = captured_parameters();
-    let mut policy = AuthorityPolicy::default();
+    let mut policy = AuthorityPolicyBuilder::default();
     for (ordinal, object) in objects.iter_mut().enumerate().take(7_000) {
         object.acl = set_acl(0);
         let target = parameter_target(&object.name);
@@ -191,7 +191,7 @@ fn public_fixture() -> (Vec<ParameterObject>, AuthorityPolicy) {
     for ordinal in [3_999, 6_999] {
         objects[ordinal].acl[0].grant_option = true;
     }
-    (objects, policy)
+    (objects, policy.build().unwrap())
 }
 
 #[test]

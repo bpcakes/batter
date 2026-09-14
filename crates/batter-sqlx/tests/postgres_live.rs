@@ -8,9 +8,9 @@ use batter::{
 use batter_sqlx::{
     FailureClass, PgLease, SqlxFailure, probe,
     verification::{
-        AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, DatabasePolicy, Identifier,
+        AdditionalMigrations, AllowedPrivilege, AuthorityPolicyBuilder, DatabasePolicy, Identifier,
         MigrationExpectation, MigrationPolicy, ObjectPrivilege, PublicGrant, PublicObject,
-        RolePolicy, SchemaPolicy, VerificationPolicy, VerificationStatus, verify,
+        RolePolicy, SchemaPolicy, VerificationPlan, VerificationStatus, verify,
     },
 };
 use sqlx::Connection;
@@ -282,16 +282,15 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     )
     .await??;
 
-    let policy = VerificationPolicy::new(
-        MigrationPolicy {
-            ledger: batter_sqlx::verification::QualifiedName::new(
+    let migration = MigrationPolicy::new(
+            batter_sqlx::verification::QualifiedName::new(
                 &schema,
                 "_batter_verification_migrations",
             )?,
-            required: vec![MigrationExpectation::new(1, vec![1_u8])],
-            additional: AdditionalMigrations::AllowSuccessful,
-        },
-        AuthorityPolicy {
+            [MigrationExpectation::new(1, [1_u8])],
+        )?
+        .with_additional(AdditionalMigrations::AllowSuccessful)?;
+    let authority = AuthorityPolicyBuilder {
             roles: RolePolicy {
                 allow_superuser: true,
                 allow_create_database: true,
@@ -355,10 +354,15 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
                 },
             ],
             required_surfaces: Vec::new(),
-            ..AuthorityPolicy::default()
-        },
-    );
-    let report = verify(&pool, &context, &policy).await?;
+            ..AuthorityPolicyBuilder::default()
+        }
+        .build()?;
+    let report = verify(
+        &pool,
+        &context,
+        VerificationPlan::migrations(&migration).with_authority(&authority)?,
+    )
+    .await?;
     require(
         report.status() == VerificationStatus::WithinDeclaredPolicy,
         "successful read-only verification did not match its declared policy",
@@ -376,18 +380,31 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     .await??;
     require(count == 2, "verification changed the migration ledger")?;
 
-    let mut incomplete_policy = policy.clone();
-    incomplete_policy.authority.required_surfaces =
+    let mut incomplete_draft = authority.to_builder();
+    incomplete_draft.required_surfaces =
         vec![batter_sqlx::verification::RequiredSurface::SecurityDefinerBody];
-    let report = verify(&pool, &context, &incomplete_policy).await?;
+    let incomplete_authority = incomplete_draft.build()?;
+    let report = verify(
+        &pool,
+        &context,
+        VerificationPlan::migrations(&migration).with_authority(&incomplete_authority)?,
+    )
+    .await?;
     require(
         report.status() == VerificationStatus::Incomplete,
         "required unsupported coverage did not produce an incomplete result",
     )?;
 
-    let mut reject_later = policy.clone();
-    reject_later.migration.additional = AdditionalMigrations::Reject;
-    let report = verify(&pool, &context, &reject_later).await?;
+    let reject_later = MigrationPolicy::new(
+        migration.ledger().clone(),
+        migration.required().iter().cloned(),
+    )?;
+    let report = verify(
+        &pool,
+        &context,
+        VerificationPlan::migrations(&reject_later).with_authority(&authority)?,
+    )
+    .await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
@@ -405,7 +422,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         .execute(&pool),
     )
     .await??;
-    let report = verify(&pool, &context, &policy).await?;
+    let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
@@ -421,7 +438,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         .execute(&pool),
     )
     .await??;
-    let report = verify(&pool, &context, &policy).await?;
+    let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
@@ -439,7 +456,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         .execute(&pool),
     )
     .await??;
-    let report = verify(&pool, &context, &policy).await?;
+    let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
@@ -453,7 +470,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
             .execute(&pool),
     )
     .await??;
-    let report = verify(&pool, &context, &policy).await?;
+    let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
@@ -472,7 +489,7 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
         .execute(&pool),
     )
     .await??;
-    let report = verify(&pool, &context, &policy).await?;
+    let report = verify(&pool, &context, VerificationPlan::migrations(&migration).with_authority(&authority)?).await?;
     require(
         report.status() == VerificationStatus::Violations
             && report.findings().iter().any(|finding| {
