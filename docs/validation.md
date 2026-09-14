@@ -2,47 +2,74 @@
 
 Latest evidence: 2026-09-15. Earlier sections retain their historical scope.
 
-## One-shot application readiness, Slice 3, 2026-09-14
+## Lifecycle capability cutover and final evidence, 2026-09-15
 
 Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
-(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 toolchains. This slice removes
-clone-wide `ShutdownHandle::mark_ready`. Each lifecycle constructs one
-non-cloneable readiness decision with its coordinator and transfers it with
-supervisor ownership; private coordinator clones cannot mint another. Ordinary
-`start` and `run_until` consume it automatically. Explicitly deferred paths use
-`UnapprovedSupervisor`, whose consuming transition produces `RunningSupervisor`.
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 (`4a4ef493e`,
+2026-03-02). The coordinated cutover removes clone-wide
+`ShutdownHandle::mark_ready`. Each lifecycle constructs one non-cloneable
+readiness decision with its coordinator and transfers it with supervisor
+ownership; private coordinator clones cannot mint another. Ordinary `start` and
+`run_until` consume it automatically. Explicitly deferred paths retain the sole
+decision in `UnapprovedSupervisor` or `UnapprovedDriver` until their consuming
+approval transition.
 
-| Slice 3 command | Executed outcome |
+| Final-tree command | Executed outcome |
 | --- | --- |
-| `bash scripts/verify.sh` | PASS on the pinned Rust 1.98.1 toolchain: runner controls, the complete core/workspace and hostile-environment runtime matrix, doctests, formatting, strict Clippy and warning-denied rustdoc completed. Foundation rustdoc ran 29 positive and 33 compile-fail cases. |
+| `bash scripts/verify.sh` | PASS on the pinned Rust 1.98.1 toolchain: runner controls, the complete core/workspace and hostile-environment runtime matrix, doctests, formatting, strict Clippy and warning-denied rustdoc completed on the final Slice 3 source. Foundation rustdoc ran 30 positive and 35 compile-fail cases. |
 | `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
-| Focused lifecycle, startup, process-ownership and scheduling tests, followed by `cargo test --workspace --all-features --locked` | PASS. The focused runs cover default approval, explicitly deferred admission, default and deferred Startup handoff, concurrent approval/drain, component acknowledgement and owner abandonment. The complete workspace run passed before the internal token-pairing refinement; both complete verifiers cover that refinement. The later source-only handoff-module extraction is covered by warning-free workspace compilation, focused startup/library/signal tests and foundation doctests; a final complete rerun remains pending. |
-| Foundation doctests in both complete verifiers | PASS: 29 positive and 33 compile-fail cases. The new negative cases reject approval through shutdown/status/admission projections, cloning either approval carrier, consuming either carrier twice, and approving an already-approved `RunningSupervisor`. |
-| Fresh `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS in all five modes on Rust 1.98.1 and again after a fresh Rust 1.94.0 build, for ten passing process smokes. |
+| Focused lifecycle, startup, process-ownership and scheduling tests, followed by `cargo test --workspace --all-features --locked` | PASS. The focused runs cover default approval, explicitly deferred admission, default and deferred Startup handoff, concurrent approval/drain, component acknowledgement, owner abandonment and destructor ordering. The standalone workspace run preceded the internal paired-token refinement and later source-module extractions; both complete final-tree verifiers cover those changes. |
+| Foundation doctests in both complete verifiers | PASS: 30 positive and 35 compile-fail cases. Negative cases reject approval through shutdown/status/admission projections, cloning or reusing linear owners, approving a post-transition owner, and separating the exceptional caller-owned driver from its approval. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline smoke profiles | PASS: all ten rebuilt process profiles across Rust 1.98.1 and 1.94.0. |
+| Toolchain-specific `cargo test -p batter-axum --example http_service --locked` and `cargo run` of `process_owned` / `operation_budget` | PASS: all 12 HTTP example cases and both runnable foundation examples on each toolchain. |
 | `cargo test --locked --manifest-path docs/evidence/batter-gi4/Cargo.toml` | PASS on Rust 1.98.1 and Rust 1.94.0: five integration and two modification tests preserve the immutable historical consumer oracle at pinned Batter revision `034ce0085220044dcf5f3561b00a0bfce96a801f`. |
 | `scripts/jig check repo:file-budget --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | The first run rejected 46 lines of new debt in `startup/driver.rs`. Extracting generic handoff ownership/publication into `startup/handoff.rs` removed that debt; the repeated check passed. |
+| Initial `scripts/jig work check --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | PASS before Slice 4 review: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. The target-validation receipt is `receipt_01M2H2N5T82ZJXA0T7EAHCTSPN`; the fresh `api:test` receipt is `receipt_01M2H2N569BC58AS7KNXR44NY7`. |
+| Post-repair `scripts/jig work check --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | PASS: unchanged Rust receipts were reused while `repo:contract` and whole-repository `repo:file-budget` executed on the repaired review fingerprint. Target-validation receipt `receipt_01M2H3AANXVB5GH5ZW40SC8T2M`; file-budget receipt `receipt_01M2H3AA4078FDSD9FHJDFBTSB`. This execution necessarily precedes its own receipt-only documentation and tracker append. The final exact-input work check remains after review/tracker closure, when reviewable files have stopped changing. |
 
-The first comprehensive Claude/Codex low-severity review pass found one
+Slice 3's first comprehensive Claude/Codex low-severity review pass found one
 substantive caller-owned-driver mismatch: `run_until_unapproved` discarded the
 pending approval it claimed to retain. `UnapprovedDriver` now owns that decision,
 with an independently pinned inner future so policy can poll and later consume
 the still-combined approval owner; the admission regression deterministically
-drives both states. The same repair batch made the public admission example
-executable and corrected observer/outcome and validation-status wording. Focused
-tests, doctests (30 positive and 35 compile-fail), strict foundation Clippy,
-formatting, diff checks and the repeated native file-budget gate pass. The final
-full-scope review and complete final-tree matrices remain pending. This evidence
-does not claim hosted CI, current Linux, live PostgreSQL, publication, deployment,
-push, or fresh current-API external consumer generation.
+drives both states. The next pass rejected an `into_parts` escape hatch that
+could detach authority and identified the ambiguous standalone constructor.
+The repair removed that split, removed `ShutdownHandle::new` and `Default`, and
+made permanently Starting construction explicit as `new_unapproved`.
 
-The third complete review pass found no substantive defect. Its sole material
-supporting gap was direct abandonment coverage for the two new unapproved owners.
-The bounded closure batch adds caller-owned never-polled drop ordering and
-spawned-owner pre-poll drain controls. Its first focused verification found the
-post-drop assertions did not themselves prove ordering, so the one permitted
-supporting correction extends the existing destructor-time witness to the
-unapproved driver. Repeated focused verification and the final complete matrices
-remain pending.
+The third complete pass found no substantive defect. Its sole supporting gap was
+direct abandonment coverage for the two unapproved owners. The bounded closure
+batch added caller-owned never-polled drop ordering and spawned-owner pre-poll
+drain controls. Its first focused verification showed that post-drop state alone
+did not prove ordering, so the permitted supporting correction extended the
+destructor-time witness to the unapproved driver. Both terminal focused reviewers
+marked every obligation satisfied with no remaining defect at complete fingerprint
+`1e8357ff4f3418b8ccfcbcf5207153063748672f2340506e300cd5ec8887a151`.
+The Slice 3 loop therefore converged after three complete passes, two ordinary
+repair rounds, one supporting closure batch and its one permitted correction.
+
+The first comprehensive Slice 4 evidence review matched complete working-tree
+fingerprint `4a43db1f419ebd95ded8f4f167bafe2256d56609341f4bcd68403d5239e05ab0`.
+Both reviewers found no production defect. They identified a stale Bead note
+that still called Jig pending after the passing receipt; one reviewer also found
+that this section's heading and standalone-workspace-test attribution overstated
+their precise evidence scopes. The repair reconciles the tracker, labels this
+section as final evidence rather than completed Slice 4 review, and credits the
+final source coverage to the two complete verifiers. The second complete pass
+matched fingerprint
+`9b6de5d22bbeb19a97c267b5c662b569d93ce0f594bd8fd72d2bbb1f942bd9fa`.
+Codex found no issue; Claude found that the evidence edits had made the
+whole-repository file-budget receipt stale. The next work check reused unchanged
+Rust receipts and reran both repository targets successfully. The third complete
+pass matched fingerprint
+`4389f9a6edc9917fd113294ed2b8dae0da97e2adb24169cf795ef2fb4489dcc2`;
+both reviewers reported no actionable finding or test gap. The Slice 4
+comprehensive loop therefore converged after three complete passes and two
+supporting-only repair rounds, with no production-code change. This one bounded
+supporting closure batch records that result before focused verification.
+
+This evidence does not claim hosted CI, current Linux, live PostgreSQL,
+publication, deployment, push, or fresh current-API external consumer generation.
 
 ## Purpose-qualified lifecycle authority, Slice 2, 2026-09-14
 

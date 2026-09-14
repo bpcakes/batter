@@ -88,6 +88,41 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   `1e8357ff4f3418b8ccfcbcf5207153063748672f2340506e300cd5ec8887a151`.
 - [x] Slice 3: replace clone-wide deferred application approval with a one-shot
   capability, migrate callers, validate, converge the review loop, and commit.
+- [x] (2026-09-15T01:05:28+02:00) The final source tree passed both supported
+  `verify.sh` matrices, all ten toolchain-specific HTTP process profiles, 12
+  HTTP example tests and both runnable foundation examples per toolchain, and
+  the immutable historical consumer archive on both toolchains.
+- [x] (2026-09-15T01:05:28+02:00) All five Jig targets executed successfully on
+  the pre-review evidence inputs. The target-validation receipt is
+  `receipt_01M2H2N5T82ZJXA0T7EAHCTSPN`; fresh `api:test` receipt
+  `receipt_01M2H2N569BC58AS7KNXR44NY7` matches the current worktree and the
+  required gate has no unresolved condition.
+- [x] (2026-09-15T01:05:28+02:00) The first comprehensive Slice 4 review matched
+  complete fingerprint
+  `4a43db1f419ebd95ded8f4f167bafe2256d56609341f4bcd68403d5239e05ab0`.
+  Both reviewers found no production defect and agreed on one stale tracker
+  statement; one reviewer found two additional evidence-scope overstatements.
+  The repair reconciles all three and makes the executed-example wording exact.
+- [x] (2026-09-15T01:11:37+02:00) The second comprehensive pass matched complete
+  fingerprint
+  `9b6de5d22bbeb19a97c267b5c662b569d93ce0f594bd8fd72d2bbb1f942bd9fa`.
+  Codex found no issue. Claude found the passing whole-repository file-budget
+  receipt had become stale after the evidence repair. A work-check refresh
+  reused unchanged Rust receipts and reran `repo:contract` and
+  `repo:file-budget`; target-validation receipt
+  `receipt_01M2H3AANXVB5GH5ZW40SC8T2M` passed.
+- [x] (2026-09-15T01:17:28+02:00) The third comprehensive pass matched complete
+  fingerprint
+  `4389f9a6edc9917fd113294ed2b8dae0da97e2adb24169cf795ef2fb4489dcc2`.
+  Both reviewers found no actionable finding or test gap. The Slice 4 loop
+  converged after three complete passes and two supporting-only repair rounds;
+  its one supporting closure batch is consumed to record convergence before
+  focused verification.
+- [x] (2026-09-15T01:23:42+02:00) Both focused closure reviewers marked the
+  validation and Bead chronology obligations satisfied with no collateral or
+  substantive defect. Their reports and the parent matched complete terminal
+  closure fingerprint
+  `e9f72b6e13e4046c0f75331c523711fa738b95cc457f3498acb2a50df657b30b`.
 - [ ] Slice 4: update contracts, status, examples, exhaustive Jig scopes and final
   evidence; run the full two-toolchain and HTTP verification, converge, and commit.
 - [ ] Complete the Bead and Jig work only after a requirement-by-requirement audit
