@@ -12,7 +12,7 @@ use axum::{
     routing::get,
 };
 use batter::lifecycle::ShutdownHandle;
-use batter_axum::{HttpObservationLevel, RequestPolicy, observe_http};
+use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http};
 use std::time::Duration;
 use tower::ServiceExt;
 use tracing::Level;
@@ -20,7 +20,10 @@ use tracing::Level;
 fn ready_policy() -> RequestPolicy {
     let handle = ShutdownHandle::new();
     handle.mark_ready();
-    RequestPolicy::new(handle, Duration::from_secs(1)).unwrap()
+    RequestPolicy::new(
+        handle,
+        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+    )
 }
 
 #[test]

@@ -9,7 +9,7 @@ use axum::{
     routing::{any, get},
 };
 use batter::lifecycle::ShutdownHandle;
-use batter_axum::{HttpObservationLevel, RequestPolicy, observe_http};
+use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -162,7 +162,10 @@ async fn completion_fields_belong_to_events_at_every_level_with_independent_span
                         (Extension(HttpObservationLevel(level)), status)
                     }),
                 ),
-                RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+                RequestPolicy::new(
+                    handle,
+                    ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+                ),
             );
             let response = router
                 .oneshot(request(
@@ -199,7 +202,10 @@ async fn rejected_and_unmatched_requests_keep_event_fields_without_info_spans() 
         let events = Events::default();
         let router = mode.apply(
             Router::new().route("/work", get(must_not_run)),
-            RequestPolicy::new(ShutdownHandle::new(), Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(
+                ShutdownHandle::new(),
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            ),
         );
         assert_eq!(
             router
@@ -244,7 +250,10 @@ fn dropped_future_keeps_event_fields_and_first_poll_dispatch_without_info_spans(
                     "/records/{id}",
                     get(|| async { std::future::pending::<StatusCode>().await }),
                 ),
-                RequestPolicy::new(handle, Duration::from_secs(60)).unwrap(),
+                RequestPolicy::new(
+                    handle,
+                    ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
+                ),
             );
             let mut future = Box::pin(
                 router

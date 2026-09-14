@@ -85,15 +85,64 @@ pub struct RequestPolicy {
     failure_renderer: Option<Arc<FailureRenderer>>,
 }
 
+/// A validated budget for constructing an HTTP response.
+///
+/// This bounds the handler future through response construction, not response
+/// body streaming. The checked value can be retained in application settings and
+/// later handed to [`RequestPolicy::new`] without another fallible step.
+///
+/// ```
+/// use batter::lifecycle::ShutdownHandle;
+/// use batter_axum::{RequestPolicy, ResponseConstructionBudget};
+/// use std::time::Duration;
+///
+/// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
+/// let policy = RequestPolicy::new(ShutdownHandle::new(), budget);
+/// # let _ = policy;
+/// # Ok::<(), batter::ConfigurationError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResponseConstructionBudget(Duration);
+
+impl ResponseConstructionBudget {
+    /// Validate a positive duration that Tokio can represent as a deadline.
+    pub fn new(budget: Duration) -> Result<Self, ConfigurationError> {
+        const FIELD: &str = "HTTP request budget";
+        if budget.is_zero() {
+            return Err(ConfigurationError::Zero(FIELD));
+        }
+        if budget > Duration::from_secs(365 * 24 * 60 * 60)
+            || Instant::now().checked_add(budget).is_none()
+        {
+            return Err(ConfigurationError::TooLarge(FIELD));
+        }
+        Ok(Self(budget))
+    }
+
+    /// Return the validated duration for diagnostics or native handoff.
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
 impl RequestPolicy {
-    /// A fixed server-side budget. No client-supplied deadline is trusted.
-    pub fn new(shutdown: ShutdownHandle, budget: Duration) -> Result<Self, ConfigurationError> {
-        validate_budget(budget)?;
-        Ok(Self {
+    /// Use a validated fixed server-side budget. No client deadline is trusted.
+    ///
+    /// ```compile_fail,E0308
+    /// use batter::lifecycle::ShutdownHandle;
+    /// use batter_axum::RequestPolicy;
+    /// use std::time::Duration;
+    ///
+    /// fn cannot_build_from_raw(handle: ShutdownHandle, budget: Duration) {
+    ///     let policy = RequestPolicy::new(handle, budget);
+    /// }
+    /// ```
+    pub fn new(shutdown: ShutdownHandle, budget: ResponseConstructionBudget) -> Self {
+        Self {
             shutdown,
-            budget,
+            budget: budget.0,
             failure_renderer: None,
-        })
+        }
     }
 
     /// Render infrastructure failures in the application's existing wire format.
@@ -132,19 +181,6 @@ impl RequestPolicy {
             None => failure.into_response(),
         }
     }
-}
-
-fn validate_budget(budget: Duration) -> Result<(), ConfigurationError> {
-    const FIELD: &str = "HTTP request budget";
-    if budget.is_zero() {
-        return Err(ConfigurationError::Zero(FIELD));
-    }
-    if budget > Duration::from_secs(365 * 24 * 60 * 60)
-        || Instant::now().checked_add(budget).is_none()
-    {
-        return Err(ConfigurationError::TooLarge(FIELD));
-    }
-    Ok(())
 }
 
 /// Sanitized infrastructure failures. Domain-to-HTTP mappings remain app-owned.
@@ -247,17 +283,21 @@ impl IntoResponse for HttpFailure {
 /// ```
 /// use axum::{Extension, Router, http::StatusCode, middleware, routing::get};
 /// use batter::{lifecycle::ShutdownHandle, operation::OperationContext};
-/// use batter_axum::{RequestPolicy, liveness, observe_http, readiness, request_admission};
+/// use batter_axum::{
+///     RequestPolicy, ResponseConstructionBudget, liveness, observe_http,
+///     readiness, request_admission,
+/// };
 /// use std::time::Duration;
 /// # fn main() -> Result<(), batter::ConfigurationError> {
 /// let handle = ShutdownHandle::new();
+/// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
 /// let guarded = Router::new()
 ///     .route("/work", get(|Extension(context): Extension<OperationContext>| async move {
 ///         context.check().expect("admitted context");
 ///         "ok"
 ///     }))
 ///     .route_layer(middleware::from_fn_with_state(
-///         RequestPolicy::new(handle.clone(), Duration::from_secs(2))?,
+///         RequestPolicy::new(handle.clone(), budget),
 ///         request_admission,
 ///     ));
 /// let app: Router = Router::new()

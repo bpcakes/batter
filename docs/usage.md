@@ -82,20 +82,11 @@ explicit idempotency/uncertainty design, not just this helper.
 
 ## Bound concurrent work separately
 
-```rust
-use batter::{admission::{Admission, Bulkhead}, operation::OperationContext};
-use std::time::Duration;
-
-async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    let bulkhead = Bulkhead::new(8)?; // Construct once and share clones.
-    let context = OperationContext::new(Duration::from_secs(1))?;
-    let _permit = bulkhead.enter(&context, Admission::Wait).await?;
-    context.run("dependency.read", |_scope| async {
-        Ok::<_, std::io::Error>(())
-    }).await?;
-    Ok(())
-}
-```
+Create `BulkheadCapacity` from the configured count, then hand that validated
+witness to `Bulkhead::new` once and share clones of the resulting bulkhead. The
+[compiled API example](../crates/batter/src/admission.rs) shows the constructor
+handoff; admission still uses the caller's `OperationContext` and selected
+`Admission` policy.
 
 Place the permit around the resource you actually intend to limit. Holding it
 across backoff limits whole logical operations but consumes capacity while idle.

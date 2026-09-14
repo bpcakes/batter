@@ -209,7 +209,10 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let mut supervisor = Supervisor::with_process_capacity(budget, 1).unwrap();
+    let mut supervisor = Supervisor::with_process_capacity(
+        budget,
+        batter::lifecycle::ProcessCapacity::new(1).unwrap(),
+    );
     let process = supervisor.process_handle().unwrap();
     supervisor
         .register("component", |signal| async move {

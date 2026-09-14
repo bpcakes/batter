@@ -87,10 +87,13 @@ protocol. Choose one retry owner so nested budgets do not multiply attempts.
 
 ## Admission contract
 
-Bulkhead is a process-local semaphore. Reject fails immediately without a free
-permit. Wait uses the caller's total deadline. The returned permit is Tokio's
-OwnedSemaphorePermit; retain it until the bounded work actually finishes.
-Closing admission wakes waiters but does not revoke acquired permits.
+`BulkheadCapacity::new` rejects zero and counts above Tokio's semaphore limit.
+`Bulkhead::new` accepts only that validated witness and is then infallible;
+there is no raw-capacity constructor. Bulkhead is a process-local semaphore.
+Reject fails immediately without a free permit. Wait uses the caller's total
+deadline. The returned permit is Tokio's OwnedSemaphorePermit; retain it until
+the bounded work actually finishes. Closing admission wakes waiters but does not
+revoke acquired permits.
 
 This bounds permit holders, **not** waiting callers, request bodies, socket
 buffers, database connections in other components, or global fleet concurrency.
@@ -206,9 +209,11 @@ remain available while admission is held. Explicit readiness/drain/cancellation
 wakeups happen after releasing the guard; native queue enqueue can wake its
 receiver while retaining admission.
 
-`with_process_capacity` adds finite process-owned admission. `try_spawn` rejects
-synchronously before startup/readiness, after root drain, or at capacity; it
-creates no queue of permit waiters and never invokes rejected factories.
+`ProcessCapacity::new` validates the nonzero Tokio task bound once.
+`with_process_capacity` consumes that witness and infallibly adds finite
+process-owned admission. `try_spawn` rejects synchronously before
+startup/readiness, after root drain, or at capacity; it creates no queue of permit
+waiters and never invokes rejected factories.
 
 Admission errors are classified after name validation: permanent closure
 (`Closed`) takes precedence over startup (`NotRunning` / `NotReady`) and
@@ -895,6 +900,11 @@ existing `request_scope` combines those behaviors for compatibility. Each
 installed observer emits its own HTTP completion event; use outer `observe_http`
 with inner `request_admission` to avoid duplicate observations. Operation events
 remain separate. Subscriber filtering and transport delivery are application-owned.
+
+`ResponseConstructionBudget::new` validates the positive bounded duration once.
+`RequestPolicy::new` consumes that witness and is infallible; it has no raw
+`Duration` overload. The witness proves only local duration representability, not
+body transmission, remote cancellation, or completion of detached work.
 
 HTTP completion events carry normalized method, matched route template (or
 `<unmatched>`), actual numeric status when a response exists, HTTP outcome and

@@ -4,8 +4,8 @@ mod support;
 
 use batter::{
     BoxError,
-    admission::{Admission, Bulkhead},
-    lifecycle::Supervisor,
+    admission::{Admission, Bulkhead, BulkheadCapacity},
+    lifecycle::{ProcessCapacity, Supervisor},
     operation::OperationContext,
 };
 use std::{convert::Infallible, time::Duration};
@@ -19,7 +19,8 @@ enum Denial {
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     tracing_subscriber::fmt().with_target(false).try_init()?;
-    let mut supervisor = Supervisor::with_process_capacity(support::shutdown_budget(), 2)?;
+    let mut supervisor =
+        Supervisor::with_process_capacity(support::shutdown_budget(), ProcessCapacity::new(2)?);
     support::register_signals(&mut supervisor)?;
     let process = supervisor
         .process_handle()
@@ -41,7 +42,7 @@ async fn main() -> Result<(), BoxError> {
 
         // Transfer the provider permit into owned work. A lost HTTP receipt must
         // not release capacity while the provider call is running.
-        let bulkhead = Bulkhead::new(1)?;
+        let bulkhead = Bulkhead::new(BulkheadCapacity::new(1)?);
         let request = OperationContext::new(Duration::from_secs(1))?;
         let permit = bulkhead.enter(&request, Admission::Reject).await?;
         let (finished, finished_rx) = oneshot::channel();

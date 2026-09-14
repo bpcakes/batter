@@ -4,7 +4,7 @@ use super::{
 };
 use axum::{Router, middleware, routing::get};
 use batter::lifecycle::ShutdownHandle;
-use batter_axum::{RequestPolicy, observe_http};
+use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http};
 use std::time::Duration;
 use tower::{Layer, ServiceExt};
 use tracing::instrument::WithSubscriber;
@@ -69,7 +69,10 @@ async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
     let router = Boundary::Combined
         .apply(
             Router::new().route("/work", get(|| async { "ok" })),
-            RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(
+                handle,
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            ),
         )
         .layer(middleware::from_fn(observe_http));
     let response = router
@@ -94,7 +97,10 @@ async fn admission_alone_does_not_emit_http_observations() {
     handle.mark_ready();
     let router = Boundary::Admission.apply(
         Router::new().route("/work", get(|| async { "ok" })),
-        RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+        RequestPolicy::new(
+            handle,
+            ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+        ),
     );
     let response = router
         .oneshot(request("GET", "/work"))

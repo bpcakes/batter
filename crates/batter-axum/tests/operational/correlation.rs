@@ -9,8 +9,8 @@ use axum::{
 };
 use batter::{lifecycle::ShutdownHandle, operation::OperationContext};
 use batter_axum::{
-    CorrelationId, HttpFailure, RequestPolicy, liveness, operational_http,
-    render_infrastructure_failure, request_admission,
+    CorrelationId, HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness,
+    operational_http, render_infrastructure_failure, request_admission,
 };
 use std::{
     collections::HashSet,
@@ -45,9 +45,11 @@ fn request(path: &str) -> Request<Body> {
 
 fn boundary(app: Router, handle: ShutdownHandle) -> Router {
     app.route_layer(middleware::from_fn_with_state(
-        RequestPolicy::new(handle, Duration::from_secs(2))
-            .unwrap()
-            .with_infrastructure_json(),
+        RequestPolicy::new(
+            handle,
+            ResponseConstructionBudget::new(Duration::from_secs(2)).unwrap(),
+        )
+        .with_infrastructure_json(),
         request_admission,
     ))
     .route("/live", get(liveness))
@@ -223,18 +225,20 @@ fn replayed_adapter_extension_is_replaced_and_custom_renderer_remains_in_control
             .unwrap()
             .clone();
         let old_id = old.as_str().to_owned();
-        let policy = RequestPolicy::new(ShutdownHandle::new(), Duration::from_secs(1))
-            .unwrap()
-            .with_infrastructure_json()
-            .with_failure_renderer(|_, parts| {
-                let id = parts.extensions.get::<CorrelationId>().unwrap();
-                (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    [("custom", "retained")],
-                    id.to_string(),
-                )
-                    .into_response()
-            });
+        let policy = RequestPolicy::new(
+            ShutdownHandle::new(),
+            ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+        )
+        .with_infrastructure_json()
+        .with_failure_renderer(|_, parts| {
+            let id = parts.extensions.get::<CorrelationId>().unwrap();
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [("custom", "retained")],
+                id.to_string(),
+            )
+                .into_response()
+        });
         let app: Router = Router::new()
             .route("/", get(|| async { StatusCode::IM_A_TEAPOT }))
             .route_layer(middleware::from_fn_with_state(policy, request_admission))
@@ -336,9 +340,11 @@ async fn deadline_failure_uses_generated_id_even_when_info_spans_are_disabled() 
 
 #[tokio::test]
 async fn missing_typed_correlation_never_falls_back_to_untrusted_headers() {
-    let policy = RequestPolicy::new(ShutdownHandle::new(), Duration::from_secs(1))
-        .unwrap()
-        .with_infrastructure_json();
+    let policy = RequestPolicy::new(
+        ShutdownHandle::new(),
+        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+    )
+    .with_infrastructure_json();
     let app: Router = Router::new()
         .route("/", get(|| async { StatusCode::IM_A_TEAPOT }))
         .layer(middleware::from_fn_with_state(policy, request_admission));

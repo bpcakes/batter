@@ -168,7 +168,10 @@ async fn finite_abort_keeps_submitter_context_while_driver_and_skipped_cleanup_k
     let _ambient = tracing::dispatcher::set_default(&ambient.dispatch);
     let driver = Logs::new();
     let request = Logs::new();
-    let mut supervisor = Supervisor::with_process_capacity(shutdown_budget(), 1).unwrap();
+    let mut supervisor = Supervisor::with_process_capacity(
+        shutdown_budget(),
+        batter::lifecycle::ProcessCapacity::new(1).unwrap(),
+    );
     let process = supervisor.process_handle().unwrap();
     let cleanup_invoked = Arc::new(AtomicBool::new(false));
     let invoked = cleanup_invoked.clone();

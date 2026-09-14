@@ -1,7 +1,7 @@
 use batter::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{Readiness, ShutdownBudget, Supervisor},
+    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
 };
 use std::{
     future::pending,
@@ -124,7 +124,8 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
 fn observer_created_after_completion_retains_report_after_owners_and_runtime_drop() {
     let owner_runtime = runtime();
     let (observer, report) = owner_runtime.block_on(async {
-        let supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+        let supervisor =
+            Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
         let running = supervisor.start();
         let report = tokio::time::timeout(Duration::from_secs(5), running.shutdown())
             .await
@@ -157,9 +158,7 @@ fn observer_panics_when_owning_runtime_drops_before_publication() {
     let owner_runtime = runtime();
     let running = {
         let _entered = owner_runtime.enter();
-        Supervisor::with_process_capacity(budget(), 1)
-            .unwrap()
-            .start()
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap()).start()
     };
     let observer = running.observer();
     // Entering a current-thread runtime does not drive its spawned futures.

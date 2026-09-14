@@ -12,8 +12,8 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Key entrypoints
 
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
-  `HttpObservationLevel`, the combined `request_scope` compatibility entry point,
-  probes, and failures.
+  `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
+  `request_scope` compatibility entry point, probes, and failures.
 - `src/observation.rs` privately owns response observation and tracing lifetime;
   its single internal composition entry has no admission policy.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
@@ -53,6 +53,8 @@ Change HTTP policy and rendering here. Change operation/lifecycle semantics in
 `batter`. Keep `RequestPolicy`'s combined readiness and deadline contract unless
 a separately approved API change calls for decoupling. Update the root HTTP
 contract, source map, implemented status, owning Bead, and validation with changes.
+Keep raw durations outside `RequestPolicy::new`; validation belongs to the opaque
+adapter-owned `ResponseConstructionBudget` witness.
 
 ## Invariants
 

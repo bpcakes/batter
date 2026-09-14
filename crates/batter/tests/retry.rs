@@ -425,7 +425,7 @@ async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
         .reserve_finalization(Duration::from_millis(300))
         .unwrap();
     let work_deadline = phases.work().deadline();
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(batter::admission::BulkheadCapacity::new(1).unwrap());
     let _occupied = bulkhead.enter(&parent, Admission::Reject).await.unwrap();
     let result: Result<(), _> = retry::execute_with_jitter(
         phases.work(),

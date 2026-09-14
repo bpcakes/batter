@@ -1,10 +1,11 @@
 use super::support::{Case, budget, yields};
-use batter::lifecycle::{Readiness, Supervisor, TaskOutcome};
+use batter::lifecycle::{ProcessCapacity, Readiness, Supervisor, TaskOutcome};
 use std::sync::Arc;
 use tokio::sync::{Barrier, oneshot};
 
 pub async fn approvals(case: Case, order: usize, delay: u64) {
-    let mut supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+    let mut supervisor =
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     let handle = supervisor.handle();
     let (first, first_rx) = oneshot::channel();
     let (first_ack, first_acked) = oneshot::channel();
@@ -67,7 +68,8 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
 }
 
 pub async fn acknowledgement_race(case: Case, delay: u64) {
-    let mut supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+    let mut supervisor =
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     let handle = supervisor.handle();
     let barrier = Arc::new(Barrier::new(4));
     let component_barrier = barrier.clone();
@@ -113,7 +115,8 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
 }
 
 pub async fn critical_exit(case: Case) {
-    let mut supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+    let mut supervisor =
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     supervisor
         .register("uninitialized-exit", |_| async { Ok(()) })
         .unwrap();

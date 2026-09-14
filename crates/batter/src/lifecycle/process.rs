@@ -32,6 +32,46 @@ pub enum ProcessAdmissionError {
     InvalidName(#[from] RegistrationError),
 }
 
+/// A validated, nonzero capacity for finite process-owned tasks.
+///
+/// Capacity covers queued plus executing work. Retaining validation in this
+/// value makes [`super::Supervisor::with_process_capacity`] infallible.
+///
+/// ```
+/// use batter::lifecycle::{ProcessCapacity, ShutdownBudget, Supervisor};
+/// # use batter::cleanup::CleanupBudget;
+/// # use std::time::Duration;
+/// # let second = Duration::from_secs(1);
+/// # let budget = ShutdownBudget::new(
+/// #     second, second, second,
+/// #     CleanupBudget::new(second, second, second)?,
+/// # )?;
+/// let capacity = ProcessCapacity::new(32)?;
+/// let supervisor = Supervisor::with_process_capacity(budget, capacity);
+/// assert!(supervisor.process_handle().is_some());
+/// # Ok::<(), batter::ConfigurationError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessCapacity(usize);
+
+impl ProcessCapacity {
+    /// Validate a nonzero capacity within Tokio's supported semaphore range.
+    pub fn new(capacity: usize) -> Result<Self, ConfigurationError> {
+        if capacity == 0 {
+            return Err(ConfigurationError::Zero("process capacity"));
+        }
+        if capacity > Semaphore::MAX_PERMITS {
+            return Err(ConfigurationError::TooLarge("process capacity"));
+        }
+        Ok(Self(capacity))
+    }
+
+    /// Return the validated task count for diagnostics or native handoff.
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// A finite task's typed result. A task-level failure initiates process shutdown;
 /// put ordinary business rejection inside T (for example T = Result<Value, Denial>).
 #[derive(Debug)]
@@ -130,23 +170,17 @@ pub(super) struct QueuedProcess {
 impl ProcessHandle {
     pub(super) fn new(
         handle: ShutdownHandle,
-        capacity: usize,
-    ) -> Result<(Self, mpsc::Receiver<QueuedProcess>), ConfigurationError> {
-        if capacity == 0 {
-            return Err(ConfigurationError::Zero("process capacity"));
-        }
-        if capacity > Semaphore::MAX_PERMITS {
-            return Err(ConfigurationError::TooLarge("process capacity"));
-        }
-        let (sender, receiver) = mpsc::channel(capacity);
-        Ok((
+        capacity: ProcessCapacity,
+    ) -> (Self, mpsc::Receiver<QueuedProcess>) {
+        let (sender, receiver) = mpsc::channel(capacity.0);
+        (
             Self {
                 handle,
-                permits: Arc::new(Semaphore::new(capacity)),
+                permits: Arc::new(Semaphore::new(capacity.0)),
                 sender,
             },
             receiver,
-        ))
+        )
     }
 
     /// Submit a finite task after process readiness. Capacity and drain share one
@@ -166,7 +200,8 @@ impl ProcessHandle {
     /// #     second, second, second,
     /// #     CleanupBudget::new(second, second, second)?,
     /// # )?;
-    /// let supervisor = Supervisor::with_process_capacity(budget, 1)?;
+    /// let capacity = batter::lifecycle::ProcessCapacity::new(1)?;
+    /// let supervisor = Supervisor::with_process_capacity(budget, capacity);
     /// let process = supervisor.process_handle().unwrap();
     /// supervisor.handle().mark_ready();
     /// let running = supervisor.start();

@@ -9,7 +9,9 @@ use batter::{
     operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
-use batter_axum::{register_http, register_http_in, register_http_with_connect_info_in};
+use batter_axum::{
+    ResponseConstructionBudget, register_http, register_http_in, register_http_with_connect_info_in,
+};
 use std::{
     convert::Infallible,
     ops::{Deref, DerefMut},
@@ -235,7 +237,10 @@ async fn streaming_abort(register: RegisterHttp) {
             Ok(())
         })
         .unwrap();
-    let policy = batter_axum::RequestPolicy::new(handle.clone(), Duration::from_secs(1)).unwrap();
+    let policy = batter_axum::RequestPolicy::new(
+        handle.clone(),
+        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+    );
     let app = Router::new()
         .route(
             "/",

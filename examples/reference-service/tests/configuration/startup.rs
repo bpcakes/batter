@@ -40,9 +40,8 @@ fn start(
     let settings = load(pairs)?;
     let second = Duration::from_secs(1);
     let cleanup = CleanupBudget::new(second, second, second).unwrap();
-    let supervisor = settings
-        .supervisor(ShutdownBudget::new(second, second, second, cleanup).unwrap())
-        .unwrap();
+    let supervisor =
+        settings.supervisor(ShutdownBudget::new(second, second, second, cleanup).unwrap());
     let handle = supervisor.handle();
     let starting = Startup::new(
         supervisor,

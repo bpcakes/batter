@@ -1,6 +1,6 @@
 use batter::{
     cleanup::CleanupBudget,
-    lifecycle::{ShutdownBudget, Supervisor},
+    lifecycle::{ProcessCapacity, ShutdownBudget, Supervisor},
 };
 use std::{
     future::{Future, poll_fn},
@@ -24,7 +24,8 @@ pub fn budget() -> ShutdownBudget {
 }
 
 pub fn supervisor(capacity: usize) -> Supervisor {
-    let supervisor = Supervisor::with_process_capacity(budget(), capacity).unwrap();
+    let supervisor =
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap());
     assert!(supervisor.handle().mark_ready());
     supervisor
 }

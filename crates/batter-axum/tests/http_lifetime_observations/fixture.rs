@@ -18,7 +18,7 @@ use batter::{
     },
     operation::OperationContext,
 };
-use batter_axum::{RequestPolicy, observe_http, request_admission};
+use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -100,20 +100,20 @@ impl Fixture {
             release_body: Arc::default(),
             context: Arc::default(),
         };
+        let request_budget = if matches!(
+            case,
+            "incomplete_upload_deadline"
+                | "streaming_cooperative_drain"
+                | "blocked_body_wrapper_abort"
+        ) {
+            Duration::from_millis(150)
+        } else {
+            Duration::from_secs(60)
+        };
         let policy = RequestPolicy::new(
             handle.clone(),
-            if matches!(
-                case,
-                "incomplete_upload_deadline"
-                    | "streaming_cooperative_drain"
-                    | "blocked_body_wrapper_abort"
-            ) {
-                Duration::from_millis(150)
-            } else {
-                Duration::from_secs(60)
-            },
-        )
-        .unwrap();
+            ResponseConstructionBudget::new(request_budget).unwrap(),
+        );
         let app = router(state.clone(), policy);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

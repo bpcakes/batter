@@ -1,6 +1,6 @@
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
-    lifecycle::{RunningSupervisor, ShutdownBudget, ShutdownCause, Supervisor},
+    lifecycle::{ProcessCapacity, RunningSupervisor, ShutdownBudget, ShutdownCause, Supervisor},
     operation::OperationContext,
     startup::Startup,
 };
@@ -57,7 +57,7 @@ async fn successful_startup_without_components_or_capacity_reports_empty_after_c
 #[tokio::test]
 async fn finite_work_without_critical_components_has_a_successful_running_lifetime() {
     let capacity = Arc::new(Semaphore::new(1));
-    let supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+    let supervisor = Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     let process = supervisor.process_handle().unwrap();
     let running = initialize(supervisor, capacity.clone()).await;
     running.handle().wait_ready().await.unwrap();

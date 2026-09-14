@@ -17,7 +17,7 @@ use batter::{
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
     operation::{Interruption, OperationContext},
 };
-use batter_axum::{HttpObservationLevel, RequestPolicy};
+use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -26,8 +26,7 @@ use tower::ServiceExt;
 use tracing::instrument::WithSubscriber;
 
 fn policy(handle: ShutdownHandle, budget: Duration) -> RequestPolicy {
-    RequestPolicy::new(handle, budget)
-        .unwrap()
+    RequestPolicy::new(handle, ResponseConstructionBudget::new(budget).unwrap())
         .with_failure_renderer(|failure, parts| {
             let id = parts.extensions.get::<TrustedId>().unwrap().0;
             (

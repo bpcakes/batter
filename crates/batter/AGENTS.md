@@ -25,6 +25,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.
+- `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
+  admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
+  primitive constructor paths or merge the two capabilities.
 - `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.

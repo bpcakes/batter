@@ -32,7 +32,7 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
         routing::any,
     };
     use batter::lifecycle::ShutdownHandle;
-    use batter_axum::{RequestPolicy, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
     use tower::ServiceExt;
 
     let output = Arc::new(Mutex::new(Vec::new()));
@@ -63,7 +63,10 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
                 ),
             )
             .layer(middleware::from_fn_with_state(
-                RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+                RequestPolicy::new(
+                    handle,
+                    ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+                ),
                 request_scope,
             ));
         for method in ["GET", "SECRET-CUSTOM-METHOD"] {
@@ -146,7 +149,7 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         routing::get,
     };
     use batter::lifecycle::ShutdownHandle;
-    use batter_axum::{RequestPolicy, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
     use tower::ServiceExt;
 
     let output = Arc::new(Mutex::new(Vec::new()));
@@ -160,7 +163,10 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
     let router = Router::new()
         .route("/work", get(|| async { "must not execute" }))
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(ShutdownHandle::new(), Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(
+                ShutdownHandle::new(),
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            ),
             request_scope,
         ));
     let response = router

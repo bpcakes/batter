@@ -31,15 +31,14 @@ fn app(config: &Config) -> axum::Router {
         monitor.reader(),
         config.bulkhead_capacity,
     )
-    .unwrap()
 }
 
 #[test]
 fn root_source_validation_preserves_defaults_and_explicit_precedence() {
     let default = config(&[]);
     assert_eq!(default.bind.to_string(), "127.0.0.1:3000");
-    assert_eq!(default.request_budget, Duration::from_secs(2));
-    assert_eq!(default.bulkhead_capacity, 32);
+    assert_eq!(default.request_budget.get(), Duration::from_secs(2));
+    assert_eq!(default.bulkhead_capacity.get(), 32);
     assert!(default.log_filter.is_none());
     let file = read_literal(
         Cursor::new(
@@ -58,8 +57,8 @@ fn root_source_validation_preserves_defaults_and_explicit_precedence() {
     )
     .unwrap();
     assert_eq!(loaded.bind.port(), 0);
-    assert_eq!(loaded.request_budget, Duration::from_millis(40));
-    assert_eq!(loaded.bulkhead_capacity, 2);
+    assert_eq!(loaded.request_budget.get(), Duration::from_millis(40));
+    assert_eq!(loaded.bulkhead_capacity.get(), 2);
     assert_eq!(loaded.log_filter.as_deref(), Some("off"));
     for (key, value) in [
         ("BATTER_REQUEST_TIMEOUT_MS", "0"),

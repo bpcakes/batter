@@ -20,7 +20,8 @@ pub use driver::{
     check_shutdown,
 };
 pub use process::{
-    ProcessAdmissionError, ProcessHandle, ProcessReceipt, ProcessScope, ProcessTaskError,
+    ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt, ProcessScope,
+    ProcessTaskError,
 };
 
 pub use managed::{
@@ -332,15 +333,20 @@ impl Supervisor {
 
     /// Enable bounded finite process work. Capacity covers queued plus running
     /// tasks; submissions reject immediately when full, never create waiters.
-    pub fn with_process_capacity(
-        budget: ShutdownBudget,
-        capacity: usize,
-    ) -> Result<Self, ConfigurationError> {
+    ///
+    /// ```compile_fail,E0308
+    /// use batter::lifecycle::{ShutdownBudget, Supervisor};
+    ///
+    /// fn cannot_build_from_raw(budget: ShutdownBudget, capacity: usize) {
+    ///     let supervisor = Supervisor::with_process_capacity(budget, capacity);
+    /// }
+    /// ```
+    pub fn with_process_capacity(budget: ShutdownBudget, capacity: ProcessCapacity) -> Self {
         let mut supervisor = Self::new(budget);
-        let (process, queued) = ProcessHandle::new(supervisor.handle.clone(), capacity)?;
+        let (process, queued) = ProcessHandle::new(supervisor.handle.clone(), capacity);
         supervisor.process = Some(process);
         supervisor.queued = Some(queued);
-        Ok(supervisor)
+        supervisor
     }
 
     /// Clone the finite-work submitting capability, if configured. It is inert

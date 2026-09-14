@@ -13,7 +13,10 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         let handle = ShutdownHandle::new();
         handle.shared.start_driver();
         handle.mark_ready();
-        let (process, _queued) = ProcessHandle::new(handle.clone(), 1).unwrap();
+        let (process, _queued) = ProcessHandle::new(
+            handle.clone(),
+            super::super::process::ProcessCapacity::new(1).unwrap(),
+        );
         let (release, released) = oneshot::channel();
         let mut tasks = TaskSet::default();
         tasks.spawn_component(

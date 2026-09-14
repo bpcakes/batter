@@ -13,7 +13,9 @@ use axum::{
 use batter::{
     lifecycle::ShutdownHandle, operation::OperationContext, telemetry::with_current_dispatch,
 };
-use batter_axum::{RequestPolicy, liveness, observe_http, readiness, request_admission};
+use batter_axum::{
+    RequestPolicy, ResponseConstructionBudget, liveness, observe_http, readiness, request_admission,
+};
 use std::{
     io,
     sync::{
@@ -74,7 +76,10 @@ fn assemble(handle: ShutdownHandle, calls: Arc<AtomicUsize>) -> Router {
         // Adding an application route here needs no per-route observation layer.
         .route("/new", get(|| async { StatusCode::CREATED }))
         .route_layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle.clone(), Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(
+                handle.clone(),
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            ),
             request_admission,
         ));
     async fn rejected_handler() -> StatusCode {

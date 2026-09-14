@@ -1,7 +1,9 @@
 use batter::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{ProcessTaskError, ShutdownBudget, ShutdownCause, Supervisor, TaskOutcome},
+    lifecycle::{
+        ProcessCapacity, ProcessTaskError, ShutdownBudget, ShutdownCause, Supervisor, TaskOutcome,
+    },
 };
 use std::{
     convert::Infallible,
@@ -21,7 +23,8 @@ fn supervisor(capacity: usize) -> Supervisor {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor = Supervisor::with_process_capacity(budget, capacity).unwrap();
+    let supervisor =
+        Supervisor::with_process_capacity(budget, ProcessCapacity::new(capacity).unwrap());
     assert!(supervisor.handle().mark_ready());
     supervisor
 }

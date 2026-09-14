@@ -2,7 +2,8 @@ use batter::{
     RegistrationError,
     cleanup::CleanupBudget,
     lifecycle::{
-        ProcessAdmissionError, ProcessHandle, Readiness, ShutdownBudget, ShutdownHandle, Supervisor,
+        ProcessAdmissionError, ProcessCapacity, ProcessHandle, Readiness, ShutdownBudget,
+        ShutdownHandle, Supervisor,
     },
     operation::OperationContext,
 };
@@ -23,9 +24,8 @@ fn supervisor() -> Supervisor {
     let cleanup = CleanupBudget::new(second, second, second).unwrap();
     Supervisor::with_process_capacity(
         ShutdownBudget::new(second, second, second, cleanup).unwrap(),
-        1,
+        ProcessCapacity::new(1).unwrap(),
     )
-    .unwrap()
 }
 
 #[derive(Default)]

@@ -1,7 +1,8 @@
 use batter::{
-    admission::Bulkhead,
+    admission::BulkheadCapacity,
     settings::{SettingsError, SettingsSource, bounded_u64, milliseconds, read_file},
 };
+use batter_axum::ResponseConstructionBudget;
 use std::{ffi::OsString, net::SocketAddr, time::Duration};
 
 const NAMES: &[&str] = &[
@@ -14,8 +15,8 @@ const NAMES: &[&str] = &[
 // Application names, defaults and precedence live at this root.
 pub(super) struct Config {
     pub bind: SocketAddr,
-    pub request_budget: Duration,
-    pub bulkhead_capacity: usize,
+    pub request_budget: ResponseConstructionBudget,
+    pub bulkhead_capacity: BulkheadCapacity,
     pub log_filter: Option<String>,
 }
 impl std::fmt::Debug for Config {
@@ -58,8 +59,7 @@ impl Config {
             "BATTER_REQUEST_TIMEOUT_MS",
             Duration::from_secs(365 * 24 * 60 * 60),
         )?;
-        // Validate the actual native duration boundary before acquiring resources.
-        batter::operation::OperationContext::new(request_budget).map_err(|e| {
+        let request_budget = ResponseConstructionBudget::new(request_budget).map_err(|e| {
             SettingsError::new("BATTER_REQUEST_TIMEOUT_MS", "invalid duration").with_cause(e)
         })?;
         let bulkhead_capacity = bounded_u64(
@@ -68,7 +68,7 @@ impl Config {
             1,
             tokio::sync::Semaphore::MAX_PERMITS as u64,
         )? as usize;
-        Bulkhead::new(bulkhead_capacity).map_err(|e| {
+        let bulkhead_capacity = BulkheadCapacity::new(bulkhead_capacity).map_err(|e| {
             SettingsError::new("BATTER_BULKHEAD_CAPACITY", "invalid capacity").with_cause(e)
         })?;
         Ok(Self {

@@ -39,8 +39,23 @@ pub struct Bulkhead {
     semaphore: Arc<Semaphore>,
 }
 
-impl Bulkhead {
-    /// Create a nonzero concurrency bound within Tokio's supported capacity.
+/// A validated, nonzero process-local concurrency capacity.
+///
+/// This value retains the result of checking Tokio's semaphore limit, so it can
+/// be handed to [`Bulkhead::new`] without another fallible configuration step.
+///
+/// ```
+/// use batter::admission::{Bulkhead, BulkheadCapacity};
+///
+/// let capacity = BulkheadCapacity::new(32)?;
+/// let bulkhead = Bulkhead::new(capacity);
+/// # Ok::<(), batter::ConfigurationError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BulkheadCapacity(usize);
+
+impl BulkheadCapacity {
+    /// Validate a nonzero capacity within Tokio's supported semaphore range.
     pub fn new(capacity: usize) -> Result<Self, ConfigurationError> {
         if capacity == 0 {
             return Err(ConfigurationError::Zero("bulkhead capacity"));
@@ -48,9 +63,29 @@ impl Bulkhead {
         if capacity > Semaphore::MAX_PERMITS {
             return Err(ConfigurationError::TooLarge("bulkhead capacity"));
         }
-        Ok(Self {
-            semaphore: Arc::new(Semaphore::new(capacity)),
-        })
+        Ok(Self(capacity))
+    }
+
+    /// Return the validated permit count for diagnostics or native handoff.
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Bulkhead {
+    /// Create a bulkhead from an already validated capacity.
+    ///
+    /// ```compile_fail,E0308
+    /// use batter::admission::Bulkhead;
+    ///
+    /// fn cannot_build_from_raw(capacity: usize) {
+    ///     let bulkhead = Bulkhead::new(capacity);
+    /// }
+    /// ```
+    pub fn new(capacity: BulkheadCapacity) -> Self {
+        Self {
+            semaphore: Arc::new(Semaphore::new(capacity.0)),
+        }
     }
 
     /// Reject new admissions and wake waiting callers. Existing permits remain.

@@ -22,7 +22,9 @@ cover the resolved transport, not immediate universal propagation or write-half
 closure. [ADR-008](adr/008-http-transport-ownership.md) records the measured
 contracts and [validation](validation.md) records platform-specific evidence.
 
-Import `RequestPolicy`, `request_admission` and `observe_http` from `batter_axum`.
+Import `ResponseConstructionBudget`, `RequestPolicy`, `request_admission` and
+`observe_http` from `batter_axum`. Validate the fixed server budget before
+composition, then pass the retained witness to the infallible policy constructor.
 Apply `middleware::from_fn_with_state(policy, request_admission)` with
 `route_layer` to guarded business routes, merge unguarded liveness/readiness and
 fallback, then apply `middleware::from_fn(observe_http)` using `Router::layer`.
@@ -558,11 +560,16 @@ explicit recovery; the timeout grants no remote-cleanup or async-drop guarantee.
 ## Application settings constructor handoff
 
 The foundation's `settings` module has no SQLx, Axum or Runledger dependency.
-The runnable HTTP example uses its literal source reader and bounds and passes
-its selected capacity into the actual router. The reference package owns
+The runnable HTTP example uses its literal source reader and bounds, retains
+`BulkheadCapacity` and `ResponseConstructionBudget`, and passes those witnesses
+into the actual router. The reference package owns
 `config::{RootSettings, PoolSettings, WorkerSettings, ConfigMode}`. Its constructors
-return native `RequestPolicy`, `PgPoolOptions`, `PgConnectOptions`, `Bulkhead`,
-Batter `Supervisor`, and `JobsConfig`/Runledger `SupervisorBuilder`.
+retain Batter `BulkheadCapacity`/`ProcessCapacity` and Axum
+`ResponseConstructionBudget`, then return infallibly constructed native
+`RequestPolicy`, `Bulkhead`, Batter `Supervisor`, and separately constructed
+`PgPoolOptions`, `PgConnectOptions`, and `JobsConfig`/Runledger
+`SupervisorBuilder` values, retaining their own native validation errors where
+those constructors are fallible.
 
 Use `RootSettings::from_process(mode, selected_path, overrides)` once before
 acquisition. Tests can inject file/environment/override sources directly.

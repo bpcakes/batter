@@ -2,8 +2,9 @@ use super::support::{Case, yields};
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome, SkipReason},
     lifecycle::{
-        ProcessAdmissionError, ProcessHandle, ProcessTaskError, SharedShutdownReport,
-        ShutdownBudget, ShutdownHandle, ShutdownReport, Supervisor, TaskOutcome,
+        ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessTaskError,
+        SharedShutdownReport, ShutdownBudget, ShutdownHandle, ShutdownReport, Supervisor,
+        TaskOutcome,
     },
 };
 use std::{
@@ -31,7 +32,8 @@ pub async fn descendant_closure(
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let mut supervisor = Supervisor::with_process_capacity(budget, 3).unwrap();
+    let mut supervisor =
+        Supervisor::with_process_capacity(budget, ProcessCapacity::new(3).unwrap());
     let finalized = Arc::new(AtomicBool::new(false));
     let flag = finalized.clone();
     supervisor

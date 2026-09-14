@@ -18,7 +18,7 @@ use batter::{
     },
     operation::OperationContext,
 };
-use batter_axum::{RequestPolicy, observe_http, request_admission};
+use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 
@@ -85,7 +85,10 @@ impl Server {
         } else {
             Duration::from_secs(30)
         };
-        let policy = RequestPolicy::new(handle.clone(), request_budget)?;
+        let policy = RequestPolicy::new(
+            handle.clone(),
+            ResponseConstructionBudget::new(request_budget)?,
+        );
         let router = Router::new()
             .route("/{*path}", get(handler).post(handler))
             .route_layer(middleware::from_fn_with_state(policy, request_admission))

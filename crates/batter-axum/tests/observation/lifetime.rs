@@ -15,7 +15,8 @@ use batter::{
     operation::{Interruption, OperationContext},
 };
 use batter_axum::{
-    HttpObservationLevel, RequestPolicy, observe_http, request_admission, request_scope,
+    HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http,
+    request_admission, request_scope,
 };
 use std::{
     sync::{
@@ -78,7 +79,10 @@ fn abort_preserves_observer_and_handler_destruction_under_the_first_poll_subscri
                         }
                     }),
                 ),
-                RequestPolicy::new(handle, Duration::from_secs(60)).unwrap(),
+                RequestPolicy::new(
+                    handle,
+                    ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
+                ),
             );
             // Construct under a different subscriber: capture must occur at first poll.
             let task = tokio::spawn(
@@ -135,7 +139,10 @@ fn abort_preserves_observer_and_handler_destruction_under_the_first_poll_subscri
 async fn discard_unpolled(State(mode): State<Boundary>, request: Request, next: Next) -> Response {
     let handle = ShutdownHandle::new();
     handle.mark_ready();
-    let policy = RequestPolicy::new(handle, Duration::from_secs(1)).unwrap();
+    let policy = RequestPolicy::new(
+        handle,
+        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+    );
     match mode {
         Boundary::Observation => drop(observe_http(request, next)),
         Boundary::Admission => drop(request_admission(State(policy), request, next)),
@@ -236,7 +243,10 @@ async fn split_admission_allows_drain_then_cancels_the_context_at_response_compl
                 }
             }),
         ),
-        RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+        RequestPolicy::new(
+            handle,
+            ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+        ),
     );
     let response = router
         .oneshot(request("GET", "/work"))

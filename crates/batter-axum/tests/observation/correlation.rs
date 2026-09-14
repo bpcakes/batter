@@ -7,7 +7,7 @@ use batter::{
     lifecycle::ShutdownHandle,
     operation::{Interruption, OperationContext},
 };
-use batter_axum::RequestPolicy;
+use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 use std::{
     future::{Future, poll_fn},
     sync::{Arc, Mutex},
@@ -44,7 +44,10 @@ fn router(mode: Boundary) -> Router {
                 StatusCode::INTERNAL_SERVER_ERROR
             }),
         ),
-        RequestPolicy::new(handle, Duration::from_secs(60)).unwrap(),
+        RequestPolicy::new(
+            handle,
+            ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
+        ),
     )
 }
 
@@ -194,7 +197,10 @@ fn handler_unwind_propagates_and_preserves_dropped_observation_and_context_cance
                             }
                         }),
                     ),
-                    RequestPolicy::new(handle, Duration::from_secs(60)).unwrap(),
+                    RequestPolicy::new(
+                        handle,
+                        ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
+                    ),
                 );
                 let origin = application_span(&capture, "panicking-request");
                 let task = tokio::spawn(

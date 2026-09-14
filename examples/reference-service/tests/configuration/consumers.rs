@@ -44,7 +44,7 @@ async fn configured_request_policy_changes_actual_response_deadline() {
                 }),
             )
             .layer(middleware::from_fn_with_state(
-                root.request_policy(handle).unwrap(),
+                root.request_policy(handle),
                 batter_axum::request_admission,
             ));
         let response = app
@@ -63,7 +63,7 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
             ("BATTER_PROCESS_CAPACITY", &process_limit.to_string()),
         ])
         .unwrap();
-        let bulkhead = root.bulkhead().unwrap();
+        let bulkhead = root.bulkhead();
         let context = OperationContext::new(Duration::from_secs(10)).unwrap();
         let mut held = Vec::new();
         for _ in 0..bulk_limit {
@@ -73,7 +73,7 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
             bulkhead.enter(&context, Admission::Reject).await,
             Err(AdmissionError::Overloaded)
         ));
-        let mut supervisor = root.supervisor(budget()).unwrap();
+        let mut supervisor = root.supervisor(budget());
         supervisor
             .register("initialized", |signal| async move {
                 signal.mark_started();
@@ -153,7 +153,7 @@ pub(crate) async fn native_worker() {
         .disable_reaper()
         .prepare()
         .unwrap();
-    let mut process = root.supervisor(budget()).unwrap();
+    let mut process = root.supervisor(budget());
     batter_runledger::register(
         &mut process,
         "worker",

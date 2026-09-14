@@ -343,7 +343,10 @@ fn dropping_unpolled_driver_signals_shutdown_without_starting_factories() {
 
 #[tokio::test]
 async fn aborting_driver_before_first_poll_notifies_readiness_waiters() {
-    let supervisor = Supervisor::with_process_capacity(budget(), 1).unwrap();
+    let supervisor = Supervisor::with_process_capacity(
+        budget(),
+        batter::lifecycle::ProcessCapacity::new(1).unwrap(),
+    );
     let handle = supervisor.handle();
     let cancellation = handle.operation_token();
     handle.mark_ready();

@@ -1,5 +1,5 @@
 use batter::{
-    admission::{Admission, AdmissionError, Bulkhead},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationContext},
 };
 use std::time::Duration;
@@ -10,13 +10,15 @@ fn context() -> OperationContext {
 
 #[test]
 fn capacity_must_be_valid() {
-    assert!(Bulkhead::new(0).is_err());
-    assert!(Bulkhead::new(usize::MAX).is_err());
+    assert!(BulkheadCapacity::new(0).is_err());
+    assert!(BulkheadCapacity::new(tokio::sync::Semaphore::MAX_PERMITS + 1).is_err());
+    assert!(BulkheadCapacity::new(usize::MAX).is_err());
+    assert!(BulkheadCapacity::new(tokio::sync::Semaphore::MAX_PERMITS).is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn rejecting_admission_enforces_capacity_and_releases_on_drop() {
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let context = context();
     let permit = bulkhead.enter(&context, Admission::Reject).await.unwrap();
     assert!(matches!(
@@ -29,7 +31,7 @@ async fn rejecting_admission_enforces_capacity_and_releases_on_drop() {
 
 #[tokio::test(start_paused = true)]
 async fn waiting_consumes_existing_deadline_without_leaking_a_permit() {
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let permit = bulkhead.enter(&context(), Admission::Reject).await.unwrap();
     let short = OperationContext::new(Duration::from_secs(1)).unwrap();
     assert!(matches!(
@@ -42,7 +44,7 @@ async fn waiting_consumes_existing_deadline_without_leaking_a_permit() {
 
 #[tokio::test]
 async fn closing_wakes_waiters() {
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let _permit = bulkhead.enter(&context(), Admission::Reject).await.unwrap();
     let owned = bulkhead.clone();
     let task = tokio::spawn(async move { owned.enter(&context(), Admission::Wait).await });
@@ -55,7 +57,7 @@ async fn closing_wakes_waiters() {
 async fn cancelled_call_is_not_admitted_even_when_capacity_exists() {
     let context = context();
     context.cancel();
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     assert!(matches!(
         bulkhead.enter(&context, Admission::Reject).await,
         Err(AdmissionError::Interrupted(Interruption::Cancelled))

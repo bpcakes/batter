@@ -13,7 +13,9 @@ use axum::{
     routing::get,
 };
 use batter::lifecycle::ShutdownHandle;
-use batter_axum::{HttpObservationLevel, RequestPolicy, observe_http, readiness};
+use batter_axum::{
+    HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http, readiness,
+};
 use std::time::Duration;
 use tower::ServiceExt;
 use tracing::{Level, instrument::WithSubscriber};
@@ -56,7 +58,10 @@ fn explicit_response_levels_preserve_status_fields_identity_and_response() {
                                 )
                             }),
                         ),
-                        RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+                        RequestPolicy::new(
+                            handle,
+                            ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+                        ),
                     )
                     .layer(middleware::from_fn(identity));
                 let response = router
@@ -104,7 +109,10 @@ fn defaults_ignore_request_extensions_and_client_level_headers() {
                 handle.mark_ready();
                 let router = mode.apply(
                     Router::new().route("/work", get(move || async move { status })),
-                    RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+                    RequestPolicy::new(
+                        handle,
+                        ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+                    ),
                 );
                 let mut request = request("GET", "/work");
                 request
@@ -195,17 +203,19 @@ async fn failure_renderers_select_severity_for_admission_and_deadline_responses(
             if phase == "draining" {
                 handle.request();
             }
-            let policy = RequestPolicy::new(handle, Duration::from_secs(1))
-                .unwrap()
-                .with_failure_renderer(|failure, _parts| {
-                    (
-                        failure.status(),
-                        Extension(HttpObservationLevel(Level::INFO)),
-                        [("x-failure-code", failure.code())],
-                        "secret-renderer-body",
-                    )
-                        .into_response()
-                });
+            let policy = RequestPolicy::new(
+                handle,
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            )
+            .with_failure_renderer(|failure, _parts| {
+                (
+                    failure.status(),
+                    Extension(HttpObservationLevel(Level::INFO)),
+                    [("x-failure-code", failure.code())],
+                    "secret-renderer-body",
+                )
+                    .into_response()
+            });
             let router = mode.apply(
                 Router::new().route(
                     "/work",

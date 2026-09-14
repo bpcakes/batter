@@ -8750,3 +8750,39 @@ The guard-removal mutations above exercised pure/offline predicates only; they
 were restored before PostgreSQL execution and are not live mutation evidence.
 `batter-m8x` retains the missing PostgreSQL 18 guard-removal controls alongside
 the broader protected catalog-boundary matrix.
+
+## Validated operational value witnesses: 2026-09-14
+
+Delivery Bead `batter-k8m`; Jig plan
+`plan_01M2FJAAJ6PTC67CW9PYFCBGQH`; baseline
+`3b4364f4044f`. Batter now owns opaque `BulkheadCapacity` and
+`ProcessCapacity` values, and the Axum adapter owns
+`ResponseConstructionBudget`. Raw values are rejected only while constructing
+those witnesses; the operational constructors consume the witnesses
+infallibly. Application schemas remain application-owned. Cargo.lock was
+unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+Executed locally on macOS 26.6.2 arm64 (Darwin 25.6.0) with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and 1.94.0 (`4a4ef493e`, 2026-03-02).
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo check --workspace --all-targets --locked` | Every workspace target compiled after all raw constructor call sites were migrated to validated witnesses. |
+| `cargo test -p batter --locked` and `cargo test -p batter-axum --locked` | Both complete package suites and their rustdocs passed. Boundary tests covered zero, exact maximum, first-over-maximum, extreme, and valid handoff cases. The negative rustdocs pass raw values directly to witness-only operational constructors, while adjacent positive rustdocs prove the intended checked handoff. |
+| `cargo test -p batter-example-reference-service --test configuration --locked` | All 20 configuration tests passed with the reference parser retaining the three validated operational witnesses. |
+| `cargo fmt --all -- --check` and `cargo clippy -p batter -p batter-axum -p batter-example-reference-service --all-targets --locked -- -D warnings` | Formatting and strict Clippy passed after extracting the reference capacity parsers. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | Both complete core/minimal, workspace runtime, hostile-environment, doctest, formatting, strict Clippy and rustdoc matrices passed on the final witness bytes. |
+| Rebuild `cargo build -p batter-axum --example http_service --locked`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes for each toolchain | All ten rebuilt process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `bash scripts/test_reference_live.sh` without external endpoint variables | Expected native preflight failure before any fixture started: `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` were absent. This did not count as live PostgreSQL execution. |
+
+The first complete Claude/Codex working-tree review used matching fingerprint
+`ec8210fddf48330db9bc78762d15eed4abe67e78f7f60acfcd7b33ebc9d138b5`.
+Its low-severity findings removed an obsolete router configuration error and a
+stale raw-capacity documentation snippet. The next complete pass used matching
+fingerprint
+`3ecab6e20e9d676404fcc1d109ea8a2fba160eb36fcc5ee7aae720ba8a5b4b05`;
+neither reviewer found a substantive defect. Its supporting observations led
+to the narrowly scoped compile-fail examples and the current execution record
+above. No hosted CI, new Linux execution, live PostgreSQL execution,
+publication, or deployment is claimed.

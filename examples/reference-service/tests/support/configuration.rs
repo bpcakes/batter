@@ -104,7 +104,7 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
         Duration::from_secs(1),
         Duration::from_secs(1),
         cleanup,
-    )?)?;
+    )?);
     let handle = supervisor.handle();
     let (pool_tx, pool_rx) = tokio::sync::oneshot::channel();
     let mut starting = Startup::new(

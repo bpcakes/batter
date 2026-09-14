@@ -24,15 +24,16 @@ use axum::{
 };
 use batter::{
     BoxError,
-    admission::{Admission, AdmissionError, Bulkhead},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::Supervisor,
     operation::{Interruption, OperationContext, OperationError},
     registration::RegistrationTarget,
 };
 use batter_axum::{
-    CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, dependency_readiness, liveness,
-    operational_http, register_http_in, render_infrastructure_failure, request_admission,
+    CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+    dependency_readiness, liveness, operational_http, register_http_in,
+    render_infrastructure_failure, request_admission,
 };
 use std::{convert::Infallible, time::Duration};
 
@@ -105,16 +106,16 @@ async fn work(
 
 fn router(
     handle: batter::lifecycle::ShutdownHandle,
-    request_budget: Duration,
+    request_budget: ResponseConstructionBudget,
     dependency: HealthReader<std::io::Error>,
-    bulkhead_capacity: usize,
-) -> Result<Router, batter::ConfigurationError> {
-    let policy = RequestPolicy::new(handle.clone(), request_budget)?.with_infrastructure_json();
+    bulkhead_capacity: BulkheadCapacity,
+) -> Router {
+    let policy = RequestPolicy::new(handle.clone(), request_budget).with_infrastructure_json();
     let application = Router::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
         .with_state(AppState {
-            outbound: Bulkhead::new(bulkhead_capacity)?,
+            outbound: Bulkhead::new(bulkhead_capacity),
         })
         .route_layer(middleware::from_fn_with_state(policy, request_admission));
     // Health endpoints must remain outside the admission gate.
@@ -122,9 +123,9 @@ fn router(
         .route("/live", get(liveness))
         .route("/ready", get(dependency_readiness::<std::io::Error>))
         .with_state(ReadinessPolicy::new(handle, dependency));
-    Ok(application
+    application
         .merge(probes)
-        .layer(middleware::from_fn(operational_http)))
+        .layer(middleware::from_fn(operational_http))
 }
 
 #[tokio::main]
@@ -192,7 +193,7 @@ async fn run() -> Result<(), BoxError> {
                         config.request_budget,
                         health,
                         config.bulkhead_capacity,
-                    )?;
+                    );
                     let listener = tokio::net::TcpListener::bind(config.bind).await?;
                     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
                     register_http_in(scope, "http", listener, application)?;

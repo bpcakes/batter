@@ -89,7 +89,7 @@ impl std::error::Error for RuntimeStartupFailure {
 /// The delivery handler is still absent, so the root withholds approval and
 /// keeps /ready unavailable; its empty native registry cannot claim delivery jobs.
 pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
-    let supervisor = settings.supervisor(shutdown_budget())?;
+    let supervisor = settings.supervisor(shutdown_budget());
     let readiness = supervisor.handle();
     let context = OperationContext::new(STARTUP_ALLOWANCE)?;
     let native_startup = context.clone();

@@ -3,8 +3,8 @@ use batter::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{
-        ProcessTaskError, SharedShutdownReport, ShutdownBudget, ShutdownReport, Supervisor,
-        TaskOutcome,
+        ProcessCapacity, ProcessTaskError, SharedShutdownReport, ShutdownBudget, ShutdownReport,
+        Supervisor, TaskOutcome,
     },
 };
 use std::{
@@ -29,7 +29,7 @@ fn supervisor() -> Supervisor {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor = Supervisor::with_process_capacity(budget, 2).unwrap();
+    let supervisor = Supervisor::with_process_capacity(budget, ProcessCapacity::new(2).unwrap());
     supervisor.handle().mark_ready();
     supervisor
 }

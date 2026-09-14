@@ -11,8 +11,8 @@ use batter::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{
-        ProcessAdmissionError, ProcessTaskError, Readiness, ShutdownBudget, ShutdownCause,
-        ShutdownReport, Supervisor, TaskOutcome,
+        ProcessAdmissionError, ProcessCapacity, ProcessTaskError, Readiness, ShutdownBudget,
+        ShutdownCause, ShutdownReport, Supervisor, TaskOutcome,
     },
 };
 use std::{
@@ -40,7 +40,8 @@ fn budget() -> ShutdownBudget {
 }
 
 fn finite_supervisor(capacity: usize) -> Supervisor {
-    let supervisor = Supervisor::with_process_capacity(budget(), capacity).unwrap();
+    let supervisor =
+        Supervisor::with_process_capacity(budget(), ProcessCapacity::new(capacity).unwrap());
     assert!(supervisor.handle().mark_ready());
     supervisor
 }
@@ -263,7 +264,10 @@ async fn completed_critical_stop_is_observed_after_deadline_without_false_abort(
 
 #[tokio::test]
 async fn unstarted_admission_is_inert_and_capacity_is_validated() {
-    assert!(Supervisor::with_process_capacity(budget(), 0).is_err());
+    assert!(ProcessCapacity::new(0).is_err());
+    assert!(ProcessCapacity::new(tokio::sync::Semaphore::MAX_PERMITS + 1).is_err());
+    assert!(ProcessCapacity::new(usize::MAX).is_err());
+    assert!(ProcessCapacity::new(tokio::sync::Semaphore::MAX_PERMITS).is_ok());
     let supervisor = finite_supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let called = Arc::new(AtomicBool::new(false));
@@ -516,7 +520,8 @@ async fn forced_cancellation_closes_descendant_admission() {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor = Supervisor::with_process_capacity(shutdown_budget, 2).unwrap();
+    let supervisor =
+        Supervisor::with_process_capacity(shutdown_budget, ProcessCapacity::new(2).unwrap());
     let process = supervisor.process_handle().unwrap();
     supervisor.handle().mark_ready();
     let running = supervisor.start();

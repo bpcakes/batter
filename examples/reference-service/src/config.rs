@@ -36,11 +36,11 @@ pub use worker::WorkerSettings;
 
 use crate::{auth::BearerAuthenticator, delivery::OwnerId};
 use batter::{
-    admission::Bulkhead,
-    lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
+    admission::{Bulkhead, BulkheadCapacity},
+    lifecycle::{ProcessCapacity, ShutdownBudget, ShutdownHandle, Supervisor},
     settings::{SettingsError, SettingsSource, bounded_u64, milliseconds, read_file},
 };
-use batter_axum::RequestPolicy;
+use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{fmt, net::SocketAddr, path::Path, time::Duration};
 
@@ -55,6 +55,30 @@ const ROOT_NAMES: &[&str] = &[
     "DATABASE_URL",
 ];
 
+fn capacity(values: &SettingsSource, name: &'static str) -> Result<usize, SettingsError> {
+    usize::try_from(bounded_u64(
+        values.text(name)?.unwrap_or("32"),
+        name,
+        1,
+        tokio::sync::Semaphore::MAX_PERMITS as u64,
+    )?)
+    .map_err(|e| SettingsError::new(name, "integer overflow").with_cause(e))
+}
+
+fn capacities(
+    values: &SettingsSource,
+) -> Result<(BulkheadCapacity, ProcessCapacity), SettingsError> {
+    let bulkhead =
+        BulkheadCapacity::new(capacity(values, "BATTER_BULKHEAD_CAPACITY")?).map_err(|e| {
+            SettingsError::new("BATTER_BULKHEAD_CAPACITY", "native validation failed").with_cause(e)
+        })?;
+    let process =
+        ProcessCapacity::new(capacity(values, "BATTER_PROCESS_CAPACITY")?).map_err(|e| {
+            SettingsError::new("BATTER_PROCESS_CAPACITY", "native validation failed").with_cause(e)
+        })?;
+    Ok((bulkhead, process))
+}
+
 /// Root purpose controls required credentials and whether worker identity is required.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigMode {
@@ -68,9 +92,9 @@ pub enum ConfigMode {
 #[derive(Clone)]
 pub struct RootSettings {
     bind: SocketAddr,
-    request_budget: Duration,
-    bulkhead_capacity: usize,
-    process_capacity: usize,
+    request_budget: ResponseConstructionBudget,
+    bulkhead_capacity: BulkheadCapacity,
+    process_capacity: ProcessCapacity,
     pool: PoolSettings,
     worker: WorkerSettings,
     endpoint: endpoint::Endpoint,
@@ -118,19 +142,10 @@ impl RootSettings {
             "BATTER_REQUEST_TIMEOUT_MS",
             MAX_DURATION,
         )?;
-        RequestPolicy::new(ShutdownHandle::new(), request_budget).map_err(|e| {
+        let request_budget = ResponseConstructionBudget::new(request_budget).map_err(|e| {
             SettingsError::new("BATTER_REQUEST_TIMEOUT_MS", "native validation failed")
                 .with_cause(e)
         })?;
-        let capacity = |name| -> Result<usize, SettingsError> {
-            usize::try_from(bounded_u64(
-                values.text(name)?.unwrap_or("32"),
-                name,
-                1,
-                tokio::sync::Semaphore::MAX_PERMITS as u64,
-            )?)
-            .map_err(|e| SettingsError::new(name, "integer overflow").with_cause(e))
-        };
         let endpoint = endpoint::Endpoint::parse(values.required("DATABASE_URL")?, mode)?;
         let authenticator = match mode {
             ConfigMode::Serve => {
@@ -185,11 +200,12 @@ impl RootSettings {
             }
         };
         let worker = WorkerSettings::from_values(&values, mode == ConfigMode::Serve)?;
+        let (bulkhead_capacity, process_capacity) = capacities(&values)?;
         Ok(Self {
             bind,
             request_budget,
-            bulkhead_capacity: capacity("BATTER_BULKHEAD_CAPACITY")?,
-            process_capacity: capacity("BATTER_PROCESS_CAPACITY")?,
+            bulkhead_capacity,
+            process_capacity,
             pool: PoolSettings::from_values(&values)?,
             worker,
             endpoint,
@@ -201,10 +217,7 @@ impl RootSettings {
         self.bind
     }
     /// Construct the actual HTTP response-construction policy.
-    pub fn request_policy(
-        &self,
-        handle: ShutdownHandle,
-    ) -> Result<RequestPolicy, batter::ConfigurationError> {
+    pub fn request_policy(&self, handle: ShutdownHandle) -> RequestPolicy {
         RequestPolicy::new(handle, self.request_budget)
     }
     /// Construct SQLx pool options, without opening a connection.
@@ -220,14 +233,11 @@ impl RootSettings {
         self.endpoint.connect_options_from_process()
     }
     /// Construct a separately bounded finite-process supervisor; does not start it.
-    pub fn supervisor(
-        &self,
-        budget: ShutdownBudget,
-    ) -> Result<Supervisor, batter::ConfigurationError> {
+    pub fn supervisor(&self, budget: ShutdownBudget) -> Supervisor {
         Supervisor::with_process_capacity(budget, self.process_capacity)
     }
     /// Construct process-local operation admission, distinct from finite task capacity.
-    pub fn bulkhead(&self) -> Result<Bulkhead, batter::ConfigurationError> {
+    pub fn bulkhead(&self) -> Bulkhead {
         Bulkhead::new(self.bulkhead_capacity)
     }
     /// Borrow validated worker settings for the explicit native builder.

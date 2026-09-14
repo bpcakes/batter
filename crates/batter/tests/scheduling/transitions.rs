@@ -1,7 +1,7 @@
 use super::support::{Case, poll_pending, supervisor, yields};
 use batter::{
     cleanup::CleanupBudget,
-    lifecycle::{ProcessAdmissionError, ShutdownBudget, Supervisor},
+    lifecycle::{ProcessAdmissionError, ProcessCapacity, ShutdownBudget, Supervisor},
 };
 use std::{
     convert::Infallible,
@@ -187,7 +187,7 @@ pub async fn forced_descendant(case: Case) {
         CleanupBudget::new(second, second, second).unwrap(),
     )
     .unwrap();
-    let supervisor = Supervisor::with_process_capacity(forced, 2).unwrap();
+    let supervisor = Supervisor::with_process_capacity(forced, ProcessCapacity::new(2).unwrap());
     let process = supervisor.process_handle().unwrap();
     supervisor.handle().mark_ready();
     let running = supervisor.start();

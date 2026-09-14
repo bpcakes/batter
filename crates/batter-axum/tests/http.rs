@@ -10,7 +10,9 @@ use batter::{
     lifecycle::ShutdownHandle,
     operation::{Interruption, OperationContext},
 };
-use batter_axum::{HttpFailure, RequestPolicy, liveness, readiness, request_scope};
+use batter_axum::{
+    HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness, readiness, request_scope,
+};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -19,6 +21,9 @@ use tower::ServiceExt;
 
 fn request(path: &str) -> Request<Body> {
     Request::builder().uri(path).body(Body::empty()).unwrap()
+}
+fn response_budget(duration: Duration) -> ResponseConstructionBudget {
+    ResponseConstructionBudget::new(duration).unwrap()
 }
 fn application(handle: ShutdownHandle) -> Router {
     Router::new()
@@ -32,7 +37,7 @@ fn application(handle: ShutdownHandle) -> Router {
             ),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
             request_scope,
         ))
 }
@@ -40,14 +45,14 @@ fn application(handle: ShutdownHandle) -> Router {
 #[test]
 fn request_budget_preserves_the_positive_representable_one_year_limit() {
     let year = Duration::from_secs(365 * 24 * 60 * 60);
-    assert!(RequestPolicy::new(ShutdownHandle::new(), year).is_ok());
+    assert_eq!(ResponseConstructionBudget::new(year).unwrap().get(), year);
     assert!(matches!(
-        RequestPolicy::new(ShutdownHandle::new(), Duration::ZERO),
+        ResponseConstructionBudget::new(Duration::ZERO),
         Err(batter::ConfigurationError::Zero("HTTP request budget"))
     ));
     for budget in [year + Duration::from_nanos(1), Duration::MAX] {
         assert!(matches!(
-            RequestPolicy::new(ShutdownHandle::new(), budget),
+            ResponseConstructionBudget::new(budget),
             Err(batter::ConfigurationError::TooLarge("HTTP request budget"))
         ));
     }
@@ -111,7 +116,7 @@ async fn drain_during_handler_does_not_interrupt_admitted_request() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
             request_scope,
         ));
     assert_eq!(
@@ -133,7 +138,7 @@ async fn total_handler_deadline_returns_sanitized_problem() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
             request_scope,
         ));
     let response = router.oneshot(request("/slow")).await.unwrap();
@@ -165,7 +170,7 @@ async fn request_context_is_cancelled_after_response_construction() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, Duration::from_secs(1)).unwrap(),
+            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
             request_scope,
         ));
     router.oneshot(request("/work")).await.unwrap();
@@ -231,9 +236,8 @@ struct ApplicationError {
 }
 
 fn application_policy(handle: ShutdownHandle) -> RequestPolicy {
-    RequestPolicy::new(handle, Duration::from_secs(1))
-        .unwrap()
-        .with_failure_renderer(|failure, parts| {
+    RequestPolicy::new(handle, response_budget(Duration::from_secs(1))).with_failure_renderer(
+        |failure, parts| {
             // This is an application-provided extension, not a client header.
             let request_id = parts.extensions.get::<TrustedRequestId>().unwrap().0;
             (
@@ -245,7 +249,8 @@ fn application_policy(handle: ShutdownHandle) -> RequestPolicy {
                 }),
             )
                 .into_response()
-        })
+        },
+    )
 }
 
 fn correlated_request() -> Request<Body> {
@@ -314,17 +319,19 @@ async fn timeout_renderer_keeps_original_trusted_metadata_after_handler_takes_th
 
 #[tokio::test]
 async fn custom_renderer_owns_status_and_headers_as_well_as_the_error_body() {
-    let policy = RequestPolicy::new(ShutdownHandle::new(), Duration::from_secs(1))
-        .unwrap()
-        .with_failure_renderer(|failure, _parts| {
-            assert_eq!(failure, HttpFailure::Unavailable);
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                [("x-application-error", "capacity-unavailable")],
-                "Application-selected response",
-            )
-                .into_response()
-        });
+    let policy = RequestPolicy::new(
+        ShutdownHandle::new(),
+        response_budget(Duration::from_secs(1)),
+    )
+    .with_failure_renderer(|failure, _parts| {
+        assert_eq!(failure, HttpFailure::Unavailable);
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("x-application-error", "capacity-unavailable")],
+            "Application-selected response",
+        )
+            .into_response()
+    });
     let router = Router::new()
         .route("/work", get(|| async { "not called" }))
         .layer(middleware::from_fn_with_state(policy, request_scope));

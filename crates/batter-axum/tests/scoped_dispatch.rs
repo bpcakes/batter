@@ -20,7 +20,7 @@ impl Drop for DropTrace {
 fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     use axum::{Router, body::Body, http::Request, middleware, routing::get};
     use batter::lifecycle::ShutdownHandle;
-    use batter_axum::{RequestPolicy, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
     use tower::ServiceExt;
 
     let scoped = Capture::new();
@@ -43,7 +43,10 @@ fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
                 }),
             )
             .layer(middleware::from_fn_with_state(
-                RequestPolicy::new(handle, Duration::from_secs(60)).unwrap(),
+                RequestPolicy::new(
+                    handle,
+                    ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
+                ),
                 request_scope,
             ));
         let task = tokio::spawn(

@@ -1,6 +1,6 @@
 use super::support::{Case, poll_pending, yields};
 use batter::{
-    admission::{Admission, AdmissionError, Bulkhead},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationContext, OperationError},
 };
 use std::{
@@ -123,7 +123,7 @@ pub async fn completion_race(case: Case, delay: u64) {
 }
 
 pub async fn bulkhead_preflight(case: Case, delay: u64) {
-    let bulkhead = Bulkhead::new(1).unwrap();
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let fresh = OperationContext::new(Duration::from_secs(30)).unwrap();
     let permit = bulkhead.enter(&fresh, Admission::Reject).await.unwrap();
     let context = fresh.child(Duration::from_secs(20)).unwrap();

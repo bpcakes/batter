@@ -42,9 +42,6 @@ struct AppState {
 /// Failure while composing the production router from validated settings.
 #[derive(Debug, thiserror::Error)]
 pub enum RouterBuildError {
-    /// A validated native constructor rejected its input.
-    #[error("router policy construction failed")]
-    Configuration(#[from] batter::ConfigurationError),
     /// Serving authentication was not configured.
     #[error("router authentication construction failed")]
     Authentication(#[from] batter::settings::SettingsError),
@@ -79,11 +76,11 @@ fn router_with_probes(
 ) -> Result<Router, RouterBuildError> {
     let authenticator = settings.authenticator()?;
     let policy = settings
-        .request_policy(handle.clone())?
+        .request_policy(handle.clone())
         .with_infrastructure_json();
     let state = AppState {
         deliveries: DeliveryService::new(pool),
-        database: settings.bulkhead()?,
+        database: settings.bulkhead(),
     };
     let business = Router::new()
         .route("/records/{record_id}/deliveries", post(submit_delivery))

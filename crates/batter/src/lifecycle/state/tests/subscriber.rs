@@ -94,7 +94,10 @@ fn subscriber_callbacks_run_before_finite_admission_lock() {
             CleanupBudget::new(second, second, second).unwrap(),
         )
         .unwrap();
-        let supervisor = Supervisor::with_process_capacity(budget, 1).unwrap();
+        let supervisor = Supervisor::with_process_capacity(
+            budget,
+            super::super::super::process::ProcessCapacity::new(1).unwrap(),
+        );
         let process = supervisor.process_handle().unwrap();
         let handle = supervisor.handle();
         // Set readiness synchronously: the coordinator must not contend for
