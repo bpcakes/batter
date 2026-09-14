@@ -8606,8 +8606,9 @@ SQLx 0.9.0.
 | Rebuild `cargo build -p batter-axum --example http_service --locked`, then run `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes for each toolchain | All ten rebuilt process smokes passed with readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
 | `cargo test -p batter-sqlx --features test-support --test verification_live --locked -- --ignored --list --format terse` | The target listed exactly 36 ignored verification cases, including protected absent-lock, pre-cursor and post-snapshot name replacement, post-snapshot attachment, RLS, inheritance, overflow, unusual-identifier/string-GUC and catalog-type-identity controls. Together with eleven disposition and fourteen pool-ownership cases, the checked runner inventory is 61. |
 | `python3 scripts/sqlx_live.py` before external fixture selection | Expected preflight failure before any target execution: `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL`, and `BATTER_SQLX_ADMIN_URL` were absent. This did not count as live execution. |
-| `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_sqlx_live.sh` with all three URLs selecting one loopback-only disposable PostgreSQL 18.4 container | The first complete execution exposed two test-support defects after 59 cases passed: one permission oracle submitted two commands as one SQLx prepared statement, and the descendant barrier still expected the superseded metadata query instead of the retained-OID lock-attestation query. After splitting the fixture commands and matching the actual protected phase, both focused cases passed and the required complete rerun passed all eleven disposition, fourteen pool-ownership and 36 verification cases: 61 passed, zero failed/ignored/filtered, in 13.06 seconds. The live inventory was not repeated on Rust 1.94.0. |
-| `scripts/jig work check --plan-id plan_01M2EE1MCEQ3BKF29GKCGRQA44`, then `work evidence` and `work gates` | Supporting-closure run `run_01M2EZFCVRGPWVGBWQQT9V4KJ5` executed and passed all five targets before the delivery close: API tests `receipt_01M2EZH6KJ6A75DBJK03JKJ2NY`, Clippy `receipt_01M2EZH6H4T269255515ZQVGSH`, formatting `receipt_01M2EZH6JDKK530DSSWJJPCFFP`, contract `receipt_01M2EZH6MQB5FEJF19FS749MME`, and file budget `receipt_01M2EZH6NSXYGMD0502XAKAT1N`. A subsequent tracker/documentation-only work refresh passed contract and file budget before `work finish`; this paragraph does not call the earlier target receipt evidence for its own later bytes. |
+| First `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_sqlx_live.sh` executions with all three URLs selecting one loopback-only disposable PostgreSQL 18.4 container | The first complete execution exposed two test-support defects after 59 cases passed: one permission oracle submitted two commands as one SQLx prepared statement, and the descendant barrier still expected the superseded metadata query instead of the retained-OID lock-attestation query. After splitting the fixture commands and matching the actual protected phase, both focused cases passed and the first complete repaired rerun passed all eleven disposition, fourteen pool-ownership and 36 verification cases: 61 passed, zero failed/ignored/filtered, in 13.06 seconds. This rerun preceded the later history-phase assertion described in the next row. |
+| After adding the history-phase assertion: focused `verification_live_protected::protected_sqlx_ledger_checks_exact_shape_and_nonprefix_subset`, then `RUSTUP_TOOLCHAIN=1.98.1 bash scripts/test_sqlx_live.sh` against the same PostgreSQL 18.4 container | The strengthened missing-SELECT oracle waited until protected ledger history setup before it could accept native SQLSTATE `42501`. That exact focused case passed one of one, then another complete runner execution passed the exact eleven disposition, fourteen pool-ownership and 36 verification cases: 61 passed, zero failed/ignored/filtered. Those production and test bytes were committed in `b062f92`. The live inventory was not repeated on Rust 1.94.0. |
+| `scripts/jig work check --plan-id plan_01M2EE1MCEQ3BKF29GKCGRQA44`, then `work evidence` and `work gates` | Supporting-closure run `run_01M2EZFCVRGPWVGBWQQT9V4KJ5` executed and passed all five targets before the delivery close: API tests `receipt_01M2EZH6KJ6A75DBJK03JKJ2NY`, Clippy `receipt_01M2EZH6H4T269255515ZQVGSH`, formatting `receipt_01M2EZH6JDKK530DSSWJJPCFFP`, contract `receipt_01M2EZH6MQB5FEJF19FS749MME`, and file budget `receipt_01M2EZH6NSXYGMD0502XAKAT1N`. A subsequent tracker/documentation-only work refresh passed contract and file budget before `work finish`. The history-phase test correction postdates those Jig receipts, so neither Jig run is claimed as evidence for that delta. |
 | Final standalone `scripts/jig check contract` and `scripts/jig check --no-receipt repo:file-budget` | Post-documentation policy checks passed on the final candidate. The contract receipt stays in `.agent` state rather than being copied back into this whole-repository input; file budget deliberately ran without a receipt because the owning plan was already closed. |
 
 Three temporary guard-removal mutations were executed before the first frozen
@@ -8729,13 +8730,21 @@ was not repeated under Rust 1.94.0. Its first exact runner execution established
 two test-support failures recorded in the table. Server statement logging showed
 the descendant barrier stopped at the post-lock `pg_class`/`pg_locks`
 attestation, before the superseded `pg_attribute` assertion. The supporting
-repair changes no production query: it gives each permission command its own
-prepared execution and checks the attestation phase the test actually protects.
-Both focused cases and the complete 61-case rerun passed. Both full toolchain
-matrices also passed again against these exact final test bytes. The previously
-recorded ten HTTP smokes remain applicable because this closure changed only
-live-test statements and assertions. No hosted, production, or new Linux-host
-execution is claimed.
+first repair changes no production query: it gives each permission command its
+own prepared execution and checks the attestation phase the test actually
+protects. Both focused cases and the first complete 61-case repaired rerun
+passed.
+
+The first focused closure verification then found that native `42501` alone did
+not prove which protected phase rejected missing `SELECT`. The test was
+strengthened to pause at protected history setup before accepting that code. On
+those later bytes, the exact focused case passed one of one and the complete
+runner passed all 61 cases again. Both full toolchain matrices also passed after
+that history-phase change, while the earlier Jig receipts remain evidence only
+for their recorded inputs. The previously recorded ten HTTP smokes remain
+applicable because the closure changed only live-test statements and assertions.
+No PostgreSQL live execution under Rust 1.94.0 and no hosted, production, or new
+Linux-host execution is claimed.
 
 The guard-removal mutations above exercised pure/offline predicates only; they
 were restored before PostgreSQL execution and are not live mutation evidence.
