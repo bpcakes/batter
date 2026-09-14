@@ -1,20 +1,31 @@
-use super::{ProbeResult, startup_process::StartupChild};
+use super::{
+    ProbeResult,
+    fixture_diagnostics::ProbeError,
+    startup_process::{self, Signal, StartupChild},
+};
+use batter::BoxError;
 use serde_json::Value;
-use sqlx::{ConnectOptions, PgPool, types::Uuid};
+use sqlx::{PgPool, types::Uuid};
 use std::{net::SocketAddr, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub async fn production_readiness(pool: PgPool) -> ProbeResult {
     let (job, original) = pending_delivery(&pool).await?;
-    let final_pool = pool.clone();
+    for signal in [Signal::Term, Signal::Int] {
+        served_until(&pool, job, &original, signal).await?;
+    }
+    Ok(())
+}
+
+async fn served_until(pool: &PgPool, job: Uuid, original: &Value, signal: Signal) -> ProbeResult {
+    let observer = pool.clone();
     let before_shutdown = original.clone();
-    let mut endpoint = pool.connect_options().to_url_lossy();
-    endpoint.set_query(Some("sslmode=disable"));
+    let endpoint = startup_process::endpoint(pool);
     let reservation = std::net::TcpListener::bind("127.0.0.1:0")?;
     let address = reservation.local_addr()?;
     drop(reservation);
-    let child = StartupChild::start_at("production", endpoint.as_str(), &address.to_string())?;
-    // Join the assertion body before terminating the process, including on panic.
+    let child = StartupChild::start_at("production", &endpoint, &address.to_string())?;
+    // Join the assertion body before signalling the process, including on panic.
     let observed = tokio::spawn(async move {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -31,29 +42,70 @@ pub async fn production_readiness(pool: PgPool) -> ProbeResult {
         tokio::time::sleep(Duration::from_millis(2100)).await;
         assert_eq!(status(address, "/live").await?, 200);
         assert_eq!(status(address, "/ready").await?, 503);
-        let controls: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM job_queue WHERE job_type = 'jobs.startup.control'",
-        )
-        .fetch_one(&pool)
-        .await?;
-        assert_eq!(controls, 0, "production startup created durable controls");
         assert_eq!(
-            job_snapshot(&pool, job).await?,
+            controls(&observer).await?,
+            0,
+            "production startup created durable controls"
+        );
+        assert_eq!(
+            job_snapshot(&observer, job).await?,
             before_shutdown,
             "empty production registry mutated pending delivery work"
         );
         Ok::<_, batter::BoxError>(())
     })
     .await;
-    let shutdown = tokio::task::spawn_blocking(move || child.terminate()).await?;
-    observed??;
-    shutdown?;
+    // The child reports success only after run's checked shutdown: joined native
+    // work and the successful application-owned postgres.pool record.
+    let shutdown =
+        tokio::task::spawn_blocking(move || child.stop(signal, &[], &[&endpoint, "fixture-token"]))
+            .await?;
+    let observed = observed
+        .map_err(|error| Box::new(error) as BoxError)
+        .and_then(|result| result);
+    let shutdown = shutdown.map_err(|error| -> BoxError { error.into() });
+    finish_results(observed, shutdown)?;
     assert_eq!(
-        job_snapshot(&final_pool, job).await?,
-        original,
+        controls(pool).await?,
+        0,
+        "production shutdown created durable controls"
+    );
+    assert_eq!(
+        job_snapshot(pool, job).await?,
+        *original,
         "production shutdown mutated pending delivery work"
     );
     Ok(())
+}
+
+fn finish_results(body: ProbeResult, shutdown: ProbeResult) -> ProbeResult {
+    batter_test_support::finish(
+        body.map_err(ProbeError::new),
+        shutdown.map_err(ProbeError::new),
+    )
+    .map_err(|error| Box::new(error) as BoxError)
+}
+
+pub(super) fn process_contracts() {
+    let failure = finish_results(
+        Err(std::io::Error::other("assertion marker").into()),
+        Err(std::io::Error::other("shutdown marker").into()),
+    )
+    .expect_err("both settled failures must remain inspectable");
+    let batter_test_support::TestFailure::Both { body, cleanup } = failure
+        .downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+        .expect("production result uses the shared dual-failure container")
+    else {
+        panic!("both branches were not retained")
+    };
+    assert_eq!(body.0.to_string(), "assertion marker");
+    assert_eq!(cleanup.0.to_string(), "shutdown marker");
+}
+
+async fn controls(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM job_queue WHERE job_type = 'jobs.startup.control'")
+        .fetch_one(pool)
+        .await
 }
 
 async fn pending_delivery(pool: &PgPool) -> Result<(Uuid, Value), batter::BoxError> {

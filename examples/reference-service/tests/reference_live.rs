@@ -3,7 +3,9 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use support::{ProbeResult, fixture_diagnostics::assert_probe, with_database};
+use support::{
+    ProbeResult, fixture_diagnostics::assert_probe, startup_process::Signal, with_database,
+};
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
@@ -346,22 +348,57 @@ async fn configured_command_root_bounds() {
 fn child_fixture() {
     if let Some(stage) = support::startup_process::launch::scenario() {
         support::startup_process::child(&stage);
+    } else {
+        support::process_contracts();
     }
-}
-
-#[tokio::test]
-async fn startup_signal_during_pool_acquisition() {
-    assert_probe(support::startup_signals::during_pool_acquisition().await);
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn startup_signal_during_schema_initialization() {
-    with_database(support::startup_signals::during_database_initialization).await;
 }
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn production_root_withholds_readiness_without_control_jobs() {
     with_database(support::production_readiness).await;
+}
+
+#[tokio::test]
+async fn protected_startup_acquisition_sigterm() {
+    assert_probe(support::startup_signals::acquisition(Signal::Term).await);
+}
+
+#[tokio::test]
+async fn protected_startup_acquisition_sigint() {
+    assert_probe(support::startup_signals::acquisition(Signal::Int).await);
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn protected_startup_schema_sigterm() {
+    with_database(|pool| support::startup_signals::schema(pool, Signal::Term)).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn protected_startup_schema_sigint() {
+    with_database(|pool| support::startup_signals::schema(pool, Signal::Int)).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn protected_startup_waiter_loss() {
+    with_database(support::protected_startup::waiter_loss).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn protected_startup_owner_loss() {
+    with_database(support::protected_startup::owner_loss).await;
+}
+
+#[tokio::test]
+async fn protected_startup_executable_sigterm() {
+    assert_probe(support::startup_signals::executable(Signal::Term).await);
+}
+
+#[tokio::test]
+async fn protected_startup_executable_sigint() {
+    assert_probe(support::startup_signals::executable(Signal::Int).await);
 }

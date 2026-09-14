@@ -10,7 +10,10 @@ use batter::{
     operation::OperationContext,
     startup::{ProtectedStartupScope, ScopedStartup, Startup, StartupFuture},
 };
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
 use std::{fmt, io::Write, process::ExitCode, time::Duration};
 
 #[derive(thiserror::Error)]
@@ -52,28 +55,23 @@ async fn run() -> Result<(), BoxError> {
     tracing_subscriber::fmt().with_target(false).try_init()?;
     let database_url = std::env::var("DATABASE_URL")?;
     let supervisor = Supervisor::new(support::shutdown_budget());
+    // The root owns the complete startup allowance; the probe derives a child.
+    let context = OperationContext::new(Duration::from_secs(15))?;
+    let probe_parent = context.clone();
     let startup = Startup::scoped(
         supervisor,
-        OperationContext::new(Duration::from_secs(15))?,
+        context,
         support::cleanup_budget(),
         move |scope| {
             Box::pin(async move {
                 let result: Result<(), BoxError> = async {
                     scope.stage("postgres.acquire")?;
-                    // Reserve before acquisition: rejection cannot strand an acquired pool.
-                    let slot = scope.reserve_cleanup("postgres.pool")?;
-                    let pool = PgPoolOptions::new()
-                        .max_connections(8)
-                        .acquire_timeout(Duration::from_secs(3))
-                        .connect(&database_url)
-                        .await?;
-                    let closing = pool.clone();
-                    slot.register(move || async move {
-                        closing.close().await;
-                        Ok(())
-                    });
+                    // Parse the application-owned endpoint before native construction.
+                    let connection: PgConnectOptions = database_url.parse()?;
+                    let pool = database_pool(scope, connection)?;
                     scope.stage("postgres.probe")?;
-                    let probe = OperationContext::new(Duration::from_secs(5))?;
+                    // The pool is lazy: this bounded probe establishes connectivity.
+                    let probe = probe_parent.child(Duration::from_secs(5))?;
                     batter_sqlx::probe(&pool, &probe).await?;
                     scope
                         .registration()
@@ -91,6 +89,19 @@ async fn run() -> Result<(), BoxError> {
     )
     .with_unix_signals("signals");
     serve(startup).await
+}
+
+/// Reserve before construction, so a rejected name cannot strand a pool; the
+/// adapter publishes native close before returning the lazy pool.
+fn database_pool(
+    scope: &mut ProtectedStartupScope,
+    connection: PgConnectOptions,
+) -> Result<PgPool, BoxError> {
+    let slot = scope.reserve_cleanup("postgres.pool")?;
+    let options = PgPoolOptions::new()
+        .max_connections(8)
+        .acquire_timeout(Duration::from_secs(3));
+    Ok(batter_sqlx::pool_in(slot, options, connection))
 }
 
 async fn serve<F>(startup: ScopedStartup<F>) -> Result<(), BoxError>

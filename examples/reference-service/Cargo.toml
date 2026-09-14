@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version = "1.94"
 license.workspace = true
 publish = false
+default-run = "batter-example-reference-service"
 
 [lints]
 workspace = true
@@ -42,3 +43,10 @@ batter-test-support.workspace = true
 [[example]]
 name = "retire_startup_controls"
 test = true
+
+[[bin]]
+name = "signal_witness_fixture"
+path = "tests/fixtures/signal_witness_fixture.rs"
+test = false
+bench = false
+doc = false

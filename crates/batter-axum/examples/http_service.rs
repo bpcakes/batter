@@ -28,7 +28,7 @@ use batter::{
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::Supervisor,
     operation::{Interruption, OperationContext, OperationError},
-    registration::RegistrationTarget,
+    registration::Registration,
 };
 use batter_axum::{
     CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
@@ -41,8 +41,8 @@ async fn fail(Extension(id): Extension<CorrelationId>) -> Response {
     render_infrastructure_failure(HttpFailure::Internal, Some(&id))
 }
 
-fn register_dependency_health<T: RegistrationTarget + ?Sized>(
-    target: &mut T,
+fn register_dependency_health(
+    mut registration: Registration<'_>,
 ) -> Result<HealthReader<std::io::Error>, BoxError> {
     let policy = HealthPolicy::new(
         Duration::from_secs(1),
@@ -56,7 +56,7 @@ fn register_dependency_health<T: RegistrationTarget + ?Sized>(
         tokio::time::sleep(Duration::from_millis(10)).await;
         Ok::<_, std::io::Error>(())
     })
-    .register_in(target, "dependency.health")?;
+    .register_in(&mut registration, "dependency.health")?;
     Ok(health)
 }
 
@@ -186,7 +186,7 @@ async fn run() -> Result<(), BoxError> {
             Box::pin(async move {
                 let result: Result<(), BoxError> = async {
                     scope.stage("dependency.health")?;
-                    let health = register_dependency_health(scope)?;
+                    let health = register_dependency_health(scope.registration())?;
                     scope.stage("http.bind")?;
                     let application = router(
                         handle.clone(),

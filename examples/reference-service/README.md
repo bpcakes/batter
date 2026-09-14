@@ -7,8 +7,10 @@ settlement observation and dependency cleanup. The delivery handler is absent,
 so the native registry is empty and readiness remains unapproved until
 `batter-8q8.2` installs the real provider. No production startup control job runs.
 The [compatibility manifest](../../docs/reference-compatibility.md) records version
-contracts and execution evidence. The redesigned live inventory passes on Linux
-with both supported toolchains; review closure remains under `batter-gi4`.
+contracts and execution evidence. The earlier 58-entry live inventory passed on
+Linux with both supported toolchains. The current 64-entry revision has executed
+only its five non-database entries; its database probes await authorized endpoints.
+Two exact legacy test aliases were removed rather than retained through the hard cutover.
 
 ## Staged worker and atomic delivery command
 
@@ -24,10 +26,22 @@ BATTER_AUTH_TOKEN='replace-with-an-opaque-token' \
 
 An optional positional settings-file path uses the literal format below.
 Environment values override that file; no file is discovered implicitly.
-Startup installs signals before the first awaited acquisition, applies native
-and forward-only application migrations, checks compatibility, synchronizes the
+Protected startup selects `.with_unix_signals("signals")`, so SIGTERM/SIGINT
+listeners exist before the initializer runs. The initializer publishes pool close
+through `batter_sqlx::pool_in`, acquires a connection, applies native and
+forward-only application migrations, checks compatibility, synchronizes the
 handler-free delivery producer, binds HTTP and registers native preparation.
-Signals remain polled through initialization and transfer to the running driver.
+A signal during initialization drains startup and awaits cleanup; after handoff
+the library-owned listeners belong to the running driver. A startup failure
+returned by `runtime::run` downcasts to `ProtectedRuntimeStartupFailure`. The
+earlier wrapper was removed in the coordinated hard cutover. Generic running
+failures retain `batter::lifecycle::ShutdownFailure`; an otherwise successful
+report missing its required pool record downcasts to
+`RuntimePoolCleanupFailure`, whose accessor exposes that report without rendering
+it. The production executable prints only `Error: reference service failed` and
+exits 1. A separately built test-fixture executable owns the process-local signal
+acknowledgements used by the integration suite; the production entrypoint has no
+witness mode or test environment switch.
 One 20-second startup allowance covers initialization. Shutdown has ten seconds
 of drain, one second of cancellation, one second of abort observation and separate
 bounded pool cleanup; native settlement shares those process intervals.
@@ -153,8 +167,12 @@ Earlier live-suite results retain their historical scope. The current executable
 inventory is defined in `scripts/reference_live.py` and checked against the Rust
 target; its native initialization, ownership, durable execution, callback and
 business-failure cases replace the retired hosted-control protocol cases.
-All 58 runner entries (56 database and two offline signal cases), plus the
+The earlier 58 runner entries (56 database and two offline signal cases), plus the
 separate maintenance-session probe, passed on both supported toolchains on Linux.
+The current inventory has 64 entries: 59 database probes, four offline signal
+controls and the private child entry. Its eight protected-startup rows are
+described in [testing](../../docs/testing.md#protected-startup-consumer-process-cases);
+their database rows remain unexecuted until authorized endpoints are supplied.
 Ordinary tests keep database cases ignored and run offline signal controls without
 PostgreSQL. See [validation](../../docs/validation.md) for exact execution scope.
 

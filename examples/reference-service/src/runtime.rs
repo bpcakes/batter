@@ -5,9 +5,9 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader},
-    lifecycle::{ShutdownBudget, check_shutdown},
+    lifecycle::{DriverOutcome, ShutdownBudget, check_shutdown},
     operation::{OperationContext, OperationError},
-    registration::RegistrationTarget,
+    registration::Registration,
     startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
 };
 use std::{fmt, time::Duration};
@@ -58,26 +58,103 @@ fn shutdown_budget() -> ShutdownBudget {
     .expect("static shutdown budget is valid")
 }
 
-/// Failed owned startup, including its independently driven cleanup report.
-/// Default formatting excludes native causes; inspection remains explicit.
-pub struct RuntimeStartupFailure(StartupError<InitializationError<InitializationFailure>>);
-impl RuntimeStartupFailure {
+/// Failed protected startup returned, boxed, by [`run`].
+///
+/// The retained report distinguishes an application failure
+/// ([`InitializationError::Application`]), a Unix signal policy failure and a
+/// received signal ([`batter::startup::StartupCause::Draining`]), together with
+/// every awaited cleanup outcome. Default formatting excludes native causes;
+/// the error source exposes the protected startup error for explicit inspection.
+///
+/// # Examples
+///
+/// ```
+/// use batter::BoxError;
+/// use batter_example_reference_service::runtime::ProtectedRuntimeStartupFailure;
+///
+/// # #[allow(dead_code)]
+/// fn inspect_startup(error: &BoxError) {
+///     if let Some(failure) = error.downcast_ref::<ProtectedRuntimeStartupFailure>() {
+///         let report = failure.startup();
+///         // Inspect the typed cause and cleanup report without rendering secrets.
+///         let _ = report;
+///     }
+/// }
+/// ```
+pub struct ProtectedRuntimeStartupFailure(StartupError<InitializationError<InitializationFailure>>);
+impl ProtectedRuntimeStartupFailure {
     /// Inspect the actual initialization cause and cleanup outcomes.
     pub fn startup(&self) -> &StartupError<InitializationError<InitializationFailure>> {
         &self.0
     }
 }
-impl fmt::Display for RuntimeStartupFailure {
+impl fmt::Display for ProtectedRuntimeStartupFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("reference service startup failed")
     }
 }
-impl fmt::Debug for RuntimeStartupFailure {
+impl fmt::Debug for ProtectedRuntimeStartupFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
-impl std::error::Error for RuntimeStartupFailure {
+impl std::error::Error for ProtectedRuntimeStartupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+fn startup_failure(error: StartupError<InitializationError<InitializationFailure>>) -> BoxError {
+    Box::new(ProtectedRuntimeStartupFailure(error))
+}
+
+/// An otherwise successful runtime shutdown that did not retain its required
+/// `postgres.pool` cleanup record.
+///
+/// The generic shutdown report has already passed [`check_shutdown`], so every
+/// recorded task and cleanup outcome succeeded. This application-root failure
+/// separately enforces that its required pool finalizer actually participated.
+/// Formatting is fixed and does not inspect report contents; [`Self::report`]
+/// provides typed access for an explicitly selected diagnostic sink.
+///
+/// # Examples
+///
+/// ```
+/// use batter::BoxError;
+/// use batter_example_reference_service::runtime::RuntimePoolCleanupFailure;
+///
+/// # #[allow(dead_code)]
+/// fn inspect_shutdown(error: &BoxError) {
+///     if let Some(failure) = error.downcast_ref::<RuntimePoolCleanupFailure>() {
+///         let report = failure.report();
+///         // Inspect the retained shutdown report without rendering native errors.
+///         let _ = report;
+///     }
+/// }
+/// ```
+pub struct RuntimePoolCleanupFailure(batter::lifecycle::SharedShutdownReport);
+
+impl RuntimePoolCleanupFailure {
+    /// Inspect the otherwise successful shutdown report and its cleanup records.
+    pub fn report(&self) -> &batter::lifecycle::SharedShutdownReport {
+        &self.0
+    }
+}
+
+impl fmt::Display for RuntimePoolCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .write_str("reference service shutdown did not retain its postgres.pool cleanup record")
+    }
+}
+
+impl fmt::Debug for RuntimePoolCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl std::error::Error for RuntimePoolCleanupFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.0)
     }
@@ -88,6 +165,12 @@ impl std::error::Error for RuntimeStartupFailure {
 /// approval are separate. No production startup control job is created.
 /// The delivery handler is still absent, so the root withholds approval and
 /// keeps /ready unavailable; its empty native registry cannot claim delivery jobs.
+///
+/// Startup-owned SIGTERM/SIGINT listeners are installed before initialization.
+/// A startup failure downcasts to [`ProtectedRuntimeStartupFailure`]. Generic
+/// running failures downcast to [`batter::lifecycle::ShutdownFailure`]; an
+/// otherwise successful report without its required pool-cleanup record
+/// downcasts to [`RuntimePoolCleanupFailure`].
 pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
     let supervisor = settings.supervisor(shutdown_budget());
     let readiness = supervisor.handle();
@@ -101,7 +184,7 @@ pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
                 drop(pool.acquire().await?);
                 scope.stage("postgres.schema")?;
                 initialize_schema(&pool).await?;
-                let health = register_health(scope, pool.clone())?;
+                let health = register_health(scope.registration(), pool.clone())?;
 
                 scope.stage("http.bind")?;
                 let application = router(&settings, readiness.clone(), pool.clone(), health)?;
@@ -124,31 +207,39 @@ pub async fn run(settings: RootSettings) -> Result<(), BoxError> {
     .without_readiness_approval()
     .with_unix_signals("signals")
     .start();
-    let running = starting
-        .wait()
-        .await
-        .map_err(|error| Box::new(RuntimeStartupFailure(error)) as BoxError)?;
-    check_shutdown(running.wait().await)?;
+    let running = starting.wait().await.map_err(startup_failure)?;
+    check_application_shutdown(running.wait().await)?;
     Ok(())
 }
 
+fn check_application_shutdown(outcome: DriverOutcome) -> Result<(), BoxError> {
+    let completed = outcome.as_ref().ok().cloned();
+    check_shutdown(outcome)?;
+    let report = completed.expect("a successful checked outcome has a report");
+    let pool_recorded = report
+        .cleanup
+        .records
+        .iter()
+        .any(|record| record.name == "postgres.pool");
+    if !pool_recorded {
+        return Err(Box::new(RuntimePoolCleanupFailure(report)));
+    }
+    Ok(())
+}
+
+/// Publish native close before returning the lazy pool. The explicit acquisition
+/// and schema stages that follow establish connectivity.
 fn register_pool(
     scope: &mut ProtectedStartupScope,
     settings: &RootSettings,
 ) -> Result<sqlx::PgPool, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
     let options = settings.connect_options_from_process()?;
-    let pool = settings.pool_options().connect_lazy_with(options);
-    let closing = pool.clone();
-    slot.register(move || async move {
-        closing.close().await;
-        Ok(())
-    });
-    Ok(pool)
+    Ok(batter_sqlx::pool_in(slot, settings.pool_options(), options))
 }
 
-fn register_health<T: RegistrationTarget + ?Sized>(
-    target: &mut T,
+fn register_health(
+    mut registration: Registration<'_>,
     pool: sqlx::PgPool,
 ) -> Result<HealthReader<OperationError<batter_sqlx::SqlxFailure>>, BoxError> {
     let second = Duration::from_secs(1);
@@ -160,13 +251,181 @@ fn register_health<T: RegistrationTarget + ?Sized>(
             batter_sqlx::probe(&pool, &context).await
         }
     })
-    .register_in(target, "postgres.health")?;
+    .register_in(&mut registration, "postgres.health")?;
     Ok(reader)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batter::{
+        cleanup::CleanupOutcome,
+        lifecycle::{Readiness, Supervisor},
+        startup::{StartupCause, StartupFailure},
+    };
+    use std::{
+        error::Error,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    const PRIVATE: &str = "private-marker";
+    type ProtectedReport = StartupFailure<InitializationError<InitializationFailure>>;
+
+    fn context() -> OperationContext {
+        OperationContext::new(Duration::from_secs(5)).unwrap()
+    }
+
+    fn protected(error: &BoxError) -> &ProtectedReport {
+        let failure = error
+            .downcast_ref::<ProtectedRuntimeStartupFailure>()
+            .expect("run maps protected startup errors to the protected wrapper");
+        assert_eq!(failure.to_string(), "reference service startup failed");
+        assert_eq!(format!("{failure:?}"), "reference service startup failed");
+        assert!(!format!("{error:?}").contains(PRIVATE));
+        assert!(std::ptr::addr_eq(
+            failure.source().unwrap(),
+            failure.startup()
+        ));
+        match failure.startup() {
+            StartupError::Failed(report) => report,
+            StartupError::Coordinator(_) => panic!("expected a retained startup report"),
+        }
+    }
+
+    fn assert_one_pool_cleanup(report: &ProtectedReport) {
+        assert!(report.destruction_panic.is_none());
+        assert!(report.cleanup.skipped.is_empty());
+        assert_eq!(report.cleanup.records.len(), 1);
+        assert_eq!(report.cleanup.records[0].name, "postgres.pool");
+        assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn protected_application_failure_retains_cause_and_cleanup() {
+        let supervisor = Supervisor::new(shutdown_budget());
+        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
+            Box::pin(async move {
+                scope.stage("postgres.acquire").map_err(initialization)?;
+                scope
+                    .reserve_cleanup("postgres.pool")
+                    .map_err(initialization)?
+                    .register(|| async { Ok(()) });
+                Err(initialization(std::io::Error::other(PRIVATE)))
+            })
+        })
+        .start();
+        let Err(error) = starting.wait().await else {
+            panic!("startup must fail")
+        };
+        let error = startup_failure(error);
+        let report = protected(&error);
+        assert_eq!(report.stage, "postgres.acquire");
+        let StartupCause::Failed(InitializationError::Application(cause)) = &report.cause else {
+            panic!("expected the application initialization failure")
+        };
+        assert_eq!(cause.source().unwrap().to_string(), PRIVATE);
+        assert_one_pool_cleanup(report);
+    }
+
+    #[tokio::test]
+    async fn protected_signal_policy_failure_is_not_an_application_error() {
+        let mut supervisor = Supervisor::new(shutdown_budget());
+        supervisor
+            .on_cleanup("postgres.pool", || async { Ok(()) })
+            .unwrap();
+        let invoked = Arc::new(AtomicBool::new(false));
+        let flag = invoked.clone();
+        // Repeated selection fails before any listener is installed.
+        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), move |_| {
+            Box::pin(async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok::<_, InitializationFailure>(())
+            })
+        })
+        .with_unix_signals("signals")
+        .with_unix_signals("signals")
+        .start();
+        let Err(error) = starting.wait().await else {
+            panic!("repeated signal policy must fail")
+        };
+        let error = startup_failure(error);
+        let report = protected(&error);
+        assert_eq!(report.stage, "startup");
+        assert!(matches!(
+            report.cause,
+            StartupCause::Failed(InitializationError::SignalPolicyAlreadySelected)
+        ));
+        assert!(!invoked.load(Ordering::SeqCst));
+        assert_one_pool_cleanup(report);
+    }
+
+    #[tokio::test]
+    async fn protected_drain_has_no_fabricated_application_cause() {
+        let supervisor = Supervisor::new(shutdown_budget());
+        let handle = supervisor.handle();
+        let (held, holding) = tokio::sync::oneshot::channel();
+        let mut starting = Startup::scoped(supervisor, context(), cleanup_budget(), |scope| {
+            Box::pin(async move {
+                scope.stage("postgres.acquire").map_err(initialization)?;
+                scope
+                    .reserve_cleanup("postgres.pool")
+                    .map_err(initialization)?
+                    .register(|| async { Ok(()) });
+                let _ = held.send(());
+                std::future::pending::<()>().await;
+                Ok(())
+            })
+        })
+        .start();
+        holding.await.unwrap();
+        handle.request();
+        let Err(error) = starting.wait().await else {
+            panic!("requested drain must fail startup")
+        };
+        let error = startup_failure(error);
+        let report = protected(&error);
+        assert_eq!(report.stage, "postgres.acquire");
+        assert!(matches!(report.cause, StartupCause::Draining));
+        assert!(report.source().is_none());
+        assert_one_pool_cleanup(report);
+        assert_ne!(handle.readiness(), Readiness::Ready);
+    }
+
+    async fn checked_outcome(cleanup: Option<&'static str>) -> DriverOutcome {
+        let mut supervisor = Supervisor::new(shutdown_budget());
+        supervisor
+            .register("component", |shutdown| async move {
+                shutdown.draining().await;
+                Ok(())
+            })
+            .unwrap();
+        if let Some(name) = cleanup {
+            supervisor.on_cleanup(name, || async { Ok(()) }).unwrap();
+        }
+        supervisor.start().shutdown().await
+    }
+
+    #[tokio::test]
+    async fn running_success_requires_the_application_pool_cleanup_record() {
+        check_application_shutdown(checked_outcome(Some("postgres.pool")).await).unwrap();
+        for cleanup in [None, Some("different.resource")] {
+            let error = check_application_shutdown(checked_outcome(cleanup).await).unwrap_err();
+            let failure = error
+                .downcast_ref::<RuntimePoolCleanupFailure>()
+                .expect("the application invariant has a public typed failure");
+            assert_eq!(
+                failure.to_string(),
+                "reference service shutdown did not retain its postgres.pool cleanup record"
+            );
+            assert!(std::ptr::addr_eq(
+                failure.source().unwrap(),
+                failure.report()
+            ));
+        }
+    }
 
     #[test]
     fn initialization_diagnostic_is_fixed_while_source_remains_available() {

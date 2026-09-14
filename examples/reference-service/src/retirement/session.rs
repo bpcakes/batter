@@ -31,7 +31,7 @@ impl Session {
         let connected = AtomicBool::new(false);
         let replaced = Arc::new(AtomicBool::new(false));
         let detected = replaced.clone();
-        let pool = PgPoolOptions::new()
+        let pool_options = PgPoolOptions::new()
             .max_connections(1)
             .min_connections(0)
             .idle_timeout(None)
@@ -53,13 +53,13 @@ impl Session {
                         Ok(())
                     }
                 })
-            })
-            .connect_lazy_with(options.options([("search_path", "public")]));
-        let closing = pool.clone();
-        slot.register(move || async move {
-            closing.close().await;
-            Ok(())
-        });
+            });
+        // Native close is published before the lazy pool is returned.
+        let pool = batter_sqlx::pool_in(
+            slot,
+            pool_options,
+            options.options([("search_path", "public")]),
+        );
         Ok(Self { pool, replaced })
     }
 

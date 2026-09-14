@@ -9,9 +9,19 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
-- `src/runtime.rs` uses owned startup, native preparation and `batter-runledger`
-  registration. It owns PostgreSQL health sampling and withholds application
-  readiness approval while the delivery handler is absent.
+- `src/runtime.rs` uses protected startup with library-owned signals, `pool_in`,
+  native preparation and `batter-runledger` registration. It owns PostgreSQL
+  health sampling and withholds application readiness approval while the delivery
+  handler is absent. Its startup failures downcast to
+  `ProtectedRuntimeStartupFailure`; the earlier wrapper was removed in the
+  coordinated hard cutover and must not be reintroduced.
+- `tests/support/startup_process.rs` owns separately captured signal children and
+  the production/test-fixture executable launchers;
+  `tests/fixtures/signal_witness_fixture.rs` owns process-local signal
+  acknowledgement outside the production entrypoint;
+  `tests/support/protected_startup.rs` owns the test-only waiter/owner-loss
+  composition. Case contracts are in
+  `../../docs/testing.md#protected-startup-consumer-process-cases`.
 - `../../crates/batter-runledger` owns native lifecycle translation; native
   descendant accounting remains in Runledger, not in this application.
 - `src/delivery.rs` owns command identity, the one-transaction submission and

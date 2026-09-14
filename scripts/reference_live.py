@@ -5,7 +5,8 @@ import sys
 
 from parallel_process import run_parallel
 
-CASES = frozenset({
+# Entries executed against the explicitly selected disposable PostgreSQL endpoints.
+DATABASE_CASES = frozenset({
     "production_root_withholds_readiness_without_control_jobs",
     "retirement_preserves_history_and_disables_old_catalog",
     "retirement_rejects_wrong_identity",
@@ -14,14 +15,15 @@ CASES = frozenset({
     "retirement_rejects_prepared_enqueue",
     "retirement_retains_commit_error_through_readback_cancellation",
     "retirement_retains_lost_commit_acknowledgement",
-    "child_fixture",
-    "startup_signal_during_pool_acquisition",
     "native_initialization_without_queue_writes",
     "native_in_flight_finishes_after_drain",
     "native_owner_drop_retains_settlement",
     "native_business_failure_preserves_process",
     "native_unjoined_callback_blocks_dependency_cleanup",
-    "startup_signal_during_schema_initialization",
+    "protected_startup_schema_sigterm",
+    "protected_startup_schema_sigint",
+    "protected_startup_waiter_loss",
+    "protected_startup_owner_loss",
     "configured_command_root_bounds",
     "configured_pool_capacity_and_acquire_timeout",
     "configured_startup_pool_close_before_lease",
@@ -65,8 +67,26 @@ CASES = frozenset({
     "reference_delivery_command_and_reconciliation",
     "isolated_durable_execution_and_shutdown",
 })
+# Offline signal controls use a withheld synthetic handshake, not a database query.
+SYNTHETIC_ACQUISITION_CASES = frozenset({
+    "protected_startup_acquisition_sigterm",
+    "protected_startup_acquisition_sigint",
+})
+# Offline controls launching the signal fixture and production executable.
+EXECUTABLE_CASES = frozenset({
+    "protected_startup_executable_sigterm",
+    "protected_startup_executable_sigint",
+})
+# Private child dispatch entry: inert under ordinary discovery, never a probe.
+DISPATCH_CASES = frozenset({"child_fixture"})
+CLASSES = (DATABASE_CASES, SYNTHETIC_ACQUISITION_CASES, EXECUTABLE_CASES, DISPATCH_CASES)
+CASES = frozenset().union(*CLASSES)
+if sum(len(cases) for cases in CLASSES) != len(CASES):
+    raise RuntimeError("reference live case classes must be disjoint")
 
 COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--test", "reference_live", "--locked"]
+# Build both executables with the invoking toolchain before any executable control runs.
+BINARY_COMMAND = ["cargo", "build", "-p", "batter-example-reference-service", "--bins", "--locked"]
 SESSION_CASE = "retirement::session::tests::maintenance_session_replacement_is_refused"
 SESSION_COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--lib", "--locked",
                    SESSION_CASE, "--", "--exact", "--include-ignored"]
@@ -87,6 +107,13 @@ def complete_execution(output):
             and re.search(rf"^test result: ok\. {len(CASES)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;", output, re.MULTILINE) is not None)
 
 
+def announcement():
+    return (f"PostgreSQL 18 prerequisite passed; executing {len(CASES)} required cases "
+            f"({len(DATABASE_CASES)} live database probes, {len(SYNTHETIC_ACQUISITION_CASES)} offline "
+            f"synthetic-acquisition signal controls, {len(EXECUTABLE_CASES)} offline executable-"
+            f"composition signal controls and {len(DISPATCH_CASES)} private child dispatch entry).")
+
+
 def run(command, timeout):
     # Reuse the repository's existing Unix process owner for timeout, capture,
     # signal escalation and group reaping. A watchdog exit is failed evidence.
@@ -102,12 +129,16 @@ def main():
     if not check.ok or check.stdout.strip() != b"reference-preflight:ok":
         print(check.output, file=sys.stderr)
         sys.exit("Native PostgreSQL preflight failed; no fixtures were started.")
+    binary = run(BINARY_COMMAND, timeout=600)
+    if not binary.ok:
+        print(binary.output, file=sys.stderr)
+        sys.exit("Reference process-fixture build failed; no live cases were started.")
     inventory = run(COMMAND + ["--", "--list"], timeout=300)
     if not inventory.ok or not complete_inventory(inventory.stdout.decode("utf-8", errors="replace")):
         print(inventory.output, file=sys.stderr)
         sys.exit("Live probe inventory failed: required live cases and offline signal controls must all compile and exist.")
-    print(f"PostgreSQL 18 prerequisite passed; executing {len(CASES)} required cases ({len(CASES) - 2} live probes and two offline signal entries).", flush=True)
-    result = run(COMMAND + ["--", "--include-ignored", "--test-threads=1"], timeout=180)
+    print(announcement(), flush=True)
+    result = run(COMMAND + ["--", "--include-ignored", "--test-threads=1"], timeout=300)
     print(result.output, end="")
     if not result.ok or not complete_execution(result.stdout.decode("utf-8", errors="replace")):
         sys.exit("Live probes did not all execute successfully.")

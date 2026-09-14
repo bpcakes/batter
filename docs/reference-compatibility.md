@@ -34,12 +34,18 @@ other database backends or non-Unix platforms to Batter's support policy.
 Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct
 disposable local PostgreSQL 18 clusters, using the primary superuser/SCRAM/autovacuum
 prerequisites in [testing](testing.md#explicit-reference-compatibility-probes), and run `bash scripts/test_reference_live.sh` from the root. It preflights the server
-and role, checks an exact inventory of 58 entries (56 live probes, the offline
-acquisition-signal control and its private child entry), and invokes
+and role, builds the production and signal-fixture executables with the invoking toolchain, checks an
+exact inventory of 64 entries (59 live database probes, two offline
+synthetic-acquisition signal controls, two offline executable-composition signal
+controls and the private child entry), and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
 -- --include-ignored`. Every named entry must pass, with zero filtered or ignored cases. The runner also
-requires the separate library physical-session replacement probe. All 58 entries and the separate library probe pass on Linux with Rust 1.98.1
-and exact 1.94.0; final all-reviewer acceptance remains open.
+requires the separate library physical-session replacement probe. The earlier
+58-entry inventory and the separate library probe passed on Linux with Rust 1.98.1
+and exact 1.94.0; final all-reviewer acceptance remains open. The eight
+`batter-lp2.4` protected-startup rows are listed in
+[testing](testing.md#protected-startup-consumer-process-cases); their database
+rows and the complete 64-entry run are unexecuted until authorized endpoints exist.
 
 | Required contract | Public API and probe | Evidence / limitation |
 | --- | --- | --- |
@@ -53,7 +59,7 @@ and exact 1.94.0; final all-reviewer acceptance remains open.
 | Native initialization | `native_initialization_without_queue_writes` | Local loop acknowledgement succeeds while job-queue writes are blocked; application approval remains independent |
 | Managed native ownership | `native_in_flight_finishes_after_drain`, `native_owner_drop_retains_settlement`, `native_unjoined_callback_blocks_dependency_cleanup` | Real admitted work completes after drain; wrapper loss retains settlement; a callback held beyond bounded report publication remains unjoined and prevents dependent cleanup |
 | Business outcomes and configuration | `native_business_failure_preserves_process`, `configured_worker_concurrency` | Durable business failure does not become process failure; held native handlers exercise configured concurrency |
-| Production readiness | `production_root_withholds_readiness_without_control_jobs` | Actual production composition exposes liveness, withholds readiness, creates no control jobs and awaits SIGTERM cleanup; see validation for execution status |
+| Production readiness | `production_root_withholds_readiness_without_control_jobs` | Actual production composition exposes liveness, withholds readiness, creates no control jobs and sequentially awaits SIGTERM and SIGINT cleanup; see validation for execution status |
 | Offline retirement | Seven `retirement_*` cases plus the required library session-replacement probe | Preserves terminal/domain rows, migrations and sequence; old additive catalog retains disable; rejects wrong identity, hidden sessions, pending/prepared enqueue and physical replacement. Native commit failure survives cancelled reconciliation and an actual lost COMMIT response |
 | Lease ownership | `empty_database`, `cleanup`, `defer_cleanup`, Drop, `drain_deferred_cleanup`; `lease_cleanup_defer_and_drop` | Every native pool closes before disposal. Independent `pg_database` reads confirm presence and post-drain absence. Dropping a never-polled consuming cleanup future also transfers fallback cleanup |
 

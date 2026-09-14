@@ -10,7 +10,8 @@ Windows support and non-Unix fallbacks are out of scope.
 
 ## Key entrypoints
 
-- `src/main.rs` acquires the pool, registers its close, and observes startup.
+- `src/main.rs` selects protected startup and Unix signals, creates the pool with
+  `batter_sqlx::pool_in` (`database_pool`), probes it, and observes startup.
 - Its private `serve` and `report_exit` functions retain failures and
   determine the executable outcome; `src/tests.rs` tests those same paths.
 - `src/tests/live.rs` contains explicitly selected tests against an externally
@@ -31,8 +32,10 @@ Keep application fixture helpers beside their integration tests.
 
 ## Invariants
 
-Reserve cleanup before acquisition, register immediately after success, and let
-the started owner drive it through startup failure.
+Reserve cleanup before construction and let `pool_in` register close ownership
+before the pool is returned; the started owner drives it through startup failure. The lazy
+pool proves nothing until the explicit bounded probe, whose context is a child of
+the root startup context. Live tests create pools inside protected startup too.
 Preserve original causes and the cleanup report without printing raw secrets.
 No hidden migrations, automatic transaction replay, database provisioning, or
 generic pool/transaction abstraction. A timeout does not prove rollback.
@@ -59,5 +62,5 @@ Running requires `DATABASE_URL` for an existing local test database. Record a
 live execution separately from compilation in the root validation document.
 
 The `serve` function starts the owned initializer, awaits its running handoff,
-and checks the shared shutdown outcome. Reserve pool cleanup before connecting;
-register closure immediately after success. Keep stages and budgets explicit.
+and checks the shared shutdown outcome. Keep stages and budgets explicit; see
+[integration contracts](../../docs/integrations.md#sqlx-keep-transactions-visible).

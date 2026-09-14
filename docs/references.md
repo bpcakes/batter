@@ -3162,3 +3162,65 @@ separately identifies the stand-alone composite type from which a typed table is
 derived. A relation-name exact PUBLIC type override therefore addresses the
 same row type that the verifier selects through `typrelid`; it does not stand in
 for policy on the underlying stand-alone type.
+## Protected startup and pool consumer adoption, 2026-09-13
+
+For `batter-lp2.4`, the [Cargo environment-variable reference](https://doc.rust-lang.org/cargo/reference/environment-variables.html)
+states that `CARGO_BIN_EXE_<name>` is the absolute path of a binary target, set
+only for integration tests and benchmarks. Cargo automatically builds that binary
+when the test is built, unless the binary requires features that are not enabled.
+The reference executable controls rely on this to run the binary built by the
+same invocation and toolchain. The live runner also builds it explicitly first.
+
+The [PostgreSQL 18 system information functions](https://www.postgresql.org/docs/18/functions-info.html)
+define `pg_blocking_pids(integer)` as `integer[]` holding the client-visible
+process IDs that block the given backend from acquiring a lock (hard or queued
+soft blocks), and an empty array when it is not blocked. A prepared transaction
+appears as zero. The schema-signal cases require the fixture blocker's own
+`pg_backend_pid()` in that array, not merely a `Lock` wait event.
+
+In the resolved `sqlx-postgres` 0.9.0 registry source, `options/parse.rs`
+implements `FromStr for PgConnectOptions` by parsing a `url::Url` and calling
+`parse_from_url`. The PostgreSQL lifecycle example previously reached the same
+parser through `PgPoolOptions::connect(&str)`. Parsing the application-owned URL
+before `pool_in` therefore keeps its accepted syntax. Only connection timing
+moves: connectivity is first established by the explicit bounded probe.
+`pool_in`, `probe` and `Pool::close` semantics are unchanged from the SQLx
+ownership rechecks above.
+
+## SQLx checked-out connection return ordering, 2026-09-13
+
+The round-four startup-signal review rechecked the pinned SQLx 0.9.0
+[`PoolConnection` drop and return path](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/connection.rs).
+Dropping a checked-out connection spawns `return_to_pool`. That future tests
+whether the pool is already closed, then can await an `after_release` hook and a
+connection ping before releasing the connection back to the pool. Consequently,
+an application test that holds an `ACCESS EXCLUSIVE` schema lock cannot wait for
+the signalled child to finish before releasing that lock: the child's cancelled
+schema query may enter the asynchronous return path before pool cleanup marks the
+pool closed, and its ping can remain behind the same blocker.
+
+The repaired schema-signal fixture therefore requires the operating system to
+accept the signal request and then waits for a child-owned Tokio listener to
+acknowledge reception. Tokio broadcasts the notification to every installed
+listener before either receiver can emit that event. The parent then releases the
+independent blocking transaction before waiting for child cleanup and the typed
+retained startup report. A separate offline control first acknowledges that both
+listeners are installed, then requires both listeners to receive TERM and INT in
+independent runs. The schema child uses a two-worker Tokio runtime so a cancelled
+query's connection return is not serialized behind the initializer task on a
+single executor thread. The corresponding PostgreSQL cases remain unexecuted
+without authorized live endpoints. Neither signal acknowledgement nor pool close
+proves immediate server-session termination.
+
+## Rust Beads comment identity, 2026-09-14
+
+The workspace uses `br` 0.5.7. Its primary
+[`br sync` safety contract](https://github.com/Dicklesworthstone/beads_rust/blob/v0.5.7/docs/SYNC_SAFETY.md#additive-reconciliation-guards)
+describes incoming comment surrogates as storage-local values that reconciliation
+reallocates. The matching
+[`SqliteStorage` import path](https://github.com/Dicklesworthstone/beads_rust/blob/v0.5.7/src/storage/sqlite.rs#L6582-L6592)
+inserts the owning issue, author, body and timestamp without preserving the JSONL
+numeric ID. Consequently, a comment number is not portable identity across clones
+or imports, and equal numbers on different issues are not a payload collision.
+Repository evidence refers to comments by owning issue plus stable text or purpose;
+numeric IDs remain useful only for inspecting one current database generation.

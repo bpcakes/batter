@@ -23,6 +23,7 @@ mod live_endpoint;
 pub mod migrations;
 pub mod native_descendants;
 pub mod native_hosted;
+pub mod protected_startup;
 pub mod retirement;
 pub mod startup_process;
 pub mod startup_signals;
@@ -83,3 +84,8 @@ where
 
 mod production_root;
 pub use production_root::production_readiness;
+
+pub fn process_contracts() {
+    startup_process::process_contracts();
+    production_root::process_contracts();
+}

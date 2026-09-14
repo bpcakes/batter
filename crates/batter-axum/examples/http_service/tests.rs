@@ -66,7 +66,11 @@ async fn readiness_responses() -> [String; 4] {
             Ok(())
         })
         .unwrap();
-    let health = register_dependency_health(&mut supervisor).unwrap();
+    // The direct-supervisor phase fixture lends the same registration-only view.
+    let health = register_dependency_health(
+        batter::registration::RegistrationTarget::registration(&mut supervisor),
+    )
+    .unwrap();
     let app = router(
         handle.clone(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),

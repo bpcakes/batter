@@ -112,11 +112,17 @@ Use `Startup::scoped(supervisor, context, cleanup_budget, initializer)`, select
 library-owned signals with `.with_unix_signals("signals")`, then call `.start()`.
 Inside the initializer, reserve cleanup before resource acquisition through
 `scope.reserve_cleanup(...)` and register it immediately after success. Pass the
-protected scope to `HealthMonitor::register_in` and adapter `_in` helpers rather
-than lending the complete supervisor. Await `starting.wait()` to obtain the
+protected scope to adapter `_in` helpers rather than lending the complete
+supervisor. Application helpers that only register work take a concrete
+`batter::registration::Registration<'_>`, passed as `scope.registration()`.
+For a native SQLx pool, reserve its slot and call `batter_sqlx::pool_in`, then run
+an explicit bounded query or `probe`. Await `starting.wait()` to obtain the
 `RunningSupervisor`; startup failure retains initialization and cleanup errors.
 The [HTTP example](../crates/batter-axum/examples/http_service.rs) demonstrates
-this complete path with native listener binding and `register_http_in`.
+this complete path with native listener binding and `register_http_in`; the
+[PostgreSQL lifecycle example](../examples/postgres-lifecycle/src/main.rs) and
+[reference root](../examples/reference-service/src/runtime.rs) add `pool_in`, and
+the reference root also registers native Runledger preparation with `register_in`.
 
 `Startup::new` remains the lower-level compatibility path when a composition
 root deliberately needs full supervisor access. Its additional caller
@@ -362,9 +368,11 @@ See [operations](operations.md#loading-example-settings) and the
 
 Register a cleanup factory immediately after acquiring an owned resource. A
 resource dependency closes after its dependents, so register it before them.
-If later startup fails, call supervisor.take_cleanup().close(budget).await and
-retain both the startup failure and the complete cleanup report. The [native
-SQLx example](../examples/postgres-lifecycle/src/main.rs) demonstrates this shape.
+With a direct supervisor, if later startup fails, call
+supervisor.take_cleanup().close(budget).await and retain both the startup failure
+and the complete cleanup report. That extraction is a lower-level escape path. The
+[native SQLx example](../examples/postgres-lifecycle/src/main.rs) instead lets
+protected startup own the reserved `pool_in` finalizer through failure cleanup.
 
 An extracted stack may be closed after dropping the supervisor, but that drop
 cancels the supervisor's operation tokens. Cleanup hooks must not use those tokens
@@ -418,12 +426,13 @@ task, observe its JoinError, and explicitly perform teardown afterward.
 ```rust
 use batter::{
     health::{HealthMonitor, HealthPolicy, HealthReader},
-    registration::RegistrationTarget,
+    registration::Registration,
 };
 use std::{io, time::Duration};
 
-fn register_health<T: RegistrationTarget + ?Sized>(
-    target: &mut T,
+// Call as `register_health(scope.registration())` inside `Startup::scoped`.
+fn register_health(
+    mut registration: Registration<'_>,
 ) -> Result<HealthReader<io::Error>, batter::BoxError> {
     let policy = HealthPolicy::new(
         Duration::from_secs(1), // whole probe, including acquisition
@@ -435,7 +444,7 @@ fn register_health<T: RegistrationTarget + ?Sized>(
         // Replace with the complete native dependency probe.
         Ok::<_, io::Error>(())
     })
-    .register_in(target, "dependency.health")?;
+    .register_in(&mut registration, "dependency.health")?;
     Ok(reader)
 }
 ```

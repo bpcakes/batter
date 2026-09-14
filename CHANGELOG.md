@@ -22,6 +22,20 @@ contracts, capability facts and validation history.
 - Reference worker settings expose validated configuration rather than a native
   supervisor builder. The composition root prepares and transfers native work to
   managed registration; the configuration consumer test follows that ownership.
+- Hard-cut the reference runtime startup error to
+  `ProtectedRuntimeStartupFailure`, removing `RuntimeStartupFailure` rather than
+  retaining a deprecated alias. Add `RuntimePoolCleanupFailure` with typed report
+  access when an otherwise successful shutdown omits the required
+  `postgres.pool` cleanup record.
+- PostgreSQL lifecycle pool construction is now lazy and registers close ownership
+  before return. Connectivity failures therefore identify the explicit
+  `postgres.probe` stage rather than the former eager acquisition step.
+- Reference process controls retain simultaneous assertion and shutdown errors,
+  and executable TERM/INT cases require a signal-specific acknowledgement from a
+  dedicated test binary plus the separate production binary's unchanged
+  empty-stdout/fixed-stderr exit contract. The production entrypoint has no test
+  signal mode, and the package explicitly retains that entrypoint as Cargo's
+  default run target.
 
 - Native runtime integration now accepts `PreparedSupervisor`, an owned validated
   launch value, instead of an arbitrary application closure. Registration rejection
@@ -116,8 +130,9 @@ contracts, capability facts and validation history.
   remain unchanged.
 - Record local verification and HTTP SIGTERM smoke results in
   [validation](docs/validation.md). Optional adapter live cases have Linux
-  evidence; the current 58-entry reference inventory and separate maintenance
-  probe pass on both supported toolchains.
+  evidence; the historical 58-entry reference inventory and separate maintenance
+  probe passed on both supported toolchains. The current 64-entry inventory has
+  five Linux-executed offline entries; its 59 database probes remain unexecuted.
 
 ## 0.1.0 — MVP source snapshot — 2026-09-07
 

@@ -365,7 +365,10 @@ They exercise queue-independent initialization, in-flight work completing after
 drain, retained settlement after owner loss, durable business failure without
 process failure and a non-yielding callback that remains unjoined at report time.
 The production-root child requires `/live` 200, `/ready` 503 across multiple health
-sampling intervals, no control-job rows and successful awaited SIGTERM cleanup.
+sampling intervals, no control-job rows and successful awaited cleanup in
+sequential SIGTERM and SIGINT runs. Its parent settles both the assertion task
+and child shutdown before combining them, retaining both errors if they fail
+together; the offline `child_fixture` control checks that dual-failure branch.
 Seven offline retirement cases separately exercise legacy disable, quiescence,
 preservation and uncertain outcomes. The current inventory is listed below;
 the earlier example-owned witness/lease protocol was removed.
@@ -1296,7 +1299,9 @@ python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --sig
 ```
 
 The selected live target fails when configuration is absent or connection fails;
-it never silently returns success. Tests execute real `SELECT 1` and
+it never silently returns success. Each test creates its pool inside protected
+startup through the example's `pool_in` helper, rather than registering a pool
+acquired outside ownership. Tests execute real `SELECT 1` and
 division-by-zero failures, then verify that startup failure and unsuccessful
 shutdown retain their causes and await native pool close. Pool size becomes
 zero and later acquisitions return `PoolClosed`. The executable smokes wait for
@@ -1455,8 +1460,15 @@ ignored. The runner controls reject missing startup/cancellation cases too.
 
 ## Native lifecycle and offline retirement acceptance
 
-The current reference target has 58 entries: 56 live probes and two offline signal
-entries. Seven retirement cases verify history/migration/sequence preservation and
+The current reference target has 64 entries: 59 live database probes, two
+offline synthetic-acquisition signal controls, two offline executable-composition
+signal controls and the private child dispatch entry. Two exact legacy aliases
+were removed in the hard cutover instead of being counted as independent evidence.
+The runner classifies each entry explicitly and builds both process executables
+with the invoking toolchain before discovery. A Python control reads Cargo
+metadata and requires `default-run` to select `batter-example-reference-service`,
+preserving the documented bare package `cargo run` command after adding the
+fixture binary. Seven retirement cases verify history/migration/sequence preservation and
 additive catalog disable, target identity, restricted session visibility, late
 native enqueue, prepared native enqueue, and retained commit failure through
 readback cancellation, plus actual lost COMMIT acknowledgement after durable
@@ -1474,10 +1486,80 @@ Native lifecycle cases independently cover queue-free local initialization,
 in-flight work after drain, owner-drop settlement, durable business failure without
 process failure, and an unjoined callback preventing dependency cleanup. Production
 startup no longer enqueues a control job. Its process-level case checks liveness,
-withheld readiness and successful SIGTERM cleanup across actual HTTP requests.
+withheld readiness and successful SIGTERM and SIGINT cleanup across actual HTTP
+requests, with no durable control job before or after either shutdown. A normal
+child exit additionally requires the checked shutdown report to contain exactly
+one successful cleanup-stack `postgres.pool` record for the close hook registered
+by the application pool's `pool_in` call.
 Full workspace/two-toolchain and fresh
 agent/review acceptance remain separate requirements; see the current validation
 entry for what actually executed.
+
+### Protected startup consumer process cases
+
+`batter-lp2.4` adds eight named `reference_live` wrappers over the existing private
+`child_fixture` dispatch. Children capture stdout and stderr separately with the
+shared bounded capture; assertion children must exit successfully with empty
+stderr, print the static cleanup proof only after typed checks, and disclose
+neither the endpoint nor the fixture token. Rust test-harness banners may share
+stdout with `batter-fixture:` events.
+
+The ordinary `child_fixture` also runs two offline broadcast controls. Each child
+installs both Tokio listeners, emits `signal-listeners-ready`, and only then may
+the parent request TERM or INT. Success requires both that readiness event and the
+later `startup-signal-observed` event, so the control cannot pass through the
+signal's default disposition or by notifying only one listener.
+
+- `protected_startup_acquisition_sigterm` and `_sigint` run actual `runtime::run`
+  against a loopback listener whose accepted handshake is withheld. After accept
+  the parent sends the signal; the child requires `ProtectedRuntimeStartupFailure`
+  at `postgres.acquire`, `StartupCause::Draining`, no destructor panic, no skipped
+  hooks and the required successful `postgres.pool` record. Cleanup registration
+  rejects duplicate names. A failed startup never
+  reaches the running handoff, so Ready is structurally unreachable under the
+  startup contract; this child does not observe readiness directly. The parent
+  requires the OS signal request to succeed before the child is observed exited;
+  the final typed report proves startup classified the request as drain. These are
+  offline cancellation controls, not database queries.
+- `protected_startup_schema_sigterm` and `_sigint` block actual schema SQL behind
+  an `ACCESS EXCLUSIVE` fixture lock. An independent fixture connection requires a
+  lock wait whose `pg_blocking_pids` contains the blocker before signalling; the
+  same typed report is required at `postgres.schema`. After the OS accepts the
+  request, the child-owned listener acknowledges reception before the parent
+  releases the lock. Tokio broadcasts the notification to every installed
+  listener before either receiver can emit that acknowledgement. Lock release
+  still precedes child cleanup so a dropped SQLx checkout cannot make
+  return-to-pool and pool close depend on that lock. This child uses a two-worker
+  runtime to exercise that concurrent ordering.
+- `protected_startup_waiter_loss` and `_owner_loss` use a test-owned protected
+  composition, because `runtime::run` exposes no startup owner. It uses validated
+  root native options, `pool_in`, a real `SELECT 1`, a dependent finalizer and
+  startup-owned signals, then parks at `test.hold`. Waiter loss drops only a
+  borrowed wait, proves startup is still pending, and receives TERM; observer and
+  resumed owner must share the same Draining report. Owner loss drops the owner
+  with no OS signal. Both require the dependent hook, observed while the pool is
+  open, before one successful pool close, zero size with later `PoolClosed`, and
+  a readiness waiter that never observed Ready.
+- `protected_startup_executable_sigterm` and `_sigint` first launch Cargo's
+  dedicated `signal_witness_fixture` binary at the withheld handshake. Its second
+  Tokio listener emits one static, signal-specific stdout acknowledgement only
+  after the requested signal is observed and `runtime::run` has settled, so an
+  output failure cannot discard runtime cleanup. The same case then launches
+  `CARGO_BIN_EXE_batter-example-reference-service` at a fresh withheld handshake
+  and requires the production entrypoint's empty stdout. Both processes must exit
+  with status 1, not by signal, and stderr exactly
+  `Error: reference service failed` plus newline. The production entrypoint has no
+  witness mode or test environment switch. An offline negative control rejects
+  the generic status/diagnostic pair as signal evidence without the fixture
+  acknowledgement. Internal report fields come from the paired typed cases, not
+  from these process exits.
+
+Ordinary workspace runs execute the four offline cases; the four database cases
+are ignored and belong to the explicit runner. On the earlier 66-entry tree, a
+deliberate mutation trial (a wrong executable diagnostic and a wrong cleanup-record
+count) made its five offline acquisition/executable entries fail before the oracles
+were restored. That historical trial includes the since-removed acquisition alias;
+it is not mutation evidence for the current four-case inventory.
 
 Verifier semantic-boundary controls cover temporary namespace rejection through
 combined, migration-only and authority-only entrypoints; exact PUBLIC relation

@@ -8750,7 +8750,6 @@ The guard-removal mutations above exercised pure/offline predicates only; they
 were restored before PostgreSQL execution and are not live mutation evidence.
 `batter-m8x` retains the missing PostgreSQL 18 guard-removal controls alongside
 the broader protected catalog-boundary matrix.
-
 ## Validated operational value witnesses: 2026-09-14
 
 Delivery Bead `batter-k8m`; Jig plan
@@ -8786,3 +8785,487 @@ neither reviewer found a substantive defect. Its supporting observations led
 to the narrowly scoped compile-fail examples and the current execution record
 above. No hosted CI, new Linux execution, live PostgreSQL execution,
 publication, or deployment is claimed.
+
+## Protected startup and pool consumer adoption: 2026-09-13
+
+Owning Bead `batter-lp2.4`; ExecPlan `.agent/plans/batter-lp2.4-consumer-adoption.md`;
+Jig plan `plan_01M2E3P7S7TBN420CKXGASQ2HG`; baseline
+`9e8709cef65e574a23fe5bfd83c125c57d75ef96` with uncommitted task changes. No
+dependency or lockfile change was made; Cargo.lock SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+Executed locally on Linux 7.0.11 x86_64 with rustc 1.98.1 (`48a229cea`,
+2026-09-01) / cargo 1.98.1 and rustc 1.94.0 (`4a4ef493e`, 2026-03-02) / cargo 1.94.0.
+
+Scope: the reference root, PostgreSQL lifecycle service and finite retirement
+session construct pools with `batter_sqlx::pool_in`. The reference and HTTP
+health helpers take a concrete `Registration`. `runtime::run` startup errors
+downcast to `ProtectedRuntimeStartupFailure`. At the time of the runs in this
+table, the earlier wrapper still kept its original accessor and compatibility
+fixture; the later hard cutover and its fresh verification are recorded in the
+review-fix follow-up below. The lifecycle root parses native options inside
+protected startup and derives its probe context from the root context. Eight
+named reference process cases and a 66-entry classified runner inventory were added.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked runtime::` | 5 passed: fixed initialization diagnostic, protected Application/`SignalPolicyAlreadySelected`/Draining reports with one successful `postgres.pool` record through the exact `run` mapping, and the then-retained compatibility accessor fixture. |
+| `cargo test -p batter-example-reference-service --test reference_live --locked` | 6 passed, 60 ignored: `child_fixture`, `startup_signal_during_pool_acquisition`, `protected_startup_acquisition_sigterm`/`_sigint` and `protected_startup_executable_sigterm`/`_sigint`. |
+| Mutation trial (wrong executable stderr and cleanup-record count, then restored) | Same command: 1 passed, 5 failed (all five acquisition/executable signal cases). The restored oracle passed in both toolchain matrices below. |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py -v` | 8 passed, covering exact 60/3/2/1 classification, the eight new names, build-before-inventory ordering, failed-build stop, and missing, duplicate, ignored, failed or filtered execution. |
+| `cargo test -p batter-example-postgres-lifecycle --locked`; `cargo test -p batter-axum --example http_service --locked` | 10 passed with 3 live ignored plus the diagnostics/native targets; 12 HTTP example tests passed. |
+| `bash scripts/verify.sh` (Rust 1.98.1) | PASS: core, runner/smoke/reference/SQLx controls, core, workspace and hostile-environment tests, doctests, formatting, strict Clippy and rustdoc. The workspace reference target reported 6 passed and 60 ignored. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix, including 6 passed and 60 ignored in the reference target. |
+| Rebuild `http_service`, then `smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter` and `--warn-filter --deadline` modes, on each toolchain | All ten PASS. |
+| `cargo build` of `postgres_lifecycle` and the reference binary on each toolchain | PASS. |
+| `bash scripts/test_reference_live.sh`, `bash scripts/test_sqlx_live.sh`, lifecycle `tests::live:: -- --ignored`, and both `smoke_postgres.py` modes, on each toolchain without endpoints | Failed closed as required, not passed: native preflight failed before fixtures (exit 1); SQLx reported missing prerequisites (exit 1); all three lifecycle live tests panicked on absent `DATABASE_URL` (exit 101); both smokes rejected missing `DATABASE_URL` (exit 2). |
+| `scripts/jig work check --plan-id plan_01M2E3P7S7TBN420CKXGASQ2HG`, then `work evidence`/`work gates --freshness-timeout-ms 30000` | Gate `verify` passed fresh: api:test `receipt_01M2E5DJE852N59E0GNYASAQ6X`, Clippy `receipt_01M2E5DHNAARBMF1TKVVE1H2FT`, fmt `receipt_01M2E5DJ1T4KQF49ZYFR6WH21W`, contract `receipt_01M2E5DJTRG872NPCCP6VC8DJV`, file budget `receipt_01M2E5DK6WBX1E1A6WKPGFB07R`. The default 2 s inspection first reported `collection_limit`. Later documentation, plan and tracker edits staled only the whole-repository policy checks; a final `work check` reused the fresh Rust receipts and re-passed contract and file budget, followed by a final gate readback. |
+
+Unexecuted required evidence: `POSTGRES_TEST_ADMIN_URL`,
+`POSTGRES_TEST_OBSERVER_URL` and `DATABASE_URL` were absent and no authorized
+fixture was documented, so no database was contacted or provisioned. The complete
+66-entry reference run, including `protected_startup_schema_sigterm`/`_sigint`,
+`protected_startup_waiter_loss`, `protected_startup_owner_loss`, the TERM/INT
+production-root variants and the maintenance-session library probe, is
+unexecuted. So are the SQLx live inventories, the three migrated lifecycle live
+cases and both PostgreSQL executable smokes. The frozen fresh-agent
+implementation/modification and packet-review evaluation was not started because
+its authorized fixture prerequisite is absent; no agent-usability result is
+claimed. No macOS, hosted CI, publication, deployment or commit evidence exists.
+ADR-010's recurring-defect trigger did not fire: no confirmed invariant failure
+recurred after repair, and the only failing runs were deliberate mutations.
+
+### Review-fix follow-up: 2026-09-13
+
+An independent Claude Opus and Codex working-tree review at fingerprint
+`e048616cf2e0725e8a31bf31139a38550c94a64c1b50c230d7b0f3b1d14a4fd8`
+found low-severity defects in the new process fixture and runner controls, plus
+documentation/API migration gaps. The repair closes command-owned pipe writers
+before joining a partially initialized capture, preserves completed-child status
+and both output streams instead of attempting to signal a reaped PID, and checks
+both paths through the existing `child_fixture` inventory entry. The runner's
+duplicate-result control now starts from the complete 66-entry output before
+adding a repeated result. `ProtectedRuntimeStartupFailure` has a compiling rustdoc
+inspection example; by explicit user decision the obsolete wrapper was removed
+in a coordinated hard cutover rather than deprecated or retained.
+
+Post-repair Linux x86_64 evidence:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` | PASS: 10 library tests passed with one live test ignored, all other ordinary targets passed, `reference_live` reported 6 passed/60 ignored, and all eight doctests passed. |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py -v` | PASS: all eight controls, including a full-inventory duplicate result that independently exercises the cardinality check. |
+| `bash scripts/verify.sh` with Rust 1.98.1 | PASS: the complete offline matrix, formatting, strict Clippy, doctests and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Rebuild `http_service`, then run the five documented `smoke_http.py` modes on each toolchain | PASS: all ten modes after a toolchain-specific rebuild. |
+
+All Cargo output used task-specific directories under `/tmp`; Python bytecode was
+disabled, so validation changed no repository paths. An earlier default-toolchain
+verification was interrupted after the hard-cutover decision and is not counted.
+The Jig receipts in the preceding table predate these review repairs and are not
+fresh for the repaired working files; `.agent` is excluded from this review-fix
+scope, so this loop did not refresh it. Live PostgreSQL limitations are unchanged.
+
+#### Review-fix round 3
+
+A later independent pass at fingerprint
+`125ce2c0a10c5f151b9b930430a83dc490fe11ae60154b4d4618c1b5074b70d9`
+found that reference-child failure diagnostics could format captured native
+output before checking it for the configured endpoint and fixture token. It also
+found that signal success did not distinguish an accepted request from a process
+that had already exited, two legacy runner entries exactly aliased new protected
+cases, and the production-root success assertion did not independently require
+the application pool's cleanup record.
+
+The repair keeps the shared non-yielding fixture's intentional failure text but
+adds a reference-specific diagnostic boundary that renders only stream sizes and
+structural state. Setup failures now terminate, reap and inspect both captures;
+event waiting checks stderr as well as stdout. A private signal result distinguishes
+an OS-accepted request from `AlreadyExited`, and the final typed assertions prove
+startup classified the signal as drain. The
+production root accepts generic shutdown success only when its report contains
+exactly one successful cleanup-stack record for the `pool_in` hook. Its unit regression
+accepts that record and rejects both a missing record and a differently named
+cleanup. Per the hard-cutover decision, the exact legacy aliases
+`startup_signal_during_pool_acquisition` and
+`startup_signal_during_schema_initialization` were removed, leaving 64 runner
+entries: 59 database probes, two synthetic-acquisition controls, two executable
+controls and the private dispatch entry.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked`; strict all-target/all-feature package Clippy | PASS: 11 library tests passed with one live ignore, all other targets passed, `reference_live` reported 5 passed/59 ignored, all eight doctests passed, and Clippy emitted no warnings. |
+| `cargo test -p batter --test non_yielding --locked`; `python3 -m unittest discover -s scripts -p test_reference_live.py -v`; formatting and diff checks | PASS: 50 shared process tests, all eight exact-inventory controls, `cargo fmt --check`, and `git diff --check`. The private-marker regression confirms that reference diagnostic formatting cannot expose the retained endpoint. |
+| Initial parallel `bash scripts/verify.sh` attempts in two fresh target directories | Not counted: both exhausted the filesystem while compiling (`No space left on device`). Only the two task-created round-3 target directories were cleaned (3.3 GiB and 3.6 GiB). A subsequent default-toolchain run exposed six expected-diagnostic regressions from an over-broad shared redaction change; that implementation was replaced by the reference-local boundary before final validation. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1; final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete offline matrices, including exact runner controls, workspace tests, hostile-environment checks, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuild `http_service`, then run default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles after toolchain-specific rebuilds. |
+
+The 59 database cases, the maintenance-session probe, SQLx live suites,
+PostgreSQL lifecycle live tests and executable smokes remain unexecuted because
+no authorized endpoint was present. No macOS, hosted CI, publication, deployment
+or commit evidence is added. The Bead remains in progress for those acceptance
+items and the fresh-agent evaluation.
+
+#### Review-fix round 4
+
+The next independent pass at fingerprint
+`9c11f589063192527527d035cbb81394144d4f2ba18d0778b02bde708f180d55`
+found a medium-severity cycle in the live schema-signal fixture: the parent held
+its `ACCESS EXCLUSIVE` blocker while waiting for the child to finish, but a
+cancelled SQLx query could begin asynchronous connection return and ping before
+pool close, leaving child cleanup waiting on the same blocker. Low-severity
+findings also identified stale historical mutation wording, an inaccurate claim
+about which layer publishes cleanup records, and signal-request language that
+overstated what an accepted `kill(2)` call proves.
+
+The repair splits signal request from child completion. The schema parent now
+requires an OS-accepted request, rolls back its blocking transaction immediately,
+then awaits and inspects the child; the schema child uses a two-worker runtime.
+The final typed startup report, rather than signal acceptance, proves that drain
+was observed. Private result names now say `Accepted` and `AlreadyExited` instead
+of claiming delivery. Current documentation assigns cleanup-record publication
+to the cleanup stack, treats the old five-case mutation as historical evidence,
+and records the pinned SQLx connection-return ordering in `references.md`.
+Production-root failure on a missing `postgres.pool` record now retains the
+otherwise-successful shared shutdown report as its error source.
+
+Post-repair Linux x86_64 evidence:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked runtime::`; `cargo test -p batter-example-reference-service --test reference_live --locked`; strict package Clippy; Python runner controls; formatting and diff checks | PASS: five focused runtime tests, 5 ordinary reference tests with 59 database cases ignored, strict all-target/all-feature Clippy, all eight runner controls, `cargo fmt --check`, and `git diff --check`. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1 | PASS: the complete offline matrix, including runner controls, workspace and hostile-environment tests, doctests, formatting, strict Clippy and warning-denied rustdoc. A redundant second default-toolchain matrix also passed and is not needed as independent evidence. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Rebuild `http_service`, then run default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles after toolchain-specific rebuilds. |
+| Pinned SQLx 0.9.0 `PoolConnection` drop/return source inspection plus schema-fixture ordering review | Static prevention evidence: the blocker is released after accepted signal request and before child completion can wait on query cancellation, connection ping or pool close. The live schema cases did not run. |
+
+The 59 database cases, maintenance-session probe, SQLx and PostgreSQL lifecycle
+live suites, PostgreSQL executable smokes and fresh-agent acceptance remain
+unexecuted because no authorized endpoints were present. No macOS, hosted CI,
+publication, deployment or commit evidence is added. The Bead remains in progress.
+
+#### Review-fix continuation tranche 2, round 1: 2026-09-14
+
+The continuation baseline exactly matched the preceding terminal review at
+fingerprint `f5f45b0f77268ffd7072fcf3e40403179978c2bac440d44cba03ad47f327eb71`,
+so that complete Claude Opus and Codex pass was reused without another opening
+review. This round targeted only two independent low-severity documentation
+groups. Status now calls the fully executed 56-database-case/58-entry inventory
+historical and labels the current 59 database probes unexecuted. Current status,
+testing, guarantees and the PostgreSQL lifecycle guide now distinguish
+`pool_in` registering close ownership from the cleanup driver recording the
+eventual hook outcome.
+
+The separate `runtime::run` rustdoc/error-contract finding was not edited. Its
+production pool-cleanup group was already targeted in cumulative rounds three
+and four, so the loop's two-attempt guard prohibits another dependent repair.
+The ADR-010 assessment classifies this as an application-root contract and
+documentation mistake rather than a demonstrated foundation or SQLx-adapter gap:
+`pool_in` already owns close registration and the cleanup stack owns report
+publication. The `batter-lp2.4` update beginning “Review-fix continuation tranche
+2, round 1” records the evidence, alternatives boundary and recommendation to
+retain runtime enforcement while selecting a stable inspectable
+invariant-violation contract before dependent repair.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo fmt --all -- --check`; `git diff --check` | PASS. No Rust source changed in this continuation round. |
+| Targeted search for current-inventory overclaims and attribution of cleanup-record publication to `pool_in` across the repaired current contracts | PASS: no match remained. The archived experiment's distinct historical statement about publishing close ownership was intentionally preserved. |
+
+The complete Rust 1.98.1 and 1.94.0 matrices and all ten rebuilt HTTP smokes from
+round four remain the latest behavioral evidence because this continuation
+changes documentation and tracker text only. It adds no live PostgreSQL, macOS,
+hosted CI, fresh Jig, publication, deployment, staging or commit evidence. The
+Bead remains in progress for the explicitly unexecuted acceptance work.
+
+Continuation round two repairs a separate low-severity integration-guide error
+found by the fresh Codex pass. The PostgreSQL lifecycle example alone runs
+`batter_sqlx::probe` under a five-second child of its root startup context. The
+reference root shares `pool_in` ownership, but establishes connectivity through a
+direct acquisition and schema initialization under its overall startup context;
+`integrations.md` now states that distinction. A targeted sibling search found no
+duplicate reference-root child-probe claim, and `git diff --check` passed.
+
+The fresh Claude pass repeated the already blocked `runtime::run` error-contract
+finding and raised a non-causal exact-stage race in the unexecuted schema-signal
+fixture as an open question. The current acceptance requires `postgres.schema`,
+so no weaker stage assertion was substituted without a deterministic observation
+design. Codex also found another historical/current inventory manifestation in
+`CHANGELOG.md`; that evidence-currency group was already targeted in cumulative
+rounds two and five. Neither twice-attempted group was edited in round two. The
+next `batter-lp2.4` continuation update records the distinction and remaining
+concern.
+
+#### Explicit post-loop targeted repairs: 2026-09-14
+
+The user explicitly authorized the remaining review repairs outside the bounded
+review-fix loop. The following schema-signal assessment update now has a causal
+offline control: both test-owned Tokio listeners emit
+`signal-listeners-ready` before the parent sends TERM or INT, both must receive
+the selected broadcast, and the observer emits `startup-signal-observed` before
+the live schema parent releases its independent blocker. The parent still
+releases that blocker before awaiting child cleanup, preserving the SQLx
+connection-return ordering established in round four.
+
+The application-root shutdown invariant now has a public stable error contract.
+An otherwise successful shutdown report that lacks its required `postgres.pool`
+record returns `RuntimePoolCleanupFailure`, whose fixed formatting does not
+inspect native errors and whose accessor exposes the retained typed report.
+`ProtectedRuntimeStartupFailure` remains the sole startup-error wrapper: the
+hard-removed `RuntimeStartupFailure` was not restored or deprecated. Current
+contracts describe listener acknowledgement and cleanup-record ownership, and
+the changelog labels the 58-entry inventory historical rather than current.
+
+The PostgreSQL lifecycle success test now checks the process result before
+awaiting its pool-publication channel. An early protected-startup failure reports
+only the typed stage, so a closed sender can no longer mask the actual startup
+failure as a publication panic.
+
+Post-repair Linux x86_64 evidence, with Cargo.lock SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test reference_live --locked child_fixture -- --nocapture` | PASS: the focused private process-contract test passed, including the listener-ready TERM/INT controls. |
+| `cargo test -p batter-example-reference-service -p batter-example-postgres-lifecycle --locked` | PASS: both affected packages, their ordinary targets and all doctests; PostgreSQL-required cases remained ignored. |
+| Final `CARGO_INCREMENTAL=0 bash scripts/verify.sh` on Rust 1.98.1 | PASS: the complete offline matrix, including runner controls, workspace and hostile-environment tests, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 CARGO_INCREMENTAL=0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Toolchain-specific rebuild of `http_service`, followed by the documented default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes on each toolchain | PASS: all ten process smoke profiles. |
+| `cargo fmt --all -- --check`; `git diff --check`; obsolete Rust-symbol search | PASS after the repairs; neither `RuntimeStartupFailure` nor `MissingPoolCleanup` has a definition or use in Rust source. Documentation names the former only to record its hard removal. |
+
+An initial Rust 1.98.1 matrix attempt exhausted the task target filesystem during
+linking and is not counted. Only that task-specific target was cleaned; the
+successful final matrices used incremental compilation disabled. The 59 database
+cases, maintenance-session probe, SQLx and PostgreSQL lifecycle live suites,
+PostgreSQL executable smokes and fresh-agent acceptance remain unexecuted because
+no authorized endpoints were present. No macOS, hosted CI, publication,
+deployment, staging or commit evidence is added. The Bead remains in progress.
+
+After those commands, `origin/master` advanced from `b062f92` to `271d376` with
+only `.agent/state/runs.jsonl`, `.beads/issues.jsonl`, `docs/status.md` and this
+validation ledger changed. The working tree was snapshotted, fast-forwarded and
+reapplied. The one documentation overlap was resolved additively: upstream's
+final strengthened 61-case verifier evidence and the current 64-entry consumer
+inventory/ownership corrections are both retained. No Rust source, manifest,
+lockfile, test runner or verification command changed across that fast-forward,
+so the completed matrices and smokes exercise the same inputs. Final formatting,
+diff and conflict-marker checks passed against `271d376` with an empty index.
+
+#### Comprehensive-review follow-up: 2026-09-14
+
+Independent Claude Opus and native Codex reviewers completed the working-tree
+review at verified complete fingerprint
+`99db383d123535d165a503ee11b7893f3f0f79ed9ab5da1a0a6531e4c8b8e711`;
+Claude attested all 80 evidence pages. The reviewers reported three findings: a
+duplicate numeric tracker-comment surrogate, a missing hard-cutover changelog
+entry and two
+SIGTERM-only descriptions of a production-root case that now runs both signals.
+
+The Unreleased changelog now records removal of `RuntimeStartupFailure`, migration
+to `ProtectedRuntimeStartupFailure`, and the distinct public
+`RuntimePoolCleanupFailure` contract. Testing and compatibility documentation
+now state that the one production-root case sequentially exercises awaited
+SIGTERM and SIGINT cleanup.
+
+The staged tracker export assigned numeric surrogate 120 to comments owned by
+both `batter-g19` and `batter-y8e`. A normal `br` export reproduced that state even
+though the current database had reallocated the latter row to 125. The working
+JSONL was aligned to that database generation with `apply_patch`; the first import
+then classified all 123 issues as semantically identical with no create, update,
+tombstone or orphan removal. After the follow-up Bead updates, a forced final
+import rebuilt the cache from the export. Final database and JSONL coverage was
+123 issues and tracker health was clean. Later primary-source research established
+that `br` 0.5.7 deliberately treats incoming comment IDs as storage-local
+surrogates and may reallocate them; uniqueness across issues is not a tracker
+contract and the review's collision finding was unsupported.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `git diff --check`; targeted searches for stale SIGTERM-only/current-inventory wording and the three public runtime-error names | PASS. The changelog and both current production-root contracts match the implemented dual-signal hard cutover. |
+| `jq -s` global grouping of every `.beads/issues.jsonl` comment ID | Observation only: this database generation had no repeated surrogate, but `br` does not require global uniqueness across issues. |
+| `br sync --import-only --json`, followed after the final comments by `br sync --import-only --force --json` and `br sync --status --json` | PASS: the initial corrected payload matched all 123 semantic records; the final import retains 123 database/JSONL issues with no coverage drift, no newer side and healthy status. |
+| `cargo fmt --all -- --check`; final index and diff checks | PASS. No Rust source changed in this follow-up. |
+
+The complete two-toolchain matrices and ten HTTP smokes immediately preceding
+this documentation/tracker-only follow-up remain the latest behavioral evidence.
+The repaired diff has not received another independent review. The 59 database
+cases, maintenance-session probe, SQLx and PostgreSQL lifecycle live suites,
+PostgreSQL executable smokes, current macOS execution and fresh-agent acceptance
+remain unexecuted. No publication, deployment, commit or new staging is claimed.
+
+#### Post-review causal process and error-retention repairs: 2026-09-14
+
+The next complete Claude Opus and native Codex review examined fingerprint
+`7bb8b36d82100fdf41b77ff316687249239904497d444651b5416de625dfea8f`;
+Claude completed all 96 evidence pages. It found two application-test defects:
+the production-root helper could discard its already-settled assertion failure
+when executable shutdown also failed, and the actual-executable TERM/INT oracle
+could mistake an unrelated status-1 exit for observation of the requested
+signal. The mandatory ADR-010 assessment classified both as application harness
+mistakes. The shared `batter_test_support::finish` contract already preserves
+dual failures, while causal observation of an external process signal belongs in
+the process test fixture. No foundation or adapter API gap, recurring lifecycle
+invariant failure, or consumer decision was identified.
+
+The production-root helper now normalizes both settled results and passes them to
+`batter_test_support::finish`; a folded offline contract proves that both typed
+sources remain inspectable. Actual-executable controls enable a private
+process-test witness, install separate Tokio TERM/INT listeners, and require the
+exact signal-specific acknowledgement before accepting the executable's status
+and fixed diagnostic. A negative control reproduces the former generic
+status-1/stderr oracle without the acknowledgement and must be rejected. Normal
+application execution does not enable or print the private witness.
+
+Research resolved the review's open contract questions before repair. Lazy
+PostgreSQL pool construction moves connectivity diagnostics to the explicit
+`postgres.probe` stage and is therefore recorded under Unreleased in the
+changelog. Cleanup reservation rejects duplicate names, so the application-root
+postcondition can fail only because the required `postgres.pool` record is
+missing; current contracts no longer describe an impossible duplicate-record
+case. Primary `br` 0.5.7 documentation and import source establish that numeric
+comment IDs are storage-local surrogates that may be reallocated. The preceding
+review's cross-issue collision finding was therefore unsupported; stable evidence
+uses the owning issue plus comment purpose or payload, as recorded in
+`references.md`.
+
+Post-repair Linux x86_64 evidence:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --nocapture` | The initial attempt failed both executable controls because a `BATTER_`-prefixed private test variable correctly entered application configuration and was rejected as an unknown key. After moving the witness to the unreserved `TEST_SIGNAL_WITNESS` name, PASS: 5 ordinary cases, including both actual-executable signals and the folded dual-error/negative controls; 59 database cases remained ignored. |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py -v` | PASS: all eight runner controls. |
+| `cargo test -p batter-example-reference-service --locked`; strict package Clippy | PASS: 11 library cases with one ignored, one executable case, 20 configuration cases, three fixture-diagnostic cases, 5 ordinary reference cases with 59 ignored, four retirement cases, nine doctests, and all-target/all-feature warning-denied Clippy. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1 | PASS: the complete offline matrix, including loopback/process, workspace and hostile-environment tests, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles. |
+| `scripts/jig work check --plan-id plan_01M2E3P7S7TBN420CKXGASQ2HG` | PASS at receipt `receipt_01M2FHTXKVXRGX9HB7AB1F6DHG`; the required `verify` gate was fresh with no unresolved gates before this validation-ledger append. |
+
+The 59 database cases, maintenance-session probe, SQLx and PostgreSQL lifecycle
+live suites, PostgreSQL executable smokes, current macOS execution and fresh-agent
+acceptance remain unexecuted because no authorized endpoints or environments were
+present. No publication, deployment, commit or new staging is claimed. The Bead
+remains in progress for that unexecuted acceptance work.
+
+#### Production-entrypoint signal-witness removal: 2026-09-14
+
+The next read-only comprehensive review examined complete working-tree fingerprint
+`7b30709a63702dbeb5dfc5c62e5b348148516c9e06d7a2998035d0900b64db2d`.
+Native Codex reported no actionable findings. Claude Opus attested all 99 evidence
+pages and found one low-severity defect: the private environment-controlled signal
+witness had been placed in the production entrypoint. A signal arriving after its
+listeners were installed but before `runtime::run` installed the application
+listeners could be consumed only by the witness, and a witness stdout failure
+could drop the application future before cleanup.
+
+The repair removes that mode and environment switch from production `main`
+entirely. A separately declared `signal_witness_fixture` test binary owns the
+additional listeners. The fixture is signalled only after the parent accepts the
+withheld native handshake, which proves protected startup has installed the
+application listeners, and it awaits `runtime::run` settlement before writing its
+signal-specific acknowledgement. Each existing executable TERM/INT case then
+starts the production binary against a fresh withheld handshake and separately
+requires empty stdout, the fixed stderr line, status 1 and no signal termination.
+The negative control still rejects the generic status/stderr pair as causal signal
+evidence. Current documentation now describes the two-process composition and the
+required named pool record rather than mixing presence with duplicate-count
+language.
+
+Post-repair Linux x86_64 evidence, with unchanged Cargo.lock SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --nocapture` | PASS: both synthetic acquisition cases, both two-process executable compositions and the folded fixture contracts passed; 59 database cases remained ignored. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1 | PASS: runner controls, the complete offline workspace matrix, hostile-environment configuration, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles. |
+| `scripts/jig work check --plan-id plan_01M2E3P7S7TBN420CKXGASQ2HG` | PASS at target validation receipt `receipt_01M2FKM69QS3AGEEEG0S6Z2BA1`: test, Clippy, formatting, contract and file-budget targets all executed successfully. |
+
+The repaired diff has not received another independent review. The 59 database
+cases, maintenance-session probe, SQLx and PostgreSQL lifecycle live suites,
+PostgreSQL executable smokes, current macOS execution and fresh-agent acceptance
+remain unexecuted because no authorized endpoints or environments were present.
+No publication, deployment, commit or new staging is claimed. The Bead remains in
+progress for that unexecuted acceptance work.
+
+#### Cargo default-run and staged-scope repair: 2026-09-14
+
+The next complete Claude Opus and native Codex review examined working-tree
+fingerprint `8d4957d19117c0aa3dc1dc40dd4e6890922edc9543a584f2acf4efe9464756a9`;
+Claude attested all 101 evidence pages. Both reviewers found that declaring the
+private `signal_witness_fixture` binary made the documented bare `cargo run -p
+batter-example-reference-service --locked` command ambiguous. Claude also found
+that the fixture remained untracked while its manifest and callers were tracked,
+so an index-only commit workflow could omit the required source file.
+
+The reference package now declares `batter-example-reference-service` as its
+Cargo `default-run`. The runner-control suite reads locked Cargo metadata and
+requires that exact production target, while a direct invocation of the
+documented command selected the production executable and returned its expected
+invalid-argument diagnostic. The fixture and the complete reviewed application,
+documentation and tracker scope are staged together; generated `.agent` state is
+not part of that reviewed scope. No compatibility alias or deprecated entrypoint
+was introduced.
+
+Post-repair Linux x86_64 evidence:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `python3 -m unittest discover -s scripts -p test_reference_live.py -v` | PASS: all nine runner controls, including the locked Cargo-metadata default-run assertion. |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --nocapture` | PASS: all five ordinary cases; 59 database cases remained ignored. |
+| `cargo run -p batter-example-reference-service --locked -- first second` | Selected `target/debug/batter-example-reference-service` and exited 1 with the expected `invalid command arguments` diagnostic; Cargo did not report binary ambiguity. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1 | PASS: the complete offline matrix, including the nine runner controls, workspace and hostile-environment tests, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete offline matrix on the minimum toolchain. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles. |
+
+The repaired diff has not received another independent review. The 59 database
+cases, maintenance-session probe, SQLx and PostgreSQL lifecycle live suites,
+PostgreSQL executable smokes, current macOS execution and fresh-agent acceptance
+remain unexecuted because no authorized endpoints or environments were present.
+No publication, deployment, commit or push is claimed. The Bead remains in
+progress for that unexecuted acceptance work.
+
+A subsequent complete review at verified fingerprint
+`211adf343f7171aaf1b39b994b702812319b4b99b744a1d583cbaf1eb3c36068`
+reported one low documentation defect: the status table attributed the Cargo
+`default-run` assertion to the live PostgreSQL runner instead of the separate
+offline runner-control suite. Claude Opus attested all 84 evidence pages; native
+Codex reported no actionable findings. The status row now names the correct
+owner. This documentation-only correction does not supersede the behavioral
+evidence above and has not received another independent review.
+
+#### Upstream operational-witness reconciliation: 2026-09-14
+
+After that repair, `origin/master` advanced from `271d376` to `d52a733` through
+`3b4364f` and `d52a733`. The working state was preserved in a named stash,
+`master` was fast-forwarded, and the saved index and working changes were
+reapplied. The three textual conflicts were resolved additively: the Axum
+readiness fixture retains its registration-only authority while consuming
+upstream's validated response-budget and bulkhead-capacity witnesses; both
+validation histories remain; and the tracker retains upstream's new `batter-k8m`
+issue, dependency and comments together with all local `batter-lp2.4` notes and
+comments. The final tracker export contains 124 issues with no coverage drift.
+
+The first Rust 1.98.1 matrix after the textual merge correctly failed because the
+private protected-startup fixture still called `unwrap` on the now-infallible
+`RootSettings::supervisor` result. The fixture was cut over directly to the new
+validated-value contract; no compatibility wrapper or deprecated API was added.
+The saved index boundary was restored after the stash application, leaving only
+the same generated `.agent/state/receipts.jsonl` and
+`.agent/state/runs.jsonl` additions unstaged.
+
+Post-reconciliation Linux x86_64 evidence:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --test reference_live --locked -- --nocapture` | PASS after the hard-cutover call-site repair: five ordinary cases passed and 59 PostgreSQL cases remained ignored. |
+| Final `bash scripts/verify.sh` on Rust 1.98.1 | PASS: the complete offline workspace matrix, controls, hostile-environment tests, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Final `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: the same complete matrix on the minimum toolchain. |
+| Toolchain-specific rebuild of `http_service`, followed by default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` on each toolchain | PASS: all ten process smoke profiles on the reconciled tree. |
+| Conflict-marker, formatting and staged/unstaged diff checks | PASS before the final Jig refresh. |
+
+The repaired reconciliation has not received another independent review. The 59
+database cases, maintenance-session probe, SQLx and PostgreSQL lifecycle live
+suites, PostgreSQL executable smokes, current Linux PostgreSQL execution and
+fresh-agent acceptance remain unexecuted. Upstream records macOS evidence for its
+operational-witness change; it is not new execution evidence for these local
+consumer changes. No publication, deployment, commit or push is claimed.

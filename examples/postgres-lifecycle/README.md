@@ -1,10 +1,15 @@
 # Native PostgreSQL lifecycle example
 
-`batter-example-postgres-lifecycle` demonstrates native SQLx pool acquisition,
-a readiness query, explicit pool-close registration, and error-preserving
-owned startup cleanup with `batter`. The optional `batter-sqlx` adapter supplies
-the bounded probe. Startup reserves the finalizer name before pool acquisition
-and immediately registers native pool closure. Its executable is `postgres_lifecycle`.
+`batter-example-postgres-lifecycle` demonstrates a protected SQLx service root:
+`Startup::scoped(...).with_unix_signals("signals")`, slot-owned native pool
+creation, a bounded readiness query and error-preserving owned startup cleanup.
+The initializer parses the application-owned `DATABASE_URL` into native
+`PgConnectOptions`, reserves `postgres.pool` and calls `batter_sqlx::pool_in`,
+which publishes awaited close before returning the lazy pool. Construction does
+not contact PostgreSQL: the following `postgres.probe` stage runs the adapter's
+bounded probe under a five-second child of the root's 15-second startup context.
+A long-running application component keeps this a service, not a finite command.
+Its executable is `postgres_lifecycle`.
 The executable keeps concrete startup and shutdown reports behind a fixed,
 redacted process diagnostic so a trusted sink can inspect the source chain.
 
@@ -52,7 +57,8 @@ python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --sig
 
 These commands require `DATABASE_URL`; missing configuration fails the selected
 check. The three live tests are labelled ignored in ordinary database-independent
-runs. They use `SELECT 1` and division-by-zero errors to verify retained causes
+runs. Each creates its pool inside protected startup through the same `pool_in`
+helper, then uses `SELECT 1` and division-by-zero errors to verify retained causes
 and awaited pool closure after success, startup failure and task failure. They
 do not create a database or modify its schema. The smoke commands require actual
 readiness, successful pool cleanup and exit code 0 after the chosen signal.

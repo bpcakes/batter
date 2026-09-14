@@ -32,8 +32,9 @@ LIFO cleanup. It does not close on registration failure; the caller retains the
 pool and must await teardown. The adapter-owned
 [`owned_pool`](examples/owned_pool.rs) example composes `pool_in` with a finite
 `Command`; the runnable [PostgreSQL lifecycle
-example](../../examples/postgres-lifecycle/README.md) demonstrates the legacy
-helper with an independently acquired pool.
+example](../../examples/postgres-lifecycle/README.md) and the reference root use
+`pool_in` inside protected service startup, and the reference retirement command
+uses it on a finite `CommandScope` slot.
 
 `SqlxFailure` retains the original SQLx cause with fixed Debug/Display.
 `FailureClass` classifies native variants, never error strings, and grants no

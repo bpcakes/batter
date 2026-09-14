@@ -3,7 +3,6 @@ use batter::{
     lifecycle::ShutdownFailure,
     startup::{InitializationError, StartupCause, StartupError, StartupFailure},
 };
-use sqlx::PgPool;
 
 async fn complete_startup(
     supervisor: Supervisor,
@@ -14,6 +13,21 @@ async fn complete_startup(
         OperationContext::new(Duration::from_secs(15)).unwrap(),
         support::cleanup_budget(),
         move |_| Box::pin(async move { process_result(result) }),
+    );
+    serve(startup).await
+}
+
+async fn owned_startup<F>(supervisor: Supervisor, initialize: F) -> Result<(), BoxError>
+where
+    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, ProcessFailure>
+        + Send
+        + 'static,
+{
+    let startup = Startup::scoped(
+        supervisor,
+        OperationContext::new(Duration::from_secs(15)).unwrap(),
+        support::cleanup_budget(),
+        initialize,
     );
     serve(startup).await
 }
@@ -39,11 +53,6 @@ fn shutdown_report(failure: &ShutdownFailure) -> &batter::lifecycle::SharedShutd
         ShutdownFailure::Coordinator(_) => panic!("expected shutdown report"),
     }
 }
-fn register_pool_close(supervisor: &mut Supervisor, pool: &PgPool) -> Result<(), BoxError> {
-    batter_sqlx::register_pool_close(supervisor, "postgres.pool", pool)?;
-    Ok(())
-}
-
 use batter::{cleanup::CleanupOutcome, lifecycle::TaskOutcome};
 use std::sync::{
     Arc,

@@ -1,16 +1,35 @@
 //! Explicit live checks: external provisioning, no schema changes or test bypass.
+//! Each pool is created inside protected startup through the example's owner.
 use super::*;
+use tokio::sync::oneshot;
 
-async fn pool() -> PgPool {
+fn connection() -> PgConnectOptions {
     let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         panic!("live checks require DATABASE_URL for an externally provisioned test database")
     });
-    PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(3))
-        .connect(&url)
+    url.parse()
+        .unwrap_or_else(|_| panic!("live checks require a valid DATABASE_URL"))
+}
+
+async fn owned_pool(receiver: oneshot::Receiver<PgPool>) -> PgPool {
+    receiver
         .await
-        .unwrap_or_else(|_| panic!("live checks could not connect to the test database"))
+        .unwrap_or_else(|_| panic!("initializer did not publish its owned pool"))
+}
+
+fn assert_success_before_pool_inspection(result: &Result<(), BoxError>) {
+    let Err(error) = result else {
+        return;
+    };
+    if let Some(StartupError::Failed(failure)) =
+        error.downcast_ref::<StartupError<InitializationError<ProcessFailure>>>()
+    {
+        panic!(
+            "live startup failed before pool inspection at stage {}",
+            failure.stage
+        );
+    }
+    panic!("live process failed after startup before pool inspection");
 }
 
 async fn assert_closed(pool: &PgPool) {
@@ -30,15 +49,28 @@ fn assert_division_error(error: &BoxError) {
 #[tokio::test]
 #[ignore = "requires an externally provisioned DATABASE_URL; run tests::live:: -- --ignored"]
 async fn success_closes_the_live_pool_before_exit() {
-    let pool = pool().await;
-    let one: i32 = sqlx::query_scalar("SELECT 1::integer")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(one, 1);
-    let mut supervisor = supervisor(false);
-    register_pool_close(&mut supervisor, &pool).unwrap();
-    let result = complete_startup(supervisor, Ok(())).await;
+    let connection = connection();
+    let (publish, published) = oneshot::channel();
+    let result = owned_startup(supervisor(false), move |scope| {
+        Box::pin(async move {
+            let result: Result<(), BoxError> = async {
+                let pool = database_pool(scope, connection)?;
+                let _ = publish.send(pool.clone());
+                let one: i32 = sqlx::query_scalar("SELECT 1::integer")
+                    .fetch_one(&pool)
+                    .await?;
+                if one != 1 {
+                    return Err("unexpected live query result".into());
+                }
+                Ok(())
+            }
+            .await;
+            process_result(result)
+        })
+    })
+    .await;
+    assert_success_before_pool_inspection(&result);
+    let pool = owned_pool(published).await;
     assert_closed(&pool).await;
     assert_exit(result, ExitCode::SUCCESS);
 }
@@ -46,19 +78,26 @@ async fn success_closes_the_live_pool_before_exit() {
 #[tokio::test]
 #[ignore = "requires an externally provisioned DATABASE_URL; run tests::live:: -- --ignored"]
 async fn startup_database_error_retains_failed_cleanup_and_closes_the_pool() {
-    let pool = pool().await;
-    let mut supervisor = supervisor(false);
-    register_pool_close(&mut supervisor, &pool).unwrap();
-    supervisor
-        .on_cleanup("failed-finalizer", || async {
-            Err(std::io::Error::other("cleanup-credential-marker").into())
+    let connection = connection();
+    let (publish, published) = oneshot::channel();
+    let result = owned_startup(supervisor(false), move |scope| {
+        Box::pin(async move {
+            let result: Result<(), BoxError> = async {
+                let pool = database_pool(scope, connection)?;
+                let _ = publish.send(pool.clone());
+                scope
+                    .reserve_cleanup("failed-finalizer")?
+                    .register(|| async {
+                        Err(std::io::Error::other("cleanup-credential-marker").into())
+                    });
+                sqlx::query("SELECT 1 / 0").execute(&pool).await?;
+                Ok(())
+            }
+            .await;
+            process_result(result)
         })
-        .unwrap();
-    let cause = sqlx::query("SELECT 1 / 0")
-        .execute(&pool)
-        .await
-        .unwrap_err();
-    let result = complete_startup(supervisor, Err(cause.into())).await;
+    })
+    .await;
     let failure = startup_failure(result.as_ref().unwrap_err());
     assert_division_error(application_cause(failure));
     assert_eq!(failure.cleanup.records.len(), 2);
@@ -69,6 +108,7 @@ async fn startup_database_error_retains_failed_cleanup_and_closes_the_pool() {
         failure.cleanup.records[1].outcome,
         CleanupOutcome::Succeeded
     );
+    let pool = owned_pool(published).await;
     assert_closed(&pool).await;
     assert_exit(result, ExitCode::FAILURE);
 }
@@ -76,18 +116,28 @@ async fn startup_database_error_retains_failed_cleanup_and_closes_the_pool() {
 #[tokio::test]
 #[ignore = "requires an externally provisioned DATABASE_URL; run tests::live:: -- --ignored"]
 async fn task_database_error_survives_shutdown_and_pool_close() {
-    let pool = pool().await;
-    let mut supervisor = Supervisor::new(support::shutdown_budget());
-    register_pool_close(&mut supervisor, &pool).unwrap();
-    let task_pool = pool.clone();
-    supervisor
-        .register("database-task", move |shutdown| async move {
-            shutdown.mark_started();
-            sqlx::query("SELECT 1 / 0").execute(&task_pool).await?;
-            Ok(())
+    let connection = connection();
+    let (publish, published) = oneshot::channel();
+    let supervisor = Supervisor::new(support::shutdown_budget());
+    let result = owned_startup(supervisor, move |scope| {
+        Box::pin(async move {
+            let result: Result<(), BoxError> = async {
+                let pool = database_pool(scope, connection)?;
+                let _ = publish.send(pool.clone());
+                scope
+                    .registration()
+                    .register("database-task", move |shutdown| async move {
+                        shutdown.mark_started();
+                        sqlx::query("SELECT 1 / 0").execute(&pool).await?;
+                        Ok(())
+                    })?;
+                Ok(())
+            }
+            .await;
+            process_result(result)
         })
-        .unwrap();
-    let result = complete_startup(supervisor, Ok(())).await;
+    })
+    .await;
     let report = result
         .as_ref()
         .unwrap_err()
@@ -95,9 +145,13 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
         .map(shutdown_report)
         .unwrap();
     assert_eq!(report.tasks.len(), 1);
+    assert_eq!(report.tasks[0].name, "database-task");
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
     assert_division_error(report.tasks[0].error.as_ref().unwrap());
+    assert_eq!(report.cleanup.records.len(), 1);
+    assert_eq!(report.cleanup.records[0].name, "postgres.pool");
     assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Succeeded);
+    let pool = owned_pool(published).await;
     assert_closed(&pool).await;
     assert_exit(result, ExitCode::FAILURE);
 }

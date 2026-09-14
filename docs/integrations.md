@@ -171,14 +171,18 @@ accounted checkouts, so join dependent work and release leases before cleanup.
 The adapter-owned `owned_pool` example demonstrates this finite `Command` path.
 
 The [service example](../examples/postgres-lifecycle/src/main.rs), packaged as
-`batter-example-postgres-lifecycle`, uses native PgPoolOptions and the optional
-`batter-sqlx` bounded probe and Pool::close registration. It registers close as a dependency finalizer and
-uses `Startup` for owned initialization and startup-error cleanup. It reserves the
-pool finalizer name before connecting and registers closure immediately after
-acquisition. Protected application roots can instead select `Startup::scoped(...)
+`batter-example-postgres-lifecycle`, selects `Startup::scoped(...)
 .with_unix_signals("signals")`, which installs listeners before the owner is
-returned and removes the initializer's manual reception/handoff obligation.
-`register_signals` remains the lower-level compatibility helper. Pool sizing,
+returned and removes any initializer reception/handoff obligation. Its
+initializer parses `DATABASE_URL` into native `PgConnectOptions`, reserves
+`postgres.pool`, calls `pool_in` with native PgPoolOptions, and then runs the
+bounded `probe` under a child of the root startup context; construction alone is
+not connectivity. The reference root shares the `pool_in` ownership path but
+establishes connectivity by directly acquiring a connection and then initializing
+its schema under the overall startup context. The finite retirement command passes
+its `CommandScope` slot and native `after_connect` guard to `pool_in` unchanged.
+`register_pool_close` and
+`register_signals` remain lower-level compatibility helpers. Pool sizing,
 probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain. No database abstraction or generic transaction retry is introduced.

@@ -167,6 +167,14 @@ channel. Native supervision stays upstream, and settlement does not prove remote
 server-session termination or arbitrary detached handler work stopped. Fresh
 dependency health and application approval remain separate; this reference root
 withholds approval until its real delivery handler is installed.
+Its PostgreSQL pool is created with `batter_sqlx::pool_in` on a reserved startup
+slot, so close ownership is registered before acquisition or schema work; its startup
+failure is exposed as `ProtectedRuntimeStartupFailure` with the protected report
+behind a fixed executable diagnostic. After handoff, generic running failures
+remain `ShutdownFailure`; the application root exposes a separate
+`RuntimePoolCleanupFailure` with typed report access if an otherwise successful
+shutdown omitted its required pool cleanup record. Cleanup registration rejects
+duplicate names before a report can be produced.
 
 The lower-level `take_cleanup` pattern remains explicitly caller-driven. Its
 caller cancellation can abandon asynchronous cleanup. Resources not yet

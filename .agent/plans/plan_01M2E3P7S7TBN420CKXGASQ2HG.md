@@ -24,50 +24,15 @@ from public guidance with independently checked failure and cleanup outcomes.
 
 - [x] (2026-09-12 13:25Z) Prepared this plan from current roots, reviewed task,
   failure fixtures and exact live inventories; no consumer has been migrated.
-- [x] (2026-09-13) Verified predecessors against HEAD `9e8709c` (Jig plan
-  `plan_01M2E3P7S7TBN420CKXGASQ2HG`). `.1` closed 2026-09-12T14:29Z (delivered in
-  `b87708d`); `.2` and `.3` closed 19:11Z after post-review repairs (`6f25e64`);
-  `.3`'s recorded receipt is `receipt_01M2B3DJPS1R9HBRWMW2J41H5Q`. Delivered
-  signatures match the Interfaces section exactly, including `pool_in`. Facade
-  `batter-tmx` has not landed, so facade checks are N/A. Fixture access:
-  `DATABASE_URL`, `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` are
-  absent and no documented authorization exists. A local PostgreSQL pid file is
-  present on the host, but it is not authorized and was not contacted.
-- [x] (2026-09-13) Migrated the reference startup: `pool_in`, a concrete
-  `Registration` health helper, and the `ProtectedRuntimeStartupFailure` cutover.
-  The legacy accessor is restored and compiled; wrapper unit tests pass.
-- [x] (2026-09-13) Migrated the PostgreSQL lifecycle root (parsed native options,
-  `pool_in`, child probe context), its offline and live tests, the HTTP health
-  helper and retirement `Session::new`. Offline tests pass; live cases unexecuted.
-- [ ] Eight frozen cases implemented with classified runner accounting (66 entries).
-  The four offline cases pass and a mutation trial proves they can fail. The
-  schema pair, waiter/owner loss and TERM/INT production-root variants are
-  unexecuted: authorized endpoints are absent.
-- [ ] Fresh-agent evaluation not started: its authorized disposable fixture
-  prerequisite is absent (see Decision Log).
-- [x] (2026-09-13) Updated guidance (usage, integrations, guarantees, architecture,
-  testing, status, references, reference compatibility, validation, package
-  READMEs and guides). Both `verify.sh` matrices, both HTTP builds with ten smokes,
-  and Jig gate `verify` (fresh api:test `receipt_01M2E5DJE852N59E0GNYASAQ6X`)
-  passed on Linux. All live runners failed closed without endpoints.
-- [ ] Bead stays open: live acceptance and the public-agent evaluation are blocked.
+- [ ] Verify completed .1/.2/.3 revisions, interfaces, receipts and fixture access.
+- [ ] Migrate reference startup, registration and error-wrapper boundary.
+- [ ] Migrate PostgreSQL/HTTP service examples and finite retirement pool creation.
+- [ ] Execute eight frozen combined process cases and preserve all live inventories.
+- [ ] Complete bounded fresh-agent implementation/modification and independent review.
+- [ ] Update canonical guidance and run complete both-toolchain/offline/live/smoke gates.
+- [ ] Record all outcomes, finish the implementation plan and close only this Bead.
 
 ## Surprises & Discoveries
-
-Implementation discovery, 2026-09-13: commit `8456ffc` (owning Bead `batter-7r3.6`)
-had already moved the reference, PostgreSQL lifecycle and HTTP roots to
-`Startup::scoped`, `.with_unix_signals` and the `_in` adapters. It also changed
-`RuntimeStartupFailure::startup` in place to return the protected report type,
-contradicting the paragraph below. The remaining `.4` substitutions were:
-`pool_in` in three consumers, concrete `Registration` helpers, the wrapper split,
-lifecycle options/probe ownership, the process cases, runner accounting and docs.
-
-Rust test-harness banners share stdout with `--nocapture` output, and their
-placement relative to test output was not verified from libtest source, which is
-not installed locally. Children defensively print a newline before any
-`batter-fixture:` event, so events start at a line boundary. Cargo sets
-`CARGO_BIN_EXE_<name>` for integration tests and builds that binary in the same
-invocation, which binds the executable cases to the invoking toolchain.
 
 
 Current reference startup manually installs listeners, races application work
@@ -122,58 +87,14 @@ Rationale: distinguish real executable behavior from harness evidence and preven
 success from being manufactured by skipped cases or unlimited unreported repairs.
 Date/author: 2026-09-12, standalone task review refinement.
 
-Decision: restore `RuntimeStartupFailure::startup`'s preparation-baseline return
-type, `&StartupError<InitializationFailure>`. `runtime::run` now produces only
-`ProtectedRuntimeStartupFailure`. Rationale: the frozen compatibility decision
-preserves the original public accessor; `8456ffc` changed it in place without a
-staged cutover. Both packages are unpublished, and the only in-repo downcast
-(`startup_process.rs`) moves to the protected wrapper. Date/author: 2026-09-13,
-implementation agent.
-
-Decision: classify the runner inventory as 60 database probes, three
-synthetic-acquisition controls, two actual-executable controls and one dispatch
-entry. Build the executable explicitly before discovery, and resolve it in tests
-through `CARGO_BIN_EXE_batter-example-reference-service`. Raise the execution
-watchdog from 180s to 300s for the larger serial inventory. Rationale: keep exact
-per-name accounting without counting synthetic controls as database evidence.
-The watchdog change relaxes no assertion. Date/author: 2026-09-13, implementation
-agent.
-
-Decision: do not start the fresh-agent evaluation. Rationale: the frozen protocol
-requires authorized disposable fixture access, a real native query and startup
-TERM oracles before the bounded repair budget is spent. Without endpoints, a
-started batch could neither pass nor be resumed later with the same fresh
-identities. Starting another batch afterwards would amount to the forbidden
-re-sampling. Date/author: 2026-09-13, implementation agent.
-
-Decision: waiter/owner-loss children use the test-owned protected composition,
-with default readiness approval so the never-Ready observation is not vacuous.
-LIFO is witnessed by a dependent hook that observes the pool still open, plus the
-ordered report. Date/author: 2026-09-13, implementation agent.
-
 ## Outcomes & Retrospective
 
 
-2026-09-13 implementation outcome: all four consumers use the protected ownership
-path, with typed failure retention and the legacy accessor compatibility fixture.
-The eight frozen cases and 66-entry classified inventory are implemented. The four
-offline cases pass on both toolchains, and a mutation trial shows their oracles
-reject wrong diagnostics and cleanup counts. Complete Linux two-toolchain
-verification, ten HTTP smokes and fresh Jig gates pass; exact commands and receipts
-are in `docs/validation.md`.
-
-The Bead remains open (in progress). Blockers:
-1. No authorized `POSTGRES_TEST_ADMIN_URL`/`POSTGRES_TEST_OBSERVER_URL`/`DATABASE_URL`
-   exists, so these are unexecuted: the four database process cases, the TERM/INT
-   production-root variants, the full 66-entry and SQLx live inventories, the
-   three lifecycle live cases and both PostgreSQL smokes.
-2. The bounded fresh-agent evaluation was not started for the same reason.
-3. No macOS or hosted evidence exists.
-
-To resume, supply authorized endpoints; run the Concrete Steps live rows on both
-toolchains; then execute Milestone 5 exactly as frozen. Record results and close
-only this Bead if everything passes. ADR-010's trigger did not fire. The parent
-epic, predecessors, related Beads and publication/deployment decisions are unaffected.
+No migration is implemented yet. This task remains blocked on `.1`, `.2` and `.3`.
+Its plan is ready to execute after those deliveries and authorized fixture access
+are verified. The parent epic closes only when all four tasks satisfy their own
+acceptance; preparing or completing this plan does not close the predecessors,
+the broader operational-adoption task or any publication/deployment decision.
 
 ## Context and Orientation
 

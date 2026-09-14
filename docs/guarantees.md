@@ -585,9 +585,24 @@ report; failures retain the complete report, including forced abort, skipped
 cleanup and unjoined work, or the original coordinator error. Its redacted
 formatting does not inspect those causes.
 
-The reference root uses owned startup and managed native settlement. Installed
-Unix signals cover initialization before its first await and transfer to the
-running driver. Native loop acknowledgement, fresh PostgreSQL sampling and
+The reference root uses protected startup with `.with_unix_signals("signals")`,
+a `pool_in` close hook registered on its reserved `postgres.pool` slot, and managed
+native settlement. Library-owned listeners exist before the initializer runs and
+belong to the running driver after handoff. Even after generic shutdown succeeds,
+the application root requires its named `postgres.pool` cleanup record;
+`pool_in` registers the close hook, the cleanup stack writes its record, and the
+preceding generic shutdown check separately requires that hook to have succeeded.
+Cleanup registration rejects duplicate names, so if the otherwise successful
+report does not contain that record,
+`runtime::run` returns the public fixed-diagnostic
+`RuntimePoolCleanupFailure`; its `report` accessor retains typed inspection without
+formatting application errors.
+A signal observed during acquisition
+or schema initialization yields `StartupCause::Draining` inside
+`ProtectedRuntimeStartupFailure`, with the awaited pool cleanup record and no
+fabricated application error; the executable renders only its fixed diagnostic
+and exits with status 1. The earlier startup wrapper was removed in the
+coordinated hard cutover. Native loop acknowledgement, fresh PostgreSQL sampling and
 application readiness approval are separate facts. The native registry is empty
 until a delivery handler exists; application readiness remains unapproved.
 Production starts no durable control job, advisory-lock owner or reconciliation
@@ -705,7 +720,8 @@ remaining pool size and `PoolClosed` from a later acquisition; `is_closed()` alo
 only witnesses that close began. These facts still say nothing about detached
 server sessions.
 `register_pool_close` remains a lower-level compatibility path for pools acquired
-elsewhere, with caller-owned cleanup if registration fails.
+elsewhere, with caller-owned cleanup if registration fails. The workspace's
+canonical service roots and finite retirement command use `pool_in`.
 
 `PgLease` detaches and drops its client unless the application explicitly calls
 `return_to_pool` after acknowledged query/commit/rollback completion. Keep the
