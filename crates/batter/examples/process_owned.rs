@@ -36,6 +36,7 @@ async fn main() -> Result<(), BoxError> {
     // destroy the runtime before the separately owned cleanup has been awaited.
     let submitted = async {
         handle
+            .status()
             .wait_ready()
             .await
             .map_err(|_| std::io::Error::other("startup failed"))?;

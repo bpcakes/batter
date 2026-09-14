@@ -83,7 +83,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
     let (address_tx, address_rx) = oneshot::channel();
     let supervisor = supervisor();
     let handle = supervisor.handle();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     let mut starting = Startup::scoped(
         supervisor,
         OperationContext::new(Duration::from_secs(2)).unwrap(),
@@ -117,11 +117,11 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
         .await
         .unwrap()
         .unwrap();
-    timeout(Duration::from_secs(1), handle.wait_ready())
+    timeout(Duration::from_secs(1), handle.status().wait_ready())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     let address = address_rx.await.unwrap();
     let mut client = connect(address).await;
     let mut response = String::new();
@@ -139,7 +139,7 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
         "{response}"
     );
     assert!(report.is_success(), "{report:?}");
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     assert!(cleaned.load(Ordering::SeqCst));
     assert!(TcpStream::connect(address).await.is_err());
 }
@@ -167,7 +167,7 @@ async fn invalid_registration_and_unstarted_supervisor_drop_release_the_bound_li
             drop(rebound);
         } else {
             result.unwrap();
-            assert_eq!(supervisor.handle().readiness(), Readiness::Starting);
+            assert_eq!(supervisor.status().readiness(), Readiness::Starting);
             drop(supervisor);
             let rebound = TcpListener::bind(address).await.unwrap();
             drop(rebound);
@@ -238,7 +238,7 @@ async fn streaming_abort(register: RegisterHttp) {
         })
         .unwrap();
     let policy = batter_axum::RequestPolicy::new(
-        handle.clone(),
+        handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     );
     let app = Router::new()
@@ -256,7 +256,7 @@ async fn streaming_abort(register: RegisterHttp) {
     register(&mut supervisor, "http", listener, app).unwrap();
     let running = supervisor.start();
     handle.mark_ready();
-    timeout(Duration::from_secs(1), handle.wait_ready())
+    timeout(Duration::from_secs(1), handle.status().wait_ready())
         .await
         .unwrap()
         .unwrap();
@@ -364,7 +364,7 @@ async fn startup_abandonment(register: RegisterHttp) {
     );
     drop(waiter);
     tokio::task::yield_now().await;
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(matches!(
         cleanup_rx.try_recv(),
         Err(oneshot::error::TryRecvError::Empty)
@@ -389,7 +389,7 @@ async fn startup_abandonment(register: RegisterHttp) {
     release_tx.send(()).unwrap();
     let outcome = timeout(Duration::from_secs(2), completion).await.unwrap();
     assert_startup_drain(outcome);
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     drop(TcpListener::bind(address).await.unwrap());
 }
 

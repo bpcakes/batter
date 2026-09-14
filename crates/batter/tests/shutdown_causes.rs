@@ -73,7 +73,7 @@ async fn ready_request_precedes_an_unobserved_finite_error() {
             Err(ProcessTaskError::Failed(_))
         ));
         // The task completed while its coordinator was not polled.
-        assert!(!handle.is_draining());
+        assert!(!handle.status().is_draining());
         handle.request();
         let report = driver.await;
         assert_eq!(report.cause, ShutdownCause::Requested);
@@ -105,7 +105,7 @@ async fn ready_request_precedes_an_unobserved_critical_error() {
         // On this current-thread runtime, the component returns before the
         // receiver resumes. The coordinator has not observed that return.
         observed.await.unwrap();
-        assert!(!handle.is_draining());
+        assert!(!handle.status().is_draining());
         handle.request();
         let report = driver.await;
         assert_eq!(report.cause, ShutdownCause::Requested);
@@ -126,7 +126,7 @@ async fn finite_error_and_panic_keep_their_kind_with_a_healthy_component() {
             register_healthy_component(&mut supervisor);
             let process = supervisor.process_handle().unwrap();
             let running = supervisor.start();
-            running.handle().wait_ready().await.unwrap();
+            running.status().wait_ready().await.unwrap();
             let receipt = process
                 .try_spawn("finite", move |_| async move {
                     assert!(!panics, "finite task panic");
@@ -173,7 +173,7 @@ async fn first_failure_is_retained_when_the_other_task_kind_fails_during_drain()
                 .unwrap();
             let process = supervisor.process_handle().unwrap();
             let running = supervisor.start();
-            running.handle().wait_ready().await.unwrap();
+            running.status().wait_ready().await.unwrap();
             let receipt = process
                 .try_spawn("finite", move |scope| async move {
                     if !finite_first {
@@ -221,7 +221,7 @@ async fn descendant_failure_reports_its_own_finite_label() {
         register_healthy_component(&mut supervisor);
         let process = supervisor.process_handle().unwrap();
         let running = supervisor.start();
-        running.handle().wait_ready().await.unwrap();
+        running.status().wait_ready().await.unwrap();
         let ancestor = process
             .try_spawn("ancestor", |scope| async move {
                 let descendant = scope
@@ -256,7 +256,7 @@ async fn finite_shutdown_abort_is_an_outcome_and_preserves_requested_cause() {
         register_healthy_component(&mut supervisor);
         let process = supervisor.process_handle().unwrap();
         let running = supervisor.start();
-        running.handle().wait_ready().await.unwrap();
+        running.status().wait_ready().await.unwrap();
         let (started, entered) = oneshot::channel();
         let receipt = process
             .try_spawn("finite", |_| async move {

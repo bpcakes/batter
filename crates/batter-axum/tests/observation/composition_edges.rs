@@ -21,7 +21,7 @@ fn ready_policy() -> RequestPolicy {
     let handle = ShutdownHandle::new();
     handle.mark_ready();
     RequestPolicy::new(
-        handle,
+        handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     )
 }

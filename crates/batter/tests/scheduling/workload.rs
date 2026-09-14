@@ -18,7 +18,7 @@ pub async fn cycle(case: Case, choices: &mut Choices) -> u64 {
         .unwrap();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     for round in 0..8 {
         round_of_work(case, &process, &ledger, round, choices).await;
     }

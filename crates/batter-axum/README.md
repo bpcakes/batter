@@ -112,7 +112,7 @@ headers are never fallback identity. Handlers may call
 envelope. Default Problem JSON and `with_failure_renderer` remain available;
 the last renderer selection wins. Domain error mappings remain application-owned.
 
-Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle, health)`
+Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
 outside admission. Its response has an empty body and 200 only when lifecycle is
 Ready and the latest read-only health snapshot is healthy. `ReadinessReason`
 retains Starting/Draining/Stopped and each unready dependency status in response

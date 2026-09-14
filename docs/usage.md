@@ -310,8 +310,11 @@ Applications remain responsible for durable uniqueness requirements and trust po
 The example selects `with_infrastructure_json()` and uses
 `render_infrastructure_failure` in handlers; legacy Problem JSON and custom
 rendering remain compatible. Readiness uses `ReadinessPolicy` with a read-only
-HealthReader, and owned startup calls `register_http_in` after binding the native
-listener. These helpers do not own domain errors, body streaming or authentication.
+HealthReader plus `LifecycleStatus`, while request admission receives only
+`OperationAdmission`; owned startup calls `register_http_in` after binding the
+native listener. Construct both projections at the composition root from the
+supervisor or its shutdown handle. These helpers cannot request shutdown or
+approve readiness and do not own domain errors, body streaming or authentication.
 
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their
@@ -376,9 +379,10 @@ and the complete cleanup report. That extraction is a lower-level escape path. T
 [native SQLx example](../examples/postgres-lifecycle/src/main.rs) instead lets
 protected startup own the reserved `pool_in` finalizer through failure cleanup.
 
-An extracted stack may be closed after dropping the supervisor, but that drop
-cancels the supervisor's operation tokens. Cleanup hooks must not use those tokens
-to cancel teardown. Await the resource's native close operation directly, or use
+An extracted stack may be closed after dropping the supervisor; that drop signals
+forced process cancellation first. Cleanup hooks must not use contexts created by
+`OperationAdmission` to cancel teardown. Await the resource's native close
+operation directly, or use
 an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
 still applies. The [extracted-cleanup test](../crates/batter/tests/lifecycle_state.rs)
 demonstrates independent teardown after the owner is dropped.
@@ -452,7 +456,8 @@ fn register_health(
 ```
 
 For each readiness request, evaluate
-`handle.readiness() == Readiness::Ready && reader.is_healthy()`.
+`status.readiness() == Readiness::Ready && reader.is_healthy()` using the
+supervisor's `LifecycleStatus` projection.
 This does no dependency I/O. To inspect why it is unready, call `reader.snapshot()`
 and inspect `status()` and `last_probe()`; original errors require deliberate
 trusted access through `ProbeOutcome::Failed`. Do not cache a healthy snapshot

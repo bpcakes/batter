@@ -52,7 +52,7 @@ fn start() -> Held {
         settings.supervisor(ShutdownBudget::new(second * 2, second, second, cleanup).unwrap());
     let handle = supervisor.handle();
     // Resolves Ok only if readiness is ever acknowledged.
-    let readiness = tokio::spawn(async move { handle.wait_ready().await });
+    let readiness = tokio::spawn(async move { handle.status().wait_ready().await });
     let connection = settings
         .connect_options_from_process()
         .expect("validated native options");

@@ -1,7 +1,7 @@
 use batter::{
     RegistrationError,
     cleanup::{CleanupBudget, CleanupOutcome},
-    lifecycle::{ManagedComponent, ManagedSettlement, ShutdownBudget, Supervisor},
+    lifecycle::{ManagedComponent, ManagedSettlement, Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
     startup::{InitializationError, Startup, StartupCause, StartupError},
 };
@@ -334,7 +334,7 @@ fn run_held_child() {
         .start();
         let report = failure(starting.wait().await);
         assert!(matches!(report.cause, StartupCause::Draining));
-        assert_eq!(handle.readiness(), batter::lifecycle::Readiness::Draining);
+        assert_eq!(handle.status().readiness(), Readiness::Draining);
         assert!(report.cleanup.is_success());
         println!("held-draining");
     });
@@ -501,7 +501,7 @@ fn run_running_child() {
         .with_unix_signals("signals")
         .start();
         let running = starting.wait().await.unwrap();
-        running.handle().wait_ready().await.unwrap();
+        running.status().wait_ready().await.unwrap();
         println!("running-ready");
         std::io::stdout().flush().unwrap();
         wait_for_parent();
@@ -537,7 +537,7 @@ fn run_unapproved_child() {
         .with_unix_signals("signals")
         .start();
         let running = starting.wait().await.unwrap();
-        assert_eq!(handle.readiness(), batter::lifecycle::Readiness::Starting);
+        assert_eq!(handle.status().readiness(), Readiness::Starting);
         println!("unapproved-running");
         std::io::stdout().flush().unwrap();
         wait_for_parent();

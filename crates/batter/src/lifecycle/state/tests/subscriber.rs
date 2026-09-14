@@ -98,14 +98,15 @@ fn subscriber_callbacks_run_before_finite_admission_lock() {
             budget,
             super::super::super::process::ProcessCapacity::new(1).unwrap(),
         );
+        let coordinator = supervisor.coordinator.clone();
         let process = supervisor.process_handle().unwrap();
         let handle = supervisor.handle();
         // Set readiness synchronously: the coordinator must not contend for
         // this lock, and queued application work must remain unpolled.
-        handle.shared.start_driver();
+        coordinator.shared.start_driver();
         handle.mark_ready();
         let probe = Arc::new(SubscriberProbe {
-            state: handle.shared.clone(),
+            state: coordinator.shared.clone(),
             registry: tracing_subscriber::registry(),
             filtered,
             armed: AtomicBool::new(false),

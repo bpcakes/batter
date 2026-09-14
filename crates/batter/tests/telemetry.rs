@@ -235,7 +235,7 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
         let _entered = span.enter();
         supervisor.start()
     });
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
 
     let (release, released) = tokio::sync::oneshot::channel();
     let receipt = tracing::dispatcher::with_default(&request_dispatch, || {

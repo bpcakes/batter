@@ -87,7 +87,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 /// let running = starting.wait().await?;
 /// // Keep requests alive until shutdown: an early critical task exit is a failure.
 /// let response = request_context.run("service.request", |_| async {
-///     running.handle().wait_ready().await
+///     running.status().wait_ready().await
 ///         .map_err(|_| std::io::Error::other("service did not become ready"))?;
 ///     let (reply, response) = oneshot::channel();
 ///     requests.send((21, reply)).await?;
@@ -167,9 +167,9 @@ impl<F> Startup<F> {
     /// .without_readiness_approval()
     /// .start();
     /// let running = starting.wait().await?;
-    /// assert_eq!(running.handle().readiness(), Readiness::Starting);
+    /// assert_eq!(running.status().readiness(), Readiness::Starting);
     /// assert!(running.handle().mark_ready());
-    /// running.handle().wait_ready().await.unwrap();
+    /// running.status().wait_ready().await.unwrap();
     /// assert!(running.shutdown().await?.is_success());
     /// # Ok(()) }
     /// ```
@@ -221,7 +221,7 @@ impl Startup<()> {
     ///         Ok::<_, batter::RegistrationError>(())
     ///     })).start();
     /// let running = starting.wait().await?;
-    /// running.handle().wait_ready().await.unwrap();
+    /// running.status().wait_ready().await.unwrap();
     /// batter::lifecycle::check_shutdown(running.shutdown().await)?;
     /// # Ok(()) }
     /// ```

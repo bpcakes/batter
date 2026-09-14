@@ -188,7 +188,7 @@ async fn finite_abort_keeps_submitter_context_while_driver_and_skipped_cleanup_k
         .unwrap();
     supervisor.handle().mark_ready();
     let running = driver.within("driver", || supervisor.start());
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();
     let receipt = request.within("request", || {
         process

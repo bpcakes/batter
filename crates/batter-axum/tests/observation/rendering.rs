@@ -26,17 +26,20 @@ use tower::ServiceExt;
 use tracing::instrument::WithSubscriber;
 
 fn policy(handle: ShutdownHandle, budget: Duration) -> RequestPolicy {
-    RequestPolicy::new(handle, ResponseConstructionBudget::new(budget).unwrap())
-        .with_failure_renderer(|failure, parts| {
-            let id = parts.extensions.get::<TrustedId>().unwrap().0;
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                Extension(HttpObservationLevel(tracing::Level::ERROR)),
-                [("x-failure-code", failure.code()), ("x-renderer-id", id)],
-                format!("{}:{id}", failure.code()),
-            )
-                .into_response()
-        })
+    RequestPolicy::new(
+        handle.operation_admission(),
+        ResponseConstructionBudget::new(budget).unwrap(),
+    )
+    .with_failure_renderer(|failure, parts| {
+        let id = parts.extensions.get::<TrustedId>().unwrap().0;
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Extension(HttpObservationLevel(tracing::Level::ERROR)),
+            [("x-failure-code", failure.code()), ("x-renderer-id", id)],
+            format!("{}:{id}", failure.code()),
+        )
+            .into_response()
+    })
 }
 
 async fn assert_rendered(response: Response, capture: &Capture, code: &str) {
@@ -151,7 +154,7 @@ async fn forced_cancellation_retains_original_metadata_and_actual_rendered_statu
             .unwrap();
         handle.mark_ready();
         let running = supervisor.start();
-        handle.wait_ready().await.unwrap();
+        handle.status().wait_ready().await.unwrap();
         let inside = handle.clone();
         let router = mode
             .apply(

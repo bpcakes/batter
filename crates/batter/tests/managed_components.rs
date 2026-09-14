@@ -104,12 +104,12 @@ async fn native_ack_requires_approval_and_cleanup_follows_actual_descendant_join
         .unwrap();
     let running = supervisor.start();
     entering.await.unwrap();
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     initialize.send(()).unwrap();
     // Approval is independent of the initialization acknowledgement.
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     running.handle().mark_ready();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success(), "{report}");
     assert!(child_dropped.load(Ordering::SeqCst));
@@ -149,10 +149,10 @@ async fn native_stop_drains_process_before_settlement_and_preserves_late_report(
         .unwrap();
     let running = supervisor.start();
     running.handle().mark_ready();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     native_stop.send(()).unwrap();
-    running.handle().draining().await;
-    assert_eq!(running.handle().readiness(), Readiness::Draining);
+    running.handle().signal().draining().await;
+    assert_eq!(running.status().readiness(), Readiness::Draining);
     release.send(()).unwrap();
     let report = running.wait().await.unwrap();
     assert!(!report.is_success());
@@ -201,7 +201,7 @@ async fn wrapper_abortion_keeps_settlement_owned_and_never_runs_cleanup_later() 
         .unwrap();
     let running = supervisor.start();
     running.handle().mark_ready();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert_eq!(report.abort_requested, ["native"]);
     assert!(!report.managed[0].outcome.finished);
@@ -330,7 +330,7 @@ async fn native_stop_callback_receives_the_original_parent_stop_time() {
         .unwrap();
     let running = supervisor.start();
     running.handle().mark_ready();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let started = Instant::now();
     running.handle().request();
     tokio::time::advance(Duration::from_millis(250)).await;

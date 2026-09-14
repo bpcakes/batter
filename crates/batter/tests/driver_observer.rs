@@ -48,7 +48,7 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
 
     // No await on this current-thread runtime: the coordinator has not polled.
     let running = supervisor.start();
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     let observer = running.observer();
     let another_observer = observer.clone();
     drop(running);
@@ -97,7 +97,7 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
 
     // The coordinator cannot poll until this current-thread test yields.
     let running = supervisor.start();
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     let observer = running.observer();
     let another_observer = observer.clone();
     drop(running);
@@ -132,7 +132,7 @@ fn observer_created_after_completion_retains_report_after_owners_and_runtime_dro
             .expect("the driver must publish its report")
             .unwrap();
         assert!(report.is_success());
-        assert_eq!(running.handle().readiness(), Readiness::Stopped);
+        assert_eq!(running.status().readiness(), Readiness::Stopped);
 
         // Construct a new observer from an owner clone after publication.
         let another_owner = running.clone();

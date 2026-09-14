@@ -68,7 +68,7 @@ fn supervisor(
             let lifetime = TaskLifetime(active.clone());
             active.store(true, Ordering::SeqCst);
             let signal = signal.acknowledge_started();
-            assert_eq!(handle.readiness(), Readiness::Ready);
+            assert_eq!(handle.status().readiness(), Readiness::Ready);
             emit("task-entered");
             entered.send(()).unwrap();
             if !cooperative {
@@ -227,7 +227,7 @@ pub fn run(scenario: &str) {
     assert_eq!(report.cause, ShutdownCause::Requested);
     assert!(report.forced_cancellation);
     assert_eq!(report.completed_process_tasks, 0);
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     if cooperative {
         assert_clean(&report);
         assert!(!live.load(Ordering::SeqCst));

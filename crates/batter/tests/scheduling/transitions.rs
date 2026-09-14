@@ -22,7 +22,7 @@ pub async fn queued_capacity(case: Case) {
     let driver = supervisor.run_until(pending());
     tokio::pin!(driver);
     poll_pending(driver.as_mut()).await;
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     for _ in 0..2 {
         let invoked = invoked.clone();
         drop(
@@ -52,7 +52,7 @@ pub async fn root_drain(case: Case, delay: u64) {
     let process = supervisor.process_handle().unwrap();
     let after = process.clone();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let barrier = Arc::new(Barrier::new(3));
     let submit_barrier = barrier.clone();
     let submitted = tokio::spawn(async move {
@@ -98,7 +98,7 @@ pub async fn descendant_outlives_parent(case: Case) {
     let supervisor = supervisor(2);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (scope_tx, scope_rx) = oneshot::channel();
     let (release, released) = oneshot::channel();
     let parent = process
@@ -137,7 +137,7 @@ pub async fn scope_expiry(case: Case, delay: u64) {
     let supervisor = supervisor(2);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let barrier = Arc::new(Barrier::new(3));
     let parent_barrier = barrier.clone();
     let (scope_tx, scope_rx) = oneshot::channel();
@@ -191,7 +191,7 @@ pub async fn forced_descendant(case: Case) {
     let process = supervisor.process_handle().unwrap();
     supervisor.handle().mark_ready();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();
     let receipt = process
         .try_spawn("forced-ancestor", move |scope| async move {

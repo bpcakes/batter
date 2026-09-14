@@ -86,7 +86,7 @@ impl Server {
             Duration::from_secs(30)
         };
         let policy = RequestPolicy::new(
-            handle.clone(),
+            handle.operation_admission(),
             ResponseConstructionBudget::new(request_budget)?,
         );
         let router = Router::new()

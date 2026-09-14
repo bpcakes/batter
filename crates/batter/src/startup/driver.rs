@@ -372,7 +372,7 @@ impl DriverScope for ProtectedStartupScope {
 }
 
 fn check<E>(context: &OperationContext, handle: &ShutdownHandle) -> Result<(), StartupCause<E>> {
-    if handle.readiness() != Readiness::Starting {
+    if handle.status().readiness() != Readiness::Starting {
         return Err(StartupCause::Draining);
     }
     context.check().map_err(StartupCause::Interrupted)
@@ -419,7 +419,8 @@ where
             );
         }
     };
-    let draining = handle.draining();
+    let shutdown = handle.signal();
+    let draining = shutdown.draining();
     let cancelled = context.cancelled();
     let deadline = tokio::time::sleep_until(context.deadline());
     tokio::pin!(draining, cancelled, deadline);
@@ -700,7 +701,7 @@ mod tests {
         assert_eq!(state.polls.load(Ordering::SeqCst), 2);
         assert_eq!(state.registrations.load(Ordering::SeqCst), 0);
         assert_eq!(state.received_registrations.load(Ordering::SeqCst), 0);
-        assert_eq!(handle.readiness(), Readiness::Draining);
+        assert_eq!(handle.status().readiness(), Readiness::Draining);
         assert!(report.cleanup.is_success());
     }
 
@@ -737,7 +738,7 @@ mod tests {
         assert_eq!(state.polls.load(Ordering::SeqCst), 2);
         assert_eq!(state.registrations.load(Ordering::SeqCst), 1);
         assert_eq!(state.received_registrations.load(Ordering::SeqCst), 1);
-        assert_eq!(handle.wait_ready().await, Err(Readiness::Draining));
+        assert_eq!(handle.status().wait_ready().await, Err(Readiness::Draining));
         assert!(report.cleanup.is_success());
     }
 

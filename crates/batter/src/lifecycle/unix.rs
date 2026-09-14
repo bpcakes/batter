@@ -297,7 +297,7 @@ mod tests {
                     .expect("installed source receives SIGTERM before registration");
                 signals.register(&mut supervisor).unwrap();
                 assert_eq!(
-                    supervisor.handle().readiness(),
+                    supervisor.status().readiness(),
                     super::super::Readiness::Draining
                 );
             });

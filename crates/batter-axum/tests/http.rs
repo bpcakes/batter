@@ -37,7 +37,10 @@ fn application(handle: ShutdownHandle) -> Router {
             ),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
+            RequestPolicy::new(
+                handle.operation_admission(),
+                response_budget(Duration::from_secs(1)),
+            ),
             request_scope,
         ))
 }
@@ -116,7 +119,10 @@ async fn drain_during_handler_does_not_interrupt_admitted_request() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
+            RequestPolicy::new(
+                handle.operation_admission(),
+                response_budget(Duration::from_secs(1)),
+            ),
             request_scope,
         ));
     assert_eq!(
@@ -138,7 +144,10 @@ async fn total_handler_deadline_returns_sanitized_problem() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
+            RequestPolicy::new(
+                handle.operation_admission(),
+                response_budget(Duration::from_secs(1)),
+            ),
             request_scope,
         ));
     let response = router.oneshot(request("/slow")).await.unwrap();
@@ -170,7 +179,10 @@ async fn request_context_is_cancelled_after_response_construction() {
             }),
         )
         .layer(middleware::from_fn_with_state(
-            RequestPolicy::new(handle, response_budget(Duration::from_secs(1))),
+            RequestPolicy::new(
+                handle.operation_admission(),
+                response_budget(Duration::from_secs(1)),
+            ),
             request_scope,
         ));
     router.oneshot(request("/work")).await.unwrap();
@@ -187,7 +199,7 @@ async fn probes_remain_reachable_without_readiness() {
         Router::new()
             .route("/live", get(liveness))
             .route("/ready", get(readiness))
-            .with_state(handle.clone()),
+            .with_state(handle.status()),
     );
     assert_eq!(
         router
@@ -236,21 +248,23 @@ struct ApplicationError {
 }
 
 fn application_policy(handle: ShutdownHandle) -> RequestPolicy {
-    RequestPolicy::new(handle, response_budget(Duration::from_secs(1))).with_failure_renderer(
-        |failure, parts| {
-            // This is an application-provided extension, not a client header.
-            let request_id = parts.extensions.get::<TrustedRequestId>().unwrap().0;
-            (
-                failure.status(),
-                Json(ApplicationError {
-                    code: failure.code(),
-                    message: "The operation could not be completed",
-                    request_id,
-                }),
-            )
-                .into_response()
-        },
+    RequestPolicy::new(
+        handle.operation_admission(),
+        response_budget(Duration::from_secs(1)),
     )
+    .with_failure_renderer(|failure, parts| {
+        // This is an application-provided extension, not a client header.
+        let request_id = parts.extensions.get::<TrustedRequestId>().unwrap().0;
+        (
+            failure.status(),
+            Json(ApplicationError {
+                code: failure.code(),
+                message: "The operation could not be completed",
+                request_id,
+            }),
+        )
+            .into_response()
+    })
 }
 
 fn correlated_request() -> Request<Body> {
@@ -320,7 +334,7 @@ async fn timeout_renderer_keeps_original_trusted_metadata_after_handler_takes_th
 #[tokio::test]
 async fn custom_renderer_owns_status_and_headers_as_well_as_the_error_body() {
     let policy = RequestPolicy::new(
-        ShutdownHandle::new(),
+        ShutdownHandle::new().operation_admission(),
         response_budget(Duration::from_secs(1)),
     )
     .with_failure_renderer(|failure, _parts| {

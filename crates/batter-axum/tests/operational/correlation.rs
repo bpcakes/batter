@@ -46,7 +46,7 @@ fn request(path: &str) -> Request<Body> {
 fn boundary(app: Router, handle: ShutdownHandle) -> Router {
     app.route_layer(middleware::from_fn_with_state(
         RequestPolicy::new(
-            handle,
+            handle.operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(2)).unwrap(),
         )
         .with_infrastructure_json(),
@@ -226,7 +226,7 @@ fn replayed_adapter_extension_is_replaced_and_custom_renderer_remains_in_control
             .clone();
         let old_id = old.as_str().to_owned();
         let policy = RequestPolicy::new(
-            ShutdownHandle::new(),
+            ShutdownHandle::new().operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         )
         .with_infrastructure_json()
@@ -341,7 +341,7 @@ async fn deadline_failure_uses_generated_id_even_when_info_spans_are_disabled() 
 #[tokio::test]
 async fn missing_typed_correlation_never_falls_back_to_untrusted_headers() {
     let policy = RequestPolicy::new(
-        ShutdownHandle::new(),
+        ShutdownHandle::new().operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     )
     .with_infrastructure_json();
@@ -387,7 +387,7 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
         .unwrap();
     let running = supervisor.start();
     handle.mark_ready();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     let seen = Arc::new(Mutex::new(None));
     let saved = seen.clone();
     let app = boundary(

@@ -53,7 +53,7 @@ async fn shared_report_retains_task_and_cleanup_failures_across_owners() {
         .unwrap();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let observer = running.observer();
     let receipt = process
         .try_spawn("failed-work", |_| async {

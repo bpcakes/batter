@@ -87,7 +87,7 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
     running.handle().mark_ready();
     let observed: Result<HashSet<Uuid>, BoxError> = async {
         running
-            .handle()
+            .status()
             .wait_ready()
             .await
             .map_err(|_| "native initialization did not complete")?;

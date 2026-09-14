@@ -1,4 +1,4 @@
-use super::{ShutdownHandle, ShutdownReport, Supervisor};
+use super::{LifecycleStatus, OperationAdmission, ShutdownHandle, ShutdownReport, Supervisor};
 use crate::{completion::wait_published, scoped_dispatch};
 use std::{future::pending, ops::Deref, sync::Arc};
 use tokio::{sync::watch, task::JoinError};
@@ -192,9 +192,19 @@ impl Drop for DriverOwner {
 }
 
 impl RunningSupervisor {
-    /// Clone lifecycle control without prolonging ownership of the driver.
+    /// Clone root shutdown control without prolonging ownership of the driver.
     pub fn handle(&self) -> ShutdownHandle {
         self.owner.handle.clone()
+    }
+
+    /// Clone read-only readiness and lifecycle status without retaining control.
+    pub fn status(&self) -> LifecycleStatus {
+        self.owner.handle.status()
+    }
+
+    /// Clone readiness-gated admission for transient operation contexts.
+    pub fn operation_admission(&self) -> OperationAdmission {
+        self.owner.handle.operation_admission()
     }
 
     /// Observe completion even after all driver owners have been dropped.

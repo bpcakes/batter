@@ -111,7 +111,7 @@ impl Fixture {
             Duration::from_secs(60)
         };
         let policy = RequestPolicy::new(
-            handle.clone(),
+            handle.operation_admission(),
             ResponseConstructionBudget::new(request_budget).unwrap(),
         );
         let app = router(state.clone(), policy);
@@ -168,7 +168,7 @@ impl Fixture {
     }
     pub fn drain(&self) {
         self.handle.request();
-        assert_eq!(self.handle.readiness(), Readiness::Draining);
+        assert_eq!(self.handle.status().readiness(), Readiness::Draining);
         self.events.record("drain");
     }
     pub fn assert_cancelled(&self) {

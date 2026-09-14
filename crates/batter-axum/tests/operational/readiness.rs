@@ -91,7 +91,7 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
             },
         );
         let handle = ShutdownHandle::new();
-        let policy = ReadinessPolicy::new(handle.clone(), monitor.reader());
+        let policy = ReadinessPolicy::new(handle.status(), monitor.reader());
         assert_response(&policy, ReadinessReason::Starting).await;
         handle.mark_ready();
         assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Unknown)).await;
@@ -145,7 +145,7 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
             .unwrap(),
             || async { Ok::<_, std::io::Error>(()) },
         );
-        let stopped = ReadinessPolicy::new(supervisor.handle(), monitor.reader());
+        let stopped = ReadinessPolicy::new(supervisor.status(), monitor.reader());
         let report = supervisor.start().wait().await.unwrap();
         assert!(!report.is_success()); // Empty supervisor, used only to observe terminal state.
         assert_response(&stopped, ReadinessReason::Stopped).await;
@@ -179,7 +179,7 @@ async fn explicit_severity_override_preserves_reason_status_body_and_http_outcom
         .unwrap(),
         || async { Ok::<_, std::io::Error>(()) },
     );
-    let policy = ReadinessPolicy::new(ShutdownHandle::new(), monitor.reader());
+    let policy = ReadinessPolicy::new(ShutdownHandle::new().status(), monitor.reader());
     let captures: Vec<_> = (0..2).map(|_| Capture::new()).collect();
     for (policy, capture, level) in [
         (policy.clone(), &captures[0], "INFO"),
@@ -251,7 +251,7 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             },
         );
         let reader = monitor.reader();
-        let policy = ReadinessPolicy::new(handle.clone(), reader.clone());
+        let policy = ReadinessPolicy::new(handle.status(), reader.clone());
         let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
         supervisor
             .register("health", move |startup| async move {
@@ -272,7 +272,7 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             .unwrap();
         let running = supervisor.start();
         handle.mark_ready();
-        tokio::time::timeout(second, handle.wait_ready())
+        tokio::time::timeout(second, handle.status().wait_ready())
             .await
             .unwrap()
             .unwrap();

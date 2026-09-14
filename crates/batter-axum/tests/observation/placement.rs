@@ -70,7 +70,7 @@ async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
         .apply(
             Router::new().route("/work", get(|| async { "ok" })),
             RequestPolicy::new(
-                handle,
+                handle.operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
         )
@@ -98,7 +98,7 @@ async fn admission_alone_does_not_emit_http_observations() {
     let router = Boundary::Admission.apply(
         Router::new().route("/work", get(|| async { "ok" })),
         RequestPolicy::new(
-            handle,
+            handle.operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         ),
     );

@@ -197,7 +197,7 @@ async fn startup_query_joins_before_pool_close() -> Result {
     })
     .start();
     let running = starting.wait().await.unwrap();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     running.handle().request();
     let report = running.wait().await.unwrap();
     assert!(report.is_success(), "{report:?}");

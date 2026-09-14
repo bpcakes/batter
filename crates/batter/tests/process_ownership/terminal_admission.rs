@@ -29,8 +29,8 @@ fn admission_is_closed_when_shutdown_precedes_startup() {
     let process = supervisor.process_handle().unwrap();
     let handle = supervisor.handle();
     handle.request();
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    assert!(!handle.operation_token().is_cancelled());
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
+    assert!(!handle.signal().is_cancelled());
     assert_admission_closed(&process);
 }
 
@@ -40,8 +40,8 @@ fn admission_is_closed_after_unpolled_driver_drop() {
     let process = supervisor.process_handle().unwrap();
     let handle = supervisor.handle();
     drop(supervisor.run_until(pending()));
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    assert!(handle.operation_token().is_cancelled());
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
+    assert!(handle.signal().is_cancelled());
     assert_admission_closed(&process);
 }
 
@@ -62,8 +62,8 @@ async fn admission_is_closed_after_driver_abort_before_first_poll() {
     let task = tokio::spawn(supervisor.run_until(pending()));
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    assert!(handle.operation_token().is_cancelled());
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
+    assert!(handle.signal().is_cancelled());
     assert_admission_closed(&process);
 }
 
@@ -73,7 +73,7 @@ async fn admission_is_closed_after_driver_abort_after_startup() {
     let process = supervisor.process_handle().unwrap();
     let handle = supervisor.handle();
     let task = tokio::spawn(supervisor.run_until(pending()));
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert_admission_closed(&process);
@@ -85,8 +85,8 @@ async fn admission_is_closed_after_completed_shutdown() {
     let process = supervisor.process_handle().unwrap();
     let handle = supervisor.handle();
     let running = supervisor.start();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     assert_admission_closed(&process);
 }

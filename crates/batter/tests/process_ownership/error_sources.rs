@@ -6,7 +6,7 @@ async fn receipt_and_report_expose_the_same_concrete_source() {
     let supervisor = finite_supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let receipt = process
         .try_spawn("shared-error", |_| async {
             Err::<(), _>(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))

@@ -17,7 +17,7 @@ pub async fn receipt_waiter(case: Case, delay: u64) {
     let supervisor = supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();
     let (release, released) = oneshot::channel();
     let receipt = process
@@ -58,12 +58,12 @@ pub async fn cleanup_waiter(case: Case, delay: u64) {
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let handle = running.handle();
     let observer = running.observer();
     let last_owner = running.clone();
     drop(running);
-    assert!(!handle.is_draining());
+    assert!(!handle.status().is_draining());
     let waiter = tokio::spawn(async move { last_owner.shutdown().await });
     ready.await.unwrap();
     yields(delay).await;
@@ -77,7 +77,7 @@ pub async fn cleanup_waiter(case: Case, delay: u64) {
     assert!(first.is_success());
     assert_eq!(first.cleanup.records.len(), 1);
     assert!(finished.load(Ordering::SeqCst));
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     case.event("cancelled-shutdown-waiter-retained-cleanup-and-report");
 }
 
@@ -85,7 +85,7 @@ pub async fn last_owner(case: Case, delay: u64) {
     let supervisor = supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started, ready) = oneshot::channel();
     let (release, released) = oneshot::channel();
     let receipt = process
@@ -102,7 +102,7 @@ pub async fn last_owner(case: Case, delay: u64) {
     let handle = running.handle();
     yields(delay).await;
     drop(running);
-    assert!(handle.is_draining());
+    assert!(handle.status().is_draining());
     release.send(()).unwrap();
     assert_eq!(receipt.wait().await.unwrap(), 31);
     let report = observer.wait().await.unwrap();
@@ -123,7 +123,7 @@ impl Drop for DropSignal {
 pub async fn caller_owned(case: Case, polled: bool) {
     let mut supervisor = Supervisor::new(budget());
     let handle = supervisor.handle();
-    let token = handle.operation_token();
+    let token = handle.signal();
     let (started, ready) = oneshot::channel();
     let (dropped, gone) = oneshot::channel();
     let invoked = Arc::new(AtomicBool::new(false));
@@ -158,7 +158,7 @@ pub async fn caller_owned(case: Case, polled: bool) {
         assert!(!invoked.load(Ordering::SeqCst));
     }
     assert!(token.is_cancelled());
-    assert!(handle.is_draining());
+    assert!(handle.status().is_draining());
     assert!(!cleanup.load(Ordering::SeqCst));
     case.event("caller-owned-drop-not-clean-shutdown");
 }

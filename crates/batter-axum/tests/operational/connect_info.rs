@@ -102,8 +102,11 @@ async fn protected_startup_supplies_each_socket_peer_to_admission_and_handler() 
     )
     .start();
     let running = timeout(WAIT, starting.wait()).await.unwrap().unwrap();
-    timeout(WAIT, handle.wait_ready()).await.unwrap().unwrap();
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    timeout(WAIT, handle.status().wait_ready())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     let address = address_rx.await.unwrap();
     let first = timeout(WAIT, TcpStream::connect(address))
         .await
@@ -121,7 +124,7 @@ async fn protected_startup_supplies_each_socket_peer_to_admission_and_handler() 
     assert_eq!(report.cleanup.records.len(), 1);
     assert_eq!(report.cleanup.records[0].name, "dependency");
     cleanup_rx.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     assert!(TcpStream::connect(address).await.is_err());
 }
 
@@ -146,7 +149,7 @@ async fn peer_registration_rejects_names_and_releases_only_rejected_or_abandoned
     ));
     drop(TcpListener::bind(rejected_address).await.unwrap());
     assert!(TcpListener::bind(accepted_address).await.is_err());
-    assert_eq!(supervisor.handle().readiness(), Readiness::Starting);
+    assert_eq!(supervisor.status().readiness(), Readiness::Starting);
     drop(supervisor);
     drop(TcpListener::bind(accepted_address).await.unwrap());
 }

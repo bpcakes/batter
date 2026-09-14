@@ -13,7 +13,7 @@ pub async fn capacity_one(case: Case, drain: bool) {
     let supervisor = supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (scope_tx, scope_rx) = oneshot::channel();
     let (finish_tx, finish_rx) = oneshot::channel();
     let parent = process

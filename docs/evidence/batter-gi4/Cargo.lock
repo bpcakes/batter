@@ -65,6 +65,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "batter"
 version = "0.1.0"
+source = "git+https://github.com/bpcakes/batter.git?rev=034ce0085220044dcf5f3561b00a0bfce96a801f#034ce0085220044dcf5f3561b00a0bfce96a801f"
 dependencies = [
  "pin-project-lite",
  "thiserror",
@@ -76,6 +77,7 @@ dependencies = [
 [[package]]
 name = "batter-runledger"
 version = "0.1.0"
+source = "git+https://github.com/bpcakes/batter.git?rev=034ce0085220044dcf5f3561b00a0bfce96a801f#034ce0085220044dcf5f3561b00a0bfce96a801f"
 dependencies = [
  "batter",
  "runledger-runtime",

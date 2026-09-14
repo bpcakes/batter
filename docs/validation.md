@@ -2,6 +2,41 @@
 
 Latest evidence: 2026-09-14. Earlier sections retain their historical scope.
 
+## Purpose-qualified lifecycle authority, Slice 2, 2026-09-14
+
+Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 toolchains. This slice
+separates root lifecycle control, read-only status, readiness-gated operation
+admission, component shutdown observation, and private coordination authority.
+Foundation, Axum, SQLx, Runledger, examples, and repository fixtures were
+migrated together; no compatibility shim retains the broad authority boundary.
+
+| Slice 2 command | Executed outcome |
+| --- | --- |
+| `bash scripts/verify.sh` | PASS on the pinned Rust 1.98.1 toolchain: the complete workspace check, test and doctest matrix, strict Clippy, formatting and rustdoc completed. Foundation rustdoc ran 25 positive and 27 compile-fail cases. The compile-fail cases reject root mutation through status, admission and component observers, direct raw-token extraction, and supplying root control to narrow Axum policies. Externally provisioned PostgreSQL tests remained explicitly ignored. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
+| `cargo test -p batter --test lifecycle_state --locked` | PASS: eight lifecycle-state cases cover admission in Starting, Ready, Draining and Stopped, downward-only cancellation, admitted work surviving drain until forced cancellation, concurrent admission/drain linearization, and an already-expired admitted deadline reporting `DeadlineExceeded`. |
+| Fresh `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS in all five modes on Rust 1.98.1 and again after a fresh Rust 1.94.0 build, for ten passing process smokes. |
+| `cargo test --locked --manifest-path docs/evidence/batter-gi4/Cargo.toml` | PASS on Rust 1.98.1 and Rust 1.94.0: five integration and two modification tests preserve the historical consumer oracle. Its evidence crate now pins Batter and Batter Runledger to immutable revision `034ce0085220044dcf5f3561b00a0bfce96a801f`, the revision whose API the archived source records, so current workspace cutovers cannot silently rewrite historical evidence. |
+| `scripts/jig check repo:file-budget --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | PASS after extracting the public projections into `lifecycle/capability.rs`; both lifecycle source files remain below their configured limits. |
+| `scripts/jig work check --plan-id plan_01M2GK0TJJSGNBFPNG0SEADTNF` | PASS: all five required targets executed against the current worktree. The fresh `api:test` receipt is `receipt_01M2GTNF6KZNW11CMHVHN6KZVV`; the target-validation receipt is `receipt_01M2GTNFVMTWZAZ075PQ0KWAFV`. |
+
+The first comprehensive Claude/Codex review pass found no runtime correctness
+defect. Its verified supporting findings led to explicit changelog coverage,
+historical-evidence pinning, direct imports, and stronger transition/admission
+tests. The second pass found no runtime defect and led to making coordinator
+state fully private, correcting Axum documentation links, and adding a
+concurrent admission-versus-drain oracle. The third pass again found no
+substantive issue; its supporting closure added direct raw-token compile-fail
+controls, conditional-readiness wording, the expired-deadline admission case,
+and this complete execution matrix. A final fresh review pass remains pending at
+the time of this execution entry.
+
+This evidence does not claim hosted CI, current Linux, live PostgreSQL,
+publication, deployment, push, or adoption by a current external consumer. The
+archived consumer run proves only the immutable historical contract described
+by its README.
+
 ## Linear component-start capability, Slice 1, 2026-09-14
 
 Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1

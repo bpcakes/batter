@@ -4,7 +4,8 @@
 mod tests;
 
 use super::{
-    Component, ShutdownCause, ShutdownHandle, TaskOutcome, TaskRecord, process, receive_process,
+    Component, LifecycleCoordinator, RegisteredComponent, ShutdownCause, TaskOutcome, TaskRecord,
+    process, receive_process,
 };
 use crate::{BoxError, scoped_dispatch};
 use std::collections::HashMap;
@@ -39,16 +40,20 @@ impl TaskSet {
     pub(super) fn spawn_component(&mut self, component: Component) {
         let Component {
             name,
-            startup,
+            lifecycle:
+                RegisteredComponent {
+                    startup,
+                    coordinator,
+                },
             factory,
         } = component;
-        let handle = startup.shutdown.handle.clone();
+        let classification = coordinator.clone();
         let span = tracing::info_span!(target: "batter", "batter.task", task = name).or_current();
         let abort = self.set.spawn(scoped_dispatch::scope(
             async move {
-                let result = factory(startup).await;
+                let result = factory(startup, coordinator).await;
                 // Capture the state at completion, never at delayed observation.
-                let expected = handle.is_draining();
+                let expected = classification.is_draining();
                 TaskExit { result, expected }
             }
             .instrument(span),
@@ -84,13 +89,13 @@ impl TaskSet {
         values
     }
 
-    fn pending(&self, handle: &ShutdownHandle) -> bool {
-        !self.set.is_empty() || handle.shared.has_finite_tasks()
+    fn pending(&self, coordinator: &LifecycleCoordinator) -> bool {
+        !self.set.is_empty() || coordinator.shared.has_finite_tasks()
     }
 
-    pub(super) fn unfinished(&self, handle: &ShutdownHandle) -> bool {
+    pub(super) fn unfinished(&self, coordinator: &LifecycleCoordinator) -> bool {
         self.names.values().any(|task| !task.abort.is_finished())
-            || handle.shared.has_finite_tasks()
+            || coordinator.shared.has_finite_tasks()
     }
 
     // Membership means a result remains unobserved, not necessarily that the
@@ -140,41 +145,41 @@ impl TaskSet {
     fn record_exit(
         &mut self,
         result: TaskResult,
-        handle: &ShutdownHandle,
+        coordinator: &LifecycleCoordinator,
     ) -> Option<ShutdownCause> {
         let cause = self.record(result);
         if cause.is_some() {
-            handle.shared.fail_task();
+            coordinator.shared.fail_task();
         }
         cause
     }
 
-    pub(super) fn collect_ready(&mut self, handle: &ShutdownHandle) {
+    pub(super) fn collect_ready(&mut self, coordinator: &LifecycleCoordinator) {
         // This nonblocking API can observe completed tasks even when Tokio's
         // cooperative poll budget is exhausted. Only this coordinator adds to
         // the JoinSet, so harvesting the currently spawned set is bounded.
         while let Some(result) = self.set.try_join_next_with_id() {
-            self.record_exit(result, handle);
+            self.record_exit(result, coordinator);
         }
     }
 
     pub(super) async fn collect_until(
         &mut self,
         queued: &mut Option<mpsc::Receiver<process::QueuedProcess>>,
-        handle: &ShutdownHandle,
+        coordinator: &LifecycleCoordinator,
         allowance: std::time::Duration,
     ) {
-        while self.pending(handle) {
+        while self.pending(coordinator) {
             tokio::select! {
                 biased;
-                _ = handle.shared.phase_elapsed(allowance) => break,
-                _ = self.next_exit(handle), if !self.is_empty() => {}
+                _ = coordinator.shared.phase_elapsed(allowance) => break,
+                _ = self.next_exit(coordinator), if !self.is_empty() => {}
                 Some(task) = receive_process(queued) => self.spawn_process(task),
             }
         }
         // Expired allowances stop waiting, not observation of results that are
         // already available. Reconcile before escalation or final reporting.
-        self.collect_ready(handle);
+        self.collect_ready(coordinator);
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -183,9 +188,12 @@ impl TaskSet {
 
     /// Join and record in the same poll, before the coordinator sees a cause.
     /// Cancelling a pending wait cannot discard a consumed task result.
-    pub(super) async fn next_exit(&mut self, handle: &ShutdownHandle) -> Option<ShutdownCause> {
+    pub(super) async fn next_exit(
+        &mut self,
+        coordinator: &LifecycleCoordinator,
+    ) -> Option<ShutdownCause> {
         let result = self.set.join_next_with_id().await?;
-        self.record_exit(result, handle)
+        self.record_exit(result, coordinator)
     }
 
     /// Release task ownership before the caller can start dependency cleanup.

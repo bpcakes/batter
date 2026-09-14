@@ -45,7 +45,7 @@ pub async fn descendant_closure(
     supervisor.handle().mark_ready();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (scope_tx, scope_rx) = oneshot::channel();
     let (release, released) = oneshot::channel();
     let parent = process

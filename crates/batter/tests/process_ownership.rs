@@ -246,7 +246,7 @@ async fn completed_critical_stop_is_observed_after_deadline_without_false_abort(
     let driver = supervisor.run_until(pending());
     tokio::pin!(driver);
     poll_driver_once(driver.as_mut()).await;
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     handle.request();
     poll_driver_once(driver.as_mut()).await;
     // Enter cancellation at its absolute boundary; completion still precedes abort.
@@ -308,14 +308,14 @@ async fn readiness_waits_for_every_component_acknowledgement() {
         .unwrap();
     let running = supervisor.start();
     first_rx.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(matches!(
         process.try_spawn("too-soon", |_| async { Ok::<_, Infallible>(()) }),
         Err(ProcessAdmissionError::NotReady)
     ));
     initialize_tx.send(()).unwrap();
-    handle.wait_ready().await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    handle.status().wait_ready().await.unwrap();
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     assert!(running.shutdown().await.unwrap().is_success());
 }
 
@@ -324,7 +324,7 @@ async fn cancelling_request_waiter_keeps_work_and_permit_owned_until_finish() {
     let supervisor = finite_supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started_tx, started_rx) = oneshot::channel();
     let (finish_tx, finish_rx) = oneshot::channel();
     let receipt = process
@@ -357,7 +357,7 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
     let supervisor = finite_supervisor(2);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let denial = process
         .try_spawn("quota-check", |_| async {
             Ok::<Result<(), Denial>, Infallible>(Err(Denial::Quota))
@@ -367,7 +367,7 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
         .await
         .unwrap();
     assert_eq!(denial, Err(Denial::Quota));
-    assert!(!running.handle().is_draining());
+    assert!(!running.status().is_draining());
     let value = process
         .try_spawn("next-task", |_| async { Ok::<_, Infallible>(23) })
         .unwrap()
@@ -390,7 +390,7 @@ async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
     let supervisor = finite_supervisor(1);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let receipt = process
         .try_spawn("failed-task", |_| async {
             Err::<(), _>(std::io::Error::other("private failure cause"))
@@ -428,7 +428,7 @@ async fn finite_factory_panic_is_observed_and_skips_dependent_cleanup() {
         .unwrap();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let receipt = process
         .try_spawn(
             "factory-panic",
@@ -459,7 +459,7 @@ async fn admitted_ancestor_can_submit_bounded_children_during_drain() {
     let supervisor = finite_supervisor(2);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (parent_tx, parent_rx) = oneshot::channel();
     let (child_tx, child_rx) = oneshot::channel();
     let (finish_tx, finish_rx) = oneshot::channel();
@@ -496,7 +496,7 @@ async fn escaped_scope_expires_when_its_actual_task_finishes() {
     let supervisor = finite_supervisor(2);
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let scope = process
         .try_spawn("escapes-scope", |scope| async {
             Ok::<_, Infallible>(scope)
@@ -527,7 +527,7 @@ async fn forced_cancellation_closes_descendant_admission() {
     let process = supervisor.process_handle().unwrap();
     supervisor.handle().mark_ready();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (started_tx, started_rx) = oneshot::channel();
     let task = process
         .try_spawn("cancelled-ancestor", move |scope| async move {
@@ -565,12 +565,12 @@ async fn cancelling_shutdown_waiter_cannot_cancel_started_cleanup() {
         .unwrap();
     let running = supervisor.start();
     let handle = running.handle();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     let observer = running.observer();
     let other_owner = running.clone();
     drop(running);
     assert!(
-        !handle.is_draining(),
+        !handle.status().is_draining(),
         "one remaining driver owner keeps process running"
     );
     let waiter = tokio::spawn(async move { other_owner.shutdown().await });
@@ -583,7 +583,7 @@ async fn cancelling_shutdown_waiter_cannot_cancel_started_cleanup() {
     assert!(first_report.is_success());
     assert!(std::ptr::eq(&*first_report, &*second_report));
     assert!(finalized.load(Ordering::SeqCst));
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
 }
 
 #[tokio::test]
@@ -598,7 +598,7 @@ async fn last_owner_drop_requests_shutdown_and_observer_retains_report() {
         })
         .unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let observer = running.observer();
     drop(running);
     let report = observer.wait().await.unwrap();
@@ -625,7 +625,7 @@ async fn component_startup_failure_never_publishes_ready_and_still_cleans_up() {
         .unwrap();
     let running = supervisor.start();
     assert!(matches!(
-        handle.wait_ready().await,
+        handle.status().wait_ready().await,
         Err(Readiness::Draining | Readiness::Stopped)
     ));
     let report = running.wait().await.unwrap();
@@ -678,7 +678,7 @@ async fn cancelling_explicit_coordinator_aborts_owned_task_and_skips_async_clean
     }
     let mut supervisor = Supervisor::new(budget());
     let handle = supervisor.handle();
-    let token = handle.operation_token();
+    let token = handle.signal();
     let (started_tx, started_rx) = oneshot::channel();
     let (dropped_tx, dropped_rx) = oneshot::channel();
     supervisor
@@ -706,7 +706,7 @@ async fn cancelling_explicit_coordinator_aborts_owned_task_and_skips_async_clean
         .unwrap()
         .unwrap();
     assert!(token.is_cancelled());
-    assert!(handle.is_draining());
+    assert!(handle.status().is_draining());
     assert!(!cleanup_called.load(Ordering::SeqCst));
 }
 
@@ -716,7 +716,7 @@ async fn admission_racing_drain_is_either_rejected_or_included_in_shutdown() {
         let supervisor = finite_supervisor(1);
         let process = supervisor.process_handle().unwrap();
         let running = supervisor.start();
-        running.handle().wait_ready().await.unwrap();
+        running.status().wait_ready().await.unwrap();
         let barrier = Arc::new(Barrier::new(3));
         let ran = Arc::new(AtomicUsize::new(0));
         let submit_barrier = barrier.clone();
@@ -769,7 +769,7 @@ async fn startup_acknowledgement_racing_drain_cannot_restore_readiness() {
             })
             .unwrap();
         let running = supervisor.start();
-        assert_eq!(handle.readiness(), Readiness::Starting);
+        assert_eq!(handle.status().readiness(), Readiness::Starting);
         let drain_barrier = barrier.clone();
         let requesting = handle.clone();
         let drain = tokio::spawn(async move {
@@ -780,11 +780,11 @@ async fn startup_acknowledgement_racing_drain_cannot_restore_readiness() {
         drain.await.unwrap();
         started_rx.await.unwrap();
         assert!(matches!(
-            handle.readiness(),
+            handle.status().readiness(),
             Readiness::Draining | Readiness::Stopped
         ));
         assert!(!handle.mark_ready());
-        assert!(handle.wait_ready().await.is_err());
+        assert!(handle.status().wait_ready().await.is_err());
         assert!(running.wait().await.unwrap().is_success());
     }
 }

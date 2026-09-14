@@ -7,7 +7,7 @@ use axum::{
 };
 use batter::{
     health::{HealthReader, HealthStatus},
-    lifecycle::{Readiness, ShutdownHandle},
+    lifecycle::{LifecycleStatus, Readiness},
 };
 use tracing::Level;
 
@@ -58,13 +58,24 @@ impl ReadinessReason {
 /// use axum::{Router, routing::get};
 /// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
 /// use batter_axum::{ReadinessPolicy, dependency_readiness};
-/// fn probes(handle: ShutdownHandle, health: HealthReader<std::io::Error>) -> Router {
+/// fn probes(control: ShutdownHandle, health: HealthReader<std::io::Error>) -> Router {
 ///     Router::new().route("/ready", get(dependency_readiness::<std::io::Error>))
-///         .with_state(ReadinessPolicy::new(handle, health))
+///         .with_state(ReadinessPolicy::new(control.status(), health))
+/// }
+/// ```
+///
+/// Root shutdown control cannot be retained by readiness policy:
+///
+/// ```compile_fail,E0308
+/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_axum::ReadinessPolicy;
+///
+/// fn cannot_retain_control(control: ShutdownHandle, health: HealthReader<std::io::Error>) {
+///     let policy = ReadinessPolicy::new(control, health);
 /// }
 /// ```
 pub struct ReadinessPolicy<E> {
-    lifecycle: ShutdownHandle,
+    lifecycle: LifecycleStatus,
     dependency: HealthReader<E>,
     level: fn(ReadinessReason) -> Level,
 }
@@ -81,7 +92,7 @@ impl<E> Clone for ReadinessPolicy<E> {
 
 impl<E> ReadinessPolicy<E> {
     /// Select INFO for expected Starting/Draining, WARN for dependency/Stopped failures.
-    pub fn new(lifecycle: ShutdownHandle, dependency: HealthReader<E>) -> Self {
+    pub fn new(lifecycle: LifecycleStatus, dependency: HealthReader<E>) -> Self {
         Self {
             lifecycle,
             dependency,

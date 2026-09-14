@@ -8,6 +8,22 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Split root lifecycle authority from consumer projections. `ShutdownHandle`
+  now requests shutdown and constructs purpose-qualified views:
+  `LifecycleStatus` for readiness/status, `OperationAdmission` for creating a
+  readiness-gated downward-cancelled `OperationContext`, and `ShutdownSignal`
+  for drain/cancellation observation. `RequestPolicy` now requires
+  `OperationAdmission`; `ReadinessPolicy` and the status-only Axum readiness
+  handler require `LifecycleStatus`. Migrate `handle.readiness()`,
+  `handle.wait_ready()`, `handle.is_draining()`, and `handle.draining()` to
+  `handle.status().readiness()`, `handle.status().wait_ready()`,
+  `handle.status().is_draining()`, and `handle.signal().draining()` respectively;
+  pass `handle.operation_admission()` to request policy. Raw `operation_token()`
+  has no direct replacement: transient work uses `OperationAdmission::admit`
+  while Ready, component drain work observes `ShutdownSignal::cancelled()`, and
+  cleanup uses an independent bounded context. Managed supervision receives
+  private coordinator authority directly and can no longer recover it through a
+  read-only signal.
 - Replace provenance-dependent `ShutdownSignal::mark_started` with a linear
   component-start boundary. `Supervisor::register` and constrained
   `Registration::register` factories now receive a non-cloneable

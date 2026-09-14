@@ -17,7 +17,7 @@ async fn dropping_component_startup_cannot_satisfy_readiness() {
 
     let running = supervisor.start();
     dropped_rx.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     handle.request();
     assert!(running.shutdown().await.unwrap().is_success());
 }

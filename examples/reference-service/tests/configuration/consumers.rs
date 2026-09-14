@@ -44,7 +44,7 @@ async fn configured_request_policy_changes_actual_response_deadline() {
                 }),
             )
             .layer(middleware::from_fn_with_state(
-                root.request_policy(handle),
+                root.request_policy(handle.operation_admission()),
                 batter_axum::request_admission,
             ));
         let response = app
@@ -85,7 +85,7 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
         let handle = supervisor.handle();
         handle.mark_ready();
         let running = supervisor.start();
-        handle.wait_ready().await.unwrap();
+        handle.status().wait_ready().await.unwrap();
         let mut finishes = Vec::new();
         let mut receipts = Vec::new();
         for _ in 0..process_limit {
@@ -164,7 +164,7 @@ pub(crate) async fn native_worker() {
     let running = process.start();
     running.handle().mark_ready();
     let initialized =
-        tokio::time::timeout(Duration::from_secs(3), running.handle().wait_ready()).await;
+        tokio::time::timeout(Duration::from_secs(3), running.status().wait_ready()).await;
     let report = running.shutdown().await.unwrap();
     assert!(matches!(initialized, Ok(Ok(()))));
     assert!(report.is_success(), "{report}");

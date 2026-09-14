@@ -44,7 +44,7 @@ pub use worker::WorkerSettings;
 use crate::{auth::BearerAuthenticator, delivery::OwnerId};
 use batter::{
     admission::{Bulkhead, BulkheadCapacity},
-    lifecycle::{ProcessCapacity, ShutdownBudget, ShutdownHandle, Supervisor},
+    lifecycle::{OperationAdmission, ProcessCapacity, ShutdownBudget, Supervisor},
     settings::{SettingsError, SettingsSource, bounded_u64, milliseconds, read_file},
 };
 use batter_axum::{RequestPolicy, ResponseConstructionBudget};
@@ -245,8 +245,8 @@ impl ServingSettings {
 
     /// Construct a native response policy for focused configuration probes.
     /// The protected serving root uses [`PreparedHttp`] instead.
-    pub fn request_policy(&self, handle: ShutdownHandle) -> RequestPolicy {
-        RequestPolicy::new(handle, self.request_budget)
+    pub fn request_policy(&self, admission: OperationAdmission) -> RequestPolicy {
+        RequestPolicy::new(admission, self.request_budget)
     }
 
     /// Construct process-local admission for focused configuration probes.

@@ -163,7 +163,7 @@ async fn completion_fields_belong_to_events_at_every_level_with_independent_span
                     }),
                 ),
                 RequestPolicy::new(
-                    handle,
+                    handle.operation_admission(),
                     ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
                 ),
             );
@@ -203,7 +203,7 @@ async fn rejected_and_unmatched_requests_keep_event_fields_without_info_spans() 
         let router = mode.apply(
             Router::new().route("/work", get(must_not_run)),
             RequestPolicy::new(
-                ShutdownHandle::new(),
+                ShutdownHandle::new().operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
         );
@@ -251,7 +251,7 @@ fn dropped_future_keeps_event_fields_and_first_poll_dispatch_without_info_spans(
                     get(|| async { std::future::pending::<StatusCode>().await }),
                 ),
                 RequestPolicy::new(
-                    handle,
+                    handle.operation_admission(),
                     ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
                 ),
             );

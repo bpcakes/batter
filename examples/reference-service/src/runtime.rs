@@ -210,7 +210,8 @@ impl std::error::Error for RuntimePoolCleanupFailure {
 pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
     let parts = prepared.into_parts();
     let supervisor = parts.supervisor;
-    let readiness = supervisor.handle();
+    let lifecycle = supervisor.status();
+    let admission = supervisor.operation_admission();
     let context = OperationContext::new(STARTUP_ALLOWANCE)?;
     let native_startup = context.clone();
     let mut starting = Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
@@ -224,7 +225,13 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
                 let health = register_health(scope.registration(), pool.clone())?;
 
                 scope.stage("http.bind")?;
-                let application = router(parts.http, readiness.clone(), pool.clone(), health);
+                let application = router(
+                    parts.http,
+                    lifecycle.clone(),
+                    admission.clone(),
+                    pool.clone(),
+                    health,
+                );
                 let listener = tokio::net::TcpListener::bind(parts.bind).await?;
                 batter_axum::register_http_in(scope, "http", listener, application)?;
 
@@ -427,7 +434,7 @@ mod tests {
         assert!(matches!(report.cause, StartupCause::Draining));
         assert!(report.source().is_none());
         assert_one_pool_cleanup(report);
-        assert_ne!(handle.readiness(), Readiness::Ready);
+        assert_ne!(handle.status().readiness(), Readiness::Ready);
     }
 
     async fn checked_outcome(cleanup: Option<&'static str>) -> DriverOutcome {

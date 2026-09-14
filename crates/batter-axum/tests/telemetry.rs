@@ -64,7 +64,7 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
             )
             .layer(middleware::from_fn_with_state(
                 RequestPolicy::new(
-                    handle,
+                    handle.operation_admission(),
                     ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
                 ),
                 request_scope,
@@ -164,7 +164,7 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         .route("/work", get(|| async { "must not execute" }))
         .layer(middleware::from_fn_with_state(
             RequestPolicy::new(
-                ShutdownHandle::new(),
+                ShutdownHandle::new().operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
             request_scope,

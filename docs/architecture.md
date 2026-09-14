@@ -152,6 +152,13 @@ through that value during initialization, then consumes
 `ShutdownSignal` for its running phase. A standalone signal cannot acknowledge
 startup, repeated acknowledgement does not type-check, and drain cannot be
 reversed by a late acknowledgement or application approval.
+The composition root retains `ShutdownHandle` only for shutdown requests and
+application-start approval. It projects `LifecycleStatus` for readiness probes
+and waiters, `OperationAdmission` for readiness-gated transient contexts, and
+`ShutdownSignal` for drain/cancellation observation. Policies cannot recover the
+root mutations from those values. Managed components receive a separate private
+coordinator capability paired with their registration rather than reaching
+through the observer.
 Canonical protected startup selects native SIGTERM/SIGINT ownership with
 `with_unix_signals`; installation occurs synchronously before the owner returns,
 and reception during initialization enters owned drain and cleanup. The lower-level
@@ -263,7 +270,8 @@ drain; cancelling an observer does not cancel cleanup. Its monitor observes the
 coordinator and publishes a retained report or JoinError. `start` creates the
 completion channel; only the monitor owns its sender. Completion observers come
 from `RunningSupervisor`, so every observer has an owned driver publisher.
-Shared readiness/admission state and `ShutdownHandle` carry no completion channel.
+Shared readiness/admission state, root control, and its status/admission/signal
+projections carry no completion channel.
 Command, startup and process observers share one private snapshot-before-wait
 mechanism while retaining distinct public outcome types and boundary-specific
 runtime-loss diagnostics. Managed native observation remains separate because a

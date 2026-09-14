@@ -119,9 +119,9 @@ async fn protected_registration_owns_readiness_sampling_and_reader_shutdown() {
 
     let running = starting.wait().await.unwrap();
     let reader = reader_rx.await.unwrap();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     wait_status(&reader, HealthStatus::Healthy).await;
-    assert_eq!(running.handle().readiness(), Readiness::Ready);
+    assert_eq!(running.status().readiness(), Readiness::Ready);
 
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success(), "{report}");
@@ -347,7 +347,7 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
     .unwrap();
     handle.mark_ready();
     let running = base.start();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     wait_status(&reader, HealthStatus::Failed).await;
     let failed = reader.snapshot();
     let ProbeOutcome::Failed(cause) = failed.last_probe().unwrap().outcome() else {
@@ -360,7 +360,7 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
     };
     assert!(Arc::ptr_eq(cause, same));
     assert!(format!("{failed:?}").contains("cause retained"));
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     advance(Duration::from_secs(3)).await;
     timeout(Duration::from_secs(2), async {
         while attempts.load(Ordering::SeqCst) < 2 {
@@ -371,7 +371,7 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
     .unwrap();
     advance(Duration::from_secs(2)).await;
     wait_status(&reader, HealthStatus::TimedOut).await;
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     advance(Duration::from_secs(3)).await;
     wait_status(&reader, HealthStatus::Healthy).await;
     assert!(running.shutdown().await.unwrap().is_success());

@@ -26,7 +26,8 @@ fn app(config: &Config) -> axum::Router {
         || async { Ok::<_, std::io::Error>(()) },
     );
     router(
-        handle,
+        handle.status(),
+        handle.operation_admission(),
         config.request_budget,
         monitor.reader(),
         config.bulkhead_capacity,

@@ -80,7 +80,7 @@ fn abort_preserves_observer_and_handler_destruction_under_the_first_poll_subscri
                     }),
                 ),
                 RequestPolicy::new(
-                    handle,
+                    handle.operation_admission(),
                     ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
                 ),
             );
@@ -140,7 +140,7 @@ async fn discard_unpolled(State(mode): State<Boundary>, request: Request, next: 
     let handle = ShutdownHandle::new();
     handle.mark_ready();
     let policy = RequestPolicy::new(
-        handle,
+        handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
     );
     match mode {
@@ -244,7 +244,7 @@ async fn split_admission_allows_drain_then_cancels_the_context_at_response_compl
             }),
         ),
         RequestPolicy::new(
-            handle,
+            handle.operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         ),
     );

@@ -27,8 +27,8 @@ use axum::{
 };
 use batter::{
     ConfigurationError,
-    lifecycle::{Readiness, ShutdownHandle},
-    operation::{Interruption, OperationContext, OperationError},
+    lifecycle::{LifecycleStatus, OperationAdmission, Readiness},
+    operation::{Interruption, OperationError},
     telemetry::with_current_dispatch,
 };
 use observation::observe_response;
@@ -80,7 +80,7 @@ pub struct HttpObservationLevel(pub Level);
 /// Application-selected request deadline and lifecycle gate.
 #[derive(Clone)]
 pub struct RequestPolicy {
-    shutdown: ShutdownHandle,
+    admission: OperationAdmission,
     budget: Duration,
     failure_renderer: Option<Arc<FailureRenderer>>,
 }
@@ -97,7 +97,9 @@ pub struct RequestPolicy {
 /// use std::time::Duration;
 ///
 /// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
-/// let policy = RequestPolicy::new(ShutdownHandle::new(), budget);
+/// let control = ShutdownHandle::new();
+/// control.mark_ready();
+/// let policy = RequestPolicy::new(control.operation_admission(), budget);
 /// # let _ = policy;
 /// # Ok::<(), batter::ConfigurationError>(())
 /// ```
@@ -134,12 +136,23 @@ impl RequestPolicy {
     /// use std::time::Duration;
     ///
     /// fn cannot_build_from_raw(handle: ShutdownHandle, budget: Duration) {
+    ///     let policy = RequestPolicy::new(handle.operation_admission(), budget);
+    /// }
+    /// ```
+    ///
+    /// Root shutdown control cannot be retained by request policy:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter::lifecycle::ShutdownHandle;
+    /// use batter_axum::{RequestPolicy, ResponseConstructionBudget};
+    ///
+    /// fn cannot_retain_control(handle: ShutdownHandle, budget: ResponseConstructionBudget) {
     ///     let policy = RequestPolicy::new(handle, budget);
     /// }
     /// ```
-    pub fn new(shutdown: ShutdownHandle, budget: ResponseConstructionBudget) -> Self {
+    pub fn new(admission: OperationAdmission, budget: ResponseConstructionBudget) -> Self {
         Self {
-            shutdown,
+            admission,
             budget: budget.0,
             failure_renderer: None,
         }
@@ -289,7 +302,9 @@ impl IntoResponse for HttpFailure {
 /// };
 /// use std::time::Duration;
 /// # fn main() -> Result<(), batter::ConfigurationError> {
-/// let handle = ShutdownHandle::new();
+/// let control = ShutdownHandle::new();
+/// control.mark_ready();
+/// let status = control.status();
 /// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
 /// let guarded = Router::new()
 ///     .route("/work", get(|Extension(context): Extension<OperationContext>| async move {
@@ -297,13 +312,13 @@ impl IntoResponse for HttpFailure {
 ///         "ok"
 ///     }))
 ///     .route_layer(middleware::from_fn_with_state(
-///         RequestPolicy::new(handle.clone(), budget),
+///         RequestPolicy::new(control.operation_admission(), budget),
 ///         request_admission,
 ///     ));
 /// let app: Router = Router::new()
 ///     .route("/live", get(liveness))
 ///     .route("/ready", get(readiness))
-///     .with_state(handle)
+///     .with_state(status)
 ///     .merge(guarded)
 ///     .fallback(|| async { StatusCode::NOT_FOUND })
 ///     .layer(middleware::from_fn(observe_http));
@@ -360,17 +375,15 @@ pub async fn request_scope(
 
 async fn request_admission_inner(policy: RequestPolicy, request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
-    if policy.shutdown.readiness() != Readiness::Ready {
-        return policy.render_failure(HttpFailure::Unavailable, &parts);
-    }
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
+    };
+    let Ok(context) = policy.admission.admit(deadline) else {
+        return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
     // Preserve the caller's metadata only when its renderer needs it.
     let saved_parts = policy.failure_renderer.as_ref().map(|_| parts.clone());
     let mut request = Request::from_parts(parts, body);
-    let parent = policy.shutdown.operation_token();
-    let context = OperationContext::under(deadline, &parent);
     let failure = match context
         .run("http.response_construction", |scope| async move {
             request.extensions_mut().insert(scope);
@@ -392,8 +405,8 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
 }
 
 /// A readiness probe. Mount outside the guarded application router.
-pub async fn readiness(State(handle): State<ShutdownHandle>) -> StatusCode {
-    if handle.readiness() == Readiness::Ready {
+pub async fn readiness(State(status): State<LifecycleStatus>) -> StatusCode {
+    if status.readiness() == Readiness::Ready {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

@@ -109,7 +109,7 @@ pub async fn queue_independent_initialization(pool: PgPool) -> ProbeResult {
     let running = process.start();
     running.handle().mark_ready();
     let initialized =
-        tokio::time::timeout(Duration::from_secs(1), running.handle().wait_ready()).await;
+        tokio::time::timeout(Duration::from_secs(1), running.status().wait_ready()).await;
     let rollback = blocked.rollback().await;
     let shutdown =
         check_shutdown(running.shutdown().await).map_err(|error| Box::new(error) as BoxError);
@@ -261,7 +261,7 @@ pub async fn business_failure(pool: PgPool) -> ProbeResult {
         })
         .await??;
         assert!(
-            !running.handle().is_draining(),
+            !running.status().is_draining(),
             "business rejection must not stop the runtime"
         );
         Ok(())

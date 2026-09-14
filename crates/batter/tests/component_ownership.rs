@@ -102,12 +102,12 @@ async fn conforming_component() {
     handle.mark_ready();
     let running = supervisor.start();
     entered_rx.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     initialize_tx.send(()).unwrap();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     handle.request();
     drained_rx.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert_eq!(snapshot(&events), ["initialized", "acknowledged"]);
     stop_tx.send(()).unwrap();
     let report = running.wait().await.unwrap();
@@ -174,7 +174,7 @@ async fn nonconforming_component() {
     handle.mark_ready();
     let running = supervisor.start();
     let child = child_rx.await.unwrap();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     let report = running.shutdown().await.unwrap();
     assert!(report.is_success());
     assert!(!report.forced_cancellation);

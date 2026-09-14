@@ -13,7 +13,7 @@ pub async fn run(case: &str, capture: Arc<Capture>) {
     let (fixture, running) = timeout_at(startup_deadline, Fixture::start(case))
         .await
         .expect("fixture construction deadline; no running owner returned");
-    let startup = timeout_at(startup_deadline, fixture.handle.wait_ready()).await;
+    let startup = timeout_at(startup_deadline, fixture.handle.status().wait_ready()).await;
     let ready = matches!(startup, Ok(Ok(())));
     let exercise = if ready {
         let observed = fixture.clone();

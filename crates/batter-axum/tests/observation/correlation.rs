@@ -45,7 +45,7 @@ fn router(mode: Boundary) -> Router {
             }),
         ),
         RequestPolicy::new(
-            handle,
+            handle.operation_admission(),
             ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
         ),
     )
@@ -198,7 +198,7 @@ fn handler_unwind_propagates_and_preserves_dropped_observation_and_context_cance
                         }),
                     ),
                     RequestPolicy::new(
-                        handle,
+                        handle.operation_admission(),
                         ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
                     ),
                 );

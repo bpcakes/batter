@@ -8,7 +8,7 @@ pub use report::{
     SettlementEvidence,
 };
 
-use super::{Component, ComponentFuture, ComponentStartup, ShutdownBudget};
+use super::{Component, ComponentFuture, RegisteredComponent, ShutdownBudget};
 use crate::{BoxError, operation::OperationContext};
 use std::{
     future::Future,
@@ -22,12 +22,14 @@ type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub(super) async fn freeze(
     observers: Vec<(&'static str, ManagedObserver)>,
-    handle: &super::ShutdownHandle,
+    coordinator: &super::LifecycleCoordinator,
     allowance: Duration,
 ) -> Vec<ManagedRecord> {
     let mut records = Vec::with_capacity(observers.len());
     for (name, observer) in observers {
-        observer.until(handle.shared.phase_elapsed(allowance)).await;
+        observer
+            .until(coordinator.shared.phase_elapsed(allowance))
+            .await;
         records.push(ManagedRecord {
             name,
             outcome: observer.snapshot(),
@@ -131,7 +133,7 @@ impl<R: ManagedSettlement> ManagedComponent<R> {
     /// })?;
     /// let running = supervisor.start();
     /// running.handle().mark_ready(); // Explicit application approval.
-    /// running.handle().wait_ready().await.unwrap();
+    /// running.status().wait_ready().await.unwrap();
     /// batter::lifecycle::check_shutdown(running.shutdown().await)?;
     /// # Ok(()) }
     /// ```
@@ -178,7 +180,7 @@ impl<R: ManagedSettlement> Future for EraseSettlement<R> {
 
 pub(super) struct Registration {
     pub(super) name: &'static str,
-    startup: ComponentStartup,
+    lifecycle: RegisteredComponent,
     context: OperationContext,
     factory: Box<
         dyn FnOnce(ManagedShutdownBudget) -> Result<ManagedComponent<SettlementEvidence>, BoxError>
@@ -189,7 +191,7 @@ pub(super) struct Registration {
 impl Registration {
     pub(super) fn new<F, R>(
         name: &'static str,
-        startup: ComponentStartup,
+        lifecycle: RegisteredComponent,
         context: OperationContext,
         factory: F,
     ) -> Self
@@ -199,7 +201,7 @@ impl Registration {
     {
         Self {
             name,
-            startup,
+            lifecycle,
             context,
             factory: Box::new(move |budget| factory(budget).map(ManagedComponent::erase)),
         }
@@ -208,7 +210,7 @@ impl Registration {
     pub(super) fn prepare(self, budget: ShutdownBudget) -> (Component, ManagedObserver) {
         let Self {
             name,
-            startup,
+            lifecycle,
             context,
             factory,
         } = self;
@@ -219,10 +221,10 @@ impl Registration {
         let waiter = observer.clone();
         let component = Component {
             name,
-            startup,
-            factory: Box::new(move |startup| {
+            lifecycle,
+            factory: Box::new(move |startup, coordinator| {
                 Box::pin(async move {
-                    drive::start(registration, budget, startup, publication);
+                    drive::start(registration, budget, startup, coordinator, publication);
                     let outcome = waiter.wait().await;
                     if outcome.is_success() {
                         Ok(())

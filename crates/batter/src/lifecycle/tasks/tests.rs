@@ -5,14 +5,15 @@ use tokio::sync::oneshot;
 
 #[test]
 fn registered_startup_pairs_acknowledgement_and_shutdown_observation() {
-    let handle = ShutdownHandle::new();
-    let startup = ComponentStartup::registered(&handle);
-    handle.shared.start_driver();
+    let coordinator = LifecycleCoordinator::new(false);
+    let handle = coordinator.shutdown_handle();
+    let startup = ComponentStartup::registered(&coordinator);
+    coordinator.shared.start_driver();
     assert!(handle.mark_ready());
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
 
     let shutdown = startup.acknowledge_started();
-    assert_eq!(handle.readiness(), Readiness::Ready);
+    assert_eq!(handle.status().readiness(), Readiness::Ready);
     handle.request();
     assert!(shutdown.is_draining());
 }
@@ -24,20 +25,21 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         TaskOutcome::Failed,
         TaskOutcome::Panicked,
     ] {
-        let handle = ShutdownHandle::new();
-        let startup = ComponentStartup::registered(&handle);
-        handle.shared.start_driver();
+        let coordinator = LifecycleCoordinator::new(false);
+        let handle = coordinator.shutdown_handle();
+        let lifecycle = RegisteredComponent::new(&coordinator);
+        coordinator.shared.start_driver();
         handle.mark_ready();
         let (process, _queued) = ProcessHandle::new(
-            handle.clone(),
+            coordinator.clone(),
             super::super::process::ProcessCapacity::new(1).unwrap(),
         );
         let (release, released) = oneshot::channel();
         let mut tasks = TaskSet::default();
         tasks.spawn_component(Component {
             name: "component",
-            startup,
-            factory: Box::new(move |_| {
+            lifecycle,
+            factory: Box::new(move |_, _| {
                 Box::pin(async move {
                     released.await.unwrap();
                     match outcome {
@@ -50,7 +52,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
             }),
         });
         {
-            let wait = tasks.next_exit(&handle);
+            let wait = tasks.next_exit(&coordinator);
             tokio::pin!(wait);
             poll_fn(|cx| {
                 assert!(wait.as_mut().poll(cx).is_pending());
@@ -61,7 +63,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         }
         release.send(()).unwrap();
         assert_eq!(
-            tasks.next_exit(&handle).await,
+            tasks.next_exit(&coordinator).await,
             Some(ShutdownCause::ComponentExit("component"))
         );
         // Failure closes finite admission before the cause reaches the caller.
@@ -69,7 +71,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
             process.try_spawn("later", |_| async { Ok::<_, Infallible>(()) }),
             Err(ProcessAdmissionError::Closed)
         ));
-        tasks.collect_ready(&handle);
+        tasks.collect_ready(&coordinator);
         assert!(tasks.is_empty());
         let summary = tasks.finish();
         assert_eq!(summary.records.len(), 1);

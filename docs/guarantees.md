@@ -139,6 +139,24 @@ not compile. For direct `register`, acknowledgement is an application assertion,
 not an inspection of its internal descendants. Forgotten acknowledgement leaves
 Starting.
 
+`ShutdownHandle` is retained at the composition root for shutdown requests and
+application readiness approval. It no
+longer exposes readiness reads, waits, or raw operation cancellation tokens.
+`LifecycleStatus` can only read or wait for lifecycle state;
+`OperationAdmission` can only create an `OperationContext` after observing Ready;
+`ShutdownSignal` can only observe drain and forced cancellation. Axum request
+and readiness policies store those narrow projections, so they cannot request
+shutdown or approve readiness. A request racing drain may enter only if its
+admission read observed Ready; initial drain does not cancel its context, while
+forced process cancellation travels downward. Managed supervision receives
+private coordinator authority from the same registered lifecycle bundle as its
+component-start capability and does not recover mutation through
+`ShutdownSignal`.
+There is deliberately no public raw process-cancellation token: new transient
+work cannot be represented after admission closes. A component already in its
+drain phase observes `ShutdownSignal::cancelled()` directly, while cleanup uses
+its independent budget and, when useful, an independent bounded context.
+
 The [component ownership comparisons](../crates/batter/tests/component_ownership.rs)
 gate actual child initialization before acknowledgement, then gate child stopping
 and join before dependent cleanup. A deliberately nonconforming wrapper returns
@@ -403,8 +421,9 @@ for execution bounds and the final-evidence reuse conditions.
 `start` explicitly launches an owned coordinator and completion monitor, creating
 their completion channel at that boundary. Obtain a `SupervisorObserver` only
 from `RunningSupervisor::observer`, available immediately after `start` even
-before the coordinator's first poll. `ShutdownHandle` provides lifecycle control
-and readiness signals, not completion observation. Migrate former
+before the coordinator's first poll. `ShutdownHandle` provides root shutdown
+control and constructs status, admission, and signal projections, not completion
+observation. Migrate former
 `handle.observer()` calls to `running.observer()` after starting the supervisor.
 `RunningSupervisor::wait`/`shutdown` and `SupervisorObserver::wait` may be cancelled
 without cancelling the driver or finalizers. Last-owner drop requests graceful
@@ -425,15 +444,15 @@ returns that last evidence rather than claiming completion or panicking.
 
 An unstarted `Supervisor` owns abandonment signaling from construction. Dropping
 it withdraws readiness, signals drain and forced cancellation, and wakes
-`wait_ready` with `Err(Readiness::Draining)` before dropping captured values.
+`LifecycleStatus::wait_ready` with `Err(Readiness::Draining)` before dropping
+captured values.
 It invokes no component or finalizer factory and publishes no completion report;
 Stopped still means coordinator completion. Extracted cleanup must be explicitly
-awaited. Extraction does not detach any operation tokens captured by its hooks:
-dropping the supervisor cancels those tokens before the extracted stack runs.
+awaited. The owner signals forced cancellation before the extracted stack runs.
 Finalizers must perform teardown independently of process operation cancellation,
 using the stack's cleanup budget and, if needed, a fresh `OperationContext::new`
-rather than a context derived from `operation_token`. This also applies to normal
-shutdown, which cancels process operations before closing resources. Unstarted
+rather than a context created by `OperationAdmission`. This also applies to normal
+shutdown, which cancels admitted process operations before closing resources. Unstarted
 supervisors, standalone shutdown handles and caller-owned `run_until` drivers
 cannot construct completion observers; await `run_until` directly for its report.
 
@@ -959,6 +978,8 @@ remain separate. Subscriber filtering and transport delivery are application-own
 `RequestPolicy::new` consumes that witness and is infallible; it has no raw
 `Duration` overload. The witness proves only local duration representability, not
 body transmission, remote cancellation, or completion of detached work.
+The policy also consumes only `OperationAdmission`, never `ShutdownHandle`; it
+can admit a process-cancelled context but cannot mutate lifecycle state.
 
 HTTP completion events carry normalized method, matched route template (or
 `<unmatched>`), actual numeric status when a response exists, HTTP outcome and
@@ -1125,7 +1146,8 @@ never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
 custom renderer afterward replaces this policy. Domain responses remain owned
 by their handler.
 
-`ReadinessPolicy` reads a fresh dependency snapshot then lifecycle readiness,
+`ReadinessPolicy` stores `LifecycleStatus` and reads a fresh dependency snapshot
+then lifecycle readiness,
 without invoking a probe or retaining the writer. Ready requires both healthy
 and lifecycle Ready; an observed drain overrides cached health. A subsequent
 transition may immediately obsolete the decision. Responses have empty bodies,

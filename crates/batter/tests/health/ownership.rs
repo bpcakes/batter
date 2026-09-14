@@ -90,7 +90,7 @@ async fn drain_during_delay_stops_before_another_probe_and_overrides_cached_succ
     assert!(reader.is_healthy());
     handle.request();
     // Even before the monitor is rescheduled, lifecycle state forbids readiness.
-    assert_ne!(handle.readiness(), Readiness::Ready);
+    assert_ne!(handle.status().readiness(), Readiness::Ready);
     let saved = reader.snapshot();
     run.await;
     assert!(saved.is_healthy()); // explicitly historical, never self-updating

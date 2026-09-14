@@ -24,7 +24,8 @@ contracts and [validation](validation.md) records platform-specific evidence.
 
 Import `ResponseConstructionBudget`, `RequestPolicy`, `request_admission` and
 `observe_http` from `batter_axum`. Validate the fixed server budget before
-composition, then pass the retained witness to the infallible policy constructor.
+composition, then pass the retained witness and the supervisor's
+`OperationAdmission` projection to the infallible policy constructor.
 Apply `middleware::from_fn_with_state(policy, request_admission)` with
 `route_layer` to guarded business routes, merge unguarded liveness/readiness and
 fallback, then apply `middleware::from_fn(observe_http)` using `Router::layer`.
@@ -118,13 +119,16 @@ code/message/request_id envelope. `render_infrastructure_failure` offers the sam
 mapping to handlers. Neither changes legacy Problem JSON; a later custom renderer
 wins. No domain error or schema/codegen dependency moves into the adapter.
 
-`ReadinessPolicy<E>` combines `HealthReader<E>` with `ShutdownHandle` without
+`ReadinessPolicy<E>` combines `HealthReader<E>` with `LifecycleStatus` without
 probing. Mount `dependency_readiness::<E>` outside admission. The empty-body
 200/503 response carries a typed reason and a separate severity extension.
 Unknown, failed, timed-out, stale and stopped-writer dependency states are unready;
 Starting/Draining default INFO, Stopped/dependency failures default WARN.
 `with_level` overrides severity only. The final lifecycle read overrides cached
 health on observed drain; this decision is not atomic with subsequent transitions.
+`RequestPolicy` separately accepts `OperationAdmission`, which can create only a
+readiness-gated downward-cancelled operation context. Neither policy retains
+`ShutdownHandle` or can request shutdown or approve readiness.
 
 The [HTTP composition root](../crates/batter-axum/examples/http_service.rs) deletes
 its local ID, renderer, readiness and serve implementations in favor of these

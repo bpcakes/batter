@@ -49,7 +49,7 @@ pub fn run(scenario: &str) {
                 state.snapshot(), capture.text()
             )
         });
-        let startup = tokio::time::timeout_at(deadline, server.access.handle.wait_ready()).await;
+        let startup = tokio::time::timeout_at(deadline, server.access.handle.status().wait_ready()).await;
         let access = server.access.clone();
         let name = scenario.to_owned();
         let exercise_limit = if matches!(scenario, "http-missing-event" | "http-teardown-stuck") {
@@ -195,7 +195,7 @@ async fn keep_alive(scenario: &str, access: Access, mut client: Client) -> Resul
     assert_eq!(client.response().await?, (200, b"ok".to_vec()));
     assert_eq!(access.state.count("handler-entered"), 1);
     access.handle.request();
-    assert_eq!(access.handle.readiness(), Readiness::Draining);
+    assert_eq!(access.handle.status().readiness(), Readiness::Draining);
     if scenario == "http-admission" {
         access.state.wait("drain-observed").await;
         client.send("/fast").await?;

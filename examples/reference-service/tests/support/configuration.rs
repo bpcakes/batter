@@ -156,7 +156,7 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
     if let Ok(pool) = &acquired {
         pool.close().await;
     }
-    let no_ready = handle.readiness() != Readiness::Ready;
+    let no_ready = handle.status().readiness() != Readiness::Ready;
     let report = match result {
         Err(StartupError::Failed(report)) => report,
         Err(error) => return Err(Box::new(error) as batter::BoxError),

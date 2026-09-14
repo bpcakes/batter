@@ -19,7 +19,7 @@ use axum::{
 };
 use batter::{
     admission::{Admission, AdmissionError, Bulkhead},
-    lifecycle::ShutdownHandle,
+    lifecycle::{LifecycleStatus, OperationAdmission},
     operation::{Interruption, OperationContext},
 };
 use batter_axum::{
@@ -30,6 +30,9 @@ use serde::Serialize;
 use sqlx::PgPool;
 use std::time::Duration;
 use uuid::Uuid;
+
+#[cfg(test)]
+use batter::lifecycle::ShutdownHandle;
 
 const REQUEST_BODY_MAX_BYTES: usize = crate::delivery::PAYLOAD_MAX_BYTES + 2 * 1024;
 const RESPONSE_RESERVE_MAX: Duration = Duration::from_millis(25);
@@ -56,11 +59,17 @@ struct AppState {
 ///
 /// fn can_route(
 ///     prepared: PreparedHttp,
-///     handle: ShutdownHandle,
+///     control: ShutdownHandle,
 ///     pool: PgPool,
 ///     health: HealthReader<()>,
 /// ) -> axum::Router {
-///     router(prepared, handle, pool, health)
+///     router(
+///         prepared,
+///         control.status(),
+///         control.operation_admission(),
+///         pool,
+///         health,
+///     )
 /// }
 /// ```
 ///
@@ -73,34 +82,40 @@ struct AppState {
 ///
 /// fn cannot_route(
 ///     prepared: PreparedMaintenance,
-///     handle: ShutdownHandle,
+///     control: ShutdownHandle,
 ///     pool: PgPool,
 ///     health: HealthReader<()>,
 /// ) {
-///     let application = router(prepared, handle, pool, health);
+///     let application = router(
+///         prepared,
+///         control.status(),
+///         control.operation_admission(),
+///         pool,
+///         health,
+///     );
 /// }
 /// ```
 pub fn router<E: Send + Sync + 'static>(
     prepared: PreparedHttp,
-    handle: ShutdownHandle,
+    lifecycle: LifecycleStatus,
+    admission: OperationAdmission,
     pool: PgPool,
     health: batter::health::HealthReader<E>,
 ) -> Router {
     let probes = Router::new()
         .route("/live", get(liveness))
         .route("/ready", get(batter_axum::dependency_readiness::<E>))
-        .with_state(batter_axum::ReadinessPolicy::new(handle.clone(), health));
-    router_with_probes(prepared, handle, pool, probes)
+        .with_state(batter_axum::ReadinessPolicy::new(lifecycle, health));
+    router_with_probes(prepared, admission, pool, probes)
 }
 
 fn router_with_probes(
     prepared: PreparedHttp,
-    handle: ShutdownHandle,
+    admission: OperationAdmission,
     pool: PgPool,
     probes: Router,
 ) -> Router {
-    let policy =
-        RequestPolicy::new(handle.clone(), prepared.request_budget).with_infrastructure_json();
+    let policy = RequestPolicy::new(admission, prepared.request_budget).with_infrastructure_json();
     let state = AppState {
         deliveries: DeliveryService::new(pool),
         database: Bulkhead::new(prepared.bulkhead_capacity),
@@ -449,7 +464,13 @@ mod tests {
                 .unwrap(),
             || async { Ok::<_, std::convert::Infallible>(()) },
         );
-        router(prepared_http, handle, pool, monitor.reader())
+        router(
+            prepared_http,
+            handle.status(),
+            handle.operation_admission(),
+            pool,
+            monitor.reader(),
+        )
     }
 
     #[tokio::test]

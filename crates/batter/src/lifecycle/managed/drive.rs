@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     PanicPayload,
-    lifecycle::{ComponentStartup, PendingComponentStart, ShutdownBudget, ShutdownSignal},
+    lifecycle::{
+        ComponentStartup, LifecycleCoordinator, ShutdownBudget, ShutdownSignal,
+        state::PendingComponentStart,
+    },
     operation::Interruption,
     scoped_dispatch,
 };
@@ -25,12 +28,21 @@ pub(super) fn start(
     registration: PreparedRegistration,
     budget: ShutdownBudget,
     startup: ComponentStartup,
+    coordinator: LifecycleCoordinator,
     publication: watch::Sender<ManagedOutcome>,
 ) {
     let (signal, pending_start) = startup.into_parts();
     let updates = publication.clone();
     let coordinator = tokio::spawn(scoped_dispatch::scope(
-        drive(registration, budget, signal, pending_start, updates).in_current_span(),
+        drive(
+            registration,
+            budget,
+            signal,
+            pending_start,
+            coordinator,
+            updates,
+        )
+        .in_current_span(),
     ));
     // Neither the wrapper nor a report observer owns this join. Wrapper abortion
     // cannot destroy the native report's only driver or completion publication.
@@ -55,9 +67,12 @@ async fn drive(
     budget: ShutdownBudget,
     signal: ShutdownSignal,
     pending_start: PendingComponentStart,
+    coordinator: LifecycleCoordinator,
     publication: watch::Sender<ManagedOutcome>,
 ) {
-    let Some((component, context)) = construct(registration, budget, &signal, &publication) else {
+    let Some((component, context)) =
+        construct(registration, budget, &signal, &coordinator, &publication)
+    else {
         return;
     };
     let ManagedComponent {
@@ -120,16 +135,15 @@ async fn drive(
             }
         }
     }
-    signal.handle.request();
-    let stop_started = signal
-        .handle
+    coordinator.shared.request();
+    let stop_started = coordinator
         .shared
         .stop_started()
         .expect("drain records its clock");
     let acknowledged = propagate_stop(
         &mut *stop,
         stop_started,
-        &signal,
+        &coordinator,
         &mut outcome,
         &publication,
     );
@@ -144,7 +158,7 @@ async fn drive(
             &mut settlement,
             &mut *stop,
             acknowledged,
-            &signal,
+            &coordinator,
             &mut outcome,
             &publication,
         )
@@ -157,13 +171,13 @@ async fn drive(
 fn propagate_stop(
     stop: &mut (dyn FnMut(tokio::time::Instant) -> tokio::time::Instant + Send),
     started: tokio::time::Instant,
-    signal: &ShutdownSignal,
+    coordinator: &LifecycleCoordinator,
     outcome: &mut ManagedOutcome,
     publication: &watch::Sender<ManagedOutcome>,
 ) -> Option<tokio::time::Instant> {
     match catch_unwind(AssertUnwindSafe(|| stop(started))) {
         Ok(native_started) => {
-            signal.handle.shared.request_since(native_started);
+            coordinator.shared.request_since(native_started);
             Some(native_started.min(started))
         }
         Err(payload) => {
@@ -179,7 +193,7 @@ async fn settle_with_clock(
     settlement: &mut Guarded<SettlementEvidence>,
     stop: &mut (dyn FnMut(tokio::time::Instant) -> tokio::time::Instant + Send),
     mut acknowledged: Option<tokio::time::Instant>,
-    signal: &ShutdownSignal,
+    coordinator: &LifecycleCoordinator,
     outcome: &mut ManagedOutcome,
     publication: &watch::Sender<ManagedOutcome>,
 ) {
@@ -187,8 +201,8 @@ async fn settle_with_clock(
         tokio::select! {
             biased;
             result = &mut *settlement => { record_settlement(outcome, result); return; }
-            earlier = signal.handle.shared.stop_before(acknowledged.unwrap_or_else(tokio::time::Instant::now)), if acknowledged.is_some() => {
-                acknowledged = propagate_stop(stop, earlier, signal, outcome, publication);
+            earlier = coordinator.shared.stop_before(acknowledged.unwrap_or_else(tokio::time::Instant::now)), if acknowledged.is_some() => {
+                acknowledged = propagate_stop(stop, earlier, coordinator, outcome, publication);
             }
         }
     }
@@ -198,6 +212,7 @@ fn construct(
     registration: PreparedRegistration,
     budget: ShutdownBudget,
     signal: &ShutdownSignal,
+    coordinator: &LifecycleCoordinator,
     publication: &watch::Sender<ManagedOutcome>,
 ) -> Option<(
     ManagedComponent<SettlementEvidence>,
@@ -229,7 +244,7 @@ fn construct(
         Ok(Err(error)) => ManagedInitialization::Rejected(Arc::from(error)),
         Err(payload) => ManagedInitialization::Failed(panic_failure(payload)),
     };
-    signal.handle.request();
+    coordinator.shared.request();
     drop(publication.send_replace(outcome));
     None
 }

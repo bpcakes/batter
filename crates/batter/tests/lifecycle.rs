@@ -33,12 +33,12 @@ fn budget() -> ShutdownBudget {
 #[test]
 fn readiness_cannot_revive_a_draining_process() {
     let handle = ShutdownHandle::new();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(handle.mark_ready());
     assert!(!handle.mark_ready());
     handle.request();
     assert!(!handle.mark_ready());
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
 }
 
 #[tokio::test(start_paused = true)]
@@ -66,9 +66,9 @@ async fn graceful_shutdown_stops_work_before_closing_dependencies() {
     let report = supervisor.run_until(async {}).await;
     assert!(report.is_success());
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Stopped);
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     handle.request();
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
 }
 
 #[tokio::test(start_paused = true)]
@@ -116,7 +116,7 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
         .register("requestor", move |signal| async move {
             let _shutdown = signal.acknowledge_started();
             completed_rx.await.unwrap();
-            assert!(!requesting.is_draining());
+            assert!(!requesting.status().is_draining());
             requesting.request();
             Ok(())
         })
@@ -222,19 +222,25 @@ async fn noncooperative_async_task_is_aborted_and_reported() {
 async fn drain_does_not_cancel_previously_admitted_contexts() {
     let mut supervisor = Supervisor::new(budget());
     let handle = supervisor.handle();
-    let token = handle.operation_token();
-    let context =
-        OperationContext::under(tokio::time::Instant::now() + Duration::from_secs(1), &token);
-    let inside = context.clone();
+    let admitted = Arc::new(std::sync::Mutex::new(None::<OperationContext>));
+    let inside = admitted.clone();
     supervisor
         .register("admitted", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
-            assert!(inside.check().is_ok());
+            assert!(inside.lock().unwrap().take().unwrap().check().is_ok());
             Ok(())
         })
         .unwrap();
-    let report = supervisor.run_until(async {}).await;
+    handle.mark_ready();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    let context = running
+        .operation_admission()
+        .admit(tokio::time::Instant::now() + Duration::from_secs(1))
+        .unwrap();
+    *admitted.lock().unwrap() = Some(context.clone());
+    let report = running.shutdown().await.unwrap();
     assert!(report.is_success());
     assert_eq!(context.check(), Err(Interruption::Cancelled));
 }
@@ -334,13 +340,13 @@ fn dropping_unpolled_driver_signals_shutdown_without_starting_factories() {
         })
         .unwrap();
     let handle = supervisor.handle();
-    let cancellation = handle.operation_token();
+    let cancellation = handle.signal();
     handle.mark_ready();
     let driver = supervisor.run_until(pending());
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(!cancellation.is_cancelled());
     drop(driver);
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert!(cancellation.is_cancelled());
     assert!(!called.load(Ordering::SeqCst));
     assert!(!cleanup_called.load(Ordering::SeqCst));
@@ -353,13 +359,13 @@ async fn aborting_driver_before_first_poll_notifies_readiness_waiters() {
         batter::lifecycle::ProcessCapacity::new(1).unwrap(),
     );
     let handle = supervisor.handle();
-    let cancellation = handle.operation_token();
+    let cancellation = handle.signal();
     handle.mark_ready();
     // On this current-thread runtime, abort runs before the coordinator polls.
     let task = tokio::spawn(supervisor.run_until(pending()));
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    let readiness = tokio::time::timeout(Duration::from_millis(100), handle.wait_ready())
+    let readiness = tokio::time::timeout(Duration::from_millis(100), handle.status().wait_ready())
         .await
         .expect("readiness waiters must be notified when their driver is dropped");
     assert_eq!(readiness, Err(Readiness::Draining));

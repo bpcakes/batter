@@ -7,9 +7,10 @@ Status: accepted, 2026-09-10. Delivery evidence: `batter-u0m`; component compari
 
 The HTTP example registers `axum::serve(...).with_graceful_shutdown(...)` as a
 critical component. Lifecycle drain drives graceful shutdown. Request admission
-uses readiness, while its operation token is cancelled at forced cancellation.
-The middleware returns when it constructs a Response. None of these boundaries
-alone establishes body completion or socket closure.
+uses readiness, while each admitted `OperationContext` inherits downward
+cancellation from process forced cancellation. The middleware returns when it
+constructs a Response. None of these boundaries alone establishes body
+completion or socket closure.
 
 Resolved Axum 0.8.9 spawns connection tasks. Its graceful serving future waits
 for connection-completion receivers to drop, but aborting that future does not

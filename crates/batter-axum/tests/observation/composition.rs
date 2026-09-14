@@ -77,7 +77,7 @@ fn assemble(handle: ShutdownHandle, calls: Arc<AtomicUsize>) -> Router {
         .route("/new", get(|| async { StatusCode::CREATED }))
         .route_layer(middleware::from_fn_with_state(
             RequestPolicy::new(
-                handle.clone(),
+                handle.operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             ),
             request_admission,
@@ -102,7 +102,7 @@ fn assemble(handle: ShutdownHandle, calls: Arc<AtomicUsize>) -> Router {
     Router::new()
         .route("/live", get(liveness))
         .route("/ready", get(readiness))
-        .with_state(handle)
+        .with_state(handle.status())
         .merge(guarded)
         .merge(denied)
         .merge(changed)

@@ -44,7 +44,7 @@ fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
             )
             .layer(middleware::from_fn_with_state(
                 RequestPolicy::new(
-                    handle,
+                    handle.operation_admission(),
                     ResponseConstructionBudget::new(Duration::from_secs(60)).unwrap(),
                 ),
                 request_scope,

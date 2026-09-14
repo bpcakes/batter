@@ -36,11 +36,11 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
     if order == 0 {
         handle.mark_ready();
     }
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     let running = supervisor.start();
     first.send(()).unwrap();
     first_acked.await.unwrap();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     if order == 2 {
         handle.request();
     }
@@ -50,19 +50,19 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
     second.send(()).unwrap();
     second_acked.await.unwrap();
     if order != 2 {
-        handle.wait_ready().await.unwrap();
-        assert_eq!(handle.readiness(), Readiness::Ready);
+        handle.status().wait_ready().await.unwrap();
+        assert_eq!(handle.status().readiness(), Readiness::Ready);
         handle.request();
     }
     assert!(!handle.mark_ready());
     // Keep the acknowledged component alive: Stopped cannot hide an invalid
     // Ready publication after drain while the coordinator finishes its report.
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    assert!(handle.wait_ready().await.is_err());
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
+    assert!(handle.status().wait_ready().await.is_err());
     release.send(()).unwrap();
     let report = running.wait().await.unwrap();
     assert!(report.is_success());
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     case.event("ordered-readiness-checked");
 }
 
@@ -86,7 +86,7 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
         })
         .unwrap();
     let running = supervisor.start();
-    assert_eq!(handle.readiness(), Readiness::Starting);
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
     let request_barrier = barrier.clone();
     let requesting = handle.clone();
     let drain = tokio::spawn(async move {
@@ -107,10 +107,10 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
     approval.await.unwrap();
     case.event("drain-and-ack-returned");
     assert!(!handle.mark_ready());
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     release.send(()).unwrap();
     assert!(running.wait().await.unwrap().is_success());
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
 }
 
 pub async fn critical_exit(case: Case) {
@@ -122,7 +122,7 @@ pub async fn critical_exit(case: Case) {
     let handle = supervisor.handle();
     handle.mark_ready();
     let running = supervisor.start();
-    assert!(handle.wait_ready().await.is_err());
+    assert!(handle.status().wait_ready().await.is_err());
     let report = running.wait().await.unwrap();
     assert!(!report.is_success());
     assert_eq!(report.tasks.len(), 1);

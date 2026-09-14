@@ -59,7 +59,7 @@ fn explicit_response_levels_preserve_status_fields_identity_and_response() {
                             }),
                         ),
                         RequestPolicy::new(
-                            handle,
+                            handle.operation_admission(),
                             ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
                         ),
                     )
@@ -110,7 +110,7 @@ fn defaults_ignore_request_extensions_and_client_level_headers() {
                 let router = mode.apply(
                     Router::new().route("/work", get(move || async move { status })),
                     RequestPolicy::new(
-                        handle,
+                        handle.operation_admission(),
                         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
                     ),
                 );
@@ -164,7 +164,7 @@ fn readiness_policy_is_explicit_and_does_not_demote_other_unguarded_failures() {
                         "/failure",
                         get(|| async { StatusCode::SERVICE_UNAVAILABLE }),
                     )
-                    .with_state(handle)
+                    .with_state(handle.status())
                     .layer(middleware::from_fn(observe_http));
                 let response = router.oneshot(request("GET", path)).await.unwrap();
                 let status = if path == "/ready" && phase == "ready" {
@@ -204,7 +204,7 @@ async fn failure_renderers_select_severity_for_admission_and_deadline_responses(
                 handle.request();
             }
             let policy = RequestPolicy::new(
-                handle,
+                handle.operation_admission(),
                 ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
             )
             .with_failure_renderer(|failure, _parts| {

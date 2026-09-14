@@ -1,4 +1,4 @@
-use super::{ShutdownHandle, ShutdownSignal, tasks::TaskExit};
+use super::{LifecycleCoordinator, ShutdownSignal, tasks::TaskExit};
 use crate::{ConfigurationError, RegistrationError, scoped_dispatch, validation};
 use std::{
     error::Error,
@@ -124,7 +124,7 @@ impl<T, E: Error + 'static> ProcessReceipt<T, E> {
 /// not keep an owned driver alive and cannot bypass shutdown admission policy.
 #[derive(Clone)]
 pub struct ProcessHandle {
-    handle: ShutdownHandle,
+    coordinator: LifecycleCoordinator,
     permits: Arc<Semaphore>,
     sender: mpsc::Sender<QueuedProcess>,
 }
@@ -142,7 +142,7 @@ pub struct ProcessScope {
 impl ProcessScope {
     /// Read drain/forced-cancellation signals without authority over readiness.
     pub fn signal(&self) -> ShutdownSignal {
-        self.process.handle.signal()
+        self.process.coordinator.signal()
     }
 
     /// Submit a bounded descendant under this active ancestor. It has its own
@@ -169,13 +169,13 @@ pub(super) struct QueuedProcess {
 
 impl ProcessHandle {
     pub(super) fn new(
-        handle: ShutdownHandle,
+        coordinator: LifecycleCoordinator,
         capacity: ProcessCapacity,
     ) -> (Self, mpsc::Receiver<QueuedProcess>) {
         let (sender, receiver) = mpsc::channel(capacity.0);
         (
             Self {
-                handle,
+                coordinator,
                 permits: Arc::new(Semaphore::new(capacity.0)),
                 sender,
             },
@@ -205,7 +205,7 @@ impl ProcessHandle {
     /// let process = supervisor.process_handle().unwrap();
     /// supervisor.handle().mark_ready();
     /// let running = supervisor.start();
-    /// running.handle().wait_ready().await.unwrap();
+    /// running.status().wait_ready().await.unwrap();
     /// let receipt = process.try_spawn("refresh", |_| async {
     ///     Err::<(), _>(std::io::Error::other("refresh failed"))
     /// })?;
@@ -248,7 +248,7 @@ impl ProcessHandle {
         let span =
             tracing::info_span!(target: "batter", "batter.process_task", task = name).or_current();
         let subscriber = tracing::dispatcher::get_default(Clone::clone);
-        let mut admission = self.handle.shared.admission();
+        let mut admission = self.coordinator.shared.admission();
         admission.check(ancestor.map(Arc::as_ref), self.sender.is_closed())?;
         let permit = self
             .permits
@@ -261,7 +261,7 @@ impl ProcessHandle {
             active: active.clone(),
         };
         let (sender, result) = oneshot::channel();
-        let handle = self.handle.clone();
+        let coordinator = self.coordinator.clone();
         // This lease is constructed after enqueue succeeds below; no Drop that
         // re-locks admission may run while we still hold the admission lock.
         let (begin, begin_rx) = oneshot::channel::<ActiveTask>();
@@ -280,7 +280,7 @@ impl ProcessHandle {
                         }
                     }
                     Err(error) => {
-                        handle.shared.fail_task();
+                        coordinator.shared.fail_task();
                         let error = Arc::new(error);
                         drop(lease);
                         let _ = sender.send(Err(error.clone()));
@@ -307,7 +307,7 @@ impl ProcessHandle {
         admission.admit_finite();
         drop(admission);
         let lease = ActiveTask {
-            handle: self.handle.clone(),
+            coordinator: self.coordinator.clone(),
             active,
             _permit: permit,
         };
@@ -319,14 +319,14 @@ impl ProcessHandle {
 }
 
 struct ActiveTask {
-    handle: ShutdownHandle,
+    coordinator: LifecycleCoordinator,
     active: Arc<AtomicBool>,
     _permit: OwnedSemaphorePermit,
 }
 
 impl Drop for ActiveTask {
     fn drop(&mut self) {
-        self.handle.shared.finish_finite(&self.active);
+        self.coordinator.shared.finish_finite(&self.active);
     }
 }
 

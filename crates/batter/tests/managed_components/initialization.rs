@@ -88,7 +88,7 @@ async fn completion_boundary(completion: Completion) {
         .unwrap();
     let running = process.start();
     running.handle().mark_ready();
-    let ready = running.handle().wait_ready().await;
+    let ready = running.status().wait_ready().await;
     // Always drain and join even when the original defect allowed readiness.
     let report = running.shutdown().await.unwrap();
     assert!(ready.is_err(), "interrupted initialization became ready");
@@ -196,7 +196,7 @@ async fn early_exit_before_initialization(exit: EarlyExit) {
         entering.await.unwrap();
         running.handle().request();
     }
-    let ready = running.handle().wait_ready().await;
+    let ready = running.status().wait_ready().await;
     let report = running.wait().await.unwrap();
     assert!(ready.is_err());
     let outcome = &report.managed[0].outcome;

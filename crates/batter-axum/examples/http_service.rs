@@ -105,12 +105,13 @@ async fn work(
 }
 
 fn router(
-    handle: batter::lifecycle::ShutdownHandle,
+    lifecycle: batter::lifecycle::LifecycleStatus,
+    admission: batter::lifecycle::OperationAdmission,
     request_budget: ResponseConstructionBudget,
     dependency: HealthReader<std::io::Error>,
     bulkhead_capacity: BulkheadCapacity,
 ) -> Router {
-    let policy = RequestPolicy::new(handle.clone(), request_budget).with_infrastructure_json();
+    let policy = RequestPolicy::new(admission, request_budget).with_infrastructure_json();
     let application = Router::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
@@ -122,7 +123,7 @@ fn router(
     let probes = Router::new()
         .route("/live", get(liveness))
         .route("/ready", get(dependency_readiness::<std::io::Error>))
-        .with_state(ReadinessPolicy::new(handle, dependency));
+        .with_state(ReadinessPolicy::new(lifecycle, dependency));
     application
         .merge(probes)
         .layer(middleware::from_fn(operational_http))
@@ -177,7 +178,8 @@ async fn run() -> Result<(), BoxError> {
         )?)
         .try_init()?;
     let supervisor = Supervisor::new(support::shutdown_budget());
-    let handle = supervisor.handle();
+    let lifecycle = supervisor.status();
+    let admission = supervisor.operation_admission();
     let mut starting = batter::startup::Startup::scoped(
         supervisor,
         OperationContext::new(Duration::from_secs(15))?,
@@ -189,7 +191,8 @@ async fn run() -> Result<(), BoxError> {
                     let health = register_dependency_health(scope.registration())?;
                     scope.stage("http.bind")?;
                     let application = router(
-                        handle.clone(),
+                        lifecycle.clone(),
+                        admission.clone(),
                         config.request_budget,
                         health,
                         config.bulkhead_capacity,

@@ -3,7 +3,7 @@ use batter::{
     cleanup::CleanupBudget,
     lifecycle::{
         ProcessAdmissionError, ProcessCapacity, ProcessHandle, Readiness, ShutdownBudget,
-        ShutdownHandle, Supervisor,
+        ShutdownSignal, Supervisor,
     },
     operation::OperationContext,
 };
@@ -12,7 +12,7 @@ use std::{
     future::{Future, pending, poll_fn},
     mem::discriminant,
     sync::{
-        Arc,
+        Arc, Barrier,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Wake, Waker},
@@ -28,6 +28,116 @@ fn supervisor() -> Supervisor {
     )
 }
 
+#[test]
+fn operation_admission_returns_the_observed_lifecycle_state() {
+    let control = batter::lifecycle::ShutdownHandle::new();
+    let admission = control.operation_admission();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+
+    assert!(matches!(
+        admission.admit(deadline),
+        Err(Readiness::Starting)
+    ));
+    assert!(control.mark_ready());
+    let expired = admission.admit(tokio::time::Instant::now()).unwrap();
+    assert_eq!(
+        expired.check(),
+        Err(batter::operation::Interruption::DeadlineExceeded)
+    );
+    let admitted = admission.admit(deadline).unwrap();
+    control.request();
+    assert!(matches!(
+        admission.admit(deadline),
+        Err(Readiness::Draining)
+    ));
+    assert_eq!(admitted.check(), Ok(()), "drain is not forced cancellation");
+}
+
+#[tokio::test]
+async fn operation_admission_is_downward_only_and_closes_after_stop() {
+    let process = supervisor();
+    let control = process.handle();
+    let status = process.status();
+    let admission = process.operation_admission();
+    let shutdown = control.signal();
+    assert!(control.mark_ready());
+    let running = process.start();
+    status.wait_ready().await.unwrap();
+
+    let context = admission
+        .admit(tokio::time::Instant::now() + Duration::from_secs(1))
+        .unwrap();
+    context.cancel();
+    assert_eq!(
+        context.check(),
+        Err(batter::operation::Interruption::Cancelled)
+    );
+    assert!(
+        !shutdown.is_cancelled(),
+        "child cancellation cannot travel upward"
+    );
+    assert_eq!(status.readiness(), Readiness::Ready);
+
+    assert!(running.shutdown().await.unwrap().is_success());
+    assert_eq!(status.readiness(), Readiness::Stopped);
+    assert!(matches!(
+        admission.admit(tokio::time::Instant::now() + Duration::from_secs(1)),
+        Err(Readiness::Stopped)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
+    let mut process = supervisor();
+    process
+        .register("drain-anchor", |startup| async move {
+            let shutdown = startup.acknowledge_started();
+            shutdown.cancelled().await;
+            Ok(())
+        })
+        .unwrap();
+    let control = process.handle();
+    let status = process.status();
+    let admission = process.operation_admission();
+    assert!(control.mark_ready());
+    let running = process.start();
+    status.wait_ready().await.unwrap();
+
+    let barrier = Arc::new(Barrier::new(2));
+    let admitting = {
+        let barrier = barrier.clone();
+        tokio::task::spawn_blocking(move || {
+            barrier.wait();
+            admission.admit(tokio::time::Instant::now() + Duration::from_secs(10))
+        })
+    };
+    let requesting = tokio::task::spawn_blocking(move || {
+        barrier.wait();
+        control.request();
+    });
+    let admitted = admitting.await.unwrap();
+    requesting.await.unwrap();
+
+    assert_eq!(status.readiness(), Readiness::Draining);
+    match &admitted {
+        Ok(context) => assert_eq!(
+            context.check(),
+            Ok(()),
+            "an admission linearized before drain survives the drain phase"
+        ),
+        Err(state) => assert_eq!(*state, Readiness::Draining),
+    }
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(running.wait().await.unwrap().is_success());
+    if let Ok(context) = admitted {
+        assert_eq!(
+            context.check(),
+            Err(batter::operation::Interruption::Cancelled)
+        );
+    }
+}
+
 #[derive(Default)]
 struct WakeCount(AtomicUsize);
 
@@ -41,16 +151,17 @@ impl Wake for WakeCount {
 fn abandoned_startup_wakes_registered_readiness_waiter() {
     let supervisor = supervisor();
     let handle = supervisor.handle();
-    let cancellation = handle.operation_token();
+    let cancellation = handle.signal();
     let wake = Arc::new(WakeCount::default());
     let waker = Waker::from(wake.clone());
     let mut cx = Context::from_waker(&waker);
-    let mut waiter = Box::pin(handle.wait_ready());
+    let status = handle.status();
+    let mut waiter = Box::pin(status.wait_ready());
     assert_eq!(waiter.as_mut().poll(&mut cx), Poll::Pending);
 
     drop(supervisor);
 
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert!(cancellation.is_cancelled());
     assert!(wake.0.load(Ordering::SeqCst) > 0);
     assert_eq!(
@@ -60,12 +171,12 @@ fn abandoned_startup_wakes_registered_readiness_waiter() {
     assert!(!handle.mark_ready());
 }
 
-struct ObserveAbandonment(ShutdownHandle);
+struct ObserveAbandonment(ShutdownSignal);
 
 impl Drop for ObserveAbandonment {
     fn drop(&mut self) {
         assert!(self.0.is_draining());
-        assert!(self.0.operation_token().is_cancelled());
+        assert!(self.0.is_cancelled());
     }
 }
 
@@ -73,7 +184,7 @@ impl Drop for ObserveAbandonment {
 fn abandonment_signals_before_dropping_inert_application_captures() {
     for transfer in [false, true] {
         let mut supervisor = supervisor();
-        let captured = ObserveAbandonment(supervisor.handle());
+        let captured = ObserveAbandonment(supervisor.handle().signal());
         supervisor
             .register("inert-component", move |_| {
                 let _capture = captured;
@@ -84,7 +195,7 @@ fn abandonment_signals_before_dropping_inert_application_captures() {
                 }
             })
             .unwrap();
-        let cleanup_capture = ObserveAbandonment(supervisor.handle());
+        let cleanup_capture = ObserveAbandonment(supervisor.handle().signal());
         supervisor
             .on_cleanup("inert-resource", move || {
                 let _capture = cleanup_capture;
@@ -110,27 +221,27 @@ fn unpolled_driver_retains_startup_ownership_until_dropped() {
     let handle = supervisor.handle();
     assert!(handle.mark_ready());
     let driver = supervisor.run_until(pending());
-    assert_eq!(handle.readiness(), Readiness::Starting);
-    assert!(!handle.operation_token().is_cancelled());
+    assert_eq!(handle.status().readiness(), Readiness::Starting);
+    assert!(!handle.signal().is_cancelled());
     assert!(matches!(
         process.try_spawn("before-poll", |_| async { Ok::<_, Infallible>(()) }),
         Err(ProcessAdmissionError::NotRunning)
     ));
     drop(driver);
-    assert_eq!(handle.readiness(), Readiness::Draining);
-    assert!(handle.operation_token().is_cancelled());
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
+    assert!(handle.signal().is_cancelled());
 }
 
 #[tokio::test]
-async fn extracted_cleanup_completes_after_supervisor_cancels_operations() {
+async fn extracted_cleanup_completes_after_supervisor_signals_cancellation() {
     let mut supervisor = supervisor();
-    let operation = supervisor.handle().operation_token();
-    let observed_operation = operation.clone();
+    let shutdown = supervisor.handle().signal();
+    let observed_shutdown = shutdown.clone();
     let closed = Arc::new(AtomicBool::new(false));
     let closing = closed.clone();
     supervisor
         .on_cleanup("resource", move || async move {
-            assert!(observed_operation.is_cancelled());
+            assert!(observed_shutdown.is_cancelled());
             // Teardown has its own context; process cancellation cannot skip it.
             let cleanup = OperationContext::new(Duration::from_secs(1))?;
             cleanup
@@ -145,7 +256,7 @@ async fn extracted_cleanup_completes_after_supervisor_cancels_operations() {
         .unwrap();
     let stack = supervisor.take_cleanup();
     drop(supervisor);
-    assert!(operation.is_cancelled());
+    assert!(shutdown.is_cancelled());
     assert!(!closed.load(Ordering::SeqCst), "drop must not run teardown");
 
     let second = Duration::from_secs(1);
@@ -201,6 +312,6 @@ async fn admission_precedence_covers_startup_capacity_drain_and_completion() {
     assert_rejections(&process, ProcessAdmissionError::Closed);
     assert!(driver.await.is_success());
     assert_eq!(receipt.wait().await.unwrap(), 7);
-    assert_eq!(handle.readiness(), Readiness::Stopped);
+    assert_eq!(handle.status().readiness(), Readiness::Stopped);
     assert_rejections(&process, ProcessAdmissionError::Closed);
 }

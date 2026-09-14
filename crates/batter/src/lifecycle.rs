@@ -4,6 +4,7 @@
 //! finite. Task-level errors initiate shutdown; ordinary business rejection can
 //! remain a typed successful task value. No automatic restart is provided.
 
+mod capability;
 mod driver;
 mod managed;
 mod process;
@@ -12,9 +13,13 @@ mod state;
 mod tasks;
 mod unix;
 
-use state::{PendingComponentStart, Shared};
+use capability::LifecycleCoordinator;
 use tasks::TaskSet;
 
+pub use capability::{
+    ComponentStartup, LifecycleStatus, OperationAdmission, Readiness, ShutdownHandle,
+    ShutdownSignal,
+};
 pub use driver::{
     DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
     check_shutdown,
@@ -40,224 +45,10 @@ use crate::{
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-
-/// Process admission state, not an automatic dependency-health assessment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Readiness {
-    /// Composition/root checks have not declared the process ready.
-    Starting,
-    /// Application explicitly enabled admission.
-    Ready,
-    /// Shutdown requested; stop admitting new work.
-    Draining,
-    /// The coordinator finished. This state is irreversible; check its report
-    /// for incomplete termination.
-    Stopped,
-}
-
-/// External lifecycle control; clones refer to the same process lifecycle.
-/// Completion observation requires an owned driver: call
-/// [`RunningSupervisor::observer`] after [`Supervisor::start`]. A control handle
-/// can exist without a driver, so it cannot construct a completion observer.
-///
-/// ```compile_fail,E0599
-/// use batter::lifecycle::ShutdownHandle;
-///
-/// let handle = ShutdownHandle::new();
-/// let observer = handle.observer();
-/// ```
-#[derive(Clone)]
-pub struct ShutdownHandle {
-    shared: Arc<Shared>,
-}
-
-impl Default for ShutdownHandle {
-    fn default() -> Self {
-        Self {
-            shared: Arc::new(Shared::new(false)),
-        }
-    }
-}
-
-impl ShutdownHandle {
-    /// An independent, initially unready lifecycle.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Declare application initialization complete. For a supervisor this arms
-    /// readiness: it remains Starting until every component consumes its
-    /// [`ComponentStartup`] acknowledgement. Returns true only for the first
-    /// accepted declaration; never revives a draining/stopped service.
-    pub fn mark_ready(&self) -> bool {
-        self.shared.mark_ready()
-    }
-
-    /// Current admission state.
-    pub fn readiness(&self) -> Readiness {
-        self.shared.readiness()
-    }
-
-    /// Atomically withdraw readiness and signal drain. Does not immediately
-    /// cancel admitted operation contexts.
-    pub fn request(&self) {
-        self.shared.request();
-    }
-
-    /// Whether draining has been requested.
-    pub fn is_draining(&self) -> bool {
-        matches!(self.readiness(), Readiness::Draining | Readiness::Stopped)
-    }
-
-    /// Wait for the stop-admission/drain signal.
-    pub async fn draining(&self) {
-        self.shared.draining().await;
-    }
-
-    /// Child token for admitted operations. Cancelling it cannot cancel the
-    /// process. It is signalled at forced cancellation, not initial drain.
-    pub fn operation_token(&self) -> CancellationToken {
-        self.shared.operation_token()
-    }
-
-    /// Create standalone read-only shutdown observation.
-    ///
-    /// This neither registers nor acknowledges a component. A direct registered
-    /// component must obtain its running observer by consuming the
-    /// [`ComponentStartup`] supplied to its factory.
-    pub fn signal(&self) -> ShutdownSignal {
-        ShutdownSignal {
-            handle: self.clone(),
-        }
-    }
-
-    /// Wait until readiness is acknowledged, or return the drain/stopped state
-    /// if startup cannot become ready. Cancelling this waiter changes no state.
-    /// Dropping an unstarted supervisor wakes this waiter with `Draining`.
-    pub async fn wait_ready(&self) -> Result<(), Readiness> {
-        self.shared.wait_ready().await
-    }
-
-    fn force_cancel(&self) {
-        self.shared.force_cancel();
-    }
-}
-
-/// Read-only drain and forced-cancellation observation.
-///
-/// This value carries no component-start or application-readiness authority.
-/// Registered components receive [`ComponentStartup`] and consume its one
-/// acknowledgement before entering their running phase.
-///
-/// ```compile_fail,E0599
-/// use batter::lifecycle::ShutdownHandle;
-///
-/// let shutdown = ShutdownHandle::new().signal();
-/// shutdown.acknowledge_started();
-/// ```
-#[derive(Clone)]
-pub struct ShutdownSignal {
-    handle: ShutdownHandle,
-}
-
-impl ShutdownSignal {
-    /// Stop accepting/claiming new work, then drain admitted work.
-    pub async fn draining(&self) {
-        self.handle.draining().await;
-    }
-
-    /// Cooperative interruption after the drain allowance is exhausted.
-    pub async fn cancelled(&self) {
-        self.handle.shared.cancelled().await;
-    }
-
-    /// Whether drain has already been requested.
-    pub fn is_draining(&self) -> bool {
-        self.handle.is_draining()
-    }
-
-    /// Whether forced cooperative cancellation has already been requested.
-    pub fn is_cancelled(&self) -> bool {
-        self.handle.shared.is_cancelled()
-    }
-}
-
-/// The one pending startup obligation of a registered critical component.
-///
-/// Observe shutdown during initialization through [`Self::shutdown`]. After the
-/// listener, worker, or other component is actually usable, consume this value
-/// with [`Self::acknowledge_started`]. The returned [`ShutdownSignal`] carries
-/// only the observation authority needed by the running component.
-///
-/// ```no_run
-/// use batter::{BoxError, lifecycle::ComponentStartup};
-///
-/// async fn run_component(startup: ComponentStartup) -> Result<(), BoxError> {
-///     if startup.shutdown().is_draining() {
-///         return Ok(());
-///     }
-///     let shutdown = startup.acknowledge_started();
-///     shutdown.draining().await;
-///     Ok(())
-/// }
-/// ```
-///
-/// The capability is intentionally non-cloneable, and acknowledgement consumes
-/// it so safe Rust cannot acknowledge the same registration twice:
-///
-/// ```compile_fail,E0599
-/// use batter::lifecycle::ComponentStartup;
-/// fn cannot_clone(startup: ComponentStartup) {
-///     let duplicate = startup.clone();
-/// }
-/// ```
-///
-/// ```compile_fail,E0382
-/// use batter::lifecycle::ComponentStartup;
-/// fn cannot_acknowledge_twice(startup: ComponentStartup) {
-///     let shutdown = startup.acknowledge_started();
-///     let again = startup.acknowledge_started();
-/// }
-/// ```
-pub struct ComponentStartup {
-    shutdown: ShutdownSignal,
-    pending: PendingComponentStart,
-}
-
-impl ComponentStartup {
-    fn registered(handle: &ShutdownHandle) -> Self {
-        Self {
-            shutdown: handle.signal(),
-            pending: handle.shared.register_component(),
-        }
-    }
-
-    /// Borrow read-only shutdown observation while initialization is pending.
-    pub fn shutdown(&self) -> &ShutdownSignal {
-        &self.shutdown
-    }
-
-    /// Record actual component initialization and enter the running phase.
-    ///
-    /// Acknowledgement during drain remains recorded but cannot revive readiness.
-    /// Dropping this value without calling this method leaves startup pending.
-    #[must_use = "retain the returned shutdown signal for the running component"]
-    pub fn acknowledge_started(self) -> ShutdownSignal {
-        let Self { shutdown, pending } = self;
-        pending.acknowledge();
-        shutdown
-    }
-
-    fn into_parts(self) -> (ShutdownSignal, PendingComponentStart) {
-        (self.shutdown, self.pending)
-    }
-}
 
 /// Phase budgets, measured from one recorded stop time. Scheduling delays consume
 /// that allowance; entering a later phase cannot restart its clock. These rely on
@@ -359,10 +150,25 @@ pub enum ShutdownCause {
 }
 
 type ComponentFuture = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'static>>;
+struct RegisteredComponent {
+    startup: ComponentStartup,
+    coordinator: LifecycleCoordinator,
+}
+
+impl RegisteredComponent {
+    fn new(coordinator: &LifecycleCoordinator) -> Self {
+        Self {
+            startup: ComponentStartup::registered(coordinator),
+            coordinator: coordinator.clone(),
+        }
+    }
+}
+
 struct Component {
     name: &'static str,
-    startup: ComponentStartup,
-    factory: Box<dyn FnOnce(ComponentStartup) -> ComponentFuture + Send + 'static>,
+    lifecycle: RegisteredComponent,
+    factory:
+        Box<dyn FnOnce(ComponentStartup, LifecycleCoordinator) -> ComponentFuture + Send + 'static>,
 }
 
 /// Own the process's critical tasks and dependency finalizers.
@@ -381,7 +187,7 @@ pub struct Supervisor {
     managed: Vec<managed::Registration>,
     reserved_components: Vec<&'static str>,
     cleanup: CleanupStack,
-    handle: ShutdownHandle,
+    coordinator: LifecycleCoordinator,
     budget: ShutdownBudget,
     process: Option<ProcessHandle>,
     queued: Option<mpsc::Receiver<process::QueuedProcess>>,
@@ -390,16 +196,14 @@ pub struct Supervisor {
 impl Supervisor {
     /// Build an initially unready supervisor, without spawning anything.
     pub fn new(budget: ShutdownBudget) -> Self {
-        let handle = ShutdownHandle {
-            shared: Arc::new(Shared::new(true)),
-        };
+        let coordinator = LifecycleCoordinator::new(true);
         Self {
-            ownership: Some(EmergencyShutdown(handle.clone())),
+            ownership: Some(EmergencyShutdown(coordinator.clone())),
             components: Vec::new(),
             managed: Vec::new(),
             reserved_components: Vec::new(),
             cleanup: CleanupStack::new(),
-            handle,
+            coordinator,
             budget,
             process: None,
             queued: None,
@@ -418,7 +222,7 @@ impl Supervisor {
     /// ```
     pub fn with_process_capacity(budget: ShutdownBudget, capacity: ProcessCapacity) -> Self {
         let mut supervisor = Self::new(budget);
-        let (process, queued) = ProcessHandle::new(supervisor.handle.clone(), capacity);
+        let (process, queued) = ProcessHandle::new(supervisor.coordinator.clone(), capacity);
         supervisor.process = Some(process);
         supervisor.queued = Some(queued);
         supervisor
@@ -430,9 +234,21 @@ impl Supervisor {
         self.process.clone()
     }
 
-    /// Shared readiness and shutdown control.
+    /// Clone root shutdown and application-readiness control.
+    /// Prefer [`Self::status`] or [`Self::operation_admission`] for consumers
+    /// that do not need those mutations.
     pub fn handle(&self) -> ShutdownHandle {
-        self.handle.clone()
+        self.coordinator.shutdown_handle()
+    }
+
+    /// Clone read-only readiness and lifecycle status.
+    pub fn status(&self) -> LifecycleStatus {
+        self.handle().status()
+    }
+
+    /// Clone readiness-gated admission for transient operation contexts.
+    pub fn operation_admission(&self) -> OperationAdmission {
+        self.handle().operation_admission()
     }
 
     /// Register long-lived, critical process work. Factories run inside their
@@ -447,11 +263,13 @@ impl Supervisor {
         Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
     {
         self.check_component_name(name)?;
-        let startup = ComponentStartup::registered(&self.handle);
+        let lifecycle = RegisteredComponent::new(&self.coordinator);
         self.components.push(Component {
             name,
-            startup,
-            factory: Box::new(move |startup| Box::pin(factory(startup)) as ComponentFuture),
+            lifecycle,
+            factory: Box::new(move |startup, _coordinator| {
+                Box::pin(factory(startup)) as ComponentFuture
+            }),
         });
         Ok(())
     }
@@ -490,11 +308,13 @@ impl Supervisor {
             .position(|reserved| *reserved == name)
             .expect("internal component reservation must exist exactly once");
         self.reserved_components.swap_remove(position);
-        let startup = ComponentStartup::registered(&self.handle);
+        let lifecycle = RegisteredComponent::new(&self.coordinator);
         self.components.push(Component {
             name,
-            startup,
-            factory: Box::new(move |startup| Box::pin(factory(startup)) as ComponentFuture),
+            lifecycle,
+            factory: Box::new(move |startup, _coordinator| {
+                Box::pin(factory(startup)) as ComponentFuture
+            }),
         });
     }
 
@@ -522,9 +342,10 @@ impl Supervisor {
         R: ManagedSettlement,
     {
         self.check_component_name(name)?;
-        let startup = ComponentStartup::registered(&self.handle);
-        self.managed
-            .push(managed::Registration::new(name, startup, context, factory));
+        let lifecycle = RegisteredComponent::new(&self.coordinator);
+        self.managed.push(managed::Registration::new(
+            name, lifecycle, context, factory,
+        ));
         Ok(())
     }
 
@@ -554,10 +375,11 @@ impl Supervisor {
 
     /// Extract pending finalizers if application startup fails before running.
     /// The application must explicitly close this stack and retain both errors.
-    /// Dropping the supervisor cancels its operation tokens, even after this
-    /// extraction. Finalizers must use cleanup independent of those tokens
-    /// (for example, a fresh [`crate::operation::OperationContext::new`]), not
-    /// a context derived from [`ShutdownHandle::operation_token`]. The stack's
+    /// Dropping the supervisor signals forced process cancellation even after
+    /// this extraction. Finalizers must use cleanup independent of admitted
+    /// operation contexts (for example, a fresh
+    /// [`crate::operation::OperationContext::new`]), not
+    /// a context derived from [`OperationAdmission`]. The stack's
     /// [`CleanupBudget`] still bounds explicit teardown.
     pub fn take_cleanup(&mut self) -> CleanupStack {
         std::mem::take(&mut self.cleanup)
@@ -590,7 +412,7 @@ impl Supervisor {
     where
         F: Future<Output = ()>,
     {
-        self.handle.shared.start_driver();
+        self.coordinator.shared.start_driver();
         let mut tasks = TaskSet::default();
         let mut managed = Vec::new();
         for registration in self.managed.drain(..) {
@@ -604,18 +426,18 @@ impl Supervisor {
         }
         tokio::pin!(shutdown);
         let cause = self.wait_for_shutdown(shutdown.as_mut(), &mut tasks).await;
-        self.handle.request();
+        self.coordinator.shared.request();
         let drain = self.budget.drain;
         let cancel = drain + self.budget.cancel;
         let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
         tasks
-            .collect_until(&mut self.queued, &self.handle, drain)
+            .collect_until(&mut self.queued, &self.coordinator, drain)
             .await;
-        let forced_cancellation = tasks.unfinished(&self.handle);
-        self.handle.force_cancel();
+        let forced_cancellation = tasks.unfinished(&self.coordinator);
+        self.coordinator.shared.force_cancel();
         tasks
-            .collect_until(&mut self.queued, &self.handle, cancel)
+            .collect_until(&mut self.queued, &self.coordinator, cancel)
             .await;
         // No new descendants can arrive after forced cancellation. Transfer all
         // already admitted queue entries into the owned JoinSet before abort.
@@ -624,15 +446,15 @@ impl Supervisor {
                 tasks.spawn_process(task);
             }
         }
-        tasks.collect_ready(&self.handle);
+        tasks.collect_ready(&self.coordinator);
         let abort_requested = tasks.abort_unfinished();
         if !tasks.is_empty() {
             tasks
-                .collect_until(&mut self.queued, &self.handle, reap)
+                .collect_until(&mut self.queued, &self.coordinator, reap)
                 .await;
         }
         let summary = tasks.finish();
-        let managed_records = managed::freeze(managed, &self.handle, reap).await;
+        let managed_records = managed::freeze(managed, &self.coordinator, reap).await;
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.
         let unsafe_exit = !abort_requested.is_empty()
@@ -645,7 +467,7 @@ impl Supervisor {
         } else {
             self.cleanup.close(self.budget.cleanup).await
         };
-        self.handle.shared.stop_driver();
+        self.coordinator.shared.stop_driver();
         ShutdownReport {
             cause,
             tasks: summary.records,
@@ -670,9 +492,9 @@ impl Supervisor {
                 tokio::select! {
                     biased;
                     // Draining cannot be starved by a stream of finite success.
-                    _ = self.handle.draining() => break ShutdownCause::Requested,
+                    _ = self.coordinator.shared.draining() => break ShutdownCause::Requested,
                     _ = &mut shutdown => break ShutdownCause::Requested,
-                    cause = tasks.next_exit(&self.handle), if !tasks.is_empty() => {
+                    cause = tasks.next_exit(&self.coordinator), if !tasks.is_empty() => {
                         if let Some(cause) = cause {
                             break cause;
                         }
@@ -684,10 +506,10 @@ impl Supervisor {
     }
 }
 
-struct EmergencyShutdown(ShutdownHandle);
+struct EmergencyShutdown(LifecycleCoordinator);
 impl Drop for EmergencyShutdown {
     fn drop(&mut self) {
-        self.0.force_cancel();
+        self.0.shared.force_cancel();
     }
 }
 

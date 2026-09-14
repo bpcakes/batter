@@ -24,7 +24,9 @@ method names before the first compilation; that was not an agent repair.
 These files preserve the actual generated consumer, supplied interface and
 independent checks. The consumer was first tested outside the repositories and
 then this archived package was compiled and executed again. Reproduce from the
-Batter root (Cargo fetches the pinned native Git source):
+Batter root. Cargo fetches the immutable Batter revision that created this
+archive and the pinned native Git source, so later breaking API cutovers do not
+rewrite or invalidate the generated consumer:
 
 ```sh
 CARGO_TARGET_DIR=target cargo test --locked --manifest-path docs/evidence/batter-gi4/Cargo.toml

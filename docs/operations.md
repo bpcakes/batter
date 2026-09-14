@@ -17,6 +17,13 @@ receives one `ComponentStartup` value and consumes `acknowledge_started` only
 after actual initialization; the returned `ShutdownSignal` observes its running
 phase. The application's `mark_ready` arms Ready, which is published only once
 the driver runs and every component acknowledges.
+Keep `ShutdownHandle` at the composition root. Pass `LifecycleStatus` to probes
+and waiters, `OperationAdmission` to request/operation entrypoints, and
+`ShutdownSignal` to standalone shutdown observers. None of those projections can
+request shutdown or approve readiness.
+Do not create new transient operation contexts during drain. Existing components
+observe `ShutdownSignal::cancelled()` while finishing; cleanup uses its separate
+budget and an independent context when one is needed.
 
 Registration is inert. Use ordinary awaited startup work before the supervisor.
 On failure, explicitly drive all registered cleanup and retain the primary

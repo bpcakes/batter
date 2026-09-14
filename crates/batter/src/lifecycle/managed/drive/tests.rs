@@ -7,13 +7,12 @@ async fn settlement_propagates_each_earlier_clock_even_during_a_stop_callback() 
     use std::task::{Context, Waker};
     let mut cx = Context::from_waker(Waker::noop());
     let shared = Arc::new(crate::lifecycle::state::Shared::new(true));
-    let handle = crate::lifecycle::ShutdownHandle {
+    let coordinator = crate::lifecycle::LifecycleCoordinator {
         shared: shared.clone(),
     };
-    let signal = handle.signal();
     let first = Instant::now();
     tokio::time::advance(Duration::from_secs(5)).await;
-    handle.request();
+    coordinator.shared.request();
     let sent = Instant::now();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let observed = calls.clone();
@@ -31,13 +30,15 @@ async fn settlement_propagates_each_earlier_clock_even_during_a_stop_callback() 
         &mut settlement,
         &mut stop,
         Some(sent),
-        &signal,
+        &coordinator,
         &mut outcome,
         &publication,
     );
     tokio::pin!(waiter);
     assert!(waiter.as_mut().poll(&mut cx).is_pending());
-    handle.shared.request_since(first + Duration::from_secs(2));
+    coordinator
+        .shared
+        .request_since(first + Duration::from_secs(2));
     assert!(waiter.as_mut().poll(&mut cx).is_pending());
     assert_eq!(
         *calls.lock().unwrap(),
@@ -104,16 +105,17 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
             },
         )
         .unwrap();
+    let coordinator = process.coordinator.clone();
     let running = process.start();
     let handle = running.handle();
     handle.mark_ready();
-    handle.wait_ready().await.unwrap();
+    handle.status().wait_ready().await.unwrap();
     let native_started = Instant::now();
     tokio::time::advance(second).await;
     handle.request();
     first_called.await.unwrap();
     // Model another native component revealing its earlier stop timestamp.
-    handle.shared.request_since(native_started);
+    coordinator.shared.request_since(native_started);
     repeated_called.await.unwrap();
     let report = running.wait().await.unwrap();
     let record = &report.managed[0];

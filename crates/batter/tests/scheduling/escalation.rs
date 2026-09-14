@@ -58,7 +58,7 @@ pub async fn outcomes(
         .unwrap();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     process
         .try_spawn("completed", |_| async { Ok::<_, Infallible>(()) })
         .unwrap()
@@ -208,7 +208,7 @@ pub async fn unjoined_finite(case: Case) {
         .unwrap();
     let process = supervisor.process_handle().unwrap();
     let running = supervisor.start();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     let (entered, entry) = oneshot::channel();
     let dropped = Arc::new(AtomicBool::new(false));
     let flag = dropped.clone();

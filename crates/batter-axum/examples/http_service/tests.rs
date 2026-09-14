@@ -72,7 +72,8 @@ async fn readiness_responses() -> [String; 4] {
     )
     .unwrap();
     let app = router(
-        handle.clone(),
+        handle.status(),
+        handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         health.clone(),
         BulkheadCapacity::new(32).unwrap(),
@@ -224,7 +225,8 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
     let handle = ShutdownHandle::new();
     handle.mark_ready();
     let app = router(
-        handle.clone(),
+        handle.status(),
+        handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         health,
         BulkheadCapacity::new(32).unwrap(),
@@ -260,6 +262,6 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
     assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // stalled writer, stale
     drop(run);
     assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // stopped writer
-    assert_eq!(handle.readiness(), Readiness::Ready); // health did not drain the process
+    assert_eq!(handle.status().readiness(), Readiness::Ready); // health did not drain the process
     assert_eq!(calls.load(Ordering::SeqCst), 2); // reads did no dependency work
 }

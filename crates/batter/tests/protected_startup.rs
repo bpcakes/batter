@@ -95,8 +95,8 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
     .start();
 
     let running = starting.wait().await.unwrap();
-    running.handle().wait_ready().await.unwrap();
-    assert_eq!(running.handle().readiness(), Readiness::Ready);
+    running.status().wait_ready().await.unwrap();
+    assert_eq!(running.status().readiness(), Readiness::Ready);
     let (reply, response) = oneshot::channel();
     requests.send((21, reply)).await.unwrap();
     assert_eq!(response.await.unwrap(), 42);

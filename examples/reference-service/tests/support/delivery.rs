@@ -62,7 +62,13 @@ fn app(settings: &ServingSettings, pool: PgPool) -> Router {
         .unwrap(),
         || async { Ok::<_, std::convert::Infallible>(()) },
     );
-    router(settings.prepare_http(), handle, pool, monitor.reader())
+    router(
+        settings.prepare_http(),
+        handle.status(),
+        handle.operation_admission(),
+        pool,
+        monitor.reader(),
+    )
 }
 
 async fn request(
@@ -561,6 +567,7 @@ async fn assert_process_capacity() -> TestResult {
     handle.mark_ready();
     let running = supervisor.start();
     handle
+        .status()
         .wait_ready()
         .await
         .map_err(|_| "supervisor did not become ready")?;

@@ -56,7 +56,21 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   check matched complete fingerprint `457d67fc0389b2b6b3960a107c6030df820dfa1cc87a051b1f2ab0876f9b78bf`.
 - [x] Slice 1: pair component registration with one linear startup capability,
   migrate every workspace caller, validate, converge the review loop, and commit.
-- [ ] Slice 2: purpose-qualify lifecycle status, admission, and shutdown control,
+- [x] (2026-09-14T20:54:48Z) Slice 2 separated public lifecycle control,
+  read-only status, readiness-gated operation admission and component shutdown
+  observation from private coordination authority; every workspace consumer and
+  contract was migrated without a broad compatibility shim.
+- [x] (2026-09-14T20:54:48Z) Slice 2 passed both supported `verify.sh`
+  matrices, all ten fresh HTTP process smokes, the historical archive's seven
+  tests on both toolchains, and all five current-tree Jig targets. Its fresh
+  `api:test` receipt is `receipt_01M2GTNF6KZNW11CMHVHN6KZVV`.
+- [x] (2026-09-14T20:54:48Z) Slice 2 converged after four complete
+  comprehensive Claude/Codex passes, two ordinary repair rounds and one
+  supporting-work closure batch. Both terminal reviewers reported no actionable
+  finding or material test gap, and the parent and native reviewer matched final
+  complete fingerprint
+  `edc0ed55db27bd2ac30f0a57579ecf63386fa798b956c21d33b8c96aa136006f`.
+- [x] Slice 2: purpose-qualify lifecycle status, admission, and shutdown control,
   migrate callers, validate, converge the review loop, and commit.
 - [ ] Slice 3: replace clone-wide deferred application approval with a one-shot
   capability, migrate callers, validate, converge the review loop, and commit.
@@ -99,6 +113,20 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   Evidence: both toolchains passed all five HTTP smoke modes after fresh example
   builds, and the second review's requested drop-without-acknowledgement scenario
   now has a dedicated process-ownership regression.
+
+- Observation: historical generated-consumer evidence cannot remain both
+  immutable and compiled against an intentionally breaking current workspace
+  API.
+  Evidence: the archive source records the API introduced by revision
+  `034ce0085220044dcf5f3561b00a0bfce96a801f`; pinning both archive dependencies
+  to that public revision preserves all seven historical tests on Rust 1.98.1
+  and 1.94.0 without rewriting the evidence.
+
+- Observation: operation admission is a concurrent phase decision rather than
+  a static token getter.
+  Evidence: the deterministic state table and a barrier-controlled race prove
+  that admission concurrent with drain yields only rejection or a context that
+  remains active through drain and is cancelled by forced shutdown.
 
 ## Decision Log
 
@@ -160,16 +188,44 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   foundation too, not merely hide that pairing from public callers.
   Date/Author: 2026-09-14 / Codex.
 
+- Decision: expose `LifecycleStatus`, `OperationAdmission`, and
+  `ShutdownSignal` as separate cloneable projections while keeping
+  `LifecycleCoordinator` private and `ShutdownHandle` at the composition root.
+  Rationale: consumers receive only the observation or downward-cancellation
+  authority their role needs; state mutation remains centralized without
+  duplicating the lifecycle state machine or introducing typestate that cannot
+  model concurrent phase changes.
+  Date/Author: 2026-09-14 / Codex.
+
+- Decision: remove public raw process-token extraction and require transient
+  root work to enter through `OperationAdmission::admit`.
+  Rationale: a freely cloned raw token bypassed readiness and made the admission
+  obligation caller-owned. The admitted `OperationContext` preserves the
+  established drain-versus-force semantics and parent-bounded deadlines.
+  Date/Author: 2026-09-14 / Codex.
+
+- Decision: pin the historical `batter-gi4` consumer archive to the immutable
+  revision that created it instead of porting the archived source.
+  Rationale: rewriting generated evidence would erase its historical claim;
+  current-version compatibility remains covered by live workspace examples and
+  tests rather than this explicitly historical oracle.
+  Date/Author: 2026-09-14 / Codex.
+
 ## Outcomes & Retrospective
 
-Slice 1 is implemented, validated, and independently converged. Its first review
+Slices 1 and 2 are implemented, validated and independently converged. Slice 1's
+first review
 exposed an internal cross-lifecycle pairing still representable by separate
 registration and spawn inputs; the durable repair carries one complete
 `ComponentStartup` from registration into task execution. Its second review
 identified only evidence and documentation obligations, which were completed
 with full supported-toolchain, process-smoke, Jig, rustdoc, and drop-behavior
-coverage. The terminal review found no actionable issue. The broader capability
-cutover remains in progress through Slices 2-4.
+coverage. Slice 2 removes ambient root authority from policies, probes,
+components and transient-operation entrypoints. Its review rounds made the
+private coordinator boundary explicit, closed race and compile-fail gaps, and
+preserved the historical consumer archive through an immutable dependency pin.
+The terminal reviewers found no actionable issue. The broader capability
+cutover remains in progress through Slices 3-4.
 
 ## Context and Orientation
 

@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 [workspace]
 [dependencies]
-batter = { path = "../../../crates/batter" }
-batter-runledger = { path = "../../../crates/batter-runledger" }
+batter = { git = "https://github.com/bpcakes/batter.git", rev = "034ce0085220044dcf5f3561b00a0bfce96a801f" }
+batter-runledger = { git = "https://github.com/bpcakes/batter.git", rev = "034ce0085220044dcf5f3561b00a0bfce96a801f" }
 runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
 runledger-core = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
 runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }

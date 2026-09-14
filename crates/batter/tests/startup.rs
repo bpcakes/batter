@@ -207,7 +207,7 @@ async fn owner_drop_during_initialization_drives_registered_cleanup_exactly_once
     assert!(matches!(report.cause, StartupCause::Draining));
     assert!(report.cleanup.is_success());
     assert_eq!(closed.load(Ordering::SeqCst), 1);
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
 }
 
 #[tokio::test]
@@ -281,7 +281,7 @@ async fn drain_at_initializer_completion_cannot_publish_ready() {
         failed(starting.wait().await).cause,
         StartupCause::Draining
     ));
-    assert_eq!(handle.wait_ready().await, Err(Readiness::Draining));
+    assert_eq!(handle.status().wait_ready().await, Err(Readiness::Draining));
 }
 
 struct DropPanic;
@@ -373,7 +373,7 @@ async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain
             );
         })
         .expect("payload inspection is uncontended");
-    assert_eq!(handle.readiness(), Readiness::Draining);
+    assert_eq!(handle.status().readiness(), Readiness::Draining);
     assert!(report.cleanup.is_success());
 }
 
@@ -562,9 +562,9 @@ async fn successful_initialization_still_requires_actual_component_acknowledgeme
     })
     .start();
     let running = starting.wait().await.unwrap();
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     release_tx.send(()).unwrap();
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
 }
 
@@ -596,9 +596,9 @@ async fn successful_initialization_can_withhold_application_readiness_approval()
     })
     .await
     .unwrap();
-    assert_eq!(running.handle().readiness(), Readiness::Starting);
+    assert_eq!(running.status().readiness(), Readiness::Starting);
     assert!(running.handle().mark_ready());
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     assert!(running.shutdown().await.unwrap().is_success());
 }
 

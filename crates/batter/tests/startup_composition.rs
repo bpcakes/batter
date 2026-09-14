@@ -60,7 +60,7 @@ async fn finite_work_without_critical_components_has_a_successful_running_lifeti
     let supervisor = Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     let process = supervisor.process_handle().unwrap();
     let running = initialize(supervisor, capacity.clone()).await;
-    running.handle().wait_ready().await.unwrap();
+    running.status().wait_ready().await.unwrap();
     assert_eq!(capacity.available_permits(), 0);
     let receipt = process
         .try_spawn("calculation", |_| async { Ok::<_, Infallible>(42) })

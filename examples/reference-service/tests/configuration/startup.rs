@@ -102,7 +102,7 @@ async fn partial_startup_retains_real_failure_and_all_lifo_finalizer_outcomes() 
     let Err(StartupError::Failed(report)) = result else {
         panic!("expected startup report");
     };
-    assert_eq!(handle.readiness(), Readiness::Draining); // No running driver was transferred.
+    assert_eq!(handle.status().readiness(), Readiness::Draining); // No running driver was transferred.
     assert_eq!(evidence.acquisitions.load(Ordering::SeqCst), 3);
     assert_eq!(evidence.spawns.load(Ordering::SeqCst), 0);
     assert_eq!(*evidence.cleanup.lock().unwrap(), ["second", "first"]);
