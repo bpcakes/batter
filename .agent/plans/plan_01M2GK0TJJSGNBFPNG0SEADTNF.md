@@ -141,6 +141,29 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   repository targets and passed under target-validation receipt
   `receipt_01M2H49DNSADMDKEV4GVC507RS`; final file-budget receipt
   `receipt_01M2H49D469JQA2AQD13Q6JD08` matches the post-close worktree.
+- [x] (2026-09-15) Reopened the Bead with user authorization after current
+  closure verification exposed a real ordinary-start ordering race. The default
+  full matrix observed an acknowledged component in `Starting`; a focused rerun
+  passed, but source inspection showed `start_unapproved` spawned the coordinator
+  before `start` applied application approval.
+- [x] (2026-09-15) Repaired the ordering narrowly: ordinary `start` now consumes
+  readiness approval before passing the driver to the shared owned-driver spawn
+  helper, while `start_unapproved` preserves its deferred typestate. The existing
+  non-yielding failure oracle now names the ordering contract. Focused lifecycle
+  and exact non-yielding tests pass on Rust 1.98.1.
+- [x] (2026-09-15) Both complete verification matrices passed, including the
+  repaired non-yielding case. All ten rebuilt HTTP process profiles, both HTTP
+  example test sets, both foundation examples, and the complete PostgreSQL
+  closure inventory passed on Rust 1.98.1 and 1.94.0.
+- [x] (2026-09-15) The dependent bounded fresh-agent initial/modification and
+  independent packet review completed within its frozen repair limits. The final
+  packet was judged implementable and compliant with no substantive finding.
+- [x] (2026-09-15) Refreshed the narrow repair Jig plan after every code,
+  contract, validation, and evaluation update. All five required targets passed
+  under target-validation receipt `receipt_01M2JBF9R889V4V25GQ9A3XNEZ`; the
+  required verify gate is fresh with no unresolved condition. The reopened Bead
+  again satisfied its acceptance audit and was closed with its evidence comment
+  and acceptance reason recorded atomically.
 - [x] Complete the Bead and Jig work only after a requirement-by-requirement audit
   proves every requested slice, review, commit, contract, and validation exists.
 
@@ -151,6 +174,17 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   Evidence: `Shared::mark_started` serializes the pending-count decrement, and
   the focused `readiness_waits_for_every_component_acknowledgement` regression
   passed at the baseline.
+
+- Observation: the original automatic spawned path composed two individually
+  valid public transitions in the wrong order: `start_unapproved()` launched a
+  concurrently pollable coordinator and only its returned typestate then applied
+  approval. A component on another runtime worker could acknowledge between those
+  operations and observe `Starting` even though its caller selected ordinary
+  `start`.
+  Evidence: the 2026-09-15 default full matrix failed the non-yielding child at
+  its post-acknowledgement readiness assertion; the old implementation at
+  `lifecycle/driver.rs` was exactly
+  `self.start_unapproved().approve_readiness()`.
 
 - Observation: the broad handle problem extends beyond startup acknowledgement.
   Evidence: Axum `RequestPolicy` and `ReadinessPolicy` retain
@@ -320,6 +354,15 @@ ordinary repair rounds, and one separate supporting-work closure allowance.
   Date/Author: 2026-09-14 / Codex.
 
 ## Outcomes & Retrospective
+
+The Bead was reopened on 2026-09-15 after a dependent closure run contradicted
+its automatic-readiness claim. The narrow repair applies the one-shot approval
+before any Tokio task can poll the ordinary owned driver and shares only the
+subsequent coordinator/monitor launch machinery with `start_unapproved`. Both
+supported-toolchain matrices, all HTTP process profiles, foundation examples and
+the dependent live/fresh-agent acceptance now pass. The narrow repair Jig plan
+passed all five targets under `receipt_01M2JBF9R889V4V25GQ9A3XNEZ`, with a fresh
+required gate and no unresolved condition. The acceptance audit is complete.
 
 Slices 1 and 2 are implemented, validated and independently converged. Slice 1's
 first review

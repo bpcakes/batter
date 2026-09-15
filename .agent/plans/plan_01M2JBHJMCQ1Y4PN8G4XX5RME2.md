@@ -1,0 +1,1 @@
+Follow-up for open Bead batter-310. Record authorized PostgreSQL 18.4 execution for the exact 61-case SQLx inventory, refreshed immutable consumer evidence, the repaired dependent lifecycle ordering contract, complete supported-toolchain verification, and final tracker closure. Do not commit or publish.

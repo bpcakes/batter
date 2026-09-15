@@ -10496,3 +10496,104 @@ runtime, correctness, security, concurrency, or data-loss defect. Claude and
 Cursor each attested all 34 captured evidence pages. The review executed no new
 tests and relied on the validation evidence above. The user then explicitly
 authorized commit and push; publication and deployment remain unclaimed.
+
+### Authorized PostgreSQL closure matrix and lifecycle contradiction
+
+On 2026-09-15 the user explicitly authorized disposable Docker infrastructure
+for the two open closure tasks. Two dedicated loopback-only PostgreSQL 18.4
+containers supplied primary and independent-observer endpoints. The primary used
+SCRAM host authentication, `track_counts=on`, `autovacuum_naptime=1s`, and
+`max_prepared_transactions=10`; the reference preflight passed before execution.
+No pre-existing container or host database was touched.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02), at Git revision
+`1cccca704d95811f5e0562e89ef593603e964eda`:
+
+| Closure command / evidence | Executed outcome |
+| --- | --- |
+| `scripts/test_sqlx_live.sh` with authorized `DATABASE_URL`, `BATTER_SQLX_AUTH_ACCEPT_URL`, and `BATTER_SQLX_ADMIN_URL` | PASS on both toolchains: all 61 cases per run (11 disposition, 14 pool-ownership, and 36 verification cases). |
+| `scripts/test_reference_live.sh` with authorized primary and observer endpoints | PASS on both toolchains: all 64 classified runner entries executed, followed by the separate passing maintenance-session replacement probe. The inventory contains 59 database probes, two synthetic-acquisition controls, two executable-composition controls, and one private dispatch entry. |
+| `cargo test -p batter-example-postgres-lifecycle --bin postgres_lifecycle --locked tests::live:: -- --ignored` | PASS on both toolchains: all three live lifecycle cases. |
+| Toolchain-specific PostgreSQL lifecycle build followed by `scripts/smoke_postgres.py` with SIGTERM and SIGINT | PASS on both toolchains: four total rebuilt smoke profiles. |
+| `scripts/jig work check --plan-id plan_01M2E3P7S7TBN420CKXGASQ2HG` before provisioning | PASS on Rust 1.98.1: all five required targets. Target-validation receipt `receipt_01M2J85BE19CEJW23X1FJGFT86`. |
+| Subsequent `bash scripts/verify.sh` | **FAIL** on Rust 1.98.1 in `non_yielding_child_reports_unjoined_work_and_cannot_drop_runtime`: after component acknowledgement, the child observed `Readiness::Starting` where the automatic-start contract expected `Ready`. The exact focused test then passed, but source inspection confirms an ordering race because `Supervisor::start` spawns through `start_unapproved` before applying readiness approval. |
+
+The PostgreSQL evidence clears the live-database blockers for `batter-310` and
+`batter-lp2.4`; it does not make the repository matrix green. The minimum-toolchain
+full verifier, HTTP smokes, frozen fresh-agent evaluation, and final Jig refresh
+were not run after the contradiction. The ordering issue belongs to the closed
+`batter-lp2.5` lifecycle-capability delivery and needs an explicit reopen/repair
+decision. No repair, hosted CI, new Linux execution, commit, push, publication,
+or deployment is claimed.
+
+#### Ordering repair and completed closure acceptance
+
+The user authorized reopening `batter-lp2.5`. Ordinary `Supervisor::start` now
+consumes its one-shot application readiness approval before spawning the owned
+coordinator; `start_unapproved` retains the unchanged deferred typestate. The
+non-yielding child retains the post-acknowledgement `Ready` oracle with an explicit
+ordering diagnostic.
+
+Executed after the repair on the same macOS 26.6.2 arm64 host:
+
+| Repair closure command / evidence | Executed outcome |
+| --- | --- |
+| Focused lifecycle target and exact non-yielding regression | PASS on Rust 1.98.1: 22 lifecycle cases and the previously failing child scenario. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete repository matrix, including the 48-case non-yielding target, doctests, strict Clippy, formatting and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Rebuilt Axum HTTP example plus `smoke_http.py` default, SIGINT, deadline, warn-filter, and warn-filter/deadline profiles | PASS on both toolchains: all ten process profiles. Both 12-case HTTP example test sets also passed. |
+| `process_owned` and `operation_budget` examples | PASS on both toolchains. |
+| Refreshed `test_sqlx_live.sh` | PASS on both toolchains: all 61 cases per run. |
+| Refreshed `test_reference_live.sh` plus separate maintenance-session probe | PASS on both toolchains: all 64 classified entries and the separate probe per run. |
+| Refreshed PostgreSQL lifecycle live target and rebuilt SIGTERM/SIGINT smokes | PASS on both toolchains: three live cases and two process profiles per run. |
+| Final Jig refresh for `batter-lp2.5` repair | PASS: all five targets under target-validation receipt `receipt_01M2JBF9R889V4V25GQ9A3XNEZ`; required verify gate fresh, no unresolved condition. |
+| Final Jig refresh for `batter-lp2.4` | PASS: all five targets under target-validation receipt `receipt_01M2JBHB3C25EK0C9DJTX00XWA`; required verify gate fresh, no unresolved condition. |
+| Final Jig follow-up for `batter-310` | PASS: all five targets under target-validation receipt `receipt_01M2JBKSFB23E3GFJQ52HG5JCM`; required verify gate fresh, no unresolved condition. |
+
+The frozen fresh-agent evaluation then used two new identities. Author
+`/root/fresh_consumer_author` submitted the initial source before compilation.
+Its first actual compile retained two `E0282` inference errors; repair 1 added
+explicit SQLx result types and passed the real-query, HTTP, TERM-cleanup, and
+later-native-failure oracles. Reviewer `/root/fresh_packet_reviewer` found one
+moderate omission: the initial cleanup message used aggregate success without
+requiring the named record. The second and final permitted initial repair added
+that record check and passed the oracle. The modification's first submission
+added a second owned dependency and fallible post-acquisition stage and passed
+normal TERM, later native failure, and injected startup failure with actual LIFO
+records and fixed diagnostics. Focused re-review found the packet implementable
+and compliant with no substantive finding.
+
+The frozen packet, independent oracle, first source, both initial repairs,
+modification, hashes, sanitized diagnostics/results and independent reviews are
+archived in [fresh consumer evidence](evidence/batter-lp2.4-2026-09-15/README.md).
+No reliability percentage, hosted CI, new Linux execution, commit, push,
+publication, or deployment is claimed. The final Jig receipts above cover the
+current repair and closure inputs; tracker closure is recorded in the owning
+Beads export.
+
+### PUBLIC relation and column precedence closure
+
+The historical `batter-7r3.13` ambiguity is resolved by the current shared
+PUBLIC declaration index. An exact relation declaration, including an empty
+deny, suppresses PUBLIC column defaults for that relation. An explicit column
+declaration remains an exception. A permitted whole-relation privilege still
+supplies the corresponding column privilege, so a column deny cannot subtract
+that grant. Pure required-policy validation and catalog discovery use the same
+precedence.
+
+Focused closure execution on 2026-09-15 used the same macOS 26.6.2 arm64 host
+and supported toolchains recorded above. On Rust 1.98.1 and 1.94.0,
+`required_policy_uses_relation_override_precedence_and_explicit_column_exceptions`
+and
+`exact_empty_public_override_rejects_grants_allowed_by_discovery_default`
+passed. Against the dedicated PostgreSQL 18.4 primary endpoint,
+`verification_public_relation_overrides_control_column_defaults` passed on both
+toolchains. The native fixture proves a column-only PUBLIC SELECT grant, then
+checks the permissive default, relation deny, explicit column exception,
+required-privilege agreement, and legacy `PublicGrant` parent precedence. The
+first focused live evaluator command omitted the target's required
+`test-support` feature and Cargo refused before test execution; the corrected
+commands above passed. The complete 61-case live runs recorded earlier include
+the same native case on both toolchains.

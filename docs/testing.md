@@ -682,7 +682,7 @@ receipt are excluded.
 | Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
 | Seeded root/descendant contention, cancellation/readiness/drop schedules, complete failure accounting, replay and watchdog controls | [scheduling.rs](../crates/batter/tests/scheduling.rs) and its [profile](../crates/batter/tests/scheduling/profile.rs) |
 | Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
-| Non-yielding direct work, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter/tests/non_yielding.rs) and its [fixture](../crates/batter/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter/tests/non_yielding/watchdog.rs) |
+| Non-yielding direct work, ordinary-start approval visible immediately after component acknowledgement, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter/tests/non_yielding.rs) and its [fixture](../crates/batter/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter/tests/non_yielding/watchdog.rs) |
 | Axum context/probes/gate/deadline/sanitized responses; budget validation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Configured envelope/status/headers, original trusted metadata on timeout/cancellation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Ordinary INFO completion, scoped context and error redaction | [core telemetry](../crates/batter/tests/telemetry.rs) |

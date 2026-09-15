@@ -1,0 +1,1 @@
+Follow-up for reopened Bead batter-lp2.5. Apply application readiness approval before owned coordinator spawn, preserve the explicitly unapproved typestate, retain the non-yielding failure oracle, update contracts and validation, and verify both supported toolchains plus process/live closure evidence. Do not commit or publish.

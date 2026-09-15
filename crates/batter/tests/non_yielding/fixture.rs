@@ -68,7 +68,11 @@ fn supervisor(
             let lifetime = TaskLifetime(active.clone());
             active.store(true, Ordering::SeqCst);
             let signal = signal.acknowledge_started();
-            assert_eq!(handle.status().readiness(), Readiness::Ready);
+            assert_eq!(
+                handle.status().readiness(),
+                Readiness::Ready,
+                "ordinary start must approve readiness before the component can acknowledge"
+            );
             emit("task-entered");
             entered.send(()).unwrap();
             if !cooperative {

@@ -63,6 +63,23 @@ documentation demonstrate the new boundary.
   revision and updated `batter-310`. The delivery Bead remains in progress because
   its required PostgreSQL 18 live evidence and refreshed pinned-consumer adoption
   could not be executed in this environment. No commit or push occurred.
+- [x] (2026-09-15) With explicit user authorization, provisioned dedicated
+  loopback-only PostgreSQL 18.4 primary and observer containers with SCRAM,
+  `track_counts=on`, `autovacuum_naptime=1s`, and
+  `max_prepared_transactions=10`. Preflight passed and the exact 61-case SQLx
+  live inventory passed on Rust 1.98.1 and 1.94.0 (11 disposition, 14 pool
+  ownership, and 36 verification cases per toolchain).
+- [x] (2026-09-15) Reopened `batter-lp2.5` with user authorization and repaired
+  its ordinary-start ordering race by applying readiness approval before the
+  coordinator is spawned. Both complete Rust matrices, all HTTP process profiles,
+  both foundation examples, and the refreshed two-toolchain PostgreSQL closure
+  matrix passed. The dependent fresh-agent evaluation also converged; final Jig
+  and tracker closure remain.
+- [x] (2026-09-15) Completed the final acceptance audit and Jig follow-up after
+  the dependent lifecycle repair. All five targets passed under
+  target-validation receipt `receipt_01M2JBKSFB23E3GFJQ52HG5JCM`; the required
+  verify gate is fresh with no unresolved condition. The Bead was then closed
+  with its evidence comment and acceptance reason recorded atomically.
 
 ## Surprises & Discoveries
 
@@ -110,6 +127,15 @@ documentation demonstrate the new boundary.
   `policy.rs` because its line debt grew by 308 lines from baseline. Moving pure
   policy compilation and normalization into `policy/compiler.rs` reduced the
   model module to 743 lines and the targeted gate passed without a waiver.
+
+- Observation: authorized PostgreSQL execution removed the database blocker,
+  but the first subsequent full repository matrix exposed a lifecycle readiness
+  ordering race outside this SQLx implementation. The race is owned by the
+  previously closed `batter-lp2.5` capability cutover; closing this Bead while
+  the required current matrix is red would overstate repository evidence.
+  Evidence: `crates/batter/src/lifecycle/driver.rs::Supervisor::start` calls
+  `start_unapproved()` before `approve_readiness()`, and the spawned coordinator
+  can acknowledge a fast component between those operations.
 
 ## Decision Log
 
@@ -203,13 +229,19 @@ actionable findings in the terminal pass, and the parent confirmed the unchanged
 complete fingerprint
 `2786f67770508ba3590e8c6e320a264e92719426d5e1c9674e1928d085378e87`.
 
-The PostgreSQL live runner stopped at preflight because `DATABASE_URL`,
-`BATTER_SQLX_AUTH_ACCEPT_URL`, and `BATTER_SQLX_ADMIN_URL` were absent. The new
-mixed-plan bodies compile but were not executed against PostgreSQL. Existing
-consumer evidence at immutable revision `b062f92b7df6928fb7b954a57c31ccdee77c93f0`
-is explicitly historical for the superseded API; a refreshed consumer migration
-remains separate work. No hosted CI, Linux run, live PostgreSQL result, consumer
-re-adoption, commit, push, publication, or deployment is claimed.
+The earlier PostgreSQL preflight blocker was cleared on 2026-09-15 with explicit
+authorization. Dedicated PostgreSQL 18.4 primary and observer containers passed
+preflight, and the full 61-case SQLx live inventory passed on Rust 1.98.1 and
+1.94.0. Refreshed immutable consumer adoption is recorded on `batter-r2a`.
+
+The previously contradictory lifecycle evidence was repaired under reopened Bead
+`batter-lp2.5`. Both complete repository matrices and the authorized two-toolchain
+PostgreSQL inventory now pass on the same source tree, and the bounded fresh-agent
+consumer evaluation passed after retaining its first compile failure and two
+review-directed initial repairs. The final Jig follow-up passed all five targets
+under `receipt_01M2JBKSFB23E3GFJQ52HG5JCM`, with a fresh required gate and no
+unresolved condition. No hosted CI, new Linux run, commit, push, publication, or
+deployment is claimed.
 
 ## Context and Orientation
 

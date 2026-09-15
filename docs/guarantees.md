@@ -458,9 +458,10 @@ and never signals after reaping. This is test-runner containment, not a new
 application guarantee for detached descendants. See [testing](testing.md#jig-verification)
 for execution bounds and the final-evidence reuse conditions.
 
-`start` explicitly approves application readiness and launches an owned
-coordinator and completion monitor, creating their completion channel at that
-boundary. It returns the cloneable `RunningSupervisor`. The exceptional
+`start` explicitly approves application readiness before it launches an owned
+coordinator and completion monitor, so no component can acknowledge and observe
+an unapproved ordinary path. It creates their completion channel at that boundary
+and returns the cloneable `RunningSupervisor`. The exceptional
 `start_unapproved` path instead returns a non-cloneable `UnapprovedSupervisor`;
 consume `approve_readiness` to obtain the ordinary owner. A `SupervisorObserver`
 is available from either owner immediately after its start boundary, even before

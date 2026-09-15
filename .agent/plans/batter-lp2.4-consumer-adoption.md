@@ -39,18 +39,38 @@ from public guidance with independently checked failure and cleanup outcomes.
 - [x] (2026-09-13) Migrated the PostgreSQL lifecycle root (parsed native options,
   `pool_in`, child probe context), its offline and live tests, the HTTP health
   helper and retirement `Session::new`. Offline tests pass; live cases unexecuted.
-- [ ] Eight frozen cases implemented with classified runner accounting (66 entries).
-  The four offline cases pass and a mutation trial proves they can fail. The
-  schema pair, waiter/owner loss and TERM/INT production-root variants are
-  unexecuted: authorized endpoints are absent.
-- [ ] Fresh-agent evaluation not started: its authorized disposable fixture
-  prerequisite is absent (see Decision Log).
+- [x] (2026-09-13) Eight frozen cases implemented; the two superseded legacy
+  signal aliases were then hard-removed. The current classified runner has 64
+  entries: 59 database probes, two synthetic-acquisition controls, two
+  executable-composition controls, and one private dispatch entry. The four
+  ordinary offline cases pass; the 59 database entries remain unexecuted for
+  this delivery because authorized endpoints are absent.
+- [x] (2026-09-15) The frozen fresh-agent evaluation completed with two fresh
+  identities. The initial first compile retained two inference failures; repair 1
+  passed runtime oracles, review found one named-cleanup omission, and the final
+  permitted repair 2 passed and cleared re-review. The modification passed on its
+  first submission with real queries, TERM/native/startup failure, LIFO cleanup,
+  fixed diagnostics, and one signal path.
 - [x] (2026-09-13) Updated guidance (usage, integrations, guarantees, architecture,
   testing, status, references, reference compatibility, validation, package
   READMEs and guides). Both `verify.sh` matrices, both HTTP builds with ten smokes,
   and Jig gate `verify` (fresh api:test `receipt_01M2E5DJE852N59E0GNYASAQ6X`)
   passed on Linux. All live runners failed closed without endpoints.
-- [ ] Bead stays open: live acceptance and the public-agent evaluation are blocked.
+- [x] (2026-09-15) Re-audited current HEAD on macOS arm64/Rust 1.98.1. Nine
+  reference-runner controls, five SQLx-runner controls, all 140 SQLx library
+  tests plus 18 offline integration tests, and the five ordinary reference
+  entries passed. Jig executed and passed all five required targets under
+  validation receipt `receipt_01M2J85BE19CEJW23X1FJGFT86`. The 59 ignored
+  reference database cases remain unexecuted.
+- [x] (2026-09-15) With explicit user authorization, dedicated loopback-only
+  PostgreSQL 18.4 primary and observer containers passed preflight and every
+  live row on both Rust 1.98.1 and 1.94.0: 61 SQLx cases, all 64 classified
+  reference entries plus the separate maintenance-session probe, three
+  lifecycle cases, and both lifecycle SIGTERM/SIGINT smokes per toolchain.
+- [x] (2026-09-15) Reopened and repaired `batter-lp2.5` with user authorization.
+  Both complete Rust matrices, all ten HTTP process profiles, foundation examples,
+  and the refreshed two-toolchain PostgreSQL live matrix passed.
+- [ ] Bead stays open only for final current-input Jig evidence and closure audit.
 
 ## Surprises & Discoveries
 
@@ -70,14 +90,16 @@ not installed locally. Children defensively print a newline before any
 invocation, which binds the executable cases to the invoking toolchain.
 
 
-Current reference startup manually installs listeners, races application work
+Preparation-baseline observation (superseded by the implementation): reference
+startup manually installed listeners, raced application work
 against reception, requests drain and transfers listeners. Its pool helper already
 uses the correct reserve/create/register sequence, demonstrating the reusable
 adapter gap rather than missing application awareness. The PostgreSQL demo
 connects and probes before it installs listeners, leaving that interval outside
 its graceful signal path. These are the concrete substitutions this task makes.
 
-`RuntimeStartupFailure::startup` publicly exposes a legacy typed startup error.
+Superseded planning observation: `RuntimeStartupFailure::startup` publicly exposed
+a legacy typed startup error.
 Changing it in place would break source consumers. Keeping it but moving run to
 a new protected wrapper still changes the boxed error's downcast target. The
 reviewed plan explicitly accepts that reference-root behavioral cutover and
@@ -98,6 +120,15 @@ was rejected and independently rebuilt. Future evaluation must bind every source
 variant to its actual executable. These are historical observations, not current
 production acceptance; see docs/evidence/agent-startup-apis-2026-09-12/README.md.
 
+Closure discovery, 2026-09-15: after the live matrix passed, default
+`scripts/verify.sh` failed the non-yielding child because it observed
+`Readiness::Starting` immediately after acknowledging its component. A focused
+rerun passed, but this is not dismissed as a flaky test: `Supervisor::start`
+calls `start_unapproved`, allowing its spawned coordinator to run, before it
+applies application readiness approval. The race contradicts the automatic
+ordinary-path contract owned by closed Bead `batter-lp2.5`. The frozen agent
+evaluation was not started after discovering it.
+
 ## Decision Log
 
 
@@ -106,7 +137,7 @@ Rationale: actual protected interfaces must exist before migration; facade impor
 can be adopted if already delivered without forcing another delivery chain.
 Date/author: 2026-09-12, reviewed planning decision.
 
-Decision: add ProtectedRuntimeStartupFailure while preserving the old type/accessor.
+Superseded decision: add ProtectedRuntimeStartupFailure while preserving the old type/accessor.
 Rationale: represent real protected application and signal failures without
 fabricating an application cause or changing the old accessor's return type.
 runtime::run's new boxed-error downcast behavior is explicit and tested.
@@ -122,22 +153,19 @@ Rationale: distinguish real executable behavior from harness evidence and preven
 success from being manufactured by skipped cases or unlimited unreported repairs.
 Date/author: 2026-09-12, standalone task review refinement.
 
-Decision: restore `RuntimeStartupFailure::startup`'s preparation-baseline return
-type, `&StartupError<InitializationFailure>`. `runtime::run` now produces only
-`ProtectedRuntimeStartupFailure`. Rationale: the frozen compatibility decision
-preserves the original public accessor; `8456ffc` changed it in place without a
-staged cutover. Both packages are unpublished, and the only in-repo downcast
-(`startup_process.rs`) moves to the protected wrapper. Date/author: 2026-09-13,
-implementation agent.
+Decision: apply the user-directed hard cutover. `runtime::run` produces only
+`ProtectedRuntimeStartupFailure`; `RuntimeStartupFailure` and its compatibility
+fixture are removed. Rationale: both packages are unpublished and the coordinated
+cutover intentionally leaves one canonical startup-error boundary. Date/author:
+2026-09-13, implementation and review-fix decision.
 
-Decision: classify the runner inventory as 60 database probes, three
-synthetic-acquisition controls, two actual-executable controls and one dispatch
-entry. Build the executable explicitly before discovery, and resolve it in tests
-through `CARGO_BIN_EXE_batter-example-reference-service`. Raise the execution
-watchdog from 180s to 300s for the larger serial inventory. Rationale: keep exact
-per-name accounting without counting synthetic controls as database evidence.
-The watchdog change relaxes no assertion. Date/author: 2026-09-13, implementation
-agent.
+Decision: after adding the protected-startup cases, hard-remove the two exact
+legacy signal aliases. Classify the final runner inventory as 59 database probes,
+two synthetic-acquisition controls, two actual-executable controls and one
+dispatch entry. Build both executables explicitly before discovery. Rationale:
+keep exact per-name accounting without counting duplicate aliases or synthetic
+controls as database evidence. Date/author: 2026-09-13, implementation and
+review-fix decision.
 
 Decision: do not start the fresh-agent evaluation. Rationale: the frozen protocol
 requires authorized disposable fixture access, a real native query and startup
@@ -155,25 +183,24 @@ ordered report. Date/author: 2026-09-13, implementation agent.
 
 
 2026-09-13 implementation outcome: all four consumers use the protected ownership
-path, with typed failure retention and the legacy accessor compatibility fixture.
-The eight frozen cases and 66-entry classified inventory are implemented. The four
+path, with typed failure retention and the coordinated removal of the legacy wrapper.
+The eight frozen cases and 64-entry classified inventory are implemented. The four
 offline cases pass on both toolchains, and a mutation trial shows their oracles
 reject wrong diagnostics and cleanup counts. Complete Linux two-toolchain
 verification, ten HTTP smokes and fresh Jig gates pass; exact commands and receipts
 are in `docs/validation.md`.
 
-The Bead remains open (in progress). Blockers:
-1. No authorized `POSTGRES_TEST_ADMIN_URL`/`POSTGRES_TEST_OBSERVER_URL`/`DATABASE_URL`
-   exists, so these are unexecuted: the four database process cases, the TERM/INT
-   production-root variants, the full 66-entry and SQLx live inventories, the
-   three lifecycle live cases and both PostgreSQL smokes.
-2. The bounded fresh-agent evaluation was not started for the same reason.
-3. No macOS or hosted evidence exists.
+Authorized live acceptance is complete on macOS arm64 against dedicated
+PostgreSQL 18.4 containers. Both supported toolchains passed all 61 SQLx live
+cases, all 64 reference entries plus the separate session probe, all three
+lifecycle live cases, and the lifecycle executable's SIGTERM/SIGINT smokes.
 
-To resume, supply authorized endpoints; run the Concrete Steps live rows on both
-toolchains; then execute Milestone 5 exactly as frozen. Record results and close
-only this Bead if everything passes. ADR-010's trigger did not fire. The parent
-epic, predecessors, related Beads and publication/deployment decisions are unaffected.
+The foundation start-ordering race was repaired under reopened `batter-lp2.5` and
+both complete matrices plus HTTP smokes passed. The frozen fresh-agent evaluation
+completed within its exact repair budget and independent re-review found the
+packet implementable and compliant. Its complete sanitized archive is
+`docs/evidence/batter-lp2.4-2026-09-15/`. Final Jig and tracker closure remain.
+No hosted evidence, publication, or deployment is claimed.
 
 ## Context and Orientation
 
@@ -249,18 +276,19 @@ are redacted; native cause and full cleanup reports remain inspectable explicitl
 check_shutdown consumes a shutdown outcome and returns unit on success; retain
 the actual outcome/observer before invoking it when a test needs detailed reports.
 
-Add this reference wrapper without altering RuntimeStartupFailure's old accessor:
+The selected hard cutover exposes this reference wrapper and removes the earlier
+`RuntimeStartupFailure` type entirely:
 
     pub struct ProtectedRuntimeStartupFailure(/* private retained error */);
     impl ProtectedRuntimeStartupFailure {
         pub fn startup(&self) -> &StartupError<InitializationError<InitializationFailure>>;
     }
 
-Implement fixed Display/Debug and an Error source exposing the protected startup
-error. runtime::run still returns Result<(), BoxError>, but its startup-error
-downcast target deliberately becomes ProtectedRuntimeStartupFailure. Update
-startup_process.rs and all intended canonical-root downcasts; retain a compiling
-old accessor fixture. Never stringify or discard the original application/IO cause.
+Its fixed Display/Debug and Error source expose the protected startup error without
+rendering native causes. `runtime::run` still returns `Result<(), BoxError>`, and
+`ProtectedRuntimeStartupFailure` is its sole startup downcast target. Update
+`startup_process.rs` and all canonical-root downcasts; do not restore the removed
+wrapper or an accessor fixture. Never stringify or discard the original cause.
 
 Facade task batter-tmx is related, not blocking. If absent, use current crate paths
 and mark facade feature/re-export checks N/A. If present, consume its delivered
@@ -300,10 +328,10 @@ Runledger preparation with register_in. Preserve jobs_config, empty JobRegistry,
 native prepare(), all stop/settlement translation and absence of startup witness
 jobs. Do not enqueue work or add a provider handler to obtain readiness.
 
-Add ProtectedRuntimeStartupFailure and switch only the canonical run mapping.
+Add ProtectedRuntimeStartupFailure and switch the canonical run mapping.
 Tests must inspect Application(InitializationFailure), a signal-policy failure,
-and Draining with their full cleanup records. Preserve old accessor source
-compatibility and fixed main.rs stderr. A failed diagnostic write must not turn
+and Draining with their full cleanup records. Preserve concrete source causes and
+fixed main.rs stderr. Do not reintroduce the removed wrapper. A failed diagnostic write must not turn
 failure into success. Run reference configuration/diagnostic tests and compile
 all targets before continuing to the next consumer.
 
@@ -400,8 +428,8 @@ pre-coordinator-poll coverage; these new cases prove actual root composition.
 ### Milestone 4: preserve exact inventories and trustworthy execution accounting
 
 
-The recorded reference inventory contains 58 entries. Preserve these exact names
-and add the eight above, giving 66 at this baseline:
+The historical reference inventory contained 58 entries. The hard cutover added
+the eight wrappers above and removed the two exact legacy aliases, giving 64:
 
     production_root_withholds_readiness_without_control_jobs
     retirement_preserves_history_and_disables_old_catalog
@@ -412,13 +440,11 @@ and add the eight above, giving 66 at this baseline:
     retirement_retains_commit_error_through_readback_cancellation
     retirement_retains_lost_commit_acknowledgement
     child_fixture
-    startup_signal_during_pool_acquisition
     native_initialization_without_queue_writes
     native_in_flight_finishes_after_drain
     native_owner_drop_retains_settlement
     native_business_failure_preserves_process
     native_unjoined_callback_blocks_dependency_cleanup
-    startup_signal_during_schema_initialization
     configured_command_root_bounds
     configured_pool_capacity_and_acquire_timeout
     configured_startup_pool_close_before_lease
@@ -464,11 +490,11 @@ and add the eight above, giving 66 at this baseline:
 
 Preserve the separate library test
 retirement::session::tests::maintenance_session_replacement_is_refused. If other
-authorized work added predecessor cases, preserve that inventory plus this exact
-eight-case delta and explain the total. Never delete cases merely to reach 66.
-Fix the runner's current len(CASES)-2 live-probe announcement: new synthetic
-acquisition and executable controls must be classified explicitly, not counted
-as successful database probes. Keep exact per-name discovery/execution checks.
+authorized work adds predecessor cases, preserve that inventory and explain the
+new total. Never restore the removed aliases merely to reach 66. Keep the current
+explicit classification of 59 database probes, two synthetic-acquisition
+controls, two executable controls, and one dispatch entry, with exact per-name
+discovery/execution checks.
 
 Read `.3`'s delivered SQLx inventory rather than rewriting its tests. Its plan
 delivers ten existing disposition cases and fourteen pool-ownership cases in two
@@ -547,8 +573,10 @@ retirement/reconciliation behavior. No library type proves remote effects.
 
 Work from `/home/aa/Documents/batter`, or its current workspace root. Record git
 status, actual predecessor revisions, source/toolchain identities and fixture
-authority. Start `scripts/jig work start --title 'Implement batter-lp2.4'
---body-file .agent/plans/batter-lp2.4-consumer-adoption.md --json` and save its ID.
+authority. Resume the open Jig plan for closure work; if current Jig requires a
+follow-up because its implementation receipts are stale, create the follow-up
+against current HEAD and link it to `batter-lp2.4` rather than duplicating the
+completed implementation.
 Missing predecessor interfaces or external endpoints block complete execution,
 not permission to invent APIs or provision infrastructure silently.
 
@@ -614,8 +642,8 @@ required acceptance. Closing the epic requires independent predecessor completio
 
 All four actual consumers use the appropriate protected path; application signal
 handoff and manual pool publication no longer appear in their canonical startup.
-Source-compatible old wrapper accessors remain, while canonical boxed-error
-downcasts intentionally change and are documented. Native settings/callbacks,
+The old startup wrapper was removed in the coordinated hard cutover; canonical
+boxed-error downcasts and migration guidance are documented. Native settings/callbacks,
 schema/durable behavior and withheld readiness remain unchanged. Actual startup
 signals, complete reports, executable exit rendering, native settlement and pool
 cleanup are independently observed, not inferred from method names or HTTP status.
@@ -666,3 +694,8 @@ Revision note, 2026-09-12: initial ExecPlan translates the reviewed migration
 contract into six ordered milestones, concrete root edits, explicit predecessor
 interfaces, exact process/live inventories, bounded fresh-agent acceptance and
 safe verification/recovery steps. No production scope is implemented here.
+
+Revision note, 2026-09-15: reconciled the historical implementation copy with
+the hard-cutover Bead note and current source. Corrected the removed startup
+wrapper, the final 64-entry runner classification, and the remaining authorized
+live/fresh-agent closure requirements.

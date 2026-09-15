@@ -3,7 +3,11 @@ use super::{
     Supervisor,
 };
 use crate::{completion::wait_published, scoped_dispatch};
-use std::{future::pending, ops::Deref, sync::Arc};
+use std::{
+    future::{Future, pending},
+    ops::Deref,
+    sync::Arc,
+};
 use tokio::{sync::watch, task::JoinError};
 use tracing::Instrument;
 
@@ -355,7 +359,13 @@ impl Supervisor {
     /// intentionally survives handle drop so it can retain coordinator panic and
     /// successful cleanup reports. Runtime/process termination cannot be shielded.
     pub fn start(self) -> RunningSupervisor {
-        self.start_unapproved().approve_readiness()
+        let handle = self.handle();
+        let (approval, driver) = self.into_unapproved_driver(pending());
+        // Ordinary start approves before the coordinator can poll. Otherwise a
+        // fast component can acknowledge initialization and still observe the
+        // application as unapproved on another runtime worker.
+        approval.approve();
+        spawn_owned_driver(handle, driver)
     }
 
     /// Start an owned driver while deliberately retaining application-readiness
@@ -367,33 +377,40 @@ impl Supervisor {
     pub fn start_unapproved(self) -> UnapprovedSupervisor {
         let handle = self.handle();
         let (approval, driver) = self.into_unapproved_driver(pending());
-        let (sender, completion) = watch::channel(None);
-        let observer = SupervisorObserver { completion };
-        let coordinator = tokio::spawn(scoped_dispatch::scope(driver.in_current_span()));
-        let monitor = async move {
-            let outcome = coordinator
-                .await
-                .map(|report| SharedShutdownReport(Arc::new(report)))
-                .map_err(Arc::new);
-            let failed = outcome.is_err();
-            // Publish before diagnostics: an application subscriber that panics
-            // cannot prevent observers from receiving the coordinator failure.
-            sender.send_replace(Some(outcome));
-            if failed {
-                tracing::error!(target: "batter", "owned process coordinator terminated without a shutdown report");
-            }
-        };
-        // This is the explicit daemon monitor: finite, one per started driver,
-        // owns the coordinator JoinHandle, and publishes every joined outcome.
-        drop(tokio::spawn(scoped_dispatch::scope(
-            monitor.in_current_span(),
-        )));
         UnapprovedSupervisor {
-            running: RunningSupervisor {
-                owner: Arc::new(DriverOwner { handle }),
-                observer,
-            },
+            running: spawn_owned_driver(handle, driver),
             approval,
         }
+    }
+}
+
+fn spawn_owned_driver<F>(handle: ShutdownHandle, driver: F) -> RunningSupervisor
+where
+    F: Future<Output = ShutdownReport> + Send + 'static,
+{
+    let (sender, completion) = watch::channel(None);
+    let observer = SupervisorObserver { completion };
+    let coordinator = tokio::spawn(scoped_dispatch::scope(driver.in_current_span()));
+    let monitor = async move {
+        let outcome = coordinator
+            .await
+            .map(|report| SharedShutdownReport(Arc::new(report)))
+            .map_err(Arc::new);
+        let failed = outcome.is_err();
+        // Publish before diagnostics: an application subscriber that panics
+        // cannot prevent observers from receiving the coordinator failure.
+        sender.send_replace(Some(outcome));
+        if failed {
+            tracing::error!(target: "batter", "owned process coordinator terminated without a shutdown report");
+        }
+    };
+    // This is the explicit daemon monitor: finite, one per started driver,
+    // owns the coordinator JoinHandle, and publishes every joined outcome.
+    drop(tokio::spawn(scoped_dispatch::scope(
+        monitor.in_current_span(),
+    )));
+    RunningSupervisor {
+        owner: Arc::new(DriverOwner { handle }),
+        observer,
     }
 }
