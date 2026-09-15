@@ -6,44 +6,73 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use batter::{
-    health::{HealthReader, HealthStatus},
-    lifecycle::{LifecycleStatus, Readiness},
+    health::HealthReader,
+    lifecycle::LifecycleStatus,
+    readiness::{ReadinessEvaluator, ReadinessUnreadyReason},
 };
 use tracing::Level;
 
-/// Sanitized reason for a point-in-time readiness decision, with no cause data.
+pub use batter::readiness::ReadinessDecision;
+
+/// Map a valid readiness decision to its default HTTP status.
 ///
-/// Intentionally exhaustive: new reason variants require a compatible API release
-/// and review of consumers' readiness/severity policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadinessReason {
-    /// Lifecycle Ready and a fresh healthy dependency observation.
-    Ready,
-    /// Application approval, driver or component acknowledgement is outstanding.
-    Starting,
-    /// Admission has closed and shutdown is underway.
-    Draining,
-    /// The process has stopped; distinct from expected startup/drain.
-    Stopped,
-    /// Lifecycle Ready, but the dependency is not healthy (including writer loss).
-    Dependency(HealthStatus),
+/// This returns 200 only for [`ReadinessDecision::Ready`]; every unready
+/// decision returns 503. Observation severity is independent.
+///
+/// ```
+/// use axum::http::StatusCode;
+/// use batter::readiness::{ReadinessDecision, ReadinessUnreadyReason};
+/// use batter_axum::readiness_status;
+///
+/// assert_eq!(readiness_status(ReadinessDecision::Ready), StatusCode::OK);
+/// assert_eq!(
+///     readiness_status(ReadinessDecision::Unready(ReadinessUnreadyReason::Starting)),
+///     StatusCode::SERVICE_UNAVAILABLE,
+/// );
+/// ```
+pub const fn readiness_status(decision: ReadinessDecision) -> StatusCode {
+    match decision {
+        ReadinessDecision::Ready => StatusCode::OK,
+        ReadinessDecision::Unready(_) => StatusCode::SERVICE_UNAVAILABLE,
+    }
 }
 
-impl ReadinessReason {
-    /// 200 only for Ready, otherwise 503; independent of observation severity.
-    pub const fn status(self) -> StatusCode {
-        match self {
-            Self::Ready => StatusCode::OK,
-            _ => StatusCode::SERVICE_UNAVAILABLE,
-        }
-    }
-
-    /// INFO for Ready/Starting/Draining; WARN for Stopped or dependency failures.
-    pub const fn level(self) -> Level {
-        match self {
-            Self::Ready | Self::Starting | Self::Draining => Level::INFO,
-            Self::Stopped | Self::Dependency(_) => Level::WARN,
-        }
+/// Map a valid readiness decision to its default observation severity.
+///
+/// Ready, Starting and Draining use INFO. Stopped and dependency-unready
+/// decisions use WARN. A custom [`ReadinessPolicy::with_level`] callback can
+/// delegate unmatched decisions here instead of copying the default table.
+///
+/// ```
+/// use batter::readiness::{ReadinessDecision, ReadinessUnreadyReason};
+/// use batter_axum::default_readiness_level;
+/// use tracing::Level;
+///
+/// fn starting_is_debug(decision: ReadinessDecision) -> Level {
+///     match decision {
+///         ReadinessDecision::Unready(ReadinessUnreadyReason::Starting) => Level::DEBUG,
+///         other => default_readiness_level(other),
+///     }
+/// }
+///
+/// assert_eq!(
+///     starting_is_debug(ReadinessDecision::Unready(ReadinessUnreadyReason::Starting)),
+///     Level::DEBUG,
+/// );
+/// assert_eq!(
+///     starting_is_debug(ReadinessDecision::Unready(ReadinessUnreadyReason::Stopped)),
+///     Level::WARN,
+/// );
+/// ```
+pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
+    match decision {
+        ReadinessDecision::Ready
+        | ReadinessDecision::Unready(
+            ReadinessUnreadyReason::Starting | ReadinessUnreadyReason::Draining,
+        ) => Level::INFO,
+        ReadinessDecision::Unready(
+            ReadinessUnreadyReason::Stopped | ReadinessUnreadyReason::Dependency(_),
+        ) => Level::WARN,
     }
 }
 
@@ -74,17 +103,28 @@ impl ReadinessReason {
 ///     let policy = ReadinessPolicy::new(control, health);
 /// }
 /// ```
+///
+/// The pre-cutover `ReadinessReason` name is intentionally unavailable from
+/// both the adapter and foundation, so changing only an import cannot make an
+/// old typed extension lookup compile and silently return `None`. Match the
+/// explicitly unready-only [`ReadinessUnreadyReason`] inside the decision:
+///
+/// ```compile_fail,E0432
+/// use batter_axum::ReadinessReason;
+/// ```
+///
+/// ```compile_fail,E0432
+/// use batter::readiness::ReadinessReason;
+/// ```
 pub struct ReadinessPolicy<E> {
-    lifecycle: LifecycleStatus,
-    dependency: HealthReader<E>,
-    level: fn(ReadinessReason) -> Level,
+    evaluator: ReadinessEvaluator<E>,
+    level: fn(ReadinessDecision) -> Level,
 }
 
 impl<E> Clone for ReadinessPolicy<E> {
     fn clone(&self) -> Self {
         Self {
-            lifecycle: self.lifecycle.clone(),
-            dependency: self.dependency.clone(),
+            evaluator: self.evaluator.clone(),
             level: self.level,
         }
     }
@@ -94,39 +134,32 @@ impl<E> ReadinessPolicy<E> {
     /// Select INFO for expected Starting/Draining, WARN for dependency/Stopped failures.
     pub fn new(lifecycle: LifecycleStatus, dependency: HealthReader<E>) -> Self {
         Self {
-            lifecycle,
-            dependency,
-            level: ReadinessReason::level,
+            evaluator: ReadinessEvaluator::new(lifecycle, dependency),
+            level: default_readiness_level,
         }
     }
 
     /// Explicitly override completion severity without changing status or body.
-    /// The callback receives only the sanitized reason and runs during rendering,
-    /// never in a destructor. Subscriber filters still determine event delivery.
-    pub fn with_level(mut self, level: fn(ReadinessReason) -> Level) -> Self {
+    /// The callback receives only the sanitized decision and runs during
+    /// rendering, never in a destructor. Subscriber filters still determine
+    /// event delivery.
+    pub fn with_level(mut self, level: fn(ReadinessDecision) -> Level) -> Self {
         self.level = level;
         self
     }
 
-    /// Obtain a fresh read-only reason. No dependency cause enters the response.
-    pub fn reason(&self) -> ReadinessReason {
-        let health = self.dependency.snapshot().status();
-        match self.lifecycle.readiness() {
-            Readiness::Starting => ReadinessReason::Starting,
-            Readiness::Draining => ReadinessReason::Draining,
-            Readiness::Stopped => ReadinessReason::Stopped,
-            Readiness::Ready if health == HealthStatus::Healthy => ReadinessReason::Ready,
-            Readiness::Ready => ReadinessReason::Dependency(health),
-        }
+    /// Obtain a fresh read-only decision. No dependency cause enters the response.
+    pub fn decision(&self) -> ReadinessDecision {
+        self.evaluator.decision()
     }
 
-    /// Empty-body 200/503 with typed reason and severity response extensions.
+    /// Empty-body 200/503 with typed decision and severity response extensions.
     pub fn response(&self) -> Response {
-        let reason = self.reason();
+        let decision = self.decision();
         (
-            Extension(reason),
-            Extension(HttpObservationLevel((self.level)(reason))),
-            reason.status(),
+            Extension(decision),
+            Extension(HttpObservationLevel((self.level)(decision))),
+            readiness_status(decision),
         )
             .into_response()
     }

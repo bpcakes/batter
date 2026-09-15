@@ -10,7 +10,10 @@ Windows is unsupported and not planned.
 
 `health` provides an ordinary supervised monitor with explicit timing policy and
 cloneable read-only observations. Readers do no probes; stale or stopped writers
-are unready. See the [usage example](../../docs/usage.md#sample-health-independently-of-http-traffic).
+are unready. `readiness` exhaustively classifies those observations and combines
+them with read-only lifecycle status into a `Ready` or `Unready(reason)` decision;
+a healthy observation cannot inhabit a dependency-unready reason. See the
+[usage example](../../docs/usage.md#sample-health-independently-of-http-traffic).
 
 `settings` reads only caller-supplied pairs, literals or an explicit file path.
 It does not search for `.env` or read the process environment. Application schemas

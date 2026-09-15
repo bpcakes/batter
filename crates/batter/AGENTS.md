@@ -28,7 +28,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/admission.rs` owns the validated `BulkheadCapacity`; lifecycle process
   admission owns the distinct validated `ProcessCapacity`. Do not reopen raw
   primitive constructor paths or merge the two capabilities.
-- `src/health.rs` and `src/health/` own dependency sampling and read-only observations.
+- `src/health.rs` and `src/health/` own dependency sampling, read-only observations,
+  and the exhaustive observation-to-dependency-readiness projection.
+- `src/readiness.rs` owns sampling order and the pure lifecycle-plus-dependency
+  decision; adapters translate its valid result.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
 - `src/command.rs` and `command/` own finite callbacks and independently retained
@@ -82,6 +85,10 @@ Health readers create no work; the sole monitor owns and destroys its active
 probe on drain. Probe failure permits recovery and does not drain the process.
 Freshness is evaluated from the observation timestamp on each read; readers
 never prolong writer ownership or refresh a successful timestamp.
+Keep `HealthStatus` observation separate from `DependencyReadiness`; classify
+every observation explicitly, with no catch-all. Overall readiness is either
+Ready or Unready with a reason, and dependency reasons cannot contain Healthy.
+Sample dependency before lifecycle so an observed drain overrides cached health.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or

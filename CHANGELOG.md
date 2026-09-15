@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Replace Axum-owned `ReadinessReason::Dependency(HealthStatus)`, which could
+  represent a healthy dependency failure, with foundation-owned exhaustive
+  classifications. `HealthStatus` now projects explicitly to
+  `DependencyReadiness`; `ReadinessEvaluator` combines that result with lifecycle
+  observation into `ReadinessDecision::Ready` or
+  `Unready(ReadinessUnreadyReason)`.
+  Axum carries the valid decision in response extensions and maps only transport
+  status/severity. Migrate `ReadinessPolicy::reason()` to `decision()` and update
+  `with_level` callbacks to accept `ReadinessDecision`. Replace
+  `ReadinessReason::Ready` with `ReadinessDecision::Ready`, `.status()` with
+  `readiness_status(decision)`, and `.level()` with
+  `default_readiness_level(decision)`. Response-extension lookups must request
+  `ReadinessDecision` and call `.unready_reason()` for its optional payload. The
+  old `ReadinessReason` name is absent from both `batter_axum` and
+  `batter::readiness`, so a stale typed extension lookup cannot be revived by
+  changing only its import and then silently return `None`. Match
+  `batter::readiness::ReadinessUnreadyReason` only inside an unready decision.
+  No invalid or ambiguously named compatibility variant is retained.
 - Replace clone-wide `ShutdownHandle::mark_ready` with one-shot readiness
   ownership. `Supervisor::start` and `run_until` consume approval automatically;
   only explicitly exceptional `start_unapproved` and `run_until_unapproved`

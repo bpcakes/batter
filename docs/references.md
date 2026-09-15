@@ -1492,11 +1492,22 @@ install that extension. `register_http` intentionally retains its narrow Router
 contract. The later opt-in companion below replaces the previously documented
 application-owned supervised native serve closure for direct TCP peer metadata.
 
+### Exhaustive readiness decision types: 2026-09-15
+
 Cargo's [SemVer guidance](https://doc.rust-lang.org/cargo/reference/semver.html)
 classifies adding enum variants and adding `non_exhaustive` to an existing
-exhaustive enum as breaking changes. ReadinessReason remains exhaustive by
-design: additional states warrant consumer policy review, rather than a new
-wildcard fallback that can conceal a readiness/severity decision.
+exhaustive enum as breaking changes. `ReadinessDecision`, `ReadinessUnreadyReason` and
+`DependencyUnreadyReason` remain exhaustive by design: additional states warrant
+consumer policy review, rather than a wildcard fallback that can conceal a
+readiness/severity decision. The unpublished 2026-09-15 cutover split the overall
+Ready/Unready verdict from its unready reason and replaced the overly broad
+`ReadinessReason::Dependency(HealthStatus)` payload. This is repository-owned
+state modeling; no new upstream runtime behavior is claimed. The old Axum reason
+re-export is deliberately removed because preserving that type path would let a
+pre-cutover response-extension lookup compile while missing the new decision
+extension. Adapter-owned `readiness_status` and `default_readiness_level` replace
+the former associated helpers without moving HTTP or tracing types into the
+foundation.
 
 ### Direct TCP peer registration: 2026-09-12
 

@@ -1195,18 +1195,32 @@ never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
 custom renderer afterward replaces this policy. Domain responses remain owned
 by their handler.
 
-`ReadinessPolicy` stores `LifecycleStatus` and reads a fresh dependency snapshot
-then lifecycle readiness,
-without invoking a probe or retaining the writer. Ready requires both healthy
-and lifecycle Ready; an observed drain overrides cached health. A subsequent
-transition may immediately obsolete the decision. Responses have empty bodies,
-200 for Ready and 503 otherwise, and retain `ReadinessReason` in extensions.
-Starting/Draining default INFO; Stopped and dependency Unknown/Failed/TimedOut/
-Stale/Stopped default WARN. Explicit level policy alters neither status, reason,
-body nor outcome. During supervised drain, a stopped health writer still yields
-Draining/INFO; after process completion it yields Stopped/WARN. Reading either
-state creates no probes. ReadinessReason is intentionally exhaustive: new states
-require an API compatibility decision and consumer policy review. Old `readiness` and `liveness` keep their status-only contracts.
+The foundation `ReadinessEvaluator` stores `LifecycleStatus` and `HealthReader`,
+reads a fresh dependency snapshot then lifecycle readiness, and invokes no probe
+or writer-retaining operation. Every `HealthStatus` is explicitly classified as
+`DependencyReadiness`; Healthy is Ready, while Unknown, ProbeFailed,
+ProbeTimedOut, Stale and WriterStopped carry the corresponding
+`DependencyUnreadyReason`. Overall `ReadinessDecision` is either Ready or
+Unready(ReadinessUnreadyReason), and `ReadinessUnreadyReason::Dependency` cannot contain a
+healthy value. Ready requires both healthy and lifecycle Ready; an observed drain
+overrides cached health. A subsequent transition may immediately obsolete the
+decision.
+
+`ReadinessPolicy` translates that valid foundation decision. Responses have empty
+bodies, 200 for Ready and 503 for Unready, and retain `ReadinessDecision` in
+extensions. Starting/Draining default INFO; Stopped and every dependency-unready
+reason default WARN. `readiness_status` and `default_readiness_level` expose those
+adapter mappings; explicit level policy receives the complete decision, can
+delegate unmatched cases to the default, and alters neither status, decision,
+body nor outcome. The old `ReadinessReason` name is absent from both Axum and
+the foundation so stale extension lookups fail at compilation even after an
+import change; deliberate matching imports `ReadinessUnreadyReason` and unwraps
+it from the decision. During supervised drain, a
+stopped health writer still yields Draining/INFO; after process completion it
+yields Stopped/WARN. Reading either state creates no probes. `ReadinessDecision`,
+`ReadinessUnreadyReason` and `DependencyUnreadyReason` are intentionally exhaustive:
+new semantic states require the corresponding API compatibility and consumer
+policy review. Old `readiness` and `liveness` keep their status-only contracts.
 
 `register_http` transfers a bound TcpListener and initialized Router into a
 critical component. The factory does no work before supervision starts and

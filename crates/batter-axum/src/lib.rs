@@ -15,7 +15,10 @@ mod readiness;
 mod serving;
 
 pub use correlation::{CorrelationId, operational_http, render_infrastructure_failure};
-pub use readiness::{ReadinessPolicy, ReadinessReason, dependency_readiness};
+pub use readiness::{
+    ReadinessDecision, ReadinessPolicy, default_readiness_level, dependency_readiness,
+    readiness_status,
+};
 pub use serving::{register_http, register_http_in, register_http_with_connect_info_in};
 
 use axum::{

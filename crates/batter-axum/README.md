@@ -114,10 +114,17 @@ the last renderer selection wins. Domain error mappings remain application-owned
 
 Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
 outside admission. Its response has an empty body and 200 only when lifecycle is
-Ready and the latest read-only health snapshot is healthy. `ReadinessReason`
-retains Starting/Draining/Stopped and each unready dependency status in response
-extensions. `with_level` explicitly changes severity only. Decisions do no probe
-I/O and are point-in-time observations, not atomic with future drain.
+Ready and the latest read-only health snapshot is healthy. The response extension
+carries the foundation's `ReadinessDecision`: either Ready or Unready with a
+Starting/Draining/Stopped or typed dependency-unready reason. Healthy has no
+dependency-unready representation. `readiness_status` exposes the adapter's
+200/503 mapping and `default_readiness_level` exposes its INFO/WARN mapping;
+`with_level` receives the valid decision and can delegate unmatched cases to that
+default. Match `ReadinessUnreadyReason` from `batter::readiness` only inside an
+unready decision. The old `ReadinessReason` name is deliberately absent from
+both crates so stale response-extension lookups fail to compile even after an
+import change. Decisions do no probe I/O and are point-in-time observations, not
+atomic with future drain.
 
 Inside protected `Startup::scoped` composition, bind a native `TcpListener`, assemble the
 `Router`, then call `register_http_in(scope, "http", listener, router)`. It acknowledges when

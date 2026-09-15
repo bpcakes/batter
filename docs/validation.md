@@ -10313,3 +10313,186 @@ loop did not run Jig or refresh excluded plan and receipt metadata. The final
 fresh complete all-reviewer pass follows this snapshot. No live
 PostgreSQL/provider, macOS or hosted-CI execution, publication, deployment,
 commit or push is claimed.
+
+### Foundational readiness decision cutover
+
+The readiness defect was present at the captured baseline: the Axum-owned public
+`ReadinessReason::Dependency(HealthStatus)` accepted `HealthStatus::Healthy`,
+whose methods nevertheless selected HTTP 503 and WARN. The canonical policy did
+not construct that value, but downstream safe Rust could. The direct unpublished
+cutover separates observation from decision: `HealthStatus` exhaustively projects
+to `DependencyReadiness`, whose unready case contains only
+`DependencyUnreadyReason`; foundation `ReadinessEvaluator` then combines that
+projection with lifecycle state into `ReadinessDecision::Ready` or
+`Unready(ReadinessUnreadyReason)`. The Axum adapter maps only this valid decision to
+transport status and severity. A compile-fail doctest rejects the former healthy
+dependency-failure construction.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Readiness cutover command / evidence | Executed outcome |
+| --- | --- |
+| Pre-change `cargo test -p batter-axum --test operational decisions_are_read_only_and_distinguish_all_dependency_and_process_states --locked` and `cargo test -p batter --test health --locked` | PASS on Rust 1.98.1: the existing canonical path was behaviorally sound before the type repair; one focused Axum scenario and all 17 foundation health tests passed. |
+| `cargo test -p batter --lib --locked`, `cargo test -p batter --test health --locked`, and `cargo test -p batter --doc --locked` | PASS on Rust 1.98.1: 28 library tests, 17 health integration tests, 32 positive doctests and 36 compile-fail doctests. The new state table covers all four lifecycle states against all six health observations, and the negative doctest rejects `Dependency(HealthStatus::Healthy)`. |
+| `cargo test -p batter-axum --test operational --locked`, `cargo test -p batter-axum --doc --locked`, `cargo test -p batter-axum --example http_service --locked`, and `cargo test -p batter-example-reference-service --no-default-features --locked` | PASS on Rust 1.98.1: 21 adapter operational tests, seven positive and three compile-fail adapter doctests, 12 HTTP example tests, and the complete no-default-features reference-service test/doctest set. The adapter cases cover every valid readiness reason, exact 200/503 and INFO/WARN policy, override behavior, read-only sampling and lifecycle precedence. |
+| `cargo clippy -p batter -p batter-axum --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, `git diff --check`, and `scripts/jig check repo:file-budget --plan-id plan_01M2HWT4TYBHKZ8E57V9135B0F` | PASS after extracting test assertion helpers to satisfy the repository's 100-line function limit. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten rebuilt process profiles across both toolchains, including readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `scripts/jig work check --plan-id plan_01M2HWT4TYBHKZ8E57V9135B0F` | PASS before this evidence-only append: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. Target-validation receipt `receipt_01M2HYAD8YZCXNKHVEF4VARM7P`. |
+
+No dependency changed, and `Cargo.lock` remained unchanged. No hosted CI, new
+Linux execution, live PostgreSQL execution, publication, deployment, commit, or
+push is claimed by this cutover.
+
+### Readiness decision review-fix round one
+
+The requested comprehensive review-fix loop reviewed the complete working-tree
+cutover with Claude, Codex and Cursor, a low minimum severity, and fingerprint
+`46a456d37c331c1cba5c1fbcb5b8d3171f744d50fa824b72154ab95fc024dcb3`.
+Codex found no actionable issue. Claude and Cursor identified one causal adapter
+migration gap plus supporting contract/test obligations. The new foundation
+`ReadinessReason` was still exported from the old
+`batter_axum::ReadinessReason` path even though responses had changed from a
+reason extension to a decision extension, so old middleware could compile while
+its extension lookup silently returned `None`. The old public `status()` and
+`level()` helpers also had no public replacements, preventing a partial custom
+severity policy from delegating unmatched cases to the adapter default. Both
+reviewers separately noted that no deterministic test pinned dependency sampling
+before lifecycle sampling.
+
+The round-one repair removes the old Axum reason re-export, making stale imports
+fail at compile time; consumers match the semantic reason through
+`batter::readiness::ReadinessReason`. Public `readiness_status` and
+`default_readiness_level` functions provide exhaustive decision-safe adapter
+mappings, and policy rendering uses those same functions. A custom severity
+regression overrides Starting while delegating every other decision to the
+default. Foundation evaluation now goes through one private ordered sampler, and
+a deterministic regression requires the dependency callback to run before the
+lifecycle callback and requires a later Draining observation to win over healthy
+cached state. The changelog and package contracts identify the response-extension,
+import, helper and ownership migrations explicitly.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Round-one repair command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter --lib readiness --locked` and `cargo test -p batter --doc --locked` | PASS on Rust 1.98.1: five filtered readiness unit tests, 32 positive doctests and 36 compile-fail doctests. The new ordered-sampler regression and invalid healthy-failure proof passed. |
+| `cargo test -p batter-axum --test operational readiness --locked`, `cargo test -p batter-axum --doc --locked`, and `cargo test -p batter-axum --example http_service --locked` | PASS on Rust 1.98.1: three filtered operational readiness tests, nine positive and four compile-fail adapter doctests, and 12 HTTP example tests. The public mappings, partial override and removed old import are covered. |
+| `cargo test -p batter-example-reference-service --no-default-features --locked` | PASS on Rust 1.98.1: the complete ordinary reference-service test and doctest set passed; externally provisioned live cases remained ignored. |
+| `cargo clippy -p batter -p batter-axum --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` | PASS. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: all ten rebuilt process profiles across both toolchains, including readiness, response, correlation, telemetry, selected-signal and exit-zero assertions. |
+| `scripts/jig work check --plan-id plan_01M2HZPHWFN5YAJ39RR211PFB4` | PASS before this evidence-only append: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. Target-validation receipt `receipt_01M2J0F1D22MFGD7YNTEHWJ3T7`. |
+
+A fresh full-scope all-reviewer pass follows this recorded repair snapshot; no
+outcome from that not-yet-executed pass is claimed here. No dependency changed,
+and `Cargo.lock` remains unchanged. No hosted CI, new Linux execution, live
+PostgreSQL execution, publication, deployment, commit, or push is claimed.
+
+### Unambiguous unready type after upstream reconciliation
+
+The first post-repair all-reviewer pass inspected complete working-tree
+fingerprint
+`0c017f21b580fdad834f11bd7bfa9c4a433190b4f32eacc5119f6216fe9dc7f3`.
+Native Codex and Cursor found no actionable issue. Claude found one low
+substantive continuation of the same response-extension migration hazard: after
+the old Axum import fails, changing only the import to the foundation's
+identically named `ReadinessReason` makes an old typed lookup compile while the
+response still contains only `ReadinessDecision`, so the lookup silently returns
+`None`.
+
+The second ordinary repair removes that ambiguous identity instead of adding a
+duplicate response extension. The foundation payload is now
+`ReadinessUnreadyReason`, `ReadinessDecision::unready_reason()` exposes its
+optional payload, and neither the foundation nor Axum defines or aliases
+`ReadinessReason`. Compile-fail doctests exercise both stale import paths. The
+adapter regression also requires responses to carry `ReadinessDecision` and no
+separate `ReadinessUnreadyReason` extension. The new name states that Ready is
+outside the payload's domain while retaining exhaustive lifecycle and dependency
+classification.
+
+At the user's request, the next review was paused while one new upstream commit
+was reconciled. The complete local tree was preserved in a named stash; `master`
+fast-forwarded from `aeab19992a14adf7be0a493ba18f031172fd1d59` to
+`fcaffe953a3000e0c09060884747354f8f376725`, exactly matching
+`origin/master`, and the readiness changes were replayed. Git merged all source
+and shared-contract changes automatically. The two append-only validation tails
+were retained in order. Rust Beads reconciliation read 126 upstream JSONL
+records, updated `batter-4c4`, retained DB-only `batter-isq`, deleted nothing,
+and exported 127 in-sync issues with the readiness history intact. The originally
+empty index was restored. The temporary stash was dropped only after the
+combined tree passed both full matrices and all process smokes.
+
+The first post-reconciliation Jig work check found an integration regression in
+the new upstream retry/operation seam: the strict workspace Clippy command
+overflowed the compiler query-depth limit while laying out the SQLx verification
+future. Raising `batter-sqlx`'s crate-wide recursion limit was not used. Merely
+constraining the retry-only outcome mapper was insufficient; the causal repair
+also restored ordinary `OperationContext::run` to its direct scoped-dispatch
+path instead of routing every caller through a second generic async state
+machine. The crate-private custom mapper now accepts a function pointer, which
+is all its current retry caller requires. The exact failing command then passed,
+and operation, retry, attempt-deadline and telemetry regressions retained their
+behavior.
+
+Executed after reconciliation on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Reconciled round-two command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter --lib readiness --locked` and `cargo test -p batter --doc --locked` | PASS on Rust 1.98.1 before reconciliation: five filtered readiness unit tests, 32 positive doctests and 36 compile-fail doctests. The combined full matrices below passed the upstream-expanded foundation inventory of 34 positive and 38 compile-fail doctests on both toolchains. |
+| `cargo test -p batter-axum --test operational readiness --locked` and `cargo test -p batter-axum --doc --locked` | PASS on Rust 1.98.1 before reconciliation: three filtered readiness cases, nine positive and five compile-fail adapter doctests. The same adapter inventories passed after reconciliation in both complete matrices. |
+| `cargo test -p batter-example-reference-service --no-default-features --locked`, `cargo clippy -p batter -p batter-axum --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` | PASS before reconciliation; the complete post-reconciliation matrices reran the corresponding workspace checks. |
+| First `scripts/jig work check --plan-id plan_01M2HZPHWFN5YAJ39RR211PFB4`, followed by focused `scripts/jig check clippy` after the operation integration repair | The first work check passed `api:test`, `api:fmt`, `repo:contract`, and `repo:file-budget` but FAILed `api:clippy` with query-depth overflow at `crates/batter-sqlx/src/verification/executor.rs:32`. The exact focused Clippy target then PASSed after restoring the direct ordinary operation path; no `recursion_limit` attribute was added. |
+| `cargo test -p batter --test operation --locked`, `cargo test -p batter --test retry --locked`, `cargo test -p batter --test retry_attempt_deadlines --locked`, and `cargo test -p batter --test telemetry --locked` | PASS on Rust 1.98.1 after the integration repair: 15 operation, 20 legacy retry, 17 bounded-attempt and eight telemetry cases. Focused readiness and Axum operational cases also remained green. |
+| `bash scripts/verify.sh` | PASS after the final integration repair on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS after the final integration repair with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS after the final integration repair: all ten rebuilt process profiles across both toolchains. |
+| Final `scripts/jig work check --plan-id plan_01M2HZPHWFN5YAJ39RR211PFB4` | PASS before this evidence-only append: `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget` executed successfully; the exact current-input `api:clippy` pass was reused. Target-validation receipt `receipt_01M2J2WW1029K073KHQDS4Q1T2`. |
+
+A fresh full-scope Claude/Codex/Cursor pass reviewed the complete reconciled
+working tree at fingerprint
+`2b319ed5118323ae5f05b7ccda97a09a8a7b5aef8337a3df805fe098ddc69e69`.
+All three reviewers reported no low-or-higher substantive defect. Claude
+identified two supporting closure items: the status rows still described
+validation as pending, and the new foundation module remains untracked. Native
+Codex identified the self-referential validation-evidence refresh as a supporting
+item; Cursor found no actionable issue. Parent fingerprints before and after the
+pass were complete and identical.
+
+The status rows now report the executed evidence. The new
+`crates/batter/src/readiness.rs` remains deliberately untracked because this task
+must preserve the originally empty index and has no staging or commit authority;
+an eventual commit must add that file explicitly rather than rely on tracked-only
+staging. After the preceding evidence-only append, a targeted Jig refresh made
+the `verify` gate current at target-validation receipt
+`receipt_01M2J2YF37T9C3T2K08ND4BNH5`. This closure append necessarily changes
+whole-repository policy inputs again, so a final closure work check and focused
+all-reviewer verification follow; neither unexecuted outcome is claimed here.
+
+`Cargo.lock` remains unchanged. No hosted CI, new Linux execution, live
+PostgreSQL execution, publication, deployment, commit, push, or staging is
+claimed.
+
+### Staging and final comprehensive review correction
+
+The preceding closure text records the state before the user authorized staging.
+The complete repository change set was subsequently staged, including the new
+`crates/batter/src/readiness.rs`; the earlier empty-index and untracked-file
+statements are historical and no longer describe the checkout. A final
+read-only Claude/Codex/Cursor comprehensive review covered the included staged
+working tree at complete, unchanged fingerprint
+`79c9fc955bedace7bb1342e13fe4ff907adf440a1360401c96514f0701d61b27`.
+Claude and Codex found this stale staging description as one low supporting
+obligation, Cursor found no actionable issue, and no reviewer found a substantive
+runtime, correctness, security, concurrency, or data-loss defect. Claude and
+Cursor each attested all 34 captured evidence pages. The review executed no new
+tests and relied on the validation evidence above. The user then explicitly
+authorized commit and push; publication and deployment remain unclaimed.

@@ -18,7 +18,8 @@ Windows support and non-Unix fallbacks are out of scope.
   its single internal composition entry has no admission policy.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
-- `src/readiness.rs` owns read-only dependency/lifecycle reasons and severity policy.
+- `src/readiness.rs` translates the foundation's valid readiness decision into
+  HTTP status, response extensions and observation severity.
 - `src/serving.rs` registers a bound native listener/router with the supervisor,
   including opt-in direct TCP peer `ConnectInfo<SocketAddr>` through protected authority.
 - `examples/http_service.rs` demonstrates adoption of these public helpers.
@@ -76,6 +77,12 @@ macros before the first real dispatcher rebuild or change thread/global selectio
 This includes raw subscriber arguments converted implicitly by `with_subscriber`.
 Readiness defaults: Starting/Draining INFO; dependency failures while Ready and
 Stopped WARN. Existing status-only probes and Problem JSON remain compatible.
+Carry the foundation `ReadinessDecision` in response extensions; do not recreate
+lifecycle/health classification or accept a broad `HealthStatus` as a failure.
+Keep `readiness_status` and `default_readiness_level` as the canonical reusable
+adapter mappings. The unready payload is named `ReadinessUnreadyReason`; do not
+introduce a `ReadinessReason` alias or re-export. Pre-cutover extension lookups
+must fail loudly rather than compile and miss the new decision extension.
 Observation severity overrides are explicit response extensions, independent of
 admission. Preserve actual status/outcome and the default WARN for dropped
 futures. No application callback belongs in the observation guard's destructor.

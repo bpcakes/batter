@@ -3,8 +3,8 @@
 //! A [`HealthMonitor`] creates no tasks. [`HealthMonitor::register_in`] transfers
 //! it to an ordinary supervised component and returns its read-only view. The
 //! lower-level consuming [`HealthMonitor::run`] future remains available. Readers
-//! never run probes. Dependency health is separate from lifecycle readiness:
-//! adapters must check both.
+//! never run probes. Dependency health is separate from lifecycle readiness;
+//! [`crate::readiness::ReadinessEvaluator`] combines both without probe I/O.
 //!
 //! ```no_run
 //! use batter::{health::{HealthMonitor, HealthPolicy, HealthReader},
@@ -26,7 +26,10 @@
 mod observation;
 mod policy;
 
-pub use observation::{HealthReader, HealthSnapshot, HealthStatus, ProbeObservation, ProbeOutcome};
+pub use observation::{
+    DependencyReadiness, DependencyUnreadyReason, HealthReader, HealthSnapshot, HealthStatus,
+    ProbeObservation, ProbeOutcome,
+};
 pub use policy::HealthPolicy;
 
 use crate::{

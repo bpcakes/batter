@@ -90,6 +90,9 @@ acknowledgements, shutdown phases, and the separately driven completion report.
 and transfer to the running driver.
 `crates/batter/src/health.rs` and `health/` own sequential dependency sampling,
 read-only freshness snapshots and writer lifetime.
+`crates/batter/src/readiness.rs` owns the pure lifecycle-plus-dependency decision,
+including the dependency-first/lifecycle-second read order and unrepresentable
+healthy-as-failure states.
 `crates/batter/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
 `crates/batter/src/operation.rs` owns deadline/cancellation boundaries and typed failures.
 `crates/batter/src/retry.rs` owns replay policy, bounded attempts, and backoff.

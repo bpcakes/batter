@@ -8,11 +8,13 @@ use axum::{
 };
 use batter::{
     cleanup::CleanupBudget,
-    health::{HealthMonitor, HealthPolicy, HealthStatus},
+    health::{DependencyUnreadyReason, HealthMonitor, HealthPolicy, HealthStatus},
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
+    readiness::ReadinessUnreadyReason,
 };
 use batter_axum::{
-    HttpObservationLevel, ReadinessPolicy, ReadinessReason, dependency_readiness, operational_http,
+    HttpObservationLevel, ReadinessDecision, ReadinessPolicy, default_readiness_level,
+    dependency_readiness, operational_http, readiness_status,
 };
 use std::{
     future::{Future, poll_fn},
@@ -34,8 +36,8 @@ async fn sample(run: &mut (impl Future<Output = ()> + Unpin)) {
     );
 }
 
-async fn assert_response(policy: &ReadinessPolicy<std::io::Error>, reason: ReadinessReason) {
-    assert_eq!(policy.reason(), reason);
+async fn assert_response(policy: &ReadinessPolicy<std::io::Error>, decision: ReadinessDecision) {
+    assert_eq!(policy.decision(), decision);
     let app: Router = Router::new()
         .route("/ready", get(dependency_readiness::<std::io::Error>))
         .with_state(policy.clone())
@@ -49,20 +51,43 @@ async fn assert_response(policy: &ReadinessPolicy<std::io::Error>, reason: Readi
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), reason.status());
+    assert_eq!(response.status(), readiness_status(decision));
     assert_eq!(
-        response.extensions().get::<ReadinessReason>(),
-        Some(&reason)
+        response.extensions().get::<ReadinessDecision>(),
+        Some(&decision)
     );
+    assert_eq!(response.extensions().get::<ReadinessUnreadyReason>(), None);
     assert_eq!(
         response
             .extensions()
             .get::<HttpObservationLevel>()
             .unwrap()
             .0,
-        reason.level()
+        default_readiness_level(decision)
     );
     assert!(to_bytes(response.into_body(), 1).await.unwrap().is_empty());
+}
+
+const fn unready(reason: ReadinessUnreadyReason) -> ReadinessDecision {
+    ReadinessDecision::Unready(reason)
+}
+
+const fn dependency_unready(reason: DependencyUnreadyReason) -> ReadinessDecision {
+    unready(ReadinessUnreadyReason::Dependency(reason))
+}
+
+async fn assert_dependency(
+    policy: &ReadinessPolicy<std::io::Error>,
+    reason: DependencyUnreadyReason,
+) {
+    assert_response(policy, dependency_unready(reason)).await;
+}
+
+const fn starting_is_error(decision: ReadinessDecision) -> Level {
+    match decision {
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Starting) => Level::ERROR,
+        other => default_readiness_level(other),
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -92,34 +117,32 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
         );
         let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
         let policy = ReadinessPolicy::new(handle.status(), monitor.reader());
-        assert_response(&policy, ReadinessReason::Starting).await;
+        assert_response(&policy, unready(ReadinessUnreadyReason::Starting)).await;
         approval.approve();
-        assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Unknown)).await;
+        assert_dependency(&policy, DependencyUnreadyReason::Unknown).await;
         let probe_handle = ShutdownHandle::new_unapproved();
         let mut run = Box::pin(monitor.run(probe_handle.signal()));
         sample(&mut run).await;
-        assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Failed)).await;
+        assert_dependency(&policy, DependencyUnreadyReason::ProbeFailed).await;
         tokio::time::advance(Duration::from_secs(2)).await;
         sample(&mut run).await;
         tokio::time::advance(Duration::from_secs(1)).await;
         sample(&mut run).await;
-        assert_response(&policy, ReadinessReason::Dependency(HealthStatus::TimedOut)).await;
+        assert_dependency(&policy, DependencyUnreadyReason::ProbeTimedOut).await;
         tokio::time::advance(Duration::from_secs(2)).await;
         sample(&mut run).await;
-        assert_response(&policy, ReadinessReason::Ready).await;
+        assert_response(&policy, ReadinessDecision::Ready).await;
         tokio::time::advance(Duration::from_secs(4)).await;
-        assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Stale)).await;
+        assert_dependency(&policy, DependencyUnreadyReason::Stale).await;
         drop(run);
-        assert_response(&policy, ReadinessReason::Dependency(HealthStatus::Stopped)).await;
+        let writer_stopped = dependency_unready(DependencyUnreadyReason::WriterStopped);
+        assert_response(&policy, writer_stopped).await;
         for _ in 0..100 {
-            assert_eq!(
-                policy.reason(),
-                ReadinessReason::Dependency(HealthStatus::Stopped)
-            );
+            assert_eq!(policy.decision(), writer_stopped);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         handle.request();
-        assert_response(&policy, ReadinessReason::Draining).await;
+        assert_response(&policy, unready(ReadinessUnreadyReason::Draining)).await;
         let cleanup = CleanupBudget::new(
             Duration::from_secs(1),
             Duration::from_secs(1),
@@ -148,7 +171,7 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
         let stopped = ReadinessPolicy::new(supervisor.status(), monitor.reader());
         let report = supervisor.start().wait().await.unwrap();
         assert!(!report.is_success()); // Empty supervisor, used only to observe terminal state.
-        assert_response(&stopped, ReadinessReason::Stopped).await;
+        assert_response(&stopped, unready(ReadinessUnreadyReason::Stopped)).await;
     }
     .with_subscriber(capture.dispatch.clone())
     .await;
@@ -168,7 +191,7 @@ async fn decisions_are_read_only_and_distinguish_all_dependency_and_process_stat
 }
 
 #[tokio::test]
-async fn explicit_severity_override_preserves_reason_status_body_and_http_outcome() {
+async fn explicit_severity_override_preserves_decision_status_body_and_http_outcome() {
     let monitor = HealthMonitor::new(
         HealthPolicy::new(
             Duration::from_secs(1),
@@ -181,9 +204,14 @@ async fn explicit_severity_override_preserves_reason_status_body_and_http_outcom
     );
     let policy = ReadinessPolicy::new(ShutdownHandle::new_unapproved().status(), monitor.reader());
     let captures: Vec<_> = (0..2).map(|_| Capture::new()).collect();
+    assert_eq!(starting_is_error(ReadinessDecision::Ready), Level::INFO);
+    assert_eq!(
+        starting_is_error(unready(ReadinessUnreadyReason::Stopped)),
+        Level::WARN
+    );
     for (policy, capture, level) in [
         (policy.clone(), &captures[0], "INFO"),
-        (policy.with_level(|_| Level::ERROR), &captures[1], "ERROR"),
+        (policy.with_level(starting_is_error), &captures[1], "ERROR"),
     ] {
         let app: Router = Router::new()
             .route("/ready", get(dependency_readiness::<std::io::Error>))
@@ -201,8 +229,8 @@ async fn explicit_severity_override_preserves_reason_status_body_and_http_outcom
             .unwrap();
         assert_eq!(response.status().as_u16(), 503);
         assert_eq!(
-            response.extensions().get::<ReadinessReason>(),
-            Some(&ReadinessReason::Starting)
+            response.extensions().get::<ReadinessDecision>(),
+            Some(&unready(ReadinessUnreadyReason::Starting))
         );
         assert!(to_bytes(response.into_body(), 1).await.unwrap().is_empty());
         let text = capture.text();
@@ -277,16 +305,17 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             .unwrap();
         // The sole writer has sampled before waiting for its next interval.
         assert_eq!(reader.snapshot().status(), HealthStatus::Healthy);
-        assert_response(&policy, ReadinessReason::Ready).await;
+        assert_response(&policy, ReadinessDecision::Ready).await;
         handle.request();
         tokio::time::timeout(second, stopped_rx)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(reader.snapshot().status(), HealthStatus::Stopped);
-        assert_response(&policy, ReadinessReason::Draining).await;
+        let draining = unready(ReadinessUnreadyReason::Draining);
+        assert_response(&policy, draining).await;
         for _ in 0..100 {
-            assert_eq!(policy.reason(), ReadinessReason::Draining);
+            assert_eq!(policy.decision(), draining);
         }
         release_tx.send(()).unwrap();
         let report = tokio::time::timeout(second, running.wait())
@@ -294,7 +323,7 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
             .unwrap()
             .unwrap();
         assert!(report.is_success(), "{report:?}");
-        assert_response(&policy, ReadinessReason::Stopped).await;
+        assert_response(&policy, unready(ReadinessUnreadyReason::Stopped)).await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
     .with_subscriber(capture.dispatch.clone())

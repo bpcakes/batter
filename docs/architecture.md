@@ -220,10 +220,19 @@ Probe errors/timeouts are recoverable dependency states, while panics remain
 critical component failures. There is no hidden task or service registry.
 
 The HTTP composition registers a monitor during owned startup and passes only
-its reader to the readiness route. The route combines process state and cached
-dependency status; it never queries a dependency. Acknowledging the monitor's
-initialization does not make an unknown dependency healthy. Application timing
-policy and actual probe implementation stay in the composition root.
+its reader to the readiness route. The foundation `ReadinessEvaluator` samples
+the cached dependency observation first and lifecycle second; it never queries a
+dependency, and an observed drain overrides the earlier health sample. A broad
+`HealthStatus` is exhaustively projected into `DependencyReadiness`, then combined
+into `ReadinessDecision::Ready` or `Unready(ReadinessUnreadyReason)`. Dependency reasons
+accept only `DependencyUnreadyReason`, so Healthy cannot be represented as a
+failure. The Axum adapter owns only HTTP status, response extensions and severity.
+It exposes those conversions as `readiness_status` and
+`default_readiness_level` so custom rendering and severity policy reuse the same
+table without moving HTTP or tracing types into the foundation.
+Acknowledging the monitor's initialization does not make an unknown dependency
+healthy. Application timing policy and actual probe implementation stay in the
+composition root.
 
 ## Shutdown state machine
 

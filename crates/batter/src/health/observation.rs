@@ -22,6 +22,65 @@ pub enum HealthStatus {
     Stopped,
 }
 
+impl HealthStatus {
+    /// Classify this observation for the foundation's dependency-readiness policy.
+    ///
+    /// This conversion is intentionally exhaustive. Adding an observation state
+    /// requires an explicit decision about whether it establishes readiness.
+    ///
+    /// ```
+    /// use batter::health::{
+    ///     DependencyReadiness, DependencyUnreadyReason, HealthStatus,
+    /// };
+    ///
+    /// assert_eq!(HealthStatus::Healthy.readiness(), DependencyReadiness::Ready);
+    /// assert_eq!(
+    ///     HealthStatus::Stale.readiness(),
+    ///     DependencyReadiness::Unready(DependencyUnreadyReason::Stale),
+    /// );
+    /// ```
+    pub const fn readiness(self) -> DependencyReadiness {
+        match self {
+            Self::Unknown => DependencyReadiness::Unready(DependencyUnreadyReason::Unknown),
+            Self::Healthy => DependencyReadiness::Ready,
+            Self::Failed => DependencyReadiness::Unready(DependencyUnreadyReason::ProbeFailed),
+            Self::TimedOut => DependencyReadiness::Unready(DependencyUnreadyReason::ProbeTimedOut),
+            Self::Stale => DependencyReadiness::Unready(DependencyUnreadyReason::Stale),
+            Self::Stopped => DependencyReadiness::Unready(DependencyUnreadyReason::WriterStopped),
+        }
+    }
+}
+
+/// Dependency-only readiness derived from one health observation.
+///
+/// A ready value contains no failure reason. An unready value can contain only a
+/// [`DependencyUnreadyReason`], which deliberately has no healthy variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyReadiness {
+    /// The latest observation is fresh and successful.
+    Ready,
+    /// Healthy evidence is absent for the contained reason.
+    Unready(DependencyUnreadyReason),
+}
+
+/// Why one dependency does not currently establish readiness.
+///
+/// Intentionally exhaustive: new reasons require a compatibility decision by
+/// consumers that distinguish individual dependency states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DependencyUnreadyReason {
+    /// No probe has completed yet.
+    Unknown,
+    /// The most recent probe returned an application error.
+    ProbeFailed,
+    /// The most recent probe exceeded its total budget.
+    ProbeTimedOut,
+    /// The most recent observation exceeded its maximum age.
+    Stale,
+    /// The sole health writer was dropped or its run ended.
+    WriterStopped,
+}
+
 /// Retained outcome of the most recent completed probe. No history is collected.
 pub enum ProbeOutcome<E> {
     /// Application probe reported success.
@@ -92,8 +151,9 @@ impl<E> fmt::Debug for ProbeObservation<E> {
 }
 
 /// A point-in-time read, not a perpetual readiness certificate.
-/// Obtain a fresh snapshot for every readiness decision and also check lifecycle
-/// readiness. A saved snapshot neither updates itself nor retains the writer.
+/// Obtain a fresh snapshot for every readiness decision; the foundation
+/// [`crate::readiness::ReadinessEvaluator`] also checks lifecycle readiness. A
+/// saved snapshot neither updates itself nor retains the writer.
 pub struct HealthSnapshot<E> {
     status: HealthStatus,
     observed_at: Instant,
@@ -105,9 +165,14 @@ impl<E> HealthSnapshot<E> {
         self.status
     }
 
+    /// Dependency-only readiness as of this snapshot's observation instant.
+    pub fn readiness(&self) -> DependencyReadiness {
+        self.status.readiness()
+    }
+
     /// Whether dependency health alone was fresh and successful at this read.
     pub fn is_healthy(&self) -> bool {
-        self.status == HealthStatus::Healthy
+        self.readiness() == DependencyReadiness::Ready
     }
 
     /// Monotonic instant at which freshness and writer liveness were evaluated.

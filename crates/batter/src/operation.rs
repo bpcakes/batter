@@ -203,44 +203,36 @@ impl OperationContext {
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        self.run_with_outcome(operation, factory, |result| match result {
-            Ok(_) => Outcome::Succeeded,
-            Err(OperationError::Failed(_)) => Outcome::Failed,
-            Err(OperationError::Interrupted(Interruption::Cancelled)) => Outcome::Cancelled,
-            Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
-                Outcome::DeadlineExceeded
-            }
-        })
-        .await
+        // Keep the ordinary boundary direct: routing it through the composite
+        // boundary adds another generic async state machine to every caller.
+        crate::scoped_dispatch::scope(self.run_inner(operation, factory, operation_outcome)).await
     }
 
     /// Run with an outcome mapper owned by a composite foundation boundary.
-    pub(crate) async fn run_with_outcome<T, E, F, Fut, O>(
+    pub(crate) async fn run_with_outcome<T, E, F, Fut>(
         &self,
         operation: &'static str,
         factory: F,
-        outcome: O,
+        outcome: fn(&Result<T, OperationError<E>>) -> Outcome,
     ) -> Result<T, OperationError<E>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
-        O: FnOnce(&Result<T, OperationError<E>>) -> Outcome,
     {
         // Capture on first poll, as with ordinary async instrumentation. The
         // inner future owns the factory, work, and observation during drop too.
         crate::scoped_dispatch::scope(self.run_inner(operation, factory, outcome)).await
     }
 
-    async fn run_inner<T, E, F, Fut, O>(
+    async fn run_inner<T, E, F, Fut>(
         &self,
         operation: &'static str,
         factory: F,
-        outcome: O,
+        outcome: fn(&Result<T, OperationError<E>>) -> Outcome,
     ) -> Result<T, OperationError<E>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
-        O: FnOnce(&Result<T, OperationError<E>>) -> Outcome,
     {
         let mut observation = Observation::new(operation);
         let span = observation.context();
@@ -266,5 +258,16 @@ impl OperationContext {
         .await;
         observation.finish(outcome(&result));
         result
+    }
+}
+
+fn operation_outcome<T, E>(result: &Result<T, OperationError<E>>) -> Outcome {
+    match result {
+        Ok(_) => Outcome::Succeeded,
+        Err(OperationError::Failed(_)) => Outcome::Failed,
+        Err(OperationError::Interrupted(Interruption::Cancelled)) => Outcome::Cancelled,
+        Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
+            Outcome::DeadlineExceeded
+        }
     }
 }

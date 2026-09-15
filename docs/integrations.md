@@ -119,13 +119,21 @@ code/message/request_id envelope. `render_infrastructure_failure` offers the sam
 mapping to handlers. Neither changes legacy Problem JSON; a later custom renderer
 wins. No domain error or schema/codegen dependency moves into the adapter.
 
-`ReadinessPolicy<E>` combines `HealthReader<E>` with `LifecycleStatus` without
-probing. Mount `dependency_readiness::<E>` outside admission. The empty-body
-200/503 response carries a typed reason and a separate severity extension.
-Unknown, failed, timed-out, stale and stopped-writer dependency states are unready;
-Starting/Draining default INFO, Stopped/dependency failures default WARN.
-`with_level` overrides severity only. The final lifecycle read overrides cached
-health on observed drain; this decision is not atomic with subsequent transitions.
+Foundation `ReadinessEvaluator<E>` combines `HealthReader<E>` with
+`LifecycleStatus` without probing. It explicitly classifies each broad health
+observation into `DependencyReadiness`, then returns `ReadinessDecision::Ready`
+or `Unready(ReadinessUnreadyReason)`. A dependency reason accepts only
+`DependencyUnreadyReason`, never Healthy. `ReadinessPolicy<E>` wraps that evaluator
+for Axum; mount `dependency_readiness::<E>` outside admission. The empty-body
+200/503 response carries the typed decision and a separate severity extension.
+Unknown, probe-failed, probe-timed-out, stale and stopped-writer dependency states
+are unready; Starting/Draining default INFO, Stopped/dependency failures default
+WARN. Reuse `readiness_status` for the adapter's 200/503 mapping and
+`default_readiness_level` when a `with_level` callback overrides only selected
+decisions. Response extensions contain `ReadinessDecision`; import
+`ReadinessUnreadyReason` from the foundation only to match its unready case. The final
+lifecycle read overrides cached health on observed drain; this decision is not
+atomic with subsequent transitions.
 `RequestPolicy` separately accepts `OperationAdmission`, which can create only a
 readiness-gated downward-cancelled operation context. Neither policy retains
 `ShutdownHandle` or can request shutdown or approve readiness.

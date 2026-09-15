@@ -1,0 +1,1 @@
+Supersede the pre-authorization empty-index statements after the user staged the complete readiness change set; refresh final policy evidence before the authorized commit and push.

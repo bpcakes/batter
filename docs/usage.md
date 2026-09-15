@@ -474,18 +474,24 @@ fn register_health(
 }
 ```
 
-For each readiness request, evaluate
-`status.readiness() == Readiness::Ready && reader.is_healthy()` using the
-supervisor's `LifecycleStatus` projection.
-This does no dependency I/O. To inspect why it is unready, call `reader.snapshot()`
-and inspect `status()` and `last_probe()`; original errors require deliberate
-trusted access through `ProbeOutcome::Failed`. Do not cache a healthy snapshot
-as permanent approval. Readers report expired success as Stale and writer loss
-as Stopped. Recovered probes can restore health without restarting the process.
+Construct a foundation `ReadinessEvaluator::new(status, reader)` once from the
+supervisor's `LifecycleStatus` projection, then call `decision()` for each
+readiness request. This performs no dependency I/O. It samples the dependency
+first and lifecycle second, returning only `ReadinessDecision::Ready` or
+`Unready(ReadinessUnreadyReason)`, so an observed drain wins and a healthy dependency
+cannot appear as an unready reason. `HealthStatus::readiness()` separately
+exposes the exhaustive dependency-only classification.
+
+To inspect why a probe failed, call `reader.snapshot()` and inspect `status()` and
+`last_probe()`; original errors require deliberate trusted access through
+`ProbeOutcome::Failed`. Do not cache a healthy snapshot as permanent approval.
+Readers report expired success as Stale and writer loss as Stopped. Recovered
+probes can restore health without restarting the process.
 
 The [HTTP example](../crates/batter-axum/examples/http_service.rs) runs a simulated
-probe every completion-plus-delay interval and combines its reader with lifecycle
-state. Its real loopback tests preserve process-phase/telemetry behavior, and a
+probe every completion-plus-delay interval and lets the foundation evaluator
+combine its reader with lifecycle state. Its real loopback tests preserve
+process-phase/telemetry behavior, and a
 controlled router test exercises unknown, failure, recovery, staleness and writer
 loss without extra probes. Actual dependency work must remain in the supplied
 future; dropping that future does not establish remote cancellation or cleanup
