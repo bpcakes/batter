@@ -304,8 +304,10 @@ The caller gets explicit failure instead of a misleading clean shutdown.
 
 OperationError<E> differentiates returned E from cancellation/deadline. RetryError
 retains E and the retry stop reason, including the previous E when interrupted
-in backoff or a later attempt. Neither can classify an external commit outcome
-without application/protocol knowledge.
+in backoff or a later attempt. The separate non-exhaustive RetryExecutionError
+preserves those outcomes for opt-in execution and adds a per-attempt deadline
+that remains distinct from expiration of the input total context. None can
+classify an external commit outcome without application/protocol knowledge.
 
 TaskRecord and CleanupRecord retain boxed original causes because heterogeneous
 components meet there. Automatic telemetry logs only category/name/count fields.

@@ -45,7 +45,7 @@ boundaries can repeat committed side effects. Those are Batter's concerns.
 | Scope/resource finalization | Explicit owned asynchronous finalizers and ordered teardown. | Implemented, but not acquireRelease interruption masking or automatic async RAII. |
 | Layer composition | One visible composition root, shared concrete services, partial-startup cleanup. | Pattern and example; generic graph/DI intentionally omitted. |
 | Expected failure vs defect vs interruption | Preserve E, observe JoinError, distinguish cancellation/deadline. | Implemented; no Effect Cause clone or universal domain error. |
-| Schedule/ExecutionPlan | One execution budget, fresh attempts, replay policy, provider delay, injected jitter, finalization reserve. | Retry/reserves implemented; fallback, per-attempt budgets, and circuits deferred. |
+| Schedule/ExecutionPlan | One execution budget, fresh attempts, replay policy, provider delay, injected jitter, opt-in per-attempt caps, finalization reserve. | Retry, attempt caps and reserves implemented; fallback, retry-token budgets and circuits deferred. |
 | Coordinated observability | Operation/task/cleanup completion and separate HTTP status/outcome/latency. | Useful default tracing implemented; metrics, exporters, and durable trace propagation deferred. |
 | Schema/HttpApi coherence | Validated boundary types, explicit errors, generated contracts where useful. | Configurable infrastructure HTTP envelopes; OpenAPI/client generation deferred. |
 | Deterministic test services | Paused runtime time, scripted dependencies, real PostgreSQL integration separately. | Timer/script tests authored; PostgreSQL harness composition deferred. |

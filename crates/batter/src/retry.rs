@@ -1,12 +1,15 @@
 //! Explicit replay policy and budget-aware exponential backoff.
 //!
 //! There is no automatic retry for timeouts, cancellation, or panics. There is
-//! no default assertion that a side effect is replay-safe. Use `execute` for
-//! deterministic backoff or `execute_with_jitter` with a per-execution sampler.
+//! no default assertion that a side effect is replay-safe. Use [`execute`] for
+//! deterministic backoff or [`execute_with_jitter`] with a per-execution
+//! sampler. The options entrypoint can additionally cap each attempt without
+//! extending the original total context.
 
 use crate::{
     ConfigurationError,
     operation::{Interruption, OperationContext, OperationError},
+    telemetry::Outcome,
     validation,
 };
 use std::{convert::Infallible, future::Future, time::Duration};
@@ -82,6 +85,94 @@ impl RetryPolicy {
     }
 }
 
+/// Optional policies for the extensible retry execution boundary.
+///
+/// The default has no per-attempt cap and does not alter the total context.
+/// Configure an attempt maximum before calling [`execute_with_options`]. Use
+/// [`RetryOptions::with_jitter`] when that execution also needs equal jitter.
+///
+/// Options are consumed by one execution and intentionally are not clonable.
+/// Construct a fresh value, with an independently seeded sampler, for every
+/// concurrent execution so cloning sampler state cannot synchronize retries.
+///
+/// ```
+/// use batter::retry::RetryOptions;
+///
+/// let mut state = 0_u64;
+/// let options = RetryOptions::new().with_jitter(move || {
+///     state += 1;
+///     state
+/// });
+/// let _ = options;
+/// ```
+///
+/// ```compile_fail
+/// use batter::retry::RetryOptions;
+///
+/// let mut state = 0_u64;
+/// let options = RetryOptions::new().with_jitter(move || {
+///     state += 1;
+///     state
+/// });
+/// let duplicate = options.clone();
+/// # let _ = duplicate;
+/// ```
+#[derive(Debug)]
+pub struct RetryOptions<S = fn() -> u64> {
+    attempt_maximum: Option<Duration>,
+    sample: Option<S>,
+}
+
+impl RetryOptions {
+    /// Create options that add no policy to the original retry behavior.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<S> RetryOptions<S> {
+    /// Cap every started attempt without renewing the total context.
+    ///
+    /// The maximum must be positive, no greater than 365 days, and
+    /// representable by the runtime clock. The actual attempt deadline is the
+    /// earlier of this maximum from the attempt's start and the deadline of the
+    /// context passed to execution.
+    pub fn with_attempt_maximum(mut self, maximum: Duration) -> Result<Self, ConfigurationError> {
+        self.attempt_maximum = Some(validation::positive(maximum, "retry attempt maximum")?);
+        Ok(self)
+    }
+
+    /// The configured cap for each attempt, if one was selected.
+    pub fn attempt_maximum(&self) -> Option<Duration> {
+        self.attempt_maximum
+    }
+
+    /// Add equal jitter from an explicitly supplied per-execution sample stream.
+    ///
+    /// Sampling follows [`execute_with_jitter`]: it happens once after replay
+    /// and classification authorize another attempt, before applying any
+    /// provider delay floor. The sampler must not block. Construct and seed it
+    /// independently for each execution; do not copy another execution's state.
+    pub fn with_jitter<T>(self, sample: T) -> RetryOptions<T>
+    where
+        T: FnMut() -> u64,
+    {
+        RetryOptions {
+            attempt_maximum: self.attempt_maximum,
+            sample: Some(sample),
+        }
+    }
+}
+
+impl Default for RetryOptions {
+    fn default() -> Self {
+        Self {
+            attempt_maximum: None,
+            sample: None,
+        }
+    }
+}
+
 /// Why an application error was returned instead of retried again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
@@ -114,7 +205,8 @@ pub enum RetryError<E> {
     Interrupted {
         /// Number of factories started; may be zero.
         attempts: u32,
-        /// Cancellation or total deadline.
+        /// Cancellation observed in the total or current attempt scope, or the
+        /// total deadline.
         reason: Interruption,
         /// Last returned failure, retained even when interrupted in backoff.
         #[source]
@@ -122,12 +214,118 @@ pub enum RetryError<E> {
     },
 }
 
-/// Per-attempt information, including a child of the original total context.
+/// Failure from the extensible retry execution boundary.
+///
+/// Unlike [`RetryError`], this type can report a per-attempt deadline without
+/// changing the legacy interruption behavior. The enum is non-exhaustive so
+/// additional opt-in policies can add typed terminal outcomes without breaking
+/// consumers.
+///
+/// ```
+/// use batter::retry::RetryExecutionError;
+///
+/// fn inspect(error: RetryExecutionError<&'static str>) {
+///     match error {
+///         RetryExecutionError::Stopped { .. }
+///         | RetryExecutionError::Interrupted { .. }
+///         | RetryExecutionError::AttemptDeadlineExceeded { .. } => {}
+///         _ => {}
+///     }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use batter::retry::RetryExecutionError;
+///
+/// fn inspect(error: RetryExecutionError<&'static str>) {
+///     match error {
+///         RetryExecutionError::Stopped { .. }
+///         | RetryExecutionError::Interrupted { .. }
+///         | RetryExecutionError::AttemptDeadlineExceeded { .. } => {}
+///     }
+/// }
+/// ```
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RetryExecutionError<E> {
+    /// Terminal application failure.
+    #[error("retry execution stopped after {attempts} attempt(s): {reason:?}")]
+    Stopped {
+        /// Number of factories started.
+        attempts: u32,
+        /// Policy reason, distinct from the application's cause.
+        reason: StopReason,
+        /// Latest returned application failure.
+        #[source]
+        error: E,
+    },
+    /// Cancellation observed in the total or current attempt scope, or
+    /// expiration of the original total context.
+    #[error("retry execution interrupted after {attempts} attempt(s): {reason}")]
+    Interrupted {
+        /// Number of factories started; may be zero.
+        attempts: u32,
+        /// Cancellation observed in the total or current attempt scope, or the
+        /// total deadline.
+        reason: Interruption,
+        /// Last returned failure, retained even when interrupted in backoff.
+        #[source]
+        last_error: Option<E>,
+    },
+    /// A configured per-attempt deadline expired while it was the tighter cap.
+    ///
+    /// This compares absolute deadlines. Runtime scheduling can delay
+    /// observation until the original total deadline has also elapsed, so this
+    /// outcome does not promise that total budget remains when it is returned.
+    #[error("retry attempt deadline exceeded after {attempts} attempt(s)")]
+    AttemptDeadlineExceeded {
+        /// Number of factories started; may be zero if the cap expires before
+        /// a very short first attempt can invoke its factory.
+        attempts: u32,
+        /// Last failure returned by an earlier attempt, when one exists.
+        #[source]
+        last_error: Option<E>,
+    },
+}
+
+impl<E> RetryExecutionError<E> {
+    fn into_legacy(self) -> RetryError<E> {
+        match self {
+            Self::Stopped {
+                attempts,
+                reason,
+                error,
+            } => RetryError::Stopped {
+                attempts,
+                reason,
+                error,
+            },
+            Self::Interrupted {
+                attempts,
+                reason,
+                last_error,
+            } => RetryError::Interrupted {
+                attempts,
+                reason,
+                last_error,
+            },
+            Self::AttemptDeadlineExceeded { .. } => {
+                unreachable!("legacy execution does not configure an attempt deadline")
+            }
+        }
+    }
+}
+
+/// Per-attempt information, including a child of the execution context.
+///
+/// An opt-in attempt maximum can further shorten that child's deadline.
 #[derive(Clone, Debug)]
 pub struct Attempt {
     /// One-based attempt number.
     pub number: u32,
     /// Cannot extend the original deadline. Cancelled when this attempt ends.
+    /// Cancelling this scope stops the retry sequence but does not cancel the
+    /// input execution context.
     pub context: OperationContext,
 }
 
@@ -135,8 +333,11 @@ pub struct Attempt {
 ///
 /// Each attempt gets a fresh future. There is one total deadline, including
 /// backoff. Provider delay is never shortened. A timeout or cancellation stops
-/// the entire sequence. The callback must not block or create detached work.
-/// Choose ONE retry owner across service/client/job layers.
+/// the entire sequence. Cancellation observed in the input lineage or current
+/// [`Attempt`] scope before result reconciliation returns
+/// [`RetryError::Interrupted`], even when the factory returned `Ok` in the same
+/// poll. The callback must not block or create detached work. Choose ONE retry
+/// owner across service/client/job layers.
 pub async fn execute<T, E, F, Fut, C>(
     context: &OperationContext,
     operation: &'static str,
@@ -151,11 +352,64 @@ where
     C: FnMut(&E) -> RetryDecision,
 {
     execute_with_delay(
-        context,
-        operation,
-        safety,
-        policy,
+        ExecutionSettings::new(context, operation, safety, policy, None),
         |delay| delay,
+        factory,
+        classify,
+    )
+    .await
+    .map_err(RetryExecutionError::into_legacy)
+}
+
+/// Execute with opt-in policies and one total retry context.
+///
+/// A configured attempt maximum is measured freshly immediately before every
+/// factory. It is capped by the deadline of `context`, including when `context`
+/// is already a shortened work phase. Expiration of the tighter attempt cap is
+/// terminal and returns [`RetryExecutionError::AttemptDeadlineExceeded`]; it is
+/// not classified or retried. Cancellation observed in the input lineage or
+/// current [`Attempt`] scope and expiration of the original total deadline
+/// remain distinct [`RetryExecutionError::Interrupted`] outcomes. Explicitly
+/// cancelling [`Attempt::context`] stops the sequence without cancelling the
+/// input `context`.
+///
+/// Attempt interruption drops the owned future and cancels its child scope. It
+/// does not establish a remote effect's outcome or join detached work.
+/// Factory construction must not block, and a non-yielding future poll cannot
+/// be preempted. If either overruns a deadline, its late result can be accepted
+/// when the completion branch becomes ready before the timer branch is observed;
+/// this is not a hard wall-clock cap. Cancellation of the current
+/// [`Attempt::context`] is reconciled before a returned result is classified.
+/// Attempt-versus-total classification compares their absolute deadlines; a
+/// stalled runtime can observe the earlier cap only after total time has also
+/// elapsed, so callers must check `context` before starting follow-up work.
+/// Backoff is deterministic unless `options` was configured with
+/// [`RetryOptions::with_jitter`].
+pub async fn execute_with_options<T, E, F, Fut, C, S>(
+    context: &OperationContext,
+    operation: &'static str,
+    safety: ReplaySafety,
+    policy: &RetryPolicy,
+    options: RetryOptions<S>,
+    factory: F,
+    classify: C,
+) -> Result<T, RetryExecutionError<E>>
+where
+    F: FnMut(Attempt) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    C: FnMut(&E) -> RetryDecision,
+    S: FnMut() -> u64,
+{
+    let RetryOptions {
+        attempt_maximum,
+        mut sample,
+    } = options;
+    execute_with_delay(
+        ExecutionSettings::new(context, operation, safety, policy, attempt_maximum),
+        |delay| match &mut sample {
+            Some(sample) => equal_jitter(delay, sample()),
+            None => delay,
+        },
         factory,
         classify,
     )
@@ -175,7 +429,11 @@ where
 /// fleet recreates synchronized retries. Tests can inject reproducible streams
 /// or endpoint samples. The sampler must not block; it is invoked only after
 /// replay and classification authorize another attempt. This function does not
-/// install a global RNG, alter replay policy, or retry interrupted attempts.
+/// install a global RNG, alter replay policy, or retry interrupted attempts. As
+/// with [`execute`], cancellation observed in the input lineage or current
+/// [`Attempt`] scope before result reconciliation returns
+/// [`RetryError::Interrupted`], even when the factory returned `Ok` in the same
+/// poll.
 pub async fn execute_with_jitter<T, E, F, Fut, C, S>(
     context: &OperationContext,
     operation: &'static str,
@@ -192,15 +450,13 @@ where
     S: FnMut() -> u64,
 {
     execute_with_delay(
-        context,
-        operation,
-        safety,
-        policy,
+        ExecutionSettings::new(context, operation, safety, policy, None),
         |delay| equal_jitter(delay, sample()),
         factory,
         classify,
     )
     .await
+    .map_err(RetryExecutionError::into_legacy)
 }
 
 fn equal_jitter(upper: Duration, sample: u64) -> Duration {
@@ -212,15 +468,127 @@ fn equal_jitter(upper: Duration, sample: u64) -> Duration {
     lower + Duration::from_nanos(offset as u64)
 }
 
-async fn execute_with_delay<T, E, F, Fut, C, D>(
-    context: &OperationContext,
+struct ExecutionSettings<'a> {
+    context: &'a OperationContext,
     operation: &'static str,
     safety: ReplaySafety,
-    policy: &RetryPolicy,
+    policy: &'a RetryPolicy,
+    attempt_maximum: Option<Duration>,
+}
+
+impl<'a> ExecutionSettings<'a> {
+    fn new(
+        context: &'a OperationContext,
+        operation: &'static str,
+        safety: ReplaySafety,
+        policy: &'a RetryPolicy,
+        attempt_maximum: Option<Duration>,
+    ) -> Self {
+        Self {
+            context,
+            operation,
+            safety,
+            policy,
+            attempt_maximum,
+        }
+    }
+}
+
+enum AttemptFailure<E> {
+    Application(E),
+    Interrupted {
+        reason: Interruption,
+        returned_error: Option<E>,
+    },
+    DeadlineExceeded,
+}
+
+enum AttemptCompletion<T, E> {
+    Returned(Result<T, E>),
+    Cancelled(Option<E>),
+}
+
+fn attempt_outcome<T, E>(
+    result: &Result<AttemptCompletion<T, E>, OperationError<Infallible>>,
+) -> Outcome {
+    match result {
+        Ok(AttemptCompletion::Returned(Ok(_))) => Outcome::Succeeded,
+        Ok(AttemptCompletion::Returned(Err(_))) => Outcome::Failed,
+        Ok(AttemptCompletion::Cancelled(_)) => Outcome::Cancelled,
+        Err(OperationError::Interrupted(Interruption::Cancelled)) => Outcome::Cancelled,
+        Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
+            Outcome::DeadlineExceeded
+        }
+        Err(OperationError::Failed(never)) => match *never {},
+    }
+}
+
+async fn run_attempt<T, E, F, Fut>(
+    settings: &ExecutionSettings<'_>,
+    attempts: &mut u32,
+    factory: &mut F,
+) -> Result<T, AttemptFailure<E>>
+where
+    F: FnMut(Attempt) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let attempt_context = settings
+        .attempt_maximum
+        .map(|maximum| settings.context.scoped_child_with_maximum(maximum));
+    let attempt_context = attempt_context.as_ref().unwrap_or(settings.context);
+    let attempt_deadline_is_tighter = attempt_context.deadline() < settings.context.deadline();
+    // Count inside the factory, not before run's cancellation preflight.
+    match attempt_context
+        .run_with_outcome(
+            settings.operation,
+            |scope| {
+                *attempts += 1;
+                tracing::debug!(target: "batter", attempt = *attempts, "attempt started");
+                let completion_scope = scope.clone();
+                let future = factory(Attempt {
+                    number: *attempts,
+                    context: scope,
+                });
+                async move {
+                    let result = future.await;
+                    let completion =
+                        if matches!(completion_scope.check(), Err(Interruption::Cancelled)) {
+                            AttemptCompletion::Cancelled(result.err())
+                        } else {
+                            AttemptCompletion::Returned(result)
+                        };
+                    Ok::<_, Infallible>(completion)
+                }
+            },
+            attempt_outcome,
+        )
+        .await
+    {
+        Ok(AttemptCompletion::Returned(Ok(value))) => Ok(value),
+        Ok(AttemptCompletion::Returned(Err(error))) => Err(AttemptFailure::Application(error)),
+        Ok(AttemptCompletion::Cancelled(returned_error)) => Err(AttemptFailure::Interrupted {
+            reason: Interruption::Cancelled,
+            returned_error,
+        }),
+        Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
+            if attempt_deadline_is_tighter =>
+        {
+            Err(AttemptFailure::DeadlineExceeded)
+        }
+        Err(OperationError::Interrupted(reason)) => Err(AttemptFailure::Interrupted {
+            reason,
+            returned_error: None,
+        }),
+        Err(OperationError::Failed(never)) => match never {},
+    }
+}
+
+async fn execute_with_delay<T, E, F, Fut, C, D>(
+    settings: ExecutionSettings<'_>,
     mut delay_for: D,
     mut factory: F,
     mut classify: C,
-) -> Result<T, RetryError<E>>
+) -> Result<T, RetryExecutionError<E>>
 where
     F: FnMut(Attempt) -> Fut,
     Fut: Future<Output = Result<T, E>>,
@@ -230,37 +598,35 @@ where
     let mut attempts = 0;
     let mut last_error = None;
     loop {
-        if let Err(reason) = context.check() {
-            return Err(RetryError::Interrupted {
+        if let Err(reason) = settings.context.check() {
+            return Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error,
             });
         }
-        // Count inside the factory, not before run's cancellation preflight.
-        let result = context
-            .run(operation, |scope| {
-                attempts += 1;
-                tracing::debug!(target: "batter", attempt = attempts, "attempt started");
-                factory(Attempt {
-                    number: attempts,
-                    context: scope,
-                })
-            })
-            .await;
-        let error = match result {
+        let error = match run_attempt(&settings, &mut attempts, &mut factory).await {
             Ok(value) => return Ok(value),
-            Err(OperationError::Interrupted(reason)) => {
-                return Err(RetryError::Interrupted {
+            Err(AttemptFailure::DeadlineExceeded) => {
+                return Err(RetryExecutionError::AttemptDeadlineExceeded {
                     attempts,
-                    reason,
                     last_error,
                 });
             }
-            Err(OperationError::Failed(error)) => error,
+            Err(AttemptFailure::Interrupted {
+                reason,
+                returned_error,
+            }) => {
+                return Err(RetryExecutionError::Interrupted {
+                    attempts,
+                    reason,
+                    last_error: returned_error.or(last_error),
+                });
+            }
+            Err(AttemptFailure::Application(error)) => error,
         };
-        if safety == ReplaySafety::Never {
-            return Err(RetryError::Stopped {
+        if settings.safety == ReplaySafety::Never {
+            return Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::ReplayForbidden,
                 error,
@@ -268,33 +634,33 @@ where
         }
         let decision = classify(&error);
         if decision == RetryDecision::Stop {
-            return Err(RetryError::Stopped {
+            return Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::NotRetryable,
                 error,
             });
         }
-        if attempts >= policy.max_attempts {
-            return Err(RetryError::Stopped {
+        if attempts >= settings.policy.max_attempts {
+            return Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::AttemptsExhausted,
                 error,
             });
         }
-        if let Err(reason) = context.check() {
-            return Err(RetryError::Interrupted {
+        if let Err(reason) = settings.context.check() {
+            return Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error: Some(error),
             });
         }
-        let backoff = delay_for(policy.delay(attempts));
+        let backoff = delay_for(settings.policy.delay(attempts));
         let delay = match decision {
             RetryDecision::RetryAfter(provider) => backoff.max(provider),
             _ => backoff,
         };
-        if delay >= context.remaining() {
-            return Err(RetryError::Stopped {
+        if delay >= settings.context.remaining() {
+            return Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::InsufficientBudget,
                 error,
@@ -302,7 +668,8 @@ where
         }
         last_error = Some(error);
         tracing::debug!(target: "batter", attempt = attempts, delay_ms = delay.as_secs_f64() * 1_000.0, "retry scheduled");
-        match context
+        match settings
+            .context
             .run("batter.retry.backoff", |_| async {
                 tokio::time::sleep(delay).await;
                 Ok::<(), Infallible>(())
@@ -311,7 +678,7 @@ where
         {
             Ok(()) => {}
             Err(OperationError::Interrupted(reason)) => {
-                return Err(RetryError::Interrupted {
+                return Err(RetryExecutionError::Interrupted {
                     attempts,
                     reason,
                     last_error,

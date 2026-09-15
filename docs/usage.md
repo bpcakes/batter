@@ -46,7 +46,7 @@ remaining gaps. The Rust snippets below illustrate existing APIs.
 ```rust
 use batter::{
     operation::OperationContext,
-    retry::{self, ReplaySafety, RetryDecision, RetryPolicy},
+    retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
 };
 use std::time::Duration;
 
@@ -59,11 +59,14 @@ async fn example() -> Result<u64, Box<dyn std::error::Error>> {
     let policy = RetryPolicy::new(
         3, Duration::from_millis(50), Duration::from_millis(400),
     )?;
-    let result = retry::execute(
+    let options = RetryOptions::new()
+        .with_attempt_maximum(Duration::from_millis(500))?;
+    let result = retry::execute_with_options(
         &context,
         "provider.read",
         ReplaySafety::Idempotent,
         &policy,
+        options,
         |_attempt| read_from_provider(),
         |error| match error.kind() {
             std::io::ErrorKind::ConnectionRefused => RetryDecision::Retry,
@@ -74,11 +77,18 @@ async fn example() -> Result<u64, Box<dyn std::error::Error>> {
 }
 ```
 
-This example authorizes replay for a read; it is not a classifier to copy onto
-arbitrary writes. For provider Retry-After, parse and validate the remote value
-in that provider's adapter, then return RetryDecision::RetryAfter. Do not classify
-by matching error-message text. A database commit or external mutation needs an
-explicit idempotency/uncertainty design, not just this helper.
+This example authorizes replay for a read and caps each provider future at 500
+milliseconds inside the unchanged three-second total context. A per-attempt
+deadline is terminal and typed separately from total deadline expiration; it is
+not sent to the classifier or retried. The callback's `attempt.context` carries
+that exact child deadline and downward cancellation.
+
+This is not a classifier to copy onto arbitrary writes. For provider Retry-After,
+parse and validate the remote value in that provider's adapter, then return
+RetryDecision::RetryAfter. Do not classify by matching error-message text. A
+database commit or external mutation needs an explicit idempotency/uncertainty
+design, not just this helper. Dropping an attempt future does not prove what a
+remote provider accepted.
 
 ## Bound concurrent work separately
 
@@ -291,10 +301,12 @@ tokens: parent cancellation reaches both, but finishing work does not cancel
 finalization. This is budget separation, not an interruption mask or guarantee
 that a database/provider effect was rolled back.
 
-The same example supplies a per-execution sample stream to `execute_with_jitter`.
+The same example supplies a per-execution sample stream through
+`RetryOptions::with_jitter`, composing equal jitter with its per-attempt maximum.
 Use a fixed deterministic stream in tests and independently seeded sampling in
 production. Provider-directed delays remain a lower bound after jitter. Existing
-`execute` callers retain deterministic capped backoff.
+`execute` and `execute_with_jitter` callers retain their signatures, result type,
+and deterministic or explicitly sampled behavior.
 
 ## Application HTTP envelopes
 

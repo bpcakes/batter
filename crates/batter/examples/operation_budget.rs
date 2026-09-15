@@ -2,7 +2,7 @@
 
 use batter::{
     operation::OperationContext,
-    retry::{self, ReplaySafety, RetryDecision, RetryPolicy},
+    retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
 };
 use std::{collections::hash_map::RandomState, hash::BuildHasher, time::Duration};
 
@@ -16,19 +16,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // source, not a cryptographic protocol; an application's RNG also fits.
     let random = RandomState::new();
     let mut draw = 0_u64;
-    let work = retry::execute_with_jitter(
+    let retry_options = RetryOptions::new()
+        .with_attempt_maximum(Duration::from_millis(100))?
+        .with_jitter(move || {
+            draw = draw.wrapping_add(1);
+            random.hash_one(draw)
+        });
+    let work = retry::execute_with_options(
         phases.work(),
         "example.read",
         ReplaySafety::Idempotent,
         &policy,
-        move || {
-            draw = draw.wrapping_add(1);
-            random.hash_one(draw)
-        },
+        retry_options,
         |attempt| async move {
             if attempt.number == 1 {
                 Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
             } else {
+                // The 100 ms cap is derived again when this attempt starts;
+                // it cannot extend the already shortened work deadline.
+                tokio::time::sleep(Duration::from_millis(25)).await;
                 Ok(42)
             }
         },

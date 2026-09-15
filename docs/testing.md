@@ -647,14 +647,17 @@ receipt are excluded.
 
 | Contract | Tests |
 | --- | --- |
-| Deadline clamping, preflight rejection, downward cancellation | [operation.rs](../crates/batter/tests/operation.rs) |
+| Deadline clamping, preflight rejection and downward child cancellation | [operation.rs](../crates/batter/tests/operation.rs) |
 | Scope cancellation on success/drop, owned-future drop on timeout | [operation.rs](../crates/batter/tests/operation.rs) |
 | Finalization reserve validation, sibling cancellation and original deadline | [operation.rs](../crates/batter/tests/operation.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter/tests/retry.rs) |
+| Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter/tests/retry.rs) |
 | Provider lower bounds, shared budget, capped backoff | [retry.rs](../crates/batter/tests/retry.rs) |
 | Injected jitter endpoints, seed reproducibility, provider floor and reserve composition | [retry.rs](../crates/batter/tests/retry.rs) |
 | Interrupted backoff/later attempt retains previous failure | [retry.rs](../crates/batter/tests/retry.rs) |
+| Per-attempt cap formula, total/same-poll cancellation precedence, current and earlier retained errors, destruction and panic | [retry_attempt_deadlines.rs](../crates/batter/tests/retry_attempt_deadlines.rs) |
+| Retry attempt telemetry matches application failure, same-poll cancellation and success without logging error contents | [telemetry.rs](../crates/batter/tests/telemetry.rs) |
 | Permit exhaustion/release, deadline wait, close/cancellation | [admission.rs](../crates/batter/tests/admission.rs) |
 | LIFO, all errors, async and synchronous-factory panic observation | [cleanup.rs](../crates/batter/tests/cleanup.rs) |
 | Timeout/reap before dependent hook, total budget, explicit skips | [cleanup.rs](../crates/batter/tests/cleanup.rs) |

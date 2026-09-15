@@ -4,7 +4,12 @@ mod filtered;
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
 
-use batter::operation::OperationContext;
+use batter::{
+    operation::{Interruption, OperationContext},
+    retry::{
+        self, ReplaySafety, RetryError, RetryExecutionError, RetryOptions, RetryPolicy, StopReason,
+    },
+};
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex},
@@ -109,6 +114,96 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
         assert!(line.contains(level), "{line}");
         assert!(line.contains("elapsed_ms="), "{line}");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let writer = Buffer(output.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .without_time()
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+    let policy = RetryPolicy::new(2, Duration::from_millis(10), Duration::from_millis(10)).unwrap();
+
+    async {
+        let failed: Result<(), _> = retry::execute(
+            &OperationContext::new(Duration::from_secs(2)).unwrap(),
+            "telemetry.retry-failed",
+            ReplaySafety::Never,
+            &policy,
+            |_| async { Err("secret-retry-error") },
+            |_| panic!("forbidden replay must not classify"),
+        )
+        .await;
+        assert!(matches!(
+            failed,
+            Err(RetryError::Stopped {
+                attempts: 1,
+                reason: StopReason::ReplayForbidden,
+                ..
+            })
+        ));
+
+        let input = OperationContext::new(Duration::from_secs(2)).unwrap();
+        let cancelled: Result<(), _> = retry::execute_with_options(
+            &input,
+            "telemetry.retry-cancelled",
+            ReplaySafety::Idempotent,
+            &policy,
+            RetryOptions::new()
+                .with_attempt_maximum(Duration::from_secs(1))
+                .unwrap(),
+            |attempt| async move {
+                attempt.context.cancel();
+                Err("secret-cancelled-error")
+            },
+            |_| panic!("cancelled attempt must not classify"),
+        )
+        .await;
+        assert!(matches!(
+            cancelled,
+            Err(RetryExecutionError::Interrupted {
+                attempts: 1,
+                reason: Interruption::Cancelled,
+                last_error: Some("secret-cancelled-error"),
+            })
+        ));
+        assert!(input.check().is_ok());
+
+        let succeeded = retry::execute_with_options(
+            &OperationContext::new(Duration::from_secs(2)).unwrap(),
+            "telemetry.retry-succeeded",
+            ReplaySafety::Idempotent,
+            &policy,
+            RetryOptions::new(),
+            |_| async { Ok::<_, &'static str>(42) },
+            |_| unreachable!("a successful attempt has no error to classify"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(succeeded, 42);
+    }
+    .with_subscriber(test_dispatch::new(subscriber))
+    .await;
+
+    let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    for (operation, outcome, level) in [
+        ("telemetry.retry-failed", "failed", "WARN"),
+        ("telemetry.retry-cancelled", "cancelled", "INFO"),
+        ("telemetry.retry-succeeded", "succeeded", "INFO"),
+    ] {
+        let line = text
+            .lines()
+            .find(|line| line.contains(operation) && line.contains("operation boundary finished"))
+            .unwrap_or_else(|| panic!("missing completion for {operation}: {text}"));
+        assert!(line.contains(&format!("outcome=\"{outcome}\"")), "{line}");
+        assert!(line.contains(level), "{line}");
+    }
+    assert!(!text.contains("secret-retry-error"), "{text}");
+    assert!(!text.contains("secret-cancelled-error"), "{text}");
 }
 
 #[tokio::test]

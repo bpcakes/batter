@@ -22,8 +22,11 @@ remains reusable until cancelled or expired.
 Preflight checks prevent starting a factory that is already cancelled/expired.
 When branches are simultaneously ready, cancellation precedes deadline, which
 precedes future completion. A just-completed side effect can therefore have an
-interrupted caller outcome. This is intentional; it does not imply rollback.
-A future that never yields can exceed any configured time allowance.
+interrupted caller outcome. Selection is cooperative: the completion branch does
+not reread the clock or cancellation token after work returns. Factory
+construction must not block, and a non-yielding poll can exceed any configured
+time allowance and still return its result when completion is selected. This is
+not a hard wall-clock boundary and does not imply rollback.
 
 Returned errors retain their concrete type. Panics propagate to a task boundary;
 ordinary OperationError is not a panic recovery mechanism. A never-polled run
@@ -65,20 +68,56 @@ the attempt limit. Only returned application errors reach the classifier.
 ReplaySafety is an explicit caller assertion, not an enforcement mechanism or
 proof about an HTTP method/SQL statement. Never permits only the first call.
 
-A single deadline covers attempts and backoff. Exponential backoff saturates at
+One total deadline covers attempts and backoff. Exponential backoff saturates at
 the configured cap. RetryAfter is a provider LOWER bound and is combined using
 max, never min. When the required sleep consumes all remaining budget, return
 InsufficientBudget immediately, retaining the application error; do not falsely
 report an already elapsed deadline. The library makes no estimate of how much
 execution time the next attempt will require.
 
-Cancellation/deadline stop the sequence and are not automatically replayed.
-The latest returned error remains in the interrupted result when available.
-A current timed-out attempt may have no returned error at all. Panics are not
-classified. `execute` retains deterministic backoff. `execute_with_jitter` takes
-a caller-supplied u64 sample stream and selects equal jitter in
-`[max(1ns, backoff / 2), backoff]`, then applies the provider lower bound with max.
-Tests can replay samples; production callers need independently seeded sampling.
+`RetryOptions::with_attempt_maximum` opts into a separate cooperative deadline
+for each factory. Immediately before every attempt, including after backoff, its
+child deadline is `min(input context deadline, attempt start + attempt maximum)`.
+The input may already be a shortened `OperationPhases::work()` context; retry
+never recovers the parent or its finalization reserve. A later attempt can
+therefore start with less total time remaining than the configured maximum.
+
+Expiration of a strictly earlier attempt cap returns the non-exhaustive
+`RetryExecutionError::AttemptDeadlineExceeded`, retains the latest earlier
+application error and counts only factories actually invoked. It is terminal:
+the interrupted attempt is not classified and no replay follows. A cap tied
+with the input deadline is reported as total `DeadlineExceeded`. Cancellation
+wins over either deadline, and a deadline wins over simultaneously ready work.
+The attempt future is dropped and its child context is cancelled; this does not
+join detached work or establish a remote effect's outcome.
+
+`Interrupted { reason: Cancelled, .. }` means cancellation was observed in the
+input lineage or the current attempt scope. A factory may cancel its public
+`Attempt.context`; that stops the retry sequence but does not cancel the input
+context. Retry reconciles that attempt token after the factory returns and before
+accepting a value or classifying an error, including a same-poll cancellation.
+An error returned in that poll is retained as `last_error` but is not classified
+or replayed; a returned value is discarded. The result does not by itself
+identify which scope originated the cancellation.
+
+Attempt-versus-total classification follows absolute deadline ordering. A
+blocked thread, non-yielding poll or stalled runtime can delay observation of an
+earlier attempt cap until the total deadline has also elapsed. The attempt-cap
+result therefore does not promise remaining total budget at return. A
+non-yielding poll that returns after a deadline can also have its result accepted
+when completion is selected before the timer is observed. Check the input
+context before starting fallback or other follow-up work.
+
+Cancellation or expiration of the total context also stops the sequence and is
+not automatically replayed. A current interrupted attempt may have no returned
+error at all. Panics are not classified. Legacy `execute` retains deterministic
+backoff and its original `RetryError`; `execute_with_jitter` retains its original
+caller-supplied sample argument. `execute_with_options` is deterministic unless
+its options use `with_jitter`; both jitter paths select equal jitter in
+`[max(1ns, backoff / 2), backoff]`, then apply the provider lower bound with max.
+Options are consumed once and are not clonable. Tests can replay samples;
+production callers need a freshly constructed, independently seeded sampler for
+each concurrent execution.
 There is no global RNG, fleet coordination, retry-token budget, or circuit breaker.
 
 Replay keys, provider deduplication retention, payload matching, transaction

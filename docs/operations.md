@@ -116,8 +116,13 @@ Rate limits, in-flight concurrency, and retries are separate budgets. Set one
 retry owner, authorize replay, and preserve provider delays. For desynchronized
 backoff use `execute_with_jitter` with independently seeded samples; replay a
 fixed stream in tests. The default `execute` still uses deterministic backoff.
-No timeout result proves that a mutation can
-safely be repeated.
+Use `execute_with_options` and a validated attempt maximum when one slow provider
+call must stop before the total context expires; add equal jitter to those same
+options when required. Attempt expiration is terminal, not replay permission.
+Factory construction must not block, and non-yielding work can overrun the cap
+before Batter regains control; if completion is selected before the timer is
+observed, that late result can be accepted. The cap is cooperative, not a hard
+wall-clock bound. No timeout result proves that a mutation can safely be repeated.
 
 Reserve finalization time before starting work. Drive the shortened work context
 then explicitly await the sibling finalization context, retaining both outcomes.

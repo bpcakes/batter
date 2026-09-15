@@ -80,6 +80,15 @@ impl OperationContext {
         Self::under(self.deadline, &self.cancellation)
     }
 
+    pub(crate) fn scoped_child_with_maximum(&self, maximum: Duration) -> Self {
+        let requested = Instant::now()
+            .checked_add(maximum)
+            // A requested deadline beyond Instant's range is later than the
+            // already representable parent deadline, so the parent wins.
+            .unwrap_or(self.deadline);
+        Self::under(self.deadline.min(requested), &self.cancellation)
+    }
+
     /// Create an independent operation with a positive total time budget.
     pub fn new(budget: Duration) -> Result<Self, ConfigurationError> {
         validation::positive(budget, "operation budget")?;
@@ -109,13 +118,7 @@ impl OperationContext {
     /// Create a child whose deadline is no later than this context's deadline.
     pub fn child(&self, maximum: Duration) -> Result<Self, ConfigurationError> {
         validation::positive(maximum, "child budget")?;
-        let requested = Instant::now()
-            .checked_add(maximum)
-            .ok_or(ConfigurationError::TooLarge("child budget"))?;
-        Ok(Self::under(
-            self.deadline.min(requested),
-            &self.cancellation,
-        ))
+        Ok(self.scoped_child_with_maximum(maximum))
     }
 
     /// Reserve a positive interval before this context's total deadline.
@@ -200,19 +203,44 @@ impl OperationContext {
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        // Capture on first poll, as with ordinary async instrumentation. The
-        // inner future owns the factory, work, and observation during drop too.
-        crate::scoped_dispatch::scope(self.run_inner(operation, factory)).await
+        self.run_with_outcome(operation, factory, |result| match result {
+            Ok(_) => Outcome::Succeeded,
+            Err(OperationError::Failed(_)) => Outcome::Failed,
+            Err(OperationError::Interrupted(Interruption::Cancelled)) => Outcome::Cancelled,
+            Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
+                Outcome::DeadlineExceeded
+            }
+        })
+        .await
     }
 
-    async fn run_inner<T, E, F, Fut>(
+    /// Run with an outcome mapper owned by a composite foundation boundary.
+    pub(crate) async fn run_with_outcome<T, E, F, Fut, O>(
         &self,
         operation: &'static str,
         factory: F,
+        outcome: O,
     ) -> Result<T, OperationError<E>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
+        O: FnOnce(&Result<T, OperationError<E>>) -> Outcome,
+    {
+        // Capture on first poll, as with ordinary async instrumentation. The
+        // inner future owns the factory, work, and observation during drop too.
+        crate::scoped_dispatch::scope(self.run_inner(operation, factory, outcome)).await
+    }
+
+    async fn run_inner<T, E, F, Fut, O>(
+        &self,
+        operation: &'static str,
+        factory: F,
+        outcome: O,
+    ) -> Result<T, OperationError<E>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        O: FnOnce(&Result<T, OperationError<E>>) -> Outcome,
     {
         let mut observation = Observation::new(operation);
         let span = observation.context();
@@ -236,14 +264,7 @@ impl OperationContext {
         }
         .instrument(span)
         .await;
-        observation.finish(match &result {
-            Ok(_) => Outcome::Succeeded,
-            Err(OperationError::Failed(_)) => Outcome::Failed,
-            Err(OperationError::Interrupted(Interruption::Cancelled)) => Outcome::Cancelled,
-            Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
-                Outcome::DeadlineExceeded
-            }
-        });
+        observation.finish(outcome(&result));
         result
     }
 }

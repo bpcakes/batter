@@ -9810,3 +9810,506 @@ remains in progress because authorized live PostgreSQL evidence and refreshed
 immutable-revision consumer adoption remain outstanding. No hosted CI, new
 Linux execution, publication, deployment, commit, push, or those external
 acceptance results are claimed.
+
+## Per-attempt retry deadlines, 2026-09-14
+
+Bead `batter-4c4` and ExecPlan
+`plan_01M2GMYGFXXAXEDRBC38HV9ZVV` cover the additive, opt-in retry attempt
+deadline boundary. The Git baseline is
+`150d16df364379b4ae64a5af4eb82a68b08a0ff0`; all evidence below is for the
+uncommitted working tree on Linux 7.0.11 x86_64. `Cargo.lock` remained
+unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+Before implementation, `br sync --status` reported 124 database issues and 125
+JSONL issues, with the JSONL export newer. A read-only
+`br sync --reconcile --dry-run` reported one create, two updates and no deletes
+or database-only records; the applied reconcile restored a healthy 125/125
+store. With `br` 0.5.7, comment IDs are storage-local surrogate values, so the
+lossless re-export renumbered comments on `batter-k8m` and `batter-lp2.4` while
+preserving their payloads and timestamps. That expected reconcile behavior
+accounts for the otherwise unrelated tracker-line churn; manually restoring
+the exported numbers would no longer match the healthy database.
+
+The new options entrypoint derives each attempt deadline when that attempt
+starts and clamps it to the input operation deadline. A strictly earlier
+attempt deadline has its own typed terminal outcome; cancellation and the
+original operation deadline retain their existing precedence and outcome.
+Legacy retry entrypoints and error enums remain unchanged. The deadline stops
+and destroys the locally owned attempt future but does not prove that an
+external provider cancelled or did not complete the request.
+
+Executed locally with rustc 1.98.1 (`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter --test retry --locked` and `cargo test -p batter --test retry_attempt_deadlines --locked` | PASS on Rust 1.98.1: all 18 legacy retry cases and all 14 new attempt-deadline cases passed with zero ignored cases. The new cases cover configuration rejection, first and later attempts, total/attempt ties and clamps, finalization reserve, cancellation/deadline precedence, backoff, error retention, destruction, panic propagation, jitter/provider floors, and legacy exhaustive matches. |
+| `cargo test -p batter --doc --locked` and `RUSTDOCFLAGS='-D warnings' cargo doc -p batter --no-deps --locked` | PASS on Rust 1.98.1: 22 positive and 13 compile-fail doctests passed, and warning-denied public documentation built. |
+| `cargo clippy -p batter --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, and `git diff --check` | PASS. The first Clippy attempt rejected an eight-argument draft API and an overlong private scheduler; carrying the injected sampler in generic options and extracting the attempt runner resolved both without lint allowances. |
+| Toolchain-specific `cargo run -p batter --example operation_budget --locked` | PASS on both Rust versions; each run printed `work succeeded: true; finalization succeeded: true` after one retry and explicit finalization. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1. The complete matrix passed runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by the default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` smoke commands | PASS: all ten rebuilt HTTP process profiles across the two toolchains, including readiness, fallback/custom error envelopes, one retained lifecycle event and correlation checks. |
+| `scripts/jig work check --plan-id plan_01M2GMYGFXXAXEDRBC38HV9ZVV` | PASS before this evidence-only append: all five applicable targets (`api:clippy`, `api:fmt`, `api:test`, `repo:contract`, and `repo:file-budget`) executed successfully. Target-validation receipt `receipt_01M2GPTBWX5SAD9P99WM2DEGCK`; the evidence and gate readers reported fresh matching inputs and no unresolved gate. |
+
+The table's `receipt_01M2GPTBWX5SAD9P99WM2DEGCK` is the initial full Jig
+execution. Appending that evidence changed only whole-repository policy inputs;
+the evidence-only refresh reused the unchanged Rust receipts and produced target
+validation `receipt_01M2GPY4VF6EPVAP73Z5V6BHS6`, which the `batter-4c4`
+comment created at `2026-09-14T19:40:38Z` cites. Closing the Bead then produced final tracker-only target validation
+`receipt_01M2GPZKEV0W2C3VPRCE8X2MPF`. The three identifiers therefore describe
+successive snapshots rather than competing evidence for one execution.
+
+No hosted CI, macOS execution, live PostgreSQL execution, real provider call,
+Studio consumer adoption, publication, deployment, commit or push is claimed.
+
+### Comprehensive review-fix repair pass
+
+The requested comprehensive, all-reviewer, low-severity review-fix loop first
+reviewed complete working-tree fingerprint
+`5e538e601d11217d15773cb20496e140641a283f2f4d38d0a7109c3318a63530`.
+Claude and Cursor attested all 32 evidence pages, and native Codex independently
+matched the same complete fingerprint before and after its review. Cursor found
+no actionable defect. Claude identified clonable stateful jitter options and an
+ambiguity about delayed observation of absolute deadline ordering; Codex found
+that ADR-003 still called attempt deadlines future work.
+
+The repair makes `RetryOptions` a consumed, non-clonable execution value and
+requires a freshly constructed, independently seeded sampler for concurrent
+executions. It records the implemented decision in ADR-003 and states that an
+attempt-cap result identifies the earlier absolute deadline but does not promise
+unused total budget when a stalled runtime finally observes it. A new default-
+options regression proves total-expiration behavior, and the successful jitter
+case now proves that every handed-out attempt scope is cancelled after its
+attempt completes. The focused deadline target now contains 15 cases.
+
+Executed locally on Linux 7.0.11 x86_64 with rustc 1.98.1 (`48a229cea`,
+2026-09-01) and rustc 1.94.0 (`4a4ef493e`, 2026-03-02):
+
+| Review-fix repair command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter --test retry_attempt_deadlines --locked` and `cargo test -p batter --test retry --locked` | PASS on Rust 1.98.1: all 15 opt-in deadline cases and all 18 legacy cases passed. |
+| `cargo clippy -p batter --all-targets --locked -- -D warnings`, `RUSTDOCFLAGS='-D warnings' cargo doc -p batter --no-deps --locked`, `cargo fmt --all -- --check`, and `git diff --check` | PASS. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: the complete runner-control, core/workspace, hostile-environment, all-target, doctest, formatting, strict-Clippy and warning-denied-rustdoc matrix completed successfully. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific HTTP example builds followed by the default, SIGINT, deadline, WARN-filtered and WARN-filtered-deadline smoke profiles | PASS: all ten rebuilt process profiles across both toolchains. |
+
+A fresh complete all-reviewer pass over the cumulative repair follows this
+recorded snapshot; no result from that not-yet-executed pass is claimed here.
+The loop does not claim live PostgreSQL, provider, Studio, macOS or hosted-CI
+execution, and it does not authorize publication, deployment, commit or push.
+
+### Compile-time contract closure
+
+The next all-reviewer pass inspected complete fingerprint
+`d83767cc56e3e58d58c284a2f1efb00f9c31f03cd62ddbe1bc2b742af4a936b6`.
+Claude and Cursor again attested all 32 evidence pages, and native Codex matched
+the same complete scope at both boundaries. Cursor found no actionable defect.
+Claude found that rustdoc omitted the validator's 365-day maximum and that the
+closed Bead still reported its historical 14-case pre-review state. Codex found
+that the new non-clonable and non-exhaustive type promises lacked downstream
+compile-fail regression coverage.
+
+The correction states the exact duration ceiling, adds external compile-fail
+examples for both type contracts, and adds a sixteenth runtime case proving that
+a tighter attempt cap inside a shortened work phase preserves the sibling
+finalization reserve. The `batter-4c4` correction created at
+`2026-09-14T20:13:26Z`, whose text begins “Post-review evidence correction,”
+preserves the original closure comment as historical evidence and records the
+repaired counts and checks without claiming the still-pending terminal review.
+
+Both complete `bash scripts/verify.sh` matrices passed again on Rust 1.98.1 and
+1.94.0 after this correction. They include 22 positive and 15 compile-fail
+foundation doctests. Both toolchains then rebuilt the HTTP example and passed
+all five smoke profiles, for ten passing process runs. Focused strict Clippy,
+warning-denied rustdoc, formatting and diff hygiene also passed.
+
+A fresh complete all-reviewer pass over this cumulative correction follows; no
+result from that not-yet-executed pass is claimed here. External execution and
+delivery limitations remain unchanged.
+
+### Evidence trail and cancellation provenance closure
+
+The third all-reviewer pass inspected complete fingerprint
+`f4a396f1b3ccc53932500584dbbbe6d1346f69d3046c6537bec529d700e04914`.
+Claude and Cursor each attested all 32 evidence pages, and native Codex matched
+the same complete scope before and after inspection. Cursor found no actionable
+defect. Claude found that storage-local Beads comment renumbering and the three
+successive Jig target-validation receipts lacked an explicit reconciliation
+record. Codex found that `RetryExecutionError::Interrupted` attributed every
+cancellation to the input context even though a factory can explicitly cancel
+its public `Attempt.context` without upward propagation.
+
+The repair records the lossless 124/125-to-125/125 tracker reconciliation and
+the initial, evidence-refresh and tracker-refresh receipt sequence. Retry
+rustdoc and the guarantee now describe cancellation as observed in either the
+input lineage or current attempt scope, without claiming its origin. The
+existing cancellation-precedence test now also cancels its own attempt scope,
+proves terminal `Interrupted { reason: Cancelled, .. }`, and proves that the
+input context remains active. The target still has 16 runtime tests.
+
+Focused validation passed all 16 attempt-deadline tests, 22 positive and 15
+compile-fail foundation doctests, strict Clippy, warning-denied rustdoc,
+formatting and diff hygiene. Both complete `bash scripts/verify.sh` matrices
+passed again on Rust 1.98.1 and 1.94.0. Each toolchain then rebuilt the HTTP
+example and passed the default, SIGINT, deadline, WARN-filtered and combined
+WARN-filtered-deadline profiles, for ten passing process runs.
+
+The trusted `.reviewignore` at the pinned `HEAD` excludes `.agent`; the review
+loop therefore neither changed nor refreshed excluded Jig plan and receipt
+state. Existing Jig receipts predate these review repairs and remain historical;
+the direct validation above covers the repaired working files. A fresh complete
+all-reviewer pass follows this snapshot. No external execution or delivery
+claim is added.
+
+### Direct invalid-bound evidence closure
+
+The fourth all-reviewer pass inspected complete fingerprint
+`fe2138991988a584073abce391d798d706819b9a94cf5685f5189af5d3e20f23`.
+Claude and Cursor each attested all 32 evidence pages, and native Codex matched
+the complete scope at both boundaries. Cursor and Codex found no actionable
+defect. Claude found that the zero-duration configuration case could pass
+through a self-confirming conditional branch and that two validation passages
+still referred to storage-local comment numbers after documenting their
+instability.
+
+The test now requires the exact `ConfigurationError` for both zero and the
+over-limit duration, without a branch that can discard an unexpected successful
+configuration. Tracker evidence references now use the owning `batter-4c4`
+issue, creation timestamp and cited receipt or opening text, never a comment
+number.
+
+All 16 focused attempt-deadline tests, strict Clippy, formatting and diff hygiene
+passed after the repair. Both complete `bash scripts/verify.sh` matrices then
+passed again on Rust 1.98.1 and 1.94.0, including all workspace tests, doctests,
+strict Clippy and warning-denied rustdoc. The HTTP implementation did not change
+in this round; the preceding ten toolchain-specific process smokes remain the
+latest executions. A fresh complete all-reviewer pass follows this snapshot.
+
+### Default construction and preserved-brief closure, 2026-09-15
+
+The continuation baseline exactly matched the preceding complete terminal
+review at fingerprint
+`2f2c82cf617267bce9a4e7456c55f46b65529cc7e8a014ab9fb52adc6e5270c2`;
+the continuation helper authorized reuse without counting another opening
+review. That review found two remaining low-severity defects: generic `Default`
+left the `RetryOptions` sampler type uninferred at an ordinary call site, and
+the preserved Effect v4 brief still called per-attempt budgets deferred.
+
+`Default` is now implemented for the default sampler specialization. The
+existing external integration test passes `RetryOptions::default()` through
+`execute_with_options`, preventing the inference failure while preserving the
+typed `with_jitter` transition. The Effect v4 brief now records opt-in attempt
+caps as implemented and leaves fallback, retry-token budgets and circuits
+deferred. The `batter-4c4` comment created at `2026-09-15T04:56:44Z` records the
+same repair and evidence without relying on its storage-local comment number.
+
+Focused validation passed all 16 attempt-deadline tests, strict Clippy,
+warning-denied rustdoc, formatting and diff hygiene. Both complete
+`bash scripts/verify.sh` matrices passed on Rust 1.98.1 and 1.94.0. Both
+toolchains then rebuilt the HTTP example and passed the default, SIGINT,
+deadline, WARN-filtered and combined WARN-filtered-deadline profiles, for ten
+passing process runs. `Cargo.lock` remained unchanged. The trusted
+`.reviewignore` still excludes `.agent`, so this continuation did not mutate or
+refresh Jig metadata. A fresh complete all-reviewer pass follows this snapshot.
+
+### Same-poll interruption and doctest-oracle closure (superseded placement)
+
+The continuation's first fresh all-reviewer pass, the sixth cumulative review
+pass, inspected complete fingerprint
+`61d843deb3e581ac5e5dfcb0bbb3a2adfa36ee9683996f81ad47236de4affd8f`.
+Claude and Cursor each attested all 33 evidence pages. Native Codex matched the
+same complete scope at both boundaries, and the parent recaptured it unchanged
+after all reviewers were terminal. Cursor found no actionable defect. Claude
+found that the two new compile-fail examples accepted any compiler error rather
+than their intended diagnostics. Codex found that same-poll factory cancellation
+could return a value or classifiable error before the selector observed the
+cancelled child, and that the attempt-cap text overstated preemption of blocking
+construction or a non-yielding poll.
+
+Because the cancellation-provenance area had already received a review repair,
+the required consumer/API design assessment ran before another edit. The defect
+is in the shared foundation execution boundary: the public operation and retry
+contracts already select cancellation and deadline ahead of completion, while
+the implementation checked them only before polling the work branch. It is not
+an application/upstream protocol problem and needs no new caller coordination or
+public abstraction.
+
+`OperationContext::run` now checks the child token and deadline after a ready
+work poll and before accepting its result. A factory that cancels its own child
+and immediately returns is therefore interrupted, while the parent remains
+active; non-yielding work still cannot be preempted, but its result is discarded
+after Batter regains control and observes expiration. Direct operation and retry
+regressions prove the same-poll case, including one factory, zero classifier
+calls, no replay and no returned current-attempt error. The two compile-fail
+examples were tagged with the intended `E0599` and `E0004` diagnostics, and the
+non-exhaustive match no longer contains a redundant pattern that could obscure
+its intended failure. The later stable-rustdoc oracle review below corrects the
+assumption that supported stable toolchains enforce those tags and pairs each
+negative case with a compiling baseline.
+
+Focused validation passed all 16 operation cases, all 17 attempt-deadline cases,
+22 positive and 15 compile-fail foundation doctests, strict Clippy,
+warning-denied rustdoc, formatting and diff hygiene. Both complete
+`bash scripts/verify.sh` matrices passed on Rust 1.98.1 and 1.94.0. Both
+toolchains then rebuilt the HTTP example and passed the default, SIGINT,
+deadline, WARN-filtered and combined WARN-filtered-deadline profiles, for ten
+passing process runs. `Cargo.lock` remained unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+The `batter-4c4` comment created at `2026-09-15T05:13:52Z` records the same
+assessment, repair and evidence without relying on its storage-local number.
+
+The trusted `.reviewignore` still excludes `.agent`; this repair did not run Jig
+or refresh excluded plan and receipt metadata. A fresh complete all-reviewer pass
+follows this snapshot. No live PostgreSQL/provider, macOS or hosted-CI execution,
+publication, deployment, commit or push is claimed. The later coupled-boundary
+assessment below supersedes the shared `OperationContext` placement while
+retaining the retry cancellation contract and doctest-oracle corrections.
+
+### Master reconciliation before terminal review
+
+At the user's request, the next review was paused while the completed repair was
+reconciled with five new `origin/master` commits. The pre-reconciliation repair
+was captured at complete fingerprint
+`75c7b34245bfa63c81f63c68bb08b8c6917c82f2cfe764a02f789adad2dc5fff`,
+then preserved in a named Git stash. `master` fast-forwarded from
+`150d16df364379b4ae64a5af4eb82a68b08a0ff0` to
+`aeab19992a14adf7be0a493ba18f031172fd1d59`, exactly matching
+`origin/master`, before the unstaged repair was reapplied.
+
+Git automatically merged every code and contract file. The changelog conflict
+was resolved by retaining both the upstream lifecycle-capability entries and the
+retry entry. The tracker conflict was resolved through Rust Beads rather than by
+selecting one JSONL line: additive reconciliation read 126 issues, created one,
+updated three, skipped one older JSONL record, deleted none, and preserved all
+events and local `batter-4c4` review comments. The resulting database and export
+are in sync. The `batter-4c4` comment created at `2026-09-15T05:23:00Z`
+records the reconciliation and validation without relying on its storage-local
+number. The Git index remained empty.
+
+The merged tree was validated afresh rather than reusing the pre-reconciliation
+results. Focused checks passed all 16 operation tests, all 17 attempt-deadline
+tests, 30 positive and 37 compile-fail foundation doctests, strict Clippy,
+warning-denied rustdoc, formatting and diff hygiene. Complete
+`bash scripts/verify.sh` matrices passed on Rust 1.98.1 and 1.94.0, including the
+new lifecycle capability coverage. Each toolchain then rebuilt the HTTP example
+and passed the default, SIGINT, deadline, WARN-filtered and combined
+WARN-filtered-deadline profiles, for ten passing process runs. `Cargo.lock`
+remained unchanged.
+
+The trusted `.reviewignore` at the new `HEAD` continues to exclude `.agent`, so
+the loop did not run Jig or refresh excluded plan and receipt metadata. A fresh
+complete all-reviewer pass follows on the reconciled fingerprint. No live
+PostgreSQL/provider, macOS or hosted-CI execution, publication, deployment,
+commit or push is claimed.
+
+### Coupled-boundary narrowing after master reconciliation
+
+The continuation's second fresh all-reviewer pass, the seventh cumulative review
+pass, inspected complete reconciled fingerprint
+`bc28010e1f64fdeacfd6e3a5ff29e06441268a049aa1b4a2c1868d06c0f91a4f`.
+Claude reported two low findings: the shared post-return clock/cancellation check
+could relabel already completed SQLx and Axum work, and the new clock branch had
+no direct oracle. Native Codex separately reported low missing Jig freshness and
+an omitted new test path in the owning Bead's evidence entrypoints. Cursor found
+no actionable defect and raised the same shared-boundary semantic question. The
+parent recaptured the complete fingerprint unchanged after every reviewer was
+terminal.
+
+This was a repeated invariant repair with a coupled lifecycle consequence, so a
+second consumer/API design assessment ran before editing. The broad placement was
+a foundation implementation-scope error: changing `OperationContext::run` would
+alter SQLx lease-disposition and Axum response semantics after their effects had
+completed. It was not evidence of an adapter API gap or an application/upstream
+protocol problem. The second and final causal repair therefore restored the
+operation boundary's existing cooperative selector semantics and moved only the
+required reconciliation into the retry-owned boundary.
+
+`run_attempt` now checks cancellation of the public `Attempt.context` immediately
+after its factory returns and before accepting a value or classifying an error.
+It deliberately does not add a post-return deadline check: factory construction
+and non-yielding polls remain non-preemptive, and a late result may be accepted if
+completion is selected before the timer is observed. The options regression
+retains its one-factory, zero-classifier cancellation oracle. A new legacy retry
+regression proves that same-poll cancellation also prevents successful completion
+without cancelling the input context. The direct operation regression and the
+uncovered shared clock branch were removed with the over-broad implementation.
+
+Focused validation passed all 15 operation cases, all 19 legacy retry cases, all
+17 attempt-deadline cases, 30 positive and 37 compile-fail foundation doctests,
+strict Clippy, warning-denied rustdoc, formatting and diff hygiene. Both complete
+`bash scripts/verify.sh` matrices passed on Rust 1.98.1 and 1.94.0. Each toolchain
+then rebuilt the HTTP example and passed the default, SIGINT, deadline,
+WARN-filtered and combined WARN-filtered-deadline profiles, for ten passing
+process runs. `Cargo.lock` remained unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+The `batter-4c4` comment created at `2026-09-15T05:42:52Z` adds the exact
+`crates/batter/tests/retry_attempt_deadlines.rs` evidence path and records this
+assessment and execution without relying on its storage-local comment number.
+
+The Jig-freshness suggestion is intentionally not executed in this review loop:
+the trusted `.reviewignore` excludes `.agent`, and the loop forbids validation
+that mutates excluded paths. No live PostgreSQL/provider, macOS or hosted-CI
+execution, publication, deployment, commit or push is claimed. A fresh complete
+all-reviewer pass follows this snapshot.
+
+### Retry telemetry outcome closure after resumed review
+
+The resumed continuation's first fresh all-reviewer pass, the ninth cumulative
+review pass, inspected complete fingerprint
+`3daf716da5cae1b5179f39b49df7505be2d04d7a91cdbebe5cd7819261e71754`.
+Claude and Cursor each attested all 37 evidence pages, and native Codex matched
+the same complete scope at both boundaries. All three reviewers independently
+found the same medium defect: `run_attempt` represented both a returned
+application error and reconciled attempt cancellation inside an outer successful
+operation value, so the operation-owned observation emitted `succeeded` even
+when retry returned `Failed` or `Interrupted`. A WARN-filtered service could
+therefore omit failed attempt telemetry. The separate legacy-cancellation
+question was rejected because the documented retry contract already makes an
+observed attempt-scope cancellation terminal across entrypoints.
+
+This is a distinct telemetry-classification causal group, not a third repair to
+the exhausted same-poll cancellation-result group. The required design
+assessment locates it at a library-owned composition boundary: retry constructs
+a richer internal result than the operation observation can classify, while the
+public retry result and cancellation contracts are already correct. The repair
+adds a crate-private operation execution seam whose caller supplies the terminal
+outcome mapping. Ordinary operations retain their existing mapping. Retry maps
+the nested application result, reconciled attempt cancellation, input
+cancellation and deadlines before the operation-owned observation finishes;
+its returned values, retry classification, precedence and public API are
+unchanged.
+
+The focused telemetry regression proves WARN `failed`, INFO `cancelled` and
+INFO `succeeded` attempt events, proves same-poll attempt cancellation leaves the
+input context active, and rejects secret-bearing error contents. Focused
+validation passed all 8 telemetry, 19 legacy retry, 17 attempt-deadline and 15
+operation tests, plus strict Clippy, warning-denied rustdoc, formatting and diff
+hygiene. Complete `bash scripts/verify.sh` matrices passed on Rust 1.98.1 and
+1.94.0, including workspace tests, doctests, strict Clippy and warning-denied
+rustdoc. Each toolchain then rebuilt the HTTP example and passed the default,
+SIGINT, deadline, WARN-filtered and combined WARN-filtered-deadline profiles, for
+ten passing process runs. `Cargo.lock` remained unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+The `batter-4c4` transition comment created at `2026-09-15T06:41:37Z` records
+the assessment, repair and evidence, and the owning task is closed on that
+validated state. The trusted `.reviewignore` still excludes `.agent`, so the
+loop did not run Jig or refresh excluded plan and receipt metadata. A fresh
+complete all-reviewer pass follows this snapshot. No live PostgreSQL/provider,
+macOS or hosted-CI execution, publication, deployment, commit or push is
+claimed.
+
+### Legacy retry rustdoc closure
+
+The resumed continuation's second fresh all-reviewer pass, the tenth cumulative
+review pass, inspected complete fingerprint
+`d71847c69e0e8a41888b83b8e3972dafd1167facf16f8782aa02e3d3ef5ad40b`.
+Claude and Cursor each attested all 39 evidence pages. Native Codex matched the
+same complete scope at both boundaries, and the parent recaptured it unchanged
+after every reviewer was terminal. Codex and Cursor found no actionable defect.
+Claude found one low public-documentation omission: the legacy `execute` and
+`execute_with_jitter` rustdocs did not state their intentional, regression-tested
+rule that cancellation observed before result reconciliation returns
+`RetryError::Interrupted` even when the factory returned `Ok` in that same poll.
+
+This omission is a distinct entrypoint-rustdoc coverage group, not another
+implementation attempt on the exhausted same-poll cancellation-result group.
+Both legacy entrypoints now state the cancellation rule and name their typed
+terminal outcome. The existing
+`same_poll_attempt_cancellation_discards_legacy_success` regression remains the
+executable behavior oracle; no runtime implementation, public signature or
+result semantics changed in this repair.
+
+Both complete `bash scripts/verify.sh` matrices passed again on Rust 1.98.1 and
+1.94.0 after the rustdoc repair, including all workspace tests, doctests, strict
+Clippy and warning-denied rustdoc. Each toolchain then rebuilt the HTTP example
+and passed the default, SIGINT, deadline, WARN-filtered and combined
+WARN-filtered-deadline profiles, for ten passing process runs. `Cargo.lock`
+remained unchanged. The closed `batter-4c4` task's comment created at
+`2026-09-15T06:57:52Z` records the same correction and evidence.
+
+The trusted `.reviewignore` still excludes `.agent`, so the loop did not run Jig
+or refresh excluded plan and receipt metadata. A fresh complete all-reviewer
+pass follows this snapshot. External execution and delivery limitations remain
+unchanged.
+
+### Stable-rustdoc API-oracle closure
+
+The resumed continuation's third fresh all-reviewer pass, the eleventh
+cumulative review pass, inspected complete fingerprint
+`66029946b191bad42d2ab82f967580e382893ee3d6e6f67d489b8f6676d00a90`.
+Claude and Cursor each attested all 39 evidence pages. Native Codex matched the
+same complete scope at both boundaries, and the parent recaptured it unchanged
+after every reviewer was terminal. Codex and Cursor found no actionable defect.
+Claude raised one uncertain low finding: supported stable rustdoc might ignore
+the `E0599` and `E0004` qualifiers even though earlier evidence called those
+compile-fail cases diagnostic-pinned.
+
+The claim was reproduced outside the reviewed tree in a minimal temporary crate.
+Its only negative doctest deliberately tagged an `E0599` missing-method failure
+as `compile_fail,E0000`; `cargo test --doc` nevertheless passed on both Rust
+1.98.1 and 1.94.0. The finding was therefore verified as a distinct
+stable-rustdoc oracle group. The correction removes the unenforced diagnostic
+qualifiers and pairs each negative contract case with a positive doctest using
+the same public imports, construction and variants. A broken import, renamed
+variant or invalid setup now fails the positive baseline instead of
+self-confirming the negative case, while making options clonable or the error
+enum exhaustive still makes its negative case compile and therefore fail. The
+current status row and earlier validation wording no longer claim stable
+diagnostic matching.
+
+Focused foundation doctests passed all 32 positive and 37 compile-fail cases on
+both toolchains; warning-denied rustdoc, formatting and diff hygiene also passed.
+Both complete `bash scripts/verify.sh` matrices then passed on Rust 1.98.1 and
+1.94.0. Each toolchain rebuilt the HTTP example and passed the default, SIGINT,
+deadline, WARN-filtered and combined WARN-filtered-deadline profiles, for ten
+passing process runs. `Cargo.lock` remained unchanged. The closed `batter-4c4`
+task's comment created at `2026-09-15T07:16:29Z` records the correction and
+evidence.
+
+The trusted `.reviewignore` still excludes `.agent`, so the loop did not run Jig
+or refresh excluded plan and receipt metadata. A fresh complete all-reviewer
+pass follows this snapshot. No live PostgreSQL/provider, macOS or hosted-CI
+execution, publication, deployment, commit or push is claimed.
+
+### Same-poll returned-error retention closure
+
+The resumed continuation's fourth fresh all-reviewer pass, the twelfth
+cumulative review pass, inspected complete fingerprint
+`063ea1ef8d44ebed323b797f9bc1a17a2267e6a5e78afca255c6ec07fdbb2485`.
+Claude and Cursor each attested all 39 evidence pages. Native Codex matched the
+same complete scope at both boundaries, and the parent recaptured it unchanged
+after every reviewer was terminal. Codex and Cursor found no actionable defect.
+Claude found one low contract violation: when a factory returned an application
+error in the same poll that its attempt context became cancelled, retry returned
+the terminal cancellation but discarded that error even though both public
+retry error types document `last_error` as the last returned failure.
+
+The required design assessment classifies this as a distinct error-retention
+group, not another repair to the exhausted cancellation-selection mechanism.
+Cancellation remains terminal and wins over the returned result. The error is
+now retained in `last_error` without classification or replay; a same-poll
+successful value remains discarded. Legacy and options regressions each prove
+one factory invocation, zero classifier calls, terminal `Cancelled`, and the
+current returned error in `last_error`. The telemetry regression proves the
+cancelled outcome while using the retained secret-bearing error to make its
+redaction assertion non-vacuous.
+
+Focused validation passed all 20 legacy retry, 17 attempt-deadline and 8
+telemetry cases, plus strict Clippy, warning-denied rustdoc, formatting and diff
+hygiene. Complete `bash scripts/verify.sh` matrices passed on Rust 1.98.1 and
+1.94.0, including 32 positive and 37 compile-fail foundation doctests. Each
+toolchain rebuilt the HTTP example and passed the default, SIGINT, deadline,
+WARN-filtered and combined WARN-filtered-deadline profiles, for ten passing
+process runs. `Cargo.lock` remained unchanged at SHA-256
+`1933a787254d32bd9cc03cdd6944e07a282b6f5ed9086822650aa4c6ff647f7e`.
+
+The `batter-4c4` transition comment created at `2026-09-15T07:37:27Z` records
+the same assessment, repair and evidence, and the owning task is closed on that
+validated state. The trusted `.reviewignore` still excludes `.agent`, so the
+loop did not run Jig or refresh excluded plan and receipt metadata. The final
+fresh complete all-reviewer pass follows this snapshot. No live
+PostgreSQL/provider, macOS or hosted-CI execution, publication, deployment,
+commit or push is claimed.

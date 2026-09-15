@@ -51,6 +51,25 @@ contracts, capability facts and validation history.
   `HealthMonitor::register_in`, or explicitly acknowledge the factory's
   `ComponentStartup` and pass the returned signal to `run`. Passing a clone from
   `startup.shutdown()` compiles but deliberately leaves readiness pending.
+- Add an opt-in `RetryOptions` / `execute_with_options` boundary for per-attempt
+  deadline caps and optional injected equal jitter. Attempt deadlines are
+  recomputed after backoff, cannot exceed the input total/work context, and have
+  a distinct non-exhaustive `RetryExecutionError` outcome. Legacy `execute`,
+  `execute_with_jitter`, `RetryError`, `StopReason`, and `Interruption` remain
+  source-compatible and keep their previous meanings. Options are consumed once
+  and intentionally are not clonable, preventing accidental duplication of a
+  stateful jitter stream across concurrent executions. The default sampler
+  specialization implements `Default`, so `RetryOptions::default()` needs no
+  sampler type annotation. Retry completion now reconciles cancellation of the
+  public attempt scope before accepting a value or classifying an error, even
+  when the factory cancels that scope and returns in the same poll. This applies
+  consistently to the legacy and options entrypoints without changing their
+  error-enum shapes or the meanings of existing variants. Composite attempt
+  results are mapped at the operation-owned observation boundary so application
+  errors remain WARN `failed`, cancellation remains INFO `cancelled`, and neither
+  can be mislabeled as a successful attempt. An error returned in the same poll
+  as terminal cancellation remains available as `last_error` without being
+  classified or replayed.
 - Hard-cut SQLx verification to compiled inputs. `AuthorityPolicyBuilder::build`
   now returns the only executable generic authority value, migration construction
   and mutation are fallible, and non-empty `VerificationPlan` constructors plus

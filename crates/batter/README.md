@@ -32,10 +32,12 @@ async fn example() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The deadline can stop awaiting a future; it cannot establish rollback of an
-external effect. Retry requires explicit replay authorization. Supervision owns
-registered tasks and admitted finite work, not their arbitrary detached children.
-Cleanup requires explicit driving, and its guarantees require a live runtime.
-Automatic observations omit error contents; applications choose their subscriber.
+external effect. Retry requires explicit replay authorization. `RetryOptions`
+can cap each attempt inside the unchanged total context; attempt expiration is
+terminal and does not itself authorize replay. Supervision owns registered tasks
+and admitted finite work, not their arbitrary detached children. Cleanup requires
+explicit driving, and its guarantees require a live runtime. Automatic
+observations omit error contents; applications choose their subscriber.
 
 Adapter authors can wrap a future with `batter::telemetry::with_current_dispatch`
 to retain the dispatcher captured at the call through polling and destruction.

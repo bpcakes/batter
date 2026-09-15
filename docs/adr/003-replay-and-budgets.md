@@ -24,4 +24,12 @@ Amendment, 2026-09-08: `reserve_finalization` produces sibling phase contexts:
 shortened work deadline and original finalization deadline. Work cancellation
 does not cancel finalization; parent cancellation still reaches both. This
 reserves time without shielding execution or extending the total allowance.
-Per-attempt deadline and retry-token policies remain separate future work.
+
+Amendment, 2026-09-14: `RetryOptions::with_attempt_maximum` adds an opt-in cap
+derived again when each attempt starts. The cap is clamped to the unchanged
+input context, including a shortened work phase, and its typed expiration is
+terminal rather than replay authorization. Absolute deadline ordering selects
+attempt versus total expiration; delayed runtime observation does not promise
+unused total time. Options are single-execution values so stateful jitter
+samplers are not accidentally cloned across concurrent calls. Retry-token
+policy remains separate future work.

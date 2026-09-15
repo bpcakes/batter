@@ -198,6 +198,72 @@ async fn cancelled_before_first_attempt_starts_nothing() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test(start_paused = true)]
+async fn same_poll_attempt_cancellation_discards_legacy_success() {
+    let context = context();
+    let result: Result<(), RetryError<&'static str>> = retry::execute(
+        &context,
+        "read.cancel-before-return",
+        ReplaySafety::Idempotent,
+        &policy(2),
+        |attempt| async move {
+            attempt.context.cancel();
+            Ok(())
+        },
+        |_| panic!("a successful attempt has no error to classify"),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(RetryError::Interrupted {
+            attempts: 1,
+            reason: Interruption::Cancelled,
+            last_error: None,
+        })
+    ));
+    assert!(context.check().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn same_poll_input_cancellation_retains_legacy_error_without_classifying() {
+    let context = context();
+    let cancellation = context.clone();
+    let classifiers = Arc::new(AtomicU32::new(0));
+    let result: Result<(), RetryError<&'static str>> = retry::execute(
+        &context,
+        "read.cancel-with-error",
+        ReplaySafety::Idempotent,
+        &policy(2),
+        move |_| {
+            let cancellation = cancellation.clone();
+            async move {
+                cancellation.cancel();
+                Err("current")
+            }
+        },
+        {
+            let classifiers = Arc::clone(&classifiers);
+            move |_| {
+                classifiers.fetch_add(1, Ordering::SeqCst);
+                RetryDecision::Retry
+            }
+        },
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(RetryError::Interrupted {
+            attempts: 1,
+            reason: Interruption::Cancelled,
+            last_error: Some("current"),
+        })
+    ));
+    assert_eq!(classifiers.load(Ordering::SeqCst), 0);
+    assert!(matches!(context.check(), Err(Interruption::Cancelled)));
+}
+
 #[tokio::test]
 async fn cancellation_in_backoff_retains_last_error() {
     let context = context();

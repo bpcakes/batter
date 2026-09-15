@@ -702,12 +702,44 @@ See [validation](validation.md) for executed checks and remaining limitations.
   panic/cancellation observations at the task boundary.
 - [Task cancellation](https://docs.rs/tokio/latest/tokio/task/): abortion requires
   runtime progress; blocking/non-yielding behavior is a separate concern.
-- [CancellationToken](https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html):
+- [CancellationToken 0.7.19](https://docs.rs/tokio-util/0.7.19/tokio_util/sync/struct.CancellationToken.html):
   downward child cancellation and drop guards; not transitive child-task joining.
 - [TaskTracker](https://docs.rs/tokio-util/latest/tokio_util/task/task_tracker/struct.TaskTracker.html):
   task lifetime tracking is not an application failure supervisor.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
+
+### Retry attempt deadline boundaries, 2026-09-14
+
+Cargo.lock resolves Tokio 1.53.1 and tokio-util 0.7.19. The versioned
+[`select!` contract](https://docs.rs/tokio/1.53.1/tokio/macro.select.html)
+states that the macro cancels its remaining branches after one completes and
+that `biased;` polls ready branches from top to bottom. Batter retains its
+existing cancellation, deadline, then work ordering so cancellation wins over
+deadline and deadline wins over simultaneously ready completion. Because work
+can become ready during its own poll, the selector does not provide hard
+wall-clock preemption or reread its clock after that poll returns. The retry
+layer separately rechecks cancellation of the public attempt child before it
+accepts a factory value or classifies an error; it does not turn the cooperative
+deadline into a post-return clock check.
+
+Tokio 1.53.1
+[`Instant::checked_add`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.checked_add)
+returns no value when the result is outside the clock representation. Batter's
+shared positive-duration validator checks this before accepting a retry attempt
+maximum. The later per-attempt derivation uses checked arithmetic and the
+already representable input deadline wins if the requested instant cannot be
+represented.
+
+Tokio-util 0.7.19 documents that a
+[`child_token`](https://docs.rs/tokio-util/0.7.19/tokio_util/sync/struct.CancellationToken.html#method.child_token)
+is cancelled with its parent while cancellation of the child does not travel
+upward. Its
+[`drop_guard`](https://docs.rs/tokio-util/0.7.19/tokio_util/sync/struct.CancellationToken.html#method.drop_guard)
+cancels that token and its descendants on drop unless disarmed. Retry attempt
+caps reuse `OperationContext::run`, so the selected attempt future is destroyed
+and its child token is cancelled without claiming that arbitrary spawned tasks
+were joined.
 
 ### Service and finite-command examples: 2026-09-10
 
