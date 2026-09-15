@@ -144,7 +144,7 @@ lower library minimum.
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
-| `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, and native serving. |
+| `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |

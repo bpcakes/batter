@@ -6,6 +6,53 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Browser credential transport review follow-up, 2026-09-15
+
+The current WHATWG Fetch Standard defines
+[CORS-safelisted request headers](https://fetch.spec.whatwg.org/#cors-safelisted-request-header)
+and [browser-forbidden request headers](https://fetch.spec.whatwg.org/#forbidden-request-header),
+and removes surrounding HTTP whitespace when
+[normalizing a script-set header value](https://fetch.spec.whatwg.org/#concept-header-value-normalize).
+Batter's custom marker constructor rejects both categories conservatively by
+name and rejects values that normalization would change. That makes an accepted
+marker script-settable and non-safelisted, but does not prove that a browser
+received it from script: the
+[Upgrade Insecure Requests specification](https://www.w3.org/TR/upgrade-insecure-requests/#preference)
+allows a user agent to append `Upgrade-Insecure-Requests: 1` to navigation
+requests even though that name is neither Fetch-safelisted nor forbidden.
+The [Fetch Metadata specification](https://www.w3.org/TR/fetch-metadata/#sec-fetch-site-header)
+marks site-controlled requests according to their initiating relationship and
+uses `cross-site` across origins. Batter therefore pairs every custom marker
+policy with exact `Sec-Fetch-Site: same-origin` rather than treating the marker
+name as provenance. The application still owns CORS and authentication policy;
+non-browser clients can forge both fields.
+
+RFC 9110 defines
+[quoted strings](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.4)
+and [media-type parameter syntax](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.6)
+over bytes. Empty parameter slots and quoted `obs-text` are valid recipient
+input, while whitespace around the parameter `=` is not. Batter's JSON
+media-type check follows that grammar before deciding whether the exact type is
+`application/json`.
+
+The WHATWG URL Standard's
+[special authority states](https://url.spec.whatwg.org/#special-authority-slashes-state)
+recover missing slashes and treat reverse solidus like a slash, while its
+[path state](https://url.spec.whatwg.org/#path-state) removes dot segments.
+Batter uses `url` for canonical serialization only after its trusted-config
+boundary has required explicit `scheme://authority` syntax and rejected reverse
+solidus and raw non-root paths.
+
+The December 2025
+[`draft-ietf-httpbis-rfc6265bis-22`](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/)
+requires user agents to apply `__Secure-` and `__Host-` prefix rules
+case-insensitively. The May 2026
+[`draft-ietf-httpbis-layered-cookies-02`](https://datatracker.ietf.org/doc/draft-ietf-httpbis-layered-cookies/)
+adds `__Http-` and `__Host-Http-` rules, including HttpOnly for the combined
+prefix. These are active Internet-Drafts, not final RFC claims. Batter rejects
+reserved secure-prefix names on loopback and enforces the combined prefix's
+HttpOnly requirement rather than allowing a browser-discarded Set-Cookie field.
+
 ## PostgreSQL 18 schema and runtime-authority verification, 2026-09-13
 
 The verifier targets PostgreSQL **18.x** and rejects other server-version
@@ -3288,3 +3335,58 @@ numeric ID. Consequently, a comment number is not portable identity across clone
 or imports, and equal numbers on different issues are not a payload collision.
 Repository evidence refers to comments by owning issue plus stable text or purpose;
 numeric IDs remain useful only for inspecting one current database generation.
+
+## Browser credential transport, 2026-09-15
+
+- [Cookies: HTTP State Management Mechanism,
+  draft-ietf-httpbis-rfc6265bis-22](https://datatracker.ietf.org/doc/draft-ietf-httpbis-rfc6265bis/)
+  remains an active Internet-Draft in the RFC Editor queue. Its server syntax,
+  cookie-name prefix, Secure, HttpOnly, SameSite, Domain, Path, Max-Age, and
+  Expires sections inform the fixed host-only response contract. Its server
+  profile prohibits more than one Set-Cookie field with the same cookie-name in
+  one response; Batter checks that invariant before appending. The draft is
+  cited as work in progress, not a final RFC.
+- The living [WHATWG URL Standard](https://url.spec.whatwg.org/) defines URL
+  origins and tuple-origin serialization. Batter delegates parsing and canonical
+  ASCII origin serialization to `url` 2.5.8, then applies its narrower HTTPS or
+  loopback-HTTP configuration policy.
+- [Fetch Metadata Request Headers, W3C Working Draft 1 April
+  2025](https://www.w3.org/TR/fetch-metadata/) defines `Sec-Fetch-Site` as a
+  Structured Field token, names `cross-site`, `same-origin`, `same-site`, and
+  `none`, and advises forward-compatible handling of unknown values. Batter's
+  compatible mode ignores syntactically valid unknown tokens but rejects an
+  explicit `cross-site`; its strict mode requires exact `same-origin`, and that
+  mode is automatic for every custom-marker policy.
+- [Upgrade Insecure Requests, W3C Candidate Recommendation 8 October
+  2015](https://www.w3.org/TR/upgrade-insecure-requests/#preference) permits user
+  agents to append `Upgrade-Insecure-Requests: 1` to navigation requests. This
+  is the concrete counterexample to inferring script provenance or a completed
+  CORS preflight from an otherwise non-safelisted, non-forbidden field name.
+- [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651.html) supplies the Structured
+  Field token grammar used to distinguish a future Fetch Metadata token from a
+  malformed, comma-list, or whitespace-containing field.
+- [RFC 9111 section 5.2.2.5](https://datatracker.ietf.org/doc/html/rfc9111#section-5.2.2.5)
+  defines the `no-store` response directive for private and shared caches and
+  explicitly says it is not a sufficient privacy mechanism against malicious or
+  compromised caches.
+- The living [Referrer Policy specification](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-same-origin)
+  defines `same-origin` as sending referrer information only for same-origin
+  requests. The living [Fetch Standard Origin-header
+  algorithm](https://fetch.spec.whatwg.org/#origin-header) retains the serialized
+  origin for a same-origin non-CORS mutation under that policy and uses `null`
+  when the current URL is cross-origin. Batter selects this policy so private
+  pages can submit same-origin HTML forms to an exact-origin mutation surface
+  without leaking referrers cross-origin.
+- The living [Fetch Standard](https://fetch.spec.whatwg.org/#x-content-type-options-header)
+  defines the `X-Content-Type-Options: nosniff` response behavior. Batter emits
+  that fixed field but makes no broader CSP or content-validation claim.
+- [`cookie` 0.18.2](https://docs.rs/cookie/0.18.2/cookie/) reports Rust 1.56 and
+  MIT OR Apache-2.0. Batter uses it with default features disabled for response
+  serialization; signing, private jars, key expansion, and percent encoding are
+  not enabled or exposed.
+- [`url` 2.5.8](https://docs.rs/url/2.5.8/url/) reports Rust 1.63 and MIT OR
+  Apache-2.0. Batter enables only its `std` feature and does not expose `Url` in
+  public signatures.
+- [`axum` 0.8.9](https://docs.rs/axum/0.8.9/axum/) reports Rust 1.80 and MIT.
+  Public Router integration tests pin the actual middleware/layer behavior used
+  by private responses and observation. The workspace minimum remains Rust 1.94.

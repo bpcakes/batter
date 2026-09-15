@@ -127,6 +127,17 @@ This uses native tracing handles and the foundation's existing dispatcher wrappe
 it introduces no identity service or second async ownership mechanism. Handler
 unwinds follow the same dropped-response observation path and propagate normally.
 
+The public `batter_axum::browser` namespace owns a separate synchronous HTTP
+transport boundary: validated configured origins, strict named-cookie scanning,
+fixed host-only cookie serialization, exact browser mutation signals, and fixed
+private-response headers. The types consume Axum/http headers but keep `cookie`
+and `url` implementation types private. Credential parsing and meaning, principal
+construction, session persistence and revocation, authorization, CORS/proxy
+trust, route selection, and application wire errors remain in the composition
+root. A custom marker is always paired with adapter-owned strict same-origin
+Fetch Metadata rather than relying on the marker name to prove browser
+provenance. The Tokio foundation retains no HTTP or browser dependency.
+
 ## Composition and readiness
 
 `startup::Startup` owns an explicit native initializer from `start` through

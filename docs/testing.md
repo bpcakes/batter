@@ -1073,6 +1073,35 @@ previously removed ambient launch path. Only the emergency fallback control
 deliberately waits ten seconds; the parent-death probes return on evidence.
 Keeping that control in ordinary matrices validates the real configured fallback.
 
+## Browser credential transport
+
+`cargo test -p batter-axum --test browser --locked` runs the public browser
+transport contract. Its table-driven cases cover HTTPS and explicit loopback
+origin construction (including special-scheme recovery forms and raw paths
+erased by URL dot-segment normalization), cookie name/value syntax and redaction,
+every Cookie field, duplicate targets, strict versus target-only malformed input,
+fixed-scope secure and local Set-Cookie output, sibling append preservation, and
+matching removal. Same-name set/set, set/removal, and removal/set attempts must
+return the sanitized duplicate-name error without mutating the first field;
+independent names still append in order.
+
+The same target covers non-empty mutation-policy construction, exact field
+multiplicity, compatible and strict Fetch Metadata modes, exact JSON media type,
+Fetch-normalized marker configuration, RFC 9110 parameter edge cases, sanitized
+status/code mapping, and deterministic Origin/Fetch/marker/content precedence.
+Every marker policy automatically requires exact same-origin Fetch Metadata; a
+regression uses the user-agent-added `Upgrade-Insecure-Requests` navigation
+field to prove that the marker alone and a cross-site value both fail closed.
+Real Axum Router cases prove private headers cover inner success,
+application errors, rejection middleware and fallback, preserve response data,
+do not cover an outer short-circuit, and compose inside one `observe_http` event
+without request-header leakage. The exact `Referrer-Policy: same-origin` value
+pins the specification-level composition with exact-origin HTML form mutations;
+no browser request constructor is simulated. Adapter doctests compile the public
+consumer shapes. No browser process, application session store, CORS policy, or
+real credential protocol is simulated; the target proves the HTTP header
+contract.
+
 ## Axum operational defaults
 
 `cargo test -p batter-axum --test operational --locked` exercises the actual

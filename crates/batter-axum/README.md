@@ -4,10 +4,81 @@ Axum 0.8 integration for the `batter` Tokio foundation. Import its API from
 `batter_axum`. This separate dependency provides request readiness/deadline
 policy, operation context extensions, sanitized infrastructure failure rendering,
 HTTP observations, trusted server correlation, dependency readiness and supervised
-native serving.
+native serving. The `browser` module separately provides validated browser-cookie,
+mutation-signal and private-response header mechanics.
 
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
+
+## Browser credential transport
+
+`batter_axum::browser` keeps opaque browser credential transport mechanical and
+leaves credential meaning application-owned. `BrowserOrigin::https` accepts one
+canonical HTTPS origin; `BrowserOrigin::loopback_http` is the explicit local-only
+HTTP path. Both require explicit `scheme://authority` input and reject reverse
+solidus or raw non-root paths before URL recovery/normalization. `BrowserCookie`
+always emits a host-only `Path=/` cookie, requires an
+exact `__Host-` name and Secure under HTTPS, rejects browser-reserved secure
+prefixes under loopback HTTP, enforces HttpOnly for `__Host-Http-`, and makes
+SameSite, HttpOnly visibility, and lifetime explicit. Setting and removal
+append `Set-Cookie` fields instead of replacing siblings, but reject an
+existing field with the same case-sensitive cookie name before mutation.
+
+`read_cookie` examines every Cookie field, rejects duplicate target names and
+non-UTF8 fields, and returns the unchanged borrowed opaque value. `Strict`
+uses Batter's narrower unquoted token/value subset for every pair, so it is
+appropriate only when the application controls the whole cookie jar and can
+reject otherwise RFC-valid quoted values. `TargetOnly` ignores invalid
+unrelated pairs while retaining all target and ambiguity checks. An empty target
+remains a present opaque value for the application credential parser to classify.
+
+For an exact-origin JSON surface:
+
+```rust
+use batter_axum::browser::{BrowserOrigin, FetchSitePolicy, MutationPolicy};
+
+fn build_policy() -> Result<MutationPolicy, Box<dyn std::error::Error>> {
+    Ok(MutationPolicy::exact_origin(BrowserOrigin::https(
+        "https://app.example",
+    )?)
+    .with_fetch_site(FetchSitePolicy::RejectCrossSite)?
+    .require_json()?)
+}
+```
+
+For a custom marker, start from
+`MutationPolicy::required_header(RequiredHeader::new(...)?)`. That constructor
+automatically requires exactly one `Sec-Fetch-Site: same-origin`; adding a
+marker to an exact-origin policy also strengthens any compatible Fetch Metadata
+check to that strict mode. The marker can therefore never be the only cross-site
+defense. Every configured category is required; checks always run in Origin,
+Fetch Metadata, marker, then content-type order. Marker construction rejects
+CORS-safelisted and browser-controlled names, plus values that Fetch would
+normalize before sending. An accepted name is script-settable and non-safelisted,
+but that alone does not prove browser provenance or preflight: user agents can
+attach other non-safelisted fields. A marker policy fails closed when Fetch
+Metadata is absent, so its mutation URL must be potentially trustworthy and its
+supported browsers must emit `Sec-Fetch-Site`. The optional JSON check parses
+the complete RFC 9110 media type and parameter byte grammar, not merely an
+`application/json` prefix.
+
+Wrap assembled private routes and their fallback with
+`middleware::from_fn(browser::private_response)`. Put mutation rejection inside
+that layer so rejection responses receive the headers, and put `observe_http`
+outside it to observe the final application-selected status once. An outer
+short-circuit that does not call the private layer cannot receive its headers.
+The layer selects `Referrer-Policy: same-origin`: cross-origin destinations do
+not receive referrer information, while same-origin HTML form mutations retain
+the `Origin` value required by `MutationPolicy::exact_origin`. A non-CORS form
+post to a different origin instead carries `Origin: null`; that page/target
+layout needs a deliberately different response policy and composition.
+
+These helpers do not authenticate a caller, distinguish a browser from a
+non-browser client, select routes, configure CORS or
+proxies, create or compare CSRF tokens, parse application credentials, revoke
+server state, or define response bodies. SameSite and Fetch Metadata remain
+defense-in-depth signals; `Cache-Control: no-store` is not a complete privacy
+guarantee.
 
 Use `RequestPolicy` with
 `middleware::from_fn_with_state(policy, request_admission)` on guarded business

@@ -105,7 +105,10 @@ and exposes `with_current_dispatch` for adapter-owned futures.
 publication waits without merging command, startup or process outcome types.
 `crates/batter/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
 full inner-future destruction, without heap allocation.
-`crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter.
+`crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter;
+`crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
+cookie, mutation-signal and private-response header mechanics without owning
+credential meaning, authorization, CORS or application error envelopes.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and pool-close registration; server-session termination remains separate.
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and

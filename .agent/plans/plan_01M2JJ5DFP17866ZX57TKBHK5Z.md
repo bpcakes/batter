@@ -289,7 +289,9 @@ standalone delivery records.
 
 - Decision: append `Set-Cookie` fields rather than insert them.
   Rationale: a response may establish or clear more than one independent cookie.
-  Insertion would silently discard a previously produced field.
+  Insertion would silently discard a previously produced field. Before append,
+  reject an existing field with the same case-sensitive cookie name because the
+  server profile forbids ambiguous same-name output.
   Date/Author: 2026-09-15 / Codex
 
 - Decision: clearing emits both `Max-Age=0` and a fixed past `Expires`, retaining
@@ -421,7 +423,7 @@ revision has been published or otherwise pushed, no downstream mechanism has
 been removed, and browser compatibility beyond the cited specifications and
 executable header-level contracts remains unverified.
 
-Review intentionally tightened three planned behaviors before release:
+Review intentionally tightened the planned behaviors before release:
 `RequiredHeader::new` is fallible and accepts only Fetch-stable printable-ASCII
 values under a script-settable, non-safelisted name; it does not claim that the
 browser received the field from script. Cookie reserved-prefix checks follow the
@@ -431,6 +433,29 @@ userinfo, and slash recovery from disappearing through URL normalization; and
 JSON parameters follow the RFC 9110 byte grammar instead of accepting an
 arbitrary tail. Valid UTF-8 in unrelated cookies is now classified by the
 selected Strict/TargetOnly syntax policy rather than mislabeled non-UTF8.
+
+The fourth review found that `Referrer-Policy: no-referrer` would make a
+same-origin non-CORS form mutation carry `Origin: null`, conflicting with the
+adapter's own exact-origin policy. The fixed private-response value is now
+`same-origin`, which withholds cross-origin referrers while preserving the
+serialized origin for a same-origin HTML form mutation.
+
+The fifth review found that unconditional append still permitted two response
+fields with the same cookie name. Set and removal now inspect existing fields
+byte-wise, reject an exact case-sensitive duplicate with a sanitized typed
+error, and leave the response unchanged; three operation-order regressions pin
+that invariant while independent cookie names still append.
+
+The complete pass over that repair found a recurring custom-marker invariant
+failure: a browser can attach a non-safelisted, non-forbidden field such as
+`Upgrade-Insecure-Requests` without script or preflight. Per ADR-010 this was
+classified as an adapter design deficiency rather than repaired with another
+open-ended denylist entry. `MutationPolicy::required_header` now installs strict
+same-origin Fetch Metadata, and `and_required_header` strengthens any compatible
+mode. Missing, same-site, cross-site, unknown, malformed, and duplicate values
+therefore fail before the marker check; an explicit browser-added-header
+regression pins the original failure. This root repair restarts the complete
+review loop.
 
 ## Context and Orientation
 
@@ -974,10 +999,10 @@ Use `HeaderMap::append(header::SET_COOKIE, value)`. Do not use `insert`.
 
 Removal does not claim server-side revocation.
 
-`SetCookieError` is expected only if an internal serialization invariant fails
-or a selected dependency rejects a previously validated value. It must be typed
-and sanitized. Do not use `expect` on a public request/response path merely
-because the values were intended to be validated.
+`SetCookieError` reports either an existing same-name response field or an
+internal serialization failure. It must be typed and sanitized and must not
+carry the cookie name or value. Do not use `expect` on a public request/response
+path merely because the values were intended to be validated.
 
 If the implementation can make append operations infallible from validated
 construction without hiding allocation failure or using unsafe code, it may
@@ -1161,7 +1186,7 @@ Provide a pure operation:
 It overwrites these fields with exact server-selected values:
 
     Cache-Control: no-store
-    Referrer-Policy: no-referrer
+    Referrer-Policy: same-origin
     X-Content-Type-Options: nosniff
 
 It does not add Pragma, Expires, Clear-Site-Data, CSP, HSTS, Vary, CORS, COOP,
@@ -1908,7 +1933,8 @@ Update `docs/references.md` with versions and access dates for:
 - RFC 6454 or the current WHATWG origin definition used by `url`;
 - W3C Fetch Metadata Working Draft dated 2025-04-01;
 - RFC 9111 no-store response semantics;
-- the current Referrer Policy specification for `no-referrer`;
+- the current Referrer Policy specification for `same-origin` and the Fetch
+  Origin-header interaction for non-CORS mutations;
 - the Fetch/nosniff specification owning `X-Content-Type-Options` behavior;
 - `cookie` 0.18.2 source/docs;
 - `url` 2.5.8 source/docs;
@@ -2155,6 +2181,7 @@ The feature Bead is complete only when all of the following are true.
 - HttpOnly versus ScriptReadable is explicit;
 - session versus positive persistent lifetime is explicit;
 - Set-Cookie uses append;
+- an existing same-name Set-Cookie field rejects set or removal without mutation;
 - removal matches scope and emits Max-Age zero plus past Expires;
 - hostile values cannot inject attributes or fields;
 - no Domain/Partitioned/general jar API is exposed.

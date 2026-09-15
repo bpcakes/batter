@@ -34,6 +34,17 @@ fallback and rejection responses without imposing admission on them. Domain
 services receive their own dependencies through State/FromRef/constructors;
 request operation context arrives through Extension<OperationContext>.
 
+Import browser-carried credential mechanics from `batter_axum::browser`.
+`BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
+`read_cookie` scans every Cookie field for one exact target; `BrowserCookie`
+appends fixed host-only/root-path set and removal fields; `MutationPolicy` checks
+configured exact Origin/custom-marker signals with optional Fetch Metadata on
+origin-only policies, automatic strict same-origin Fetch Metadata on every
+marker policy, and an optional JSON guard; `private_response` overwrites the
+three fixed private headers on inner responses. Applications still own
+credential/token meaning, account and session state, authorization, CSRF-token
+design, CORS/proxy trust, route selection, revocation, and response rendering.
+
 Apply observation after every route/fallback is assembled: Axum's router layer
 runs after routing and only covers existing routes. A later-added route bypasses
 it; a service wrapper outside routing has no matched route template at entry.

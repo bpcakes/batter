@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `batter_axum::browser` with validated HTTPS/loopback origins,
+  duplicate-aware opaque named-cookie reads, fixed host-only/root-path cookie
+  set and removal, exact Origin/custom-marker/Fetch Metadata/JSON mutation
+  signals, sanitized application-mappable rejections, and private-response
+  headers. Every custom-marker policy automatically requires exact same-origin
+  Fetch Metadata; an accepted marker name alone is not treated as browser or
+  preflight provenance. Authentication, authorization, CORS, CSRF-token design,
+  session persistence/revocation, and application error envelopes remain
+  outside the adapter.
 - Replace Axum-owned `ReadinessReason::Dependency(HealthStatus)`, which could
   represent a healthy dependency failure, with foundation-owned exhaustive
   classifications. `HealthStatus` now projects explicitly to

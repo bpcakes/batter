@@ -15,10 +15,12 @@ workspace = true
 [dependencies]
 batter.workspace = true
 axum.workspace = true
+cookie.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "net"] }
 tracing.workspace = true
 tower-http = { version = "0.6.11", default-features = false, features = ["request-id"] }
+url.workspace = true
 
 [dev-dependencies]
 http-body.workspace = true

@@ -1,11 +1,14 @@
-//! Axum HTTP observation and request admission/deadline boundaries for Batter.
+//! Axum HTTP observation, request admission, and browser transport boundaries for Batter.
 //! The workspace targets Unix backends. Windows is unsupported and not planned.
 //!
 //! This bounds obtaining a response, NOT streaming its body or a WebSocket
 //! session. It does not detect disconnects that the transport does not surface
 //! by dropping the handler future. Bodies, proxy trust and auth remain
-//! application-owned. Trusted request correlation is explicitly opt-in. Keep liveness/readiness outside admission;
-//! apply observation to the assembled router, including probes and fallback.
+//! application-owned. Trusted request correlation is explicitly opt-in. The
+//! [`browser`] module supplies validated cookie/header mechanics without an
+//! account, session, authorization, CORS, or CSRF-token model. Keep
+//! liveness/readiness outside admission; apply observation to the assembled
+//! router, including probes and fallback.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +16,9 @@ mod correlation;
 mod observation;
 mod readiness;
 mod serving;
+
+/// Browser-carried opaque credential transport primitives.
+pub mod browser;
 
 pub use correlation::{CorrelationId, operational_http, render_infrastructure_failure};
 pub use readiness::{

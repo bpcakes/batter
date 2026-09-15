@@ -1166,6 +1166,78 @@ shutdown, with late-entry controls proving the final checkpoint. These are test
 harness contracts, not production deadline or async-drop guarantees.
 
 
+### Browser credential transport
+
+`batter_axum::browser` accepts trusted origins only through distinct HTTPS and
+loopback-HTTP constructors. It requires explicit case-insensitive
+`scheme://authority` input and rejects reverse solidus, credentials, non-root
+paths, queries and fragments before URL recovery or path normalization can erase
+them. It canonicalizes accepted values with `url` 2.5.8 and never derives
+authority from Host, Forwarded, or request Origin fields. Loopback HTTP is
+limited to loopback IPs and `localhost` names.
+
+Incoming cookie reads scan every Cookie field. Target names are exact and
+case-sensitive; duplicate targets, non-UTF8 fields, invalid opaque target values,
+and malformed target pairs fail with sanitized typed errors. `Strict` applies
+Batter's narrower unquoted syntax to unrelated pairs and is suitable only when
+the application controls the whole cookie jar; it rejects some RFC-valid input
+such as quoted values. `TargetOnly` ignores invalid unrelated pairs while
+keeping target and ambiguity checks strict. Values are borrowed without
+percent-decoding, unquoting, or normalization. An empty target remains a present
+opaque value; its application credential parser owns invalid/absent semantics.
+
+`BrowserCookie` always emits a host-only `Path=/` cookie. HTTPS requires the
+exact `__Host-` prefix and Secure; explicit loopback rejects browser-reserved
+secure prefixes and SameSite None. `__Host-Http-` additionally requires
+HttpOnly. SameSite, HttpOnly versus script-readable visibility, and session
+versus positive whole-second Max-Age are explicit. Set and removal operations
+append Set-Cookie fields. Removal retains scope/security attributes and emits
+both Max-Age zero and a past Expires; it does not revoke server state.
+
+Every `MutationPolicy` starts with exact configured Origin or one exact custom
+marker. Marker construction rejects CORS-safelisted names, browser-controlled
+names, non-printable values, tabs, and surrounding spaces that Fetch would
+normalize away. Because a user agent can attach other accepted non-safelisted
+names without script or preflight, every policy containing a marker automatically
+requires exactly one `Sec-Fetch-Site: same-origin`; adding a marker strengthens
+an existing compatible Fetch Metadata check and cannot weaken strict mode.
+Missing Fetch Metadata fails closed. Marker-policy consumers therefore require
+a potentially trustworthy mutation URL and browsers that emit the field;
+non-trustworthy development URLs and older clients can be rejected.
+Configured categories are ANDed and checked in Origin, Fetch Metadata, marker,
+then JSON order with exact field multiplicity.
+`RejectCrossSite` permits missing and syntactically valid future Fetch-Site
+tokens but rejects explicit `cross-site`;
+`RequireSameOrigin` accepts only exact `same-origin`. The optional JSON check
+parses one complete `application/json` media type case-insensitively with the
+RFC 9110 byte grammar, including empty parameter slots and quoted `obs-text`,
+while rejecting whitespace around parameter `=`. It does not accept suffix JSON
+types, malformed parameter tails, or coalesced lists. Typed rejections expose
+only a stable status/code and no observed or expected values.
+
+Set and removal operations append independent Set-Cookie fields without
+replacing siblings. Before mutation they reject an existing field with the same
+case-sensitive cookie name, preventing ambiguous set/set, set/removal, and
+removal/set responses. The error is typed and contains no cookie name or value.
+
+Private-response mutation overwrites exactly `Cache-Control: no-store`,
+`Referrer-Policy: same-origin`, and `X-Content-Type-Options: nosniff`, preserving
+status, body, extensions and unrelated headers. The referrer policy withholds
+referrer information from cross-origin requests while preserving the serialized
+origin on same-origin non-CORS mutations such as HTML form submissions. A
+non-CORS form post to another origin carries `Origin: null` and cannot satisfy
+that target's exact-origin policy; such a page/target layout requires a
+different response policy and composition. The
+middleware covers inner success, error, rejection and fallback responses; it
+cannot affect an outer short-circuit that never calls it and creates no
+observation of its own.
+
+These are bounded header/cookie mechanics, not authentication, authorization,
+CORS, proxy trust, token generation/comparison, a complete CSRF proof, browser
+history control, or server-side revocation. SameSite and Fetch Metadata are
+defense in depth. `no-store` is not a sufficient privacy guarantee against
+malicious caches or non-HTTP storage.
+
 ### Opt-in operational defaults
 
 `operational_http` generates a new UUID on first poll and composes exactly one

@@ -3,8 +3,9 @@
 ## Purpose
 
 Translate the foundation's operational contracts into Axum request and probe
-behavior. Keep application security, business logic, and wire-envelope policy
-at the composition root.
+behavior. Own validated browser credential transport mechanics while keeping
+credential meaning, authentication, authorization, CORS, business logic, and
+wire-envelope policy at the composition root.
 
 Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
 Windows support and non-Unix fallbacks are out of scope.
@@ -14,6 +15,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
   `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
   `request_scope` compatibility entry point, probes, and failures.
+- `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
+  duplicate-aware named-cookie transport, exact mutation-signal checks, and
+  fixed private-response headers. They do not own account/session state, CSRF
+  token protocols, route selection, CORS, or application error rendering.
 - `src/observation.rs` privately owns response observation and tracing lifetime;
   its single internal composition entry has no admission policy.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
@@ -29,6 +34,9 @@ Windows support and non-Unix fallbacks are out of scope.
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
   all readiness reasons, native startup/drain and a body surviving wrapper abort.
+- `tests/browser.rs` and `tests/browser/` cover the public browser transport
+  matrices, sanitized failures, Set-Cookie append/removal, mutation precedence,
+  and real Axum private-response layer placement.
 - `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
@@ -93,6 +101,12 @@ Select execution/event context once at first poll, retaining the HTTP span or it
 available application parent. Never discover a fallback parent at Drop or record
 HTTP fields into the application span. Handler panics propagate; an unwind before
 a response is observed as dropped, with no invented status or logged panic payload.
+Browser origins come only from validated operator configuration, never Host or
+forwarding headers. Scan every Cookie field and reject target ambiguity. Keep
+cookie/url dependency types private. Mutation checks are browser signals, not
+authentication or complete CSRF protection. Apply `private_response` outside
+application rejection middleware and inside `observe_http`; an outer
+short-circuit cannot be retroactively decorated.
 
 ## Common commands
 

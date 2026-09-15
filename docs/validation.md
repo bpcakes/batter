@@ -2,6 +2,159 @@
 
 Latest evidence: 2026-09-15. Earlier sections retain their historical scope.
 
+## Browser credential transport, 2026-09-15
+
+Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 (`4a4ef493e`,
+2026-03-02). `batter_axum::browser` adds validated HTTPS and explicit loopback
+origins, opaque named-cookie input, fixed-scope cookie output, composable
+mutation checks, sanitized typed rejection, and private-response headers. It
+does not add application authentication, authorization, session persistence,
+CORS selection, or a complete CSRF proof.
+
+| Feature command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-axum --test browser --locked` | PASS after the marker-policy redesign on Rust 1.98.1: all 33 public browser integration cases, including real Axum router/middleware, observation composition, automatic strict Fetch Metadata for marker policies, the browser-added `Upgrade-Insecure-Requests` failure control, complete media-type parsing, strict raw origin syntax, non-loopback controls, reserved cookie prefixes, UTF-8 classification, SameSite None, exact emitted attributes, atomic same-name response rejection, and case-distinct response names. The minimum-toolchain result is supplied by the complete matrix below. |
+| `cargo tree -p batter-axum --locked -e features -i url` and `-i idna` | PASS: the adapter's own selected graph enables `url/std`, which enables `idna/std`, `idna/alloc`, and `idna/compiled_data`; the focused adapter target's Unicode-host case therefore exercises IDNA without relying on another workspace package's `url` features. |
+| `cargo test -p batter-axum --doc --locked` and strict all-target adapter Clippy | PASS after the redesign on Rust 1.98.1: 23 positive and five compile-fail doctests, with no Clippy failure. Warning-denied rustdoc, formatting, and `git diff --check` passed and are also covered by the complete post-redesign matrix. |
+| `bash scripts/verify.sh` | PASS after the redesign on Rust 1.98.1. The complete run covers runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy, warning-denied rustdoc, and live loopback readiness tests. External PostgreSQL cases remain intentionally ignored by this non-database feature matrix. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS after the redesign with the same complete matrix on the declared minimum toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS after the redesign: all ten rebuilt process profiles across both supported toolchains. |
+| `scripts/jig work check --plan-id plan_01M2JJ5DFP17866ZX57TKBHK5Z`, then `work evidence` and `work gates --freshness-timeout-ms 30000` | PASS on the redesigned bytes: target validation `receipt_01M2JX8PV1HZMNZ13W7500C5M4`; API Clippy `receipt_01M2JX8P0Z5G3H212HYYP86KEH`; formatting `receipt_01M2JX8P2N6JB76XV2XG55DS7R`; API tests `receipt_01M2JX8P47Z2Y9JTQ6N6TZKZQ1`; contract `receipt_01M2JX8P5P6VG02FT1D9QGDEYT`; file budget `receipt_01M2JX8P74PQA3MG9HBGYC1SSK`. Evidence and the required verify gate were fresh with no unresolved gate. |
+
+`Cargo.lock` hash after adding `cookie` 0.18.2 and the already-transitive `url`
+2.5.8 as direct adapter dependencies is
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+The resolution added the cookie/time support stack and did not broadly upgrade
+unrelated packages. Optional cookie crypto and encoding features remain
+disabled. No hosted CI, new Linux, live browser, proxy, PostgreSQL,
+publication, deployment, or push is claimed.
+
+The first low-threshold Claude/Codex/Cursor pass covered the complete staged
+scope at unchanged fingerprint
+`e68d33835e20b2778d8313a3a6336a8e0304753c420b1daa45a823e8fad0d991`.
+Cursor found no actionable defect. Claude and Codex identified coding/API
+validation omissions rather than an architectural mismatch: valid UTF-8 was
+misclassified by visible-ASCII header conversion, custom markers admitted
+non-preflight or impossible configurations, loopback/combined cookie-prefix
+rules were incomplete, and JSON parameters were not fully parsed. The repair
+addresses those root causes and adds the focused cases summarized above; the
+second complete review pass covered the cumulative result.
+
+That second pass covered unchanged fingerprint
+`005a9e9767f35f14ed8c1933b4608befd7f8f31da85cbac641aa27271e3effce`.
+Its independently overlapping marker finding showed that accepted surrounding
+whitespace could never match after Fetch normalization. Primary-source checking
+also confirmed Codex's RFC 9110 parameter findings and rejected Claude's
+remembered legacy client-hint safelist: the current Fetch standard lists only
+the names already rejected. The repair validates marker bytes before serving,
+parses media parameters byte-wise with empty slots and quoted `obs-text` but no
+whitespace around `=`, rejects raw non-root origin paths before URL dot-segment
+normalization can erase them, makes the README snippet standalone, and adds the
+focused origin/cookie controls. These were coding and supporting omissions, not an
+adapter-boundary mismatch. A third complete pass is the convergence gate for
+the cumulative result.
+
+The third complete pass covered unchanged fingerprint
+`50f17f5a5fbb015653f992428dd4cb43eb60e8dfb1cef5d6400403bf09dbb40b`.
+Claude and Codex independently found that the raw-origin repair still allowed
+WHATWG special-scheme recovery when configured input omitted `//`; Codex also
+found imprecise non-UTF8 JSON rejection rustdoc. This was a recurrence of the
+same origin-validation mechanism, so the repair was reassessed at the API
+boundary instead of adding another normalized-path special case. Origin
+construction now requires raw case-insensitive `scheme://authority` syntax,
+rejects reverse solidus before parsing, and then applies raw userinfo/path plus
+native URL checks. The matrix adds recovery forms, uppercase schemes,
+non-loopback IP literals, exact `__Secure-` rejection, and every stable mutation
+status/code. Cookie input docs explicitly retain empty target values for the
+application parser. A fourth complete pass is the final ordinary convergence
+gate.
+
+The fourth complete pass covered unchanged fingerprint
+`f85547744e8f4d17c103bcc2522346d5b78730b75b930a4009e813f48692c2e0`.
+Codex and Cursor found no actionable defect. Claude identified a composition
+failure between the fixed `Referrer-Policy: no-referrer` response and
+`MutationPolicy::exact_origin`: under the Fetch Origin-header algorithm, a
+same-origin non-CORS HTML form mutation would carry `Origin: null` and be
+rejected. The final repair selects `same-origin`, which withholds referrers from
+cross-origin destinations while retaining the serialized origin for a
+same-origin form mutation. The private-header test pins that value, and the
+cookie output test now also rejects any unselected wire attribute instead of
+relying only on the native parser. A final complete all-reviewer pass is the
+convergence gate for this fourth repair.
+
+That post-repair pass covered unchanged fingerprint
+`de46b41dac76e6f556deb4e64c0a706caec87d471753ba43d5b4c5c6a7a6e8b9`.
+Claude and Cursor found no implementation defect; Claude and Codex both found
+the stale `no-referrer` tracker wording. Codex additionally identified that the
+unconditional Set-Cookie append could produce two same-name fields, contrary to
+the cited server profile. This was a separate API-invariant omission, not a
+repeat of the origin or referrer mechanisms, so the user-supplied workflow's
+continue-on-omission rule authorized a fifth repair round. Set and removal now
+reject an existing exact case-sensitive name without mutating the response, and
+the public matrix covers set/set, set/removal, and removal/set orderings. A final
+complete pass over that fifth repair supplied the next assessment.
+
+That complete pass covered unchanged fingerprint
+`c2d9364d074f28327dabafbc617c2ddbae58287c8d21eda4950b836505d3d0f6`.
+Codex and Cursor found no substantive implementation defect. Claude demonstrated
+that `RequiredHeader::new` still accepted a field such as
+`Upgrade-Insecure-Requests: 1`, which a user agent can attach to cross-site form
+navigation without script or CORS preflight. This was the third marker-policy
+failure after the safelist/forbidden-name and normalization repairs, so the
+ADR-010 consumer/API assessment classified it as an adapter design deficiency.
+An expanded denylist was rejected as open-ended symptom repair, and a
+documentation-only caller obligation was rejected because it preserved a
+fragile marker-only protected path. The owning Bead records the selected root
+change: every marker policy automatically requires exact
+`Sec-Fetch-Site: same-origin`, adding a marker strengthens a compatible policy,
+and no later Fetch Metadata selection can weaken or duplicate that guard.
+The public regression pins missing and cross-site rejection plus same-origin
+acceptance for the browser-added field. A supporting regression also proves
+that response cookie names are compared case-sensitively before exact duplicate
+rejection. Per the user-supplied workflow, the complete review loop restarts on
+the redesigned and revalidated bytes; a second design misalignment would stop
+delivery for explicit direction.
+
+The restarted loop used fresh low-threshold Claude, Codex, and Cursor passes
+over each complete staged state, with `.agent` excluded by the trusted
+`.reviewignore`. The first pass covered unchanged fingerprint
+`f2eb1b7cd8581ab7deb491da65bc3212edb68c135fdec0b510eef56e445587db`.
+It found no further implementation or design failure. Ordinary supporting
+repairs clarified the non-UTF8 JSON rejection class and directly pinned marker
+builder ordering, strict-mode replacement rejection, successive JSON
+parameters, and quoted non-UTF8 classification.
+
+The second pass covered unchanged fingerprint
+`9fec33fe0cb65f27a08110bf4ab8664ac016b8b8e02822bab09c4afb0edf49ce`.
+Codex and Cursor found no actionable defect. Claude proposed accepting an
+unrelated non-UTF8 cookie pair under `TargetOnly`; the implemented and planned
+contract deliberately rejects every non-UTF8 Cookie field. Expanding that mode
+would add a new availability guarantee without removing related-domain
+cookie/header exhaustion, so the review triage retained the explicit
+fail-closed behavior. The supported ordinary gap was exhaustive coverage of
+browser-controlled marker names and prefixes, which the next repair supplied.
+
+The third pass covered unchanged fingerprint
+`a0887d33564766e43782029f66d8d3247742b5b8d9ad70894d5b6d1d85c1e6a0`.
+Codex and Cursor again found no actionable defect. The remaining supporting
+work documents that marker policies require a potentially trustworthy mutation
+URL and clients which emit Fetch Metadata, and that `Referrer-Policy:
+same-origin` preserves a non-CORS form Origin only when page and target share
+one origin. Direct tests now cover origin-only strict Fetch Metadata and IDNA
+origin comparison. Package-local Cargo feature inspection confirmed that
+`url/std` selects the `idna` allocation, standard-library, and compiled-data
+features used by the existing Unicode-host constructor case.
+
+The final complete pass covered unchanged fingerprint
+`08ea18d441ccdc1a27407e0eacc27191e067d11df5d507b90212424ddc58e028`.
+All three reviewers reported no actionable finding through low severity. The
+parent fingerprint capture before and after the pass was complete and exact,
+with no index/working-tree divergence, untracked included path, dirty
+submodule, or capture issue. The separately verified closure delta records this
+chronology only; it does not change the reviewed implementation or behavioral
+contract.
+
 ## Lifecycle capability cutover and final evidence, 2026-09-15
 
 Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
