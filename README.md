@@ -36,10 +36,10 @@ and report the design concern before continuing dependent repairs.
 
 ## Status
 
-**0.1.0 MVP, locally validated; not a production-validated release.** Publishing
-is disabled; no registry name has been reserved. Linux x86_64 and macOS arm64
-have execution evidence on Rust 1.94.0 and 1.98.1. The updated macOS CI job has
-not run. See [current status](docs/status.md) and [validation](docs/validation.md).
+Version 0.1.0. Publishing is disabled; no registry name has been reserved.
+Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
+The updated macOS CI job has not run. See [current status](docs/status.md) and
+[validation](docs/validation.md).
 
 ## Platform support
 
@@ -211,5 +211,4 @@ compiler, lint, and test failures without weakening the documented contracts.
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Review ownership and publication policy before
-turning this internal MVP into a public release.
+MIT; see [LICENSE](LICENSE). Registry publication remains a separate decision.

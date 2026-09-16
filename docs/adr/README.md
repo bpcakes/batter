@@ -1,7 +1,7 @@
 # Architecture decisions
 
-These decisions govern the source implementation and future work; they do not
-establish that the current source has passed validation.
+These decisions govern the source implementation and future work. Executed
+checks live in [validation](../validation.md).
 
 | ADR | Decision |
 | --- | --- |

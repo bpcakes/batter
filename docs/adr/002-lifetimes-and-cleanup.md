@@ -1,6 +1,6 @@
 # ADR-002: Explicit lifetimes and conservative asynchronous cleanup
 
-Status: accepted for the MVP source. Date: 2026-09-07.
+Status: accepted. Date: 2026-09-07.
 
 Context: lexical ownership does not await asynchronous finalizers or prevent a
 dropped JoinHandle from leaving background work. Arbitrary Rust future abortion

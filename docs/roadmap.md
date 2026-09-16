@@ -29,4 +29,4 @@ behavioral contracts in [guarantees](guarantees.md) and
 Task-local ExecPlans hold implementation steps and evidence for their owning
 bead; archived plans are historical records, not open work.
 
-Closing technical tasks does not authorize publishing or deployment.
+Closing technical tasks does not authorize publishing to a crate registry.

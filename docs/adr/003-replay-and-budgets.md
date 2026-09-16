@@ -1,6 +1,6 @@
 # ADR-003: One total deadline; replay must be authorized
 
-Status: accepted for the MVP source. Date: 2026-09-07.
+Status: accepted. Date: 2026-09-07.
 
 Context: independent timeout resets can inflate request latency. Nested retries
 can multiply attempts. A network failure or caller deadline does not establish

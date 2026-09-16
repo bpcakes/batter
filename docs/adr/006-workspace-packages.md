@@ -2,9 +2,9 @@
 
 Status: accepted. Date: 2026-09-08.
 
-Context: the early foundation has no downstream consumers. Its optional Axum
-module and SQLx example currently share one package manifest, making package
-ownership and dependency adoption less explicit than their actual roles.
+Context: when this decision was recorded, the optional Axum module and SQLx
+example shared one package manifest, making package ownership and dependency
+adoption less explicit than their actual roles.
 
 Decision: use a virtual root workspace with three libraries: `batter`,
 `batter-axum`, and `batter-test-support`. Move the native SQLx executable to

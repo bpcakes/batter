@@ -1,6 +1,6 @@
 # ADR-004: Optional adapters and preserved upstream ownership
 
-Status: accepted for the MVP source. Date: 2026-09-07.
+Status: accepted. Date: 2026-09-07.
 
 Context: HTTP handlers, workers, CLIs, and tests need shared operational behavior
 without importing a web framework everywhere. The user's existing libraries

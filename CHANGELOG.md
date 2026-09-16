@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Soften public status language now that the library is in internal use: drop
+  MVP / not-production-validated framing while keeping unpublished-package,
+  evidence-scope, and API-limit facts.
+
 - Add `batter_axum::browser` with validated HTTPS/loopback origins,
   duplicate-aware opaque named-cookie reads, fixed host-only/root-path cookie
   set and removal, exact Origin/custom-marker/Fetch Metadata/JSON mutation
@@ -254,7 +258,7 @@ contracts, capability facts and validation history.
   probe passed on both supported toolchains. The current 64-entry inventory has
   five Linux-executed offline entries; its 59 database probes remain unexecuted.
 
-## 0.1.0 — MVP source snapshot — 2026-09-07
+## 0.1.0 — Initial source snapshot — 2026-09-07
 
 Added critical-task lifecycle supervision, explicit phased shutdown/readiness,
 LIFO asynchronous cleanup reports, deadline/cancellation contexts, opted-in
@@ -268,4 +272,4 @@ Effect v4 design rationale; integration boundaries and a prioritized agent backl
 Validation limitation: no Rust toolchain or dependency resolution was available
 in the authoring environment. Compilation, tests, formatting, lints, documentation
 builds, live examples, and MSRV compatibility remain unverified. See
-[validation](docs/validation.md). This is not a published or production-validated release.
+[validation](docs/validation.md). Packages remained unpublished.

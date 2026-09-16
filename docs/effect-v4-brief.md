@@ -39,7 +39,7 @@ boundaries can repeat committed side effects. Those are Batter's concerns.
 
 ## What to borrow, by area
 
-| Effect-inspired concern | Batter decision | MVP status |
+| Effect-inspired concern | Batter decision | Status |
 | --- | --- | --- |
 | Explicit asynchronous lifetime | Distinguish operation, process, and durable work. Own critical and bounded finite tasks; separate shutdown ownership from waiting. | Implemented partially; no request child-task joining or general fiber scope. |
 | Scope/resource finalization | Explicit owned asynchronous finalizers and ordered teardown. | Implemented, but not acquireRelease interruption masking or automatic async RAII. |
@@ -55,8 +55,8 @@ Effect Layer is dependency/resource construction; Tower Layer decorates services
 They are not the same abstraction. Using Tower where a Service-shaped boundary
 fits does not imply every domain function should become a Tower Service.
 
-Effect's managed runtime coordinates finalization and interruption. This MVP
-cannot honestly claim equivalent guarantees simply because it has CleanupStack.
+Effect's managed runtime coordinates finalization and interruption. Batter
+cannot claim equivalent guarantees simply because it has CleanupStack.
 Its finalizers must be explicitly driven. The owned driver survives cancellation
 of a completion waiter, but directly dropping `run_until`/`CleanupStack::close`
 or terminating the runtime can still prevent awaited cleanup. Finalization

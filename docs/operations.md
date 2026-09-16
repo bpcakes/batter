@@ -1,7 +1,7 @@
 # Operating an application built with Batter
 
-This is a runbook for the intended contract, not a claim that the examples have
-been load-tested or deployed. Validate the package and your application first.
+This is a runbook for the intended operating contract. Example defaults are not
+load-tested capacity recommendations.
 
 The project targets Unix systems; Windows is unsupported and not planned.
 Example shutdown listeners register SIGINT and SIGTERM directly. See
@@ -131,10 +131,10 @@ finished. The reserve neither ignores parent cancellation nor extends total time
 
 ## Deployment prerequisites
 
-Production and publication evidence is tracked in [Beads](roadmap.md).
-Local library validation is not application-specific operational evidence or
-production certification. Deployment and publication remain separate owner
-decisions.
+Choose exposure, TLS, authentication, and service budgets from the consuming
+application's requirements. Library verification records what this repository
+executed; it does not replace application-specific operational evidence.
+Registry publication remains a separate owner decision.
 
 ## Loading example settings
 

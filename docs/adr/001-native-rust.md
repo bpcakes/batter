@@ -1,6 +1,6 @@
 # ADR-001: Native Rust, not an Effect port
 
-Status: accepted for the MVP source. Date: 2026-09-07.
+Status: accepted. Date: 2026-09-07.
 
 Context: the user's Rust backend stack already has strong typing, Result,
 ownership, Tokio futures, Axum state, and SQLx. Effect v4's useful inspiration

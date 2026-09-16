@@ -70,5 +70,4 @@ direct `&mut Supervisor` access. `finite_command` uses `command::Command` to ret
 and cleanup independently of borrowed waiters. Its failure/interruption modes and
 ownership limits are explained in [usage](../../docs/usage.md#finite-commands-and-owned-cleanup).
 
-Version 0.1.0; Rust 1.94 minimum; publishing disabled. This is an early foundation,
-not a production-validated release. MIT licensed.
+Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.

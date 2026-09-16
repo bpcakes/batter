@@ -1,9 +1,10 @@
 # Security and trust boundaries
 
-This MVP has local compiler/runtime validation, but not a security audit or
-production validation. Do not deploy it as a security control without completing the validation
-and application-specific hardening outcomes tracked in Beads; see
-[backlog access](docs/roadmap.md).
+Batter has compiler and runtime validation recorded in
+[validation](docs/validation.md). It has not had a dedicated security audit.
+Authentication, authorization, and related controls remain application-owned;
+do not treat Batter itself as a security control. Application-specific hardening
+still belongs with the consumer; see [backlog access](docs/roadmap.md).
 
 ## Boundaries that remain application-owned
 

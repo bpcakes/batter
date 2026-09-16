@@ -3,8 +3,7 @@
 Updated: 2026-09-11. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
 the implemented-evidence column now includes later settings, fixture, ownership
 and HTTP-lifetime deliveries. This is a design reconciliation, not a new
-implementation or a claim of production validation. Execution evidence lives in
-[validation](validation.md).
+implementation. Execution evidence lives in [validation](validation.md).
 
 Batter implements much of the operational core proposed in the analysis. The
 atomic reference producer path is implemented; worker/provider execution and

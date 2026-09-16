@@ -1,6 +1,6 @@
 # ADR-005: Preserve causes internally; sanitize automatic outputs
 
-Status: accepted for the MVP source. Date: 2026-09-07.
+Status: accepted. Date: 2026-09-07.
 
 Context: applications need typed domain failures, while a process supervisor
 must collect errors from unrelated components. Operational interruption, an
