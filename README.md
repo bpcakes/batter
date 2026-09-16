@@ -149,7 +149,7 @@ lower library minimum.
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
-| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, pinned compatibility probes, validated constructors, and an explicit live test target. |
+| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, explicit direct-peer/request correlation, pinned compatibility probes, validated constructors, and an explicit live test target. |
 
 PostgreSQL provisioning stays in the external `postgres-test-harness` repository;
 it is not a workspace member. The optional `batter-sqlx/test-support` feature is

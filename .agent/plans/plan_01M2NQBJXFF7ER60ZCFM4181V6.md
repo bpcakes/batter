@@ -1,0 +1,1 @@
+Remove the timing flake, pin non-disclosure of peer metadata, resolve the unused policy accessor and document existing real-socket peer fidelity evidence. Run focused and full required verification, close batter-in2, then commit and push as explicitly authorized.

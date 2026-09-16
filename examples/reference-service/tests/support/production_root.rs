@@ -9,6 +9,8 @@ use sqlx::{PgPool, types::Uuid};
 use std::{net::SocketAddr, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const HTTP_RESPONSE_MAX_BYTES: u64 = 64 * 1024;
+
 pub async fn production_readiness(pool: PgPool) -> ProbeResult {
     let (job, original) = pending_delivery(&pool).await?;
     for signal in [Signal::Term, Signal::Int] {
@@ -36,6 +38,18 @@ async fn served_until(pool: &PgPool, job: Uuid, original: &Value, signal: Signal
             }
         })
         .await?;
+        let response = response(address, "/delivery-commands/transport-probe").await?;
+        assert_eq!(
+            response.status, 401,
+            "production business route did not reach authentication"
+        );
+        let request_id = response
+            .request_id
+            .as_deref()
+            .ok_or("production response omitted x-request-id")?;
+        let body: Value = serde_json::from_slice(&response.body)?;
+        assert_eq!(body["code"], "authentication_required");
+        assert_eq!(body["request_id"].as_str(), Some(request_id));
         assert_eq!(status(address, "/ready").await?, 503);
         // Recheck after multiple dependency sampling intervals. HTTP binding alone
         // cannot establish that readiness stays unapproved after initialization.
@@ -142,6 +156,16 @@ async fn job_snapshot(pool: &PgPool, job: Uuid) -> Result<Value, sqlx::Error> {
 }
 
 async fn status(address: SocketAddr, path: &str) -> Result<u16, batter::BoxError> {
+    Ok(response(address, path).await?.status)
+}
+
+struct RawResponse {
+    status: u16,
+    request_id: Option<String>,
+    body: Vec<u8>,
+}
+
+async fn response(address: SocketAddr, path: &str) -> Result<RawResponse, batter::BoxError> {
     tokio::time::timeout(Duration::from_millis(500), async {
         let mut socket = tokio::net::TcpStream::connect(address).await?;
         socket
@@ -151,15 +175,36 @@ async fn status(address: SocketAddr, path: &str) -> Result<u16, batter::BoxError
             )
             .await?;
         let mut response = Vec::new();
-        (&mut socket).take(4096).read_to_end(&mut response).await?;
+        (&mut socket)
+            .take(HTTP_RESPONSE_MAX_BYTES + 1)
+            .read_to_end(&mut response)
+            .await?;
+        if response.len() > HTTP_RESPONSE_MAX_BYTES as usize {
+            return Err(format!(
+                "HTTP response exceeded the {HTTP_RESPONSE_MAX_BYTES}-byte capture limit"
+            )
+            .into());
+        }
         let response = std::str::from_utf8(&response)?;
-        let code = response
+        let (headers, body) = response
+            .split_once("\r\n\r\n")
+            .ok_or("missing HTTP header terminator")?;
+        let status = headers
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().nth(1))
             .ok_or("missing HTTP status")?
             .parse()?;
-        Ok::<_, batter::BoxError>(code)
+        let request_id = headers.lines().skip(1).find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("x-request-id")
+                .then(|| value.trim().to_owned())
+        });
+        Ok::<_, batter::BoxError>(RawResponse {
+            status,
+            request_id,
+            body: body.as_bytes().to_vec(),
+        })
     })
     .await?
 }

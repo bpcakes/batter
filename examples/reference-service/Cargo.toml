@@ -21,6 +21,7 @@ url = "2.5.8"
 percent-encoding = "2.3.2"
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
 axum.workspace = true
+tower = { workspace = true, features = ["util"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
@@ -32,7 +33,6 @@ runledger-runtime.workspace = true
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 tokio-postgres = "=0.7.18"
-tower = { workspace = true, features = ["util"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 batter-sqlx = { workspace = true, features = ["test-support"] }

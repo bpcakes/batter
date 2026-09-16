@@ -1268,6 +1268,49 @@ never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
 custom renderer afterward replaces this policy. Domain responses remain owned
 by their handler.
 
+The reference application's canonical `http::register_in` operation constructs
+the trusted-peer router and selects native `ConnectInfo<SocketAddr>` registration
+at one application-owned boundary. This prevents the production root from
+choosing direct-peer policy and transport metadata independently; the generic
+adapter cannot infer an arbitrary router's extension requirements. The
+application installs `TrustedRequestMetadata` after `operational_http` and before
+authentication/admission. It accepts only `ConnectInfo<SocketAddr>` supplied by
+that production native serving path or explicitly asserted by the opaque
+in-process request client. It retains the IP as an opaque `TrustedPeer`; the source port is not a stable
+admission identity. `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `traceparent`,
+`tracestate` and client request-ID fields are ignored. Behind a proxy the trusted
+direct peer is therefore the proxy. No trusted-proxy mode is implemented.
+Missing native peer metadata fails closed with the shared sanitized internal
+response and generated correlation.
+
+Liveness and readiness remain outside the peer-, authentication- and
+admission-gated business router, so an in-process probe needs no synthetic peer
+extension. Axum extractor rejections also remain native responses: malformed
+JSON, invalid paths and body-limit failures are not promised the application's
+JSON problem envelope. The outer operational middleware still supplies its
+generated response ID header. Tests and callers must distinguish raw HTTP
+responses from routes whose contract promises an envelope.
+
+`TrustedRequestMetadata` has no public or test constructor. Production combines
+the adapter-owned correlation with native `ConnectInfo` inside the application
+middleware. The lower-level `http::in_process_client` returns an opaque
+`InProcessRequestClient` that neither implements a serving service nor exposes
+its inner router. Each request requires a caller-selected synthetic peer, and
+the client replaces the exact `ConnectInfo<SocketAddr>` extension itself. Axum's
+extractor-only `MockConnectInfo` fallback is not observed by
+middleware that reads request extensions directly.
+
+The bearer credential remains the only reference authority input and replaces a
+preexisting `OwnerId` extension before a handler runs. `TrustedRequestMetadata`
+contains neither owner authority nor `OperationContext`; handlers extract and
+pass all three separately. Application success/domain/authentication bodies and
+shared infrastructure bodies use the typed `CorrelationId`, so any body
+`request_id` agrees with the outer generated response header. Correlation never
+grants access, selects the durable owner, or extends request lifetime.
+Cancellation keeps the request's selected metadata while cancelling its separate
+operation context. No task-local inheritance, arbitrary-spawn propagation,
+inbound trace retention, durable correlation envelope, or quota backend follows.
+
 The foundation `ReadinessEvaluator` stores `LifecycleStatus` and `HealthReader`,
 reads a fresh dependency snapshot then lifecycle readiness, and invokes no probe
 or writer-retaining operation. Every `HealthStatus` is explicitly classified as
@@ -1469,7 +1512,8 @@ serving. Dedicated maintenance files and overrides reject serving-only fields.
 Known serving fields may coexist in captured process environment and are ignored
 by maintenance without parsing; unknown reserved names and every PG* name fail.
 `runtime::prepare` consumes serving settings into a must-use non-cloneable inert
-owner; only that owner can enter `runtime::run`, while `http::router` consumes its
+owner; only that owner can enter `runtime::run`, while canonical
+`http::register_in` or explicit `http::in_process_client` consumes its
 narrower opaque `PreparedHttp`. These local types cannot prove remote database
 authentication or availability.
 

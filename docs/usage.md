@@ -335,6 +335,14 @@ native listener. Construct both projections at the composition root from the
 supervisor or its shutdown handle. These helpers cannot request shutdown or
 approve readiness and do not own domain errors, body streaming or authentication.
 
+The reference application demonstrates the application-owned next layer. Its
+canonical `http::register_in` builds the router and selects
+`register_http_with_connect_info_in` as one operation, then builds `TrustedRequestMetadata`
+from only the accepted socket peer plus `CorrelationId`, then authenticates
+`OwnerId` before request admission. It ignores forwarding, trace and client-ID
+headers and implements no proxy mode. Handlers extract metadata, authority and
+`OperationContext` separately; correlation is never a grant.
+
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their
 own contract. Keep HTTP status/outcome observations separate from whether the

@@ -151,11 +151,43 @@ readiness-gated downward-cancelled operation context. Neither policy retains
 
 The [HTTP composition root](../crates/batter-axum/examples/http_service.rs) deletes
 its local ID, renderer, readiness and serve implementations in favor of these
-helpers. Authentication/metadata policy in the reference consumer remains
-separately owned by batter-in2. [Real socket tests](../crates/batter-axum/tests/operational/serving.rs)
+helpers. Authentication/metadata policy remains application-owned.
+[Real socket tests](../crates/batter-axum/tests/operational/serving.rs)
 prove graceful startup/drain and demonstrate an outstanding stream surviving
 wrapper abortion with cleanup skipped; they do not establish a general body,
 WebSocket or disconnect ownership contract.
+
+The reference consumer composes those helpers as
+`operational_http -> direct-peer metadata -> bearer authentication ->
+request_admission -> handler`. Its `TrustedPeerPolicy` has one explicit mode:
+trust the IP from native `ConnectInfo<SocketAddr>` and ignore every forwarding,
+trace and client request-ID header. The application-owned `http::register_in`
+operation constructs that router and selects
+`register_http_with_connect_info_in` together; the production root does not make
+an independent transport-registration choice. Serving settings pin this policy
+in code and carry it through preparation; no environment setting selects a trust
+mode. The lower-level `in_process_client` returns an opaque non-service type and
+requires a synthetic peer for every request; it owns insertion of the exact
+`ConnectInfo<SocketAddr>` and cannot expose or serve its inner router.
+`MockConnectInfo` affects extractor
+fallback only and is not read by this middleware. No proxy allowlist/CIDR mode
+or forwarded-header parser exists. Liveness and readiness are merged outside
+that business boundary and therefore do not require peer metadata. Axum path,
+JSON and body-limit extractor rejections remain native transport responses, not
+application problem envelopes; the outer operational layer still assigns their
+response correlation header.
+
+`TrustedRequestMetadata` carries the shared adapter `CorrelationId` and opaque
+direct peer only and intentionally has no public constructor. `OwnerId` remains
+separate authority selected by the configured
+bearer credential, and `OperationContext` remains the request deadline/
+cancellation capability. Handler and error helpers receive metadata explicitly;
+domain/authentication and shared infrastructure bodies use its typed correlation,
+while the outer adapter alone sets the response header and records completion.
+The public `TrustedPeer` value is the application-owned admission input required
+by the downstream Runlimit composition, but no quota identity or grant is
+inferred in this stage. Durable persistence remains with
+`batter-7g0`; Runlimit composition remains with `batter-97p`.
 
 ## SQLx: keep transactions visible
 

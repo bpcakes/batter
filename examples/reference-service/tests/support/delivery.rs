@@ -1,6 +1,5 @@
 use super::ProbeResult;
 use axum::{
-    Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
 };
@@ -10,12 +9,14 @@ use batter::{
     settings::SettingsSource,
 };
 use batter_example_reference_service::{
-    config::ServingSettings, delivery::DELIVERY_JOB_TYPE, http::router, schema::initialize_schema,
+    config::ServingSettings,
+    delivery::DELIVERY_JOB_TYPE,
+    http::{InProcessRequestClient, in_process_client},
+    schema::initialize_schema,
 };
 use serde_json::Value;
 use sqlx::{PgPool, postgres::PgConnectOptions};
-use std::{convert::Infallible, ffi::OsString, future::Future, time::Duration};
-use tower::ServiceExt;
+use std::{convert::Infallible, ffi::OsString, future::Future, net::SocketAddr, time::Duration};
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -48,7 +49,7 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings
     .expect("live settings are valid")
 }
 
-fn app(settings: &ServingSettings, pool: PgPool) -> Router {
+fn app(settings: &ServingSettings, pool: PgPool) -> InProcessRequestClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let second = std::time::Duration::from_secs(1);
@@ -62,7 +63,7 @@ fn app(settings: &ServingSettings, pool: PgPool) -> Router {
         .unwrap(),
         || async { Ok::<_, std::convert::Infallible>(()) },
     );
-    router(
+    in_process_client(
         settings.prepare_http(),
         handle.status(),
         handle.operation_admission(),
@@ -71,13 +72,19 @@ fn app(settings: &ServingSettings, pool: PgPool) -> Router {
     )
 }
 
-async fn request(
-    app: &Router,
+struct RawResponse {
+    status: StatusCode,
+    request_id: String,
+    body: axum::body::Bytes,
+}
+
+async fn raw_request(
+    app: &InProcessRequestClient,
     method: Method,
     path: &str,
     token: &str,
     body: Option<&str>,
-) -> TestResult<(StatusCode, Value)> {
+) -> TestResult<RawResponse> {
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
@@ -89,10 +96,41 @@ async fn request(
         }
         None => Body::empty(),
     };
-    let response = app.clone().oneshot(builder.body(body)?).await?;
+    let request = builder.body(body)?;
+    let response = app
+        .request(request, SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await;
     let status = response.status();
-    let bytes = to_bytes(response.into_body(), 64 * 1024).await?;
-    Ok((status, serde_json::from_slice(&bytes)?))
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .ok_or("missing generated response request ID")?
+        .to_str()?
+        .to_owned();
+    let body = to_bytes(response.into_body(), 64 * 1024).await?;
+    Ok(RawResponse {
+        status,
+        request_id,
+        body,
+    })
+}
+
+async fn envelope_request(
+    app: &InProcessRequestClient,
+    method: Method,
+    path: &str,
+    token: &str,
+    body: Option<&str>,
+) -> TestResult<(StatusCode, Value)> {
+    let response = raw_request(app, method, path, token, body).await?;
+    let body: Value = serde_json::from_slice(&response.body)?;
+    let body_request_id = body["request_id"]
+        .as_str()
+        .ok_or("response body request ID is missing or invalid")?;
+    if body_request_id != response.request_id {
+        return Err("response body and header request IDs differ".into());
+    }
+    Ok((response.status, body))
 }
 
 fn assert_code(status: StatusCode, body: &Value, expected_status: StatusCode, code: &str) {
@@ -102,8 +140,8 @@ fn assert_code(status: StatusCode, body: &Value, expected_status: StatusCode, co
 
 struct CommandFixture {
     pool: PgPool,
-    app_a: Router,
-    app_b: Router,
+    app_a: InProcessRequestClient,
+    app_b: InProcessRequestClient,
     owner_a: Uuid,
     record_a: Uuid,
     record_b: Uuid,
@@ -151,7 +189,7 @@ const CANONICAL_REPLAY: &str = r#"{
 
 async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
     let path_a = format!("/records/{}/deliveries", fixture.record_a);
-    let (status, accepted) = request(
+    let (status, accepted) = envelope_request(
         &fixture.app_a,
         Method::POST,
         &path_a,
@@ -172,7 +210,7 @@ async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
             .ok_or("accepted response omitted delivery_id")?,
     )?;
 
-    let (status, replayed) = request(
+    let (status, replayed) = envelope_request(
         &fixture.app_a,
         Method::POST,
         &path_a,
@@ -193,7 +231,7 @@ async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
         "idempotency_key": "command-a",
         "payload": {"primary": 999, "secondary": 2}
     }"#;
-    let (status, conflict) = request(
+    let (status, conflict) = envelope_request(
         &fixture.app_a,
         Method::POST,
         &path_a,
@@ -208,7 +246,7 @@ async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
         "idempotency_conflict",
     );
 
-    let (status, observed) = request(
+    let (status, observed) = envelope_request(
         &fixture.app_a,
         Method::GET,
         &format!("/deliveries/{delivery_a}"),
@@ -218,7 +256,7 @@ async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
     .await?;
     assert_eq!(status, StatusCode::OK, "unexpected response: {observed}");
     assert_eq!(observed["delivery"]["delivery_id"], delivery_a.to_string());
-    let (status, by_key) = request(
+    let (status, by_key) = envelope_request(
         &fixture.app_a,
         Method::GET,
         "/delivery-commands/command-a",
@@ -232,7 +270,7 @@ async fn initial_command(fixture: &CommandFixture) -> TestResult<Uuid> {
 }
 
 async fn ownership_and_replacement(fixture: &CommandFixture, delivery_a: Uuid) -> TestResult {
-    let (status, hidden) = request(
+    let (status, hidden) = envelope_request(
         &fixture.app_b,
         Method::GET,
         &format!("/deliveries/{delivery_a}"),
@@ -252,7 +290,7 @@ async fn ownership_and_replacement(fixture: &CommandFixture, delivery_a: Uuid) -
         "idempotency_key": "foreign-target",
         "payload": {"owner": "b"}
     }"#;
-    let (status, hidden_target) = request(
+    let (status, hidden_target) = envelope_request(
         &fixture.app_b,
         Method::POST,
         &format!("/records/{}/deliveries", fixture.record_a),
@@ -273,7 +311,7 @@ async fn ownership_and_replacement(fixture: &CommandFixture, delivery_a: Uuid) -
         "idempotency_key": "command-a",
         "payload": {"owner": "b"}
     }"#;
-    let (status, accepted_b) = request(
+    let (status, accepted_b) = envelope_request(
         &fixture.app_b,
         Method::POST,
         &path_b,
@@ -300,7 +338,7 @@ async fn ownership_and_replacement(fixture: &CommandFixture, delivery_a: Uuid) -
         "idempotency_key": "stale-command",
         "payload": {"generation": 1}
     }"#;
-    let (status, stale_response) = request(
+    let (status, stale_response) = envelope_request(
         &fixture.app_a,
         Method::POST,
         &format!("/records/{}/deliveries", fixture.record_a),
@@ -315,7 +353,7 @@ async fn ownership_and_replacement(fixture: &CommandFixture, delivery_a: Uuid) -
         "stale_record_generation",
     );
 
-    let (status, replay_after_replacement) = request(
+    let (status, replay_after_replacement) = envelope_request(
         &fixture.app_a,
         Method::POST,
         &format!("/records/{}/deliveries", fixture.record_a),
@@ -339,7 +377,7 @@ async fn discard_and_reconcile(fixture: &CommandFixture) -> TestResult {
         "idempotency_key": "discarded-response",
         "payload": {"generation": 2}
     }"#;
-    let discarded = request(
+    let discarded = envelope_request(
         &fixture.app_a,
         Method::POST,
         &format!("/records/{}/deliveries", fixture.record_a),
@@ -349,7 +387,7 @@ async fn discard_and_reconcile(fixture: &CommandFixture) -> TestResult {
     .await?;
     assert_eq!(discarded.0, StatusCode::ACCEPTED);
     drop(discarded);
-    let (status, reconciled) = request(
+    let (status, reconciled) = envelope_request(
         &fixture.app_a,
         Method::GET,
         "/delivery-commands/discarded-response",
@@ -430,11 +468,11 @@ pub async fn command_and_reconciliation(pool: PgPool) -> ProbeResult {
 }
 
 async fn failure_code(
-    app: &Router,
+    app: &InProcessRequestClient,
     path: &str,
     token: &str,
 ) -> Result<(StatusCode, String), Box<dyn std::error::Error + Send + Sync>> {
-    let (status, body) = request(app, Method::GET, path, token, None).await?;
+    let (status, body) = envelope_request(app, Method::GET, path, token, None).await?;
     Ok((
         status,
         body["code"]
@@ -530,7 +568,13 @@ async fn assert_bulkhead(options: PgConnectOptions, missing: &str) -> TestResult
         .await?;
     let held = bulkhead_pool.acquire().await?;
     let bulkhead_app = app(&bulkhead_settings, bulkhead_pool.clone());
-    let mut first = Box::pin(request(&bulkhead_app, Method::GET, missing, TOKEN_A, None));
+    let mut first = Box::pin(envelope_request(
+        &bulkhead_app,
+        Method::GET,
+        missing,
+        TOKEN_A,
+        None,
+    ));
     let pending = std::future::poll_fn(|context| {
         std::task::Poll::Ready(first.as_mut().poll(context).is_pending())
     })

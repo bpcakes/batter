@@ -1,7 +1,9 @@
 //! Application-owned authentication seam for the reference command.
 //!
 //! The production root maps one opaque bearer token to one configured owner.
-//! Broader peer/proxy and request-metadata policy remains outside this task.
+//! Trusted direct-peer metadata is established separately by
+//! [`crate::request`]; correlation and transport metadata cannot select the
+//! owner returned here.
 //!
 //! ```
 //! use axum::http::HeaderValue;

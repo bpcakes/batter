@@ -1,0 +1,1 @@
+Classify the comprehensive-review findings by root cause; separate raw response capture from application-envelope assertions; pin probe independence and native Axum extractor rejection behavior; correct stale two-toolchain live evidence; run focused, full two-toolchain, smoke, live, and Jig verification as applicable.

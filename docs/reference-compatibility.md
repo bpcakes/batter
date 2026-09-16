@@ -1,6 +1,8 @@
 # Native reference compatibility
 
-Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures), `batter-kjl` (failure retention). This API/evidence manifest accompanies the unpublished
+Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures),
+`batter-kjl` (failure retention), and `batter-in2` (trusted request metadata).
+This API/evidence manifest accompanies the unpublished
 [reference package](../examples/reference-service/README.md). Beads owns delivery
 acceptance and status. The current native lifecycle and retirement redesign is owned by `batter-gi4`;
 `batter-0cp` records the superseded example-owned host.
@@ -42,10 +44,12 @@ controls and the private child entry), and invokes
 -- --include-ignored`. Every named entry must pass, with zero filtered or ignored cases. The runner also
 requires the separate library physical-session replacement probe. The earlier
 58-entry inventory and the separate library probe passed on Linux with Rust 1.98.1
-and exact 1.94.0; final all-reviewer acceptance remains open. The eight
-`batter-lp2.4` protected-startup rows are listed in
-[testing](testing.md#protected-startup-consumer-process-cases); their database
-rows and the complete 64-entry run are unexecuted until authorized endpoints exist.
+and exact 1.94.0. After the request-metadata harness repair, the complete current
+64-entry run plus the separate library probe passed on macOS arm64 against two
+task-owned PostgreSQL 18.4 containers with Rust 1.98.1 and exact 1.94.0 on
+2026-09-16. The eight `batter-lp2.4`
+protected-startup rows are listed in
+[testing](testing.md#protected-startup-consumer-process-cases).
 
 | Required contract | Public API and probe | Evidence / limitation |
 | --- | --- | --- |
@@ -60,6 +64,8 @@ rows and the complete 64-entry run are unexecuted until authorized endpoints exi
 | Managed native ownership | `native_in_flight_finishes_after_drain`, `native_owner_drop_retains_settlement`, `native_unjoined_callback_blocks_dependency_cleanup` | Real admitted work completes after drain; wrapper loss retains settlement; a callback held beyond bounded report publication remains unjoined and prevents dependent cleanup |
 | Business outcomes and configuration | `native_business_failure_preserves_process`, `configured_worker_concurrency` | Durable business failure does not become process failure; held native handlers exercise configured concurrency |
 | Production readiness | `production_root_withholds_readiness_without_control_jobs` | Actual production composition exposes liveness, withholds readiness, creates no control jobs and sequentially awaits SIGTERM and SIGINT cleanup; see validation for execution status |
+| Request metadata boundary | `http::in_process_client`, `InProcessRequestClient`, `TrustedPeerPolicy`, `TrustedRequestMetadata`, `BearerAuthenticator`; ten ordinary `http::tests` cases plus the adapter's real-socket peer oracle | The lower-level client cannot be served or expose its router and requires an explicit synthetic peer for every request. The adapter compares the native server peer with the client's independently observed socket address; the application retains only its IP. It consumes shared server `CorrelationId`, replaces prior owner extensions through bearer authentication and keeps `OperationContext` separate. Forged metadata, concurrency, missing peer data, nested operations, Debug redaction and forced cancellation require no PostgreSQL; an explicit three-second test guard is tighter than the test operation budget. Production authentication and domain bodies exclude the selected peer. A bare liveness request proves probes remain outside the peer boundary; malformed JSON, invalid UUID paths and body-limit overflow prove all documented native extractor rejections remain outside the application problem envelope |
+| Production request-metadata registration | Application-owned `http::register_in`; ordinary `canonical_registration_supplies_native_peer_to_the_business_boundary`; live `production_root_withholds_readiness_without_control_jobs` | The canonical operation constructs the trusted-peer router and selects native peer registration together. The ordinary real-socket case requires a matched business route to return authenticated-boundary 401 rather than missing-peer 500 without PostgreSQL. The live production child repeats that assertion in the complete root and requires matching generated header/body identity; execution status is recorded in validation |
 | Offline retirement | Seven `retirement_*` cases plus the required library session-replacement probe | Preserves terminal/domain rows, migrations and sequence; old additive catalog retains disable; rejects wrong identity, hidden sessions, pending/prepared enqueue and physical replacement. Native commit failure survives cancelled reconciliation and an actual lost COMMIT response |
 | Lease ownership | `empty_database`, `cleanup`, `defer_cleanup`, Drop, `drain_deferred_cleanup`; `lease_cleanup_defer_and_drop` | Every native pool closes before disposal. Independent `pg_database` reads confirm presence and post-drain absence. Dropping a never-polled consuming cleanup future also transfers fallback cleanup |
 
@@ -141,9 +147,10 @@ server-session quiescence; these probes create no detached connections.
 
 [Validation](validation.md) records commands, lock hash, toolchains, PostgreSQL
 version, repaired development failures and final gates. New live compatibility
-evidence is Linux-only. Existing macOS evidence does not validate this new graph;
-macOS and hosted execution remain unverified for this change. The package stays
-unpublished. The producer command and optional native adapter are implemented; real provider
+evidence for the request-metadata repair is macOS arm64 on Rust 1.98.1 and exact
+1.94.0; hosted CI and other hosts are unverified for that repair. The package
+stays unpublished. The producer command and optional
+native adapter are implemented; real provider
 effects remain a separate Bead. Complete redesign acceptance remains open.
 
 ## Reusable fixture acceptance
@@ -208,7 +215,9 @@ The selected upstream pins remain unchanged. The reference package now owns
 distinct validated `ServingSettings` and `MaintenanceSettings`, section-level
 `PoolSettings`/`WorkerSettings`, and inert prepared ownership values. The serving
 schema requires a password-qualified endpoint, concrete authentication, a native
-validated worker configuration and Batter/Axum operational witnesses. The
+validated worker configuration and Batter/Axum operational witnesses. Serving
+preparation pins the code-selected direct-peer policy as a separate typed input;
+it is not an environment-selectable setting. The
 database-only maintenance schema permits passwordless local trust authentication,
 ignores known serving-only values in captured environment without parsing them,
 but rejects those keys in dedicated inputs and cannot be converted into serving. Native runtime

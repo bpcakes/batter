@@ -1556,7 +1556,7 @@ extension. Adapter-owned `readiness_status` and `default_readiness_level` replac
 the former associated helpers without moving HTTP or tracing types into the
 foundation.
 
-### Direct TCP peer registration: 2026-09-12
+### Direct TCP peer registration: rechecked 2026-09-16
 
 Rechecked locked Axum 0.8.9 `src/extract/connect_info.rs` and
 [Connected](https://docs.rs/axum/0.8.9/axum/extract/connect_info/trait.Connected.html):
@@ -1567,7 +1567,22 @@ stream's `remote_addr`. Its native make-service wraps each cloned router in
 requires that make-service conversion. Batter's fixed
 `register_http_with_connect_info_in` uses it without parsing forwarding headers
 or replacing application authentication/proxy policy. Locked Tokio is 1.53.1;
-no dependency change was needed. Delivery is tracked by `batter-rme`.
+no dependency change was needed. The reference consumer's canonical
+`http::register_in` operation now constructs its direct-peer router and selects
+that native entrypoint together, retaining only the direct peer IP; forwarding
+and trace headers stay uninterpreted. Adapter delivery was tracked by `batter-rme`; the application
+trust boundary is tracked by `batter-in2`.
+
+Axum 0.8.9
+[MockConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/connect_info/struct.MockConnectInfo.html)
+inserts its own fallback extension. The
+[source](https://docs.rs/axum/0.8.9/src/axum/extract/connect_info.rs.html)
+shows that `ConnectInfo<T>::from_request_parts` first reads the real
+`ConnectInfo<T>` extension and only then reads `MockConnectInfo<T>` when the
+extractor is invoked. Reference request-metadata middleware reads
+`request.extensions().get::<ConnectInfo<SocketAddr>>()` directly, so an
+in-process fixture must insert the real extension; the mock cannot satisfy that
+lookup. This is a test-provenance distinction, not a production proxy mode.
 
 ## Fixture failure retention and session observation: 2026-09-10
 

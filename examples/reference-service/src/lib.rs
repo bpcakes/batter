@@ -48,6 +48,9 @@ pub mod delivery;
 /// Authenticated HTTP command and owner-scoped reconciliation routes.
 pub mod http;
 
+/// Trusted direct-peer metadata with shared server request correlation.
+pub mod request;
+
 /// Owned staged service startup and shutdown composition.
 pub mod runtime;
 

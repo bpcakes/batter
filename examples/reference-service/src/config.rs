@@ -41,7 +41,7 @@ mod worker;
 pub use pool::PoolSettings;
 pub use worker::WorkerSettings;
 
-use crate::{auth::BearerAuthenticator, delivery::OwnerId};
+use crate::{auth::BearerAuthenticator, delivery::OwnerId, request::TrustedPeerPolicy};
 use batter::{
     admission::{Bulkhead, BulkheadCapacity},
     lifecycle::{OperationAdmission, ProcessCapacity, ShutdownBudget, Supervisor},
@@ -145,6 +145,11 @@ fn authenticator(values: &SettingsSource) -> Result<BearerAuthenticator, Setting
 ///
 /// Every field needed by HTTP, PostgreSQL, finite-process work, and the native
 /// worker is concrete. Construction cannot produce a maintenance-qualified value.
+/// Direct-peer trust is pinned in code with [`TrustedPeerPolicy::direct`] and
+/// carried as a typed preparation input; no configuration key selects it.
+/// Supporting a proxy later would require a validated trusted-proxy model,
+/// forwarding-header parser, tests, and contracts rather than only another
+/// settings value or policy variant.
 pub struct ServingSettings {
     bind: SocketAddr,
     request_budget: ResponseConstructionBudget,
@@ -154,6 +159,7 @@ pub struct ServingSettings {
     jobs: JobsConfig,
     endpoint: endpoint::ServingEndpoint,
     authenticator: BearerAuthenticator,
+    trusted_peer_policy: TrustedPeerPolicy,
 }
 
 impl ServingSettings {
@@ -201,6 +207,7 @@ impl ServingSettings {
             jobs: WorkerSettings::from_values(&values)?.into_jobs_config(),
             endpoint: endpoint::ServingEndpoint::parse(values.required("DATABASE_URL")?)?,
             authenticator: authenticator(&values)?,
+            trusted_peer_policy: TrustedPeerPolicy::direct(),
         })
     }
 
@@ -229,6 +236,7 @@ impl ServingSettings {
                 request_budget: self.request_budget,
                 bulkhead_capacity: self.bulkhead_capacity,
                 authenticator: self.authenticator,
+                trusted_peer_policy: self.trusted_peer_policy,
             },
         })
     }
@@ -240,6 +248,7 @@ impl ServingSettings {
             request_budget: self.request_budget,
             bulkhead_capacity: self.bulkhead_capacity,
             authenticator: self.authenticator.clone(),
+            trusted_peer_policy: self.trusted_peer_policy,
         }
     }
 
@@ -374,7 +383,13 @@ impl fmt::Display for MaintenanceSettings {
     }
 }
 
-/// Opaque serving-qualified HTTP inputs, consumed by [`crate::http::router`].
+/// Opaque serving-qualified HTTP inputs, consumed by canonical
+/// [`crate::http::register_in`] or the lower-level in-process
+/// [`crate::http::in_process_client`] test seam.
+///
+/// This carries the code-selected direct-peer policy separately from the
+/// authenticator. It does not expose a proxy or metadata-construction escape
+/// hatch.
 ///
 /// ```
 /// use batter_example_reference_service::config::{PreparedHttp, ServingSettings};
@@ -392,11 +407,12 @@ impl fmt::Display for MaintenanceSettings {
 ///     settings.prepare_http();
 /// }
 /// ```
-#[must_use = "prepared HTTP inputs must be transferred to the router"]
+#[must_use = "prepared HTTP inputs must be transferred to HTTP registration or an in-process router"]
 pub struct PreparedHttp {
     pub(crate) request_budget: ResponseConstructionBudget,
     pub(crate) bulkhead_capacity: BulkheadCapacity,
     pub(crate) authenticator: BearerAuthenticator,
+    pub(crate) trusted_peer_policy: TrustedPeerPolicy,
 }
 
 impl fmt::Debug for PreparedHttp {

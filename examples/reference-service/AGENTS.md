@@ -27,6 +27,8 @@ Unix-only application is not a reusable database framework.
 - `src/delivery.rs` owns command identity, the one-transaction submission and
   durable owner-scoped projections.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
+- `src/request.rs` owns direct-socket peer trust and combines it with the shared
+  adapter correlation without owning application authority or request lifetime.
 - `src/schema.rs` owns repeated migration/compatibility/producer-definition startup.
 - `src/lib.rs` also preserves native SQLx type identity probes.
 - `src/config.rs` and `src/config/` own the example settings schema, validated
@@ -54,8 +56,11 @@ Settings names/defaults/precedence and required passwords stay in this root.
 Keep `ServingSettings` and database-only `MaintenanceSettings` concrete and
 separate; do not restore a shared mode enum, optional serving capability, or
 conversion from maintenance into serving. `runtime::run` accepts only the inert,
-non-cloneable `PreparedServing` owner, and `http::router` consumes only
-`PreparedHttp`. Maintenance ignores known serving-only names from captured
+non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
+only `PreparedHttp` while inseparably selecting native peer registration.
+`http::in_process_client` is the lower-level test seam. Its opaque
+`InProcessRequestClient` cannot be served or expose the inner router, and each
+request requires an exact synthetic peer. Maintenance ignores known serving-only names from captured
 environment without parsing them, but dedicated files/overrides reject those
 names and unknown reserved or PG* names still fail. Use shared `batter::settings` mechanics, retain concrete causes
 behind static diagnostics, and pass validated outputs to native constructors
@@ -96,6 +101,18 @@ requires enabled IPv6 loopback (`::1`) for its native protocol fixture, plus
 IPv4 loopback and Unix subprocess permissions. This test is not skipped when
 the host or container lacks IPv6. Never mutate process globals.
 Explicit live invocation fails when prerequisites are missing.
+
+Keep request metadata outside authority and operation lifetime. The production
+root must use application-owned `http::register_in`, which alone selects
+`register_http_with_connect_info_in`; only its accepted socket peer
+may populate `TrustedPeer`. Ignore forwarding, trace and client request-ID
+headers until a separately validated proxy policy is implemented. The bearer
+credential alone selects `OwnerId`, replacing any prior extension. Reuse
+`operational_http`, `CorrelationId`, `request_admission` and
+`render_infrastructure_failure`; do not add another ID generator, observation
+layer, response-header setter or infrastructure renderer. Pass metadata,
+authority and `OperationContext` explicitly. No arbitrary spawned task inherits
+request metadata.
 
 ## Common commands
 

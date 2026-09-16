@@ -400,6 +400,15 @@ Seven offline retirement cases separately exercise legacy disable, quiescence,
 preservation and uncertain outcomes. The current inventory is listed below;
 the earlier example-owned witness/lease protocol was removed.
 
+Ordinary reference HTTP tests separately pin the composition boundaries: a bare
+in-process `/live` request succeeds without `ConnectInfo`, while an authenticated
+business request with malformed JSON, an invalid UUID path, and a body exceeding
+the configured limit return Axum's native plain-text 400/413 responses plus the
+outer generated response-ID header, not an application problem envelope. The
+database delivery fixture therefore captures raw status/header/body first and
+applies JSON envelope and matching body/header identity assertions only for
+routes whose contract promises that envelope.
+
 Their [API manifest](reference-compatibility.md) states the exact scope and pins.
 
 ```sh
@@ -1301,6 +1310,40 @@ listeners; dropping the unstarted owner releases the accepted listener. Shared
 serving scenarios also execute the peer variant through startup waiter/owner
 abandonment and a streaming body surviving forced wrapper abort. These checks
 do not establish application authentication or proxy-trust correctness.
+
+The reference package separately exercises its actual business-boundary function
+with the production `operational_http`, direct-peer metadata, bearer
+authentication and request-admission order. Twelve overlapping requests use
+distinct injected native peer IPs and forged forwarding, trace, request-ID and
+owner-extension values; each handler and nested `OperationContext` returns its
+own generated correlation and expected peer, and the configured owner always
+wins. The concurrency case gives its operation a ten-second budget while a
+three-second wall-clock guard owns failure, avoiding a hidden load-sensitive
+deadline. Authentication and domain-failure cases require the selected peer to
+remain absent from their response bodies. Additional cases cover absent optional headers, missing `ConnectInfo`
+failing closed, unauthenticated and domain-invalid production routes, and forced
+request cancellation retaining the correct response/header identity while the
+separate operation context becomes cancelled. These ordinary tests substitute a
+deterministic handler only after applying the same production boundary and need
+no PostgreSQL. Adapter real-socket tests independently establish ConnectInfo
+provenance by comparing the observed value with each client's own socket address;
+the reference policy tests establish the exact SocketAddr-to-IP step. The database-backed live delivery helper uses the opaque
+`InProcessRequestClient`, which cannot be served or expose its inner router and
+requires the helper to select a synthetic peer for every request. It requires every parsed JSON
+`request_id` to equal the generated response header.
+
+The application-owned `http::register_in` function fuses router construction
+with native peer-aware registration. An ordinary non-database real-socket case
+starts that exact operation and requires authenticated-boundary 401 rather than
+the missing-peer 500 control. The production-root live case supplies the final
+evidence layer: after the real listener becomes live, it sends an unauthorized request to the matched
+`/delivery-commands/transport-probe` route and requires 401
+`authentication_required` plus matching header/body identity. Replacing native
+ConnectInfo registration with plain registration would instead hit the retained
+missing-peer 500 unit control. `MockConnectInfo` is not used because this
+middleware reads request extensions directly while the mock affects extractor
+fallback. No proxy trust mode, durable metadata, quota backend, or spawned-work
+inheritance is claimed.
 
 The SQLx example's `tests/diagnostics.rs` launches the actual executable with
 missing, non-Unicode and malformed database URLs, requiring a nonzero exit and

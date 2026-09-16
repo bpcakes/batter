@@ -1,6 +1,308 @@
 # Validation evidence
 
-Latest evidence: 2026-09-15. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-16. Earlier sections retain their historical scope.
+
+## Reference metadata review follow-up, 2026-09-16
+
+The comprehensive review of fingerprint
+`b5afc564b98ac298b1588c64984594bf3a3c083b2e9f4447e046bbe70b3f247b`
+found no production defect. Its one actionable supporting issue was a test timing
+inversion: twelve requests rendezvoused beneath the default two-second production
+operation budget while the test's explicit wall-clock guard allowed three
+seconds. The test settings now use a ten-second operation budget, leaving the
+explicit three-second guard as the only binding failure clock.
+
+Authentication, domain-failure and real-socket responses now also assert that
+the selected peer IP is absent from their bodies. The separate proposed
+real-socket fidelity test would duplicate existing executable evidence: the
+adapter's `operational::connect_info` case compares each server-observed native
+peer with the client's independently observed socket address, while the
+reference boundary cases prove the exact `SocketAddr`-to-IP policy step. The
+contract now links those layers explicitly. The unused public
+`ServingSettings::trusted_peer_policy` accessor was removed; downstream
+application admission consumes `TrustedPeer` from request metadata and does not
+need to extract the preparation policy. The opaque public in-process client
+remains intentional for external integration-test consumers and cannot enter a
+serving path.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 19 ordinary tests and one intentionally ignored live retirement test. The concurrent identity case and production response non-disclosure assertions passed. |
+| `cargo test -p batter-axum --test operational connect_info --locked` | PASS: both selected native peer-registration cases, including the two-client independent socket-address oracle. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 15 compiling and nine compile-fail doctests. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS on Rust 1.98.1. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete repository matrices, including all-target tests, runner controls, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and loopback readiness tests. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `scripts/jig work check --plan-id plan_01M2NQBJXFF7ER60ZCFM4181V6` | PASS: all five required targets executed successfully. Target validation `receipt_01M2NQKB21X7T3QBZX1BJFCE73`; API Clippy `receipt_01M2NQKA9F6K27H4FNKJWBEKBH`; formatting `receipt_01M2NQKAB57ZB7M5K7H597DMM8`; API tests `receipt_01M2NQKACSZJ0SHNKBPFQ039X7`; contract `receipt_01M2NQKAE50R0J07M8JKHZC8YP`; file budget `receipt_01M2NQKAFHATY1M9NRVDBWK3FA`. |
+
+The exact two-toolchain 64-case PostgreSQL inventories recorded immediately
+below remain applicable: this follow-up changes test-only settings and
+assertions, documentation, and removes an unused read accessor; it does not
+change production execution or the dependency graph. `Cargo.lock` remains
+unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+The repaired diff was not independently re-reviewed; this was the authorized
+one-pass repair following the frozen comprehensive review.
+
+## Reference in-process boundary closure, 2026-09-16
+
+The next comprehensive review found no defect in the canonical production
+registration path, but it did find a residual application API design problem:
+the public in-process seam returned an ordinary Axum `Router`. Its documentation
+required synthetic `ConnectInfo<SocketAddr>`, yet the type still allowed an
+agent-generated consumer to serve that router directly and create a 500-only
+business service. This was not an Axum adapter defect and not another missing
+middleware call. It was a boundary mismatch between an agent-only integration
+policy, which requires library-owned enforcement of operational invariants, and
+an escape hatch whose crucial obligation existed only in prose.
+
+The repair removes the servable value from the public seam. Production still
+uses application-owned `http::register_in`, which constructs the router and
+selects native peer-aware serving together. Tests and live helpers now receive
+an opaque `InProcessRequestClient`: its router field is private, it implements no
+Tower service trait, and each request requires a caller-selected synthetic peer
+which the client installs as the exact native `ConnectInfo`. A compile-fail
+doctest proves the client cannot be used as an Axum router. This closes the
+misuse path structurally without adding proxy policy, changing the generic
+adapter, or creating a second serving abstraction.
+
+The review's response-capture finding had a different root cause. Once the live
+production helper began decoding complete application envelopes, its inherited
+single 4 KiB read became an accidental truncation point. Truncated JSON then
+looked like a UTF-8 or JSON failure instead of a transport-size failure. The
+helper now reads at most 64 KiB plus one sentinel byte under the existing timeout
+and reports an explicit capture-limit error before decoding. This is a local test
+helper omission rather than architecture debt.
+
+Two adjacent gaps were ordinary coverage omissions. Tests now pin native
+plain-text rejection behavior for malformed JSON, invalid UUID paths and body
+limit overflow, while requiring the outer generated response-ID header and
+rejecting an application JSON envelope. `TrustedPeer` remains public because the
+downstream admission task `batter-97p` needs hostile-header-resistant,
+application-owned peer input; it conveys no authentication authority. The older
+authorization caveat is obsolete: the exact 64-case live inventory below
+includes those application paths on both supported toolchains.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 19 ordinary tests and one intentionally ignored live retirement test. The new invalid-path and body-limit native rejection cases passed. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS for all ordinary targets: 19 library tests passed with one live retirement test ignored, 23 configuration cases, three fixture diagnostics, five non-database live-runner entries, three preflight cases and four retirement-example cases. The 59 PostgreSQL cases remained explicitly ignored only in this ordinary command. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS on Rust 1.98.1 with no warning or module-layout exception. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 15 compiling and nine compile-fail doctests, including the non-servable client proof. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS after correcting an ambiguous Rustdoc link found by the first attempts: both complete repository matrices passed, including runner controls, workspace tests, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and loopback readiness tests. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `POSTGRES_TEST_ADMIN_URL=<task-primary> POSTGRES_TEST_OBSERVER_URL=<task-observer> bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on each toolchain against two task-owned PostgreSQL 18.4 containers: exact 64-entry inventory, 64 passed, zero failed, ignored, measured or filtered; the separately required maintenance-session replacement probe also passed. This exercises the opaque client in database-backed requests and the bounded real-socket response helper. |
+| `scripts/jig work check --plan-id plan_01M2NN58XA6539AS53TR3RMJK7` | PASS: all five required targets executed successfully. Target validation `receipt_01M2NNXCQ28EMF29G9ED3NMJM7`; API Clippy `receipt_01M2NNXBYRN1YD20X13CE882BW`; formatting `receipt_01M2NNXC0EQ8VVQAXYWN632SX8`; API tests `receipt_01M2NNXC1Y6JXTDRT6S7XQ3HHM`; contract `receipt_01M2NNXC3AGC4RC918WFCQHQE2`; file budget `receipt_01M2NNXC4N0A9SZZZAC6FR102D`. |
+
+The disposable `batter-client-primary` and `batter-client-observer` containers
+used the pinned PostgreSQL 18.4 arm64 digest, SCRAM host authentication,
+loopback ports 55485/55486, `track_counts=on`, `autovacuum_naptime=1s`,
+`max_prepared_transactions=10`, and `max_connections=100`. Both were removed
+after execution; unrelated containers were untouched. `Cargo.lock` remains
+unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+
+## Reference HTTP boundary-contract follow-up, 2026-09-16
+
+The comprehensive review after the application-root composition repair found no
+remaining transport-registration defect. The canonical production operation
+already makes missing native peer metadata unrepresentable for accepted sockets
+by constructing the router and selecting peer-aware registration together. A
+second production-path missing-peer negative would therefore test a deliberately
+incorrect composition, while the lower-level in-process negative remains the
+appropriate failure control.
+
+The confirmed code issue was narrower: the database live helper conflated raw
+HTTP capture with application JSON-envelope validation. That assumption could
+not represent Axum's deliberately native extractor rejections and would report a
+misleading missing-body-ID failure. The helper now captures status, generated
+response ID and bytes first; `envelope_request` adds JSON parsing and body/header
+identity only for routes that promise the application envelope. Ordinary tests
+also pin the two adjacent contracts: liveness succeeds without synthetic peer
+metadata, and authenticated malformed JSON returns Axum's plain-text 400 plus
+the outer response-ID header. No production behavior or generic adapter API
+changed.
+
+`TrustedPeer` remains public because the concrete downstream `batter-97p` task
+requires application-owned admission identity that hostile forwarding headers
+cannot select. It remains diagnostic/admission input only: bearer authentication
+still selects authority, and no quota grant exists in this stage. The two stale
+evidence statements were documentation bookkeeping: they described an earlier
+harness-repair checkpoint but were phrased as current limitations. They now
+point to the later exact two-toolchain live evidence.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 17 ordinary tests and one intentionally ignored live retirement test. The new peer-free liveness and native malformed-JSON rejection cases passed. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS for all ordinary targets: 17 library tests passed with one live retirement test ignored, 23 configuration cases, three fixture diagnostics, five non-database live-runner entries, three preflight cases and four retirement-example cases. The 59 PostgreSQL cases remained explicitly ignored only in this ordinary command. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS on Rust 1.98.1 with no warning or module-layout exception. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 15 compiling and eight compile-fail doctests. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete repository matrices, including runner controls, workspace tests, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and loopback readiness tests. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `POSTGRES_TEST_ADMIN_URL=<task-primary> POSTGRES_TEST_OBSERVER_URL=<task-observer> bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on each toolchain against two task-owned PostgreSQL 18.4 containers: exact 64-entry inventory, 64 passed, zero failed, ignored, measured or filtered; the separately required maintenance-session replacement probe also passed. |
+| `scripts/jig work check --plan-id plan_01M2NKNVG32RBWFSWBVS93XS3Z` | PASS: all five required targets executed successfully. Target validation `receipt_01M2NM7MFZP92FWSS91KBJQYDQ`; API Clippy `receipt_01M2NM7KPZRDDXSC58MKBE90VG`; formatting `receipt_01M2NM7KRME144Z4RZCC9Q6PVP`; API tests `receipt_01M2NM7KT446BQXDPPXNG5R4RF`; contract `receipt_01M2NM7KVKMPGHPFEBWFXWW2EP`; file budget `receipt_01M2NM7KWWE9SBSD69YPHR8Q6N`. |
+
+The disposable `batter-boundary-primary` and `batter-boundary-observer`
+containers used the pinned PostgreSQL 18.4 arm64 digest, SCRAM host
+authentication, loopback ports 55483/55484, `track_counts=on`,
+`autovacuum_naptime=1s`, `max_prepared_transactions=10`, and
+`max_connections=100`. Both were removed after execution; unrelated containers
+were untouched. `Cargo.lock` remains unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+
+## Reference request-metadata composition repair, 2026-09-16
+
+The follow-up comprehensive review found one application-root composition risk:
+`http::router` consumed a direct-peer trust policy while sibling `runtime` code
+independently selected Axum's peer-aware registration variant. The missed
+`ConnectInfo` was an implementation omission enabled by that split. It was not a
+generic adapter defect: an arbitrary Axum router cannot declare which request
+extensions it requires, and Batter already exposed the correct constrained
+native registration operation.
+
+The reference application now owns canonical `http::register_in`, which builds
+the trusted-peer router and selects `register_http_with_connect_info_in` as one
+operation. The production runtime has no independent server-mode choice. The
+unpublished raw-router API was hard-cut over to the obligation-bearing name
+`router_for_in_process`; every caller must explicitly provide exact
+`ConnectInfo<SocketAddr>`. An ordinary real-socket regression exercises the
+canonical operation without PostgreSQL and distinguishes authentication 401
+from missing-peer 500. Separate ordinary assertions cover Debug redaction and
+bound the concurrent metadata barrier.
+
+Readiness remains deliberately based on application approval, lifecycle and
+dependency health rather than a self-request to an arbitrary business route.
+Likewise, Axum extractor rejections remain outside the application domain and
+infrastructure envelope contract; neither concern is a corrective mechanism for
+transport composition. The evidence-status wording was corrected independently
+as bookkeeping rather than treated as a runtime design failure.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 15 ordinary tests and one intentionally ignored live retirement test. The new canonical-registration loopback and Debug-redaction cases passed; the existing missing-peer 500 and concurrent forged-metadata controls remained green. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 15 compiling and eight compile-fail doctests, including the new public canonical-registration example and renamed in-process seam. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS on Rust 1.98.1 with no warning or module-layout exception. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS for all ordinary targets: 15 library tests passed with one live retirement test ignored, 23 configuration cases, three fixture diagnostics, five non-database live-runner entries, three preflight cases and four retirement-example cases. The 59 PostgreSQL cases remained explicitly ignored only in this ordinary command. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS: both complete repository matrices, including runner controls, workspace tests, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and loopback readiness tests. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `POSTGRES_TEST_ADMIN_URL=<task-primary> POSTGRES_TEST_OBSERVER_URL=<task-observer> bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on each toolchain against two task-owned PostgreSQL 18.4 containers: exact 64-entry inventory, 64 passed, zero failed, ignored, measured or filtered; the separately required maintenance-session replacement probe also passed. This includes the complete production-root real-socket case. |
+| `scripts/jig work check --plan-id plan_01M2NHXYZMAYR94AYBE35ATRV4` | PASS: all five required targets executed successfully. Target validation `receipt_01M2NJMHRVT0V9QNNGWTMEEZ6J`; API Clippy `receipt_01M2NJMH0T4J9HC0RER1ZNGXVH`; formatting `receipt_01M2NJMH29H0SE35KAM3N1JATN`; API tests `receipt_01M2NJMH3QN16N367BTERNYDPY`; contract `receipt_01M2NJMH53Q7NMKYCKTB2YHJTH`; file budget `receipt_01M2NJMH6GYYZS9A2V2DFP1PCH`. |
+
+The disposable primary and observer used the pinned PostgreSQL 18.4 arm64 digest,
+SCRAM host authentication, loopback ports 55481/55482, `track_counts=on`,
+`autovacuum_naptime=1s`, `max_prepared_transactions=10`, and
+`max_connections=100`. Both task-owned containers were removed after execution;
+unrelated containers were untouched. `Cargo.lock` remains unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+No proxy mode, settings key, public metadata constructor, readiness self-probe,
+application-wide extractor renderer, commit, publication or deployment is
+claimed.
+
+## Reference request-metadata live harness repair, 2026-09-16
+
+Executed locally on macOS 26.6.2 arm64. The definitive live suite used pinned
+rustc 1.98.1 (`48a229cea`, 2026-09-01); the complete offline matrix and HTTP
+smokes also passed on minimum rustc 1.94.0 (`4a4ef493e`, 2026-03-02).
+Post-closure review fingerprint
+`d1d5e98fbd8f9dd94c8cda858b992bdc2f19476985e4abd8b1d20c4d284ad301`
+showed that database-backed in-process requests omitted the now-required native
+`ConnectInfo` extension and that the production process exercised only probe
+routes. `batter-in2` was reopened before repair.
+
+The shared live delivery helper now inserts exact
+`ConnectInfo<SocketAddr>` and owns that synthetic direct-peer trust assertion;
+every JSON response it parses must carry the same generated request ID as the
+response header. The production-root live case now sends an unauthorized request
+to matched business route `/delivery-commands/transport-probe` over its real
+listener and requires 401 `authentication_required` plus matching header/body
+identity. The existing missing-peer unit case still requires 500.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 13 ordinary tests; one unrelated live retirement test intentionally ignored. The missing-native-peer negative case passed. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 14 compiling and eight compile-fail doctests. Public docs retain private trusted-metadata construction and code-selected direct policy. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS for every ordinary target; live discovery found 64 cases, with the 59 database cases intentionally ignored only in this ordinary command. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS with no warning or module-layout exception. |
+| `POSTGRES_TEST_ADMIN_URL=<task-primary> POSTGRES_TEST_OBSERVER_URL=<task-observer> bash scripts/test_reference_live.sh` | PASS: PostgreSQL 18 preflight; exact 64-entry inventory; 64 passed, zero failed, ignored, measured or filtered in 43.25 seconds. The complete command finished in 58.15 seconds. Its separately required maintenance-session probe passed one selected test; Cargo reported 13 deliberately filtered library tests outside that exact probe. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace matrix, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and live loopback readiness checks. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across Rust 1.98.1 and 1.94.0. |
+| `scripts/jig work check --plan-id plan_01M2NDEWM1XMXDYDSZNSF7N2TA`, then `work evidence` and `work gates --freshness-timeout-ms 30000` | PASS on the repaired tree: target validation `receipt_01M2NGYNN3JFS0768QF24KSBM0`; API Clippy `receipt_01M2NGYMWT4N0VY6P247Z184BN`; formatting `receipt_01M2NGYMYEC5V6KA5MYZH4JWVG`; API tests `receipt_01M2NGYMZZD2MYECHGV9CDXHYP`; contract `receipt_01M2NGYN1E4EETAHFR6WBXYATJ`; file budget `receipt_01M2NGYN2T44XHKAVAM1R9VBX4`. Evidence and the required verify gate were fresh with no unresolved gate. |
+
+The task-owned containers `batter-in2-primary` and `batter-in2-observer` used
+PostgreSQL 18.4 Debian arm64 from
+`postgres@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636`,
+SCRAM credentials, loopback ports 55481/55482, `track_counts=on`,
+`autovacuum_naptime=1s`, `max_prepared_transactions=10`, and
+`max_connections=100`. Both were removed after the live run; unrelated
+containers were untouched.
+
+`Cargo.lock` remains unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+No settings key, proxy/CIDR mode, forwarded-header parser, public
+`TrustedRequestMetadata` constructor, task-local propagation, durable
+correlation or Runlimit integration was added. At this harness-repair checkpoint,
+minimum-toolchain live database execution and hosted CI remained unverified;
+the later composition-repair evidence above records the exact 64-entry live run
+on both supported toolchains. Both toolchains also had complete offline matrices
+and process smokes at this checkpoint.
+
+## Initial reference request metadata evidence (pre-repair), 2026-09-16
+
+Executed locally on macOS 26.6.2 arm64 with the pinned rustc 1.98.1
+(`48a229cea`, 2026-09-01) and minimum rustc 1.94.0 (`4a4ef493e`,
+2026-03-02). The unpublished reference application now consumes the shared
+server `CorrelationId`, the native accepted TCP peer, authenticated `OwnerId`
+and request `OperationContext` as separate values. Its only peer mode trusts the
+direct socket IP; forwarding, trace and client request-ID headers remain
+uninterpreted.
+
+A post-closure review found that this evidence did not justify closing
+`batter-in2`: the database-backed in-process helper omitted `ConnectInfo`, and
+the production process probe never entered a matched business route. The
+all-target command below compiled those 59 live cases but intentionally ignored
+them; neither that compilation nor the static production registration proves the
+new boundary. The Bead was reopened. The repair and its definitive external live
+execution are recorded separately when completed.
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --lib --locked` | PASS: 13 ordinary tests and one intentionally ignored live retirement test. Four request-boundary cases cover production auth/domain failures, twelve concurrent forged requests, absent optional metadata, missing native peer, nested operation propagation and forced cancellation. |
+| `cargo test -p batter-example-reference-service --doc --locked` | PASS: 14 compiling and eight compile-fail doctests, including the new separate metadata/authority/context extractor example. |
+| `cargo clippy -p batter-example-reference-service --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files` | PASS on Rust 1.98.1 with no warning or module-layout exception. |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` | PASS: all ordinary reference targets, including 13 library tests, 23 configuration cases, five non-database live-runner entries and the existing ignored 59-case external PostgreSQL inventory. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace matrix, hostile-environment cases, doctests, formatting, strict Clippy, warning-denied rustdoc and live loopback readiness checks. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS for the same complete matrix on the declared minimum toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across Rust 1.98.1 and 1.94.0. |
+| Focused Rust security-boundary review of the changed routes, metadata, authentication and rendering | No confirmed defect: client identity fields are replaced or ignored, a prior owner extension is removed before credential selection, auth remains outside admission/handlers, and error bodies contain only fixed diagnostics plus generated correlation. The absent rate limiter remains the explicit downstream `batter-97p` scope; staged production readiness is still withheld. |
+| `scripts/jig work check --plan-id plan_01M2NAC48CCB639V71F8BWNZBZ`, then `work evidence` and `work gates --freshness-timeout-ms 30000` | PASS on the documented implementation: target validation `receipt_01M2NBFCVABQBZX10BGFP0EV8M`; API Clippy `receipt_01M2NBFC2B96RBX2D55PPT5RMK`; formatting `receipt_01M2NBFC3STJYZF9ZQ31XTRMV2`; API tests `receipt_01M2NBFC57218QMDXTGMNKN0PJ`; contract `receipt_01M2NBFC6TYGX1SWN958BK8K03`; file budget `receipt_01M2NBFC80SJCQD18Z7M47VHN5`. Evidence and the required verify gate were fresh with no unresolved gate before this receipt-only documentation update. |
+
+`Cargo.lock` is unchanged at
+`72e70a2bfc3a5e7569736ea8722b54b8e38861691a7d282a91e2797a789f7471`.
+Existing Jig v9 globs already cover both new source paths, so neither input-scope
+file changed. This run does not claim a proxy trust mode, inbound trace
+retention, task-local or arbitrary-spawn propagation, durable correlation,
+Runlimit admission, external PostgreSQL execution, hosted CI, new Linux
+execution, publication or deployment. The adapter's existing real-socket tests
+establish native `ConnectInfo` provenance; the reference boundary tests use
+in-process trusted extension injection and the production runtime statically
+selects `register_http_with_connect_info_in`.
 
 ## Browser credential transport, 2026-09-15
 

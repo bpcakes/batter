@@ -2,7 +2,7 @@
 
 use crate::{
     config::{PreparedServing, ServingSettings},
-    http::router,
+    http::register_in,
     schema::initialize_schema,
 };
 use batter::{
@@ -225,15 +225,16 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
                 let health = register_health(scope.registration(), pool.clone())?;
 
                 scope.stage("http.bind")?;
-                let application = router(
+                let listener = tokio::net::TcpListener::bind(parts.bind).await?;
+                register_in(
+                    scope,
+                    listener,
                     parts.http,
                     lifecycle.clone(),
                     admission.clone(),
                     pool.clone(),
                     health,
-                );
-                let listener = tokio::net::TcpListener::bind(parts.bind).await?;
-                batter_axum::register_http_in(scope, "http", listener, application)?;
+                )?;
 
                 scope.stage("worker.register")?;
                 batter_runledger::register_in(scope, "worker", native_startup, {
