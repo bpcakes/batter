@@ -676,8 +676,9 @@ or schema initialization yields `StartupCause::Draining` inside
 fabricated application error; the executable renders only its fixed diagnostic
 and exits with status 1. The earlier startup wrapper was removed in the
 coordinated hard cutover. Native loop acknowledgement, fresh PostgreSQL sampling and
-application readiness approval are separate facts. The native registry is empty
-until a delivery handler exists; application readiness remains unapproved.
+application readiness approval are separate facts. The reference now registers
+its delivery handler before native preparation and grants ordinary application
+approval; readiness still requires all three inputs.
 Production starts no durable control job, advisory-lock owner or reconciliation
 pool. The startup allowance is 20 seconds. Process drain, cancellation and reap
 allowances are ten, one and one seconds, followed by separately bounded pool
@@ -1538,9 +1539,65 @@ Focused offline tests prove source policy, native field mapping, changed HTTP
 response deadlines, independent admission capacities and retained startup/cleanup
 failures. Explicit live cases additionally require a disposable PostgreSQL 18
 endpoint; their execution status is recorded in [validation](validation.md).
-The unpublished reference package now composes these constructors into a staged
-command and probe-only worker host. No delivery-provider execution, publication,
-deployment or external adoption follows from that example.
+The unpublished reference package now composes these constructors into a command
+and provider-effect worker. Its application-owned protocol proves only stable-key
+reconciliation against the local fixture with a 24-hour retention boundary. No
+publication, deployment, exactly-once guarantee or external adoption follows.
+The worker's private state API locks and revalidates the exact unexpired
+Runledger lease before every effect mutation; callers cannot issue an unfenced
+state write. Retained state selects terminal, local-expiry, reconciliation or
+dispatch work before provider admission. POST and GET require one canonical
+accepted-request identity check. This does not fence the external provider after
+the database transaction ends: stable idempotency and retained uncertainty still
+own that recovery boundary.
+
+Retained provider payload and key identity must match the accepted command before
+worker dispatch or either owner-scoped read can proceed. A future dispatch
+retry-not-before does not defer required keyed reconciliation: an accepted lookup
+may confirm immediately, while authoritative absence still cannot authorize an
+early POST. These are reference-application boundaries, not framework guarantees.
+
+Reference confirmation serializes with generation replacement: it locks the
+record FOR SHARE, then the native job, then the effect, and retains all locks
+through commit. A replacement committed before record-lock acquisition is read
+by the subsequent confirmation statement and makes acceptance manual resolution.
+A replacement arriving afterward waits for confirmation to commit. No provider
+I/O occurs in that transaction. Waiting for the record does not hold the job-row
+lock; later job/effect waits can still contend with heartbeat maintenance. The
+post-lock and precommit lease checks remain mandatory.
+
+Reference listener discovery is optional and application-owned. Explicit
+`BATTER_LISTENER_ANNOUNCEMENT_PATH` selects an existing Unix datagram receiver;
+publication is nonblocking async I/O under the startup deadline, with no spawned
+blocking writer. Unconfigured startup never writes a listener announcement.
+The datagram acknowledges binding, not readiness, and errors fail startup.
+
+Manual resolution and business denial share a terminal writer whose source type
+can represent only unresolved states. Both entry methods reject terminal sources
+before database acquisition; the SQL equality predicate additionally rejects a
+stale unresolved source. Neighboring confirmation, failure, invariant and dispatch
+writes constrain their own legal sources. This is an application-private boundary,
+not a new foundation provider protocol or protection from arbitrary external SQL.
+
+Provider response exchanges consume their admission permit; post-response SQL
+cannot retain that capacity. Send and body errors remain distinct, with static
+diagnostic codes and connector-only known non-dispatch. One owner-scoped query
+boundary validates identity and projects unresolved terminal jobs from a single
+job/effect snapshot: spent dead-lettered attempts become exhausted, other native
+termination becomes manual resolution, and retained acceptance facts survive.
+Projection requires no write after lease loss or database failure.
+
+The provider state transaction checks lease identity and expiry in a fresh
+statement after locking, and again before commit after later lock waits. Dispatch
+eligibility is checked under the effect-row lock. Known non-dispatch outcomes
+atomically retain an absolute retry-not-before timestamp; native completion loss
+cannot discard that committed lower bound. The private persistence method owns
+both the outcome write and returned retry scheduling decision. Storage errors
+retain an observed delay in the returned native failure. Process death before
+the response is persisted can still lose that observation, and recovery attempts
+continue to consume Runledger's attempt budget. PostgreSQL's wall clock remains
+the durable timing authority; no cross-system clock or remote-effect fencing is
+claimed.
 
 The private live endpoint handoff accepts `localhost` or `127.0.0.1` with
 sslmode=disable. It rejects IPv6 literals before acquisition because SQLx 0.9

@@ -162,8 +162,8 @@ The adapter translates native initialization, stop clocks and retained descendan
 settlement into Batter ownership; Runledger retains its internal supervisor and
 durable work policy. Follow the [reference composition root](../examples/reference-service/src/runtime.rs)
 and [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
-That root deliberately withholds application approval while its delivery handler
-is absent. Native initialization alone does not establish dependency health or
+That root approves application readiness after installing its delivery handler.
+Native initialization alone does not establish dependency health or
 application readiness, and native joins do not prove arbitrary detached work or
 remote sessions stopped.
 

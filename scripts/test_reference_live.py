@@ -31,7 +31,8 @@ def successful_outputs():
     execution = "\n".join(f"test {case} ... ok" for case in CASES)
     execution += f"\ntest result: ok. {len(CASES)} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;"
     session = f"test {SESSION_CASE} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out;"
-    return [b"reference-preflight:ok\n", b"", inventory.encode(), execution.encode(), session.encode()]
+    state = session.replace(SESSION_CASE, reference_live.STATE_CASE)
+    return [b"reference-preflight:ok\n", b"", inventory.encode(), execution.encode(), session.encode(), state.encode()]
 
 
 class ReferenceLiveControls(unittest.TestCase):
@@ -65,12 +66,13 @@ class ReferenceLiveControls(unittest.TestCase):
         results = [SimpleNamespace(ok=True, stdout=output, output=output.decode()) for output in successful_outputs()]
         with patch.object(reference_live, "run", side_effect=results) as run, patch("builtins.print") as printed:
             reference_live.main()
-        self.assertEqual(run.call_count, 5)
+        self.assertEqual(run.call_count, 6)
         self.assertIn("reference_preflight", run.call_args_list[0].args[0])
         self.assertEqual(run.call_args_list[1].args[0], reference_live.BINARY_COMMAND)
         self.assertEqual(run.call_args_list[2].args[0][-2:], ["--", "--list"])
         self.assertEqual(run.call_args_list[3].args[0][-2:], ["--include-ignored", "--test-threads=1"])
         self.assertEqual(run.call_args_list[4].args[0], reference_live.SESSION_COMMAND)
+        self.assertEqual(run.call_args_list[5].args[0], reference_live.STATE_COMMAND)
         printed.assert_any_call(reference_live.announcement(), flush=True)
 
     def test_failed_binary_build_stops_before_inventory(self):
@@ -90,19 +92,28 @@ class ReferenceLiveControls(unittest.TestCase):
         self.assertFalse(complete_session_execution(output.replace("... ok", "... ignored")))
         self.assertFalse(complete_session_execution(output.replace("1 passed", "0 passed")))
 
+    def test_state_probe_is_required_after_the_main_and_session_suites(self):
+        for invalid in (b"", b"test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;"):
+            outputs = successful_outputs()
+            outputs[-1] = invalid
+            results = [SimpleNamespace(ok=True, stdout=output, output=output.decode()) for output in outputs]
+            with patch.object(reference_live, "run", side_effect=results), patch("builtins.print"):
+                with self.assertRaisesRegex(SystemExit, "Provider state boundary probe"):
+                    reference_live.main()
+
     def test_case_classes_are_exact_and_disjoint(self):
-        self.assertEqual(len(DATABASE_CASES), 59)
+        self.assertEqual(len(DATABASE_CASES), 61)
         self.assertEqual(len(SYNTHETIC_ACQUISITION_CASES), 2)
         self.assertEqual(len(EXECUTABLE_CASES), 2)
         self.assertEqual(DISPATCH_CASES, {"child_fixture"})
-        self.assertEqual(len(CASES), 64)
+        self.assertEqual(len(CASES), 66)
         classes = (DATABASE_CASES, SYNTHETIC_ACQUISITION_CASES, EXECUTABLE_CASES, DISPATCH_CASES)
         self.assertEqual(sum(len(cases) for cases in classes), len(CASES))
         for case, expected in PROTECTED_STARTUP.items():
             self.assertIn(case, expected)
         announcement = reference_live.announcement()
-        self.assertIn("64 required cases", announcement)
-        self.assertIn("59 live database probes", announcement)
+        self.assertIn("66 required cases", announcement)
+        self.assertIn("61 live database probes", announcement)
 
     def test_configuration_cases_cannot_be_omitted_from_inventory_or_execution(self):
         configured = {"retirement_preserves_history_and_disables_old_catalog",
@@ -121,7 +132,9 @@ class ReferenceLiveControls(unittest.TestCase):
                       "configured_pool_capacity_and_acquire_timeout",
                       "configured_startup_pool_close_before_lease",
                       "configured_worker_concurrency",
-                      "production_root_withholds_readiness_without_control_jobs",
+                      "production_root_registers_provider_worker",
+                      "provider_effect_crash_and_restart",
+                      "provider_effect_outcome_contracts",
                       "child_fixture"} | set(PROTECTED_STARTUP)
         self.assertTrue(configured <= CASES)
         for missing in configured:

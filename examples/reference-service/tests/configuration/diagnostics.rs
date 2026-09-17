@@ -127,6 +127,19 @@ fn rejected_urls_and_nested_aggregates_never_format_input() {
     }
     let error = load(&[("BATTER_AUTH_TOKEN", "secret auth marker")]).unwrap_err();
     assert!(!format!("{error} {error:#?}").contains("secret auth marker"));
+    for (name, value) in [
+        (
+            "BATTER_PROVIDER_BASE_URL",
+            "https://user:secret-provider-marker@provider.example/",
+        ),
+        ("BATTER_PROVIDER_TOKEN", "secret provider marker"),
+    ] {
+        let error = load(&[(name, value)]).unwrap_err();
+        let diagnostic = format!("{error} {error:#?} {:?}", vec![&error]);
+        assert!(diagnostic.contains(name));
+        assert!(!diagnostic.contains("secret-provider-marker"));
+        assert!(!diagnostic.contains("secret provider marker"));
+    }
     let error = load(&[(
         "DATABASE_URL",
         "postgres://user:secret-marker@host/db?sslmode=secret-marker",

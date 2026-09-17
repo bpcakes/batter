@@ -353,9 +353,45 @@ Only acknowledged commit or rollback returns the connection to the pool. Failed
 commit/rollback acknowledgement or interruption after `BEGIN` retires it and
 produces an uncertain response. `GET /delivery-commands/{idempotency_key}` lets
 the same authenticated owner reconcile without a response-generated identifier;
-absence during settlement is not rollback evidence. This initial command has no
-automatic transaction replay, worker handler, provider effect, or exactly-once
-claim. The later controlled concurrency/fault suite owns stronger proof.
+absence during settlement is not rollback evidence. The command performs no
+automatic transaction replay. Its worker separately owns one selected provider
+effect protocol; neither layer makes an exactly-once claim.
+
+The provider row is inserted in that same transaction with a stable key derived
+from the delivery UUID and a canonical versioned request containing owner, record,
+generation and payload. The handler commits `reconcile_needed` before polling the
+POST. A lost response, timeout, cancellation or worker death after that commit is
+not retry permission: the next attempt performs keyed lookup first. Exact retained
+acceptance confirms the original effect; retained-window absence permits the
+original POST; mismatch or expiry becomes manual resolution. The local protocol
+assumes 24-hour key retention. The application binds the SQL `resolve_before`
+interval from `IDEMPOTENCY_RETENTION`; the database does not carry an independent
+retention literal. Accepted retry delays have a separate
+`MAX_ACCEPTED_RETRY_DELAY` policy, currently also 24 hours. Changing one policy
+does not change the other. It proves no behavior for an arbitrary provider.
+
+The handler first loads the retained effect state. Terminal states return without
+provider admission; uncertain state reconciles before target-generation policy.
+Only retained-window absence permits replay. Every effect mutation constrains its
+legal source state in SQL, so local lifecycle events cannot downgrade uncertainty
+or overwrite terminal truth.
+
+Supported retained-data invariant failures and request-construction failures are
+projected to `manual_resolution` under the same live native lease before the
+handler returns a terminal failure. If that application update loses its lease,
+the pinned Runledger completion predicates reject the stale handler outcome too.
+This is application-owned failure projection, not a queue transaction or a claim
+that arbitrary database tampering can be repaired.
+
+Provider `Bulkhead` admission then waits inside the existing provider work budget
+using the purpose-specific `BATTER_PROVIDER_CAPACITY`. Runledger has already
+claimed the job and offers no attempt-neutral defer/refund, but its validated
+global handler concurrency also bounds the number of provider waiters. This
+durable-work composition avoids request-style immediate rejection without adding
+a second claim engine or an unbounded waiter population. Admission interruption
+records a source-state-specific outcome: pre-dispatch states remain known
+undispatched, while `reconcile_needed` retains its acceptance possibility and
+resolution deadline.
 
 ## Runledger: optional native lifecycle adapter
 
@@ -377,9 +413,9 @@ is required. In-flight claims can still dispatch after stop; arbitrary detached
 handler descendants and remote server sessions are not covered by native joins.
 
 The reference combines native initialization with fresh PostgreSQL health and
-explicit application approval. The production registry is empty and approval
-remains withheld until the real delivery handler is installed. Durable execution
-proof belongs to isolated tests. Startup performs no control-job enqueue, advisory
+explicit application approval. The production registry contains the delivery
+handler and grants ordinary approval after registration. Durable execution proof
+belongs to isolated tests. Startup performs no control-job enqueue, advisory
 lease, epoch allocation or reconciliation loop.
 
 The separate offline retirement command disables the exact legacy native job
@@ -638,13 +674,15 @@ into the actual router. The reference package owns concrete
 PreparedMaintenance, PoolSettings, WorkerSettings}`. Serving construction retains
 Batter `BulkheadCapacity`/`ProcessCapacity`, Axum `ResponseConstructionBudget`, a
 password-qualified endpoint, a concrete authenticator, and a validated native
-`JobsConfig`. Maintenance recognizes only its database schema and has no
+`JobsConfig`, a validated provider origin and a redacted provider credential.
+HTTPS is required except for loopback HTTP fixtures; redirects are disabled.
+Maintenance recognizes only its database schema and has no
 promotion or conversion into the serving types.
 
 Use `ServingSettings::from_process(selected_path, overrides)` once, then transfer
 the result through `runtime::prepare` before acquisition. The returned must-use,
 non-cloneable `PreparedServing` owns inert `PgPoolOptions`, `PgConnectOptions`,
-`Supervisor`, `JobsConfig`, bind address and `PreparedHttp`; `runtime::run`
+`Supervisor`, `JobsConfig`, provider client/bulkhead, bind address and `PreparedHttp`; `runtime::run`
 accepts only that owner. Router construction consumes only `PreparedHttp` and is
 infallible because authentication and local operational values are already
 concrete. Offline commands separately consume `MaintenanceSettings::prepare`.
@@ -668,8 +706,9 @@ Bulkhead and finite-process constructors; live held-work cases prove their
 runtime effects. Its worker transfers native preparation to `batter-runledger`,
 preserving native intent-promoter inheritance. Each enabled loop acknowledges
 local initialization; fresh health and application approval remain separate.
-The production registry omits `records.delivery.execute`, and readiness stays
-unapproved until the provider task installs and verifies its real handler.
+The production registry installs `records.delivery.execute`; ordinary readiness
+approval follows that registration, independently of native acknowledgement and
+fresh health.
 Authorized external migration remains `batter-7r3.6`.
 The producer does not introduce Runlimit settings or an alternate job supervisor.
 

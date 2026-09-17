@@ -1,4 +1,26 @@
 use crate::{load, source};
+
+#[test]
+fn listener_announcement_requires_an_explicit_absolute_unix_path() {
+    for invalid in [
+        "",
+        "relative.sock",
+        "/tmp/bad\0path",
+        &format!("/tmp/{}", "x".repeat(200)),
+    ] {
+        let error = load(&[("BATTER_LISTENER_ANNOUNCEMENT_PATH", invalid)]).unwrap_err();
+        assert_eq!(error.field(), "BATTER_LISTENER_ANNOUNCEMENT_PATH");
+        assert!(!format!("{error:?}").contains(invalid) || invalid.is_empty());
+    }
+    // Validation does not open a socket or require its destination to exist.
+    assert!(
+        load(&[(
+            "BATTER_LISTENER_ANNOUNCEMENT_PATH",
+            "/tmp/absent-fixture-socket"
+        )])
+        .is_ok()
+    );
+}
 use axum::http::HeaderValue;
 use batter::settings::{SettingsSource, read_literal};
 use batter_example_reference_service::config::{
@@ -75,12 +97,44 @@ fn explicit_values_reach_all_native_worker_and_pool_fields() {
 }
 
 #[test]
+fn provider_origin_and_credential_policy_is_explicit() {
+    for origin in [
+        "https://provider.example/",
+        "http://127.0.0.1:8080/",
+        "http://[::1]:8080/",
+    ] {
+        assert!(
+            load(&[("BATTER_PROVIDER_BASE_URL", origin)]).is_ok(),
+            "valid provider origin was rejected: {origin}"
+        );
+    }
+    for origin in [
+        "ftp://provider.example/",
+        "http://provider.example/",
+        "http://localhost:8080/",
+        "https://user:password@provider.example/",
+        "https://provider.example/path",
+        "https://provider.example/?query=1",
+        "https://provider.example/#fragment",
+    ] {
+        let error = load(&[("BATTER_PROVIDER_BASE_URL", origin)]).unwrap_err();
+        assert_eq!(error.field(), "BATTER_PROVIDER_BASE_URL");
+    }
+    for token in ["", "contains space", "contains\nnewline", &"x".repeat(257)] {
+        let error = load(&[("BATTER_PROVIDER_TOKEN", token)]).unwrap_err();
+        assert_eq!(error.field(), "BATTER_PROVIDER_TOKEN");
+    }
+    assert!(load(&[("BATTER_PROVIDER_TOKEN", &"x".repeat(256))]).is_ok());
+}
+
+#[test]
 fn numeric_edges_are_rejected_before_native_clamping_or_truncation() {
     let year_ms = 31_536_000_000_u64;
     let capacity = tokio::sync::Semaphore::MAX_PERMITS as u64;
     for (name, maximum, minimum) in [
         ("BATTER_REQUEST_TIMEOUT_MS", year_ms, 1),
         ("BATTER_BULKHEAD_CAPACITY", capacity, 1),
+        ("BATTER_PROVIDER_CAPACITY", capacity, 1),
         ("BATTER_PROCESS_CAPACITY", capacity, 1),
         ("BATTER_POOL_MAX_CONNECTIONS", u32::MAX.into(), 1),
         ("BATTER_POOL_ACQUIRE_TIMEOUT_MS", year_ms, 1),
@@ -229,6 +283,10 @@ fn serving_shaped_inputs_cannot_promote_maintenance() {
     let endpoint = "postgres://user:fake@localhost/database?sslmode=disable";
     let serving_only = [
         ("BATTER_BIND", "127.0.0.1:3000"),
+        (
+            "BATTER_LISTENER_ANNOUNCEMENT_PATH",
+            "/tmp/fixture-announcement",
+        ),
         ("BATTER_REQUEST_TIMEOUT_MS", "2000"),
         ("BATTER_BULKHEAD_CAPACITY", "32"),
         ("BATTER_PROCESS_CAPACITY", "32"),
@@ -238,6 +296,9 @@ fn serving_shaped_inputs_cannot_promote_maintenance() {
             "00000000-0000-0000-0000-000000000001",
         ),
         ("BATTER_AUTH_TOKEN", "fake-token"),
+        ("BATTER_PROVIDER_BASE_URL", "http://127.0.0.1:9/"),
+        ("BATTER_PROVIDER_TOKEN", "fake-provider-token"),
+        ("BATTER_PROVIDER_CAPACITY", "32"),
         ("JOBS_WORKER_ID", "worker"),
     ];
     for pair in serving_only {
@@ -280,6 +341,8 @@ fn serving_values(endpoint: &str) -> SettingsSource {
             "00000000-0000-0000-0000-000000000001",
         ),
         ("BATTER_AUTH_TOKEN", "fake-configured-token"),
+        ("BATTER_PROVIDER_BASE_URL", "http://127.0.0.1:9/"),
+        ("BATTER_PROVIDER_TOKEN", "fake-provider-token"),
     ])
 }
 
@@ -367,6 +430,8 @@ fn source_order_and_unknown_key_policy_are_explicit() {
                 "00000000-0000-0000-0000-000000000001",
             ),
             ("BATTER_AUTH_TOKEN", "environment-token"),
+            ("BATTER_PROVIDER_BASE_URL", "http://127.0.0.1:9/"),
+            ("BATTER_PROVIDER_TOKEN", "environment-provider-token"),
         ]),
         source(&[("BATTER_POOL_MAX_CONNECTIONS", "5")]),
     )

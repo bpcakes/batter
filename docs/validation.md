@@ -1,6 +1,650 @@
 # Validation evidence
 
-Latest evidence: 2026-09-16. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-17. Earlier sections retain their historical scope.
+
+## Executable announcement failure propagation, 2026-09-17
+
+Owning Bead `batter-x36`; Jig plan `plan_01M2RJ8E7YAXJ2DFZMRG2VP379`.
+The comprehensive review identified a composition-level test gap, not a runtime
+defect. The production-root live case now includes a typed assertion child that
+requires protected startup failure at `http.bind`, the underlying missing Unix
+receiver I/O cause and successful pool cleanup. A separate actual-executable
+child must exit1 naturally with exact sanitized diagnostics. Existing receiver,
+readiness, provider-work and clean-shutdown phases supply the positive control.
+Two eight-second child reap budgets are added to the scenario-owned observation
+allowance (now 182.4s); no existing phase limit or assertion was relaxed. The
+66-case inventory and production sources remain unchanged.
+
+Initial compilation caught a test-module visibility and OsString conversion
+mistake; both were corrected. The focused production-root case passed in11.07s
+on Rust1.98.1 with PostgreSQL18.6. Strict package Clippy passed. Two independent
+scoped reviews found no actionable issue; one inspected source only, the other
+also ran the ordinary child_fixture control (1 passed,65 filtered). Neither
+reviewer independently ran live PostgreSQL or Linux validation.
+
+Rust1.98.1 `scripts/verify.sh` passed the full workspace matrices, Clippy and
+rustdoc; its explicit reference runner passed all66 cases in86.04s and the
+separate maintenance/state probes. The five rebuilt HTTP smoke profiles passed
+on each toolchain. Rust1.94.0 workspace verification also passed; its full live
+runner passed all66 cases in87.79s plus maintenance/state probes. Both live runs
+were executed after workspace verification, without concurrent compilation.
+No failing live run or relaxed assertion occurred in this task. Both endpoints
+showed zero task-role-owned databases and sessions; the temporary roles were
+removed and both task-owned servers stopped, retaining the data directories.
+No application data was deleted. Final Jig `work check` passed all five targets;
+`work evidence` and `work gates` reported all fresh, including `api:test` receipt
+`receipt_01M2RK0NNJRE2VWB6W5657YWBB`. Metadata-only closure refresh reuses
+unchanged test inputs and the same Rust1.98.1 environment. Reviewed test-source
+hashes remained unchanged through validation. No source files were staged or
+committed.
+Logs: `/tmp/batter-announcement-proof.DNODSC`.
+
+## Retained identity and reconciliation timing proofs, 2026-09-17
+
+Owning Bead `batter-zfe`; Jig plan `plan_01M2RG4N57PHC1A384SFE541W4`.
+Two low-severity review findings were missing negative and cross-state test
+coverage, not reproduced runtime defects. Added independent persisted payload/key
+corruption checks at worker load and both owner-scoped reads, with zero provider
+requests. Added future-delay reconciliation for accepted and absent GET results,
+requiring no POST; absence also preserves the complete effect row and the native
+retry lower bound. The ordinary planner case passed on Rust1.98.1, as did strict
+package Clippy. Production code, migrations and API remain unchanged.
+
+Executed on macOS arm64 against disposable PostgreSQL18.6:
+
+| Check | Result |
+| --- | --- |
+| Focused `provider_effect_outcome_contracts`, Rust1.98.1 | PASS, 36.57s |
+| `bash scripts/verify.sh`, Rust1.98.1 and Rust1.94.0 | PASS both complete matrices, including 45 ordinary reference library cases, strict Clippy and rustdoc |
+| Rebuilt `http_service`, five smoke profiles per toolchain | PASS all ten runs |
+| Full explicit reference live runner, Rust1.98.1 | PASS all66 cases in92.89s plus separate maintenance and state probes |
+| Full explicit reference live runner, Rust1.94.0 unchanged rerun | PASS all66 cases in95.94s plus separate maintenance and state probes |
+| Two independent scoped native reviews | No actionable findings; both inspected source, one also ran the planner test and compiled the live target. Neither independently ran PostgreSQL cases. |
+
+The first Rust1.94.0 live run passed65 cases, including the expanded provider
+outcome case, but failed `configured_pool_capacity_and_acquire_timeout` with a
+redacted body failure and one retained pool failure. The retained pool failure
+locates it in fixture pool setup, before the capacity assertions. This existing
+probe selects a100ms pool acquisition timeout. The isolated unchanged rerun passed in0.33s;
+the report does not establish the precise original cause. Concurrent verification
+was running during the first suite, but resource contention is only a hypothesis.
+The full unchanged live rerun passed; no limits/assertions were relaxed.
+Both endpoints then reported zero task-role-owned databases and sessions. Removed
+the temporary roles and stopped both task-owned servers, retaining their data
+directories. No application data was removed. Final Jig `work check` passed all
+five targets, including `api:test` receipt
+`receipt_01M2RH08AHXX96MJEETRFYQT3M`; evidence/gates inspection reported every
+target fresh and passed. Metadata-only closure refresh reuses unchanged Rust
+inputs and the same Rust1.98.1 environment. Logs: `/tmp/batter-provider-proof.L0VWIo`.
+
+## Listener discovery and serialized confirmation, 2026-09-17
+
+Owning Bead `batter-ws3`; Jig plan `plan_01M2RCJ7MSZCV9ARBD9CSVVV2V`.
+The latest comprehensive review did not reproduce the terminal-source defect.
+It identified synchronous stdout inside protected startup and two diagnostic
+coverage gaps. Native reqwest timeout coverage now exercises both header wait
+and body streaming, asserts native timeout identity, the stable diagnostic and
+permit release. Its focused Rust1.98.1 test passed; strict package Clippy passed.
+The live admission test additionally asserts the persisted interruption code;
+`provider_effect_outcome_contracts` passed against PostgreSQL18.6 in 34.06s
+(one passed,65 filtered; this was a targeted run, not the full inventory).
+The approved runtime changes now replace stdout discovery with an optional Unix
+datagram and serialize confirmation with record replacement. Focused SQL tests
+passed replacement-first/manual resolution, confirmation-first/committed success,
+and lease expiry while waiting for the record; a NOWAIT check proves that wait
+does not hold the heartbeat's job row. Configuration passed all25 cases and strict
+package Clippy passed. Both announcement tests passed after the negative control
+was corrected to recognize macOS ENOBUFS as immediate saturation failure. The
+process oracle initially used an unavailable /bin/true path; it now uses /bin/sh.
+
+Two focused PostgreSQL18.6 experiments resolved mechanics, not application
+policy: a blocked confirmation retained its statement snapshot across a record
+generation replacement, and forced generic lookup plans used both existing
+indexes while skipping index searches for the NULL branch. The latter used
+100,000 synthetic rows and omitted the full application's joins. Pinned native
+heartbeat source confirms shared-row contention and a one-third-TTL maintenance
+budget; no production-load benchmark was executed. See [references](references.md).
+
+The user explicitly approved both application contracts. No framework API or
+backfill was added. Logs: `/tmp/batter-listener-review.Jb1ixP`.
+The disposable mechanism-probe database and temporary roles were removed after
+zero-session checks. Both task-owned servers were stopped; cluster directories
+were retained. No application data was removed, staged or committed.
+The same task-owned clusters and a recreated temporary role were used for final
+validation. Both endpoints again showed zero role-owned databases and sessions;
+the temporary roles were dropped and both servers stopped. Data directories
+remain retained. No application data was deleted.
+
+Final executed evidence on macOS arm64:
+
+| Check | Result |
+| --- | --- |
+| `bash scripts/verify.sh` (Rust1.98.1) | PASS complete workspace/core/minimal matrices, 44 ordinary reference library cases, 25 configuration cases, hostile-environment controls, doctests, strict Clippy and rustdoc |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS same complete matrix |
+| Explicit `bash scripts/test_reference_live.sh`, both toolchains | PASS all66 required cases, 85.22s / 87.86s, plus the separate maintenance replacement and extended provider-state probes (state probes6.28s /6.31s). Expected deferred-cleanup negative-control diagnostics remained in the captured evidence; final fixture cleanup passed. |
+| Rebuilt `http_service` and five `smoke_http.py` profiles per toolchain | PASS ten runs: TERM, INT, deadline, WARN filtering, WARN+deadline |
+| Two independent native scoped follow-up reviews | Both found the same stale README stdout paragraph and no code defect. Both read-only checked its correction. No fresh-agent usability experiment or full-worktree re-review is claimed. |
+
+Review source was frozen at fingerprint `cd1b3c6c2bb6230846f9cb0100cdc1c8d2eded94e06f5b84a42b9ee33a3e1eca`;
+the README-only correction captured `afa8b077a4d22b0af55ae2f1a4ee57acfe3ad8670d97b3a3c6dbf5263c26b572`.
+Validation/tracker evidence was updated afterward, without runtime/test changes.
+The Rust input scopes already include all new nested source/test files; no Jig
+contract expansion was required. The first final Jig batch failed in the existing
+`scripts/test_smoke_postgres.py` prerequisite (exit1); the saved preview omitted
+its failing assertion. An isolated rerun passed all13 controls in3.848s. With no
+source/test changes, `scripts/jig check test --plan-id
+plan_01M2RCJ7MSZCV9ARBD9CSVVV2V` then passed the complete required test target in
+60.8s, receipt `receipt_01M2REYASH3V2ZS0N593XSMYXW`. The earlier failure remains
+recorded as `receipt_01M2RESZ61690NJEQR9S61NCRR`; its precise cause was not
+reproduced or established. No tests, limits or semantic assertions were relaxed.
+Formatting, Clippy, contract and file-budget siblings also passed; final
+metadata-only gate refresh reuses the unchanged Rust1.98.1 check inputs.
+
+## Terminal-write and readiness-budget ownership, 2026-09-17
+
+Owning Bead: `batter-8ou`; Jig plan `plan_01M2R988JYWB18MV86BMZ7X66A`.
+The ADR-010 assessment found a remaining private API authorization gap, not an
+observed corruption: business denial checked source legality locally while manual
+resolution trusted its current callers. SQL source equality alone did not forbid
+terminal overwrites. Both now construct the same private unresolved-source value;
+the shared terminal writer cannot accept a terminal source. Neighboring dispatch,
+confirmation, failed-attempt and invariant writes already constrain their sources.
+No public Batter framework change, backfill or mixed-version contract is needed.
+
+The readiness fixture's 30-second default was shorter than its permitted serial
+phases. Its zero-argument entrypoint now owns fixture selection and derives a
+166.4-second observation budget from actual phase and child-process limits plus
+explicit headroom. This does not bound arbitrary SQL I/O or turn timeout into
+cleanup proof. No timing flake was reproduced; the mismatch was established by
+inspection. Open questions and pinned upstream semantics are recorded in
+[references](references.md).
+
+Executed on macOS arm64: the new two-writer/seven-state offline regression
+failed before the fix (`record_manual(Confirmed)` reached storage) and passed
+afterward. The ordinary `child_fixture` process controls and strict package Clippy
+passed. An initial mistyped filter selected zero tests; it was not counted as
+coverage and the exact `child_fixture` case was then run successfully.
+Both `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`
+passed again on final source, including full matrices, 41 ordinary reference
+library tests, strict Clippy and warning-denied rustdoc. All ten rebuilt HTTP
+smoke profiles passed. Final full live runs against disposable PostgreSQL 18.6
+passed on Rust 1.98.1 and 1.94.0: exact 66-case inventories in 96.35s and 107.68s,
+maintenance probes in 2.20s and 2.21s, and state probes including stale-source
+preservation in 4.28s and 5.19s. Logs are task-local under
+`/tmp/batter-terminal-review.IZm879`.
+
+Two independent native reviews found no production defect in the repair. One
+identified a prevention-coverage gap: the offline test cannot exercise the SQL
+source predicate. The existing live state probe now calls both writers with a
+stale unresolved argument against all four terminal states and another unresolved
+state, requiring invariant failures and complete row equality. Both reviewers
+inspected the addition and reported no remaining actionable findings in scope.
+
+Jig validation `receipt_01M2RA55CX2PBZNCH6FNWWK9WB` passed all five targets,
+including final API-test receipt `receipt_01M2RA54J4PF7PZ39J4YAQSFAD`.
+Evidence and gates were fresh with no unresolved target. Closure changes only
+documentation/tracker evidence; the final policy refresh reuses unchanged Rust
+passes. Toolchains, commands, offline-test environment and prerequisites remain
+unchanged. Both live endpoints had zero task-role databases/sessions before
+removing the temporary roles and stopping the two task-owned servers; their data
+directories were retained.
+
+The recurring cause was rules split across sibling writers and caller knowledge;
+this repair moves that rule into the shared boundary. Reviewer capacity-ratio
+speculation and staging warnings were not treated as additional runtime defects.
+Fresh-agent implementation/modification evaluation remains unexecuted. This is
+normal Jig validation under the user's workflow override, not a controller
+convergence claim. Existing index contents are preserved; no commit is authorized.
+
+## Post-lock lease authority and durable provider eligibility, 2026-09-17
+
+Owning Bead: `batter-gg8`; Jig plan:
+`plan_01M2R4RQK6WDR3DKNVXZA963JS`.
+The recurring-defect assessment separated a private-boundary implementation
+error from an application protocol persistence gap. A filtered locking SELECT
+does not validate expiry after a lock-only wait. The private transaction now
+locks first, checks exact lease identity/expiry in a fresh statement, and checks
+again before commit after later effect-row waits. Provider outcome persistence
+now takes the observed delay, atomically retains absolute eligibility, and owns
+the returned native scheduling result. Both dispatch-marker paths enforce that
+eligibility under the effect-row lock; returned storage failures retain timing.
+
+Primary-source answers are recorded in [references](references.md): native zero
+delay preserves policy backoff; the final-state reserve is handler headroom,
+not an independently enforced SQL timeout; underlying native I/O timeouts can
+reach reqwest's timeout classifier. No new queue, library provider abstraction,
+reference backfill or mixed-version deployment contract was introduced.
+
+Executed locally on macOS arm64 with disposable PostgreSQL 18.6:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| Focused package tests, strict Clippy, and Python live-runner controls | PASS. New coverage includes retained-state deferral, storage-error timing, lock-only job/effect expiry, both legal dispatch paths, and a real-worker crash between application commit and native completion. All ten runner controls passed. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS after the test-helper split and again with the final offline projection table: full matrices, runner controls, doctests, strict Clippy and warning-denied rustdoc. |
+| Full reference live runner with explicit admin/observer endpoints on Rust 1.98.1 and 1.94.0 | PASS: exact 66-case inventories, zero failed/ignored/filtered, in 88.86s and 88.31s. Maintenance probes passed in 2.22s each; separate state probes passed in 4.30s and 4.29s. |
+| Rebuild `http_service` on each toolchain; default, SIGINT, deadline, WARN-filter, WARN-filter/deadline | PASS, all ten profiles. |
+
+The initial state-probe harness name exceeded its 16-character bound and was
+shortened. Rust 1.94's strict Clippy also required splitting the new test's
+persistence and dispatch assertions; no lint allowance or assertion weakening
+was used. The refined default-version state probe passed again in 4.36s.
+Jig validation `receipt_01M2R6G17PW3TME1SC9P57A61S` includes passing API-test
+receipt `receipt_01M2R6G0GR9CMAPPHJD6RSVTJ6`; evidence and gates were fresh with
+no unresolved target. After adding the offline projection table, final Jig
+validation `receipt_01M2R7DGQTBPQ76VH3W6SFBYH2` passed all five targets,
+including API-test receipt `receipt_01M2R7DG0VSWVJJ33CA5A2CRYH`.
+Evidence and gates were fresh with no unresolved target. Closure changes only
+documentation/tracker evidence and reuses these unchanged Rust passes.
+
+Independent Claude and Codex reviews completed against unchanged fingerprint
+`2a79856e663938643effc976dcea92642e7fe57e7c6468cc29d5e8382a4527b0`.
+Claude attested all 65 evidence pages; receipt validity measures access, not
+review quality. Both used working-tree scope with `.agent` excluded by the
+HEAD policy; Claude used restricted file access and its default profile.
+Codex identified stale integration prose coupling retry and retention policies;
+that sentence is corrected. Claude requested an offline terminal-projection
+oracle; a 70-combination table now covers every retained/native/budget pair,
+in addition to the existing authenticated live probes. Its focused default
+test and both complete matrices passed. A separate targeted native review of
+the policy prose, projection table and cleanup answer found no actionable
+findings; before/after fingerprint
+`575920ef18f08b785018de89194ad101f8d05eecfdf9cef989be1c1b0489dce9`
+matched completely with no capture issues. No runtime code changed in these
+final review follow-ups. The live/HTTP runs remain applicable to the unchanged
+runtime and live-probe sources; these were not rerun for the added offline test.
+
+Claude's untracked-file concern is retained as a packaging warning, not accepted
+as a working-tree defect or permission to stage: all four files were included
+in both the review and executed checks. A future commit must include them and
+the unstaged repairs. The current index is not the reviewed final source.
+The remaining review questions are resolved: the in-progress evidence was a
+deliberately frozen review snapshot; migration `202609110001` already supplies
+`UNIQUE (owner_id, id)` for the effect foreign key; target connection admission
+does not prevent admin-database cleanup (see [references](references.md)).
+
+The repair controller was initialized without endpoint forwarding; it applied
+no code edits. The user selected normal Jig work/validation/review instead, and
+the abandoned controller terminated `SCOPE_CHANGED`. This is not a controller
+convergence claim. A process death before response persistence can still lose
+the unrecorded observation; recovery consumes native attempts and durable timing
+uses PostgreSQL's wall clock. No fresh-agent implementation/modification
+evaluation, Linux execution, hosted CI, publication or commit is claimed.
+
+## Terminal delivery projection and provider exchange ownership, 2026-09-17
+
+The follow-up ADR-010 assessment found a boundary the prior handler fixes could
+not cover: native termination may occur without another legal application write.
+Both delivery reads and exact command replay now share one validated loader and
+one job/effect snapshot. Unresolved dead-lettered work with a spent budget
+projects exhaustion; other unresolved native termination projects manual
+resolution. Retained provider identity and acceptance uncertainty are unchanged.
+Missing effect rows produce invariant errors consistently on both routes.
+
+Provider methods consume their permits and finish dropping them before returning
+to post-response SQL. Send/body errors are distinct; only send-phase connector
+errors can prove known non-dispatch. Fixed diagnostic codes distinguish request,
+body, oversized response, timeout, deadline and cancellation. The provider's
+accepted retry delay remains a lower bound: the deliberately retained 24-hour
+maximum is now separate from the 24-hour retention constant. Clamping an accepted
+delay downward was rejected because it violates the existing retry contract.
+Cleartext provider endpoints now require literal loopback addresses, and effect
+generation comes from the canonical request. A direct test proves invalid-header
+construction failure; canonical validated worker inputs exclude that particular
+failure, so it is not evidence of a reachable production-worker branch.
+
+The live command case checks native terminal states with and without possible
+acceptance through both authenticated routes and verifies reads do not mutate
+retained state. The lease-loss case now revokes the final attempt and proves the
+public exhausted projection while the fenced durable row remains uncertain.
+Production readiness is checked beyond its three-second freshness window, then
+across database unavailability and recovery for both signal profiles.
+
+Initial verification exposed test-only corrections: the foreign owner already
+had the same command key; PostgreSQL cannot disable connections from within the
+target database; dynamic identifier SQL requires SQLx 0.9's audited boundary;
+and focused helpers were split to meet the existing lint limits. The corrected
+command and readiness live cases passed individually.
+
+Executed locally on macOS arm64 with PostgreSQL 18.6:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| Package tests and strict package Clippy | PASS; 37 library tests passed and the separate maintenance test remained explicitly ignored until the live runner invoked it. New regressions cover truncated body uncertainty, permit release, static diagnostics, invalid-header construction and retry lower bounds. |
+| `bash scripts/verify.sh` and `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on final source: both complete matrices, configuration child checks, runner controls, doctests, Clippy and warning-denied rustdoc. |
+| Rebuild `http_service` on each toolchain; run default, SIGINT, deadline, WARN-filter and WARN-filter/deadline smoke modes | PASS, all ten profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on both toolchains against distinct disposable PostgreSQL 18.6 clusters. Exact inventories: 66 passed, zero failed/ignored/filtered, in 84.05s and 87.61s; separate maintenance probes passed in 2.20s and 2.21s. |
+
+Jig plan `plan_01M2R23C1DMN9WZ9GKHE2KXR1H` owns the final receipt check.
+Its first batch returned successful command exit codes but was invalidated by
+a concurrent validation-document update (`execution_mutated`). The subsequent
+batch passed all five targets with the worktree frozen; invalidated receipts
+were not reused. Validation receipt `receipt_01M2R35VHV0FY7YHD3HAJ4JE9R` includes
+API-test receipt `receipt_01M2R35TT03WDCS0NZN267W2H4`. Evidence and gates reported
+fresh inputs with no unresolved gate. A final documentation/tracker refresh
+reuses the unchanged Rust passes and refreshes repository policy checks.
+
+No backfill, schema change, upstream API change, hosted CI execution, external
+provider validation, publication or commit is claimed. A fresh-agent usability
+evaluation has not been executed; passing tests alone does not establish it.
+
+## Provider-effect API and live lease-fence correction, 2026-09-17
+
+The latest comprehensive review exposed a repeated design defect rather than
+another isolated omitted predicate. The reference worker still required callers
+to reconstruct four coupled obligations: exact live-lease fencing in every SQL
+statement, retained-state ordering, provider-admission ordering and accepted
+response identity. Earlier repairs corrected individual paths but left those
+obligations procedural, so another call site could omit or reorder them.
+
+The ADR-010 assessment rechecked Runledger 0.12.0 at exact revision
+`d57ec6be61e9f00ccce373b19ca356cafe98f206`, PostgreSQL 18 row locking, and
+reqwest 0.12.28 connector classification. Runledger locks the exact `job_queue`
+row and requires `lease_expires_at > clock_timestamp()` for live lifecycle
+mutations; heartbeat and reaping serialize on that row. Application writes after
+expiry are therefore not intended. `EXHAUSTED` is intentionally distinct from
+`MANUAL_RESOLUTION`: exhaustion records a spent native attempt budget and can
+retain possible acceptance, while manual resolution records that automatic work
+is unsafe because truth expired, conflicted or became stale.
+
+The private state module now owns an opaque live-effect transaction. Every load
+or mutation locks and revalidates the exact job/run/attempt/worker lease before
+accessing effect state, and every mutation commits before provider I/O.
+Confirmation moved behind the same boundary; no effect-mutating SQL remains in
+the orchestrator. An exhaustive pure planner selects terminal completion,
+manual expiry, generation denial, reconciliation or dispatch before provider
+admission. POST and GET share one canonical accepted-request validator. Only a
+reqwest connector error becomes known not dispatched; timeouts and all
+post-connect/body failures remain uncertain.
+
+The live outcome case adds a concurrency proof: after the fixture accepts the
+POST, the test locks the authoritative job row, releases the provider response,
+observes confirmation blocked at the live-effect fence, revokes the lease, and
+then releases the row. The stale handler leaves `RECONCILE_NEEDED`, possible
+acceptance and the absent provider identity untouched. This is a current-version
+reference cutover only; no migration, backfill or rolling compatibility path was
+added.
+
+Executed locally on macOS 26.6.2 arm64 with PostgreSQL 18.6, rustc 1.98.1 and
+rustc 1.94.0:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --all-targets --all-features --locked` and strict package Clippy | PASS. The library has 33 passing tests and one explicit live ignore; planner, canonical acceptance, connector classification and public provider JSON regressions pass. All ordinary package targets pass. |
+| Focused `provider_effect_outcome_contracts` | PASS on Rust 1.98.1 in 32.91 seconds, including the blocked confirmation and revoked lease. |
+| `bash scripts/verify.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: both complete workspace matrices, runner controls, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuilt HTTP example plus the five documented smoke profiles on each toolchain | PASS: all ten process profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS against two distinct disposable PostgreSQL 18.6 clusters. Each invocation passed the exact 66-entry inventory with zero failed/ignored/measured/filtered cases, then passed the separate maintenance-session replacement probe. The inventories completed in 122.56 and 99.81 seconds, respectively. |
+| `scripts/jig work check --plan-id plan_01M2QZ5HJQH2FB56NT2GTD0WRG` | PASS: all five required targets executed. Validation `receipt_01M2R0NB2MBRFAZB4PT5S1Y25Y`; Clippy `receipt_01M2R0NA8TF0KJQNSATMYCD8G8`; formatting `receipt_01M2R0NAAZ4ENFPQ5J3WVCWZJ0`; API tests `receipt_01M2R0NACM1Q2R0TZAG9AZD8J2`; contract `receipt_01M2R0NADZ7J5DBKBW6JXWQJ2W`; file budget `receipt_01M2R0NAF9RRK71RJCY92J2A8F`. The provider tests were split into their conventional child module; no waiver was added. |
+
+No hosted CI, external provider, publication, deployment, commit or push is
+claimed.
+
+## Local provider-retention boundary proof, 2026-09-17
+
+A complete Codex working-tree review found no substantive defect but identified
+one supporting evidence gap: the worker already checked an expired local
+`resolve_before` before provider reconciliation, while the live expiry scenario
+started inside that window and proved only a provider-returned expiry. Removing
+or reversing the local guard could therefore authorize lookup and replay after
+the application safety window without failing the suite.
+
+The outcome probe now installs `RECONCILE_NEEDED` with unresolved acceptance and
+an already-expired local deadline while configuring the fixture to return
+authoritative absence. The real production worker must dead-letter the attempt
+as manual resolution with retained `provider_retention_expired`, preserve
+acceptance uncertainty, and issue neither a reconciliation GET nor a dispatch
+POST. This is evidence hardening only; production source, schema, protocol and
+public APIs are unchanged.
+
+Executed locally on macOS 26.6.2 arm64 with PostgreSQL 18.6, rustc 1.98.1 and
+rustc 1.94.0:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| Focused `provider_effect_outcome_contracts` | The first run exposed a test-wiring decode error because `outcome_code` is nullable before transition. The supporting correction modeled it as `Option<String>`; the rerun passed in 30.95 seconds and proved zero provider requests across the expired local boundary. |
+| `bash scripts/verify.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: both complete workspace matrices, runner controls, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuilt HTTP example plus the five documented smoke profiles on each toolchain | PASS: all ten process profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS against two distinct disposable PostgreSQL 18.6 clusters. Each invocation passed the exact 66-entry inventory with zero failed/ignored/measured/filtered cases, then passed the separate maintenance-session replacement probe. The inventories completed in 73.94 and 75.32 seconds, respectively. |
+| `scripts/jig check --profile verify --no-receipt` | PASS: API tests, formatting, strict Clippy, repository contract and file budget all executed successfully. Receipt emission was deliberately disabled because the review's trusted `.reviewignore` excludes `.agent`, and closure validation may not write excluded paths. |
+
+The bounded review-fix closure is recorded on Beads `batter-8q8.5`. No
+production behavior, backfill, compatibility layer, hosted CI, external
+provider, publication, deployment, commit or push is claimed.
+
+## Replay-window and live-listener ownership correction, 2026-09-17
+
+The recurring example findings were assessed under ADR-010 before repair. They
+had two independent, reference-local causes rather than a Batter, adapter or
+Runledger architecture gap. First, authoritative provider absence was collapsed
+into the same `None` result as "nothing to reconcile". Durable state correctly
+remained `RECONCILE_NEEDED`, but dispatch then inferred its origin from that
+state and skipped the timestamp transition used by initial dispatch. A genuinely
+new POST could therefore inherit the prior uncertain attempt's nearly expired
+resolution deadline. Second, the process harness selected an ephemeral port,
+dropped the listener, and later passed only the address to the production child.
+That address was never a reservation; the gap between selection and bind was an
+ordinary ownership race.
+
+The worker now carries authoritative absence as an explicit replay
+authorization. Only that result can select a lease-, attempt-, worker-,
+generation- and source-state-fenced transition that renews
+`dispatch_possible_at` and `resolve_before` immediately before the fresh POST.
+The old deadline remains authoritative until absence is actually observed. The
+live process harness now configures `127.0.0.1:0`; the production child owns the
+bind, reports the selected loopback address after successful binding, and the
+parent validates and consumes that exact address. Settlement still permits only
+the one bounded address line, requires empty stderr, and retains panic, status
+and secret-output checks. No retry loop or pre-bind timing window remains.
+
+The reference package is unpublished and promises current-version runnability,
+not rolling compatibility. This repair changes no schema, persisted format,
+provider protocol, dependency graph or public Batter/adapter/Runledger API; no
+backfill or mixed-version path was added.
+
+Executed locally on macOS 26.6.2 arm64 with PostgreSQL 18.6, rustc 1.98.1 and
+rustc 1.94.0:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` and strict all-target package Clippy | PASS. The package includes 29 passing library tests plus one explicit live ignore, all ordinary integration/control tests, and all positive/compile-fail doctests. |
+| Focused `provider_effect_outcome_contracts` and `production_root_registers_provider_worker` | PASS on Rust 1.98.1 against the disposable PostgreSQL pair. The near-expiry scenario proves a fresh greater-than-23-hour deadline after authoritative absence and an indeterminate new POST; the production root consumes only the child's actual bound address. |
+| `bash scripts/verify.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: both complete workspace matrices, runner controls, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuilt HTTP example plus the five documented smoke profiles on each toolchain | PASS: all ten process profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS against two distinct disposable PostgreSQL 18.6 clusters. Each invocation passed the exact 66-entry inventory with zero failed/ignored/measured/filtered cases, then passed the separate maintenance-session replacement probe. The inventories completed in 73.36 and 76.12 seconds, respectively. |
+| `scripts/jig work check --plan-id plan_01M2QRX1S4E885GM81CKB50367` | PASS: all five required targets executed successfully. Target validation `receipt_01M2QTKEDSRQX2K155HHD31JEH`; API Clippy `receipt_01M2QTKDKG48WTTK9YPCR3ACQF`; formatting `receipt_01M2QTKDMZ05TM1FAHSG02FV7G`; API tests `receipt_01M2QTKDPFCTKY02P1082DAES7`; contract `receipt_01M2QTKDR1EC5C8NMR955PQ8BN`; file budget `receipt_01M2QTKDSJ3YG4HG9VE19QJRGK`. Evidence and gate inspection reported the required `verify` profile passed with no unresolved gates. |
+
+The assessment and repair are recorded on Beads `batter-8q8.5` and task-local
+Jig plan `plan_01M2QRX1S4E885GM81CKB50367`. No hosted CI, external provider,
+publication, deployment, commit or push is claimed.
+
+## Provider state and evidence review correction, 2026-09-17
+
+The repeated example review was assessed under ADR-010 before repair. It did not
+identify a Batter or adapter architecture gap. The effect-state findings belong
+to the application-owned provider protocol: two terminal paths omitted a retained
+terminal projection, exhaustion shared the manual-resolution diagnostic, and the
+same 24-hour protocol boundary was duplicated in Rust and SQL. The remaining
+timeout, documentation and fixture-client findings were local harness/evidence
+mistakes. The unpublished reference package still targets current-version
+runnability only; no migration backfill, mixed-version producer or rolling
+compatibility path was added.
+
+The open Runledger questions were resolved against the exact pinned
+`d57ec6be61e9f00ccce373b19ca356cafe98f206` sources. Claim SQL increments and
+returns `attempt` before handler execution, so `q.attempt >= q.max_attempts`
+correctly recognizes the current final attempt. Provider `Admission::Wait` stays
+inside the native heartbeated handler future. Lease loss drops that future and
+skips completion, while both success and failure completion SQL require the same
+unexpired job/run/attempt/worker lease. A wait can therefore span the original
+lease interval only while renewal succeeds; stale completion remains fenced.
+The local provider's lookup guarantee and the effect row's `resolve_before` are
+one correctness boundary, so SQL now binds the Rust protocol duration instead of
+carrying an independent `interval '24 hours'` literal.
+
+The worker now projects supported retained-data invariant and pre-dispatch
+request-construction failures to `MANUAL_RESOLUTION` under the live lease before
+returning a terminal failure. Retained `EXHAUSTED` redelivery reports
+`delivery.attempts_exhausted`. The composite outcome fixture has a 180-second
+outer watchdog consistent with its sequential internal bounds; the crash/restart
+case retains its independent 75-second watchdog. The fixture identity client now
+disables redirects and ambient proxies like the production provider client.
+Focused offline checks cover exact retained-absence classification, both declared
+and streamed oversized bodies, every admission-error mapping, effect-state/schema
+vocabulary agreement, and exhausted acceptance/deadline/error-code retention.
+
+Executed locally on macOS 26.6.2 arm64 with PostgreSQL 18.6, rustc 1.98.1 and
+rustc 1.94.0:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` and strict all-target package Clippy | PASS. The package includes 29 passing library tests plus one explicit live ignore, all ordinary integration/control tests, and all positive/compile-fail doctests. |
+| `bash scripts/verify.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: both complete workspace matrices, runner controls, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuilt HTTP example plus the five documented smoke profiles on each toolchain | PASS: all ten process profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS against the two stopped/restarted disposable clusters: exact 66-entry inventory, 66 passed with zero failed/ignored/measured/filtered, followed by the separate maintenance-session replacement probe. The outcome contract passed in 73.88 seconds and 75.11 seconds, respectively. |
+| Final `scripts/jig check test`, `fmt`, `clippy`, `contract` and `repo:file-budget` | PASS. Receipts: test `receipt_01M2QQQ06HTTKQ50PAFTFP5NW3`, formatting `receipt_01M2QQQ5Q1P6NAPPMN1NXTMY58`, Clippy `receipt_01M2QQQDEBRG5Y8TXVGSWA4QHE`, contract `receipt_01M2QQQE2G1G27S43Z878VGMKQ`, file budget `receipt_01M2QQQF29AEZJDSAJ0X3TKWK8`. The provider outcome support file remains exactly at the 800-line policy boundary; worker persistence is split into a focused child module without a waiver. |
+
+The assessment and repair are recorded on Beads `batter-8q8.5`. The two
+disposable clusters were stopped after execution and remain in the host Trash.
+No public Batter API, dependency graph, database schema, persisted-format change,
+publication, deployment, commit or push is claimed.
+
+## Provider live-probe review follow-up, 2026-09-17
+
+The remaining comprehensive-review findings were local harness and evidence
+defects, not another application architecture failure. The reference package is
+an unpublished current-version example, so no migration, backfill, legacy
+producer or rolling-version compatibility path was added.
+
+The crash/restart case now has an explicit 75-second fixture allowance matching
+its sequential bounded phases. Every provider child started by the affected
+admission and replacement probes is explicitly stopped or crashed on assertion
+and query failures, with body and shutdown failures retained together rather
+than relying on `Drop`. A single private-value helper supplies the database
+endpoint, provider origin, application bearer token and provider bearer token
+to every provider-child output oracle. Its offline regression proves that both
+credentials are rejected without being repeated in diagnostics. The package
+README and compatibility manifest now agree with the already executed
+state-first live evidence.
+
+Executed locally on macOS 26.6.2 arm64 with PostgreSQL 18.6, rustc 1.98.1 and
+rustc 1.94.0:
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` and strict package Clippy | PASS on the final source, including the offline child credential-output failure oracle. |
+| `bash scripts/verify.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: both complete workspace matrices, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| Rebuilt HTTP example plus the five documented smoke profiles on each toolchain | PASS: all ten process profiles. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on the final source against two distinct disposable clusters: exact 66-entry inventory, zero failed/ignored/measured/filtered, followed by the separate maintenance-session replacement probe. |
+| `scripts/jig check contract` and `scripts/jig check repo:file-budget` | PASS. The first file-budget run found the new provider probe at 806 lines; moving the duplicated loopback-address reservation into shared test support reduced it below the 800-line limit without a waiver. |
+
+The follow-up is recorded on Beads `batter-8q8.5`. It changes only reference
+test support and evidence text. No public API, production behavior, dependency
+graph, schema, persisted representation, compatibility promise, publication,
+deployment, commit or push is claimed. The disposable clusters were stopped and
+moved to the host Trash after verification.
+
+## State-first provider-effect correction, 2026-09-17
+
+A comprehensive review found five coupled symptoms in the reference delivery
+worker: generation policy ran before uncertainty reconciliation; provider
+admission preceded durable-state classification; failed-attempt SQL could
+overwrite any source state under the same lease; the provider operation ended at
+response headers rather than the bounded response body; and request-style
+admission rejection reused the HTTP bulkhead for durable worker jobs. The common
+cause was an attempt-centric orchestration model: retained provider state was
+treated as data inside a fresh handler pipeline instead of the authority that
+selects the next legal action. This is an application/provider-protocol design
+defect, not a missing Batter or Runledger primitive.
+
+The worker now loads state first. Confirmed and business-denied redeliveries
+complete without provider admission; manual and exhausted states remain
+terminal; fresh or known-undispatched work may apply generation policy; and
+uncertain work reconciles before generation denial or replay. Mutations constrain
+their legal source state in SQL. Provider calls use an independently configured
+`BATTER_PROVIDER_CAPACITY`, wait within the already bounded Runledger handler
+population and operation budget, and preserve uncertainty if that wait is
+interrupted. Request execution and bounded body collection now share the same
+`OperationContext`.
+
+The existing provider live cases were expanded to cover a target-generation
+replacement between attempts, fresh contention without immediate attempt loss,
+terminal redelivery without provider admission, and uncertain admission timeout
+without loss of the reconciliation window. Those database-backed assertions
+passed against two distinct disposable PostgreSQL 18.6 clusters on both
+supported Rust toolchains.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` | PASS on Rust 1.98.1: 25 library tests passed with one explicitly ignored live session test; the binary, 24 configuration, three fixture-diagnostic, five offline process-control and four retirement-example tests passed; all 24 positive/compile-fail doctests passed. The 61 PostgreSQL cases remained explicitly ignored. |
+| `python3 scripts/test_reference_live.py -v` | PASS: all nine exact-inventory, ordering and mutation controls passed for the 66-entry runner. |
+| Provider response-body stall regression | PASS inside the ordinary library matrix: a real loopback server flushed headers and an incomplete body, and the provider returned the typed deadline interruption rather than allowing body streaming to escape the operation. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `python3 scripts/reference_live.py` with no live endpoint variables | Expected prerequisite FAIL before fixture creation: `POSTGRES_TEST_ADMIN_URL: explicit Unicode endpoint required`; no fixtures started. This established fail-closed behavior before disposable endpoints were later supplied. |
+| First disposable-cluster runs | A mistakenly selected PostgreSQL 14 binary was detected by an explicit server-version query before the suite and replaced. The first PostgreSQL 18.6 run used trust host authentication and failed the suite's required SCRAM challenge, so it supplied no behavioral evidence. With SCRAM configured, 65 of 66 entries passed and the repeated crash case exposed a test-provider barrier race: a cancelled HTTP handler could leave a semaphore permit for the next request. |
+| Focused `provider_effect_crash_and_restart` after fixture repair | PASS. The provider fixture now uses a monotonically increasing release generation plus notification; a release can wake already-waiting requests but cannot leak capacity into a later crash scenario. No timing sleep was added. |
+| `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh`, repeated with `RUSTUP_TOOLCHAIN=1.94.0` | PASS on each toolchain against two distinct disposable PostgreSQL 18.6 clusters: exact 66-entry inventory, 66 passed, zero failed/ignored/measured/filtered, followed by the separate maintenance-session replacement probe. The expanded provider cases proved cross-attempt generation replacement after accepted uncertainty, fresh bounded waiting, terminal redelivery without admission and uncertain admission interruption with its reconciliation window retained. |
+| `scripts/jig check repo:file-budget --plan-id plan_01M2QFGTTZXDTS5Q1V9KW8D5G9` | The first run found the new worker at 808 lines, eight beyond policy. Moving its unit tests to the conventional child module reduced the production file to 781 lines; the targeted rerun passed. |
+| `scripts/jig work check --plan-id plan_01M2QFGTTZXDTS5Q1V9KW8D5G9` | PASS: all five required targets executed successfully. Target validation `receipt_01M2QHXC8M8J5A498Y8SBPGTCR`; API Clippy `receipt_01M2QHXBFW2YJVPCHTTKTVP86J`; formatting `receipt_01M2QHXBHE465W1GJXAEYT9WST`; API tests `receipt_01M2QHXBJW4NFACKPXB3ASRQCX`; contract `receipt_01M2QHXBMA0YB0EG3MK1GW018G`; file budget `receipt_01M2QHXBNMEV0FM6T56FYEX4BX`. |
+
+The review-triggered design assessment is recorded on Beads `batter-8q8.5` and
+the earlier completed provider task. The correction changes no public Batter API,
+database schema, persisted representation or dependency graph. No hosted CI,
+new Linux execution, publication, deployment, commit, push, staging, live
+environment retention or exactly-once provider guarantee is claimed. Both
+disposable clusters were stopped and removed after verification.
+
+## Baseline provider outcome certainty and restart reconciliation, 2026-09-16
+
+This historical baseline recorded the first provider-effect implementation. The
+reference service registered its delivery handler in the ordinary
+Runledger runtime and approves readiness after registration. One durable
+`reference_delivery_effects` row binds the stable delivery UUID, provider key,
+canonical request, target generation, outcome state and uncertainty window.
+The application-owned HTTP adapter builds the request before committing the
+dispatch-possible marker, disables redirects and automatic proxy discovery,
+bounds response bodies, and treats only exact structured protocol responses as
+definitive. Process-local admission happens before application effect mutation
+or provider I/O, while the locked native Runledger claim remains attempt-owning
+and has no refund operation.
+
+Two explicit PostgreSQL cases were added to the exact reference inventory. One
+uses the production binary and a real loopback provider barrier to accept an
+effect, retain an unacknowledged lease, deliver SIGKILL, restart normally, and
+require lookup reconciliation without a second accepted effect. The other
+exercises admission refusal, known undispatched retry, opaque-response bounded
+exhaustion, business denial, retention expiry and a generation replacement that
+races an accepted response. These cases compile in the ordinary matrix, but
+their database-backed assertions also executed through the exact live runner
+against two distinct disposable PostgreSQL 18.6 clusters.
+
+Executed locally on macOS 26.6.2 arm64 with rustc 1.98.1
+(`48a229cea`, 2026-09-01) and rustc 1.94.0
+(`4a4ef493e`, 2026-03-02):
+
+| Command / evidence | Executed outcome |
+| --- | --- |
+| `cargo test -p batter-example-reference-service --locked` | PASS on Rust 1.98.1: 24 library tests passed with one explicitly ignored database session test; the binary, 24 configuration, three fixture-diagnostic, five offline process-control and four retirement-example tests passed; all 24 positive/compile-fail doctests passed. The 61 database cases remained explicitly ignored. |
+| First `bash scripts/verify.sh` | FAIL in the reference-runner controls because their expected inventory still named 59 database/64 total cases and the superseded production-root case. No Rust test failed. The control contract was updated to require the two new provider cases and the renamed production-root case. |
+| `python3 scripts/test_reference_live.py -v` | PASS after the runner-control repair: all nine mutation and exact-inventory controls passed for 61 database and 66 total entries. An earlier `python3 -m unittest scripts/test_reference_live.py -v` invocation failed only because that invocation does not put `scripts/` on Python's import path; the repository's documented/direct invocation above passed. |
+| Final `bash scripts/verify.sh` | PASS on Rust 1.98.1: complete runner controls, core/workspace tests, hostile-environment checks, all targets, doctests, formatting, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete matrix on the minimum supported toolchain. |
+| Toolchain-specific `cargo build -p batter-axum --example http_service --locked`, followed by `scripts/smoke_http.py` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and combined warn/deadline modes | PASS: all ten rebuilt process profiles across both supported toolchains. |
+| `python3 scripts/reference_live.py` with no live endpoint variables | Expected prerequisite FAIL before fixture creation: `POSTGRES_TEST_ADMIN_URL: explicit Unicode endpoint required`; the runner then reported that native PostgreSQL preflight failed and no fixtures were started. `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` were both absent, so no live migration, SQL transition, SIGKILL/restart, or provider-outcome case is claimed. |
+| Initial `bash scripts/test_reference_live.sh` against two distinct disposable PostgreSQL 18.6 clusters | Preflight passed. The first execution passed 63 cases and exposed three new process tests whose oracle still expected the formerly failing production root to exit 1; the actual checked running shutdown correctly exited 0 with empty streams. After separating startup-failure and running-success process contracts, all provider cases passed. The next complete execution passed 65 cases and exposed an offline control that attempted to spawn macOS's absent `/bin/true`; changing the executable control to the Linux/macOS `/usr/bin/true` path fixed that test-only error. |
+| Final `POSTGRES_TEST_ADMIN_URL=... POSTGRES_TEST_OBSERVER_URL=... bash scripts/test_reference_live.sh` | PASS on PostgreSQL 18.6: native preflight proved distinct clusters and the required primary settings; all 66 inventory entries passed serially (61 database probes, two synthetic-acquisition controls, two executable-composition controls and one private child dispatch entry), including provider acceptance, SIGKILL, restart reconciliation, capacity denial, generation fencing and expiry/manual resolution. The separate maintenance-session replacement probe also passed. |
+| First `scripts/jig work check --plan-id plan_01M2NYAT65MZNZMTFHQCYDRWJ3`, targeted file-budget repair, and post-live work check | The first check passed API Clippy, formatting, tests and repository contract but failed file budget because `delivery.rs` and `startup_process.rs` grew past 800 lines. Transaction persistence and offline process-owner contracts were moved into their existing logical submodules without behavior changes; the files initially fell to 705 and 764 lines. The later split running/startup process contract leaves them at 705 and 781 lines. Both complete toolchain matrices were rerun successfully, and the post-live Jig check executed and passed all five required targets. Target validation `receipt_01M2P32VC5CHN7A8GFYXJQ3C2R`; file budget `receipt_01M2P32TRB2T46RFN36HE1FAX6`. |
+
+No hosted CI, new Linux execution, publication, deployment, commit, push,
+staging, or exactly-once provider guarantee is claimed. The PostgreSQL evidence
+is local macOS/Homebrew execution; the disposable clusters were stopped and
+removed after verification. `Cargo.lock` changed through Cargo for the new
+Rust-1.94-compatible `reqwest` transport graph.
 
 ## Reference metadata review follow-up, 2026-09-16
 

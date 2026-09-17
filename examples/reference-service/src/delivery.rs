@@ -8,7 +8,7 @@
 //! ```no_run
 //! use batter::operation::OperationContext;
 //! use batter_example_reference_service::delivery::{
-//!     DeliveryService, OwnerId, SubmitDelivery,
+//!     DeliveryService, OwnerId, ProviderEffectState, SubmitDelivery,
 //! };
 //! use serde_json::json;
 //! use std::time::Duration;
@@ -24,6 +24,11 @@
 //!     idempotency_key: "command-42".into(),
 //!     payload: json!({"channel": "example"}),
 //! }).await?;
+//! assert_eq!(
+//!     accepted.delivery.provider.state,
+//!     ProviderEffectState::AwaitingAttempt,
+//! );
+//! assert!(!accepted.delivery.provider.acceptance_possible);
 //! let reconciled = service
 //!     .get_by_key(&context, owner, "command-42")
 //!     .await?;
@@ -34,25 +39,26 @@
 //! ```
 
 mod service;
+mod worker;
+pub(crate) use worker::DeliveryWorker;
 
 use batter::operation::Interruption;
 use runledger_core::jobs::{JobDefinitionSettings, JobSpec, JobStage, JobStatus, JobType};
-use runledger_postgres::jobs::{
-    JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_tx,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{FromRow, PgConnection, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgConnection, PgPool};
 use uuid::Uuid;
 
-/// Durable Runledger type used by the reference delivery worker added later.
+use crate::provider::{EFFECT_PROTOCOL_VERSION, ProviderEffectRequest};
+
+/// Durable Runledger type consumed by the reference delivery worker.
 pub const DELIVERY_JOB_TYPE: &str = "records.delivery.execute";
 /// Maximum retained application idempotency-key size, in UTF-8 bytes.
 pub const IDEMPOTENCY_KEY_MAX_BYTES: usize = 128;
 /// Maximum meaningful JSON payload size before PostgreSQL acquisition.
 pub const PAYLOAD_MAX_BYTES: usize = 16 * 1024;
 
-/// Persisted delivery payload version consumed by future worker handlers.
+/// Persisted delivery payload version consumed by the delivery handler.
 pub const DELIVERY_PAYLOAD_VERSION: u8 = 1;
 const ENQUEUE_PRIORITY: i32 = 0;
 const ENQUEUE_MAX_ATTEMPTS: i32 = 3;
@@ -167,7 +173,7 @@ fn validate_idempotency_key(key: &str) -> Result<(), ValidationError> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryState {
-    /// Durable and eligible for a future worker, but not executing.
+    /// Durable and eligible for the worker, but not currently executing.
     Pending,
     /// Currently leased by a worker; completion is not yet known.
     InFlight,
@@ -210,6 +216,85 @@ pub struct Delivery {
     pub payload: Value,
     /// Current state projected from the authoritative Runledger job.
     pub state: DeliveryState,
+    /// Retained provider facts, with unresolved native termination projected.
+    pub provider: ProviderOutcome,
+}
+
+/// Application-owned provider-effect state, separate from native job status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderEffectState {
+    /// No provider mutation has become possible.
+    AwaitingAttempt,
+    /// A declared outcome proves the latest attempt did not dispatch.
+    RetryableUndispatched,
+    /// Bytes may have been sent and lookup must resolve the outcome.
+    ReconcileNeeded,
+    /// The selected protocol confirmed one retained provider effect.
+    Confirmed,
+    /// Authoritative application or provider policy denied the effect.
+    BusinessDenied,
+    /// Automatic action is unsafe; an operator must resolve the retained facts.
+    ManualResolution,
+    /// The native attempt budget ended before a successful resolution.
+    Exhausted,
+}
+
+impl ProviderEffectState {
+    // Read-time projection covers failures for which the handler cannot safely
+    // persist another transition (lost lease, unavailable DB, cancellation).
+    fn project(self, job: DeliveryState, attempts_spent: bool) -> Self {
+        match self {
+            Self::Confirmed | Self::BusinessDenied | Self::ManualResolution | Self::Exhausted => {
+                self
+            }
+            Self::AwaitingAttempt | Self::RetryableUndispatched | Self::ReconcileNeeded => {
+                match job {
+                    DeliveryState::Pending | DeliveryState::InFlight => self,
+                    DeliveryState::DeadLettered if attempts_spent => Self::Exhausted,
+                    DeliveryState::DeadLettered
+                    | DeliveryState::Cancelled
+                    | DeliveryState::Succeeded => Self::ManualResolution,
+                }
+            }
+        }
+    }
+
+    fn from_database(value: &str) -> Result<Self, StorageError> {
+        match value {
+            "AWAITING_ATTEMPT" => Ok(Self::AwaitingAttempt),
+            "RETRYABLE_UNDISPATCHED" => Ok(Self::RetryableUndispatched),
+            "RECONCILE_NEEDED" => Ok(Self::ReconcileNeeded),
+            "CONFIRMED" => Ok(Self::Confirmed),
+            "BUSINESS_DENIED" => Ok(Self::BusinessDenied),
+            "MANUAL_RESOLUTION" => Ok(Self::ManualResolution),
+            "EXHAUSTED" => Ok(Self::Exhausted),
+            _ => Err(StorageError::Invariant("unknown provider effect state")),
+        }
+    }
+
+    fn database_name(self) -> &'static str {
+        match self {
+            Self::AwaitingAttempt => "AWAITING_ATTEMPT",
+            Self::RetryableUndispatched => "RETRYABLE_UNDISPATCHED",
+            Self::ReconcileNeeded => "RECONCILE_NEEDED",
+            Self::Confirmed => "CONFIRMED",
+            Self::BusinessDenied => "BUSINESS_DENIED",
+            Self::ManualResolution => "MANUAL_RESOLUTION",
+            Self::Exhausted => "EXHAUSTED",
+        }
+    }
+}
+
+/// Durable provider facts returned with an owner-scoped delivery.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProviderOutcome {
+    /// Retained effect state, or terminal projection when native work has ended.
+    pub state: ProviderEffectState,
+    /// Provider identity when a response or lookup supplied one.
+    pub provider_effect_id: Option<String>,
+    /// Whether an accepted remote effect is still possible but unconfirmed.
+    pub acceptance_possible: bool,
 }
 
 /// Whether submission created the command or replayed its exact identity.
@@ -367,169 +452,15 @@ pub struct DeliveryJobPayload {
     pub payload: Value,
 }
 
-async fn submit_in_transaction(
-    transaction: &mut Transaction<'_, Postgres>,
-    owner: OwnerId,
-    record_id: Uuid,
-    request: &ValidatedSubmit,
-) -> Result<SubmitResult, CommandFailure> {
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut **transaction)
-        .await
-        .map_err(StorageError::from)?;
-
-    let delivery_id = Uuid::now_v7();
-    let enqueue_idempotency_key = format!("delivery:{delivery_id}");
-    let enqueue_payload = serde_json::to_value(DeliveryJobPayload {
-        version: DELIVERY_PAYLOAD_VERSION,
-        delivery_id,
-        owner_id: owner.as_uuid(),
-        record_id,
-        record_generation: request.expected_generation,
-        payload: request.payload.clone(),
-    })
-    .map_err(|_| StorageError::Invariant("delivery payload encoding failed"))?;
-
-    let inserted = insert_command_identity(
-        transaction,
-        owner,
-        record_id,
-        request,
-        delivery_id,
-        &enqueue_idempotency_key,
-        &enqueue_payload,
-    )
-    .await?;
-
-    if !inserted {
-        let retained = load_command(transaction, owner, &request.idempotency_key)
-            .await?
-            .ok_or(StorageError::Invariant(
-                "conflicting command identity disappeared",
-            ))?;
-        if retained.record_id != record_id
-            || retained.expected_generation != request.expected_generation
-            || retained.request_payload != request.payload
-        {
-            return Err(SubmitRejection::IdempotencyConflict.into());
-        }
-        return Ok(SubmitResult {
-            disposition: SubmitDisposition::Replayed,
-            delivery: retained.delivery()?,
-        });
+fn provider_request(payload: &DeliveryJobPayload) -> ProviderEffectRequest {
+    ProviderEffectRequest {
+        version: EFFECT_PROTOCOL_VERSION,
+        effect_id: payload.delivery_id,
+        owner_id: payload.owner_id,
+        record_id: payload.record_id,
+        record_generation: payload.record_generation,
+        payload: payload.payload.clone(),
     }
-
-    let generation: Option<i64> = sqlx::query_scalar(
-        "SELECT generation
-           FROM reference_records
-          WHERE id = $1 AND owner_id = $2
-          FOR UPDATE",
-    )
-    .bind(record_id)
-    .bind(owner.as_uuid())
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(StorageError::from)?;
-    let Some(generation) = generation else {
-        return Err(SubmitRejection::RecordNotObserved.into());
-    };
-    if generation != request.expected_generation {
-        return Err(SubmitRejection::StaleGeneration {
-            current_generation: generation,
-        }
-        .into());
-    }
-
-    let enqueue = JobEnqueue {
-        job_type: JobType::new(DELIVERY_JOB_TYPE),
-        organization_id: Some(owner.as_uuid()),
-        payload: &enqueue_payload,
-        priority: Some(ENQUEUE_PRIORITY),
-        max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
-        timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
-        next_run_at: None,
-        idempotency_key: Some(&enqueue_idempotency_key),
-        stage: Some(JobStage::Queued),
-    };
-    let outcome = enqueue_job_with_outcome_tx(transaction, &enqueue)
-        .await
-        .map_err(StorageError::from)?;
-    if outcome.disposition != JobEnqueueDisposition::Inserted {
-        return Err(
-            StorageError::Invariant("new command resolved to an existing upstream job").into(),
-        );
-    }
-    insert_delivery(transaction, owner, request, delivery_id, &outcome).await?;
-    Ok(SubmitResult {
-        disposition: SubmitDisposition::Accepted,
-        delivery: Delivery {
-            delivery_id,
-            record_id,
-            generation,
-            payload: request.payload.clone(),
-            state: DeliveryState::from_job_status(outcome.status),
-        },
-    })
-}
-
-async fn insert_command_identity(
-    transaction: &mut Transaction<'_, Postgres>,
-    owner: OwnerId,
-    record_id: Uuid,
-    request: &ValidatedSubmit,
-    delivery_id: Uuid,
-    enqueue_idempotency_key: &str,
-    enqueue_payload: &Value,
-) -> Result<bool, StorageError> {
-    let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO reference_delivery_commands (
-            owner_id, idempotency_key, delivery_id, record_id, expected_generation,
-            request_payload, enqueue_job_type, enqueue_idempotency_key, enqueue_payload,
-            enqueue_priority, enqueue_max_attempts, enqueue_timeout_seconds, enqueue_stage
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-         ON CONFLICT (owner_id, idempotency_key) DO NOTHING
-         RETURNING delivery_id",
-    )
-    .bind(owner.as_uuid())
-    .bind(&request.idempotency_key)
-    .bind(delivery_id)
-    .bind(record_id)
-    .bind(request.expected_generation)
-    .bind(&request.payload)
-    .bind(DELIVERY_JOB_TYPE)
-    .bind(enqueue_idempotency_key)
-    .bind(enqueue_payload)
-    .bind(ENQUEUE_PRIORITY)
-    .bind(ENQUEUE_MAX_ATTEMPTS)
-    .bind(ENQUEUE_TIMEOUT_SECONDS)
-    .bind(JobStage::Queued.as_db_value())
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(StorageError::from)?;
-    Ok(inserted.is_some())
-}
-
-async fn insert_delivery(
-    transaction: &mut Transaction<'_, Postgres>,
-    owner: OwnerId,
-    request: &ValidatedSubmit,
-    delivery_id: Uuid,
-    outcome: &JobEnqueueOutcome,
-) -> Result<(), StorageError> {
-    let result = sqlx::query(
-        "INSERT INTO reference_deliveries (id, owner_id, idempotency_key, job_id)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(delivery_id)
-    .bind(owner.as_uuid())
-    .bind(&request.idempotency_key)
-    .bind(outcome.job_id)
-    .execute(&mut **transaction)
-    .await?;
-    if result.rows_affected() != 1 {
-        return Err(StorageError::Invariant("delivery insert changed no row"));
-    }
-    Ok(())
 }
 
 #[derive(FromRow)]
@@ -554,13 +485,20 @@ struct CommandRow {
     job_payload: Option<Value>,
     job_priority: Option<i32>,
     job_max_attempts: Option<i32>,
+    job_attempt: Option<i32>,
     job_timeout_seconds: Option<i32>,
+    effect_provider_key: Option<String>,
+    effect_provider_payload: Option<Value>,
+    effect_state: Option<String>,
+    effect_provider_effect_id: Option<String>,
+    effect_acceptance_possible: Option<bool>,
 }
 
 impl CommandRow {
     fn delivery(self) -> Result<Delivery, StorageError> {
         let payload: DeliveryJobPayload = serde_json::from_value(self.enqueue_payload.clone())
             .map_err(|_| StorageError::Invariant("retained enqueue payload is invalid"))?;
+        let expected_provider = provider_request(&payload);
         if self.enqueue_job_type != DELIVERY_JOB_TYPE
             || self.enqueue_idempotency_key != format!("delivery:{}", self.delivery_id)
             || self.enqueue_priority != ENQUEUE_PRIORITY
@@ -573,6 +511,13 @@ impl CommandRow {
             || payload.record_id != self.record_id
             || payload.record_generation != self.expected_generation
             || payload.payload != self.request_payload
+            || self.effect_provider_key.as_deref()
+                != Some(expected_provider.idempotency_key().as_str())
+            || self.effect_provider_payload.as_ref()
+                != Some(
+                    &serde_json::to_value(&expected_provider)
+                        .map_err(|_| StorageError::Invariant("provider payload encoding failed"))?,
+                )
         {
             return Err(StorageError::Invariant(
                 "retained enqueue request does not match delivery identity",
@@ -584,6 +529,13 @@ impl CommandRow {
         let status = self
             .job_status
             .ok_or(StorageError::Invariant("upstream job row is missing"))?;
+        let effect_state = self
+            .effect_state
+            .as_deref()
+            .ok_or(StorageError::Invariant("delivery effect row is missing"))?;
+        let effect_acceptance_possible = self
+            .effect_acceptance_possible
+            .ok_or(StorageError::Invariant("delivery effect row is missing"))?;
         if self.job_type.as_deref() != Some(self.enqueue_job_type.as_str())
             || self.job_organization_id != Some(self.owner_id)
             || self.job_idempotency_key.as_deref() != Some(self.enqueue_idempotency_key.as_str())
@@ -596,12 +548,22 @@ impl CommandRow {
                 "upstream job does not match retained enqueue request",
             ));
         }
+        let state = DeliveryState::from_database(&status)?;
+        let attempt = self
+            .job_attempt
+            .ok_or(StorageError::Invariant("upstream job row is missing"))?;
         Ok(Delivery {
             delivery_id: self.delivery_id,
             record_id: self.record_id,
             generation: self.expected_generation,
             payload: self.request_payload,
-            state: DeliveryState::from_database(&status)?,
+            state,
+            provider: ProviderOutcome {
+                state: ProviderEffectState::from_database(effect_state)?
+                    .project(state, attempt >= self.enqueue_max_attempts),
+                provider_effect_id: self.effect_provider_effect_id,
+                acceptance_possible: effect_acceptance_possible,
+            },
         })
     }
 }
@@ -611,6 +573,24 @@ async fn load_command(
     owner: OwnerId,
     idempotency_key: &str,
 ) -> Result<Option<CommandRow>, StorageError> {
+    load_command_at(connection, owner, CommandLookup::Key(idempotency_key)).await
+}
+
+enum CommandLookup<'a> {
+    Key(&'a str),
+    Id(Uuid),
+}
+
+// Both owner-scoped reads use one SQL snapshot and one identity/projection check.
+async fn load_command_at(
+    connection: &mut PgConnection,
+    owner: OwnerId,
+    lookup: CommandLookup<'_>,
+) -> Result<Option<CommandRow>, StorageError> {
+    let (idempotency_key, delivery_id) = match lookup {
+        CommandLookup::Key(key) => (Some(key), None),
+        CommandLookup::Id(id) => (None, Some(id)),
+    };
     sqlx::query_as(
         "SELECT c.owner_id, c.delivery_id, c.record_id, c.expected_generation, c.request_payload,
                 c.enqueue_job_type, c.enqueue_idempotency_key, c.enqueue_payload,
@@ -619,29 +599,29 @@ async fn load_command(
                 q.job_type, q.organization_id AS job_organization_id,
                 q.idempotency_key AS job_idempotency_key, q.payload AS job_payload,
                 q.priority AS job_priority, q.max_attempts AS job_max_attempts,
-                q.timeout_seconds AS job_timeout_seconds
+                q.attempt AS job_attempt,
+                q.timeout_seconds AS job_timeout_seconds,
+                e.provider_key AS effect_provider_key,
+                e.provider_payload AS effect_provider_payload,
+                e.state AS effect_state,
+                e.provider_effect_id AS effect_provider_effect_id,
+                e.acceptance_possible AS effect_acceptance_possible
            FROM reference_delivery_commands c
            LEFT JOIN reference_deliveries d
              ON d.owner_id = c.owner_id
             AND d.idempotency_key = c.idempotency_key
             AND d.id = c.delivery_id
            LEFT JOIN job_queue q ON q.id = d.job_id
-          WHERE c.owner_id = $1 AND c.idempotency_key = $2",
+           LEFT JOIN reference_delivery_effects e ON e.delivery_id = d.id
+          WHERE c.owner_id = $1
+            AND (c.idempotency_key = $2 OR c.delivery_id = $3)",
     )
     .bind(owner.as_uuid())
     .bind(idempotency_key)
+    .bind(delivery_id)
     .fetch_optional(connection)
     .await
     .map_err(StorageError::from)
-}
-
-#[derive(FromRow)]
-struct DeliveryRow {
-    delivery_id: Uuid,
-    record_id: Uuid,
-    generation: i64,
-    payload: Value,
-    job_status: String,
 }
 
 async fn load_delivery_by_id(
@@ -649,38 +629,15 @@ async fn load_delivery_by_id(
     owner: OwnerId,
     delivery_id: Uuid,
 ) -> Result<Option<Delivery>, StorageError> {
-    let row: Option<DeliveryRow> = sqlx::query_as(
-        "SELECT d.id AS delivery_id, c.record_id,
-                c.expected_generation AS generation, c.request_payload AS payload,
-                q.status::text AS job_status
-           FROM reference_deliveries d
-           JOIN reference_delivery_commands c
-             ON c.owner_id = d.owner_id
-            AND c.idempotency_key = d.idempotency_key
-            AND c.delivery_id = d.id
-           JOIN job_queue q ON q.id = d.job_id
-          WHERE d.owner_id = $1 AND d.id = $2",
-    )
-    .bind(owner.as_uuid())
-    .bind(delivery_id)
-    .fetch_optional(connection)
-    .await?;
-    row.map(|row| {
-        Ok(Delivery {
-            delivery_id: row.delivery_id,
-            record_id: row.record_id,
-            generation: row.generation,
-            payload: row.payload,
-            state: DeliveryState::from_database(&row.job_status)?,
-        })
-    })
-    .transpose()
+    load_command_at(connection, owner, CommandLookup::Id(delivery_id))
+        .await?
+        .map(CommandRow::delivery)
+        .transpose()
 }
 
 /// Producer definition synchronized before accepting delivery commands.
 ///
-/// This carries no worker handler. Provider execution and worker hosting are
-/// deliberately separate delivery tasks.
+/// The application root registers the matching provider handler separately.
 pub fn delivery_job_spec() -> Result<JobSpec, runledger_core::jobs::JobSpecError> {
     JobSpec::new(JobType::new(DELIVERY_JOB_TYPE))?.with_settings(
         JobDefinitionSettings::new()
@@ -752,6 +709,57 @@ mod tests {
             DeliveryState::Cancelled
         );
         assert!(DeliveryState::from_database("NEW_UPSTREAM_STATE").is_err());
+    }
+
+    #[test]
+    fn provider_effect_projection_matches_the_database_check_vocabulary() {
+        let migration = include_str!("../migrations/202609160001_delivery_effect_outcomes.sql");
+        let check = migration
+            .split("chk_reference_delivery_effects_state")
+            .nth(1)
+            .unwrap()
+            .split(")),")
+            .next()
+            .unwrap();
+        let database: Vec<_> = check.split('\'').skip(1).step_by(2).collect();
+        let projected = [
+            ProviderEffectState::AwaitingAttempt,
+            ProviderEffectState::RetryableUndispatched,
+            ProviderEffectState::ReconcileNeeded,
+            ProviderEffectState::Confirmed,
+            ProviderEffectState::BusinessDenied,
+            ProviderEffectState::ManualResolution,
+            ProviderEffectState::Exhausted,
+        ]
+        .map(ProviderEffectState::database_name);
+        assert_eq!(database, projected);
+    }
+
+    #[test]
+    fn public_provider_outcome_json_preserves_state_and_acceptance_truth() {
+        let exhausted = serde_json::to_value(ProviderOutcome {
+            state: ProviderEffectState::Exhausted,
+            provider_effect_id: Some("provider:retained".to_owned()),
+            acceptance_possible: true,
+        })
+        .unwrap();
+        assert_eq!(
+            exhausted,
+            serde_json::json!({
+                "state": "exhausted",
+                "provider_effect_id": "provider:retained",
+                "acceptance_possible": true,
+            })
+        );
+
+        let manual = serde_json::to_value(ProviderOutcome {
+            state: ProviderEffectState::ManualResolution,
+            provider_effect_id: None,
+            acceptance_possible: false,
+        })
+        .unwrap();
+        assert_eq!(manual["state"], "manual_resolution");
+        assert_ne!(manual["state"], exhausted["state"]);
     }
 
     #[test]

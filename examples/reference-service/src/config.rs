@@ -23,6 +23,8 @@
 //!     ("JOBS_WORKER_ID".into(), "worker-example".into()),
 //!     ("BATTER_AUTH_OWNER_ID".into(), "00000000-0000-0000-0000-000000000001".into()),
 //!     ("BATTER_AUTH_TOKEN".into(), "fake-example-token".into()),
+//!     ("BATTER_PROVIDER_BASE_URL".into(), "http://127.0.0.1:9/".into()),
+//!     ("BATTER_PROVIDER_TOKEN".into(), "fake-provider-token".into()),
 //! ])?;
 //! let settings = ServingSettings::from_sources(
 //!     None,
@@ -37,6 +39,7 @@
 
 mod endpoint;
 mod pool;
+mod provider;
 mod worker;
 pub use pool::PoolSettings;
 pub use worker::WorkerSettings;
@@ -50,11 +53,17 @@ use batter::{
 use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 use runledger_runtime::config::JobsConfig;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::{fmt, net::SocketAddr, path::Path, time::Duration};
+use std::{
+    fmt,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const MAX_DURATION: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 const SERVING_ROOT_NAMES: &[&str] = &[
     "BATTER_BIND",
+    "BATTER_LISTENER_ANNOUNCEMENT_PATH",
     "BATTER_REQUEST_TIMEOUT_MS",
     "BATTER_BULKHEAD_CAPACITY",
     "BATTER_PROCESS_CAPACITY",
@@ -94,6 +103,7 @@ fn serving_names() -> Vec<&'static str> {
     SERVING_ROOT_NAMES
         .iter()
         .chain(pool::NAMES)
+        .chain(provider::NAMES)
         .chain(worker::NAMES)
         .copied()
         .collect()
@@ -141,6 +151,26 @@ fn authenticator(values: &SettingsSource) -> Result<BearerAuthenticator, Setting
         .map_err(|error| SettingsError::new("BATTER_AUTH_TOKEN", "invalid token").with_cause(error))
 }
 
+fn listener_announcement(values: &SettingsSource) -> Result<Option<PathBuf>, SettingsError> {
+    const NAME: &str = "BATTER_LISTENER_ANNOUNCEMENT_PATH";
+    values
+        .text(NAME)?
+        .map(|value| {
+            let path = PathBuf::from(value);
+            if !path.is_absolute() {
+                return Err(SettingsError::new(
+                    NAME,
+                    "expected an absolute Unix socket path",
+                ));
+            }
+            std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|error| {
+                SettingsError::new(NAME, "invalid Unix socket path").with_cause(error)
+            })?;
+            Ok(path)
+        })
+        .transpose()
+}
+
 /// Validated inputs for the serving process.
 ///
 /// Every field needed by HTTP, PostgreSQL, finite-process work, and the native
@@ -152,6 +182,7 @@ fn authenticator(values: &SettingsSource) -> Result<BearerAuthenticator, Setting
 /// settings value or policy variant.
 pub struct ServingSettings {
     bind: SocketAddr,
+    listener_announcement: Option<PathBuf>,
     request_budget: ResponseConstructionBudget,
     bulkhead_capacity: BulkheadCapacity,
     process_capacity: ProcessCapacity,
@@ -160,6 +191,7 @@ pub struct ServingSettings {
     endpoint: endpoint::ServingEndpoint,
     authenticator: BearerAuthenticator,
     trusted_peer_policy: TrustedPeerPolicy,
+    provider: provider::ProviderSettings,
 }
 
 impl ServingSettings {
@@ -200,6 +232,7 @@ impl ServingSettings {
         let (bulkhead_capacity, process_capacity) = capacities(&values)?;
         Ok(Self {
             bind,
+            listener_announcement: listener_announcement(&values)?,
             request_budget,
             bulkhead_capacity,
             process_capacity,
@@ -208,6 +241,7 @@ impl ServingSettings {
             endpoint: endpoint::ServingEndpoint::parse(values.required("DATABASE_URL")?)?,
             authenticator: authenticator(&values)?,
             trusted_peer_policy: TrustedPeerPolicy::direct(),
+            provider: provider::ProviderSettings::from_values(&values)?,
         })
     }
 
@@ -226,12 +260,16 @@ impl ServingSettings {
         shutdown_budget: ShutdownBudget,
     ) -> Result<PreparedServing, SettingsError> {
         let connect_options = self.endpoint.connect_options_from_process()?;
+        let (provider, provider_bulkhead) = self.provider.prepare()?;
         Ok(PreparedServing {
             bind: self.bind,
+            listener_announcement: self.listener_announcement,
             pool_options: self.pool.pool_options(),
             connect_options,
             supervisor: Supervisor::with_process_capacity(shutdown_budget, self.process_capacity),
             jobs: self.jobs,
+            provider,
+            provider_bulkhead,
             http: PreparedHttp {
                 request_budget: self.request_budget,
                 bulkhead_capacity: self.bulkhead_capacity,
@@ -459,19 +497,25 @@ impl fmt::Debug for PreparedHttp {
 #[must_use = "prepared serving inputs must be transferred to runtime::run"]
 pub struct PreparedServing {
     bind: SocketAddr,
+    listener_announcement: Option<PathBuf>,
     pool_options: PgPoolOptions,
     connect_options: PgConnectOptions,
     supervisor: Supervisor,
     jobs: JobsConfig,
+    provider: crate::provider::ProviderClient,
+    provider_bulkhead: Bulkhead,
     http: PreparedHttp,
 }
 
 pub(crate) struct ServingParts {
     pub(crate) bind: SocketAddr,
+    pub(crate) listener_announcement: Option<PathBuf>,
     pub(crate) pool_options: PgPoolOptions,
     pub(crate) connect_options: PgConnectOptions,
     pub(crate) supervisor: Supervisor,
     pub(crate) jobs: JobsConfig,
+    pub(crate) provider: crate::provider::ProviderClient,
+    pub(crate) provider_bulkhead: Bulkhead,
     pub(crate) http: PreparedHttp,
 }
 
@@ -479,10 +523,13 @@ impl PreparedServing {
     pub(crate) fn into_parts(self) -> ServingParts {
         ServingParts {
             bind: self.bind,
+            listener_announcement: self.listener_announcement,
             pool_options: self.pool_options,
             connect_options: self.connect_options,
             supervisor: self.supervisor,
             jobs: self.jobs,
+            provider: self.provider,
+            provider_bulkhead: self.provider_bulkhead,
             http: self.http,
         }
     }

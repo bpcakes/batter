@@ -44,6 +44,7 @@ pub mod config;
 
 /// Atomic application command, durable delivery projection and query paths.
 pub mod delivery;
+mod provider;
 
 /// Authenticated HTTP command and owner-scoped reconciliation routes.
 pub mod http;

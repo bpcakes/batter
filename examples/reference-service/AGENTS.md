@@ -11,8 +11,8 @@ Unix-only application is not a reusable database framework.
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
 - `src/runtime.rs` uses protected startup with library-owned signals, `pool_in`,
   native preparation and `batter-runledger` registration. It owns PostgreSQL
-  health sampling and withholds application readiness approval while the delivery
-  handler is absent. Its startup failures downcast to
+  health sampling, installs the delivery handler and approves ordinary readiness
+  after registered components acknowledge initialization. Its startup failures downcast to
   `ProtectedRuntimeStartupFailure`; the earlier wrapper was removed in the
   coordinated hard cutover and must not be reintroduced.
 - `tests/support/startup_process.rs` owns separately captured signal children and
@@ -26,6 +26,11 @@ Unix-only application is not a reusable database framework.
   descendant accounting remains in Runledger, not in this application.
 - `src/delivery.rs` owns command identity, the one-transaction submission and
   durable owner-scoped projections.
+- `src/delivery/worker.rs` owns provider admission, durable dispatch uncertainty,
+  lookup-before-replay, generation fencing and terminal outcome projection;
+  `src/delivery/worker/state.rs` owns its lease-fenced SQL state transitions.
+- `src/provider.rs` owns the selected HTTP effect protocol. It is application
+  code, not a generic provider adapter or an exactly-once claim.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
 - `src/request.rs` owns direct-socket peer trust and combines it with the shared
   adapter correlation without owning application authority or request lifetime.
@@ -78,15 +83,15 @@ submission uses one `PgLease` and one READ COMMITTED transaction for command,
 delivery and Runledger rows. Exact replay never re-enqueues. Owner/key identity,
 record generation, canonical payload and immutable enqueue fields stay retained;
 uncertain commit/rollback acknowledgement is reconciled by owner/key and is never
-automatically retried. The delivery producer definition has no handler in this
-stage. The production native registry is empty; catalog synchronization alone
-must not make `records.delivery.execute` claimable. Use native `prepare()` and
+automatically retried. The delivery producer definition and handler use the same
+locked type identity. The production registry contains exactly that handler.
+Use native `prepare()` and
 transfer the owned launch value to the adapter; do not construct a live supervisor
 or reintroduce an application termination gate, settlement driver, control job,
 advisory lease or reconciliation loop. Native initialization, fresh database
 health and application approval are separate readiness inputs.
-Application readiness stays unapproved until the provider task installs its real
-handler and isolated acceptance establishes its execution contract. Durable
+Application readiness approval follows handler registration; fresh dependency
+health and native initialization remain independent inputs. Durable
 execution witnesses belong only to isolated tests. Always await a started process
 before returning a live probe failure. Native reports must retain unjoined
 callbacks and prevent dependent cleanup. Close pools before consuming fixture
@@ -101,6 +106,70 @@ requires enabled IPv6 loopback (`::1`) for its native protocol fixture, plus
 IPv4 loopback and Unix subprocess permissions. This test is not skipped when
 the host or container lacks IPv6. Never mutate process globals.
 Explicit live invocation fails when prerequisites are missing.
+
+The provider effect key and canonical request are created in the submission
+transaction. Load and classify that retained effect before provider admission:
+terminal states perform no admission, and `RECONCILE_NEEDED` must reconcile
+before generation denial or replay. Provider admission waits on the dedicated
+`BATTER_PROVIDER_CAPACITY` inside the existing work deadline. Its waiter set is
+bounded by Runledger's validated global handler concurrency; do not replace it
+with request-style immediate rejection or another claim engine. Runledger has
+already claimed the native attempt and has no attempt-neutral defer/refund.
+Commit `RECONCILE_NEEDED` before polling the POST, and constrain every effect
+write by its legal durable source state. Every effect mutation must use the
+private live-effect transaction: lock the exact `job_queue` row, recheck the
+unexpired job/run/attempt/worker lease after lock acquisition, mutate one legal
+effect state, revalidate before commit after any later lock waits, and commit.
+Time-dependent authority must be checked in a statement after row locking, not
+only in the locking SELECT's filter. Do not duplicate lease predicates in caller-owned SQL
+or hold the transaction across provider I/O. Cancellation, timeout, lost response and
+process death after dispatch became possible remain uncertain until the selected
+lookup protocol resolves them. Only exact structured response codes may establish
+known non-dispatch or business denial; text does not. POST and GET acceptance
+both require the exact canonical request echo. Only a typed reqwest connector
+failure proves known non-dispatch; timeout and post-connect/body errors remain
+uncertain. Recheck the authoritative
+owner/record/generation before confirmation. Confirmation locks the record FOR SHARE
+before locking the native job and effect rows, then evaluates generation in a
+fresh statement and holds the record lock through commit. A replacement that
+wins the record lock makes acceptance stale; a later replacement waits for
+confirmation. Keep record waits outside the heartbeat's job-row lock and retain
+post-lock/precommit lease validation. Expiry, mismatch or an accepted
+stale generation becomes manual resolution. The local protocol retains keys for
+24 hours; bind SQL resolution deadlines from that code-selected duration rather
+than duplicating it in SQL. After lookup proves retained-window absence, renew
+that deadline immediately before polling the newly authorized POST; absence does
+not make the old request's clock valid for a new remote-effect boundary. No claim
+extends beyond that window or to another provider.
+`EXHAUSTED` remains distinct from `MANUAL_RESOLUTION`: the former records a spent
+native attempt budget and can retain possible acceptance, while the latter means
+automatic action is unsafe because retained truth expired, conflicted or became
+stale.
+
+The owner-scoped read boundary projects unresolved terminal jobs even when the
+handler could not write after storage failure or lease loss. Both routes and
+exact replay share one command loader and preserve acceptance facts; do not add
+best-effort writes that require lost authority. Provider exchange methods consume
+the permit, so post-response SQL cannot retain provider capacity. Keep send/body
+errors distinct, and map transport failures to bounded codes without error text.
+The 24-hour accepted retry lower bound is a separate application policy from
+retention; never clamp it down. Cleartext provider URLs require literal loopback.
+Provider non-dispatch persistence takes the retry delay and constructs the native
+scheduling result itself. The durable absolute eligibility timestamp commits with
+the outcome and every dispatch authorization checks it under the effect-row lock.
+Admission failure has a separate narrow transition and cannot classify an
+uncertain provider result. A recovered attempt may consume native retry budget
+while deferring; there is no refund or replacement scheduler. A response never
+successfully persisted can still be lost on process death; no local type removes
+that external acknowledgement gap.
+
+Real production-child probes bind `127.0.0.1:0` in the child and consume its
+acknowledged listener report through an explicitly configured Unix datagram
+receiver owned by the harness before child spawn. No stdout discovery protocol
+or blocking writer belongs in startup. Do not reintroduce parent-selected ephemeral ports:
+an address is not reserved after its listener is dropped. Settlement permits only
+empty stdout/stderr and retains the existing bounded capture, panic, exit-status
+and secret-disclosure checks. Socket publication acknowledges bind, not readiness.
 
 Keep request metadata outside authority and operation lifetime. The production
 root must use application-owned `http::register_in`, which alone selects

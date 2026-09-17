@@ -49,6 +49,11 @@ fn settings() -> ServingSettings {
                 std::ffi::OsString::from(Uuid::from_u128(AUTHENTICATED_OWNER).to_string()),
             ),
             ("BATTER_AUTH_TOKEN".into(), "fake-token".into()),
+            (
+                "BATTER_PROVIDER_BASE_URL".into(),
+                "http://127.0.0.1:9/".into(),
+            ),
+            ("BATTER_PROVIDER_TOKEN".into(), "fake-provider-token".into()),
             // Real-time boundary tests own tighter explicit wall-clock guards.
             // Keep the production operation budget from becoming their hidden
             // and load-sensitive failure condition.

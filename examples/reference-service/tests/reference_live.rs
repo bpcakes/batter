@@ -355,8 +355,28 @@ fn child_fixture() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
-async fn production_root_withholds_readiness_without_control_jobs() {
-    with_database(support::production_readiness).await;
+async fn production_root_registers_provider_worker() {
+    support::production_readiness().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn provider_effect_crash_and_restart() {
+    support::with_database_bound(
+        std::time::Duration::from_secs(75),
+        support::provider_effects::crash_and_restart,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn provider_effect_outcome_contracts() {
+    support::with_database_bound(
+        std::time::Duration::from_secs(180),
+        support::provider_effects::outcome_contracts,
+    )
+    .await;
 }
 
 #[tokio::test]

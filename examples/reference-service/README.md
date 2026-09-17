@@ -1,15 +1,17 @@
-# Staged worker, reference delivery command and compatibility probes
+# Provider-backed reference delivery service and compatibility probes
 
 Unpublished, Unix-only application package. Its runnable root initializes the
 atomic delivery command and registers native Runledger through `batter-runledger`.
 Native preparation is inert; Batter owns launch, initialization acknowledgement,
-settlement observation and dependency cleanup. The delivery handler is absent,
-so the native registry is empty and readiness remains unapproved until
-`batter-8q8.2` installs the real provider. No production startup control job runs.
+settlement observation and dependency cleanup. The production registry installs
+the delivery handler and ordinary readiness is approved after component
+initialization; fresh PostgreSQL health remains independent. No production startup
+control job or reconciliation loop runs.
 The [compatibility manifest](../../docs/reference-compatibility.md) records version
 contracts and execution evidence. The earlier 58-entry live inventory passed on
-Linux with both supported toolchains. The current 64-entry revision has executed
-only its five non-database entries; its database probes await authorized endpoints.
+Linux with both supported toolchains. The prior 64-entry revision passed on macOS
+with both supported toolchains. The current 66-entry state-first provider suite
+passed on macOS with Rust 1.98.1 and exact 1.94.0 against PostgreSQL 18.6.
 Two exact legacy test aliases were removed rather than retained through the hard cutover.
 
 ## Staged worker and atomic delivery command
@@ -21,6 +23,8 @@ DATABASE_URL='postgres://service:password@127.0.0.1:5432/service?sslmode=disable
 JOBS_WORKER_ID='reference-worker' \
 BATTER_AUTH_OWNER_ID='00000000-0000-0000-0000-000000000001' \
 BATTER_AUTH_TOKEN='replace-with-an-opaque-token' \
+BATTER_PROVIDER_BASE_URL='https://provider.example/' \
+BATTER_PROVIDER_TOKEN='replace-with-a-provider-token' \
   cargo run -p batter-example-reference-service --locked
 ```
 
@@ -30,7 +34,7 @@ Protected startup selects `.with_unix_signals("signals")`, so SIGTERM/SIGINT
 listeners exist before the initializer runs. The initializer publishes pool close
 through `batter_sqlx::pool_in`, acquires a connection, applies native and
 forward-only application migrations, checks compatibility, synchronizes the
-handler-free delivery producer, binds HTTP and registers native preparation.
+delivery producer, binds HTTP and registers handler-bearing native preparation.
 A signal during initialization drains startup and awaits cleanup; after handoff
 the library-owned listeners belong to the running driver. A startup failure
 returned by `runtime::run` downcasts to `ProtectedRuntimeStartupFailure`. The
@@ -38,8 +42,14 @@ earlier wrapper was removed in the coordinated hard cutover. Generic running
 failures retain `batter::lifecycle::ShutdownFailure`; an otherwise successful
 report missing its required pool record downcasts to
 `RuntimePoolCleanupFailure`, whose accessor exposes that report without rendering
-it. The production executable prints only `Error: reference service failed` and
-exits 1. A separately built test-fixture executable owns the process-local signal
+it. A failed production executable prints only `Error: reference service failed`
+and exits 1. Listener discovery never writes stdout. To discover a child-selected
+port, bind a Unix datagram receiver before launching the child and set
+`BATTER_LISTENER_ANNOUNCEMENT_PATH` to its absolute socket path. After TCP bind,
+the child sends one datagram containing its actual SocketAddr, without a newline.
+This acknowledges binding, not readiness; publication failure fails startup and
+backpressure remains inside the startup deadline. Without that setting, serving
+performs no announcement. A separately built test-fixture executable owns the process-local signal
 acknowledgements used by the integration suite; the production entrypoint has no
 witness mode or test environment switch.
 One 20-second startup allowance covers initialization. Shutdown has ten seconds
@@ -48,9 +58,9 @@ bounded pool cleanup; native settlement shares those process intervals.
 
 Native loop initialization requires no queue mutation or durable execution proof.
 Fresh PostgreSQL health comes from a separate bounded sample, and application
-approval remains withheld. Consequently `/ready` and admission-protected business
-routes remain unavailable in this stage. Nonterminal business jobs are not claimed
-by the empty native registry. Durable execution is tested only in isolated probes.
+approval follows handler registration. `/ready` requires all three facts. The
+native worker claims `records.delivery.execute`; durable execution and crash
+reconciliation are tested only in isolated probes.
 The application pool limit includes native runtime and health usage; there are no
 extra production control/reconciliation pools. Applied legacy migrations and the
 owner-epoch sequence remain intact. Offline retirement passed fixture acceptance
@@ -97,10 +107,99 @@ query its original owner/key; absence while the original database session may
 still settle does not prove rollback.
 
 `pending`, `in_flight`, `succeeded`, `dead_lettered`, and `cancelled` are a
-closed application projection of the locked Runledger status vocabulary. This
-command initially creates `pending` work only. The native registry does not
-register the delivery type, so acceptance never means that an external effect
-succeeded.
+closed application projection of the locked Runledger status vocabulary.
+Provider outcome is a separate closed projection: `awaiting_attempt`,
+`retryable_undispatched`, `reconcile_needed`, `confirmed`, `business_denied`,
+`manual_resolution`, or `exhausted`. Command acceptance still does not mean that
+an external effect succeeded.
+
+The application creates one provider key and canonical versioned request in the
+same transaction as the command, delivery and Runledger job. The key derives from
+the stable delivery UUID and remains unchanged across attempts or restart. The
+selected protocol uses `POST /effects` plus `GET /effects/{key}`: same key and
+payload returns the retained effect, while changed payload conflicts. Its key
+retention assumption is exactly 24 hours. Unknown lookup or expiry becomes bounded
+manual resolution; this is not an exactly-once claim beyond that protocol window.
+
+The worker loads the retained provider state before provider admission. Terminal
+redelivery completes without taking provider capacity. Fresh work may apply
+generation policy before dispatch; `reconcile_needed` must perform keyed lookup
+first, and only a retained-window absence permits a later generation denial or
+replay. That newly authorized POST receives a new 24-hour resolution window
+immediately before polling; the prior uncertain attempt's deadline is retained
+until absence is proven. Every SQL transition constrains its legal source state.
+The shared terminal writer takes a privately validated unresolved-state value;
+both manual resolution and business denial reject all terminal sources before
+database acquisition. A matching SQL source predicate alone is not transition
+authorization.
+The state module is the only mutation boundary: it first locks the exact
+Runledger `job_queue` row, rechecks the unexpired job/run/attempt/worker lease
+after acquiring that lock, performs one legal transition, and commits before
+returning. It revalidates before commit as well, so later effect-row lock waits
+cannot publish an expired mutation. Heartbeat, reaping and application state writes therefore serialize
+on the same native row. Lease loss is distinct from retained-data corruption.
+
+A known non-dispatch outcome and its absolute provider retry eligibility commit
+together. The state API takes the delay and returns the native scheduling result;
+the handler does not coordinate two independent values. Every initial/replay POST
+authorization checks eligibility under the effect-row lock. After a crash between
+the application commit and native completion, a recovered attempt defers without
+POSTing. That attempt still consumes native retry budget. Returned storage errors
+retain known delay, but process death before any successful persistence can lose
+the remote response; this is not an exactly-once or remote-acknowledgement guarantee.
+
+Provider admission waits on the purpose-specific `BATTER_PROVIDER_CAPACITY`
+inside the handler work deadline. Runledger necessarily claims and increments the
+native attempt before invoking the handler and exposes no attempt-neutral
+refund/defer operation, but its validated global handler concurrency bounds the
+waiting population. No second claim engine or unbounded waiter set is introduced.
+Before POST polling, the handler commits `reconcile_needed` and a resolution
+deadline. Timeout, cancellation, lost response or SIGKILL then remains
+indeterminate. Only exact structured protocol responses can establish known
+non-dispatch or business denial; response text never authorizes replay. The
+complete response, including bounded body streaming, remains inside that work
+deadline. Both POST and GET acceptance require the exact canonical request echo;
+a 200 with a missing or mismatched echo cannot confirm an effect. A reqwest
+connect-phase failure is known not dispatched, while timeout and every
+post-connect/body failure remain indeterminate. The worker rechecks authoritative owner/record/generation before
+dispatch and confirmation. Confirmation takes a shared record-row lock before
+the native job and effect locks, evaluates generation in a fresh statement, and
+holds that record lock through commit. If replacement wins the record lock,
+accepted old-generation work becomes manual resolution; if confirmation wins,
+replacement waits until confirmation commits. Confirmed work remains attached
+to its original identity; it does not mutate the replacement. Record-lock waits
+do not hold the heartbeat's job lock, and lease authority is still revalidated
+after lock acquisition and immediately before commit. No transaction spans
+provider I/O.
+
+`exhausted` and `manual_resolution` deliberately retain different facts.
+Exhaustion means the native attempt budget ended and may still have
+`acceptance_possible=true`; manual resolution means automatic action is unsafe
+because retained truth expired or conflicted, or the target changed.
+
+Both owner-scoped reads and exact submission replay use the same validated
+command loader. The query reads job and effect facts in one SQL snapshot. If a
+handler cannot persist its last outcome, unresolved effects on a dead-lettered
+job with a spent attempt budget project `exhausted`; cancellation, early terminal
+failure, or unexpected native success project `manual_resolution`. These reads
+preserve acceptance uncertainty and provider identity without changing retained
+rows. Missing effect state is an invariant error on both query routes.
+
+Each provider exchange consumes its admission permit and releases it before
+returning to post-response SQL. POST admission also covers its short durable
+pre-dispatch marker; GET and a subsequent POST acquire separately. The worker
+retains static diagnostic codes for request failure, body failure, oversized
+response, deadline and cancellation, without storing provider error text.
+The reference deliberately accepts a provider retry lower bound of up to 24
+hours. This application retry policy is separate from key retention even though
+both currently select 24 hours; accepted delays are never shortened.
+
+Provider capacity and database pool capacity count different lifetimes, so there
+is no required equality or ordering between their limits. Native global handler
+concurrency bounds active handlers and admission waiters. The shared pool also
+serves HTTP and health probes; size it and its acquisition budget for measured
+database latency and request load. Provider permits no longer remain occupied
+while post-response state writes wait for that pool.
 
 Run offline compilation and the native seam doctest:
 
@@ -190,10 +289,12 @@ target; its native initialization, ownership, durable execution, callback and
 business-failure cases replace the retired hosted-control protocol cases.
 The earlier 58 runner entries (56 database and two offline signal cases), plus the
 separate maintenance-session probe, passed on both supported toolchains on Linux.
-The current inventory has 64 entries: 59 database probes, four offline signal
+The current inventory has 66 entries: 61 database probes, four offline signal
 controls and the private child entry. Its eight protected-startup rows are
 described in [testing](../../docs/testing.md#protected-startup-consumer-process-cases);
-their database rows remain unexecuted until authorized endpoints are supplied.
+the full baseline executed on PostgreSQL 18.6. The expanded assertions for
+resumed generation replacement, uncertain admission interruption and terminal
+redelivery also passed on PostgreSQL 18.6 with both supported Rust toolchains.
 Ordinary tests keep database cases ignored and run offline signal controls without
 PostgreSQL. See [validation](../../docs/validation.md) for exact execution scope.
 
@@ -203,9 +304,9 @@ bounded Unix process ownership. Database failure injection requires dedicated
 endpoints and serial execution. A failed or watchdog-terminated run does not
 establish cleanup.
 
-The original migration fixtures remain narrow compatibility probes. The staged
-root starts native Runledger with an empty handler registry and withholds readiness
-approval until the delivery handler is implemented and verified. Reusable
+The original migration fixtures remain narrow compatibility probes. The production
+root starts native Runledger with the delivery handler and ordinary readiness
+approval. Reusable
 native pool/lease ownership comes from the optional
 `batter-sqlx/test-support` feature; template isolation and lock-operation probes
 exercise it without importing application policy into the adapter.
@@ -239,11 +340,15 @@ there is no interpolation, escaping, export, multiline or inline-comment syntax.
 | Setting | Initial default / requirement |
 | --- | --- |
 | BATTER_BIND | 127.0.0.1:3000; port 0 permitted |
+| BATTER_LISTENER_ANNOUNCEMENT_PATH | Unset by default; optional absolute Unix datagram receiver path, validated without I/O. After binding any configured port, send one datagram containing only the actual SocketAddr (no newline). The receiver must exist before startup. Failure fails startup; backpressure remains inside its existing deadline. This announces binding, not readiness. No stdout discovery protocol. |
 | BATTER_REQUEST_TIMEOUT_MS | 2000; positive, at most one year |
 | BATTER_BULKHEAD_CAPACITY | 32; 1..=Tokio Semaphore::MAX_PERMITS |
 | BATTER_PROCESS_CAPACITY | 32; independent finite-task bound, same range |
 | BATTER_AUTH_OWNER_ID | Required non-nil UUID in serving; outside the maintenance schema |
 | BATTER_AUTH_TOKEN | Required visible-ASCII token, 1..=256 bytes in serving; redacted from application diagnostics; outside the maintenance schema |
+| BATTER_PROVIDER_BASE_URL | Required HTTPS origin, or cleartext HTTP only for literal IPv4/IPv6 loopback fixtures; DNS names including localhost are not cleartext exemptions; credentials, path, query and fragment forbidden |
+| BATTER_PROVIDER_TOKEN | Required visible-ASCII token, 1..=256 bytes; redacted from application diagnostics; outside the maintenance schema |
+| BATTER_PROVIDER_CAPACITY | 32; provider exchanges plus the short POST marker, 1..=Tokio Semaphore::MAX_PERMITS; excludes post-response SQL; waiting callers are bounded by JOBS_MAX_GLOBAL_CONCURRENCY |
 | BATTER_POOL_MAX_CONNECTIONS | 8; positive u32 |
 | BATTER_POOL_MIN_CONNECTIONS | 0; u32, at most maximum |
 | BATTER_POOL_ACQUIRE_TIMEOUT_MS | 3000; positive, at most one year |
@@ -305,8 +410,8 @@ The explicit live inventory additionally includes configured pool timeout/reuse,
 held-handler worker concurrency, failed startup closing its pool before the
 native fixture lease, atomic delivery/reconciliation, and command-root pool,
 deadline, Bulkhead, and finite-process effects. See
-[validation](../../docs/validation.md) for execution status. Probe-only worker
-hosting is implemented; delivery-provider execution remains a separate task.
+[validation](../../docs/validation.md) for execution status. Provider-backed
+delivery execution is implemented; external-provider adoption remains separate.
 
 Offline native-option, IPv6 and worker-builder checks execute in cleared child
 processes. The normal matrix repeats this target with hostile parent PG* values;

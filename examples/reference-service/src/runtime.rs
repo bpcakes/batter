@@ -2,6 +2,7 @@
 
 use crate::{
     config::{PreparedServing, ServingSettings},
+    delivery::DeliveryWorker,
     http::register_in,
     schema::initialize_schema,
 };
@@ -14,7 +15,10 @@ use batter::{
     registration::Registration,
     startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
 };
+use runledger_core::jobs::JobExecutionHandler;
 use std::{fmt, time::Duration};
+
+mod announcement;
 
 const STARTUP_ALLOWANCE: Duration = Duration::from_secs(20);
 
@@ -189,8 +193,8 @@ impl std::error::Error for RuntimePoolCleanupFailure {
 /// Run a purpose-qualified preparation until shutdown.
 /// Native loop acknowledgement, fresh PostgreSQL health and explicit application
 /// approval are separate. No production startup control job is created.
-/// The delivery handler is still absent, so the root withholds approval and
-/// keeps /ready unavailable; its empty native registry cannot claim delivery jobs.
+/// The provider handler is registered before native preparation, and ordinary
+/// startup approval remains contingent on every critical acknowledgement.
 ///
 /// Startup-owned SIGTERM/SIGINT listeners are installed before initialization.
 /// A startup failure downcasts to [`ProtectedRuntimeStartupFailure`]. Generic
@@ -226,6 +230,11 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
 
                 scope.stage("http.bind")?;
                 let listener = tokio::net::TcpListener::bind(parts.bind).await?;
+                announcement::publish(
+                    parts.listener_announcement.as_deref(),
+                    listener.local_addr()?,
+                )
+                .await?;
                 register_in(
                     scope,
                     listener,
@@ -237,9 +246,14 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
                 )?;
 
                 scope.stage("worker.register")?;
+                let mut registry = runledger_runtime::registry::JobRegistry::new();
+                registry.try_register(
+                    DeliveryWorker::new(pool.clone(), parts.provider, parts.provider_bulkhead)
+                        .into_job_handler(),
+                )?;
                 batter_runledger::register_in(scope, "worker", native_startup, {
                     runledger_runtime::Supervisor::builder(&pool, parts.jobs)?
-                        .with_registry(runledger_runtime::registry::JobRegistry::new())
+                        .with_registry(registry)
                         .prepare()?
                 })?;
                 Ok(())
@@ -248,7 +262,6 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
             result.map_err(initialization)
         })
     })
-    .without_readiness_approval()
     .with_unix_signals("signals")
     .start();
     let pending = starting.wait().await.map_err(startup_failure)?;

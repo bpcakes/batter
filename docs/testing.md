@@ -326,7 +326,32 @@ fixture lifecycle and configuration probes. `scripts/reference_live.py::CASES` o
 uses the production authenticated router, and checks exact replay, canonical
 payload conflict, foreign-owner isolation, replacement-generation fencing,
 discarded-response reconciliation, pending state and exact command/delivery/job
-counts. Fixture cases cover template reuse/isolation, acknowledged
+counts. It also checks unresolved native terminal states and missing-effect
+corruption through both authenticated read routes, preserving uncertainty and
+owner isolation. The production-root case rechecks readiness beyond the health
+freshness window, disables connections to its disposable database, requires
+unready, restores connections, and requires readiness recovery. Its retained
+control connection restores database availability before returning an error.
+The readiness scenario owns its database-fixture entrypoint and derives its
+completion-observation budget from both signal cases' actual phase limits,
+process bind/reap limits, two announcement-failure child reap bounds and explicit
+fixture headroom (currently 182.4 seconds).
+The generic 30-second fixture budget is not suitable for these serial phases.
+Offline process controls assert the serial allowance; a separate seven-state,
+two-writer table verifies terminal-source rejection before SQL acquisition.
+The live state probe additionally supplies stale unresolved arguments against
+all four retained terminal states and a different unresolved state; both writers
+must return an invariant failure and preserve the complete row, including
+provider identity, uncertainty and timestamps.
+The observation budget does not guarantee termination of arbitrary database I/O
+or claim cleanup completion after a timeout.
+The native provider-timeout regression uses a loopback peer that withholds
+headers or stalls a declared response body. A native reqwest read timeout must
+retain `delivery.provider_timeout` and release provider capacity; the enclosing
+operation budget is deliberately longer. The admission-interruption live case
+also checks that `delivery.admission_interrupted` reaches the retained effect
+row, not merely the pure diagnostic mapper. Execution status is in validation.
+Fixture cases cover template reuse/isolation, acknowledged
 lock operations, returned body errors, partial/sibling acquisition, panic,
 resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
 errors, observer failure, cancelled native creation, abandoned producer errors
@@ -391,14 +416,76 @@ The native lifecycle cases now use `batter-runledger` and owned native preparati
 They exercise queue-independent initialization, in-flight work completing after
 drain, retained settlement after owner loss, durable business failure without
 process failure and a non-yielding callback that remains unjoined at report time.
-The production-root child requires `/live` 200, `/ready` 503 across multiple health
-sampling intervals, no control-job rows and successful awaited cleanup in
-sequential SIGTERM and SIGINT runs. Its parent settles both the assertion task
-and child shutdown before combining them, retaining both errors if they fail
-together; the offline `child_fixture` control checks that dual-failure branch.
+The production-root child requires `/live` and eventual `/ready` 200, no
+control-job rows, one confirmed provider effect per run and successful awaited
+cleanup in sequential SIGTERM and SIGINT runs. Its parent settles both the
+assertion task and child shutdown before combining them, retaining both errors if
+they fail together; the offline `child_fixture` control checks that dual-failure
+branch.
+
+Two provider-effect cases use a parent-owned real loopback HTTP fixture and the
+actual production binary. The crash case withholds an accepted POST response,
+independently queries a leased native job plus `reconcile_needed`, SIGKILLs and
+reaps that process, then starts the ordinary root again. It proves ordinary
+confirmation and repeats the crash window with generation replacement between
+attempts; restart must reconcile the accepted effect into manual resolution
+rather than business denial. The outcome case checks same-key replay and mismatch
+conflict, three bounded native handlers behind one provider permit, business
+denial, structured known non-dispatch, opaque-text lookup-before-replay, bounded
+exhaustion, generation replacement after provider acceptance, retention
+expiry/manual resolution and later work after terminal outcomes. A retained
+already-expired local resolution window reaches manual resolution without a
+provider lookup or dispatch, even when the fixture would report authoritative
+absence. A retained
+near-expiry uncertainty plus authoritative absence proves that the following
+fresh POST receives a newly anchored 24-hour reconciliation deadline. Its admission
+phases prove that fresh work waits without immediate attempt loss, terminal
+redelivery completes without provider admission, and an admission deadline while
+`reconcile_needed` preserves acceptance possibility and the resolution deadline.
+The same outcome case holds the authoritative job-row lock after provider
+acceptance, lets the handler reach its confirmation fence, revokes the native
+lease before releasing the lock, and requires the stale handler to leave the
+effect in `reconcile_needed`. Offline transport cases require the identical
+canonical request echo for POST and GET, classify only connector failure as
+known non-dispatch, and keep missing/mismatched responses conservative.
+Runledger still owns the already-claimed attempt; provider waiters are bounded by
+its configured global handler concurrency.
+The outcome case independently corrupts the persisted provider payload and key,
+requires invariant rejection from both owner-scoped reads and worker loading,
+and witnesses zero provider requests. With a future dispatch lower bound, keyed
+GET must still run: accepted lookup confirms without POST; authoritative absence
+preserves the complete effect row and schedules native retry no earlier than the
+retained lower bound. A pure planner case separately pins reconciliation before
+dispatch eligibility and keeps expired reconciliation terminal.
+The crash/restart probe has a 75-second fixture-completion bound. The composite
+outcome probe has a separate 180-second bound because its sequential phase
+bounds, including the roughly 30-second locked native retry schedule, exceed 75
+seconds before cleanup. Running production children select port zero themselves,
+send the bound loopback address once to a private Unix datagram receiver bound
+by the parent before spawn, and must exit zero with empty stdout and stderr after
+checked SIGTERM/SIGINT shutdown; the separately held
+acquisition controls still require the documented startup-failure exit.
 Seven offline retirement cases separately exercise legacy disable, quiescence,
 preservation and uncertain outcomes. The current inventory is listed below;
 the earlier example-owned witness/lease protocol was removed.
+
+The private `provider_state_lock_and_retry_boundaries` probe also witnesses both
+confirmation/replacement lock orders using `pg_blocking_pids`: replacement-first
+requires manual resolution; confirmation-first blocks replacement until the
+confirmation commit. An expired lease during the record wait must leave retained
+uncertainty untouched, and a NOWAIT job-row acquisition proves the record wait
+does not hold the heartbeat lock. Offline Unix announcement tests exercise absent
+configuration, exact address payload, missing receiver and saturated receiver
+settlement; configuration tests reject relative, NUL-containing and oversized
+paths. These are native Unix cases, not a general stdout cancellation guarantee.
+The production-root case additionally starts a typed assertion child with no
+announcement receiver, requiring the protected startup report at `http.bind`,
+the retained `io::ErrorKind::NotFound` cause and successful `postgres.pool`
+cleanup. It then runs the actual executable with a missing receiver and requires
+natural exit1, empty stdout and the exact sanitized stderr diagnostic. Each child
+has the existing eight-second reap bound; watchdog termination is failure, not
+successful settlement evidence. Its ordinary receiver/readiness phases remain
+the positive control, and the live inventory remains 66 cases.
 
 Ordinary reference HTTP tests separately pin the composition boundaries: a bare
 in-process `/live` request succeeds without `ConnectInfo`, while an authenticated
@@ -1251,6 +1338,22 @@ count. The same per-variant replacement definitions drive source edits and
 SHA-256, including the unchanged baseline. Logs and evidence go in the selected directory. Root/registry sources
 remain unchanged, and the copied lock may change only Axum's path identity.
 
+## Provider lease and retry boundary probes
+
+The reference live runner additionally requires the ignored library test
+`delivery::worker::state::live_tests::provider_state_lock_and_retry_boundaries`
+after its 66-case integration inventory and maintenance-session probe. It uses a
+disposable harness database, synthetic native lease identity and no heartbeat to
+isolate the SQL authority boundary: lock-only waits on the job and effect rows
+cross expiry and must leave application state unchanged. It also discards the
+native completion value after outcome persistence and checks both dispatch
+authorization paths reject future eligibility, then accepts expired eligibility.
+The ordinary library matrix covers returned storage-error delay retention and
+pure retry planning. The integration outcome case blocks native completion after
+the application commit, kills the real worker, and checks recovery issues no POST
+and schedules at or after the retained provider boundary. Synthetic SQL authority
+coverage and real native recovery coverage are distinct evidence.
+
 ## HTTP process smoke test
 
 The example defaults its logging filter only when `RUST_LOG` is absent.
@@ -1572,7 +1675,7 @@ ignored. The runner controls reject missing startup/cancellation cases too.
 
 ## Native lifecycle and offline retirement acceptance
 
-The current reference target has 64 entries: 59 live database probes, two
+The current reference target has 66 entries: 61 live database probes, two
 offline synthetic-acquisition signal controls, two offline executable-composition
 signal controls and the private child dispatch entry. Two exact legacy aliases
 were removed in the hard cutover instead of being counted as independent evidence.

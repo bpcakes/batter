@@ -36,6 +36,8 @@ fn load(pairs: &[(&str, &str)]) -> Result<ServingSettings, batter::settings::Set
             "00000000-0000-0000-0000-000000000001",
         ),
         ("BATTER_AUTH_TOKEN", "fake-configured-token"),
+        ("BATTER_PROVIDER_BASE_URL", "http://127.0.0.1:9/"),
+        ("BATTER_PROVIDER_TOKEN", "fake-provider-token"),
     ]);
     values.overlay(source(pairs));
     ServingSettings::from_sources(None, SettingsSource::default(), values)

@@ -1,7 +1,10 @@
 use super::*;
 use batter::operation::{OperationContext, OperationError};
 use batter_sqlx::{PgLease, SqlxFailure};
-use sqlx::{Connection, PgConnection, PgPool};
+use runledger_postgres::jobs::{
+    JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_tx,
+};
+use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -223,4 +226,232 @@ async fn attempt_submit(
             }),
         },
     }
+}
+
+struct NewDelivery {
+    delivery_id: Uuid,
+    enqueue_idempotency_key: String,
+    enqueue_payload: Value,
+    provider_key: String,
+    provider_payload: ProviderEffectRequest,
+}
+
+fn prepare_new_delivery(
+    owner: OwnerId,
+    record_id: Uuid,
+    request: &ValidatedSubmit,
+) -> Result<NewDelivery, StorageError> {
+    let delivery_id = Uuid::now_v7();
+    let enqueue_idempotency_key = format!("delivery:{delivery_id}");
+    let delivery_payload = DeliveryJobPayload {
+        version: DELIVERY_PAYLOAD_VERSION,
+        delivery_id,
+        owner_id: owner.as_uuid(),
+        record_id,
+        record_generation: request.expected_generation,
+        payload: request.payload.clone(),
+    };
+    let enqueue_payload = serde_json::to_value(&delivery_payload)
+        .map_err(|_| StorageError::Invariant("delivery payload encoding failed"))?;
+    let provider_payload = provider_request(&delivery_payload);
+    let provider_key = provider_payload.idempotency_key();
+    Ok(NewDelivery {
+        delivery_id,
+        enqueue_idempotency_key,
+        enqueue_payload,
+        provider_key,
+        provider_payload,
+    })
+}
+
+async fn submit_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    owner: OwnerId,
+    record_id: Uuid,
+    request: &ValidatedSubmit,
+) -> Result<SubmitResult, CommandFailure> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut **transaction)
+        .await
+        .map_err(StorageError::from)?;
+
+    let new = prepare_new_delivery(owner, record_id, request)?;
+    let inserted = insert_command_identity(
+        transaction,
+        owner,
+        record_id,
+        request,
+        new.delivery_id,
+        &new.enqueue_idempotency_key,
+        &new.enqueue_payload,
+    )
+    .await?;
+
+    if !inserted {
+        let retained = load_command(transaction, owner, &request.idempotency_key)
+            .await?
+            .ok_or(StorageError::Invariant(
+                "conflicting command identity disappeared",
+            ))?;
+        if retained.record_id != record_id
+            || retained.expected_generation != request.expected_generation
+            || retained.request_payload != request.payload
+        {
+            return Err(SubmitRejection::IdempotencyConflict.into());
+        }
+        return Ok(SubmitResult {
+            disposition: SubmitDisposition::Replayed,
+            delivery: retained.delivery()?,
+        });
+    }
+
+    let generation: Option<i64> = sqlx::query_scalar(
+        "SELECT generation
+           FROM reference_records
+          WHERE id = $1 AND owner_id = $2
+          FOR UPDATE",
+    )
+    .bind(record_id)
+    .bind(owner.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(StorageError::from)?;
+    let Some(generation) = generation else {
+        return Err(SubmitRejection::RecordNotObserved.into());
+    };
+    if generation != request.expected_generation {
+        return Err(SubmitRejection::StaleGeneration {
+            current_generation: generation,
+        }
+        .into());
+    }
+
+    let enqueue = JobEnqueue {
+        job_type: JobType::new(DELIVERY_JOB_TYPE),
+        organization_id: Some(owner.as_uuid()),
+        payload: &new.enqueue_payload,
+        priority: Some(ENQUEUE_PRIORITY),
+        max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
+        timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
+        next_run_at: None,
+        idempotency_key: Some(&new.enqueue_idempotency_key),
+        stage: Some(JobStage::Queued),
+    };
+    let outcome = enqueue_job_with_outcome_tx(transaction, &enqueue)
+        .await
+        .map_err(StorageError::from)?;
+    if outcome.disposition != JobEnqueueDisposition::Inserted {
+        return Err(
+            StorageError::Invariant("new command resolved to an existing upstream job").into(),
+        );
+    }
+    insert_delivery(
+        transaction,
+        owner,
+        request,
+        new.delivery_id,
+        &outcome,
+        &new.provider_key,
+        &new.provider_payload,
+    )
+    .await?;
+    Ok(SubmitResult {
+        disposition: SubmitDisposition::Accepted,
+        delivery: Delivery {
+            delivery_id: new.delivery_id,
+            record_id,
+            generation,
+            payload: request.payload.clone(),
+            state: DeliveryState::from_job_status(outcome.status),
+            provider: ProviderOutcome {
+                state: ProviderEffectState::AwaitingAttempt,
+                provider_effect_id: None,
+                acceptance_possible: false,
+            },
+        },
+    })
+}
+
+async fn insert_command_identity(
+    transaction: &mut Transaction<'_, Postgres>,
+    owner: OwnerId,
+    record_id: Uuid,
+    request: &ValidatedSubmit,
+    delivery_id: Uuid,
+    enqueue_idempotency_key: &str,
+    enqueue_payload: &Value,
+) -> Result<bool, StorageError> {
+    let inserted: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO reference_delivery_commands (
+            owner_id, idempotency_key, delivery_id, record_id, expected_generation,
+            request_payload, enqueue_job_type, enqueue_idempotency_key, enqueue_payload,
+            enqueue_priority, enqueue_max_attempts, enqueue_timeout_seconds, enqueue_stage
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (owner_id, idempotency_key) DO NOTHING
+         RETURNING delivery_id",
+    )
+    .bind(owner.as_uuid())
+    .bind(&request.idempotency_key)
+    .bind(delivery_id)
+    .bind(record_id)
+    .bind(request.expected_generation)
+    .bind(&request.payload)
+    .bind(DELIVERY_JOB_TYPE)
+    .bind(enqueue_idempotency_key)
+    .bind(enqueue_payload)
+    .bind(ENQUEUE_PRIORITY)
+    .bind(ENQUEUE_MAX_ATTEMPTS)
+    .bind(ENQUEUE_TIMEOUT_SECONDS)
+    .bind(JobStage::Queued.as_db_value())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(StorageError::from)?;
+    Ok(inserted.is_some())
+}
+
+async fn insert_delivery(
+    transaction: &mut Transaction<'_, Postgres>,
+    owner: OwnerId,
+    request: &ValidatedSubmit,
+    delivery_id: Uuid,
+    outcome: &JobEnqueueOutcome,
+    provider_key: &str,
+    provider_payload: &ProviderEffectRequest,
+) -> Result<(), StorageError> {
+    let result = sqlx::query(
+        "INSERT INTO reference_deliveries (id, owner_id, idempotency_key, job_id)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(delivery_id)
+    .bind(owner.as_uuid())
+    .bind(&request.idempotency_key)
+    .bind(outcome.job_id)
+    .execute(&mut **transaction)
+    .await?;
+    if result.rows_affected() != 1 {
+        return Err(StorageError::Invariant("delivery insert changed no row"));
+    }
+    let effect = sqlx::query(
+        "INSERT INTO reference_delivery_effects (
+            delivery_id, owner_id, record_id, record_generation,
+            provider_key, provider_payload
+         ) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(delivery_id)
+    .bind(owner.as_uuid())
+    .bind(provider_payload.record_id)
+    .bind(provider_payload.record_generation)
+    .bind(provider_key)
+    .bind(
+        serde_json::to_value(provider_payload)
+            .map_err(|_| StorageError::Invariant("provider payload encoding failed"))?,
+    )
+    .execute(&mut **transaction)
+    .await?;
+    if effect.rows_affected() != 1 {
+        return Err(StorageError::Invariant(
+            "delivery effect insert changed no row",
+        ));
+    }
+    Ok(())
 }

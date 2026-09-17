@@ -7,7 +7,9 @@ from parallel_process import run_parallel
 
 # Entries executed against the explicitly selected disposable PostgreSQL endpoints.
 DATABASE_CASES = frozenset({
-    "production_root_withholds_readiness_without_control_jobs",
+    "production_root_registers_provider_worker",
+    "provider_effect_crash_and_restart",
+    "provider_effect_outcome_contracts",
     "retirement_preserves_history_and_disables_old_catalog",
     "retirement_rejects_wrong_identity",
     "retirement_rejects_hidden_sessions",
@@ -90,10 +92,17 @@ BINARY_COMMAND = ["cargo", "build", "-p", "batter-example-reference-service", "-
 SESSION_CASE = "retirement::session::tests::maintenance_session_replacement_is_refused"
 SESSION_COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--lib", "--locked",
                    SESSION_CASE, "--", "--exact", "--include-ignored"]
+STATE_CASE = "delivery::worker::state::live_tests::provider_state_lock_and_retry_boundaries"
+STATE_COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--lib", "--locked",
+                 STATE_CASE, "--", "--exact", "--include-ignored"]
 
 
 def complete_session_execution(output):
-    return (output.count(f"test {SESSION_CASE} ... ok") == 1
+    return complete_named_execution(output, SESSION_CASE)
+
+
+def complete_named_execution(output, case):
+    return (output.count(f"test {case} ... ok") == 1
             and re.search(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;", output, re.MULTILINE) is not None)
 
 
@@ -146,6 +155,10 @@ def main():
     print(session.output, end="")
     if not session.ok or not complete_session_execution(session.stdout.decode("utf-8", errors="replace")):
         sys.exit("Maintenance session replacement probe did not execute successfully.")
+    state = run(STATE_COMMAND, timeout=180)
+    print(state.output, end="")
+    if not state.ok or not complete_named_execution(state.stdout.decode("utf-8", errors="replace"), STATE_CASE):
+        sys.exit("Provider state boundary probe did not execute successfully.")
 
 
 if __name__ == "__main__":

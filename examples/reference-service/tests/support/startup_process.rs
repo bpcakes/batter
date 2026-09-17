@@ -14,15 +14,29 @@ mod timing;
 
 /// Static proof printed only after a child's typed assertions pass.
 const CLEANUP_PROOF: &str = "startup-child:owned-cleanup-complete";
+pub const AUTH_TOKEN: &str = "fixture-token";
 pub const SIGNAL_LISTENERS_READY: &str = "signal-listeners-ready";
 pub const SIGNAL_OBSERVED: &str = "startup-signal-observed";
+
+pub fn provider_forbidden_values<'a>(endpoint: &'a str, provider_url: &'a str) -> [&'a str; 4] {
+    [endpoint, provider_url, AUTH_TOKEN, super::provider::TOKEN]
+}
 
 #[allow(dead_code)]
 mod watchdog {
     include!("../../../../test-support/process/watchdog.rs");
-    use std::process::Stdio;
+    use std::{net::SocketAddr, process::Stdio};
+
+    #[path = "process_contracts.rs"]
+    mod contracts;
+    pub use contracts::process_contracts;
+    #[path = "announcement_failure.rs"]
+    pub(super) mod announcement_failure;
+    #[path = "listener.rs"]
+    mod listener;
 
     const REAP_LIMIT: Duration = Duration::from_secs(8);
+    const BIND_LIMIT: Duration = Duration::from_secs(20);
 
     /// A Unix signal selected by one process case.
     #[derive(Clone, Copy, Debug)]
@@ -65,7 +79,32 @@ mod watchdog {
                 "BATTER_AUTH_OWNER_ID",
                 "00000000-0000-0000-0000-000000000001",
             )
-            .env("BATTER_AUTH_TOKEN", "fixture-token");
+            .env("BATTER_AUTH_TOKEN", super::AUTH_TOKEN)
+            .env("BATTER_PROVIDER_BASE_URL", "http://127.0.0.1:9/")
+            .env("BATTER_PROVIDER_TOKEN", "fixture-provider-token");
+    }
+
+    fn configure_provider_worker(
+        command: &mut Command,
+        endpoint: &str,
+        bind: &str,
+        provider_base_url: &str,
+        worker_id: &str,
+        maximum_concurrency: &str,
+        retry_delay_ms: &str,
+    ) {
+        configure(command, endpoint, bind);
+        command
+            .env("BATTER_PROVIDER_BASE_URL", provider_base_url)
+            .env("JOBS_WORKER_ID", worker_id)
+            .env("JOBS_POLL_INTERVAL_MS", "20")
+            .env("JOBS_CLAIM_BATCH_SIZE", "1")
+            .env("JOBS_LEASE_TTL_SECONDS", "1")
+            .env("JOBS_MAX_GLOBAL_CONCURRENCY", maximum_concurrency)
+            .env("JOBS_REAPER_INTERVAL_SECONDS", "1")
+            .env("JOBS_SCHEDULE_POLL_INTERVAL_SECONDS", "1")
+            .env("JOBS_REAPER_RETRY_DELAY_MS", retry_delay_ms)
+            .env("BATTER_PROVIDER_CAPACITY", "1");
     }
 
     /// A launched process with separately bounded stdout and stderr capture.
@@ -199,6 +238,37 @@ mod watchdog {
             } else {
                 Err(format!(
                     "could not send {signal:?} to {}; {}",
+                    self.label,
+                    self.diagnostics()
+                ))
+            }
+        }
+
+        fn signal_kill(&mut self) -> Result<SignalRequest, String> {
+            if self
+                .child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                return Ok(SignalRequest::AlreadyExited);
+            }
+            let sent = Command::new("/bin/kill")
+                .args(["-KILL", &self.child.id().to_string()])
+                .status()
+                .map_err(|error| error.to_string())?;
+            if sent.success() {
+                Ok(SignalRequest::Accepted)
+            } else if self
+                .child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                Ok(SignalRequest::AlreadyExited)
+            } else {
+                Err(format!(
+                    "could not send SIGKILL to {}; {}",
                     self.label,
                     self.diagnostics()
                 ))
@@ -441,16 +511,22 @@ mod watchdog {
     #[derive(Clone, Copy)]
     enum ExecutableKind {
         SignalFixture,
-        Production,
+        ProductionStartupFailure,
+        ProductionRunningSuccess,
     }
 
     /// A separately built executable, never a Rust test-harness child.
     pub struct ExecutableChild {
         child: SeparateChild,
         kind: ExecutableKind,
+        listener: Option<SocketAddr>,
     }
 
     impl ExecutableChild {
+        pub fn lifecycle_observation_budget() -> Duration {
+            BIND_LIMIT + REAP_LIMIT
+        }
+
         pub fn start_signal_fixture(endpoint: &str) -> io::Result<Self> {
             let mut command = Command::new(env!("CARGO_BIN_EXE_signal_witness_fixture"));
             configure(&mut command, endpoint, "127.0.0.1:0");
@@ -458,6 +534,7 @@ mod watchdog {
             SeparateChild::spawn("signal witness fixture", command, None).map(|child| Self {
                 child,
                 kind: ExecutableKind::SignalFixture,
+                listener: None,
             })
         }
 
@@ -470,9 +547,77 @@ mod watchdog {
             SeparateChild::spawn("production reference executable", command, None).map(|child| {
                 Self {
                     child,
-                    kind: ExecutableKind::Production,
+                    kind: ExecutableKind::ProductionStartupFailure,
+                    listener: None,
                 }
             })
+        }
+
+        /// Start the real production executable with fast, bounded native worker
+        /// timings for the isolated provider-effect acceptance probe.
+        pub fn start_provider_worker(
+            endpoint: &str,
+            provider_base_url: &str,
+            worker_id: &str,
+        ) -> io::Result<Self> {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_batter-example-reference-service"));
+            configure_provider_worker(
+                &mut command,
+                endpoint,
+                "127.0.0.1:0",
+                provider_base_url,
+                worker_id,
+                "1",
+                "1",
+            );
+            command.stdin(Stdio::null());
+            let announcement = listener::Announcement::new(&mut command)?;
+            let mut child = SeparateChild::spawn("production provider worker", command, None)?;
+            let listener = child
+                .wait_for_listener(&announcement, BIND_LIMIT)
+                .map_err(io::Error::other)?;
+            Ok(Self {
+                child,
+                kind: ExecutableKind::ProductionRunningSuccess,
+                listener: Some(listener),
+            })
+        }
+
+        /// Start the production worker with three native execution slots and one
+        /// provider permit so the live probe can observe bounded waiting while
+        /// an accepted request remains behind its response barrier.
+        pub fn start_admission_worker(
+            endpoint: &str,
+            provider_base_url: &str,
+            worker_id: &str,
+        ) -> io::Result<Self> {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_batter-example-reference-service"));
+            configure_provider_worker(
+                &mut command,
+                endpoint,
+                "127.0.0.1:0",
+                provider_base_url,
+                worker_id,
+                "3",
+                "60000",
+            );
+            command.stdin(Stdio::null());
+            let announcement = listener::Announcement::new(&mut command)?;
+            let mut child = SeparateChild::spawn("production admission worker", command, None)?;
+            let listener = child
+                .wait_for_listener(&announcement, BIND_LIMIT)
+                .map_err(io::Error::other)?;
+            Ok(Self {
+                child,
+                kind: ExecutableKind::ProductionRunningSuccess,
+                listener: Some(listener),
+            })
+        }
+
+        /// Return the loopback address selected and acknowledged by a running child.
+        pub fn listener(&self) -> SocketAddr {
+            self.listener
+                .expect("only a running production child exposes its listener")
         }
 
         /// Stop and reap after parent-side setup failed, retaining redacted
@@ -481,7 +626,7 @@ mod watchdog {
             self.child.abort_diagnostics(forbidden)
         }
 
-        /// Require the kind-specific fixed nonzero startup exit, not signal termination.
+        /// Require the kind-specific startup failure or clean running shutdown.
         pub fn stop(mut self, signal: Signal, forbidden: &[&str]) -> Result<(), String> {
             if self.child.signal(signal)? != SignalRequest::Accepted {
                 let run = self.child.wait(REAP_LIMIT)?;
@@ -494,92 +639,27 @@ mod watchdog {
             let run = self.child.wait(REAP_LIMIT)?;
             match self.kind {
                 ExecutableKind::SignalFixture => run.signal_fixture_child(signal, forbidden),
-                ExecutableKind::Production => run.production_child(forbidden),
+                ExecutableKind::ProductionStartupFailure => run.production_child(forbidden),
+                ExecutableKind::ProductionRunningSuccess => run.production_running_child(forbidden),
             }
         }
-    }
 
-    /// Offline checks for capture setup and already-completed process ownership.
-    pub fn process_contracts() {
-        let (stdout_reader, stdout_writer) = io::pipe().unwrap();
-        let (stderr_reader, stderr_writer) = io::pipe().unwrap();
-        let mut command = Command::new("/bin/true");
-        command.stdout(stdout_writer).stderr(stderr_writer);
-        let mut starts = 0;
-        let error = match start_captures(command, stdout_reader, stderr_reader, |reader| {
-            starts += 1;
-            if starts == 2 {
-                Err(io::Error::other("injected second capture failure"))
-            } else {
-                Capture::start(reader)
+        /// Deliver SIGKILL, reap the process, and require signal termination with
+        /// bounded, empty, secret-free streams. This is an expected crash witness,
+        /// not the timeout fallback used by the ordinary child owner.
+        pub fn crash(mut self, forbidden: &[&str]) -> Result<(), String> {
+            if self.child.signal_kill()? != SignalRequest::Accepted {
+                let run = self.child.wait(REAP_LIMIT)?;
+                run.check(forbidden)?;
+                return Err(format!("{} exited before SIGKILL: {run:?}", run.label));
             }
-        }) {
-            Ok(_) => panic!("the injected second capture failure must be returned"),
-            Err(error) => error,
-        };
-        assert_eq!(error.to_string(), "injected second capture failure");
-
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "printf 'batter-fixture:completed-child\\n'"]);
-        let mut child = SeparateChild::spawn("completed child", command, None).unwrap();
-        assert!(child.child.wait().unwrap().success());
-        child
-            .wait_event("completed-child", REAP_LIMIT)
-            .expect("event remains available after the child is reaped");
-        assert_eq!(
-            child.signal(Signal::Term).unwrap(),
-            SignalRequest::AlreadyExited,
-            "a completed child is distinguished from an accepted signal request"
-        );
-        let run = child.wait(REAP_LIMIT).unwrap();
-        assert!(run.status.success());
-        run.stdout.validate(&["completed-child"], &[]).unwrap();
-        run.stderr.validate(&[], &[]).unwrap();
-
-        // The old executable oracle accepted this exact status/diagnostic pair.
-        // Without a process-local signal witness it must now be rejected.
-        let mut command = Command::new("/bin/sh");
-        command.args([
-            "-c",
-            "printf 'Error: reference service failed\\n' >&2; exit 1",
-        ]);
-        let run = SeparateChild::spawn("unrelated failure", command, None)
-            .unwrap()
-            .wait(REAP_LIMIT)
-            .unwrap();
-        assert!(run.signal_fixture_child(Signal::Term, &[]).is_err());
-
-        let private = "postgres://fixture:private@localhost/database";
-        let mut output = Output::default();
-        output.record(
-            format!("{private}\nthread panicked at private boundary\n").as_bytes(),
-            Instant::now(),
-        );
-        let diagnostic = safe_check(&output, "private output").unwrap_err();
-        assert!(!diagnostic.contains(private));
-        assert!(!format!("{:?}", SafeOutput(&output)).contains(private));
-
-        for (scenario, signal) in [
-            ("signal.broadcast.term", Signal::Term),
-            ("signal.broadcast.int", Signal::Int),
-        ] {
-            let mut child = StartupChild::start(scenario, private).unwrap();
-            child
-                .wait_event(super::SIGNAL_LISTENERS_READY, REAP_LIMIT)
-                .unwrap();
-            let mut child = child.request_stop(signal, &[private]).unwrap();
-            child
-                .wait_event(super::SIGNAL_OBSERVED, REAP_LIMIT)
-                .unwrap();
-            child
-                .finish(
-                    &[super::SIGNAL_LISTENERS_READY, super::SIGNAL_OBSERVED],
-                    &[private],
-                )
-                .unwrap();
+            self.child.wait(REAP_LIMIT)?.production_crash(forbidden)
         }
     }
 }
+pub use watchdog::announcement_failure::{
+    observation_budget as announcement_failure_budget, probe as check_announcement_failure,
+};
 pub use watchdog::{ExecutableChild, Signal, StartupChild, process_contracts};
 
 /// Emit a parseable fixture event on its own line.
@@ -609,6 +689,7 @@ pub fn child(scenario: &str) {
     runtime.enable_all().build().unwrap().block_on(async {
         match scenario {
             "production" => production().await,
+            "announcement.failure" => watchdog::announcement_failure::child().await,
             "postgres.acquire" | "postgres.schema" => startup_drain(scenario).await,
             "signal.broadcast.term" | "signal.broadcast.int" => signal_broadcast(scenario).await,
             "protected.waiter-loss" => super::protected_startup::waiter_loss_child().await,

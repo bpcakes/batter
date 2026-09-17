@@ -6,6 +6,79 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Listener and SQL ordering investigation, 2026-09-17
+
+Under `batter-ws3`, rechecked Tokio 1.53.1's
+[stdout implementation contract](https://docs.rs/tokio/1.53.1/tokio/io/fn.stdout.html)
+and [blocking-task cancellation limits](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn_blocking.html).
+Async stdout delegates writes to blocking threads; moving a synchronous write
+there does not make an already-started write cancellable. A genuinely bounded
+listener announcement needs a different I/O boundary. The user selected an
+explicit optional Unix-datagram announcement. Tokio's native
+[UnixDatagram::send_to](https://docs.rs/tokio/1.53.1/tokio/net/struct.UnixDatagram.html#method.send_to)
+uses socket readiness rather than blocking-task stdout. The reference root owns
+this protocol; no foundation discovery API is added.
+
+PostgreSQL18 [Read Committed semantics](https://www.postgresql.org/docs/18/transaction-iso.html)
+give a statement its own snapshot, not a fresh snapshot of unrelated rows after
+every lock wait. A three-connection local PostgreSQL18.6 experiment held the
+effect-row lock, witnessed confirmation waiting on it, committed generation2,
+then released the effect lock. The confirmation CASE published CONFIRMED for
+retained generation1; a subsequent statement selected MANUAL_RESOLUTION.
+This was a minimal SQL mechanism reproduction, not a full worker integration
+test. The user selected serialization with replacement. PostgreSQL's
+[row-lock modes](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS)
+make FOR SHARE conflict with generation updates, while FOR KEY SHARE would not
+protect a non-key generation change. Confirmation now takes record -> job ->
+effect locks and evaluates generation after record-lock acquisition. Submission
+also takes its record lock before native enqueue; exact replay does not enqueue,
+and new enqueue uses its new delivery UUID as identity. The focused application
+probe passed both lock orderings, expiry while waiting for the record, and job-row
+availability during that wait. This establishes the selected local SQL ordering,
+not validity forever after confirmation or atomicity with the remote provider.
+
+Pinned Runledger revision `d57ec6be61e9f00ccce373b19ca356cafe98f206` owns
+[heartbeat maintenance](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-runtime/src/worker/execution.rs):
+it polls the handler while heartbeat work is pending and bounds each heartbeat,
+including pool acquisition, to one third of lease TTL. Its
+[heartbeat SQL](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/heartbeat.rs)
+locks the same job row as application mutations. Long application transactions
+can therefore cause lease-maintenance failure; independent heartbeat polling
+does not eliminate database lock contention. No loaded-system throughput or
+lease-sizing benchmark was executed. A provider-capacity/pool-size ratio alone
+cannot bound SQL lock time or prevent this failure, so no ratio restriction is
+justified by these sources.
+
+Used PostgreSQL's [forced generic prepared-plan mode](https://www.postgresql.org/docs/18/sql-prepare.html)
+to test the combined lookup predicate against 100,000 synthetic rows and the
+same two uniqueness indexes. Both key and ID modes used BitmapOr, with one
+index search on the active branch and zero on the NULL branch. Each returned
+one row without a table scan. Separate predicates used direct index scans.
+This isolates predicate/index selection; it does not benchmark the full joined
+query, production distributions or concurrency. No query rewrite is supported
+by this experiment alone.
+
+## Reference terminal-state review answers, 2026-09-17
+
+Rechecked the resolved Runledger 0.12.0 source at revision
+`d57ec6be61e9f00ccce373b19ca356cafe98f206`. Its PostgreSQL
+[failure completion implementation](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/failure.rs)
+selects terminal completion before resolving retry timing; timing is resolved
+only in the retry branch. The upstream
+[terminal-failure timing regression](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-runtime/src/worker/tests/completion_and_retry.rs)
+explicitly tests ignoring the delay override. Source was inspected locally;
+that upstream test was not separately executed here.
+
+The reference's current migration `202609110001_reference_deliveries.sql`
+already declares `UNIQUE (delivery_id)` on commands. No uniqueness migration or
+backfill is needed. The future-delay reconciliation fixture deliberately installs
+a legal retained row to test dispatch authorization. Normal forward-clock
+transitions check eligibility before marking reconciliation; they do not produce
+that combination. Wall-clock rollback or external state mutation can. Keyed GET
+may still resolve uncertainty; neither POST path may ignore retained eligibility.
+No evidence establishes a required provider-capacity-to-pool-size ratio: provider
+permits do not hold database connections during remote I/O.
+
 ## Browser credential transport review follow-up, 2026-09-15
 
 The current WHATWG Fetch Standard defines
@@ -236,6 +309,85 @@ regenerated their lock entries. The native initialization/settlement and
 transaction-error contracts described below now have an immutable source identity.
 This source check does not itself establish runtime acceptance; executed checks
 and remaining limits are recorded under `batter-vly` in [validation](validation.md).
+
+The 2026-09-17 provider-worker review rechecked the exact pinned implementation,
+not a moving branch. Runledger's pinned
+[`claim.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/claim.rs)
+increments `attempt` in the lease update and returns that value to the handler, so
+the reference worker compares the current attempt with `max_attempts`. Its pinned
+[`execution.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-runtime/src/worker/execution.rs)
+keeps heartbeat maintenance in the same select set as the handler future and
+abandons handler completion after lease loss. The pinned
+[`success.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/success.rs)
+and
+[`failure.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/failure.rs)
+also require the same live job, run, attempt and worker lease before durable
+completion. Therefore a provider-admission wait can cross the original lease
+interval only while native heartbeat renewal succeeds; stale completion is not
+accepted after ownership or expiry changes.
+
+The 2026-09-17 lease-fence follow-up also rechecked Runledger's pinned
+[`common.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/common.rs),
+[`heartbeat.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/lifecycle/heartbeat.rs),
+and
+[`reaper.rs`](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-postgres/src/jobs/queue/reaper.rs).
+They lock the exact `job_queue` row and recheck lease expiry for live lifecycle
+mutations. PostgreSQL 18's official
+[`FOR UPDATE` semantics](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS)
+make concurrent writers/lockers wait until transaction end and then return the
+updated row or no row, which is the serialization boundary mirrored by the
+reference state API. Reqwest 0.12.28's official
+[`Error::is_connect`](https://docs.rs/reqwest/0.12.28/reqwest/struct.Error.html#method.is_connect)
+classifies connector errors; the pinned source delegates to hyper-util's
+`ErrorKind::Connect`. The reference treats only that pre-request phase as known
+non-dispatch. Timeouts, response/body failures and all post-connect errors remain
+indeterminate.
+
+The next reference transport assessment on 2026-09-17 checked the same pinned
+reqwest implementation: request sending and `Response::chunk` return native
+errors through different phase variants in the application, so a body error
+cannot enter connector classification. Request construction can fail on invalid
+header values even with infallibly serializable JSON; a direct constructor test
+proves this, while validated canonical worker inputs prevent that particular
+failure. [RFC 6761 section 6.3](https://www.rfc-editor.org/rfc/rfc6761.html#section-6.3)
+specifies localhost resolver behavior; the reference chooses literal loopback
+addresses for cleartext so credential transport does not depend on resolver
+configuration. [RFC 9110 Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after)
+defines a requested wait, consistent with Batter's provider-delay lower bound.
+The selected JSON protocol uses its own `retry_after_ms`; the application
+deliberately accepts up to 24 hours independently of the idempotency window.
+
+The recurring-boundary assessment on 2026-09-17 additionally checked PostgreSQL
+18's [LockRows executor](https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/executor/nodeLockRows.c):
+it consumes a qualifying tuple before acquiring its lock and performs
+EvalPlanQual only when an updated tuple was traversed. A lock-only wait therefore
+does not re-evaluate a time-dependent filter. The reference now uses a separate
+post-lock authority query and rechecks before commit after later waits.
+Runledger's pinned
+[retry timing contract](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-core/src/jobs/runtime_types.rs)
+combines the requested lower bound with ordinary policy backoff; zero supplies
+no additional bound. Native completion persists that request after the handler
+returns, so it cannot retain an application-observed delay lost before completion.
+The application effect row now owns its absolute eligibility fact, while native
+scheduling remains upstream. The pinned
+[execution budget](https://github.com/bpcakes/runledger/blob/d57ec6be61e9f00ccce373b19ca356cafe98f206/runledger-core/src/jobs/execution.rs)
+subtracts reserved headroom from remaining handler time; it does not create a
+separate SQL timeout. Reqwest's
+[0.12.28 timeout classification](https://github.com/seanmonstar/reqwest/blob/v0.12.28/src/error.rs)
+also recognizes underlying I/O timeout errors, so an explicit client timeout is
+not a prerequisite for its timeout diagnostic branch.
+
+The final review's database-outage question was checked against the locked
+postgres-test-harness revision `3d525e6fc5745ce2e2437c7997de5cccdecff4ac`:
+its [admin cleanup](https://github.com/bpcakes/postgres-test-harness/blob/3d525e6fc5745ce2e2437c7997de5cccdecff4ac/src/admin.rs)
+issues `DROP DATABASE ... WITH (FORCE)` from the administrative connection.
+PostgreSQL 18's [DROP DATABASE contract](https://www.postgresql.org/docs/18/sql-dropdatabase.html)
+requires connecting to a different database, not reopening the target. Thus a
+failed restoration of target connection admission does not itself prevent
+cleanup. This is not an unconditional deletion guarantee: admin unavailability,
+prepared transactions and other documented blockers can still fail cleanup;
+the fixture retains body and cleanup failures. The outage probe's control
+connection targets `postgres` and is outside the terminated database.
 
 ## HTTP fixture review follow-up: 2026-09-10
 
@@ -3334,8 +3486,8 @@ retained startup report. A separate offline control first acknowledges that both
 listeners are installed, then requires both listeners to receive TERM and INT in
 independent runs. The schema child uses a two-worker Tokio runtime so a cancelled
 query's connection return is not serialized behind the initializer task on a
-single executor thread. The corresponding PostgreSQL cases remain unexecuted
-without authorized live endpoints. Neither signal acknowledgement nor pool close
+single executor thread. The corresponding PostgreSQL cases were unexecuted at
+that stage; later complete live runs are recorded in validation. Neither signal acknowledgement nor pool close
 proves immediate server-session termination.
 
 ## Rust Beads comment identity, 2026-09-14
@@ -3405,3 +3557,25 @@ numeric IDs remain useful only for inspecting one current database generation.
 - [`axum` 0.8.9](https://docs.rs/axum/0.8.9/axum/) reports Rust 1.80 and MIT.
   Public Router integration tests pin the actual middleware/layer behavior used
   by private responses and observation. The workspace minimum remains Rust 1.94.
+
+## Provider-effect protocol evidence, 2026-09-16
+
+- Resend's official [idempotency-key documentation](https://resend.com/docs/dashboard/emails/idempotency-keys)
+  says an exact request replay under the same key returns the original response
+  without another email, retains keys for 24 hours, and rejects reuse with a
+  changed request. Its official [API error reference](https://www.resend.com/docs/api-reference/errors)
+  identifies changed-payload and concurrent-key conflicts separately. These facts
+  inform the application state machine and its finite retention deadline; Batter
+  does not adopt or claim compatibility with the Resend HTTP API.
+- The official Resend Rust SDK `main` was checked at commit
+  [`fddc9e46538da2d8af25be3cb61121ea0238ff0d`](https://github.com/resend/resend-rust/blob/fddc9e46538da2d8af25be3cb61121ea0238ff0d/src/config.rs#L172-L182).
+  Its send path awaits the internal Governor limiter, builds the request and calls
+  `reqwest::Client::execute` inside one method. That surface does not expose the
+  boundary needed to commit application uncertainty immediately before request
+  polling, so the reference uses a private direct reqwest transport instead.
+- The local reference protocol adds `GET /effects/{idempotency_key}` with an exact
+  canonical-request echo because this task needs restart reconciliation. The
+  Resend sources above do not document that lookup. The fixture therefore proves
+  only its selected protocol: same key/same payload, mismatch conflict, typed
+  retained-window absence, expiry and accepted-effect lookup. A real provider
+  requires a new primary-source audit and adapter acceptance.

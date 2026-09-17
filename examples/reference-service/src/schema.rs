@@ -30,11 +30,11 @@ pub enum SchemaInitializationError {
     DefinitionCommit(#[source] sqlx::Error),
 }
 
-/// Apply both migration histories and synchronize the producer-only job definition.
+/// Apply both migration histories and synchronize the delivery job definition.
 ///
 /// Safe to call on repeated startup. Existing operator-disabled Runledger job
-/// definitions remain disabled. This function registers no handler and starts
-/// no worker.
+/// definitions remain disabled. Handler registration remains a separate inert
+/// runtime-composition step; this function starts no worker.
 pub async fn initialize_schema(pool: &PgPool) -> Result<(), SchemaInitializationError> {
     runledger_postgres::migrate_after_idempotency_cutover(pool)
         .await

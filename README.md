@@ -149,15 +149,17 @@ lower library minimum.
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
-| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, explicit direct-peer/request correlation, pinned compatibility probes, validated constructors, and an explicit live test target. |
+| `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, provider-effect reconciliation, explicit direct-peer/request correlation, pinned compatibility probes, validated constructors, and an explicit live test target. |
 
 PostgreSQL provisioning stays in the external `postgres-test-harness` repository;
 it is not a workspace member. The optional `batter-sqlx/test-support` feature is
 selected by reference tests; the default adapter graph excludes the harness.
 The optional `batter-runledger` adapter owns native initialization and settlement.
-The reference starts the native runtime with an empty handler registry and uses
-Runledger's transactional producer API. The delivery handler/provider and a
-Runlimit adapter remain unimplemented; application readiness stays unapproved.
+The reference uses Runledger's transactional producer API and registers one
+application-owned provider-effect handler. Its selected loopback-test protocol
+uses a stable key, canonical payload matching, lookup reconciliation and an
+explicit 24-hour retention boundary; this is not an exactly-once or arbitrary
+provider guarantee. A Runlimit adapter remains unimplemented.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The

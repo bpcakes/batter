@@ -1,13 +1,13 @@
 # Effect v4 analysis reconciled with Batter
 
-Updated: 2026-09-11. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
+Updated: 2026-09-16. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
 the implemented-evidence column now includes later settings, fixture, ownership
 and HTTP-lifetime deliveries. This is a design reconciliation, not a new
 implementation. Execution evidence lives in [validation](validation.md).
 
 Batter implements much of the operational core proposed in the analysis. The
-atomic reference producer path is implemented; worker/provider execution and
-some boundary conventions remain unimplemented.
+atomic reference producer and selected provider-effect worker paths are
+implemented; some boundary conventions remain unimplemented.
 Delivery outcomes and dependencies are tracked in [Beads](roadmap.md). The central thesis holds: ordinary Rust types,
 futures, constructors, and Tokio should remain the programming model. Uniformity
 is useful where it makes ownership, errors, and boundaries predictable.
@@ -29,7 +29,7 @@ application composition roots or upstream libraries.
 | 5. Config and secrets | [`batter::settings`](../crates/batter/src/settings.rs) supplies explicit bounded sources, parsing and redacted diagnostics; HTTP and reference roots own their schemas and native constructors. The reference command maps a configured opaque bearer token to an application owner and consumes the native request/pool/admission constructors. [Argument validation](../crates/batter/src/validation.rs) still rejects invalid budgets/registration. | Not a configuration framework, general authentication system, or secret-erasure tool. Argument validation is not a config API. |
 | 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; independent HTTP observation covers assembled routes, probes/fallback and rejection, with explicit response severity and retained correlation under filtering. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library; arbitrary synchronous subscriber failures are not isolated. |
 | 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. |
-| 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. Optional [`batter-sqlx/test-support`](../crates/batter-sqlx/src/test_support.rs) owns isolated fixture leases/templates; the explicit reference runner owns exact live inventory. | No TestApp. PostgreSQL provisioning stays in the external harness. Ordinary tests compile but do not execute the ignored live cases; the current 42-case inventory has separate Linux two-toolchain evidence. |
+| 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. Optional [`batter-sqlx/test-support`](../crates/batter-sqlx/src/test_support.rs) owns isolated fixture leases/templates; the explicit reference runner owns exact live inventory. | No TestApp. PostgreSQL provisioning stays in the external harness. Ordinary tests compile but do not execute the ignored live cases; the current 66-entry provider inventory and separate maintenance-session probe passed locally against two distinct PostgreSQL 18.6 clusters, while earlier Linux/macOS inventories retain their separately recorded scope. |
 
 The crate also already has [process-local concurrency admission](../crates/batter/src/admission.rs),
 explicit finalization reserves, bounded finite task receipts, and shutdown waiters

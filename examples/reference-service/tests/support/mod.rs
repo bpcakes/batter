@@ -61,7 +61,15 @@ where
     F: FnOnce(PgPool) -> Fut + Send + 'static,
     Fut: Future<Output = ProbeResult> + Send + 'static,
 {
-    let result = fixture_run::run(move |scope, _observer| {
+    with_database_bound(Duration::from_secs(30), body).await;
+}
+
+pub async fn with_database_bound<F, Fut>(bound: Duration, body: F)
+where
+    F: FnOnce(PgPool) -> Fut + Send + 'static,
+    Fut: Future<Output = ProbeResult> + Send + 'static,
+{
+    let result = fixture_run::run_with_bound(bound, move |scope, _observer| {
         Box::pin(async move {
             let plan = batter_sqlx::test_support::ConnectionPlan::new(
                 vec![
@@ -84,6 +92,8 @@ where
 
 mod production_root;
 pub use production_root::production_readiness;
+pub mod provider;
+pub mod provider_effects;
 
 pub fn process_contracts() {
     startup_process::process_contracts();

@@ -194,7 +194,8 @@ application needs no separate native join driver, termination gate or report
 channel. Native supervision stays upstream, and settlement does not prove remote
 server-session termination or arbitrary detached handler work stopped. Fresh
 dependency health and application approval remain separate; this reference root
-withholds approval until its real delivery handler is installed.
+approves readiness after installing its delivery handler, while health and native
+initialization remain independently required.
 Its PostgreSQL pool is created with `batter_sqlx::pool_in` on a reserved startup
 slot, so close ownership is registered before acquisition or schema work; its startup
 failure is exposed as `ProtectedRuntimeStartupFailure` with the protected report

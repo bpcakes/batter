@@ -1,4 +1,4 @@
-//! Runnable staged reference service. Provider execution is added later.
+//! Runnable reference service with provider-backed delivery execution.
 
 use batter::{BoxError, settings::SettingsSource};
 use batter_example_reference_service::{config::ServingSettings, runtime};

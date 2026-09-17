@@ -35,6 +35,11 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings
         ("JOBS_WORKER_ID".into(), "reference-worker".into()),
         ("BATTER_AUTH_OWNER_ID".into(), owner.into()),
         ("BATTER_AUTH_TOKEN".into(), token.into()),
+        (
+            "BATTER_PROVIDER_BASE_URL".into(),
+            "http://127.0.0.1:9/".into(),
+        ),
+        ("BATTER_PROVIDER_TOKEN".into(), "fake-provider-token".into()),
     ];
     pairs.extend(
         extra
@@ -464,8 +469,11 @@ pub async fn command_and_reconciliation(pool: PgPool) -> ProbeResult {
     let fixture = prepare_commands(pool).await?;
     let delivery_id = initial_command(&fixture).await?;
     ownership_and_replacement(&fixture, delivery_id).await?;
-    assert_persistence(&fixture).await
+    assert_persistence(&fixture).await?;
+    projection::probe(&fixture, delivery_id).await
 }
+
+mod projection;
 
 async fn failure_code(
     app: &InProcessRequestClient,

@@ -1,5 +1,26 @@
 # Native reference compatibility
 
+The announcement propagation regression (`batter-x36`) adds typed startup/cleanup
+and actual-executable missing-receiver checks to the production-root live case.
+No native dependency, migration, production behavior or 66-case inventory change
+is involved; current execution evidence is recorded in [validation](validation.md).
+
+The current-version provider follow-up (`batter-gg8`) adds the forward migration
+`202609170001_provider_retry_eligibility.sql`. Outcome persistence owns durable
+retry eligibility; native Runledger still owns attempts and scheduling. The
+private lease transaction validates after lock acquisition and before commit.
+The live runner now also requires its direct SQL boundary library probe after
+the main inventory and maintenance-session case. This adds no backfill or
+mixed-version reference obligation; execution evidence is in [validation](validation.md).
+
+The subsequent boundary follow-up (`batter-8ou`) constrains both terminal writers
+to unresolved source states before SQL acquisition. The live state probe also
+checks stale-source rejection against terminal and mismatched unresolved rows,
+including complete retained-row equality. The production readiness scenario owns
+its phase-derived fixture budget. Native dependencies, migrations and the 66-case
+inventory are unchanged; current execution status is recorded in
+[validation](validation.md#terminal-write-and-readiness-budget-ownership-2026-09-17).
+
 Owning Beads: `batter-4t6` (compatibility), `batter-4jz` (reusable fixtures),
 `batter-kjl` (failure retention), and `batter-in2` (trusted request metadata).
 This API/evidence manifest accompanies the unpublished
@@ -24,6 +45,7 @@ optional test-support harness retain one native type graph.
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
 | Runledger Git | core/postgres/runtime 0.12.0 at `d57ec6be61e9f00ccce373b19ca356cafe98f206` | Native SQLx types, inert preparation, initialization observation and complete settlement | Immutable source selection replaces sibling patches; see [pin validation](validation.md#pushed-native-source-pin-batter-vly-2026-09-12). Earlier live results retain their recorded source scope |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
+| reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |
 
 Identical Runledger version numbers do not imply identical registry and Git
@@ -37,7 +59,7 @@ Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct
 disposable local PostgreSQL 18 clusters, using the primary superuser/SCRAM/autovacuum
 prerequisites in [testing](testing.md#explicit-reference-compatibility-probes), and run `bash scripts/test_reference_live.sh` from the root. It preflights the server
 and role, builds the production and signal-fixture executables with the invoking toolchain, checks an
-exact inventory of 64 entries (59 live database probes, two offline
+exact inventory of 66 entries (61 live database probes, two offline
 synthetic-acquisition signal controls, two offline executable-composition signal
 controls and the private child entry), and invokes
 `cargo test -p batter-example-reference-service --test reference_live --locked
@@ -47,7 +69,11 @@ requires the separate library physical-session replacement probe. The earlier
 and exact 1.94.0. After the request-metadata harness repair, the complete current
 64-entry run plus the separate library probe passed on macOS arm64 against two
 task-owned PostgreSQL 18.4 containers with Rust 1.98.1 and exact 1.94.0 on
-2026-09-16. The eight `batter-lp2.4`
+2026-09-16. The expanded 66-entry baseline plus the separate library probe then
+passed on macOS arm64 against two distinct disposable PostgreSQL 18.6 clusters
+with Rust 1.98.1, including both added provider-effect cases. The current
+state-first provider assertions retain that inventory and passed on the same
+PostgreSQL version with both supported Rust toolchains. The eight `batter-lp2.4`
 protected-startup rows are listed in
 [testing](testing.md#protected-startup-consumer-process-cases).
 
@@ -63,9 +89,12 @@ protected-startup rows are listed in
 | Native initialization | `native_initialization_without_queue_writes` | Local loop acknowledgement succeeds while job-queue writes are blocked; application approval remains independent |
 | Managed native ownership | `native_in_flight_finishes_after_drain`, `native_owner_drop_retains_settlement`, `native_unjoined_callback_blocks_dependency_cleanup` | Real admitted work completes after drain; wrapper loss retains settlement; a callback held beyond bounded report publication remains unjoined and prevents dependent cleanup |
 | Business outcomes and configuration | `native_business_failure_preserves_process`, `configured_worker_concurrency` | Durable business failure does not become process failure; held native handlers exercise configured concurrency |
-| Production readiness | `production_root_withholds_readiness_without_control_jobs` | Actual production composition exposes liveness, withholds readiness, creates no control jobs and sequentially awaits SIGTERM and SIGINT cleanup; see validation for execution status |
+| Production readiness | `production_root_registers_provider_worker` | Actual production composition binds port zero in each child, reports the selected loopback address through an explicitly configured parent-owned Unix datagram receiver, reaches readiness, executes and confirms provider-backed work, creates no control jobs and sequentially awaits SIGTERM and SIGINT cleanup with empty stdout/stderr; latest execution recorded in validation |
+| Confirmation/replacement serialization | `provider_state_lock_and_retry_boundaries` | Witnessed record-first and confirmation-first lock orders, retained acceptance/manual-resolution identity, expiry rollback during the record wait and heartbeat job-row availability; focused PostgreSQL18.6 pass, full-matrix status in validation |
+| Provider crash reconciliation | `provider_effect_crash_and_restart` | Parent-owned real HTTP fixture accepts behind a withheld response; the real production binary is SIGKILLed while its native job remains leased and the application row is `reconcile_needed`, then ordinary restart resolves through GET. The repeated crash changes generation before restart and requires accepted truth to become manual resolution. The complete scenario passed on PostgreSQL 18.6 with both supported Rust toolchains. |
+| Provider outcome boundaries | `provider_effect_outcome_contracts` | Same-key replay/mismatch, exact POST/GET canonical acceptance identity, connector-only known non-dispatch, business denial, opaque-text lookup-before-replay, fresh deadline renewal after authoritative absence, exhaustion, accepted generation replacement, retention expiry/manual resolution, bounded provider waiting, uncertain admission interruption, terminal redelivery without provider admission, and stale lease revocation at the job-row fence share one real HTTP fixture. Prior state-first evidence passed on both supported toolchains; the latest lease-fence execution is recorded separately in validation. |
 | Request metadata boundary | `http::in_process_client`, `InProcessRequestClient`, `TrustedPeerPolicy`, `TrustedRequestMetadata`, `BearerAuthenticator`; ten ordinary `http::tests` cases plus the adapter's real-socket peer oracle | The lower-level client cannot be served or expose its router and requires an explicit synthetic peer for every request. The adapter compares the native server peer with the client's independently observed socket address; the application retains only its IP. It consumes shared server `CorrelationId`, replaces prior owner extensions through bearer authentication and keeps `OperationContext` separate. Forged metadata, concurrency, missing peer data, nested operations, Debug redaction and forced cancellation require no PostgreSQL; an explicit three-second test guard is tighter than the test operation budget. Production authentication and domain bodies exclude the selected peer. A bare liveness request proves probes remain outside the peer boundary; malformed JSON, invalid UUID paths and body-limit overflow prove all documented native extractor rejections remain outside the application problem envelope |
-| Production request-metadata registration | Application-owned `http::register_in`; ordinary `canonical_registration_supplies_native_peer_to_the_business_boundary`; live `production_root_withholds_readiness_without_control_jobs` | The canonical operation constructs the trusted-peer router and selects native peer registration together. The ordinary real-socket case requires a matched business route to return authenticated-boundary 401 rather than missing-peer 500 without PostgreSQL. The live production child repeats that assertion in the complete root and requires matching generated header/body identity; execution status is recorded in validation |
+| Production request-metadata registration | Application-owned `http::register_in`; ordinary `canonical_registration_supplies_native_peer_to_the_business_boundary`; live `production_root_registers_provider_worker` | The canonical operation constructs the trusted-peer router and selects native peer registration together. The ordinary real-socket case requires a matched business route to return authenticated-boundary 401 rather than missing-peer 500 without PostgreSQL. The live production child repeats that assertion in the complete root and requires matching generated header/body identity; execution status is recorded in validation |
 | Offline retirement | Seven `retirement_*` cases plus the required library session-replacement probe | Preserves terminal/domain rows, migrations and sequence; old additive catalog retains disable; rejects wrong identity, hidden sessions, pending/prepared enqueue and physical replacement. Native commit failure survives cancelled reconciliation and an actual lost COMMIT response |
 | Lease ownership | `empty_database`, `cleanup`, `defer_cleanup`, Drop, `drain_deferred_cleanup`; `lease_cleanup_defer_and_drop` | Every native pool closes before disposal. Independent `pg_database` reads confirm presence and post-drain absence. Dropping a never-polled consuming cleanup future also transfers fallback cleanup |
 
@@ -84,9 +113,18 @@ owns configuration without launching work. The adapter starts it after Batter
 registration validation, acknowledges each enabled loop's local initialization,
 and retains native settlement independently of the direct component waiter.
 Initialization proves neither fresh database health nor durable job execution.
+The terminal-projection follow-up uses one command loader for both public read
+routes and exact replay, deriving unresolved termination from the same native
+job/effect snapshot without altering retained acceptance facts. Its live command
+probe covers exhausted, cancelled and early-terminal jobs and missing-effect
+corruption. The final-attempt lease-loss probe preserves the uncertain stored
+effect while both reads project exhaustion. Production readiness is additionally
+tested after the freshness interval and through a disposable database outage
+and recovery; executed toolchain results are in [validation](validation.md).
+
 Production readiness additionally requires fresh dependency observations and
-explicit application approval. The missing delivery handler keeps that approval
-withheld. Production startup has no control job, advisory lease, owner epoch
+explicit application approval. The installed delivery handler permits ordinary
+approval after registration. Production startup has no control job, advisory lease, owner epoch
 allocation or reconciliation driver.
 
 Runledger owns direct loops and its tracked descendants. Complete reports retain
@@ -146,12 +184,14 @@ server-session quiescence; these probes create no detached connections.
 ## Reproduction scope
 
 [Validation](validation.md) records commands, lock hash, toolchains, PostgreSQL
-version, repaired development failures and final gates. New live compatibility
-evidence for the request-metadata repair is macOS arm64 on Rust 1.98.1 and exact
-1.94.0; hosted CI and other hosts are unverified for that repair. The package
-stays unpublished. The producer command and optional
-native adapter are implemented; real provider
-effects remain a separate Bead. Complete redesign acceptance remains open.
+version, repaired development failures and final gates. Live compatibility
+evidence for the current state-first provider correction is macOS arm64 on Rust
+1.98.1 and exact 1.94.0 against PostgreSQL 18.6; hosted CI and other hosts are
+unverified for that repair. The package stays unpublished. The producer command,
+optional native adapter and selected local provider-effect protocol are
+implemented. The 66-entry suite passed on both supported toolchains. It makes no
+claim about a real external provider or effects outside the 24-hour fixture contract.
+Complete redesign acceptance remains open.
 
 ## Reusable fixture acceptance
 
