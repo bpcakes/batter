@@ -1083,7 +1083,9 @@ carries `quota_outcome` and `quota_consumption`. The outcome is one of
 `not_consumed`, or `unknown`. Allowed means consumed; an unresolved check means
 unknown; a backend failure retains its native certainty; the other outcomes mean
 not consumed. These facts are independent of final HTTP status, including a
-timeout after admission. Ordinary `operational_http` allocates no quota record
+timeout after admission. The pinned native Runlimit adapter does not emit
+`other_denial`; that value remains available to manual observation writers.
+Ordinary `operational_http` allocates no quota record
 and its completion omits these quota values. The observer retains these facts separately
 from its INFO span, so disabling that span does not remove fields from an enabled
 completion event. The span carries method, route, status, HTTP outcome and latency

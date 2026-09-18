@@ -3,7 +3,7 @@
 use batter::operation::{Interruption, OperationContext, OperationError};
 use runlimit_core::{
     BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Decision, DecisionView, Denial,
-    Limiter, QuotaDenial, RateLimitPolicy,
+    DenialView, Limiter, QuotaDenial, RateLimitPolicy,
 };
 use std::{future::Future, sync::Arc, time::Duration};
 
@@ -289,7 +289,16 @@ where
                     BatchDecisionView::Denied { index, denial } => {
                         return RunResult::Rejected {
                             index,
-                            denial: *denial,
+                            denial: match denial {
+                                DenialView::QuotaExceeded(details) => {
+                                    Denial::quota_exceeded(details)
+                                }
+                                DenialView::StorageCapacity { retry_after } => {
+                                    Denial::storage_capacity(
+                                        retry_after.map(|delay| delay.duration()),
+                                    )
+                                }
+                            },
                         };
                     }
                     BatchDecisionView::Allowed { .. } => Admission::Allowed {

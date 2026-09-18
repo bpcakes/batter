@@ -39,7 +39,8 @@ Preserve a protected root fallback when provided, and the default unmatched
 404 otherwise.
 Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority.
 The allowed result retains native scalar decision metadata without exposing a
-denial arm; unknown future native denial kinds use an other-denial label.
+denial arm. Match every native `DenialView` reason explicitly; a future reason
+must force an adapter and contract update at the next pin.
 Authentication meaning and explicitly unguarded probe routes remain application
 policy. PostgreSQL setup/maintenance is not implemented or implicitly performed.
 No body-stream, detached-task or remote rollback guarantee is added.

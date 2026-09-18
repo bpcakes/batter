@@ -21,7 +21,7 @@ use batter_axum::{
     request_admission,
 };
 use runlimit_core::{
-    BatchDecisionView, Check, ConsumptionStatus, DenialKind, Limiter, QuotaMode, RateLimitPolicy,
+    BatchDecisionView, Check, ConsumptionStatus, DenialView, Limiter, QuotaMode, RateLimitPolicy,
     SubjectKey,
 };
 use std::{
@@ -408,7 +408,6 @@ enum BoundaryRejection {
     AuthenticationRequired,
     QuotaExhausted,
     QuotaStorageCapacity,
-    QuotaOtherDenial,
     QuotaBackendFailed,
 }
 
@@ -420,7 +419,7 @@ impl BoundaryRejection {
             }
             Self::AuthenticationRequired => StatusCode::UNAUTHORIZED,
             Self::QuotaExhausted => StatusCode::TOO_MANY_REQUESTS,
-            Self::QuotaStorageCapacity | Self::QuotaOtherDenial | Self::QuotaBackendFailed => {
+            Self::QuotaStorageCapacity | Self::QuotaBackendFailed => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
         }
@@ -434,26 +433,11 @@ impl BoundaryRejection {
             Self::AuthenticationRequired => "authentication_required",
             Self::QuotaExhausted => "quota_exhausted",
             Self::QuotaStorageCapacity => "quota_storage_capacity",
-            Self::QuotaOtherDenial => "quota_other_denial",
             Self::QuotaBackendFailed => "quota_backend_failed",
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum DenialCategory {
-    Quota,
-    StorageCapacity,
-    Other,
-}
-
-fn denial_category(kind: DenialKind) -> DenialCategory {
-    match kind {
-        DenialKind::QuotaExceeded => DenialCategory::Quota,
-        DenialKind::StorageCapacity => DenialCategory::StorageCapacity,
-        _ => DenialCategory::Other,
-    }
-}
 impl TestClient {
     /// Dispatches with the supplied synthetic peer, replacing any request peer.
     pub async fn request(&self, mut request: Request<Body>, peer: SocketAddr) -> Response {
@@ -556,14 +540,17 @@ where
             response
         }
         RunResult::Rejected { denial, .. } => {
-            let mut response = match denial_category(denial.kind()) {
-                DenialCategory::Quota => rejection(BoundaryRejection::QuotaExhausted),
-                DenialCategory::StorageCapacity => {
-                    rejection(BoundaryRejection::QuotaStorageCapacity)
+            let (kind, retry_after) = match denial.view() {
+                DenialView::QuotaExceeded(details) => (
+                    BoundaryRejection::QuotaExhausted,
+                    Some(details.retry_after()),
+                ),
+                DenialView::StorageCapacity { retry_after } => {
+                    (BoundaryRejection::QuotaStorageCapacity, retry_after)
                 }
-                DenialCategory::Other => rejection(BoundaryRejection::QuotaOtherDenial),
             };
-            if let Some(seconds) = denial.retry_after_seconds() {
+            let mut response = rejection(kind);
+            if let Some(seconds) = retry_after.map(|delay| delay.seconds()) {
                 response
                     .headers_mut()
                     .insert(header::RETRY_AFTER, seconds.to_string().parse().unwrap());
@@ -583,10 +570,9 @@ fn project_terminal(snapshot: &Snapshot) -> QuotaTerminalFacts {
         Snapshot::Decided(decision) => match decision.view() {
             BatchDecisionView::Allowed { .. } => QuotaTerminalFacts::Allowed,
             BatchDecisionView::ShadowDenied { .. } => QuotaTerminalFacts::ShadowDenied,
-            BatchDecisionView::Denied { denial, .. } => match denial_category(denial.kind()) {
-                DenialCategory::Quota => QuotaTerminalFacts::QuotaDenied,
-                DenialCategory::StorageCapacity => QuotaTerminalFacts::StorageCapacity,
-                DenialCategory::Other => QuotaTerminalFacts::OtherDenial,
+            BatchDecisionView::Denied { denial, .. } => match denial {
+                DenialView::QuotaExceeded(_) => QuotaTerminalFacts::QuotaDenied,
+                DenialView::StorageCapacity { .. } => QuotaTerminalFacts::StorageCapacity,
             },
         },
         Snapshot::Started => unreachable!("only completed quota results"),
@@ -638,11 +624,6 @@ mod boundary_rejection_tests {
                 BoundaryRejection::QuotaStorageCapacity,
                 StatusCode::SERVICE_UNAVAILABLE,
                 "quota_storage_capacity",
-            ),
-            (
-                BoundaryRejection::QuotaOtherDenial,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "quota_other_denial",
             ),
             (
                 BoundaryRejection::QuotaBackendFailed,

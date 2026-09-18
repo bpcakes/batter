@@ -1596,7 +1596,7 @@ dependencies = [
 [[package]]
 name = "runlimit-core"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=f147fb7b139028a7a4204113358e1e9fbb2c7c26#f147fb7b139028a7a4204113358e1e9fbb2c7c26"
+source = "git+https://github.com/bpcakes/runlimit?rev=0a9138fc72f210c2d2ab01d445734a92aaca6aee#0a9138fc72f210c2d2ab01d445734a92aaca6aee"
 dependencies = [
  "hmac",
  "sha2 0.11.0",
@@ -1606,7 +1606,7 @@ dependencies = [
 [[package]]
 name = "runlimit-memory"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=f147fb7b139028a7a4204113358e1e9fbb2c7c26#f147fb7b139028a7a4204113358e1e9fbb2c7c26"
+source = "git+https://github.com/bpcakes/runlimit?rev=0a9138fc72f210c2d2ab01d445734a92aaca6aee#0a9138fc72f210c2d2ab01d445734a92aaca6aee"
 dependencies = [
  "runlimit-core",
  "thiserror",
@@ -1615,7 +1615,7 @@ dependencies = [
 [[package]]
 name = "runlimit-postgres"
 version = "0.3.1"
-source = "git+https://github.com/bpcakes/runlimit?rev=f147fb7b139028a7a4204113358e1e9fbb2c7c26#f147fb7b139028a7a4204113358e1e9fbb2c7c26"
+source = "git+https://github.com/bpcakes/runlimit?rev=0a9138fc72f210c2d2ab01d445734a92aaca6aee#0a9138fc72f210c2d2ab01d445734a92aaca6aee"
 dependencies = [
  "runlimit-core",
  "sha2 0.11.0",

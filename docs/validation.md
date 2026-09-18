@@ -2,6 +2,66 @@
 
 Latest evidence: 2026-09-18. Earlier sections retain their historical scope.
 
+## Runlimit revision 0a9138f, 2026-09-18
+
+Owning Bead `batter-5je`; Jig plan `plan_01M2TSSFNS4DF7WQJS09QXT369`.
+The exact upstream diff from `346dc5e` adds exhaustive `DenialView` reasons
+and a typed `RetryAfter`. Batter now reconstructs the public native `Denial`
+from each exhaustive batch view, maps each reason to its HTTP response and
+observation without a wildcard, and uses `RetryAfter::seconds()` for headers.
+The generic Axum observation writer still permits a manually asserted
+`other_denial`; the pinned native adapter cannot emit it. Three native Git
+dependencies and Cargo.lock now resolve to the same new revision. The focused
+storage-denial regression retains the exact 2001 ms delay without invoking
+work; the existing protected HTTP regression checks whole-second rounding for
+both quota and storage denials. See
+[current primary sources](references.md#runlimit-current-pin-0a9138f-2026-09-18).
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`). Cargo.lock SHA-256:
+`0b155436466572a0c9ba342175cf98e9add8d517cb39496d37d3b866ce4634d7`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS on Rust 1.98.1: one internal, 36 protected HTTP and 20 native quota tests; four positive and seven compile-fail doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: workspace tests, isolated feature graphs, formatting, strict Clippy and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on Rust 1.94.0 with the same full matrix. |
+| On each toolchain, build `batter-axum`'s `http_service` with `--locked` and run `scripts/smoke_http.py` in default, SIGINT, deadline, warn-filter and warn-filter-plus-deadline modes | PASS: ten HTTP process profiles. |
+| On each toolchain, `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native admission and protected HTTP `[200, 429]`. |
+
+These checks do not establish live PostgreSQL, Linux or hosted CI behavior.
+
+
+## Runlimit revision 346dc5e, 2026-09-18
+
+Owning Bead `batter-9ms`; Jig plan `plan_01M2TPS5T7GB26MJ5W1SG5QG09`.
+The exact native diff from `f147fb7b` to `346dc5e` has three commits:
+memory and GCRA `Limiter` futures defer checks until first poll; shadow-denied
+decisions hold only validated quota denials and return owned denial details;
+and ambiguous `Decision::is_allowed` / `is_denied` aliases were removed. Batter
+uses the discriminated batch view and ordinary `.await`, so its public adapter
+shape did not change. All three native dependencies then pinned the same Git
+revision, and Cargo regenerated `Cargo.lock`. The former eager-memory negative
+control now checks that both unpolled single and batch trait futures leave a
+one-use grant available, while the next polled check consumes it. GCRA laziness
+is source-inspected here; this local regression executes `MemoryStore` only.
+See [primary sources for that pin](references.md#runlimit-previous-pin-346dc5e-2026-09-18).
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`37337ba09ca9571635143d9d00bfe24e18900400c38eb2e1a7ed58d1c8c4c140`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS on Rust 1.98.1: one internal, 36 HTTP and 19 native quota tests; four positive and seven compile-fail doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: workspace tests, isolated feature graphs, formatting, strict Clippy and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on Rust 1.94.0 with the same full matrix. |
+| On each toolchain, build `batter-axum`'s `http_service` with `--locked` and run `scripts/smoke_http.py` with no extra flag, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` | PASS: ten HTTP process profiles. |
+| On each toolchain, `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native admission and protected HTTP `[200, 429]`. |
+
+The first full matrix includes the new native laziness regression; both matrices
+ran after the code and contract edits above. No live PostgreSQL, Linux, hosted
+CI, GCRA runtime, or rollback-after-poll claim follows from these checks.
+
 ## Runlimit probe collision and post-grant retention, 2026-09-18
 
 Owning Bead `batter-45q`; controller record
@@ -91,7 +151,7 @@ memory regression now proves that dropping its unpolled future leaves the sole
 grant available. A direct native-memory trait-call negative control confirms
 consumption during future construction at this pin. GCRA is source-inspected
 only; no PostgreSQL runtime laziness claim is made. See
-[primary-source detail](references.md#runlimit-adapter-source-contract-2026-09-18).
+[primary-source detail](references.md#runlimit-historical-pin-f147fb7b-2026-09-18).
 
 Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
 (`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:

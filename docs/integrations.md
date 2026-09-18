@@ -440,7 +440,7 @@ The worker creates a new execution context with its own deadline/retry policy.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` pins native revision `f147fb7b139028a7a4204113358e1e9fbb2c7c26`
+`batter-runlimit` pins native revision `0a9138fc72f210c2d2ab01d445734a92aaca6aee`
 (core/memory 0.3.0, PostgreSQL 0.3.1). There are no default features. `memory`
 and `postgres` enable native error bridges; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,
@@ -451,12 +451,12 @@ live acceptance claim. The reference service has not adopted this adapter.
 `Quota::run(context, Checks::new(&checks)?, work_factory)` performs one native
 `Limiter::check_all`. An empty protected batch is rejected before execution.
 Constructing `Quota::run`'s future does not invoke the native limiter; a
-never-polled operation cannot consume quota. Once polled, the native check may
-take effect before yielding. At this pin, Runlimit's new trait rustdoc requires
-each limiter's returned future to be lazy, but its memory implementations still
-evaluate a check while constructing `ready(...)`. Batter does not expose the
-native future through its protected operation, and does not assume that native
-trait-level laziness for cancellation or rollback.
+never-polled operation cannot consume quota. At this pin, native `MemoryStore`
+and `GcraStore` trait checks also defer evaluation until their futures are polled;
+the focused Batter regression exercises both single and batch `MemoryStore`
+checks. Once polled, the native check may take effect before yielding. Batter
+does not expose the native future through its protected operation or infer
+rollback from dropping an in-flight check.
 Denial and backend failure never invoke the work factory. Allowed and shadow
 decisions remain separate from the typed work result. `RunResult::Rejected`
 contains only a native denial and its batch index. `RunResult::Admitted` contains
@@ -502,7 +502,7 @@ remain application concerns; this order is not a universal security claim.
 One batch is intentional: stacked native single-check HTTP layers can charge an
 earlier quota before a later denial. This adapter reuses native atomic checking,
 not native single-policy HTTP layering. Shadow denial permits work. For an enforced native denial, `Retry-After` is present exactly when the
-native denial supplies `retry_after_seconds()`. Its value is that native
+native `DenialView` supplies a `RetryAfter`. Its `seconds()` value is the native
 whole-second result: zero stays `0`, and positive subsecond remainder rounds
 up (for example, 1 ns to `1`, 2001 ms to `3`). Denials without a retry delay,
 authentication failures and backend failures omit the header. Concrete
@@ -515,13 +515,15 @@ boundary rejections use exactly one JSON
 | Authentication failed | 401 | `authentication_required` |
 | Native quota exhausted | 429 | `quota_exhausted` |
 | Native storage capacity denied | 503 | `quota_storage_capacity` |
-| Future unknown native denial kind | 503 | `quota_other_denial` |
 | Native backend failed | 503 | `quota_backend_failed` |
 | Missing protected composition context, direct peer, or observer | 500 | `missing_context`, `missing_peer`, or `missing_observer` respectively |
 
 The three 500 codes are defensive faults outside the supported opaque
-`PreparedHttp` serving path. A future native denial kind also records the
-distinct `other_denial` observation rather than claiming storage capacity.
+`PreparedHttp` serving path. The pinned native `DenialView` has exhaustive
+quota-exhausted and storage-capacity reasons. A new reason requires an explicit
+adapter mapping before a later Runlimit revision compiles. The generic
+observation writer retains `other_denial` for manual assertions outside this
+native adapter; this adapter does not emit it at the current pin.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
 quota rejection. `request_admission` captures the original request metadata without the
 private quota writer and installs an opaque interruption responder for the inner

@@ -1,7 +1,7 @@
 mod support;
 use batter::operation::{Interruption, OperationError};
 use batter_runlimit::quota::{Admission, Checks, InterruptedCheck, Quota, RunResult};
-use runlimit_core::{Check, ConsumptionStatus, DenialKind, QuotaMode};
+use runlimit_core::{BatchDecision, Check, ConsumptionStatus, Denial, DenialView, QuotaMode};
 use std::{
     convert::Infallible,
     sync::atomic::{AtomicUsize, Ordering},
@@ -42,8 +42,39 @@ async fn native_quota_runs_once_and_rejects_before_work_factory() {
         panic!("expected an enforced denial");
     };
     assert_eq!(index, 0);
-    assert_eq!(denial.kind(), DenialKind::QuotaExceeded);
+    assert!(matches!(denial.view(), DenialView::QuotaExceeded(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn storage_denial_retains_exact_retry_delay_without_running_work() {
+    let delay = Duration::from_millis(2_001);
+    let backend = Backend::new(Mode::Return(BatchDecision::denied(
+        0,
+        Denial::storage_capacity(Some(delay)),
+    )));
+    let quota = Quota::new(backend);
+    let policy = policy("owner", 1);
+    let checks = [Check::new(&policy, subject(1))];
+    let calls = AtomicUsize::new(0);
+    let result = quota
+        .run(&context(100), Checks::new(&checks).unwrap(), |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok::<_, Infallible>(()) }
+        })
+        .await;
+    let RunResult::Rejected { index: 0, denial } = result else {
+        panic!("expected a storage denial");
+    };
+    let DenialView::StorageCapacity {
+        retry_after: Some(retry_after),
+    } = denial.view()
+    else {
+        panic!("expected a typed storage retry delay");
+    };
+    assert_eq!(retry_after.duration(), delay);
+    assert_eq!(retry_after.seconds(), 3);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -105,18 +136,38 @@ async fn never_polled_quota_does_not_consume_native_memory() {
     ));
 }
 
-#[test]
-fn native_memory_trait_future_is_eager_at_this_pin() {
-    let store = memory();
-    let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+#[tokio::test]
+async fn native_memory_trait_futures_defer_consumption_until_polled() {
+    for batch in [false, true] {
+        let store = memory();
+        let policy = policy("owner", 1);
+        let checks = [Check::new(&policy, subject(1))];
 
-    drop(runlimit_core::Limiter::check_all(&store, &checks));
+        if batch {
+            drop(runlimit_core::Limiter::check_all(&store, &checks));
+            let first = runlimit_core::Limiter::check_all(&store, &checks)
+                .await
+                .unwrap();
+            assert!(matches!(
+                first.view(),
+                runlimit_core::BatchDecisionView::Allowed { .. }
+            ));
+        } else {
+            drop(runlimit_core::Limiter::check(&store, &checks[0]));
+            let first = runlimit_core::Limiter::check(&store, &checks[0])
+                .await
+                .unwrap();
+            assert!(matches!(
+                first.view(),
+                runlimit_core::DecisionView::Allowed { .. }
+            ));
+        }
 
-    assert!(matches!(
-        store.check(&checks[0]).unwrap().view(),
-        runlimit_core::DecisionView::Denied { .. }
-    ));
+        assert!(matches!(
+            store.check(&checks[0]).unwrap().view(),
+            runlimit_core::DecisionView::Denied { .. }
+        ));
+    }
 }
 
 #[tokio::test(start_paused = true)]

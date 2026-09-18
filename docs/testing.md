@@ -35,9 +35,12 @@ Source presence and package-integrity checks are not type checking.
 The native quota adapter's `cargo test -p batter-runlimit --all-features --locked`
 uses real memory-store atomic decisions and scripted pending/uncertain failures.
 Its real memory-store regression also drops an unpolled `Quota::run` future and
-proves that the next call still gets the sole grant. A direct native trait-call
-negative control proves that the pinned memory limiter instead consumes that
-grant while constructing its returned future.
+proves that the next call still gets the sole grant. Direct native single and
+batch trait-call controls now prove that dropping an unpolled memory check leaves
+the grant available, while polling consumes it.
+An enforced storage-capacity denial retains its exact typed retry duration in
+the public result without calling work. Protected HTTP checks both native
+denial reasons and whole-second `Retry-After` rounding from the typed delay.
 It covers total budgets, factory inertness, denial-before-body, async authentication,
 direct-peer identity, protected-by-default route assembly, literal-only public
 probe registration, inner raw-principal

@@ -51,7 +51,7 @@ pub enum QuotaFacts {
     QuotaDenied,
     /// The limiter could not allocate storage for a new key.
     StorageCapacity,
-    /// A future native denial kind that does not match a known category.
+    /// A reason asserted by a manual writer outside the pinned native adapter.
     OtherDenial,
     /// A native failure, with independently retained consumption knowledge.
     BackendFailed(QuotaConsumption),
@@ -159,7 +159,7 @@ pub enum QuotaTerminalFacts {
     QuotaDenied,
     /// The limiter could not allocate storage for a new key.
     StorageCapacity,
-    /// A future native denial kind that does not match a known category.
+    /// A reason asserted by a manual writer outside the pinned native adapter.
     OtherDenial,
     /// A native failure, with independently retained consumption knowledge.
     BackendFailed(QuotaConsumption),

@@ -16,9 +16,9 @@ axum = ["dep:axum", "dep:batter-axum", "dep:tokio", "dep:tower", "dep:serde_json
 [dependencies]
 batter.workspace = true
 thiserror.workspace = true
-runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26" }
-runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26", optional = true }
-runlimit-postgres = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26", optional = true }
+runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee" }
+runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee", optional = true }
+runlimit-postgres = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee", optional = true }
 axum = { workspace = true, optional = true }
 batter-axum = { path = "../batter-axum", optional = true }
 tokio = { workspace = true, features = ["net"], optional = true }

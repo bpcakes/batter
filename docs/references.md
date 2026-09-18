@@ -6,47 +6,88 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
-## Runlimit adapter source contract, 2026-09-18
+## Runlimit current pin 0a9138f, 2026-09-18
+
+- The [upstream commit](https://github.com/bpcakes/runlimit/commit/0a9138fc72f210c2d2ab01d445734a92aaca6aee)
+  advances one commit from `346dc5e`. Core and memory remain 0.3.0,
+  PostgreSQL remains 0.3.1, and the workspace minimum remains Rust 1.94.
+  Batter pins this exact revision for all three native crates.
+- The [core decision source](https://github.com/bpcakes/runlimit/blob/0a9138fc72f210c2d2ab01d445734a92aaca6aee/crates/runlimit-core/src/decision.rs)
+  replaces non-exhaustive `DenialKind` and optional denial accessors with
+  exhaustive `DenialView` variants. Batch denied views carry the view by value.
+  `RetryAfter::duration()` retains the exact native delay and `seconds()` rounds
+  up for the HTTP header. Batter matches both reasons explicitly, preserving
+  native `Denial` in its public rejected result and using the typed delay for
+  HTTP. A later native reason requires a source update before compilation.
+  Upstream states the Serde wire representation is unchanged. Runtime checks
+  here use the native memory backend; no live PostgreSQL behavior is inferred.
+
+## Runlimit previous pin 346dc5e, 2026-09-18
+
+- The [exact upstream checkout](https://github.com/bpcakes/runlimit/tree/346dc5e6233995a8e2d8ad2d5d56a2d26ed3e664)
+  is three commits after Batter's earlier `f147fb7b` pin. Core and memory remain
+  version 0.3.0, PostgreSQL remains 0.3.1, and the workspace minimum remains
+  Rust 1.94. Batter pinned this Git revision for all three native crates at
+  that stage.
+- The [memory trait repair](https://github.com/bpcakes/runlimit/commit/8cf9894)
+  changes `MemoryStore` and `GcraStore` single and batch `Limiter` methods to
+  evaluate on first poll. Their returned futures are no longer `Unpin`; ordinary
+  `.await` callers such as Batter are unaffected. Batter executes a real
+  `MemoryStore` single/batch laziness regression; GCRA is source-inspected here.
+  Neither fact proves rollback after a check has started.
+- The [shadow decision change](https://github.com/bpcakes/runlimit/commit/da992ae)
+  stores a validated `QuotaDenial` in shadow outcomes, preventing a shadowed
+  storage-capacity denial. `Decision::denial` and `BatchDecision::denial` now
+  return owned `Option<Denial>` values; Batter uses `BatchDecisionView` and
+  retains its native denial and shadow-admission projections.
+- The [admission alias removal](https://github.com/bpcakes/runlimit/commit/346dc5e6233995a8e2d8ad2d5d56a2d26ed3e664)
+  removes `Decision::is_allowed` and `is_denied`; use `permits_request` and
+  `is_enforced_denial`, or match `DecisionView`. Batter's adapter did not use
+  the removed aliases. The PostgreSQL typed-error mapping at that pin is unchanged
+  by these three commits; offline tests still do not establish live PostgreSQL
+  cancellation or maintenance behavior.
+
+## Runlimit historical pin f147fb7b, 2026-09-18
 
 - Native [workspace at f147fb7b](https://github.com/bpcakes/runlimit/tree/f147fb7b139028a7a4204113358e1e9fbb2c7c26)
   was rechecked from Cargo's exact Git checkout: core/memory 0.3.0, PostgreSQL
-  0.3.1 and SQLx 0.9.0. Batter pins that complete revision, not a moving branch.
+  0.3.1 and SQLx 0.9.0. Batter previously pinned that complete revision, not a
+  moving branch. The behavior below describes that revision, not the current pin.
 - Native [core](https://github.com/bpcakes/runlimit/tree/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-core/src)
-  supplies `Limiter::check_all`, `Check`, `BatchDecisionView`, enforced/shadow
-  decisions and consumption vocabulary. Native memory tests in Batter exercise
+  supplied `Limiter::check_all`, `Check`, `BatchDecisionView`, enforced/shadow
+  decisions and consumption vocabulary. Native memory tests in Batter exercised
   atomic denial and the sequential-single-check partial-charge counterexample.
 - PostgreSQL [typed errors](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-postgres/src/errors.rs)
-  distinguish before-commit failure, commit uncertainty and committed malformed
-  response metadata. The upstream exact classifier is private; Batter's narrow
-  `ConsumptionError` bridge preserves those variants and conservatively maps
-  unknown future variants to possibly consumed. Its offline type/error tests do
+  distinguished before-commit failure, commit uncertainty and committed malformed
+  response metadata. The upstream exact classifier was private; Batter's narrow
+  `ConsumptionError` bridge preserved those variants and conservatively mapped
+  unknown future variants to possibly consumed. Its offline type/error tests did
   not establish PostgreSQL runtime, cancellation or maintenance behavior.
 
 On 2026-09-18, the same exact Git checkout was rechecked for the protected API
 cutover. Native [decision.rs](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-core/src/decision.rs)
-has a discriminated batch view, validated allowed batches, a consuming
-`try_into_allowed` that returns the native decision vector, and scalar allowed
-decision metadata. `DenialKind` is non-exhaustive with quota-exceeded and
-storage-capacity variants at that pin; unknown future variants must not be
-called storage capacity. These facts support Batter's narrowed result payloads
-and distinct future-denial fallback.
+had a discriminated batch view, validated allowed batches, a consuming
+`try_into_allowed` that returned the native decision vector, and scalar allowed
+decision metadata. `DenialKind` was non-exhaustive with quota-exceeded and
+storage-capacity variants at that pin; unknown future variants could not be
+called storage capacity. These facts supported Batter's then-current narrowed
+result payloads and distinct future-denial fallback.
 
-The `b2e61516..f147fb7b` upstream diff changes only six lines of
+The `b2e61516..f147fb7b` upstream diff changed only six lines of
 [`Limiter` trait rustdoc](https://github.com/bpcakes/runlimit/commit/f147fb7b139028a7a4204113358e1e9fbb2c7c26):
-implementations are now required to defer check evaluation and consumption
-until their returned future is first polled. The pinned native
+implementations were required to defer check evaluation and consumption
+until their returned future was first polled. At that pin, the native
 [`MemoryStore` trait implementation](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-memory/src/store.rs)
 and [`GcraStore` trait implementation](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-memory/src/gcra.rs)
-still call the synchronous check inside `std::future::ready(...)` while
-constructing the future, so those implementations do not yet satisfy the new
-trait contract. A direct native-memory trait-call regression observes quota
-consumption even when the returned future is dropped unpolled; GCRA is
-source-inspected, not runtime-tested here. The PostgreSQL trait implementation
-returns its async check future without polling it. Batter's `Quota::run` itself
-is an async function;
-its native call occurs only when the outer future is polled. The real memory
-regression checks that narrower protected-boundary guarantee. This does not
-establish native trait-level laziness or rollback once polling starts.
+called the synchronous check inside `std::future::ready(...)` while
+constructing the future, so those implementations did not satisfy the trait
+contract. A direct native-memory trait-call regression at that pin observed quota
+consumption even when the returned future was dropped unpolled; GCRA was
+source-inspected, not runtime-tested. The PostgreSQL trait implementation
+returned its async check future without polling it. Batter's `Quota::run` itself
+was an async function; its native call occurred only when the outer future was
+polled. The memory regression checked that narrower protected-boundary guarantee.
+Those checks did not establish native trait-level laziness or rollback after polling.
 
 ## Listener and SQL ordering investigation, 2026-09-17
 
