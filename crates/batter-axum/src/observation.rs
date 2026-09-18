@@ -26,6 +26,7 @@ pub(super) async fn observe_response<F: Future<Output = Response>>(
 }
 
 struct HttpObservation {
+    quota: Option<crate::quota_observation::QuotaObservation>,
     span: tracing::Span,
     context: tracing::Span,
     correlation: Option<CorrelationId>,
@@ -64,6 +65,10 @@ impl HttpObservation {
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
         Self {
+            quota: request
+                .extensions()
+                .get::<crate::quota_observation::QuotaObservation>()
+                .cloned(),
             span,
             context,
             correlation: request.extensions().get::<CorrelationId>().cloned(),
@@ -108,6 +113,7 @@ impl HttpObservation {
         macro_rules! emitter {
             ($level:expr) => {
                 |observation: &Self, outcome: &str, latency_ms: f64| {
+                    let quota = observation.quota.as_ref().map(|record| record.snapshot());
                     tracing::event!(
                         target: "batter",
                         parent: &observation.context,
@@ -118,6 +124,8 @@ impl HttpObservation {
                         status = observation.status.map(|status| status.as_u16()),
                         http_outcome = outcome,
                         latency_ms,
+                        quota_outcome = quota.map(|facts| facts.outcome()),
+                        quota_consumption = quota.map(|facts| facts.consumption().label()),
                         "HTTP response boundary finished"
                     );
                 }

@@ -65,8 +65,40 @@ impl std::fmt::Display for CorrelationId {
 /// `info,batter=warn,batter::request=info` retains nested request correlation while
 /// suppressing Batter INFO completion events. HTTP events retain their typed ID
 /// even when all INFO spans are disabled.
-pub async fn operational_http(mut request: Request, next: Next) -> Response {
+pub async fn operational_http(request: Request, next: Next) -> Response {
+    operational_http_inner(request, next, false).await
+}
+
+/// Opt into one retained quota record alongside the existing HTTP observation.
+///
+/// Use this instead of [`operational_http`], never nested with another HTTP
+/// observer. Quota adapters take [`crate::quota_observation::QuotaRecorder`]
+/// before application code, start immediately before the native check, and
+/// consume the started writer with a terminal native fact. The HTTP
+/// completion retains them even when admission or handler futures are dropped.
+/// Fresh records replace all previously supplied records. No quota backend,
+/// authentication, or admission is installed by this middleware alone.
+///
+/// ```
+/// use axum::{Router, middleware, routing::get};
+/// use batter_axum::operational_http_with_quota;
+/// let app: Router = Router::new().route("/live", get(|| async { "live" }))
+///     .layer(middleware::from_fn(operational_http_with_quota));
+/// ```
+pub async fn operational_http_with_quota(request: Request, next: Next) -> Response {
+    operational_http_inner(request, next, true).await
+}
+
+async fn operational_http_inner(mut request: Request, next: Next, quota: bool) -> Response {
     with_current_dispatch(async move {
+        request
+            .extensions_mut()
+            .remove::<crate::quota_observation::QuotaObservation>();
+        if quota {
+            request
+                .extensions_mut()
+                .insert(crate::quota_observation::QuotaObservation::default());
+        }
         request.headers_mut().remove("x-request-id");
         request.extensions_mut().remove::<RequestId>();
         request.extensions_mut().remove::<CorrelationId>();

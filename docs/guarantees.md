@@ -11,6 +11,47 @@ planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
 macOS arm64 have execution evidence on both supported toolchains. The updated
 macOS CI job and other Unix targets remain unverified. See [ADR-007](adr/007-unix-platform-scope.md).
 
+## Native quota execution
+
+The optional `batter-runlimit` adapter owns one native atomic batch before the
+work factory, using the same total operation deadline for both phases. It does
+not implement quota storage, policy validation or transactions. Denial/backend
+failure prevents work; a returned grant remains retained even if cancellation
+prevents work or work later fails. There are no automatic retries or refunds.
+An unobserved started check has unknown consumption, not proof of rollback.
+
+Its authenticated HTTP boundary owns lifecycle/deadline admission before auth,
+then quota before body extraction. The complete protected router passed to
+`prepare`, including custom root, nested and method fallbacks, is guarded.
+Without a custom protected fallback, unmatched paths receive the default 404.
+Public probes require the named `with_public_probes` opt-in and a route-only
+`PublicProbes` builder; it rejects capture and catch-all patterns at
+construction, so arbitrary Routers, dynamic routes and custom fallbacks cannot
+become public handlers. A public GET probe and protected GET route at the same
+path cause a startup panic during Axum route assembly; no service is registered
+from that preparation. Declared GET/HEAD probes bypass lifecycle/deadline admission,
+authentication and quota, and receive no protected `OperationContext`. It does not treat raw
+principal extensions as authority and installs a privately constructible `Authenticated<P>`
+handler extractor only after authentication. Applications must extract that
+type for authority; raw `Extension<P>` remains unrelated application metadata.
+It uses the transport peer, never forwarding headers. The opaque prepared service
+installs native peer metadata and exactly one observer across assembled business
+routes, public probes and fallback. Retained bounded quota facts survive outer
+timeout/drop and are separate from the final status. The record owns one
+irreversible writer claim shared by every clone of request metadata; neither
+handlers nor a timeout renderer can reclaim it after admission or writer drop.
+The admission failure renderer receives ordinary request metadata without the
+private writer, including when admission fails before the quota boundary runs.
+The non-cloneable writer moves from unstarted to started to consumed terminal
+publication. Dropping it before a check leaves `NotChecked`; dropping it during
+a check leaves `Unresolved`. A published terminal fact cannot be replaced with a
+later timeout/nonterminal fact through this API.
+This observation capability is not authentication or quota authority: the
+supported adapter still owns recording native truth. Application authorization, proxy trust,
+backend initialization/maintenance, body streaming and detached descendants stay
+outside these guarantees. Memory atomicity and offline native error/type tests
+are not live PostgreSQL or fresh-agent usability evidence.
+
 ## Execution boundary
 
 OperationContext uses a Tokio monotonic deadline. Children clamp their deadline
@@ -1034,11 +1075,20 @@ can admit a process-cancelled context but cannot mutate lifecycle state.
 
 HTTP completion events carry normalized method, matched route template (or
 `<unmatched>`), actual numeric status when a response exists, HTTP outcome and
-construction latency as event fields. The observer retains these facts separately
+construction latency as event fields. With `operational_http_with_quota` (also
+installed by the protected `HttpQuota` assembly), the completion additionally
+carries `quota_outcome` and `quota_consumption`. The outcome is one of
+`not_checked`, `unresolved`, `allowed`, `shadow_denied`, `quota_denied`,
+`storage_capacity`, `other_denial`, or `backend_failed`; consumption is `consumed`,
+`not_consumed`, or `unknown`. Allowed means consumed; an unresolved check means
+unknown; a backend failure retains its native certainty; the other outcomes mean
+not consumed. These facts are independent of final HTTP status, including a
+timeout after admission. Ordinary `operational_http` allocates no quota record
+and its completion omits these quota values. The observer retains these facts separately
 from its INFO span, so disabling that span does not remove fields from an enabled
-completion event. The span still carries the same fields for nested context;
-formatters may show them in both places. Application-owned correlation in other
-spans remains subject to those spans' filtering.
+completion event. The span carries method, route, status, HTTP outcome and latency
+for nested context; quota fields exist only on the completion event. Application-owned
+correlation in other spans remains subject to those spans' filtering.
 
 At first poll, observation retains its enabled HTTP span or the current enabled
 application span for execution and completion parenting. Later ambient spans

@@ -147,6 +147,7 @@ lower library minimum.
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
+| `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution and protected authenticated HTTP assembly. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
 | `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, provider-effect reconciliation, explicit direct-peer/request correlation, pinned compatibility probes, validated constructors, and an explicit live test target. |
@@ -159,7 +160,11 @@ The reference uses Runledger's transactional producer API and registers one
 application-owned provider-effect handler. Its selected loopback-test protocol
 uses a stable key, canonical payload matching, lookup reconciliation and an
 explicit 24-hour retention boundary; this is not an exactly-once or arbitrary
-provider guarantee. A Runlimit adapter remains unimplemented.
+provider guarantee. `batter-runlimit` preserves native quota decisions and consumption
+certainty under an operation budget; optional HTTP assembly owns auth/quota/body
+ordering. Its `memory`, `postgres`, and `axum` features are independent and off by
+default. It does not own PostgreSQL initialization or maintenance. Run its finite
+example with `cargo run -p batter-runlimit --features axum,memory --example quota_service`.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The

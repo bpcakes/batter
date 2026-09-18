@@ -28,7 +28,7 @@ it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` foundation,
-`batter-axum`, `batter-sqlx` and `batter-runledger` adapters, and
+`batter-axum`, `batter-sqlx`, `batter-runledger` and `batter-runlimit` adapters, and
 `batter-test-support` utilities are separate libraries;
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
@@ -47,7 +47,9 @@ application composition root
   |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
   |     `-- opt-in test-support -> external harness + generic test support
   |-- optional batter-runledger -> batter + native runtime preparation / settlement
-  |-- native Runlimit (no adapter implemented)
+  |-- optional batter-runlimit -> batter + native Runlimit core
+  |     |-- opt-in memory / postgres -> native storage and error bridges
+  |     `-- opt-in axum -> batter-axum + native serving
   `-- reference tests -> batter-test-support + external postgres-test-harness
 ```
 
@@ -68,8 +70,12 @@ adapter shares the observed connection disposition mechanism while preserving
 native transactions and application policy. The implemented optional
 `batter-runledger` adapter translates owned native preparation, initialization,
 stop clocks and complete settlement into managed process ownership; native
-supervision and durable policy remain in Runledger. Runlimit has no implemented
-Batter adapter; adding one still requires proven shared mechanics. See
+supervision and durable policy remain in Runledger. The optional `batter-runlimit`
+adapter owns quota-before-work execution, not a second limiter. Its HTTP boundary
+owns async authentication, one atomic native batch, body ordering and retained
+quota facts; its opaque prepared service owns the required serving metadata.
+Bulkhead bounds simultaneous work; Runlimit accounts usage over time. Neither
+replaces the other. See
 [ADR-006](adr/006-workspace-packages.md) and the
 [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
 

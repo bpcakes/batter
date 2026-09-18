@@ -32,6 +32,47 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+The native quota adapter's `cargo test -p batter-runlimit --all-features --locked`
+uses real memory-store atomic decisions and scripted pending/uncertain failures.
+Its real memory-store regression also drops an unpolled `Quota::run` future and
+proves that the next call still gets the sole grant. A direct native trait-call
+negative control proves that the pinned memory limiter instead consumes that
+grant while constructing its returned future.
+It covers total budgets, factory inertness, denial-before-body, async authentication,
+direct-peer identity, protected-by-default route assembly, literal-only public
+probe registration, inner raw-principal
+collision, narrowed allowed/denied/interrupted results, native serving, and
+retained single observations after timeout
+or drop. Axum unit tests and compile-fail doctests cover the consuming quota
+writer's unstarted, started, and terminal phases, including rejection of a second
+terminal write or a nonterminal finish. PostgreSQL error/type checks are offline,
+not database acceptance.
+`cargo run -p batter-runlimit --features axum,memory --example quota_service --locked`
+executes native admission and an HTTP 200/429 sequence.
+The public example now compiles without subject-selector argument annotations.
+An external disposable Cargo consumer additionally checks a valid assembled
+service and confirms wrong auth and selector closure signatures fail at
+`HttpQuota::new`; record its executed result in [validation](validation.md).
+
+`python3 scripts/check_runlimit_features.py` compiles all eight independent feature
+subsets in a disposable consumer workspace with the current toolchain. It checks
+normal dependency reachability, refuses external source/version drift from the
+repository lock, and requires the specific disabled-HTTP import error without
+`axum`. This runner is part of `test_matrix.py`, including Jig's test action.
+It reads the declared feature inventory from Cargo metadata and fails if a
+feature is added without a graph-membership expectation. A runner control
+injects an additional declared feature and requires that failure. Protected
+HTTP regressions cover nested custom and method fallbacks through authentication
+and quota, custom protected root fallbacks with and without public probes, and
+a public probe's unsupported method returning the default 405 without polling
+its request body. A focused preparation test pins Axum's startup panic when a
+public GET probe duplicates a protected GET route. Real one-use memory tests
+recheck the same subject after domain work failure and post-grant cancellation;
+both require a later native denial and no second work invocation. Constructor tests reject empty and mixed-mode policy sets;
+native memory certainty tests cover all pinned error variants directly.
+Existing exhaustive source/test/example and scripts globs in both Jig contract
+representations include the new package and runner; no new input root is used.
+
 The `batter-sqlx` offline library suite includes the pure exact-role manifest
 compiler and grant renderer. Its cases compare differently grouped inputs,
 idempotent and conflicting duplicates, required versus allowed-only authority,

@@ -25,6 +25,7 @@ REFERENCE_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "s
                           "-p", "test_reference_live.py", "-v"]
 SQLX_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                      "-p", "test_sqlx_live.py", "-v"]
+RUNLIMIT_FEATURES = [sys.executable, "scripts/check_runlimit_features.py"]
 
 
 def main():
@@ -33,7 +34,8 @@ def main():
                               [CORE_CHECK, RUNNER_TESTS, SMOKE_TESTS, REFERENCE_RUNNER_TESTS]),
                              (["sqlx-runner-controls"], [SQLX_RUNNER_TESTS]),
                              (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),
-                             (["doctests"], [DOC_TESTS])]:
+                             (["doctests"], [DOC_TESTS]),
+                             (["runlimit-isolated-features"], [RUNLIMIT_FEATURES])]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)
         outcomes = run_parallel(commands, timeout=1500, output_limit=8 * 1024 * 1024,
                                 cwd=ROOT, retain_tail=True)

@@ -15,9 +15,21 @@ import unittest
 from unittest import mock
 
 import parallel_process as parallel
+import check_runlimit_features as runlimit_features
 import scheduling_controls as controls
 from scheduling_process import ProcessOutcome
 import test_matrix as matrix
+
+
+class RunlimitFeatureInventoryTests(unittest.TestCase):
+    def test_manifest_feature_addition_fails_until_graph_expectations_are_updated(self):
+        metadata = {"packages": [{"name": "batter-runlimit", "features": {
+            "default": [], "memory": [], "postgres": [], "axum": []}}]}
+        self.assertEqual(runlimit_features.declared_features(metadata),
+                         ("axum", "memory", "postgres"))
+        metadata["packages"][0]["features"]["additional"] = []
+        with self.assertRaisesRegex(RuntimeError, "unmapped=\\['additional'\\]"):
+            runlimit_features.declared_features(metadata)
 
 
 def python(code):
@@ -331,7 +343,7 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "run_parallel", execute), \
                 mock.patch.object(matrix, "render_outcomes"):
             self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [4, 1, 3, 1])
+        self.assertEqual([len(batch) for batch in batches], [4, 1, 3, 1, 1])
         self.assertEqual(batches[0][1], matrix.RUNNER_TESTS)
         self.assertEqual(batches[0][3], matrix.REFERENCE_RUNNER_TESTS)
         self.assertEqual(batches[1][0], matrix.SQLX_RUNNER_TESTS)
@@ -347,13 +359,15 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("configuration", batches[2][2])
         self.assertIn("--locked", batches[2][2])
         self.assertIn("--doc", batches[3][0])
+        self.assertEqual(batches[4], [matrix.RUNLIMIT_FEATURES])
+        self.assertIn("scripts/check_runlimit_features.py", batches[4][0])
         self.assertTrue(all("--locked" in command for batch in batches for command in batch
                             if command[0] == "cargo"))
 
     def test_failure_of_any_prerequisite_or_runtime_pass_stops_later_batches(self):
         success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
         failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
-        batch_sizes = [4, 1, 3, 1]
+        batch_sizes = [4, 1, 3, 1, 1]
         for failing_batch, size in enumerate(batch_sizes):
             for failing_command in range(size):
                 results = [[success] * earlier for earlier in batch_sizes[:failing_batch]]

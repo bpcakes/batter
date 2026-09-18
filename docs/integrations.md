@@ -1,6 +1,6 @@
 # Integration ownership contracts
 
-The `batter-axum` and `batter-sqlx` adapters, native SQLx lifecycle example and
+The `batter-axum`, `batter-sqlx`, `batter-runledger` and `batter-runlimit` adapters, native SQLx lifecycle example and
 unpublished reference command package exist in this snapshot. The latter
 composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
@@ -187,7 +187,7 @@ while the outer adapter alone sets the response header and records completion.
 The public `TrustedPeer` value is the application-owned admission input required
 by the downstream Runlimit composition, but no quota identity or grant is
 inferred in this stage. Durable persistence remains with
-`batter-7g0`; Runlimit composition remains with `batter-97p`.
+`batter-7g0`; the new Runlimit adapter does not change that reference-service path.
 
 ## SQLx: keep transactions visible
 
@@ -438,23 +438,117 @@ versioned, validated representation. Never persist a CancellationToken or Tokio
 Instant, and never keep a job subordinate to an already-finished HTTP scope.
 The worker creates a new execution context with its own deadline/retry policy.
 
-## Runlimit: future thin policy/telemetry connection
+## Runlimit: optional protected native quota adapter
 
-Reviewed baseline: the Runlimit workspace has separate core, memory, PostgreSQL,
-HTTP, and Axum responsibilities. Re-check current APIs before coding.
+`batter-runlimit` pins native revision `f147fb7b139028a7a4204113358e1e9fbb2c7c26`
+(core/memory 0.3.0, PostgreSQL 0.3.1). There are no default features. `memory`
+and `postgres` enable native error bridges; `axum` selects HTTP assembly.
+Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,
+transactions and migrations remain Runlimit's responsibilities. PostgreSQL
+initialization and maintenance remain application/native-owned and have no new
+live acceptance claim. The reference service has not adopted this adapter.
 
-Prefer the upstream runlimit-axum layer rather than reimplementing its admission
-path in Batter. The application must establish proxy trust and normalize
-identities before generating opaque subject keys. Batter must not interpret
-Forwarded, raw emails, session IDs, or tenant policy on the user's behalf.
+`Quota::run(context, Checks::new(&checks)?, work_factory)` performs one native
+`Limiter::check_all`. An empty protected batch is rejected before execution.
+Constructing `Quota::run`'s future does not invoke the native limiter; a
+never-polled operation cannot consume quota. Once polled, the native check may
+take effect before yielding. At this pin, Runlimit's new trait rustdoc requires
+each limiter's returned future to be lazy, but its memory implementations still
+evaluate a check while constructing `ready(...)`. Batter does not expose the
+native future through its protected operation, and does not assume that native
+trait-level laziness for cancellation or rollback.
+Denial and backend failure never invoke the work factory. Allowed and shadow
+decisions remain separate from the typed work result. `RunResult::Rejected`
+contains only a native denial and its batch index. `RunResult::Admitted` contains
+either an allowed batch with narrow per-check capacity, availability and refill
+time, or a shadow denial with its native index and quota details. Interruption
+reports only `NotStarted` or `InFlight`; neither implies rollback. Admission and
+work share
+the parent's total deadline; cancellation after a grant can prevent work without
+erasing the grant. No retry or refund is automatic. Inner work retries do not
+repeat quota admission. A started check without an observed result means unknown
+consumption, not proof of continued local execution or remote rollback.
 
-Translate observations into stable telemetry without raw subjects or backend
-error strings as labels. Preserve normal quota denial vs capacity denial vs
-backend failure, shadow decisions, retry timing, and consumption certainty. Do
-not charge a new user quota automatically for each internal retry attempt.
+`HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy,
+protected_routes)` rejects an empty policy set or mixed enforced/shadow modes
+at construction, then owns lifecycle/deadline -> async authentication -> native
+atomic batch -> body/handler ordering. Subject-dependent native batch validation
+stays with Runlimit. Every route passed to `prepare` is guarded. To expose a
+public probe, call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`
+before `prepare`; the default has no unguarded handlers. A public GET probe
+that shares a path with a protected GET route makes `prepare` panic during
+Axum route assembly, before serving starts. Declare distinct GET paths. The supplied protected
+`Router` is treated as a complete service: its custom root fallback, nested
+fallbacks and method fallback pass the same admission, authentication and quota
+gates as ordinary routes. An explicitly supplied protected root fallback is
+retained; without one, unmatched paths receive the default unguarded 404. The
+public builder accepts only literal GET paths (with Axum's implicit HEAD) and
+returns a typed error for capture or wildcard patterns. It cannot accept a
+Router or fallback. Unsupported methods on a declared probe path get
+Axum's default 405 without an application fallback. Public probes bypass
+lifecycle/deadline admission, authentication and quota; they receive no protected
+`OperationContext`, but retain root observation and correlation. Unavailable
+lifecycle admission therefore precedes a 401 only on protected paths. The auth
+factory gets owned headers, direct transport peer and the request
+context, not a body or untrusted principal extension. The subject selector gets
+only the authenticated principal, direct peer and native policy. It must return
+native opaque keys; closure signatures are checked at `new`. Handlers extract
+`Authenticated<P>`, whose constructor is private; raw `Extension<P>` is never
+authentication evidence and can be overwritten by unrelated middleware. No
+forwarded-header/proxy trust is inferred. Behind a proxy,
+the direct peer is the proxy. Authorization and pre-authentication throttling
+remain application concerns; this order is not a universal security claim.
 
-Layer ordering depends on trusted metadata, authentication and which identity
-is being limited. No single order is a universal security claim.
+One batch is intentional: stacked native single-check HTTP layers can charge an
+earlier quota before a later denial. This adapter reuses native atomic checking,
+not native single-policy HTTP layering. Shadow denial permits work. For an enforced native denial, `Retry-After` is present exactly when the
+native denial supplies `retry_after_seconds()`. Its value is that native
+whole-second result: zero stays `0`, and positive subsecond remainder rounds
+up (for example, 1 ns to `1`, 2001 ms to `3`). Denials without a retry delay,
+authentication failures and backend failures omit the header. Concrete
+auth/backend errors stay internal as response `Arc<E>` extensions. Fixed
+boundary rejections use exactly one JSON
+`{"code": ...}` body and `Cache-Control: no-store`:
+
+| Condition | Status | `code` |
+| --- | --- | --- |
+| Authentication failed | 401 | `authentication_required` |
+| Native quota exhausted | 429 | `quota_exhausted` |
+| Native storage capacity denied | 503 | `quota_storage_capacity` |
+| Future unknown native denial kind | 503 | `quota_other_denial` |
+| Native backend failed | 503 | `quota_backend_failed` |
+| Missing protected composition context, direct peer, or observer | 500 | `missing_context`, `missing_peer`, or `missing_observer` respectively |
+
+The three 500 codes are defensive faults outside the supported opaque
+`PreparedHttp` serving path. A future native denial kind also records the
+distinct `other_denial` observation rather than claiming storage capacity.
+Nested quota check or work interruption is a lifecycle failure, not a fixed
+quota rejection. `request_admission` captures the original request metadata without the
+private quota writer and installs an opaque interruption responder for the inner
+adapter; it uses
+the same `RequestPolicy` renderer as an outer cancellation or deadline. A
+custom renderer, including `with_infrastructure_json`, owns that response's
+status, safe body and headers. A completed native quota fact remains retained
+when later work is interrupted.
+
+`PreparedHttp::register_in` consumes the assembled service into native direct-peer
+serving under process ownership. Its `in_process` alternative requires a synthetic
+peer per request and cannot be served or converted into a Router. Probe routes
+are explicitly unguarded. All routes, probes and fallback are covered by one root
+observer with fresh server correlation. Opt-in `operational_http_with_quota` retains
+bounded quota facts across outer timeout or drop. The adapter claims the sole
+writer before protected handlers and discards it before public probe handlers;
+ordinary operational HTTP allocates no
+quota record. Its consuming start/finish API retains `NotChecked` before the
+check, `Unresolved` after a dropped in-flight check, and a terminal native fact
+after completion; a later work timeout has no writer to downgrade it. The
+terminal value remains an adapter assertion, not a proof of native truth. Raw
+subjects, credentials and error strings are not observations.
+Body streaming and detached descendants remain outside response construction.
+
+See the [compiled consumer](../crates/batter-runlimit/examples/shape.rs) and
+[failure contracts](../crates/batter-runlimit/tests). Fresh-agent usability and
+live PostgreSQL acceptance remain unexecuted for this adapter.
 
 ## postgres-test-harness: optional native fixtures
 
@@ -554,8 +648,10 @@ explicit prerequisite-checking runner; skipped cases are not executed evidence.
 Applications depend on Batter and the upstream libraries. Batter adapters may
 depend on upstream libraries; upstream core crates must not depend on Batter.
 Select adapter packages explicitly rather than requiring all integrations for
-every consumer. Keep SQLx, Runlimit, and Runledger composition local to an
-example until common mechanics justify extraction. Integration fixtures may
+every consumer. Keep application-specific composition local until shared
+operational invariants justify an adapter. The user-approved Runlimit prototype
+established a direct library path without requiring a reference-service task
+first; it does not establish application adoption or stable API maturity. Integration fixtures may
 depend on the participating libraries; the foundation must not depend back on
 them through its generic test utilities.
 

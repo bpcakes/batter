@@ -1,6 +1,409 @@
 # Validation evidence
 
-Latest evidence: 2026-09-17. Earlier sections retain their historical scope.
+Latest evidence: 2026-09-18. Earlier sections retain their historical scope.
+
+## Runlimit probe collision and post-grant retention, 2026-09-18
+
+Owning Bead `batter-45q`; controller record
+`.git/jig/review-fix/c73b9048-fdb8-468c-842c-6b44ed8c1398/`.
+Pinned Axum 0.8.9 rejects duplicate public/protected GET routes during
+`HttpQuota::prepare`; the new test catches that startup panic. Two real
+one-use memory-store tests recheck the same subject after admitted domain
+work failure and post-grant cancellation and require native denial without
+invoking later work. In controller round one, the Runlimit tests, feature graphs,
+HTTP smokes and quota example passed, but both full verification commands stopped
+at `cargo fmt --check` because the new overlap test needed formatting. The
+formatted candidate passed every round-two check below. The controller finished
+`CONVERGED`; its `validation.json` retains the command logs and final fingerprint.
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`aa71b8a1d94a4fdfa32483a846d67c07c2f831c690af216623de0f529c6ee3fe`.
+
+| Round-two command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: one internal, 36 HTTP and 19 native quota tests, plus four positive and seven compile-fail doctests. |
+| `python3 scripts/check_runlimit_features.py` | PASS: all eight isolated feature graphs and compilations. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: workspace tests, feature checks, strict Clippy, formatting and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on Rust 1.94.0: the same full verification matrix. |
+| Build `batter-axum`'s `http_service` with `--locked`, then run `scripts/smoke_http.py` in default, SIGINT, deadline, warn-filter and warn-filter-plus-deadline modes | PASS: five HTTP process profiles on Rust 1.98.1. |
+| Repeat that build and five-profile smoke matrix with `RUSTUP_TOOLCHAIN=1.94.0` | PASS: five HTTP process profiles on Rust 1.94.0. |
+| `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native quota and work; protected HTTP status sequence `[200, 429]`. |
+
+No live PostgreSQL, Linux or hosted CI result follows from these local cases.
+
+## Runlimit protected probe and constructor review repair, 2026-09-18
+
+Owning Bead `batter-jqg`; Jig plan `plan_01M2TFKWF34YEAG931SN65P6NT`.
+The previous public-probe fallback repair was incomplete: pinned Axum 0.8.9
+keeps custom method fallbacks in `path_router` when `reset_fallback` clears its
+ordinary fallback. A second isolated review reproduced POST /live running a
+custom 418 method handler after reset. Accepting an arbitrary probe `Router`
+therefore left a public handler outside lifecycle admission, authentication and
+quota. The supported API now accepts only `PublicProbes` registrations for literal GET
+paths (and Axum's corresponding HEAD); capture and catch-all
+patterns fail with a typed construction error, and no custom public fallback can
+be passed.
+Mixed quota modes fail at `HttpQuota::new`; request-dependent native checks stay
+with Runlimit. Direct native memory error tests, protected root fallback tests
+without probes, and accurate compile-fail fences cover the other review findings.
+
+The bounded controller record is
+`.git/jig/review-fix/720a17de-54e8-4524-a8af-1569e801c812/`. Its terminal
+status and `validation.json` are the authoritative results for the repaired
+checkout. The preceding run `0cd5d124-2960-44ca-84c0-0472ccd9fb6e` passed its
+five required checks but stopped with `SCOPE_CHANGED` after Jig updated tracked
+agent state during review; it did not establish a terminal result.
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`aa71b8a1d94a4fdfa32483a846d67c07c2f831c690af216623de0f529c6ee3fe`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS in the controller's final round: one internal, 35 HTTP and 17 native quota tests, plus four positive and seven compile-fail doctests. |
+| `python3 scripts/check_runlimit_features.py` | PASS: all eight isolated feature combinations and dependency graphs. |
+| `bash scripts/verify.sh`; `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on both toolchains in the controller's final round: workspace tests, feature checks, strict Clippy, formatting and rustdoc. The first round failed strict Clippy because the example's `main` exceeded 100 lines; the example was shortened and both full commands then passed. |
+| On each toolchain, build `batter-axum`'s `http_service` and run `scripts/smoke_http.py` in default, SIGINT, deadline, warn-filter and warn-filter-plus-deadline modes | PASS: ten HTTP process profiles after the final code repair. |
+| On each toolchain, `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native admission and protected HTTP `[200, 429]`. |
+| Fresh disposable external consumer: `CARGO_TARGET_DIR=/Users/aa/Documents/batter/target cargo run --offline` in `/tmp/batter-public-probe-consumer` | PASS on Rust 1.98.1: the public `PublicProbes` API rejects `/{*rest}` with `PublicProbePathError::Pattern` and accepts `/live`. The disposable consumer used local path dependencies and is not a workspace source file. |
+
+The comprehensive controller finished `CONVERGED` in round two. Its two fresh
+terminal reviews reported all six acceptance criteria satisfied and no
+actionable findings on the final code fingerprint. The controller record owns
+the full validation logs and earlier failed attempt. Final Jig receipts are
+recorded separately after the tracker update.
+
+No live PostgreSQL, Linux, hosted CI, response-body streaming or arbitrary
+spawned-task termination claim follows from this repair.
+
+## Runlimit revision f147fb7b, 2026-09-18
+
+Owning Bead `batter-a8t`; Jig plan `plan_01M2TE1PVHK189WZM6RTR56SAS`.
+The exact native diff from `b2e61516` to `f147fb7b` adds six lines of
+`Limiter` rustdoc requiring checks to remain inert until their futures are
+polled. Package manifests, native algorithms and public signatures are
+unchanged. Batter now pins all three native crates to the same new revision;
+Cargo regenerated the lockfile. The native memory and GCRA trait methods still
+evaluate checks while constructing ready futures, contrary to that new trait
+requirement. Batter's own `Quota::run` remains lazy until polled; a real native
+memory regression now proves that dropping its unpolled future leaves the sole
+grant available. A direct native-memory trait-call negative control confirms
+consumption during future construction at this pin. GCRA is source-inspected
+only; no PostgreSQL runtime laziness claim is made. See
+[primary-source detail](references.md#runlimit-adapter-source-contract-2026-09-18).
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`aa71b8a1d94a4fdfa32483a846d67c07c2f831c690af216623de0f529c6ee3fe`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: one internal, 31 HTTP and 16 native quota tests; three positive and five compile-fail doctests. The two memory tests distinguish Batter's lazy outer operation from the eager native trait future. |
+| `python3 scripts/check_runlimit_features.py` | PASS: all eight isolated feature combinations and dependency graphs. |
+| `bash scripts/verify.sh`; `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on both toolchains: workspace matrix, feature isolation, strict Clippy and rustdoc. |
+| On each toolchain, build `batter-axum`'s `http_service` and run `scripts/smoke_http.py` in default, SIGINT, deadline, warn-filter and warn-filter-plus-deadline modes | PASS: ten HTTP process profiles. |
+| On each toolchain, `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native admission and protected HTTP `[200, 429]`. |
+| `scripts/jig work check --plan-id plan_01M2TE1PVHK189WZM6RTR56SAS` | PASS after the test and tracker updates: `api:test` receipt `receipt_01M2TETD3XAHKZ75Z99SASQGS9`, with Clippy, formatting, contract and file-budget targets passing. `work evidence` and `work gates` reported the required verify profile fresh. |
+
+Both `verify.sh` commands were repeated after adding the direct native-memory
+negative control. The HTTP smokes and quota examples ran before that test-only
+addition; their application inputs were unchanged.
+
+These checks do not establish live PostgreSQL behavior, Linux execution,
+hosted CI, or native memory `Limiter` conformance to the newly documented
+future-laziness requirement.
+
+## Complete protected router composition, 2026-09-18
+
+Owning Bead `batter-3uy`; Jig plan `plan_01M2T4PD3AAZFC2J442YJHA131`.
+Pinned Axum 0.8.9 stores custom nested fallbacks outside the path router, so
+per-route middleware had left them outside lifecycle, authentication and quota.
+Its router merge also panics when both inputs have explicit fallbacks. The
+protected input is now layered as a complete router; a caller's custom protected
+root fallback remains guarded. The opt-in public probe router has its fallbacks
+removed before merge, including nested fallback entries. Without a custom
+protected fallback, unmatched paths retain the default public 404. The isolated
+feature runner now compares Cargo metadata's declared features with its explicit
+dependency-graph expectations before enumerating subsets.
+
+Executed locally on macOS arm64 (`aarch64-apple-darwin`) with Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`f39b374acd46121e62ad3ca37767d2082134cb9a8e8bfeb23408437c10651a3b`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: one internal mapping test, 31 protected HTTP tests, 14 native quota tests, 3 positive and 5 compile-fail doctests. New HTTP cases cover nested, method and root custom fallbacks, body non-polling on denial, and two custom input fallbacks without a merge panic. |
+| `python3 -m unittest discover -s scripts -p 'test_parallel_process.py' -v` | PASS: 23 runner controls, including an injected unmapped manifest feature that must fail. |
+| `python3 scripts/check_runlimit_features.py` | PASS: all eight manifest-declared feature subsets compiled with expected dependency graphs. |
+| `bash scripts/verify.sh`; `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS on both toolchains: workspace matrix, feature graph, strict Clippy and rustdoc. |
+| On each toolchain, rebuild `batter-axum`'s `http_service`, then run `scripts/smoke_http.py --binary target/debug/examples/http_service` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` modes | PASS: ten process smoke profiles. |
+| On each toolchain, `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS: native admission and HTTP `[200, 429]`. |
+
+A fresh agent, without the repair context, built a disposable consumer at
+`/tmp/batter-runlimit-consumer.cEE5XP` using public APIs only and ran
+`CARGO_TARGET_DIR=/tmp/batter-runlimit-consumer-target cargo run --offline`
+on Rust 1.98.1. Synthetic requests returned 401 for unauthenticated nested and
+root fallbacks, 200 then 429 for each authenticated fallback, 200 for the
+explicit public probe, and 401 for an unmatched probe path. Handler counters
+confirmed that denied requests and the probe fallback did not run. The agent
+reported no blocking API or documentation ambiguity and made no repository edits.
+This is one fresh consumer execution, not broad agent usability evidence.
+
+These checks do not establish live PostgreSQL behavior, Linux execution, hosted
+CI, or any remote side-effect rollback guarantee.
+
+## Protected quota HTTP review repair, 2026-09-18
+
+Owning Bead `batter-7ib`; Jig plan `plan_01M2SWVF4NC6JDDWB5FPSGQPCX`.
+The `request_admission` boundary now retains an opaque request-scoped
+interruption renderer containing the configured `RequestPolicy` failure policy
+and original request metadata. The inner quota boundary uses it for cancellation
+and deadline results, so nested interruption and outer admission use the same
+infrastructure response envelope. Public probe routes relinquish the quota
+writer before their handlers; their completion still reports `not_checked`.
+Empty and fallback-only probe routers prepare without a panic.
+Admission failure renderers receive request metadata without the private writer,
+so an early failure or authentication timeout cannot publish false quota facts.
+Fixed quota-owned HTTP rejections use a closed internal status/code mapping, and
+protected HTTP tests pin the reachable JSON wire codes, no-store header, retained
+quota after cancellation, and all three native backend consumption projections.
+The guarantee text also now distinguishes quota completion-event fields from
+span fields.
+
+The local review-fix controller record is
+`.git/jig/review-fix/b2a4b86f-e145-43fb-a003-4908c8890025/`.
+Its required validation passed on macOS arm64 against the repaired source:
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: one internal response-code test, 28 protected HTTP tests, 14 native quota tests, 3 positive and 5 compile-fail doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1, including the full test matrix, isolated feature graph, strict Clippy and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same gates. |
+| Rebuilt `http_service`; ran `scripts/smoke_http.py` in default, SIGINT, deadline, warn-filter and warn-filter-plus-deadline modes; ran the Runlimit `quota_service` example; repeated on each toolchain | PASS: ten HTTP process profiles and both quota examples (`[200, 429]`). |
+
+Earlier repair candidates failed Clippy module ordering, an E0618 test-local
+name collision, and rustfmt's closure layout. Those defects were corrected before
+the passing checks above. This evidence establishes local
+behavior, not live PostgreSQL, Linux or hosted CI execution. The native
+`DenialKind` has no constructible unknown variant in this pinned revision;
+its distinct future-denial mapping is checked by the internal classification
+test and source path, not by a native runtime fixture.
+
+## Quota review coverage follow-up, 2026-09-18
+
+Owning Bead `batter-orw`. The optional Runlimit adapter's status text now agrees
+with its implemented row. Two checked-in compile-fail doctests require incorrect
+authentication and subject-selector signatures to fail at `HttpQuota::new`;
+the runnable example still compiles an unannotated valid selector. A protected
+HTTP regression uses owner and direct-peer policies in one native atomic batch.
+It exhausts each policy in turn, requires denial before handler work, and proves
+that the other check was not charged by the denied batch. The integration guide
+now states that quota-owned `{ "code": ... }` rejections retain their fixed
+shape independently of `RequestPolicy` admission-failure renderers. No runtime
+response behavior was changed.
+
+The local review-fix controller record is
+`.git/jig/review-fix/0e1aaeff-2420-473d-a671-08d8e36ca612/`. Its required
+validation ran against the repaired source on macOS arm64:
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: 19 protected HTTP tests, 14 native quota tests, 3 positive and 5 compile-fail doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1, including the full matrix, isolated feature graph, strict Clippy and rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same gates. |
+| Rebuilt `http_service` and all five `scripts/smoke_http.py` profiles, then ran `quota_service`, on each toolchain | PASS: ten process profiles and both quota examples (`[200, 429]`). |
+
+The controller's validation receipts establish these local outcomes; they do
+not establish live PostgreSQL behavior, Linux execution or hosted CI.
+
+## Protected quota API hardening, 2026-09-18
+
+Owning Bead `batter-rbq`; Jig plan `plan_01M2SQMEJBH272M1ZHQ3W3SRVS`.
+Every router passed to `HttpQuota::prepare` is now protected. The only public
+routes require the named `with_public_probes` opt-in. The boundary installs a
+private-constructor `Authenticated<P>` after authentication; a raw extension of
+type `P` cannot replace what that extractor returns. Public quota results carry
+only allowed or shadow-admitted details, an enforced denial, or a two-state
+interrupted check. Native denial details, allowed decision metrics and concrete
+backend errors remain available. `HttpQuota::new` checks authentication and
+subject-selector closure signatures. A future native denial kind has a distinct
+503 code and `other_denial` observation, without calling it storage capacity.
+
+The external compile check used a disposable Cargo consumer outside this
+workspace with path dependencies and the pinned Runlimit revision. Its valid
+service assembled with an unannotated subject-selector closure and the
+`Authenticated<&str>` extractor. Two separate invalid binaries failed with
+E0631 at `HttpQuota::new`: one supplied an authentication closure taking `u8`
+instead of `AuthInput`, and one supplied a subject selector taking `&u64`
+instead of the authenticated principal. This checks compilation and diagnostics;
+it is not a fresh-agent implementation study. The pinned native `DenialKind`
+currently has only quota and storage-capacity variants, so the future wildcard
+path can be checked statically but cannot yet receive a native runtime fixture.
+The first Jig plan check passed test, Clippy, formatting and contract targets,
+then found the HTTP integration file at 858 lines against its 800-line budget.
+Two existing tests moved into a child module, leaving the parent at 775 lines.
+The same 18 HTTP tests and the targeted file-budget gate passed after the move.
+
+Host: macOS arm64 (`aarch64-apple-darwin`). Toolchains: Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`f39b374acd46121e62ad3ca37767d2082134cb9a8e8bfeb23408437c10651a3b`.
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: 18 HTTP and 14 native quota integration tests; 3 positive and 3 compile-fail doctests. |
+| `cargo test -p batter-axum --lib quota_observation --locked` | PASS: 5 observation unit tests, including `other_denial`. |
+| External consumer `cargo check --lib --offline`; two invalid `cargo check --bin ... --offline` | Valid service PASS; both invalid signatures failed at the constructor as expected. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: formatting, full test matrix, isolated feature graph, strict Clippy and warning-denied rustdoc. Initial run failed only at Clippy's `unwrap_or_default` suggestion; rerun passed after the one-line change. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete gates. |
+| Rebuilt `cargo build -p batter-axum --example http_service --locked`, then all five documented `scripts/smoke_http.py` modes | PASS on both toolchains: ten local process profiles. |
+| `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` (also with `RUSTUP_TOOLCHAIN=1.94.0`) | PASS on both toolchains: native work and protected HTTP `[200, 429]`. |
+| `scripts/jig work check --plan-id plan_01M2SQMEJBH272M1ZHQ3W3SRVS` | PASS after the test-file split: fresh `api:test` receipt `receipt_01M2SS0KQ9CHGAMEWFXVHZX90V`, with Clippy, formatting, contract and file-budget targets also passing. `work evidence` and `work gates` report the required verify profile fresh. |
+
+No live PostgreSQL, Linux, or hosted CI execution is claimed by this change.
+
+## Quota fact publication state repair, 2026-09-18
+
+Owning Bead `batter-d1v`. The public `QuotaRecorder::record` accepted repeated
+calls, so one writer could publish `Allowed` and then replace it with
+`NotChecked` or `Unresolved`. The current Runlimit callback published only
+`Started` followed by one decision or failure; the defect was reachable through
+the public adapter seam rather than the current protected HTTP path.
+
+`QuotaRecorder::start` now consumes the unstarted writer and publishes
+`Unresolved`. `StartedQuotaRecorder::finish` accepts only `QuotaTerminalFacts`
+and consumes the sole started writer. Dropping before start retains `NotChecked`;
+dropping while a check is in flight retains `Unresolved`. Unit tests pin those
+phases and a consumed backend-failure fact. Compile-fail doctests reject a
+second finish and a nonterminal finish. The Runlimit HTTP boundary uses the
+new sequence. The prior timeout/drop and cloned-metadata regressions still pass.
+The type transition prevents a later write through the writer; it does not prove
+that an adapter's asserted terminal fact matches its native result.
+
+Host: macOS arm64 (`Darwin arm64`). Toolchains: Rust 1.98.1
+(`48a229cea`) and 1.94.0 (`4a4ef493e`). Cargo.lock SHA-256:
+`f39b374acd46121e62ad3ca37767d2082134cb9a8e8bfeb23408437c10651a3b`.
+Executed locally after the source change:
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-axum --lib quota_observation --locked` | PASS: 5 unit tests. |
+| `cargo test -p batter-axum --doc --locked` | PASS: 25 positive and 8 compile-fail doctests, including the two new transition controls. |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: 30 integration tests and 3 doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1: formatting, full test matrix, isolated Runlimit feature graph, strict Clippy and warning-denied rustdoc. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the same complete gates. |
+| Rebuilt `cargo build -p batter-axum --example http_service --locked`, then all five documented `scripts/smoke_http.py` modes | PASS on both toolchains: ten local process profiles. |
+| `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` (also with `RUSTUP_TOOLCHAIN=1.94.0`) | PASS on both toolchains: native work and protected HTTP `[200, 429]`. |
+| `scripts/jig check test` | PASS: `api:test` receipt `receipt_01M2SPZRKAKMBQTZTGYFAYA7DR` (exit 0, unchanged execution inputs). |
+| `scripts/jig check contract`, `scripts/jig check repo:file-budget`, `scripts/jig check fmt` | PASS: contract v9, file budget and formatting. |
+
+The HTTP and memory-store checks do not establish live PostgreSQL behavior.
+No Linux or hosted CI execution is claimed by this repair.
+
+## Quota observation ownership repair, 2026-09-18
+
+Owning Bead `batter-97p`; Jig plan `plan_01M2SF37SZ65MG604BMSVS0SYK`.
+The comprehensive review found a localized capability design flaw, not a reason
+to move native policy/storage ownership into Batter. Removing a private
+extension from one request map did not consume authority shared by cloned
+`Parts`/`Extensions`. `RequestPolicy` itself saves a clone for custom failure
+renderers before quota admission. A renderer could consequently reacquire the
+writer after handler timeout and replace confirmed consumption.
+
+A disposable public-API consumer compiled and reproduced the failure before
+repair: after dropping the first writer, taking from cloned parts returned
+Some instead of None. Its failed assertion was
+`cloned Parts reacquired a consumed writer capability`. This diagnostic used
+Axum 0.8.9 and the local adapter; its separately resolved offline dependency
+graph is not substituted for workspace-locked verification.
+
+The owning observation allocation now stores the permanent claim alongside
+its facts, under the same mutex. No renderer-specific stripping, caller
+coordination, new public API, additional allocation, or limiter engine is needed.
+Unit regressions exercise metadata clones before/after claim, writer destruction
+and eight simultaneous claimants. A protected HTTP regression invokes a custom
+timeout renderer that attempts to rewrite the facts; completion must remain
+allowed/consumed. These prove the ownership contract, not trust in an arbitrary
+application-provided backend or writer.
+
+The remaining findings were prevention/documentation omissions: current native
+PostgreSQL mapping already matches all eight pinned `CheckError` variants, but
+only three had tests; Retry-After tests checked presence, not exact native
+conversion; and the authoritative HTTP event-field list omitted the opt-in
+quota fields. Offline tests now enumerate all eight variants without adding a
+SQLx dependency, and exercise zero, fractional and whole-second waits for both
+quota and known-capacity denial. The existing unknown-capacity omission control
+remains. Native classification and rounding stay upstream; the bounded field
+vocabulary and opt-in presence are documented in the HTTP guarantee.
+
+This repair's frozen validation contract requires `bash scripts/verify.sh` on
+Rust 1.98.1 and 1.94.0, each toolchain's rebuilt HTTP example followed by all five
+smoke profiles, and each toolchain's runnable `quota_service` example.
+Exact execution outcomes, source fingerprints and independent review reports
+are retained in the local controller record
+`.git/jig/review-fix/63d1aadc-f071-410c-a382-bf9219ddd58d/`.
+Only succeeded validation receipts in that record establish completed checks;
+the contract itself is not evidence of execution. Final repository-level Jig
+receipts belong to the plan above and are recorded after guarded validation,
+because Jig appends tracked bookkeeping. No live PostgreSQL, Linux execution,
+hosted CI, or fresh-agent consumer implementation is claimed by this repair.
+
+## Protected native Runlimit adapter, 2026-09-17–18
+
+Owning Bead `batter-97p`; Jig plan `plan_01M2RN3DEM31QGF1SWWREQSAYH`.
+User-approved direct library delivery follows the disposable compiled prototype;
+it does not require or implement reference-service adoption first. Native pin:
+`b2e61516f5a540fe4bc1e3d90fa476a00d0a5946`, core/memory 0.3.0 and PostgreSQL
+0.3.1. Cargo generated the lock additions without changing existing versions.
+Host: macOS 26.6.2 (25G83), arm64. Rust 1.98.1 (`48a229cea`) and 1.94.0
+are the selected supported toolchains; neither Linux nor hosted execution is
+newly claimed here.
+
+The implementation adds 28 quota/HTTP integration cases, two Axum observation
+capability unit cases, one positive adapter doctest and two adapter compile-fail
+doctests. The Axum observation seam adds two positive doctests and one
+compile-fail constructor control. Cases use the real native memory store plus
+scripted native failures/pending futures, actual loopback serving and paused
+clocks. They preserve atomic denial, shadow/storage/backend distinctions,
+concrete failures, total deadline, quota-before-body ordering, direct-peer
+selection and one retained completion under timeout/drop. The standalone quota
+factory-destruction test checks first-poll tracing dispatch after later drop.
+
+`check_runlimit_features.py` checks all eight feature subsets in a separate
+consumer workspace, refuses external source/version drift against Cargo.lock,
+and requires the specific disabled-HTTP import error for the four subsets
+without `axum`. Native type/error mapping is tested offline; no PostgreSQL
+database, migration, maintenance or cancellation behavior is exercised.
+
+The initial full run stopped at the matrix-control test because it expected
+four phases after a fifth isolated-feature phase was added. Both the exact phase
+inventory and failure-stop controls were updated; no semantic assertion was
+relaxed. A focused read-only reviewer found no concrete implementation defect
+but identified missing HTTP response-extension assertions. Tests now require
+`Arc<AuthError>`, `Arc<BackendFailure>` with native consumption certainty and no
+backend error on capacity denial; the reviewer confirmed the gap was closed.
+That review did not execute tests or establish independent consumer usability.
+
+Executed commands:
+
+| Command | Outcome |
+| --- | --- |
+| `cargo test -p batter-runlimit --all-features --locked` | PASS: 28 integration tests, one positive and two compile-fail doctests. |
+| `bash scripts/verify.sh` | PASS on Rust 1.98.1 after the matrix-control update: workspace/core/runtime/doctests, eight isolated feature subsets, formatting, strict Clippy and warning-denied rustdoc. The later test-only error-retention assertions are covered by final Jig validation. |
+| `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh` | PASS with the updated error-retention assertions and the same complete matrix. |
+| Rebuilt `cargo build -p batter-axum --example http_service --locked`, then `python3 scripts/smoke_http.py --binary target/debug/examples/http_service` in default, `--signal SIGINT`, `--deadline`, `--warn-filter`, and `--warn-filter --deadline` profiles | PASS on both toolchains: ten process profiles. |
+| `cargo run -p batter-runlimit --features axum,memory --example quota_service --locked` | PASS on both toolchains: native work returns 42 and protected HTTP returns `[200, 429]`. |
+
+The first Jig work check ran while the review assertions were being added;
+Jig correctly refused its receipts with `execution_mutated` / `source_raced`
+instead of treating successful child commands as immutable-tree evidence. A
+frozen-tree final check then passed all five targets, with fresh `api:test`
+receipt `receipt_01M2RPCD74VHKMEMRS0KJ77S7J`. `work evidence` and `work gates`
+confirmed current inputs and no unresolved gates. The final documentation/tracker
+refresh reuses those unchanged Rust receipts and refreshes repository policy
+checks. No test failure was waived.
+The reference service, PostgreSQL lifecycle integration, Linux acceptance and
+fresh-agent implementation/modification evaluation remain outside this evidence.
 
 ## Executable announcement failure propagation, 2026-09-17
 

@@ -1,0 +1,48 @@
+[package]
+name = "batter-runlimit"
+description = "Protected native Runlimit quota execution and optional authenticated HTTP composition"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.94"
+license.workspace = true
+publish = false
+
+[features]
+default = []
+memory = ["dep:runlimit-memory"]
+postgres = ["dep:runlimit-postgres"]
+axum = ["dep:axum", "dep:batter-axum", "dep:tokio", "dep:tower", "dep:serde_json"]
+
+[dependencies]
+batter.workspace = true
+thiserror.workspace = true
+runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26" }
+runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26", optional = true }
+runlimit-postgres = { git = "https://github.com/bpcakes/runlimit", rev = "f147fb7b139028a7a4204113358e1e9fbb2c7c26", optional = true }
+axum = { workspace = true, optional = true }
+batter-axum = { path = "../batter-axum", optional = true }
+tokio = { workspace = true, features = ["net"], optional = true }
+tower = { workspace = true, features = ["util"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "net", "io-util"] }
+http-body.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[test]]
+name = "quota"
+required-features = ["memory"]
+
+[[test]]
+name = "http"
+required-features = ["axum", "memory"]
+
+[[example]]
+name = "quota_service"
+path = "examples/shape.rs"
+required-features = ["axum", "memory"]
+
+[lints]
+workspace = true

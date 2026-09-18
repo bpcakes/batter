@@ -6,6 +6,48 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Runlimit adapter source contract, 2026-09-18
+
+- Native [workspace at f147fb7b](https://github.com/bpcakes/runlimit/tree/f147fb7b139028a7a4204113358e1e9fbb2c7c26)
+  was rechecked from Cargo's exact Git checkout: core/memory 0.3.0, PostgreSQL
+  0.3.1 and SQLx 0.9.0. Batter pins that complete revision, not a moving branch.
+- Native [core](https://github.com/bpcakes/runlimit/tree/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-core/src)
+  supplies `Limiter::check_all`, `Check`, `BatchDecisionView`, enforced/shadow
+  decisions and consumption vocabulary. Native memory tests in Batter exercise
+  atomic denial and the sequential-single-check partial-charge counterexample.
+- PostgreSQL [typed errors](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-postgres/src/errors.rs)
+  distinguish before-commit failure, commit uncertainty and committed malformed
+  response metadata. The upstream exact classifier is private; Batter's narrow
+  `ConsumptionError` bridge preserves those variants and conservatively maps
+  unknown future variants to possibly consumed. Its offline type/error tests do
+  not establish PostgreSQL runtime, cancellation or maintenance behavior.
+
+On 2026-09-18, the same exact Git checkout was rechecked for the protected API
+cutover. Native [decision.rs](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-core/src/decision.rs)
+has a discriminated batch view, validated allowed batches, a consuming
+`try_into_allowed` that returns the native decision vector, and scalar allowed
+decision metadata. `DenialKind` is non-exhaustive with quota-exceeded and
+storage-capacity variants at that pin; unknown future variants must not be
+called storage capacity. These facts support Batter's narrowed result payloads
+and distinct future-denial fallback.
+
+The `b2e61516..f147fb7b` upstream diff changes only six lines of
+[`Limiter` trait rustdoc](https://github.com/bpcakes/runlimit/commit/f147fb7b139028a7a4204113358e1e9fbb2c7c26):
+implementations are now required to defer check evaluation and consumption
+until their returned future is first polled. The pinned native
+[`MemoryStore` trait implementation](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-memory/src/store.rs)
+and [`GcraStore` trait implementation](https://github.com/bpcakes/runlimit/blob/f147fb7b139028a7a4204113358e1e9fbb2c7c26/crates/runlimit-memory/src/gcra.rs)
+still call the synchronous check inside `std::future::ready(...)` while
+constructing the future, so those implementations do not yet satisfy the new
+trait contract. A direct native-memory trait-call regression observes quota
+consumption even when the returned future is dropped unpolled; GCRA is
+source-inspected, not runtime-tested here. The PostgreSQL trait implementation
+returns its async check future without polling it. Batter's `Quota::run` itself
+is an async function;
+its native call occurs only when the outer future is polled. The real memory
+regression checks that narrower protected-boundary guarantee. This does not
+establish native trait-level laziness or rollback once polling starts.
+
 ## Listener and SQL ordering investigation, 2026-09-17
 
 Under `batter-ws3`, rechecked Tokio 1.53.1's
@@ -978,6 +1020,24 @@ These semantics determine the assembled-router observer placement. Public
 combined wrapper and nested observers are not deduplicated. No upstream version
 or Cargo.lock change is required. Destruction and event-count evidence belongs
 in [validation](validation.md), not in upstream documentation claims.
+
+For the Runlimit protected assembly, rechecked the pinned Axum 0.8.9
+[`Router` implementation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs)
+on 2026-09-18. `route_layer` transforms `path_router` but leaves
+`fallback_router` untouched; nesting a router with a custom fallback adds that
+fallback to the latter. `layer` transforms both routers. `merge` panics when
+both inputs have custom fallbacks, and `reset_fallback` removes a router's
+fallback entries before merging. `method_not_allowed_fallback` instead
+modifies `path_router`, which `reset_fallback` does not clear. An isolated
+Axum 0.8.9 reproduction returned the custom 418 method fallback for POST /live
+after `reset_fallback`. A public probe API accepting a complete Router therefore
+cannot enforce explicit-only public handlers; the route-only builder owns that
+restriction. The pinned [route documentation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/docs/routing/route.md)
+also defines `/{key}` captures and `/{*key}` wildcards, which can match more than
+one path. A public probe builder must reject those patterns before routing;
+otherwise a wildcard GET probe acts as a public fallback for protected paths.
+Protected Router layering remains necessary for application root, nested and
+method fallbacks.
 
 ## HTTP observation severity reviewed: 2026-09-09
 

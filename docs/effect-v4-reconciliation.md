@@ -126,7 +126,7 @@ flag merely to reproduce Effect's packaging. HTTP and SQLx adoption now
 use separate packages; neither is a foundation feature. See
 [ADR-006](adr/006-workspace-packages.md) and [Cargo's feature policy reference](references.md#boundary-conventions-reviewed-2026-09-08).
 
-[AGENTS.md](../AGENTS.md), rustdoc, six runnable demonstrations plus a read-only
+[AGENTS.md](../AGENTS.md), rustdoc, seven runnable demonstrations plus a read-only
 live-suite preflight, and the
 [failure-contract test map](testing.md) already provide the agent-facing starting
 point. No `llms.txt` exists. An additional index would be navigation only, not a competing contract. Predictability should come from checked types,

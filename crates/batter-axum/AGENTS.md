@@ -23,6 +23,9 @@ Windows support and non-Unix fallbacks are out of scope.
   its single internal composition entry has no admission policy.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
+- `src/quota_observation.rs` owns bounded facts and a single-take writer for
+  `operational_http_with_quota`; its consuming start/finish states prevent terminal
+  facts from being downgraded. Native quota execution belongs in batter-runlimit.
 - `src/readiness.rs` translates the foundation's valid readiness decision into
   HTTP status, response extensions and observation severity.
 - `src/serving.rs` registers a bound native listener/router with the supervisor,

@@ -17,6 +17,8 @@ Fast jump index for agent-facing guidance in this repository.
   database fixture ownership.
 - [Native runtime adapter](./crates/batter-runledger/AGENTS.md): inert native preparation,
   initialization, stop-clock exchange and retained descendant settlement.
+- [Native quota adapter](./crates/batter-runlimit/AGENTS.md): atomic quota-before-work,
+  authenticated HTTP assembly and retained consumption observations.
 - [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
   and error-preserving result combination.
 - [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool

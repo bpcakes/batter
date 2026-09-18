@@ -17,10 +17,14 @@ mod observation;
 mod readiness;
 mod serving;
 
+pub mod quota_observation;
+
 /// Browser-carried opaque credential transport primitives.
 pub mod browser;
 
-pub use correlation::{CorrelationId, operational_http, render_infrastructure_failure};
+pub use correlation::{
+    CorrelationId, operational_http, operational_http_with_quota, render_infrastructure_failure,
+};
 pub use readiness::{
     ReadinessDecision, ReadinessPolicy, default_readiness_level, dependency_readiness,
     readiness_status,
@@ -92,6 +96,76 @@ pub struct RequestPolicy {
     admission: OperationAdmission,
     budget: Duration,
     failure_renderer: Option<Arc<FailureRenderer>>,
+}
+
+/// Renders an interruption using the request's admission policy and original metadata.
+///
+/// [`request_admission`] installs this opaque capability on admitted requests.
+/// A nested adapter can use it when its own operation observes cancellation or
+/// deadline expiry before the outer admission operation is polled again. The
+/// application cannot construct one with a different request or policy. The
+/// captured metadata excludes Batter's private quota observation writer.
+///
+/// ```
+/// use axum::{extract::Request, response::Response};
+/// use batter::operation::Interruption;
+/// use batter_axum::RequestInterruptionResponder;
+///
+/// fn nested_interruption(request: &Request, reason: Interruption) -> Option<Response> {
+///     request.extensions().get::<RequestInterruptionResponder>()
+///         .map(|responder| responder.render(reason))
+/// }
+/// ```
+#[derive(Clone)]
+pub struct RequestInterruptionResponder(InterruptionRendering);
+
+#[derive(Clone)]
+enum InterruptionRendering {
+    Default,
+    Custom {
+        renderer: Arc<FailureRenderer>,
+        original_parts: Arc<Parts>,
+    },
+}
+
+fn renderer_parts(parts: &Parts) -> Parts {
+    let mut snapshot = parts.clone();
+    // The renderer needs request metadata, never the observer's private writer.
+    snapshot
+        .extensions
+        .remove::<quota_observation::QuotaObservation>();
+    snapshot
+}
+
+impl RequestInterruptionResponder {
+    fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
+        match &policy.failure_renderer {
+            Some(renderer) => Self(InterruptionRendering::Custom {
+                renderer: renderer.clone(),
+                original_parts: Arc::new(renderer_parts(original_parts)),
+            }),
+            None => Self(InterruptionRendering::Default),
+        }
+    }
+
+    /// Render cancellation or deadline expiry with the admission policy's envelope.
+    ///
+    /// The custom renderer receives the original request metadata captured
+    /// before inner adapter extensions were inserted, without the private
+    /// quota observation writer.
+    pub fn render(&self, reason: Interruption) -> Response {
+        let failure = match reason {
+            Interruption::Cancelled => HttpFailure::Cancelled,
+            Interruption::DeadlineExceeded => HttpFailure::DeadlineExceeded,
+        };
+        match &self.0 {
+            InterruptionRendering::Default => failure.into_response(),
+            InterruptionRendering::Custom {
+                renderer,
+                original_parts,
+            } => renderer(failure, original_parts.as_ref()),
+        }
+    }
 }
 
 /// A validated budget for constructing an HTTP response.
@@ -170,7 +244,8 @@ impl RequestPolicy {
     /// Render infrastructure failures in the application's existing wire format.
     ///
     /// The callback receives a snapshot of the original request parts at entry
-    /// to this middleware, including application extensions. Install trusted
+    /// to this middleware, including application extensions but excluding
+    /// Batter's private quota observation writer. Install trusted
     /// correlation/identity extensions in an outer layer before this boundary;
     /// Batter does not authenticate header values or log these parts. Handler
     /// changes to extensions are not included. The callback owns its response
@@ -199,7 +274,7 @@ impl RequestPolicy {
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {
         match &self.failure_renderer {
-            Some(renderer) => renderer(failure, parts),
+            Some(renderer) => renderer(failure, &renderer_parts(parts)),
             None => failure.into_response(),
         }
     }
@@ -390,26 +465,20 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Ok(context) = policy.admission.admit(deadline) else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
-    // Preserve the caller's metadata only when its renderer needs it.
-    let saved_parts = policy.failure_renderer.as_ref().map(|_| parts.clone());
+    // One request-scoped capability owns both the policy and the original parts.
+    let responder = RequestInterruptionResponder::from_policy(&policy, &parts);
     let mut request = Request::from_parts(parts, body);
-    let failure = match context
+    request.extensions_mut().insert(responder.clone());
+    match context
         .run("http.response_construction", |scope| async move {
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)
         })
         .await
     {
-        Ok(response) => return response,
-        Err(OperationError::Interrupted(Interruption::Cancelled)) => HttpFailure::Cancelled,
-        Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
-            HttpFailure::DeadlineExceeded
-        }
+        Ok(response) => response,
+        Err(OperationError::Interrupted(reason)) => responder.render(reason),
         Err(OperationError::Failed(never)) => match never {},
-    };
-    match saved_parts {
-        Some(parts) => policy.render_failure(failure, &parts),
-        None => failure.into_response(),
     }
 }
 
