@@ -469,7 +469,7 @@ The worker creates a new execution context with its own deadline/retry policy.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` pins native revision `0a9138fc72f210c2d2ab01d445734a92aaca6aee`
+`batter-runlimit` pins native revision `e91da419216e77e8c83d0bb80c70c297d286d341`
 (core/memory 0.3.0, PostgreSQL 0.3.1). There are no default features. `memory`
 and `postgres` enable native error bridges; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,
@@ -488,9 +488,11 @@ does not expose the native future through its protected operation or infer
 rollback from dropping an in-flight check.
 Denial and backend failure never invoke the work factory. Allowed and shadow
 decisions remain separate from the typed work result. `RunResult::Rejected`
-contains only a native denial and its batch index. `RunResult::Admitted` contains
-either an allowed batch with narrow per-check capacity, availability and refill
-time, or a shadow denial with its native index and quota details. Interruption
+contains the native denial, its batch index and the validated nonzero evaluated
+batch size. `RunResult::Admitted` contains either an allowed batch of native
+validated `Allowance` values, or a shadow denial with its native index, nonzero
+batch size and quota details. Enforced members cannot occur in the allowed batch
+type. Interruption
 reports only `NotStarted` or `InFlight`; neither implies rollback. Admission and
 work share
 the parent's total deadline; cancellation after a grant can prevent work without
@@ -553,6 +555,10 @@ quota-exhausted and storage-capacity reasons. A new reason requires an explicit
 adapter mapping before a later Runlimit revision compiles. The generic
 observation writer retains `other_denial` for manual assertions outside this
 native adapter; this adapter does not emit it at the current pin.
+The PostgreSQL bridge explicitly maps both commit-outcome-loss and commit-timeout
+failures to `PossiblyConsumed`, committed malformed responses to `Consumed`, and
+all current pre-commit or rolled-back failures to `NotConsumed`. Its wildcard is
+reserved for a future non-exhaustive upstream variant and remains conservative.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
 quota rejection. `request_admission` captures the original request metadata without the
 private quota writer and installs an opaque interruption responder for the inner

@@ -2,10 +2,10 @@
 
 use batter_core::operation::{Interruption, OperationContext, OperationError};
 use runlimit_core::{
-    BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Decision, DecisionView, Denial,
-    DenialView, Limiter, QuotaDenial, RateLimitPolicy,
+    Allowance, BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Denial, DenialView,
+    Limiter, QuotaDenial, RateLimitPolicy,
 };
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{future::Future, num::NonZeroUsize, sync::Arc};
 
 /// A narrow bridge; native policy, storage, and error types stay upstream.
 pub trait ConsumptionError: std::error::Error + Send + Sync + 'static {
@@ -31,6 +31,7 @@ impl ConsumptionError for runlimit_postgres::CheckError {
         use runlimit_postgres::CheckError::*;
         match self {
             CommittedResponseInvariant => ConsumptionStatus::Consumed,
+            CommitOutcomeUnknown(_) | CommitTimedOut => ConsumptionStatus::PossiblyConsumed,
             InvalidBatch(_)
             | DefinitelyNotConsumed(_)
             | TimedOutBeforeCommit { .. }
@@ -96,69 +97,27 @@ pub enum InterruptedCheck {
     InFlight,
 }
 
-/// Native metadata for one consumed allowed check.
+/// A native batch already restricted to consumed allowances.
 ///
-/// Only a validated native allowed batch can create this value. All fields
-/// retain their native meaning without requiring a caller to handle denied
-/// decision variants that cannot occur in an allowed batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AllowedDecision {
-    capacity: u64,
-    available: u64,
-    replenishes_after: Duration,
-}
-
-impl AllowedDecision {
-    /// Maximum immediately available policy allowance.
-    pub fn capacity(self) -> u64 {
-        self.capacity
-    }
-
-    /// Allowance available after this check consumed quota.
-    pub fn available(self) -> u64 {
-        self.available
-    }
-
-    /// Native time until the policy's full capacity is next available.
-    pub fn replenishes_after(self) -> Duration {
-        self.replenishes_after
-    }
-}
-
-/// A native batch already validated to contain only allowed decisions.
-///
-/// This retains Runlimit's decision vector without copying it. Iteration
-/// projects only allowed metadata, so consumers need no impossible denial arm.
+/// Runlimit's `Allowance` type makes denied members unrepresentable. The
+/// values remain in caller-supplied check order.
 #[derive(Debug)]
-pub struct AllowedBatch(Vec<Decision>);
+pub struct AllowedBatch(Vec<Allowance>);
 
 impl AllowedBatch {
-    /// Number of allowed check decisions retained from the native batch.
+    /// Number of allowances retained from the native batch.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Whether the native batch contained no decisions.
+    /// Whether the native batch contained no allowances.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Inspect each allowed decision in caller-supplied order.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = AllowedDecision> + '_ {
-        self.0.iter().map(|item| match item.view() {
-            DecisionView::Allowed {
-                capacity,
-                available,
-                replenishes_after,
-            } => AllowedDecision {
-                capacity,
-                available,
-                replenishes_after,
-            },
-            DecisionView::Denied { .. } | DecisionView::ShadowDenied { .. } => {
-                unreachable!("native allowed batch contains only allowed checks")
-            }
-        })
+    /// Inspect each native allowance in caller-supplied order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Allowance> + '_ {
+        self.0.iter().copied()
     }
 }
 
@@ -167,13 +126,15 @@ impl AllowedBatch {
 pub enum Admission {
     /// All checks were allowed and consumed in caller-supplied order.
     Allowed {
-        /// One native allowed decision per supplied check.
-        decisions: AllowedBatch,
+        /// One native allowance per supplied check.
+        allowances: AllowedBatch,
     },
     /// A native quota denial allowed work under an explicit shadow policy.
     ShadowDenied {
         /// Index of the denied check in the original batch.
         index: usize,
+        /// Validated number of checks in the evaluated batch.
+        batch_size: NonZeroUsize,
         /// Native validated quota-denial details.
         denial: QuotaDenial,
     },
@@ -187,6 +148,8 @@ pub enum RunResult<T, E, B> {
     Rejected {
         /// Index of the denied check in the original batch.
         index: usize,
+        /// Validated number of checks in the evaluated batch.
+        batch_size: NonZeroUsize,
         /// Native denial details, including any retry lower bound.
         denial: Denial,
     },
@@ -291,9 +254,14 @@ where
         match result {
             Ok(decision) => {
                 let admission = match decision.view() {
-                    BatchDecisionView::Denied { index, denial } => {
+                    BatchDecisionView::Denied {
+                        index,
+                        batch_size,
+                        denial,
+                    } => {
                         return RunResult::Rejected {
                             index,
+                            batch_size,
                             denial: match denial {
                                 DenialView::QuotaExceeded(details) => {
                                     Denial::quota_exceeded(details)
@@ -307,15 +275,21 @@ where
                         };
                     }
                     BatchDecisionView::Allowed { .. } => Admission::Allowed {
-                        decisions: AllowedBatch(
+                        allowances: AllowedBatch(
                             decision
                                 .try_into_allowed()
-                                .expect("native allowed view must yield allowed decisions"),
+                                .expect("native allowed view must yield allowances"),
                         ),
                     },
-                    BatchDecisionView::ShadowDenied { index, denial } => {
-                        Admission::ShadowDenied { index, denial }
-                    }
+                    BatchDecisionView::ShadowDenied {
+                        index,
+                        batch_size,
+                        denial,
+                    } => Admission::ShadowDenied {
+                        index,
+                        batch_size,
+                        denial,
+                    },
                 };
                 RunResult::Admitted {
                     admission,

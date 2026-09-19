@@ -22,26 +22,32 @@ async fn native_quota_runs_once_and_rejects_before_work_factory() {
         })
         .await;
     let RunResult::Admitted {
-        admission: Admission::Allowed { decisions },
+        admission: Admission::Allowed { allowances },
         work: Ok(42),
     } = result
     else {
         panic!("expected a consumed allowed batch");
     };
-    assert_eq!(decisions.len(), 1);
-    let decision = decisions.iter().next().unwrap();
-    assert_eq!(decision.capacity(), 1);
-    assert_eq!(decision.available(), 0);
+    assert_eq!(allowances.len(), 1);
+    let allowance = allowances.iter().next().unwrap();
+    assert_eq!(allowance.capacity(), 1);
+    assert_eq!(allowance.available(), 0);
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Ok::<_, Infallible>(0) }
         })
         .await;
-    let RunResult::Rejected { index, denial } = result else {
+    let RunResult::Rejected {
+        index,
+        batch_size,
+        denial,
+    } = result
+    else {
         panic!("expected an enforced denial");
     };
     assert_eq!(index, 0);
+    assert_eq!(batch_size.get(), 1);
     assert!(matches!(denial.view(), DenialView::QuotaExceeded(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
@@ -51,6 +57,7 @@ async fn storage_denial_retains_exact_retry_delay_without_running_work() {
     let delay = Duration::from_millis(2_001);
     let backend = Backend::new(Mode::Return(BatchDecision::denied(
         0,
+        1,
         Denial::storage_capacity(Some(delay)),
     )));
     let quota = Quota::new(backend);
@@ -63,7 +70,12 @@ async fn storage_denial_retains_exact_retry_delay_without_running_work() {
             async { Ok::<_, Infallible>(()) }
         })
         .await;
-    let RunResult::Rejected { index: 0, denial } = result else {
+    let RunResult::Rejected {
+        index: 0,
+        batch_size,
+        denial,
+    } = result
+    else {
         panic!("expected a storage denial");
     };
     let DenialView::StorageCapacity {
@@ -74,6 +86,7 @@ async fn storage_denial_retains_exact_retry_delay_without_running_work() {
     };
     assert_eq!(retry_after.duration(), delay);
     assert_eq!(retry_after.seconds(), 3);
+    assert_eq!(batch_size.get(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -251,14 +264,19 @@ async fn native_atomic_batch_denial_does_not_consume_the_other_bucket() {
         Check::new(&first, subject(1)),
         Check::new(&second, subject(2)),
     ];
-    assert!(matches!(
-        quota
-            .run(&context(100), Checks::new(&both).unwrap(), |_| async {
-                Ok::<_, Infallible>(())
-            })
-            .await,
-        RunResult::Rejected { index: 1, .. }
-    ));
+    let RunResult::Rejected {
+        index: 1,
+        batch_size,
+        ..
+    } = quota
+        .run(&context(100), Checks::new(&both).unwrap(), |_| async {
+            Ok::<_, Infallible>(())
+        })
+        .await
+    else {
+        panic!("expected the second check to deny the two-check batch");
+    };
+    assert_eq!(batch_size.get(), 2);
     let just_first = [Check::new(&first, subject(1))];
     assert!(matches!(
         quota
@@ -294,10 +312,16 @@ async fn native_shadow_denial_allows_work_and_preserves_native_decision() {
     else {
         panic!("wrong result: {result:?}")
     };
-    let Admission::ShadowDenied { index, denial } = admission else {
+    let Admission::ShadowDenied {
+        index,
+        batch_size,
+        denial,
+    } = admission
+    else {
         panic!("expected shadow admission");
     };
     assert_eq!(index, 0);
+    assert_eq!(batch_size.get(), 1);
     assert_eq!(denial.capacity(), 1);
 }
 

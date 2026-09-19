@@ -36,7 +36,10 @@ proves that the next call still gets the sole grant. Direct native single and
 batch trait-call controls now prove that dropping an unpolled memory check leaves
 the grant available, while polling consumes it.
 An enforced storage-capacity denial retains its exact typed retry duration in
-the public result without calling work. Protected HTTP checks both native
+the public result without calling work. Allowed results expose native validated
+allowances, while enforced and shadow denials retain the native validated batch
+size; the two-check atomic-denial regression proves the original size survives
+the adapter. Protected HTTP checks both native
 denial reasons and whole-second `Retry-After` rounding from the typed delay.
 It covers total budgets, factory inertness, denial-before-body, async authentication,
 direct-peer identity, protected-by-default route assembly, literal-only public
@@ -46,7 +49,8 @@ retained single observations after timeout
 or drop. Axum unit tests and compile-fail doctests cover the consuming quota
 writer's unstarted, started, and terminal phases, including rejection of a second
 terminal write or a nonterminal finish. PostgreSQL error/type checks are offline,
-not database acceptance.
+not database acceptance; they explicitly cover the current lost-confirmation and
+commit-timeout variants as possibly consumed.
 `cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked`
 executes native admission and an HTTP 200/429 sequence.
 The public example now compiles without subject-selector argument annotations.

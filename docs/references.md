@@ -27,12 +27,38 @@ then runs compilation with `--locked`. These primary Cargo semantics justify
 the validation shape; they are not evidence that the facade runner itself has
 passed.
 
-## Runlimit current pin 0a9138f, 2026-09-18
+## Runlimit current pin e91da41, 2026-09-19
+
+- The [upstream commit](https://github.com/bpcakes/runlimit/commit/e91da419216e77e8c83d0bb80c70c297d286d341)
+  was the `master` head rechecked through the primary Git remote on 2026-09-19.
+  Core and memory remain 0.3.0, PostgreSQL remains 0.3.1, and the workspace
+  minimum remains Rust 1.94. Batter pins this exact revision for every active
+  native dependency.
+- The [core decision source](https://github.com/bpcakes/runlimit/blob/e91da419216e77e8c83d0bb80c70c297d286d341/crates/runlimit-core/src/decision.rs)
+  makes `Allowance` the validated allowed-check type. Allowed batches now carry
+  only allowances, so an enforced or shadow denial is unrepresentable in that
+  collection. Batch denials validate and expose a nonzero batch size alongside
+  the original input index. Batter returns the native allowances and retains
+  that size on both rejected and shadow-admitted results.
+- The [upstream changelog](https://github.com/bpcakes/runlimit/blob/e91da419216e77e8c83d0bb80c70c297d286d341/CHANGELOG.md)
+  records the related removal of ambiguous decision predicates, the typed
+  `Admitted` split, exhaustive observation enums, and the constructor/view
+  changes. Batter's dependency graph does not use the separate upstream Axum
+  adapter, while its direct core, memory and PostgreSQL API uses have been
+  migrated to this revision.
+- The [PostgreSQL error source](https://github.com/bpcakes/runlimit/blob/e91da419216e77e8c83d0bb80c70c297d286d341/crates/runlimit-postgres/src/errors.rs)
+  distinguishes lost commit confirmation and commit timeout as possibly
+  consumed. Batter maps both current variants explicitly and keeps a
+  conservative wildcard only because the upstream error enum remains
+  non-exhaustive. These checks are offline type and classification evidence;
+  no live PostgreSQL behavior follows from them.
+
+## Runlimit previous pin 0a9138f, 2026-09-18
 
 - The [upstream commit](https://github.com/bpcakes/runlimit/commit/0a9138fc72f210c2d2ab01d445734a92aaca6aee)
   advances one commit from `346dc5e`. Core and memory remain 0.3.0,
   PostgreSQL remains 0.3.1, and the workspace minimum remains Rust 1.94.
-  Batter pins this exact revision for all three native crates.
+  Batter pinned this exact revision for all three native crates at that stage.
 - The [core decision source](https://github.com/bpcakes/runlimit/blob/0a9138fc72f210c2d2ab01d445734a92aaca6aee/crates/runlimit-core/src/decision.rs)
   replaces non-exhaustive `DenialKind` and optional denial accessors with
   exhaustive `DenialView` variants. Batch denied views carry the view by value.
@@ -43,7 +69,7 @@ passed.
   Upstream states the Serde wire representation is unchanged. Runtime checks
   here use the native memory backend; no live PostgreSQL behavior is inferred.
 
-## Runlimit previous pin 346dc5e, 2026-09-18
+## Runlimit earlier pin 346dc5e, 2026-09-18
 
 - The [exact upstream checkout](https://github.com/bpcakes/runlimit/tree/346dc5e6233995a8e2d8ad2d5d56a2d26ed3e664)
   is three commits after Batter's earlier `f147fb7b` pin. Core and memory remain

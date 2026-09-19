@@ -508,7 +508,7 @@ async fn fixed_quota_rejections_have_stable_codes_and_no_store() {
 
     for (mode, code) in [
         (
-            Mode::Return(BatchDecision::denied(0, Denial::storage_capacity(None))),
+            Mode::Return(BatchDecision::denied(0, 1, Denial::storage_capacity(None))),
             "quota_storage_capacity",
         ),
         (

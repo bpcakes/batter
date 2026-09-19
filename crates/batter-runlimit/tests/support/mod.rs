@@ -6,8 +6,8 @@ use batter_core::{
 };
 use batter_runlimit::quota::ConsumptionError;
 use runlimit_core::{
-    BatchDecision, Check, ConsumptionStatus, Decision, FixedWindowPolicy, Limiter, PolicyId,
-    ScopeId, SubjectKey,
+    Allowance, BatchDecision, Check, ConsumptionStatus, Decision, FixedWindowPolicy, Limiter,
+    PolicyId, ScopeId, SubjectKey,
 };
 use std::{
     sync::{
@@ -30,10 +30,9 @@ pub fn subject(n: u8) -> SubjectKey {
     SubjectKey::from_digest([n; 32])
 }
 pub fn allowed() -> BatchDecision {
-    BatchDecision::try_allowed(vec![
-        Decision::try_allowed(10, 9, Duration::from_secs(60)).unwrap(),
+    BatchDecision::allowed(vec![
+        Allowance::try_new(10, 9, Duration::from_secs(60)).unwrap(),
     ])
-    .unwrap()
 }
 pub fn context(ms: u64) -> OperationContext {
     OperationContext::new(Duration::from_millis(ms)).unwrap()

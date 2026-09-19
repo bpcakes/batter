@@ -35,8 +35,8 @@
 
 pub mod quota;
 pub use quota::{
-    Admission, AllowedBatch, AllowedDecision, Checks, ConsumptionError, EmptyChecks,
-    InterruptedCheck, Quota, RunResult,
+    Admission, AllowedBatch, Checks, ConsumptionError, EmptyChecks, InterruptedCheck, Quota,
+    RunResult,
 };
 
 /// Authenticated HTTP assembly, selected with the `axum` feature.

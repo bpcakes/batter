@@ -256,7 +256,9 @@ async fn retry_after_preserves_native_ceil_seconds_for_both_denial_kinds() {
             ),
         ] {
             let client = prepare(
-                Quota::new(Backend::new(Mode::Return(BatchDecision::denied(0, denial)))),
+                Quota::new(Backend::new(Mode::Return(BatchDecision::denied(
+                    0, 1, denial,
+                )))),
                 vec![policy("owner", 1)],
                 request_policy(&running, 1000),
                 routes(),
@@ -531,7 +533,7 @@ async fn shadow_and_storage_and_backend_outcomes_remain_distinct() {
     assert!(capture.events()[0].contains("quota_consumption=\"not_consumed\""));
     for (mode, expected) in [
         (
-            Mode::Return(BatchDecision::denied(0, Denial::storage_capacity(None))),
+            Mode::Return(BatchDecision::denied(0, 1, Denial::storage_capacity(None))),
             "storage_capacity",
         ),
         (

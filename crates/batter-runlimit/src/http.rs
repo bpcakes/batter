@@ -565,7 +565,7 @@ fn project_terminal(snapshot: &Snapshot) -> QuotaTerminalFacts {
         Snapshot::Failed(consumption) => QuotaTerminalFacts::BackendFailed(match consumption {
             ConsumptionStatus::Consumed => QuotaConsumption::Consumed,
             ConsumptionStatus::NotConsumed => QuotaConsumption::NotConsumed,
-            _ => QuotaConsumption::Unknown,
+            ConsumptionStatus::PossiblyConsumed => QuotaConsumption::Unknown,
         }),
         Snapshot::Decided(decision) => match decision.view() {
             BatchDecisionView::Allowed { .. } => QuotaTerminalFacts::Allowed,

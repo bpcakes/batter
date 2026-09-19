@@ -14,6 +14,9 @@ decisions separate from the work result. Checks run once; work shares the same
 total budget. Quota denial/backend failure prevents factory invocation. Cancellation
 after a grant does not refund or erase consumption. Native algorithms, atomicity,
 policy validation, opaque keys and persistence remain in Runlimit, not Batter.
+Allowed batches yield native validated `Allowance` values. Enforced and shadow
+denials retain the native index and nonzero evaluated batch size as well as the
+typed denial details.
 
 `HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy, routes)`
 guards every supplied route. It rejects empty and mixed-mode policy sets at

@@ -221,10 +221,10 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         features = ", features = " + json.dumps(native_features) if native_features else ""
         deps.append("batter-runlimit = { path = " + json.dumps(str(ROOT / "crates/batter-runlimit")) + features + " }")
         if "runlimit-memory" in chosen:
-            deps.append("runlimit-memory = { git = \"https://github.com/bpcakes/runlimit\", rev = \"0a9138fc72f210c2d2ab01d445734a92aaca6aee\" }")
-            deps.append("runlimit-core = { git = \"https://github.com/bpcakes/runlimit\", rev = \"0a9138fc72f210c2d2ab01d445734a92aaca6aee\" }")
+            deps.append("runlimit-memory = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
+            deps.append("runlimit-core = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
         if "runlimit-postgres" in chosen:
-            deps.append("runlimit-postgres = { git = \"https://github.com/bpcakes/runlimit\", rev = \"0a9138fc72f210c2d2ab01d445734a92aaca6aee\" }")
+            deps.append("runlimit-postgres = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
     if "runlimit-axum" in chosen:
         deps.append("tokio = { version = \"1.53.1\", default-features = false, features = [\"net\"] }")
     if "test-support" in chosen or "sqlx-test-support" in chosen:

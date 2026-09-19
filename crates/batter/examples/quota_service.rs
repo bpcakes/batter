@@ -38,14 +38,14 @@ async fn main() {
         })
         .await;
     let RunResult::Admitted {
-        admission: Admission::Allowed { decisions },
+        admission: Admission::Allowed { allowances },
         work: Ok(42),
     } = result
     else {
         panic!("expected native admission and work");
     };
-    assert_eq!(decisions.len(), 1);
-    assert_eq!(decisions.iter().next().unwrap().capacity(), 1);
+    assert_eq!(allowances.len(), 1);
+    assert_eq!(allowances.iter().next().unwrap().capacity(), 1);
     println!("native quota + work: passed");
 
     let second = Duration::from_secs(1);
