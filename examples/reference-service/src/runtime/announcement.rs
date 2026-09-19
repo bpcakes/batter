@@ -64,10 +64,10 @@ mod tests {
     #[tokio::test]
     async fn unread_receiver_cannot_hold_startup_past_its_deadline() -> io::Result<()> {
         let receiver = Receiver::new()?;
-        let sender = std::os::unix::net::UnixDatagram::unbound()?;
-        sender.set_nonblocking(true)?;
         let mut full = false;
         for _ in 0..100_000 {
+            let sender = std::os::unix::net::UnixDatagram::unbound()?;
+            sender.set_nonblocking(true)?;
             match sender.send_to(b"127.0.0.1:43210", &receiver.path) {
                 Ok(_) => {}
                 Err(error) if saturated(&error) => {

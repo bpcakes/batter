@@ -8,6 +8,7 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 
 ## Key entrypoints
 
+- `src/lib.rs`: public quota exports and optional HTTP module selection.
 - `src/quota.rs`: nonempty native checks, typed consumption bridge and factory execution.
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
 - `batter-axum/src/quota_observation.rs`: the retained HTTP fact writer and read-only observation.
