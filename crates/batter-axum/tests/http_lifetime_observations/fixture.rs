@@ -10,7 +10,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use batter::{
+use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
+use batter_core::{
     cleanup::SkipReason,
     lifecycle::{
         Readiness, RunningSupervisor, SharedShutdownReport, ShutdownHandle, Supervisor,
@@ -18,7 +19,6 @@ use batter::{
     },
     operation::OperationContext,
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -173,7 +173,7 @@ impl Fixture {
     pub fn assert_cancelled(&self) {
         assert!(
             self.context.lock().unwrap().as_ref().unwrap().check()
-                == Err(batter::operation::Interruption::Cancelled)
+                == Err(batter_core::operation::Interruption::Cancelled)
         );
         self.events.record("context-cancelled");
     }

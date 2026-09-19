@@ -72,7 +72,7 @@ async fn run() -> Result<(), BoxError> {
                     scope.stage("postgres.probe")?;
                     // The pool is lazy: this bounded probe establishes connectivity.
                     let probe = probe_parent.child(Duration::from_secs(5))?;
-                    batter_sqlx::probe(&pool, &probe).await?;
+                    batter::sqlx::probe(&pool, &probe).await?;
                     scope
                         .registration()
                         .register("application", |startup| async move {
@@ -101,7 +101,7 @@ fn database_pool(
     let options = PgPoolOptions::new()
         .max_connections(8)
         .acquire_timeout(Duration::from_secs(3));
-    Ok(batter_sqlx::pool_in(slot, options, connection))
+    Ok(batter::sqlx::pool_in(slot, options, connection))
 }
 
 async fn serve<F>(startup: ScopedStartup<F>) -> Result<(), BoxError>

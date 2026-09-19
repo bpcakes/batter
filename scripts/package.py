@@ -40,9 +40,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=root.parent / "batter-0.1.0-mvp.zip")
     args = parser.parse_args()
     paths = sorted(path for path in root.rglob("*") if eligible(path, root))
-    inventory = root / "SHA256SUMS"
-    inventory.write_text("".join(f"{digest(path)}  {path.relative_to(root).as_posix()}\n" for path in paths))
-    paths.append(inventory)
+    inventory = "".join(f"{digest(path)}  {path.relative_to(root).as_posix()}\n" for path in paths)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -54,13 +52,18 @@ def main() -> int:
             mode = 0o755 if path.parent.name == "scripts" else 0o644
             info.external_attr = (stat.S_IFREG | mode) << 16
             archive.writestr(info, path.read_bytes())
+        info = zipfile.ZipInfo("batter/SHA256SUMS", date_time=(2026, 9, 7, 0, 0, 0))
+        info.create_system = 3
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = (stat.S_IFREG | 0o644) << 16
+        archive.writestr(info, inventory.encode())
     with zipfile.ZipFile(output) as archive:
         bad = archive.testzip()
         if bad:
             raise RuntimeError(f"ZIP CRC failed: {bad}")
     checksum = output.with_suffix(output.suffix + ".sha256")
     checksum.write_text(f"{digest(output)}  {output.name}\n")
-    print(f"Created {output.name}: {len(paths)} source/documentation files, {output.stat().st_size} bytes.")
+    print(f"Created {output.name}: {len(paths) + 1} source/documentation files, {output.stat().st_size} bytes.")
     print(f"SHA-256: {digest(output)}")
     return 0
 

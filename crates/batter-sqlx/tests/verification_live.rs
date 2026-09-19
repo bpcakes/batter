@@ -252,7 +252,8 @@ async fn verify_policy(
     pool: &sqlx::PgPool,
     policy: &VerificationPolicy,
 ) -> Result<batter_sqlx::verification::VerificationReport> {
-    let context = batter::operation::OperationContext::new(std::time::Duration::from_secs(10))?;
+    let context =
+        batter_core::operation::OperationContext::new(std::time::Duration::from_secs(10))?;
     let authority = policy.authority.clone().build()?;
     let plan = VerificationPlan::migrations(&policy.migration).with_authority(&authority)?;
     Ok(batter_sqlx::verification::verify(pool, &context, plan).await?)
@@ -260,11 +261,11 @@ async fn verify_policy(
 
 async fn verify_combined(
     pool: &sqlx::PgPool,
-    context: &batter::operation::OperationContext,
+    context: &batter_core::operation::OperationContext,
     policy: &VerificationPolicy,
 ) -> std::result::Result<
     batter_sqlx::verification::VerificationReport,
-    batter::operation::OperationError<batter_sqlx::verification::VerificationError>,
+    batter_core::operation::OperationError<batter_sqlx::verification::VerificationError>,
 > {
     let authority = policy
         .authority

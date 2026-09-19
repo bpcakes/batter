@@ -6,6 +6,27 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Facade feature and resolver semantics: reviewed 2026-09-18
+
+- Cargo's [feature reference](https://doc.rust-lang.org/cargo/reference/features.html)
+  defines optional dependency features, `dep:` names, additive feature
+  forwarding, and feature unification. The facade uses those mechanisms to
+  select adapter namespaces without moving native ownership into `batter`.
+- Cargo's [resolver reference](https://doc.rust-lang.org/cargo/reference/resolver.html)
+  explains why a workspace `--all-features` build cannot prove an isolated
+  consumer graph. The facade runner therefore gives each temporary consumer an
+  external workspace boundary and checks normal dependency reachability.
+- Cargo's [target reference](https://doc.rust-lang.org/cargo/reference/cargo-targets.html)
+  defines `required-features` for the runnable consumer moves scheduled in the
+  next delivery. This B delivery leaves those example roots in their current
+  packages; C will apply the same rule when moving them behind facade features.
+
+The runner preserves the repository's resolved registry and Git source tuples,
+uses a Cargo-generated temporary lock only for the temporary root package, and
+then runs compilation with `--locked`. These primary Cargo semantics justify
+the validation shape; they are not evidence that the facade runner itself has
+passed.
+
 ## Runlimit current pin 0a9138f, 2026-09-18
 
 - The [upstream commit](https://github.com/bpcakes/runlimit/commit/0a9138fc72f210c2d2ab01d445734a92aaca6aee)
@@ -319,8 +340,7 @@ Parameter names use case-normalized comparison keys for both `pg_settings` and
 uses a 10,001-row sentinel and rejects counts above 10,000. Variable-length
 parameter names are checked before transfer against 1,024 bytes; fixed catalog
 identifiers retain PostgreSQL's native limits. These are client retention limits,
-not an assertion about server execution resources. Executed results and the
-unexecuted platform limits are recorded in [validation](validation.md).
+not an assertion about server execution resources.
 
 ### Catalog resolution and dependent type ACL correction, 2026-09-13
 
@@ -390,8 +410,7 @@ Cargo fetched that Git source for core/postgres/runtime 0.12.0. The root and
 archived consumer manifests use the same revision without path patches; Cargo
 regenerated their lock entries. The native initialization/settlement and
 transaction-error contracts described below now have an immutable source identity.
-This source check does not itself establish runtime acceptance; executed checks
-and remaining limits are recorded under `batter-vly` in [validation](validation.md).
+This source check does not itself establish runtime acceptance.
 
 The 2026-09-17 provider-worker review rechecked the exact pinned implementation,
 not a moving branch. Runledger's pinned
@@ -602,9 +621,10 @@ compatibility graph.
   activity snapshot inside a transaction. PID observations distinguish local
   capacity release from backend termination; they do not imply remote cancellation.
 
-The package retains Rust 1.94 and SQLx runtime-tokio/PostgreSQL features; consumers
-select TLS. No upstream external package or checksum changed in the Cargo-generated
-lockfile. Linux execution and unverified platforms are recorded in [validation](validation.md).
+For the 2026-09-09 disposition reviewed here, the package retained Rust 1.94 and
+SQLx runtime-tokio/PostgreSQL features while consumers selected TLS. That change
+did not alter an upstream external package or checksum in the Cargo-generated
+lockfile.
 
 ## PostgreSQL schema and authority verification, reviewed 2026-09-12 (superseded)
 
@@ -672,8 +692,7 @@ Binding or explicitly discarding the wrapper still bypasses the warning.
 The [lint expectation reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-expect-attribute)
 supports controls that fail if the expected lint is absent. Repository tests
 use `expect(unused_must_use)` with `deny(unfulfilled_lint_expectations)` to check
-the actual owned-driver expressions, alongside compile-fail doctests. Executed
-Rust 1.98.1 and 1.94.0 evidence is recorded in [validation](validation.md).
+the actual owned-driver expressions, alongside compile-fail doctests.
 
 ## Error handling corrections: 2026-09-09
 
@@ -863,8 +882,7 @@ states that optimized compilation omits assertion statements. The
 defines `PYTHONOPTIMIZE` as enabling optimization like `-O` (or repeated `-O`
 for integer levels). Checked against the 3.12 documentation for the locally
 installed Python 3.12.3. The parent-death probe therefore uses explicit failure
-branches, with real-process positive and negative controls under optimization;
-executed results are recorded in [validation](validation.md).
+branches, with real-process positive and negative controls under optimization.
 
 ## Workspace packaging: reviewed 2026-09-08
 
@@ -974,7 +992,7 @@ to 1.94; the default toolchain is pinned to Rust 1.98.1. SQLx's selected
 `runtime-tokio`, `tls-rustls-ring`, and `postgres` features remain available.
 The example continues to use native pool acquisition, queries, and explicit
 pool closure; transaction and remote-commit guarantees are unchanged.
-See [validation](validation.md) for executed checks and remaining limitations.
+
 
 ## Tokio and Tokio-util
 
@@ -1037,7 +1055,7 @@ used by `batter-7r3.7`; no version or feature change was needed.
   closing that native socket requires no async close method. This is a local
   resource-lifetime example, not a database/session termination analogue.
 
-Execution and error/cleanup controls belong in [validation](validation.md).
+
 
 ## Independent HTTP observation reviewed: 2026-09-08
 
@@ -1059,8 +1077,7 @@ The current primary documentation also identifies 0.8.9:
 These semantics determine the assembled-router observer placement. Public
 `observe_http` and `request_admission` are additive; `request_scope` remains a
 combined wrapper and nested observers are not deduplicated. No upstream version
-or Cargo.lock change is required. Destruction and event-count evidence belongs
-in [validation](validation.md), not in upstream documentation claims.
+or Cargo.lock change is required.
 
 For the Runlimit protected assembly, rechecked the pinned Axum 0.8.9
 [`Router` implementation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs)
@@ -1345,8 +1362,7 @@ Research preceded the evidence/policy refactor. No dependency version changed.
 - Read-only inspection of [hosted baseline run 34209833620](https://github.com/bpcakes/batter/actions/runs/34209833620)
   found successful Linux jobs for Rust 1.94.0, 1.98.1 and stable at
   `e5f2f04b2dbb349d08085caf177f662fcbc89812`, with no macOS job. It cannot validate
-  this working-tree diff. Execution of the current source on the user-provided
-  macOS host is recorded separately in [validation](validation.md).
+  this working-tree diff.
 
 The resulting design separates bounded diagnostic capture and timestamped
 protocol evidence from pure fixed/after-event deadline decisions. The reader
@@ -1370,8 +1386,7 @@ platform policy or removing its regression control.
   schedules SIGALRM, while Python handlers themselves run later in the main
   interpreter thread. The probe deliberately keeps a hard default alarm rather
   than introducing asynchronously raised exceptions. It can bypass `finally`;
-  that fallback is process containment, not cleanup evidence. Python versions
-  exercised here are recorded in validation; no Python dependency was added.
+  that fallback is process containment, not cleanup evidence. No Python dependency was added.
 - [Python subprocess pipes](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.wait)
   can deadlock waits if output fills an undrained pipe. Both overflow controls
   require natural child exit after flooding output, independently of rejecting
@@ -1512,7 +1527,7 @@ in Beads; recheck the eventual source and generated Cargo graph.
 
 `batter-4t6` subsequently fetched the inspected revisions through Cargo and
 compiled public native type probes. The [compatibility manifest](reference-compatibility.md)
-and [validation](validation.md) supersede the preceding planning-only status for
+supersedes the preceding planning-only status for
 the selected graph and tested paths. Local checkouts remained unchanged.
 
 - [Runledger manifest at the selected revision](https://github.com/bpcakes/runledger/blob/0f464b4f8fb5449d8df5b9071eb7b9ec49d1b8d4/runledger-postgres/Cargo.toml)
@@ -1579,7 +1594,7 @@ be fetched. `signal` installs listeners immediately; Tokio's process-wide handle
 is not restored when listeners are dropped. `install_signals` retains both
 sources for cancellation-safe polling during initialization, then transfers them
 to the critical component. A Linux real-child unit control sends SIGTERM before
-that transfer; process smoke evidence is recorded in validation. No new macOS run
+that transfer. No new macOS run
 is claimed.
 
 ## Owned dependency health semantics (2026-09-09)
@@ -2380,8 +2395,7 @@ by exclusive private creation. No global no-symlink policy is inferred.
 The [official PostgreSQL image documentation](https://hub.docker.com/_/postgres)
 was checked before provisioning: `POSTGRES_PASSWORD` initializes the default
 superuser's password on an empty instance. A disposable `postgres:18` container
-provided live acceptance evidence; the resolved digest and actual server version
-are recorded in [validation](validation.md#configuration-live-completion-batter-5pm-2026-09-10).
+provided live acceptance evidence.
 This operational test setup adds no provisioning implementation or ordinary-test
 database dependency to the workspace.
 
@@ -3079,8 +3093,7 @@ it does not demonstrate a new allocation, lost error, or lifecycle failure.
 The [official configuration](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#large-error-threshold)
 documents the default 128-byte threshold. We preserve native source compatibility
 rather than redesign the existing error payloads solely for this supplemental
-newer-compiler lint. No lint threshold or assertion was relaxed. The exact failed
-commands remain in validation evidence; strict native 1.98.1 Clippy is not claimed.
+newer-compiler lint. No lint threshold or assertion was relaxed. Strict native 1.98.1 Clippy is not claimed.
 
 ## Native review boundary decisions, 2026-09-12
 
@@ -3250,7 +3263,7 @@ native settlement. Publishing at the shared catch point preserves it in the froz
 process report. The regression first failed with zero retained failures and passes
 with the original payload visible before settlement finishes; later completion
 never restarts skipped cleanup. No new application-level coordination protocol was
-introduced for either repair. Executed results are in [validation](validation.md).
+introduced for either repair.
 
 ## Final descendant harvest and remaining contract questions, 2026-09-12
 
@@ -3508,8 +3521,7 @@ live regression retains that distinction and the verifier's captured required
 and excess answers. Native inquiries remain test references, not a replacement
 for the snapshot model. Temporary namespace selection is now explicitly
 unsupported; this resolves the formerly unclassified surface without extending
-Batter into session-specific namespace authorization. Final verification and
-review evidence are recorded separately in validation.md.
+Batter into session-specific namespace authorization.
 
 ## Exact-role grant rendering, 2026-09-13
 
@@ -3588,7 +3600,7 @@ listeners are installed, then requires both listeners to receive TERM and INT in
 independent runs. The schema child uses a two-worker Tokio runtime so a cancelled
 query's connection return is not serialized behind the initializer task on a
 single executor thread. The corresponding PostgreSQL cases were unexecuted at
-that stage; later complete live runs are recorded in validation. Neither signal acknowledgement nor pool close
+that stage. Neither signal acknowledgement nor pool close
 proves immediate server-session termination.
 
 ## Rust Beads comment identity, 2026-09-14

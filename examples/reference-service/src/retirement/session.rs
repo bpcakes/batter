@@ -55,7 +55,7 @@ impl Session {
                 })
             });
         // Native close is published before the lazy pool is returned.
-        let pool = batter_sqlx::pool_in(
+        let pool = batter::sqlx::pool_in(
             slot,
             pool_options,
             options.options([("search_path", "public")]),

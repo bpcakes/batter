@@ -24,8 +24,7 @@ against this workspace. Check `bv`'s reported `source_path` and counts against
 Legacy roadmap identifiers are retained in Beads external references and
 descriptions. Implemented capability facts remain in [status](status.md),
 behavioral contracts in [guarantees](guarantees.md) and
-[integrations](integrations.md), and executed evidence in
-[validation](validation.md). These documents are not parallel backlogs.
+[integrations](integrations.md). These documents are not parallel backlogs.
 Task-local ExecPlans hold implementation steps and evidence for their owning
 bead; archived plans are historical records, not open work.
 

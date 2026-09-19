@@ -12,10 +12,7 @@ default-run = "batter-example-reference-service"
 workspace = true
 
 [dependencies]
-batter.workspace = true
-batter-axum = { path = "../../crates/batter-axum" }
-batter-sqlx.workspace = true
-batter-runledger.workspace = true
+batter = { workspace = true, features = ["axum", "sqlx", "runledger"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
 url = "2.5.8"
 percent-encoding = "2.3.2"
@@ -36,10 +33,9 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 tokio-postgres = "=0.7.18"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-batter-sqlx = { workspace = true, features = ["test-support"] }
+batter = { workspace = true, features = ["sqlx-test-support"] }
 postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util", "net", "io-util"] }
-batter-test-support.workspace = true
 
 [[example]]
 name = "retire_startup_controls"

@@ -45,7 +45,7 @@ async fn configured_request_policy_changes_actual_response_deadline() {
             )
             .layer(middleware::from_fn_with_state(
                 root.request_policy(handle.operation_admission()),
-                batter_axum::request_admission,
+                batter::axum::request_admission,
             ));
         let response = app
             .oneshot(Request::builder().uri("/held").body(Body::empty()).unwrap())
@@ -153,7 +153,7 @@ pub(crate) async fn native_worker() {
         .prepare()
         .unwrap();
     let mut process = root.supervisor(budget());
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "worker",
         OperationContext::new(Duration::from_secs(3)).unwrap(),

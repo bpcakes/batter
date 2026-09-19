@@ -8,8 +8,8 @@ use axum::{
     middleware,
     routing::{any, get},
 };
-use batter::lifecycle::ShutdownHandle;
 use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http};
+use batter_core::lifecycle::ShutdownHandle;
 use std::{
     collections::BTreeMap,
     fmt,

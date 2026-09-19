@@ -38,7 +38,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use batter::{
+use batter_core::{
     ConfigurationError,
     lifecycle::{LifecycleStatus, OperationAdmission, Readiness},
     operation::{Interruption, OperationError},
@@ -108,7 +108,7 @@ pub struct RequestPolicy {
 ///
 /// ```
 /// use axum::{extract::Request, response::Response};
-/// use batter::operation::Interruption;
+/// use batter_core::operation::Interruption;
 /// use batter_axum::RequestInterruptionResponder;
 ///
 /// fn nested_interruption(request: &Request, reason: Interruption) -> Option<Response> {
@@ -175,7 +175,7 @@ impl RequestInterruptionResponder {
 /// later handed to [`RequestPolicy::new`] without another fallible step.
 ///
 /// ```
-/// use batter::lifecycle::ShutdownHandle;
+/// use batter_core::lifecycle::ShutdownHandle;
 /// use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 /// use std::time::Duration;
 ///
@@ -184,7 +184,7 @@ impl RequestInterruptionResponder {
 /// approval.approve();
 /// let policy = RequestPolicy::new(control.operation_admission(), budget);
 /// # let _ = policy;
-/// # Ok::<(), batter::ConfigurationError>(())
+/// # Ok::<(), batter_core::ConfigurationError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResponseConstructionBudget(Duration);
@@ -214,7 +214,7 @@ impl RequestPolicy {
     /// Use a validated fixed server-side budget. No client deadline is trusted.
     ///
     /// ```compile_fail,E0308
-    /// use batter::lifecycle::ShutdownHandle;
+    /// use batter_core::lifecycle::ShutdownHandle;
     /// use batter_axum::RequestPolicy;
     /// use std::time::Duration;
     ///
@@ -226,7 +226,7 @@ impl RequestPolicy {
     /// Root shutdown control cannot be retained by request policy:
     ///
     /// ```compile_fail,E0308
-    /// use batter::lifecycle::ShutdownHandle;
+    /// use batter_core::lifecycle::ShutdownHandle;
     /// use batter_axum::{RequestPolicy, ResponseConstructionBudget};
     ///
     /// fn cannot_retain_control(handle: ShutdownHandle, budget: ResponseConstructionBudget) {
@@ -379,13 +379,13 @@ impl IntoResponse for HttpFailure {
 ///
 /// ```
 /// use axum::{Extension, Router, http::StatusCode, middleware, routing::get};
-/// use batter::{lifecycle::ShutdownHandle, operation::OperationContext};
+/// use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
 /// use batter_axum::{
 ///     RequestPolicy, ResponseConstructionBudget, liveness, observe_http,
 ///     readiness, request_admission,
 /// };
 /// use std::time::Duration;
-/// # fn main() -> Result<(), batter::ConfigurationError> {
+/// # fn main() -> Result<(), batter_core::ConfigurationError> {
 /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
 /// approval.approve();
 /// let status = control.status();

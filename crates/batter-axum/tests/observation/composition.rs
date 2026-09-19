@@ -10,11 +10,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get},
 };
-use batter::{
-    lifecycle::ShutdownHandle, operation::OperationContext, telemetry::with_current_dispatch,
-};
 use batter_axum::{
     RequestPolicy, ResponseConstructionBudget, liveness, observe_http, readiness, request_admission,
+};
+use batter_core::{
+    lifecycle::ShutdownHandle, operation::OperationContext, telemetry::with_current_dispatch,
 };
 use std::{
     io,

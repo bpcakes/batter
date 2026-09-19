@@ -1,6 +1,6 @@
 use super::*;
 use batter::operation::{OperationContext, OperationError};
-use batter_sqlx::{PgLease, SqlxFailure};
+use batter::sqlx::{PgLease, SqlxFailure};
 use runledger_postgres::jobs::{
     JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_tx,
 };

@@ -12,7 +12,7 @@ readme = "README.md"
 workspace = true
 
 [dependencies]
-batter.workspace = true
+batter-core.workspace = true
 runledger-runtime.workspace = true
 
 [dev-dependencies]

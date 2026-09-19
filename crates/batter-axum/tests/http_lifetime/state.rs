@@ -1,6 +1,6 @@
 use crate::events::EventLog;
 use axum::body::{Bytes, HttpBody};
-use batter::operation::{Interruption, OperationContext};
+use batter_core::operation::{Interruption, OperationContext};
 use http_body::Frame;
 use std::{
     convert::Infallible,

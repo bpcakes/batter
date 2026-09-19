@@ -120,13 +120,20 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "batter"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "batter-axum",
+ "batter-core",
+ "batter-runledger",
+ "batter-runlimit",
+ "batter-sqlx",
  "batter-test-support",
- "pin-project-lite",
+ "runlimit-core",
+ "runlimit-memory",
+ "sqlx",
  "thiserror",
  "tokio",
- "tokio-util",
+ "tower",
  "tracing",
- "tracing-core",
  "tracing-subscriber",
 ]
 
@@ -135,7 +142,7 @@ name = "batter-axum"
 version = "0.1.0"
 dependencies = [
  "axum",
- "batter",
+ "batter-core",
  "cookie",
  "http-body",
  "serde",
@@ -148,11 +155,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "batter-core"
+version = "0.1.0"
+dependencies = [
+ "batter-test-support",
+ "pin-project-lite",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "batter-example-postgres-lifecycle"
 version = "0.1.0"
 dependencies = [
  "batter",
- "batter-sqlx",
  "sqlx",
  "thiserror",
  "tokio",
@@ -166,10 +186,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "batter",
- "batter-axum",
- "batter-runledger",
- "batter-sqlx",
- "batter-test-support",
  "futures-util",
  "percent-encoding",
  "postgres-test-harness",
@@ -194,7 +210,7 @@ dependencies = [
 name = "batter-runledger"
 version = "0.1.0"
 dependencies = [
- "batter",
+ "batter-core",
  "runledger-runtime",
  "sqlx",
  "tokio",
@@ -205,8 +221,8 @@ name = "batter-runlimit"
 version = "0.1.0"
 dependencies = [
  "axum",
- "batter",
  "batter-axum",
+ "batter-core",
  "http-body",
  "runlimit-core",
  "runlimit-memory",
@@ -223,7 +239,7 @@ dependencies = [
 name = "batter-sqlx"
 version = "0.1.0"
 dependencies = [
- "batter",
+ "batter-core",
  "batter-test-support",
  "futures-util",
  "postgres-test-harness",

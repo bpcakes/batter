@@ -1,5 +1,5 @@
 mod support;
-use batter::operation::{Interruption, OperationError};
+use batter_core::operation::{Interruption, OperationError};
 use batter_runlimit::quota::{Admission, Checks, InterruptedCheck, Quota, RunResult};
 use runlimit_core::{BatchDecision, Check, ConsumptionStatus, Denial, DenialView, QuotaMode};
 use std::{

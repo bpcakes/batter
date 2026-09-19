@@ -125,7 +125,7 @@ status/outcome alerts still need application-owned probe filtering.
 Axum's `Router::layer` runs after routing and covers only routes/fallback already
 assembled when applied. Routes appended later bypass it. A service wrapper
 outside routing records `<unmatched>` because the matched route template is not
-yet available. The [runnable example](examples/http_service.rs) and
+yet available. The [runnable example](../batter/examples/http_service.rs) and
 [`observe_http` rustdoc](src/lib.rs) demonstrate the supported composition.
 
 `with_failure_renderer` accepts application-controlled response mapping with a
@@ -150,10 +150,10 @@ From the workspace root:
 
 ```sh
 cargo test -p batter-axum --locked
-cargo run -p batter-axum --example http_service
+cargo run -p batter --features axum --example http_service --locked
 ```
 
-The example binds `127.0.0.1:3000` by default and provides `/live`, `/ready`,
+The facade-owned example binds `127.0.0.1:3000` by default and provides `/live`, `/ready`,
 `/work`, and `/fail`. `BATTER_BIND`, `BATTER_REQUEST_TIMEOUT_MS` and
 `BATTER_BULKHEAD_CAPACITY` configure its listener, deadline and concurrency.
 `BATTER_ENV_FILE` may name one literal dotenv file; there is no default `.env`
@@ -191,7 +191,7 @@ Starting/Draining/Stopped or typed dependency-unready reason. Healthy has no
 dependency-unready representation. `readiness_status` exposes the adapter's
 200/503 mapping and `default_readiness_level` exposes its INFO/WARN mapping;
 `with_level` receives the valid decision and can delegate unmatched cases to that
-default. Match `ReadinessUnreadyReason` from `batter::readiness` only inside an
+default. Match `ReadinessUnreadyReason` from `batter_core::readiness` only inside an
 unready decision. The old `ReadinessReason` name is deliberately absent from
 both crates so stale response-extension lookups fail to compile even after an
 import change. Decisions do no probe I/O and are point-in-time observations, not

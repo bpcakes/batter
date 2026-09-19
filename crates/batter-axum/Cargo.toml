@@ -13,7 +13,7 @@ autoexamples = false
 workspace = true
 
 [dependencies]
-batter.workspace = true
+batter-core.workspace = true
 axum.workspace = true
 cookie.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -27,7 +27,3 @@ http-body.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros", "signal", "net", "io-util"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tower = { workspace = true, features = ["util"] }
-
-[[example]]
-name = "http_service"
-test = true

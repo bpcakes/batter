@@ -7,11 +7,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use batter::{lifecycle::ShutdownHandle, operation::OperationContext};
 use batter_axum::{
     CorrelationId, HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness,
     operational_http, render_infrastructure_failure, request_admission,
 };
+use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
 use std::{
     collections::HashSet,
     future::{Future, poll_fn},
@@ -358,7 +358,7 @@ async fn missing_typed_correlation_never_falls_back_to_untrusted_headers() {
 
 #[tokio::test(start_paused = true)]
 async fn forced_process_cancellation_preserves_handler_body_header_and_event_identity() {
-    use batter::{
+    use batter_core::{
         cleanup::CleanupBudget,
         lifecycle::{ShutdownBudget, Supervisor},
     };

@@ -7,7 +7,7 @@
 //! the pool's `max_connections`. Applications own remote outcome reconciliation.
 //!
 //! ```no_run
-//! use batter::operation::OperationContext;
+//! use batter_core::operation::OperationContext;
 //! use batter_sqlx::{PgLease, SqlxFailure};
 //! use sqlx::{Connection, PgPool};
 //! # async fn example(pool: &PgPool, ctx: &OperationContext) -> Result<(), Box<dyn std::error::Error>> {
@@ -29,7 +29,7 @@ pub mod verification;
 
 pub use failure::{FailureClass, SqlxFailure};
 
-use batter::{
+use batter_core::{
     RegistrationError,
     cleanup::CleanupSlot,
     lifecycle::Supervisor,
@@ -151,11 +151,11 @@ pub async fn probe(
 /// cancellation, transaction rollback, or detached server-session termination.
 ///
 /// ```no_run
-/// use batter::cleanup::{CleanupBudget, CleanupStack};
+/// use batter_core::cleanup::{CleanupBudget, CleanupStack};
 /// use batter_sqlx::pool_in;
 /// use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 /// use std::time::Duration;
-/// # async fn example() -> Result<(), batter::RegistrationError> {
+/// # async fn example() -> Result<(), batter_core::RegistrationError> {
 /// let mut cleanup = CleanupStack::new();
 /// let pool = pool_in(
 ///     cleanup.reserve("postgres.pool")?,

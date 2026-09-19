@@ -1,7 +1,6 @@
 # Security and trust boundaries
 
-Batter has compiler and runtime validation recorded in
-[validation](docs/validation.md). It has not had a dedicated security audit.
+Batter has not had a dedicated security audit.
 Authentication, authorization, and related controls remain application-owned;
 do not treat Batter itself as a security control. Application-specific hardening
 still belongs with the consumer; see [backlog access](docs/roadmap.md).

@@ -37,7 +37,7 @@ pub use request::{
     PlanError, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationPlan,
 };
 
-use batter::operation::{OperationContext, OperationError};
+use batter_core::operation::{OperationContext, OperationError};
 use sqlx::{PgPool, Postgres, Transaction};
 
 #[derive(Default)]
@@ -86,7 +86,7 @@ struct InspectionFragment {
 /// does not certify future sessions, grants or schema changes.
 ///
 /// ```no_run
-/// use batter::operation::OperationContext;
+/// use batter_core::operation::OperationContext;
 /// use batter_sqlx::verification::{verify, VerificationPlan, VerificationStatus};
 /// # async fn check(pool: &sqlx::PgPool, context: &OperationContext,
 /// # plan: VerificationPlan<'_>) -> Result<(), Box<dyn std::error::Error>> {
@@ -119,7 +119,7 @@ pub async fn verify(
 /// follow [`verify`]. Application-specific ledger shape remains a separate check.
 ///
 /// ```no_run
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext,
+/// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext,
 /// # policy: &batter_sqlx::verification::MigrationPolicy)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// let report = batter_sqlx::verification::verify_migrations(pool, context, policy).await?;
@@ -130,7 +130,7 @@ pub async fn verify(
 ///
 /// An inherited ledger is handled as an unsupported request:
 /// ```no_run
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext,
+/// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext,
 /// # policy: &batter_sqlx::verification::MigrationPolicy)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// use batter_sqlx::verification::{verify_migrations, UnsupportedSurface, VerificationStatus};
@@ -143,7 +143,7 @@ pub async fn verify(
 ///
 /// Temporary namespace selection is explicitly unsupported:
 /// ```no_run
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
+/// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope, Identifier,
 ///     UnsupportedSurface, VerificationStatus, verify_authority};
@@ -177,7 +177,7 @@ pub async fn verify_migrations(
 /// excess authority remains rooted at the authenticated login.
 ///
 /// ```no_run
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext,
+/// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext,
 /// # policy: &batter_sqlx::verification::AuthorityPolicy)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// let report = batter_sqlx::verification::verify_authority(pool, context, policy).await?;
@@ -188,7 +188,7 @@ pub async fn verify_migrations(
 ///
 /// Temporary namespace selection is explicitly unsupported:
 /// ```no_run
-/// # async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext)
+/// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// use batter_sqlx::verification::{AuthorityPolicyBuilder, DiscoveryScope, Identifier,
 ///     UnsupportedSurface, VerificationStatus, verify_authority};

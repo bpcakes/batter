@@ -1,4 +1,4 @@
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver, template_spec,
 };
 use sqlx::postgres::PgPoolOptions;

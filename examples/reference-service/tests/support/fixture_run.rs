@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use batter_sqlx::test_support::{FixtureBody, FixtureScope, FixtureSuite, SessionObserver};
+use batter::sqlx::test_support::{FixtureBody, FixtureScope, FixtureSuite, SessionObserver};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 pub use super::fixture_diagnostics::ProbeError;
@@ -96,6 +96,6 @@ where
     // report means cleanup has run before interpreting either result. An observer failure
     // cannot overwrite the complete body/acquisition/database/drain report.
     let result = report.into_result().map_err(ProbeError::report);
-    batter_test_support::finish(result, observation.map_err(ProbeError::new))
+    batter::test_support::finish(result, observation.map_err(ProbeError::new))
         .map_err(|error| Box::new(error) as _)
 }

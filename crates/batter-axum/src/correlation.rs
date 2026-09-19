@@ -6,7 +6,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use batter::telemetry::with_current_dispatch;
+use batter_core::telemetry::with_current_dispatch;
 use serde::Serialize;
 use tower_http::request_id::{MakeRequestId, MakeRequestUuid, RequestId};
 use tracing::Instrument;

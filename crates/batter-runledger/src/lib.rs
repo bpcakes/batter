@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use batter::{
+use batter_core::{
     BoxError, RegistrationError,
     lifecycle::{ManagedComponent, ManagedSettlement, Supervisor},
     operation::OperationContext,
@@ -50,14 +50,14 @@ impl ManagedSettlement for NativeReport {
 /// A live native supervisor cannot be passed through the protected boundary:
 ///
 /// ```compile_fail,E0308
-/// # fn example(process: &mut batter::lifecycle::Supervisor, context: batter::operation::OperationContext, live: runledger_runtime::Supervisor) {
+/// # fn example(process: &mut batter_core::lifecycle::Supervisor, context: batter_core::operation::OperationContext, live: runledger_runtime::Supervisor) {
 /// batter_runledger::register(process, "worker", context, live).unwrap();
 /// # }
 /// ```
 /// A closure cannot hide an already-running supervisor either:
 ///
 /// ```compile_fail,E0308
-/// # fn example(process: &mut batter::lifecycle::Supervisor, context: batter::operation::OperationContext, live: runledger_runtime::Supervisor) {
+/// # fn example(process: &mut batter_core::lifecycle::Supervisor, context: batter_core::operation::OperationContext, live: runledger_runtime::Supervisor) {
 /// batter_runledger::register(process, "worker", context, move || Ok(live)).unwrap();
 /// # }
 /// ```
@@ -77,7 +77,7 @@ pub fn register(
 /// and complete settlement remain identical to [`register`].
 ///
 /// ```no_run
-/// use batter::{BoxError, operation::OperationContext,
+/// use batter_core::{BoxError, operation::OperationContext,
 ///     startup::ProtectedStartupScope};
 /// use runledger_runtime::{config::JobsConfig, registry::JobRegistry};
 /// use std::time::Duration;

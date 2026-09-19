@@ -24,6 +24,7 @@ pub fn shutdown_budget() -> ShutdownBudget {
     .expect("constant shutdown budget is valid")
 }
 
+#[allow(dead_code)]
 pub fn register_signals(supervisor: &mut Supervisor) -> Result<(), BoxError> {
     batter::lifecycle::register_signals(supervisor, "signals")?;
     Ok(())

@@ -1,7 +1,7 @@
 # batter
 
-A small operational foundation for Rust backends built on Tokio, with a separate
-Axum adapter and optional SQLx PostgreSQL adapter. Keep your normal futures,
+A cohesive facade for a native operational foundation built on Tokio, with
+separate Axum, SQLx, Runledger, and Runlimit adapters. Keep your normal futures,
 application error enums, SQLx pools, transactions, and routers. Standardize how
 work is owned, bounded, observed, and stopped—not how every business operation
 is written.
@@ -38,8 +38,7 @@ and report the design concern before continuing dependent repairs.
 
 Version 0.1.0. Publishing is disabled; no registry name has been reserved.
 Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
-The updated macOS CI job has not run. See [current status](docs/status.md) and
-[validation](docs/validation.md).
+The updated macOS CI job has not run. See [current status](docs/status.md).
 
 ## Platform support
 
@@ -54,7 +53,7 @@ targets. Other Unix targets remain unverified. See
 Network access is required to download dependencies on the first run.
 
 ```sh
-cargo run -p batter-axum --example http_service
+cargo run -p batter --features axum --example http_service
 # In a second terminal:
 curl -i http://127.0.0.1:3000/live
 curl -i http://127.0.0.1:3000/ready
@@ -113,7 +112,7 @@ test database; never commit real connection secrets.
 retain cleanup independently of its waiter.
 Service startup is a different ownership path; see
 [usage](docs/usage.md#finite-commands-and-owned-cleanup) and the
-executable [`Startup` example](crates/batter/src/startup.rs).
+executable [`Startup` example](crates/batter-core/src/startup.rs).
 
 ## Use as a local dependency
 
@@ -122,7 +121,12 @@ below assumes this repository is checked out as `batter` beside the consumer:
 
 ```toml
 [dependencies]
+# Public facade; its default graph contains only the native foundation.
 batter = { path = "../batter/crates/batter" }
+# Select optional toolkit namespaces explicitly, for example:
+# batter = { path = "../batter/crates/batter", features = ["axum"] }
+# Direct foundation implementation, when an adapter or focused consumer needs it.
+batter-core = { path = "../batter/crates/batter-core" }
 # Add this dependency for the HTTP adapter.
 batter-axum = { path = "../batter/crates/batter-axum" }
 # Add for explicit SQLx PostgreSQL connection disposition.
@@ -134,16 +138,20 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 
 ## Packages
 
-Depending on `batter` does not bring in Axum, SQLx, or test utilities. HTTP APIs
-are imported from `batter_axum`; there is no `batter::http`, `axum` feature, or
-`postgres-example` feature. Each package declares its own version and Rust
+The default `batter` graph does not bring in Axum, SQLx, or test utilities.
+Adapter APIs are also available from their direct packages. The facade exposes
+`batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
+`batter::test_support` through additive opt-in features; `runlimit-memory`,
+`runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
+documented bridges. Each package declares its own version and Rust
 minimum (currently 0.1.0 and 1.94). The default toolchain is 1.98.1. SQLx 0.9.0
 sets that floor in the adapter and examples; extracting it does not establish a
 lower library minimum.
 
 | Package | Location | Job |
 | --- | --- | --- |
-| `batter` | [crates/batter](crates/batter/README.md) | Process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
+| `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
+| `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
@@ -164,7 +172,7 @@ provider guarantee. `batter-runlimit` preserves native quota decisions and consu
 certainty under an operation budget; optional HTTP assembly owns auth/quota/body
 ordering. Its `memory`, `postgres`, and `axum` features are independent and off by
 default. It does not own PostgreSQL initialization or maintenance. Run its finite
-example with `cargo run -p batter-runlimit --features axum,memory --example quota_service`.
+example with `cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service`.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The
@@ -201,8 +209,7 @@ detail.
 
 To work in this repository: [AGENTS.md](AGENTS.md) for reading order,
 verification, and change rules; [status](docs/status.md) and
-[testing](docs/testing.md) for coverage; [validation](docs/validation.md) for
-executed evidence; [Beads](docs/roadmap.md) for delivery tasks. The
+[testing](docs/testing.md) for coverage; [Beads](docs/roadmap.md) for delivery tasks. The
 [Effect v4 brief](docs/effect-v4-brief.md) and
 [reconciliation](docs/effect-v4-reconciliation.md) record design rationale.
 [Primary references](docs/references.md) record upstream checks.

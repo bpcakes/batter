@@ -1,5 +1,5 @@
 use axum::Router;
-use batter::{
+use batter_core::{
     RegistrationError,
     lifecycle::Supervisor,
     registration::{Registration, RegistrationTarget},
@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 
 /// Register an already-bound native Axum server as a supervised critical task.
 ///
-/// Bind the listener and finish router/resource initialization in [`batter::startup::Startup`]
+/// Bind the listener and finish router/resource initialization in [`batter_core::startup::Startup`]
 /// before calling this. Registration transfers listener ownership, does not poll
 /// the server, and releases it on registration failure or abandoned startup.
 /// Cancelling a borrowed startup waiter leaves the owner intact. Dropping the
@@ -49,7 +49,7 @@ pub fn register_http(
 
 /// Register an already-bound Axum server through constrained registration authority.
 ///
-/// This is the canonical companion to [`batter::startup::Startup::scoped`]. It
+/// This is the canonical companion to [`batter_core::startup::Startup::scoped`]. It
 /// has the same runtime and native descendant limits as [`register_http`], while
 /// preventing the adapter from receiving process-start or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
@@ -57,10 +57,10 @@ pub fn register_http(
 ///
 /// ```no_run
 /// use axum::{Router, routing::get};
-/// use batter::startup::ProtectedStartupScope;
+/// use batter_core::startup::ProtectedStartupScope;
 /// use batter_axum::register_http_in;
 ///
-/// async fn register(scope: &mut ProtectedStartupScope) -> Result<(), batter::BoxError> {
+/// async fn register(scope: &mut ProtectedStartupScope) -> Result<(), batter_core::BoxError> {
 ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
 ///     let app = Router::new().route("/live", get(batter_axum::liveness));
 ///     register_http_in(scope, "http", listener, app)?;
@@ -91,13 +91,13 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 ///
 /// ```no_run
 /// use axum::{Router, extract::ConnectInfo, routing::get};
-/// use batter::registration::RegistrationTarget;
+/// use batter_core::registration::RegistrationTarget;
 /// use batter_axum::register_http_with_connect_info_in;
 /// use std::net::SocketAddr;
 ///
 /// // Call from Startup::scoped after application resources are initialized.
 /// async fn register<T: RegistrationTarget + ?Sized>(scope: &mut T)
-///     -> Result<(), batter::BoxError>
+///     -> Result<(), batter_core::BoxError>
 /// {
 ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
 ///     let router = Router::new().route("/peer", get(

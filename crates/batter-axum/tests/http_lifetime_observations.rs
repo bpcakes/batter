@@ -1,7 +1,7 @@
 //! Real HTTP/1.1 observations, each contained by an independent Unix watchdog.
 // Shared capture also exposes filter constructors used by other targets.
 #[allow(dead_code)]
-#[path = "support/capture.rs"]
+#[path = "../../../test-support/capture.rs"]
 mod capture;
 #[path = "support/http_graceful.rs"]
 mod http_graceful;

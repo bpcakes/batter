@@ -26,7 +26,7 @@ def copy_scripts(root, subject):
 
 
 def build(subject, log):
-    command = ["cargo", "test", "-p", "batter", "--test", "scheduling", "--no-run",
+    command = ["cargo", "test", "-p", "batter-core", "--test", "scheduling", "--no-run",
                "--locked", "--offline", "--message-format=json"]
     result = run_process(
         command, cwd=subject, timeout=BUILD_LIMIT, output_limit=BUILD_OUTPUT_LIMIT,
@@ -98,7 +98,7 @@ def main():
             shutil.copytree(root / name, subject / name,
                             ignore=shutil.ignore_patterns("target", "__pycache__"))
         copy_scripts(root, subject)
-        source = subject / "crates/batter/src/lifecycle/process.rs"
+        source = subject / "crates/batter-core/src/lifecycle/process.rs"
         original = source.read_text()
         old = """let permit = self
             .permits
@@ -115,8 +115,8 @@ def main():
         mutant = original.replace(old, replacement)
         (output / "mutation.patch").write_text("".join(difflib.unified_diff(
             original.splitlines(True), mutant.splitlines(True),
-            fromfile="a/crates/batter/src/lifecycle/process.rs",
-            tofile="b/crates/batter/src/lifecycle/process.rs")))
+            fromfile="a/crates/batter-core/src/lifecycle/process.rs",
+            tofile="b/crates/batter-core/src/lifecycle/process.rs")))
         for variant, content in (("original", original), ("mutant", mutant)):
             source.write_text(content)
             binary = build(subject, output / f"{variant}-build.log")

@@ -29,8 +29,8 @@ work before cleanup expects `Pool::close` to complete.
 `register_pool_close(&mut supervisor, name, &pool)` remains the lower-level path
 for externally owned pools and registers native closure in existing explicit
 LIFO cleanup. It does not close on registration failure; the caller retains the
-pool and must await teardown. The adapter-owned
-[`owned_pool`](examples/owned_pool.rs) example composes `pool_in` with a finite
+pool and must await teardown. The facade-owned
+[`owned_pool`](../batter/examples/owned_pool.rs) example composes `pool_in` with a finite
 `Command`; the runnable [PostgreSQL lifecycle
 example](../../examples/postgres-lifecycle/README.md) and the reference root use
 `pool_in` inside protected service startup, and the reference retirement command
@@ -59,7 +59,7 @@ use batter_sqlx::verification::{
     RelationPolicy, SchemaPolicy, VerificationPlan, verify,
 };
 
-# async fn check(pool: &sqlx::PgPool, context: &batter::operation::OperationContext) -> Result<(), Box<dyn std::error::Error>> {
+# async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext) -> Result<(), Box<dyn std::error::Error>> {
 let ledger = QualifiedName::new("app", "_sqlx_migrations")?;
 let migration = MigrationPolicy::new(
     ledger.clone(),

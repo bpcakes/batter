@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use batter::telemetry::with_current_dispatch;
+use batter_core::telemetry::with_current_dispatch;
 use postgres_test_harness::{DatabaseLease, DatabaseTemplate, PostgresHarness, TemplateSpec};
 use sqlx::PgPool;
 use tokio::task::JoinHandle;

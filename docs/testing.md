@@ -8,12 +8,10 @@ process ownership targets cover retained settlement and delayed native stop
 observation. Library lifecycle controls verify wakeups in all three process phases
 and an earlier update arriving during callback execution. Native complete-report
 tests tighten active graceful and abort waits while preserving failure causes and
-uncertain descendants. [Validation](validation.md) records executed reference live
-cutover and retirement acceptance, including limitations and failed attempts.
-Review closure is tracked separately; older hosted-control sections below describe
+uncertain descendants. Review closure is tracked separately; older hosted-control sections below describe
 the previous implementation.
 
-Finite command completion controls in `crates/batter/tests/command/completion.rs`
+Finite command completion controls in `crates/batter-core/tests/command/completion.rs`
 place cancellation or paused-clock expiry in the final poll versus future
 destruction, preserving both returned success values and application errors.
 Managed initialization controls distinguish native stop, native settlement and
@@ -21,8 +19,7 @@ process drain before acknowledgement, and check retained settlement and cleanup.
 These sources are covered by the existing exhaustive Jig source/test inputs.
 
 Cargo discovers foundation, adapter, example and generic test-support tests, plus
-library doctests. [Validation](validation.md) records dated execution counts,
-toolchains and outcomes; this guide describes behaviors and verification commands.
+library doctests. This guide describes behaviors and verification commands.
 Foundation fixture-dispatch entries are inert in the parent run. The non-yielding
 and scheduling suites cover native process controls, deterministic policy checks,
 controlled-clock regressions and Python subprocess ownership. Linux orphan-probe
@@ -50,12 +47,12 @@ or drop. Axum unit tests and compile-fail doctests cover the consuming quota
 writer's unstarted, started, and terminal phases, including rejection of a second
 terminal write or a nonterminal finish. PostgreSQL error/type checks are offline,
 not database acceptance.
-`cargo run -p batter-runlimit --features axum,memory --example quota_service --locked`
+`cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked`
 executes native admission and an HTTP 200/429 sequence.
 The public example now compiles without subject-selector argument annotations.
 An external disposable Cargo consumer additionally checks a valid assembled
 service and confirms wrong auth and selector closure signatures fail at
-`HttpQuota::new`; record its executed result in [validation](validation.md).
+`HttpQuota::new`.
 
 `python3 scripts/check_runlimit_features.py` compiles all eight independent feature
 subsets in a disposable consumer workspace with the current toolchain. It checks
@@ -94,7 +91,7 @@ cargo test -p batter-sqlx --features test-support --locked
 The component and real HTTP/1.1 ownership suites run in normal Cargo discovery:
 
 ```sh
-cargo test -p batter --test component_ownership --locked
+cargo test -p batter-core --test component_ownership --locked
 cargo test -p batter-axum --test http_lifetime --locked
 ```
 
@@ -152,8 +149,7 @@ Cooperative handler/body cases keep release withheld for a further 50 ms, assert
 live resources and unfinished server/cleanup, then release explicitly. The
 instrumented target additionally checks that the wire read remains pending.
 The native event establishes ordering; the subsequent finite observation window
-does not establish indefinite survival. See the [versioned source rationale](references.md#native-connection-graceful-acknowledgement-2026-09-10)
-and [mutation evidence](validation.md#native-graceful-acknowledgement-repair-2026-09-10).
+does not establish indefinite survival. See the [versioned source rationale](references.md#native-connection-graceful-acknowledgement-2026-09-10).
 
 The existing matrix includes `--workspace --all-features --all-targets`; no new
 runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inputs
@@ -179,8 +175,9 @@ cleanup timeouts and report observation across runtime destruction. The scoped
 task suite checks work and cleanup destruction under the originating subscriber.
 
 ```sh
-cargo test -p batter --locked --test command --test startup_composition --example finite_command
-cargo test -p batter --doc --locked startup::Startup
+cargo test -p batter-core --locked --test command --test startup_composition
+cargo test -p batter-core --doc --locked startup::Startup
+cargo test -p batter --doc --locked
 cargo run -p batter --example finite_command --locked
 ```
 
@@ -302,7 +299,7 @@ concurrency bound. The full process has a 180-second watchdog; OS scheduling and
 process death do not establish cleanup guarantees.
 
 Private-boundary regressions in
-[`lifecycle/tasks/tests.rs`](../crates/batter/src/lifecycle/tasks/tests.rs) cover
+[`lifecycle/tasks/tests.rs`](../crates/batter-core/src/lifecycle/tasks/tests.rs) cover
 cancelled join waiters, exactly-once recording of early success/error/panic,
 closed admission before returning a failure cause, and conservative unjoined
 summaries. [`observation/tests.rs`](../crates/batter-axum/src/observation/tests.rs)
@@ -340,8 +337,16 @@ including lines outside the HTTP completions.
 The live readiness fixture awaits teardown before checking results and reports
 the saved request, supervisor and server outcomes together if any failed.
 
-The script checks isolated `-p batter --no-default-features` library compilation
-and core tests, all workspace targets, doctests, Clippy with warnings denied,
+The script checks isolated `-p batter-core --no-default-features` library
+compilation and core tests, the no-default facade, and the bounded facade
+feature runner. `scripts/check_facade_features.py` uses disposable external
+workspaces to compile each declared feature, the representative Axum/SQLx and
+Runlimit unions, and all-features; it checks the selected normal graph, eight
+focused disabled-module failures, and one all-feature direct/facade identity
+fixture. It runs under the invoking toolchain and leaves the repository lock
+unchanged. The separate `scripts/check_runlimit_features.py` gate still covers
+all eight native Runlimit feature combinations. The matrix then checks all
+workspace targets, doctests, Clippy with warnings denied,
 and rustdoc with warnings denied. The workspace run includes the SQLx executable
 and compiles the reference compatibility cases as ignored; ordinary verification
 does not execute PostgreSQL or Runledger jobs. The explicit live runner below
@@ -394,7 +399,7 @@ headers or stalls a declared response body. A native reqwest read timeout must
 retain `delivery.provider_timeout` and release provider capacity; the enclosing
 operation budget is deliberately longer. The admission-interruption live case
 also checks that `delivery.admission_interrupted` reaches the retained effect
-row, not merely the pure diagnostic mapper. Execution status is in validation.
+row, not merely the pure diagnostic mapper.
 Fixture cases cover template reuse/isolation, acknowledged
 lock operations, returned body errors, partial/sibling acquisition, panic,
 resumable wait cancellation, foreign-template rejection, simultaneous body/cleanup
@@ -610,8 +615,7 @@ Watchdog termination is failure and does not claim application/database cleanup.
 The earlier serial sixteen-case suite took 5.54–5.61 seconds in the round-one
 Linux measurements after compilation, leaving over thirty times that measured
 duration within the 180-second bound. This is a workload backstop, not a promise
-to complete arbitrary stalled native operations. Timing claims for newer inventories and CPU-constrained Linux execution are
-recorded separately in validation; arbitrary slower environments remain unverified.
+to complete arbitrary stalled native operations. Arbitrary slower environments remain unverified.
 Compile time has its separate inventory bound.
 `scripts/test_reference_live.py` checks zero-test, skipped, missing-case and native preflight
 failure/ordering behavior in the ordinary test matrix.
@@ -624,7 +628,7 @@ it does not change the exact ignored live inventory. Fixture report doctests
 reject discarded owned and borrowed observations with `unused_must_use` denied.
 Fingerprint controls vary migration identity and kind independently of SQL.
 Warm-cache reuse permits zero initializations; cold initialization is established
-only by the fresh-cluster execution recorded in validation, not by that count alone.
+only by fresh-cluster execution, not by that count alone.
 
 The focused `cargo test -p batter-example-postgres-lifecycle --test native_sqlx
 --locked` target checks native pool/connection/transaction composition without
@@ -726,8 +730,7 @@ Jig's database tooling is disabled because SQLx currently appears only in an
 example package. There are no migration or prepared-query metadata gates.
 Workspace checks execute the startup/shutdown error-retention unit tests and
 bounded subprocess checks of portable exit paths and redacted configuration
-failures. Explicit live query and pool-closure checks are separate; see
-[validation](validation.md).
+failures. Explicit live query and pool-closure checks are separate.
 Agent bootstrap requests only the Rust and ExecPlan plugins. No frontend,
 development app, or external status provider is configured. Vault scope metadata
 is retained for Jig compatibility; these checks do not need a vault passphrase.
@@ -777,8 +780,9 @@ managed attributes block so a regenerated union rule cannot silently replace it.
 The two budget-exhaustion observation tests run in their own integration-test
 executable, isolating scoped log capture from concurrent subscriber-free cleanup
 tests. Their report, event, invocation, and capture-order assertions are unchanged.
-Static package inspection excludes Jig's transient cache/runtime/tmp directories,
-while continuing to inspect durable agent guides and plans.
+Static current-document link inspection includes active maintenance guides and
+`.agent/PLANS.md`; it excludes append-only historical Markdown under
+`.agent/plans` and `.agent/reviews`.
 Source archives include the executable Jig launcher, contract, and durable work
 records; local caches, runtime data, scratch files, and the deprecated adoption
 receipt are excluded.
@@ -787,60 +791,60 @@ receipt are excluded.
 
 | Contract | Tests |
 | --- | --- |
-| Deadline clamping, preflight rejection and downward child cancellation | [operation.rs](../crates/batter/tests/operation.rs) |
-| Scope cancellation on success/drop, owned-future drop on timeout | [operation.rs](../crates/batter/tests/operation.rs) |
-| Finalization reserve validation, sibling cancellation and original deadline | [operation.rs](../crates/batter/tests/operation.rs) |
-| Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter/tests/operation.rs) |
-| Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter/tests/retry.rs) |
-| Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter/tests/retry.rs) |
-| Provider lower bounds, shared budget, capped backoff | [retry.rs](../crates/batter/tests/retry.rs) |
-| Injected jitter endpoints, seed reproducibility, provider floor and reserve composition | [retry.rs](../crates/batter/tests/retry.rs) |
-| Interrupted backoff/later attempt retains previous failure | [retry.rs](../crates/batter/tests/retry.rs) |
-| Per-attempt cap formula, total/same-poll cancellation precedence, current and earlier retained errors, destruction and panic | [retry_attempt_deadlines.rs](../crates/batter/tests/retry_attempt_deadlines.rs) |
-| Retry attempt telemetry matches application failure, same-poll cancellation and success without logging error contents | [telemetry.rs](../crates/batter/tests/telemetry.rs) |
-| Permit exhaustion/release, deadline wait, close/cancellation | [admission.rs](../crates/batter/tests/admission.rs) |
-| LIFO, all errors, async and synchronous-factory panic observation | [cleanup.rs](../crates/batter/tests/cleanup.rs) |
-| Timeout/reap before dependent hook, total budget, explicit skips | [cleanup.rs](../crates/batter/tests/cleanup.rs) |
-| Every budget-skipped hook logged/reported once; native capture-drop LIFO | [cleanup_observation.rs](../crates/batter/tests/cleanup_observation.rs) |
-| Dropping an active cleanup driver aborts its hook and does not start dependencies | [cleanup.rs](../crates/batter/tests/cleanup.rs) |
-| Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
-| Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
-| Dependency health freshness, exhaustive observation-to-readiness classification, unrepresentable healthy-as-failure state, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter/tests/health.rs), foundation [readiness](../crates/batter/src/readiness.rs), and [ownership](../crates/batter/tests/health/ownership.rs), [publication](../crates/batter/tests/health/publication.rs) |
-| Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic, simultaneous drain/destruction classification and readiness/handoff | [startup.rs](../crates/batter/tests/startup.rs), [protected_startup.rs](../crates/batter/tests/protected_startup.rs), [registration.rs](../crates/batter/tests/registration.rs) |
-| Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, deterministic same-poll failure/success reception, TERM/INT during start and running, cleanup-owned observation of delayed repeated signals without deadline restart, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter/src/lifecycle/unix.rs) |
-| Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
-| Completion/drain classification regression | [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
-| Never-polled ordinary/unapproved caller-owned driver drop signals readiness/cancellation before captured values are destroyed; unapproved spawned-owner drop requests drain before its driver poll; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter/tests/lifecycle.rs), [lifecycle_state.rs](../crates/batter/tests/lifecycle_state.rs) |
-| Component and application startup acknowledgement, deterministic caller-owned driving before and after approval, dropped unacknowledged capabilities, deferred/default startup handoff, last-owner and waiter drop, retained driver failure; compile-fail rejection of read-only, cloned, repeated, and post-transition approval | [lifecycle_state.rs](../crates/batter/tests/lifecycle_state.rs), [process_ownership.rs](../crates/batter/tests/process_ownership.rs), [startup.rs](../crates/batter/tests/startup.rs), `ComponentStartup`/`ReadinessApproval`/`ShutdownSignal` rustdoc in [capability.rs](../crates/batter/src/lifecycle/capability.rs), caller-owned typestate rustdoc in [caller_owned.rs](../crates/batter/src/lifecycle/caller_owned.rs), and owned-driver typestate rustdoc in [driver.rs](../crates/batter/src/lifecycle/driver.rs) |
-| Completion observers require an owned driver; immediate last-owner drop before first poll retains success or coordinator panic; a new observer after publication retains its report after owners/runtime drop; destroying an unpublished monitor's runtime causes the documented observer panic | `ShutdownHandle` compile-fail rustdoc in [capability.rs](../crates/batter/src/lifecycle/capability.rs) and [driver_observer.rs](../crates/batter/tests/driver_observer.rs) |
-| Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
-| Initial finite errors/panics use `FiniteTaskExit`; critical errors/panics/early success retain `ComponentExit`; later finite failures preserve `Requested` | [process_ownership.rs](../crates/batter/tests/process_ownership.rs), [lifecycle.rs](../crates/batter/tests/lifecycle.rs), and the `ProcessHandle::try_spawn` rustdoc example |
-| Mixed critical/finite ownership, first observed failure retained across task kinds, descendant cause labels, ready requests preceding unobserved finite/critical failures, and shutdown aborts preserving `Requested` | [shutdown_causes.rs](../crates/batter/tests/shutdown_causes.rs) |
-| Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter/tests/process_ownership/terminal_admission.rs) |
-| Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and each waiter notified outside the transition lock, allowing redundant wakes | [state/tests.rs](../crates/batter/src/lifecycle/state/tests.rs) |
-| Read-only status waits and operation admission across Starting/Ready/Draining; admitted-context drain/cancel behavior; abandonment notification, guard transfer and component/cleanup capture destruction order; extracted cleanup independent of process cancellation; inert factories and invalid-name/startup/capacity/closure precedence | [lifecycle_state.rs](../crates/batter/tests/lifecycle_state.rs) and [lifecycle.rs](../crates/batter/tests/lifecycle.rs) |
-| Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
-| Seeded root/descendant contention, cancellation/readiness/drop schedules, complete failure accounting, replay and watchdog controls | [scheduling.rs](../crates/batter/tests/scheduling.rs) and its [profile](../crates/batter/tests/scheduling/profile.rs) |
-| Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter/tests/process_ownership.rs) |
-| Non-yielding direct work, ordinary-start approval visible immediately after component acknowledgement, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter/tests/non_yielding.rs) and its [fixture](../crates/batter/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter/tests/non_yielding/watchdog.rs) |
+| Deadline clamping, preflight rejection and downward child cancellation | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Scope cancellation on success/drop, owned-future drop on timeout | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Finalization reserve validation, sibling cancellation and original deadline | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
+| Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
+| Provider lower bounds, shared budget, capped backoff | [retry.rs](../crates/batter-core/tests/retry.rs) |
+| Injected jitter endpoints, seed reproducibility, provider floor and reserve composition | [retry.rs](../crates/batter-core/tests/retry.rs) |
+| Interrupted backoff/later attempt retains previous failure | [retry.rs](../crates/batter-core/tests/retry.rs) |
+| Per-attempt cap formula, total/same-poll cancellation precedence, current and earlier retained errors, destruction and panic | [retry_attempt_deadlines.rs](../crates/batter-core/tests/retry_attempt_deadlines.rs) |
+| Retry attempt telemetry matches application failure, same-poll cancellation and success without logging error contents | [telemetry.rs](../crates/batter-core/tests/telemetry.rs) |
+| Permit exhaustion/release, deadline wait, close/cancellation | [admission.rs](../crates/batter-core/tests/admission.rs) |
+| LIFO, all errors, async and synchronous-factory panic observation | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
+| Timeout/reap before dependent hook, total budget, explicit skips | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
+| Every budget-skipped hook logged/reported once; native capture-drop LIFO | [cleanup_observation.rs](../crates/batter-core/tests/cleanup_observation.rs) |
+| Dropping an active cleanup driver aborts its hook and does not start dependencies | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
+| Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
+| Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
+| Dependency health freshness, exhaustive observation-to-readiness classification, unrepresentable healthy-as-failure state, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter-core/tests/health.rs), foundation [readiness](../crates/batter-core/src/readiness.rs), and [ownership](../crates/batter-core/tests/health/ownership.rs), [publication](../crates/batter-core/tests/health/publication.rs) |
+| Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic, simultaneous drain/destruction classification and readiness/handoff | [startup.rs](../crates/batter-core/tests/startup.rs), [protected_startup.rs](../crates/batter-core/tests/protected_startup.rs), [registration.rs](../crates/batter-core/tests/registration.rs) |
+| Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, deterministic same-poll failure/success reception, TERM/INT during start and running, cleanup-owned observation of delayed repeated signals without deadline restart, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter-core/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter-core/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter-core/src/lifecycle/unix.rs) |
+| Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
+| Completion/drain classification regression | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
+| Never-polled ordinary/unapproved caller-owned driver drop signals readiness/cancellation before captured values are destroyed; unapproved spawned-owner drop requests drain before its driver poll; borrowed non-Send shutdown | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), [lifecycle_state.rs](../crates/batter-core/tests/lifecycle_state.rs) |
+| Component and application startup acknowledgement, deterministic caller-owned driving before and after approval, dropped unacknowledged capabilities, deferred/default startup handoff, last-owner and waiter drop, retained driver failure; compile-fail rejection of read-only, cloned, repeated, and post-transition approval | [lifecycle_state.rs](../crates/batter-core/tests/lifecycle_state.rs), [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs), [startup.rs](../crates/batter-core/tests/startup.rs), `ComponentStartup`/`ReadinessApproval`/`ShutdownSignal` rustdoc in [capability.rs](../crates/batter-core/src/lifecycle/capability.rs), caller-owned typestate rustdoc in [caller_owned.rs](../crates/batter-core/src/lifecycle/caller_owned.rs), and owned-driver typestate rustdoc in [driver.rs](../crates/batter-core/src/lifecycle/driver.rs) |
+| Completion observers require an owned driver; immediate last-owner drop before first poll retains success or coordinator panic; a new observer after publication retains its report after owners/runtime drop; destroying an unpublished monitor's runtime causes the documented observer panic | `ShutdownHandle` compile-fail rustdoc in [capability.rs](../crates/batter-core/src/lifecycle/capability.rs) and [driver_observer.rs](../crates/batter-core/tests/driver_observer.rs) |
+| Finite capacity/receipt ownership, descendants, typed failure vs normal business denial | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs) |
+| Initial finite errors/panics use `FiniteTaskExit`; critical errors/panics/early success retain `ComponentExit`; later finite failures preserve `Requested` | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs), [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs), and the `ProcessHandle::try_spawn` rustdoc example |
+| Mixed critical/finite ownership, first observed failure retained across task kinds, descendant cause labels, ready requests preceding unobserved finite/critical failures, and shutdown aborts preserving `Requested` | [shutdown_causes.rs](../crates/batter-core/tests/shutdown_causes.rs) |
+| Permanent admission closure before startup, unpolled driver drop/abort, dropped unstarted supervisor, post-start abort and completed shutdown; rejected factories stay inert | [terminal_admission.rs](../crates/batter-core/tests/process_ownership/terminal_admission.rs) |
+| Startup permutations, irreversible transition table, concurrent request/completion, admission precedence, nonblocking readiness snapshot and each waiter notified outside the transition lock, allowing redundant wakes | [state/tests.rs](../crates/batter-core/src/lifecycle/state/tests.rs) |
+| Read-only status waits and operation admission across Starting/Ready/Draining; admitted-context drain/cancel behavior; abandonment notification, guard transfer and component/cleanup capture destruction order; extracted cleanup independent of process cancellation; inert factories and invalid-name/startup/capacity/closure precedence | [lifecycle_state.rs](../crates/batter-core/tests/lifecycle_state.rs) and [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
+| Multi-thread admission/drain and startup/drain races | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs) |
+| Seeded root/descendant contention, cancellation/readiness/drop schedules, complete failure accounting, replay and watchdog controls | [scheduling.rs](../crates/batter-core/tests/scheduling.rs) and its [profile](../crates/batter-core/tests/scheduling/profile.rs) |
+| Delayed observation of completed success/error/panic; abort only unfinished work | [process_ownership.rs](../crates/batter-core/tests/process_ownership.rs) |
+| Non-yielding direct work, ordinary-start approval visible immediately after component acknowledgement, unjoined reports, skipped cleanup, blocked runtime destruction/timers; watchdog kill/reap and failure cleanup | [non_yielding.rs](../crates/batter-core/tests/non_yielding.rs) and its [fixture](../crates/batter-core/tests/non_yielding/fixture.rs) / [watchdog](../crates/batter-core/tests/non_yielding/watchdog.rs) |
 | Axum context/probes/gate/deadline/sanitized responses; budget validation | [http.rs](../crates/batter-axum/tests/http.rs) |
 | Configured envelope/status/headers, original trusted metadata on timeout/cancellation | [http.rs](../crates/batter-axum/tests/http.rs) |
-| Ordinary INFO completion, scoped context and error redaction | [core telemetry](../crates/batter/tests/telemetry.rs) |
+| Ordinary INFO completion, scoped context and error redaction | [core telemetry](../crates/batter-core/tests/telemetry.rs) |
 | Actual HTTP status and request/error redaction | [HTTP telemetry](../crates/batter-axum/tests/telemetry.rs) |
 | Independent HTTP observation and complete-router coverage | [Composition](../crates/batter-axum/tests/observation/composition.rs): startup/ready/drain, probes, fallback, rejection, application errors, new routes, trusted correlation and redaction. |
 | HTTP event fields independent of span filtering | [Event fields](../crates/batter-axum/tests/observation/event_fields.rs): direct event visitors check typed fields at all severities, WARN/ERROR with INFO spans disabled, admission rejection, unmatched routes and future destruction under another ambient subscriber. |
 | Observation filtering and middleware order | [Composition edges](../crates/batter-axum/tests/observation/composition_edges.rs): DEBUG/TRACE overrides suppressed by INFO with a WARN positive control, outer status/severity rewriting after observation, and retained overrides read by each nested observer. |
 | HTTP context ownership and handler unwinds | [Correlation](../crates/batter-axum/tests/observation/correlation.rs): mixed target filters, interleaved completion/drop under other spans/subscribers, retained parent lifetime, untouched application fields, no replacement of an absent parent, propagated task panic, cancelled admitted context and sanitized dropped observations. |
-| Foundation decision and example readiness policy over real HTTP | Foundation unit/rustdoc tests exhaust every lifecycle/health classification, deterministically require dependency sampling before lifecycle, and reject `Dependency(Healthy)`; Axum rustdoc makes the old reason import fail loudly, while [operational tests](../crates/batter-axum/tests/operational/readiness.rs) preserve all valid typed decisions, reusable status/severity mappings, partial default severity delegation and drain precedence; [example tests](../crates/batter-axum/examples/http_service/tests.rs) cover the actual router's Starting/Ready/Draining/Stopped statuses and event levels with generated request correlation. A separately owned listener stays available through all phases; this does not prove the binary's connection shutdown timing. |
+| Foundation decision and example readiness policy over real HTTP | Foundation unit/rustdoc tests exhaust every lifecycle/health classification, deterministically require dependency sampling before lifecycle, and reject `Dependency(Healthy)`; Axum rustdoc makes the old reason import fail loudly, while [operational tests](../crates/batter-axum/tests/operational/readiness.rs) preserve all valid typed decisions, reusable status/severity mappings, partial default severity delegation and drain precedence; [example tests](../crates/batter/examples/http_service/tests.rs) cover the actual router's Starting/Ready/Draining/Stopped statuses and event levels with generated request correlation. A separately owned listener stays available through all phases; this does not prove the binary's connection shutdown timing. |
 | Explicit HTTP observation severity | [Severity](../crates/batter-axum/tests/observation/severity.rs): all five event levels, preserved defaults/status/outcome/identity/response data, expected readiness vs unrelated unguarded failure, custom rendering, middleware override replacement/removal and ignored request-side hints. Rendering tests include forced cancellation with an ERROR override on a 429; lifetime tests keep dropped futures at WARN despite an annotated response constructed but never returned. |
 | Split/legacy rendering and request lifetime | [Rendering](../crates/batter-axum/tests/observation/rendering.rs) and [lifetime](../crates/batter-axum/tests/observation/lifetime.rs): actual custom status, original metadata, timeout, forced cancellation, inert unpolled futures, cross-subscriber abort/destruction, context cancellation and post-response body drop. |
 | Axum middleware placement and observation ownership | [Placement](../crates/batter-axum/tests/observation/placement.rs): existing vs late-added routes, pre-routing missing metadata, observation-free admission and explicit duplicate observations when wrapping the legacy middleware. |
-| Operation abort; public wrapper capture at call, unpolled destruction, borrowed/non-Send work | [core dispatch](../crates/batter/tests/scoped_dispatch.rs) |
+| Operation abort; public wrapper capture at call, unpolled destruction, borrowed/non-Send work | [core dispatch](../crates/batter-core/tests/scoped_dispatch.rs) |
 | HTTP abort under another subscriber, including nested span destruction | [HTTP dispatch](../crates/batter-axum/tests/scoped_dispatch.rs) |
-| Unpolled !Unpin future capture and nested span destruction under its saved dispatcher | [private wrapper](../crates/batter/src/scoped_dispatch.rs) |
-| Critical/finite abort, dropped cleanup driver, hook timeout; submitter vs driver diagnostics | [scoped_owned_tasks.rs](../crates/batter/tests/scoped_owned_tasks.rs) |
-| Filtered task spans retain enabled application parents during execution and normal/aborted destruction | [filtered.rs](../crates/batter/tests/scoped_owned_tasks/filtered.rs): critical components, finite tasks and cleanup hooks under `info,batter=warn`, on current-thread and two-worker runtimes, with a separate ambient subscriber and parent. |
-| Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
+| Unpolled !Unpin future capture and nested span destruction under its saved dispatcher | [private wrapper](../crates/batter-core/src/scoped_dispatch.rs) |
+| Critical/finite abort, dropped cleanup driver, hook timeout; submitter vs driver diagnostics | [scoped_owned_tasks.rs](../crates/batter-core/tests/scoped_owned_tasks.rs) |
+| Filtered task spans retain enabled application parents during execution and normal/aborted destruction | [filtered.rs](../crates/batter-core/tests/scoped_owned_tasks/filtered.rs): critical components, finite tasks and cleanup hooks under `info,batter=warn`, on current-thread and two-worker runtimes, with a separate ambient subscriber and parent. |
+| Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter-core/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
 
 Timer tests use Tokio's paused time. This controls the Tokio clock, not system
@@ -850,7 +854,7 @@ database transaction behavior, or non-yielding task preemption.
 
 ## Seeded scheduling exploration
 
-Run the discoverable target with `cargo test -p batter --test scheduling --locked`.
+Run the discoverable target with `cargo test -p batter-core --test scheduling --locked`.
 It launches separate two- and four-worker Tokio profiles, each with seeds 0–31,
 64 workload supervisor lifecycles and 4,096 completed finite tasks. Every seed
 also runs all eight required families: shared capacity, admission closure,
@@ -891,7 +895,7 @@ The [runner](../scripts/stress_scheduling.py) accepts the compiled test executab
 Resolve it without relying on Cargo's changing filename hash:
 
 ```sh
-cargo test -p batter --test scheduling --no-run --locked --message-format=json > /tmp/batter-scheduling-build.jsonl
+cargo test -p batter-core --test scheduling --no-run --locked --message-format=json > /tmp/batter-scheduling-build.jsonl
 scheduling_binary="$(python3 -c 'import json; print(next(r["executable"] for line in open("/tmp/batter-scheduling-build.jsonl") if (r := json.loads(line)).get("executable") and r.get("target", {}).get("name") == "scheduling"))')"
 python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 2
 python3 scripts/stress_scheduling.py --binary "$scheduling_binary" --workers 4 --seed 17
@@ -918,6 +922,10 @@ Every family is bounded by an independent five-second Tokio timeout and the whol
 profile by 120 seconds. An external Python watchdog requests process termination
 at 140 seconds by default and maximum, with one five-second reap/output
 EOF allowance. These observed process deadlines are not an OS scheduling SLA.
+Rust elapsed assertions consume the process owner's structured observation, which
+starts immediately before target child creation. Launch of the Python process owner
+and host scheduling before `run_process` remain outside that deadline and inside
+the enclosing Cargo/Jig command bounds.
 The workload ledger has 128 slots, shared finite capacity eight, and bounded
 channels; each case discards its data before the next. Capture retains at most
 1 MiB of raw stdout/stderr combined and continues draining after overflow, which
@@ -1062,16 +1070,15 @@ python3 scripts/test_scheduling_process.py --binary "$scheduling_binary"
 
 This suite explores bounded schedules and rejects selected faults; it does not
 prove exhaustive concurrency correctness, task preemption, detached-descendant
-termination or cleanup after a watchdog kill. [Validation](validation.md) records
-executed platforms and toolchains; the macOS/hosted scheduling job remains
-unverified until it actually runs.
+termination or cleanup after a watchdog kill. The macOS/hosted scheduling job
+remains unverified until it actually runs.
 
 ## Non-yielding subprocess tests
 
 Run the focused suite with:
 
 ```sh
-cargo test -p batter --test non_yielding --locked -- --nocapture
+cargo test -p batter-core --test non_yielding --locked -- --nocapture
 ```
 
 These tests also run in the ordinary isolated-core and workspace matrices. Each
@@ -1172,7 +1179,7 @@ path. Real subprocess controls still cover startup that never completes,
 extended-deadline early kills, natural-exit races and the actual blocked runtime.
 
 The Linux parent-death regression requires Python 3; absence is a test failure.
-Its isolated [probe](../crates/batter/tests/non_yielding/parent_death.py) becomes
+Its isolated [probe](../crates/batter-core/tests/non_yielding/parent_death.py) becomes
 a Linux child subreaper, waits for a blocked fixture's report and runtime-drop
 entry, then sends SIGKILL only to the owner PID. It adopts and waits for the
 orphan's exit code 74, rejecting cleanup/destruction evidence. Its own timeout
@@ -1205,9 +1212,7 @@ the terminated child's wait; only a surviving owner can explicitly reap it.
 The macOS CI job compiles all workspace targets and runs the focused subprocess
 suite on Rust 1.94.0 and 1.98.1. Separately, both full verification matrices and
 the rebuilt HTTP smoke modes passed on a macOS arm64 host over SSH. The updated
-CI job has not run yet. [Validation](validation.md) records the exact host,
-source snapshot, commands and limits.
-This focused hosted job is intentional; it does not claim a full macOS hosted
+CI job has not run yet. This focused hosted job is intentional; it does not claim a full macOS hosted
 matrix. The environment-variable control is also intentional: it protects the
 previously removed ambient launch path. Only the emergency fallback control
 deliberately waits ten seconds; the parent-death probes return on evidence.
@@ -1350,12 +1355,11 @@ EOF and destruction. It tests a 50 ms pending-read checkpoint, not indefinite
 survival. Disconnect cases require positive body/handler and socket destruction
 within one shared second after the close/EOF checkpoint, before any release/drain; full `Shutdown::Both` plus socket
 drop differs from write-side shutdown followed by reading EOF. No test invents
-another HTTP completion after response headers. New Linux/macOS execution is
-recorded separately in [validation](validation.md#http11-connection-lifetimes-2026-09-10).
+another HTTP completion after response headers.
 
 ## Fixture infrastructure regression and mutation checks
 
-`cargo test -p batter --test tracing_dispatch --locked` isolates first callsite
+`cargo test -p batter-core --test tracing_dispatch --locked` isolates first callsite
 registration in a fresh process. An unsubscribed thread first creates a disabled
 span; the registered subscriber must subsequently create an enabled span at that
 same callsite. A filtered-capture regression also requires output storage to be
@@ -1408,13 +1412,13 @@ retention of the original error without printing environment contents.
 After verification builds the example:
 
 ```sh
-cargo build -p batter-axum --example http_service --locked
+cargo build -p batter --features axum --example http_service --locked
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --signal SIGINT
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --deadline
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service --warn-filter --deadline
-cargo test -p batter-axum --example http_service --locked
+cargo test -p batter --features axum --example http_service --locked
 cargo run -p batter --locked --example process_owned
 cargo run -p batter --locked --example operation_budget
 ```
@@ -1582,8 +1586,7 @@ The suite does not establish full real-transport behavior, non-yielding task
 termination, transaction commit/cancellation or upstream worker compatibility, or HTTP handler-panic
 recovery. Basic Problem JSON tests do not establish comprehensive route-contract
 or RFC conformance. Bounded multi-thread regressions are not exhaustive race
-exploration. Compiler/lint/doc and HTTP smoke results remain recorded in
-[validation](validation.md).
+exploration.
 
 The audited missing-test requirements and their dependencies live in
 [Beads](roadmap.md), not in a second checklist here. Database prerequisites must
@@ -1592,7 +1595,7 @@ never be silently skipped, and non-yielding tests must not hang the test runner.
 ## Reporting convention
 
 Record command, toolchain, dependency lock hash, platform, result, and skipped
-prerequisites in `docs/validation.md`. A source review is not a passing test.
+prerequisites in the owning Bead. A source review is not a passing test.
 A passing build is not an operational audit. A deterministic unit test is not
 proof that a database commit or an arbitrary external effect is cancellation-safe.
 
@@ -1602,7 +1605,7 @@ The native preflight uses signed 64-bit cluster identifiers and rejects failed
 prerequisite rows or equal cluster identities. Offline controls preserve both
 signed extrema and require invalid secondary endpoints to fail before connection.
 
-`crates/batter/tests/settings.rs` covers injected sources, exact-path bounded
+`crates/batter-core/tests/settings.rs` covers injected sources, exact-path bounded
 literal reading, redacted aggregates, retained typed errors and numeric limits.
 The HTTP example is explicitly marked `test = true`, so its actual router and
 configuration child-process tests run under the normal all-targets matrix.
@@ -1642,7 +1645,7 @@ The third retains an external native lease until owned startup failure and pool
 close are observed, then awaits cleanup/drain and queries independent absence.
 These cases are ignored only in ordinary discovery. The explicit runner requires
 every configured case to execute, and missing live prerequisites fail its target.
-Current executed evidence and remaining prerequisites are in [validation](validation.md).
+
 
 ### Configuration review regressions
 
@@ -1750,9 +1753,9 @@ requests, with no durable control job before or after either shutdown. A normal
 child exit additionally requires the checked shutdown report to contain exactly
 one successful cleanup-stack `postgres.pool` record for the close hook registered
 by the application pool's `pool_in` call.
-Full workspace/two-toolchain and fresh
-agent/review acceptance remain separate requirements; see the current validation
-entry for what actually executed.
+Full workspace/two-toolchain and fresh agent/review acceptance remain separate
+requirements. Owning Bead `batter-lp2.4` records what actually executed for this
+scope.
 
 ### Protected startup consumer process cases
 

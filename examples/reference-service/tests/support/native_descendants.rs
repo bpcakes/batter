@@ -59,7 +59,7 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
         Ok(())
     })?;
     let native_pool = pool.clone();
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "native",
         OperationContext::new(Duration::from_secs(2))?,
@@ -119,7 +119,7 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
         .settlement
         .as_ref()
         .ok_or("native report was discarded")?
-        .downcast_ref::<batter_runledger::NativeReport>()
+        .downcast_ref::<batter::runledger::NativeReport>()
         .ok_or("native report identity changed")?;
     assert!(
         native

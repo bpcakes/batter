@@ -168,7 +168,7 @@ async fn served_until(
 }
 
 fn finish_results(body: ProbeResult, shutdown: ProbeResult) -> ProbeResult {
-    batter_test_support::finish(
+    batter::test_support::finish(
         body.map_err(ProbeError::new),
         shutdown.map_err(ProbeError::new),
     )
@@ -258,8 +258,8 @@ pub(super) fn process_contracts() {
         Err(std::io::Error::other("shutdown marker").into()),
     )
     .expect_err("both settled failures must remain inspectable");
-    let batter_test_support::TestFailure::Both { body, cleanup } = failure
-        .downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+    let batter::test_support::TestFailure::Both { body, cleanup } = failure
+        .downcast_ref::<batter::test_support::TestFailure<ProbeError, ProbeError>>()
         .expect("production result uses the shared dual-failure container")
     else {
         panic!("both branches were not retained")

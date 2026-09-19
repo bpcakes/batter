@@ -27,9 +27,10 @@ Batter's unit of reuse is an invariant: who owns this work, which deadline bound
 it, who observes its failure, and when may its dependencies close? It is not a
 collection of wrappers around every dependency.
 
-The root is a virtual Cargo workspace. The `batter` foundation,
-`batter-axum`, `batter-sqlx`, `batter-runledger` and `batter-runlimit` adapters, and
-`batter-test-support` utilities are separate libraries;
+The root is a virtual Cargo workspace. The `batter` facade and its single
+`batter-core` implementation, the `batter-axum`, `batter-sqlx`,
+`batter-runledger` and `batter-runlimit` adapters, and `batter-test-support`
+utilities are seven separate libraries;
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
@@ -39,19 +40,28 @@ those boundaries aggregate heterogeneous component results.
 ```text
 application composition root
   |-- native services / concrete constructors / domain errors
-  |-- batter lifecycle + cleanup
-  |-- batter operation + retry + admission
-  |-- batter settings (explicit sources; application schemas)
+  |-- batter facade -> batter-core lifecycle + cleanup
+  |                         operation + retry + admission + settings
   |-- native tracing subscriber and exporters (application-owned)
-  |-- optional batter-axum -> batter + Axum / Tower
-  |-- optional batter-sqlx -> batter + native SQLx PgPool / Transaction
+  |-- optional batter-axum -> batter-core + Axum / Tower
+  |-- optional batter-sqlx -> batter-core + native SQLx PgPool / Transaction
   |     `-- opt-in test-support -> external harness + generic test support
-  |-- optional batter-runledger -> batter + native runtime preparation / settlement
-  |-- optional batter-runlimit -> batter + native Runlimit core
+  |-- optional batter-runledger -> batter-core + native runtime preparation / settlement
+  |-- optional batter-runlimit -> batter-core + native Runlimit core
   |     |-- opt-in memory / postgres -> native storage and error bridges
   |     `-- opt-in axum -> batter-axum + native serving
   `-- reference tests -> batter-test-support + external postgres-test-harness
 ```
+
+The facade's default feature set is empty, so an ordinary `batter` dependency
+selects only `batter-core`. Applications opt into `batter::axum`,
+`batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
+`batter::test_support` explicitly. `runlimit-memory`, `runlimit-postgres`,
+`runlimit-axum`, and `sqlx-test-support` forward the existing adapter features;
+they do not add facade-owned storage, HTTP, or fixture implementations. The
+facade re-exports the adapter types, preserving identity with direct adapter
+imports. See the [feature selection contract](integrations.md#facade-feature-selection)
+and the [facade package guide](../crates/batter/README.md).
 
 The foundation graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.
 The latter provides safe pin projection for a private, allocation-free tracing

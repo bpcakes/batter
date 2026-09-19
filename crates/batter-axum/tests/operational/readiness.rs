@@ -6,15 +6,15 @@ use axum::{
     middleware,
     routing::get,
 };
-use batter::{
+use batter_axum::{
+    HttpObservationLevel, ReadinessDecision, ReadinessPolicy, default_readiness_level,
+    dependency_readiness, operational_http, readiness_status,
+};
+use batter_core::{
     cleanup::CleanupBudget,
     health::{DependencyUnreadyReason, HealthMonitor, HealthPolicy, HealthStatus},
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
     readiness::ReadinessUnreadyReason,
-};
-use batter_axum::{
-    HttpObservationLevel, ReadinessDecision, ReadinessPolicy, default_readiness_level,
-    dependency_readiness, operational_http, readiness_status,
 };
 use std::{
     future::{Future, poll_fn},

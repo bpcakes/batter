@@ -1,4 +1,4 @@
-#[path = "support/capture.rs"]
+#[path = "../../../test-support/capture.rs"]
 mod capture;
 #[path = "observation/composition.rs"]
 mod composition;

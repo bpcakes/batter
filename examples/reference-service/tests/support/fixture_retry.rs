@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     BodyFailure, CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -60,7 +60,7 @@ pub async fn pending_completion_recovers() -> ProbeResult {
 }
 
 async fn failing_body(
-    scope: &mut batter_sqlx::test_support::FixtureScope,
+    scope: &mut batter::sqlx::test_support::FixtureScope,
 ) -> Result<(), FixtureError> {
     let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
     let db = scope.empty(&plan).await?;
@@ -72,7 +72,7 @@ async fn failing_body(
 }
 
 fn assert_recovered(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     failure: &std::sync::Arc<FixtureError>,
     retained: bool,
 ) {

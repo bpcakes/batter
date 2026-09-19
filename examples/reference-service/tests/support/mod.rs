@@ -71,7 +71,7 @@ where
 {
     let result = fixture_run::run_with_bound(bound, move |scope, _observer| {
         Box::pin(async move {
-            let plan = batter_sqlx::test_support::ConnectionPlan::new(
+            let plan = batter::sqlx::test_support::ConnectionPlan::new(
                 vec![
                     batter_example_reference_service::config::PoolSettings::new(
                         4,

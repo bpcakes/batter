@@ -182,7 +182,7 @@ contracts, capability facts and validation history.
   production-root HTTP probe and retirement command on both supported toolchains.
 - Add `batter::settings` for explicit bounded sources, integer/duration parsing
   and redacted diagnostics. HTTP and reference roots own their schemas and native
-  constructors; current execution evidence is recorded in `docs/validation.md`.
+  constructors.
 - Add the optional `batter-sqlx` PostgreSQL lease, probe and pool-close adapter,
   plus unpublished postgres-lifecycle and reference-service example packages.
   Isolated fixtures are opt-in under `batter-sqlx/test-support`; provisioning stays
@@ -252,8 +252,7 @@ contracts, capability facts and validation history.
 - Normalize rustfmt output, remove a redundant cleanup-test closure, and escape
   a generic type in HTTP rustdoc. Failure-path assertions and runtime contracts
   remain unchanged.
-- Record local verification and HTTP SIGTERM smoke results in
-  [validation](docs/validation.md). Optional adapter live cases have Linux
+- Optional adapter live cases have Linux
   evidence; the historical 58-entry reference inventory and separate maintenance
   probe passed on both supported toolchains. The current 64-entry inventory has
   five Linux-executed offline entries; its 59 database probes remain unexecuted.
@@ -271,5 +270,4 @@ Effect v4 design rationale; integration boundaries and a prioritized agent backl
 
 Validation limitation: no Rust toolchain or dependency resolution was available
 in the authoring environment. Compilation, tests, formatting, lints, documentation
-builds, live examples, and MSRV compatibility remain unverified. See
-[validation](docs/validation.md). Packages remained unpublished.
+builds, live examples, and MSRV compatibility remain unverified. Packages remained unpublished.

@@ -3,14 +3,14 @@ use axum::{
     body::{Body, Bytes},
     routing::get,
 };
-use batter::{
+use batter_axum::{
+    ResponseConstructionBudget, register_http, register_http_in, register_http_with_connect_info_in,
+};
+use batter_core::{
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
-};
-use batter_axum::{
-    ResponseConstructionBudget, register_http, register_http_in, register_http_with_connect_info_in,
 };
 use std::{
     convert::Infallible,
@@ -30,8 +30,12 @@ use tokio::{
     time::timeout,
 };
 
-type RegisterHttp =
-    fn(&mut Supervisor, &'static str, TcpListener, Router) -> Result<(), batter::RegistrationError>;
+type RegisterHttp = fn(
+    &mut Supervisor,
+    &'static str,
+    TcpListener,
+    Router,
+) -> Result<(), batter_core::RegistrationError>;
 
 fn cleanup_budget() -> CleanupBudget {
     CleanupBudget::new(
@@ -151,7 +155,7 @@ async fn invalid_registration_and_unstarted_supervisor_drop_release_the_bound_li
         &'static str,
         TcpListener,
         Router,
-    ) -> Result<(), batter::RegistrationError> = register_http;
+    ) -> Result<(), batter_core::RegistrationError> = register_http;
     let mut wrapped = SupervisorWrapper(supervisor());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     assert!(register_http(&mut wrapped, "", listener, Router::new()).is_err());

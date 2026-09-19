@@ -3,7 +3,7 @@
 Updated: 2026-09-16. Originally reviewed 2026-09-09 against Git baseline `22848ea`;
 the implemented-evidence column now includes later settings, fixture, ownership
 and HTTP-lifetime deliveries. This is a design reconciliation, not a new
-implementation. Execution evidence lives in [validation](validation.md).
+implementation.
 
 Batter implements much of the operational core proposed in the analysis. The
 atomic reference producer and selected provider-effect worker paths are
@@ -22,16 +22,16 @@ application composition roots or upstream libraries.
 
 | Proposed area | Implemented evidence | Current boundary |
 | --- | --- | --- |
-| 1. Error model | [OperationError<E>](../crates/batter/src/operation.rs), legacy [RetryError<E>](../crates/batter/src/retry.rs), and the non-exhaustive opt-in `RetryExecutionError<E>` preserve concrete failures and distinguish total interruption from a per-attempt deadline; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Domain errors remain concrete; wire policy belongs to the application. |
-| 2. Composition root and lifecycle | [Supervisor](../crates/batter/src/lifecycle.rs), [owned driver](../crates/batter/src/lifecycle/driver.rs), [finite work](../crates/batter/src/lifecycle/process.rs), and [CleanupStack](../crates/batter/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. Private state owns terminal transitions and abandonment. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Non-yielding, scheduling, component-ownership and HTTP/1.1 lifetime suites have scoped execution evidence; they do not detect hidden children or bound streaming bodies after response construction. |
-| 3. Ambient request context | HTTP supplies explicit `Extension<OperationContext>` with deadline/cancellation. Opt-in `operational_http` supplies opaque server-generated `CorrelationId` and retained HTTP event fields; the [HTTP example](../crates/batter-axum/examples/http_service.rs) adopts it. The reference root separately combines that ID with the native direct peer in `TrustedRequestMetadata`, while bearer-selected `OwnerId` stays separate authority. | No task-local request context, proxy trust mode, tenant/principal framework, inbound trace-parent handling, durable envelope, or automatic spawn propagation. Explicit metadata remains non-authoritative. |
-| 4. Retry policy | [RetryPolicy and RetryOptions](../crates/batter/src/retry.rs) implement fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, injected jitter, and opt-in per-attempt deadline caps that never renew total time. | No `backon` dependency, outbound HTTP/SQLx/job adapter, or retry-token budget. Share mechanics while retaining one retry owner for each operation. |
-| 5. Config and secrets | [`batter::settings`](../crates/batter/src/settings.rs) supplies explicit bounded sources, parsing and redacted diagnostics; HTTP and reference roots own their schemas and native constructors. The reference command maps a configured opaque bearer token to an application owner and consumes the native request/pool/admission constructors. [Argument validation](../crates/batter/src/validation.rs) still rejects invalid budgets/registration. | Not a configuration framework, general authentication system, or secret-erasure tool. Argument validation is not a config API. |
-| 6. Observability | [Telemetry](../crates/batter/src/telemetry.rs) records outcomes/timing; independent HTTP observation covers assembled routes, probes/fallback and rejection, with explicit response severity and retained correlation under filtering. [Scoped dispatch](../crates/batter/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library; arbitrary synchronous subscriber failures are not isolated. |
+| 1. Error model | [OperationError<E>](../crates/batter-core/src/operation.rs), legacy [RetryError<E>](../crates/batter-core/src/retry.rs), and the non-exhaustive opt-in `RetryExecutionError<E>` preserve concrete failures and distinguish total interruption from a per-attempt deadline; [HttpFailure](../crates/batter-axum/src/lib.rs) has stable sanitized codes, default Problem JSON, and configurable rendering. | No universal Error, app-wide domain-code contract, or HTTP panic catcher. Domain errors remain concrete; wire policy belongs to the application. |
+| 2. Composition root and lifecycle | [Supervisor](../crates/batter-core/src/lifecycle.rs), [owned driver](../crates/batter-core/src/lifecycle/driver.rs), [finite work](../crates/batter-core/src/lifecycle/process.rs), and [CleanupStack](../crates/batter-core/src/cleanup.rs) implement acknowledged readiness, admission, drain/cancel/abort observation, retained reports, and LIFO cleanup. Private state owns terminal transitions and abandonment. [SQLx example](../examples/postgres-lifecycle/src/main.rs) shows explicit acquisition and partial-startup cleanup. | Resource construction remains an application pattern. No DI graph, memoizing builder, automatic async resource scope, or general request-child joining. Non-yielding, scheduling, component-ownership and HTTP/1.1 lifetime suites have scoped execution evidence; they do not detect hidden children or bound streaming bodies after response construction. |
+| 3. Ambient request context | HTTP supplies explicit `Extension<OperationContext>` with deadline/cancellation. Opt-in `operational_http` supplies opaque server-generated `CorrelationId` and retained HTTP event fields; the [HTTP example](../crates/batter/examples/http_service.rs) adopts it. The reference root separately combines that ID with the native direct peer in `TrustedRequestMetadata`, while bearer-selected `OwnerId` stays separate authority. | No task-local request context, proxy trust mode, tenant/principal framework, inbound trace-parent handling, durable envelope, or automatic spawn propagation. Explicit metadata remains non-authoritative. |
+| 4. Retry policy | [RetryPolicy and RetryOptions](../crates/batter-core/src/retry.rs) implement fresh factories, explicit replay authorization/classification, bounded attempts, provider delay floors, total budgets, injected jitter, and opt-in per-attempt deadline caps that never renew total time. | No `backon` dependency, outbound HTTP/SQLx/job adapter, or retry-token budget. Share mechanics while retaining one retry owner for each operation. |
+| 5. Config and secrets | [`batter::settings`](../crates/batter-core/src/settings.rs) supplies explicit bounded sources, parsing and redacted diagnostics; HTTP and reference roots own their schemas and native constructors. The reference command maps a configured opaque bearer token to an application owner and consumes the native request/pool/admission constructors. [Argument validation](../crates/batter-core/src/validation.rs) still rejects invalid budgets/registration. | Not a configuration framework, general authentication system, or secret-erasure tool. Argument validation is not a config API. |
+| 6. Observability | [Telemetry](../crates/batter-core/src/telemetry.rs) records outcomes/timing; independent HTTP observation covers assembled routes, probes/fallback and rejection, with explicit response severity and retained correlation under filtering. [Scoped dispatch](../crates/batter-core/src/scoped_dispatch.rs) retains owned-future tracing through polling and destruction. | No metrics/exporter setup recipe or durable trace propagation is implemented. No global subscriber installation belongs in the library; arbitrary synchronous subscriber failures are not isolated. |
 | 7. Schema and contract | HTTP infrastructure rendering can match an application's wire envelope. Optional Serde currently serializes that envelope. | No validated JSON extractor, schema generation, OpenAPI, or client round-trip pipeline. |
 | 8. Test kit | [Test support](../crates/batter-test-support/src/lib.rs) provides scripted results and preserves body plus cleanup errors. Tests use native Tokio paused time. Optional [`batter-sqlx/test-support`](../crates/batter-sqlx/src/test_support.rs) owns isolated fixture leases/templates; the explicit reference runner owns exact live inventory. | No TestApp. PostgreSQL provisioning stays in the external harness. Ordinary tests compile but do not execute the ignored live cases; the current 66-entry provider inventory and separate maintenance-session probe passed locally against two distinct PostgreSQL 18.6 clusters, while earlier Linux/macOS inventories retain their separately recorded scope. |
 
-The crate also already has [process-local concurrency admission](../crates/batter/src/admission.rs),
+The crate also already has [process-local concurrency admission](../crates/batter-core/src/admission.rs),
 explicit finalization reserves, bounded finite task receipts, and shutdown waiters
 that do not own cleanup. These strengthen the proposed lifecycle model without
 introducing a runtime. Semaphore waiters themselves are not bounded; finite
@@ -126,7 +126,7 @@ flag merely to reproduce Effect's packaging. HTTP and SQLx adoption now
 use separate packages; neither is a foundation feature. See
 [ADR-006](adr/006-workspace-packages.md) and [Cargo's feature policy reference](references.md#boundary-conventions-reviewed-2026-09-08).
 
-[AGENTS.md](../AGENTS.md), rustdoc, seven runnable demonstrations plus a read-only
+[AGENTS.md](../AGENTS.md), rustdoc, eight runnable demonstrations plus a read-only
 live-suite preflight, and the
 [failure-contract test map](testing.md) already provide the agent-facing starting
 point. No `llms.txt` exists. An additional index would be navigation only, not a competing contract. Predictability should come from checked types,
@@ -136,15 +136,15 @@ probe, not a complete durable service.
 ## Evidence behind this comparison
 
 Representative existing tests include `original_application_error_survives` and
-`panic_is_not_converted_to_expected_failure` in [operation tests](../crates/batter/tests/operation.rs);
+`panic_is_not_converted_to_expected_failure` in [operation tests](../crates/batter-core/tests/operation.rs);
 `attempt_timeout_is_not_automatically_retried` and provider-floor tests in
-[retry tests](../crates/batter/tests/retry.rs); error retention and conservative cleanup in
-[lifecycle tests](../crates/batter/tests/lifecycle.rs); readiness acknowledgements, receipt
-ownership, and waiter cancellation in [process tests](../crates/batter/tests/process_ownership.rs).
+[retry tests](../crates/batter-core/tests/retry.rs); error retention and conservative cleanup in
+[lifecycle tests](../crates/batter-core/tests/lifecycle.rs); readiness acknowledgements, receipt
+ownership, and waiter cancellation in [process tests](../crates/batter-core/tests/process_ownership.rs).
 [HTTP tests](../crates/batter-axum/tests/http.rs) cover deadlines and trusted renderer metadata;
-[core telemetry tests](../crates/batter/tests/telemetry.rs),
+[core telemetry tests](../crates/batter-core/tests/telemetry.rs),
 [HTTP telemetry tests](../crates/batter-axum/tests/telemetry.rs),
-[core dispatch tests](../crates/batter/tests/scoped_dispatch.rs), and
+[core dispatch tests](../crates/batter-core/tests/scoped_dispatch.rs), and
 [HTTP dispatch tests](../crates/batter-axum/tests/scoped_dispatch.rs)
 cover context and output exclusions. These existing tests support the implemented
 rows; the remaining rows are proposals without implementation evidence.

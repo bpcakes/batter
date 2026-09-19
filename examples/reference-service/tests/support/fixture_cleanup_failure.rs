@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{BodyFailure, ConnectionPlan, FixtureError, FixtureSuite};
+use batter::sqlx::test_support::{BodyFailure, ConnectionPlan, FixtureError, FixtureSuite};
 use postgres_test_harness::{HarnessConfig, PostgresHarness, cleanup_stale_databases};
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::oneshot;
@@ -70,7 +70,7 @@ pub async fn probe() -> ProbeResult {
     Ok(())
 }
 
-fn assert_both(report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>) {
+fn assert_both(report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>) {
     assert!(
         matches!(&report.body, Err(BodyFailure::Returned(FixtureError::Observe(sqlx::Error::Database(error)))) if error.code().as_deref() == Some("22012"))
     );
@@ -126,7 +126,7 @@ async fn low_level_both() -> ProbeResult {
     recovered?;
     absence?;
     assert!(
-        matches!(result, Err(batter_test_support::TestFailure::Both { body: sqlx::Error::Database(error), cleanup: FixtureError::Harness(_) }) if error.code().as_deref() == Some("22012"))
+        matches!(result, Err(batter::test_support::TestFailure::Both { body: sqlx::Error::Database(error), cleanup: FixtureError::Harness(_) }) if error.code().as_deref() == Some("22012"))
     );
     Ok(())
 }
@@ -207,7 +207,7 @@ pub async fn deferred_and_consuming() -> ProbeResult {
 }
 
 fn assert_deferred_report(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     deferred_name: &str,
     name: &str,
 ) {

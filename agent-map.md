@@ -8,7 +8,8 @@ Fast jump index for agent-facing guidance in this repository.
 
 ## Nested guides
 
-- [Foundation](./crates/batter/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
+- [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
+- [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
   cleanup, admission, dependency health, settings, and telemetry.
 - [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, browser credential
   transport, probes, rendering, operational defaults, and HTTP observations.
@@ -39,5 +40,5 @@ Fast jump index for agent-facing guidance in this repository.
 2. Open the nearest guide for the area you will change.
 3. Follow that guide's entrypoint map before editing.
 
-Owned initialization: `crates/batter/src/startup.rs` and `startup/` retain the
+Owned initialization: `crates/batter-core/src/startup.rs` and `startup/` retain the
 supervisor through failure cleanup or running handoff.

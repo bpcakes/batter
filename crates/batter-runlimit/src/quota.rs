@@ -1,6 +1,6 @@
 //! Admission owns entry into a work factory, preserving native results.
 
-use batter::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationContext, OperationError};
 use runlimit_core::{
     BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Decision, DecisionView, Denial,
     DenialView, Limiter, QuotaDenial, RateLimitPolicy,
@@ -253,8 +253,13 @@ where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        batter::telemetry::with_current_dispatch(self.run_recorded(context, checks, |_| {}, work))
-            .await
+        batter_core::telemetry::with_current_dispatch(self.run_recorded(
+            context,
+            checks,
+            |_| {},
+            work,
+        ))
+        .await
     }
 
     /// Internal HTTP integration seam; callers do not coordinate an external recorder.

@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version = "1.94"
 license.workspace = true
 publish = false
+autoexamples = false
 
 [features]
 default = []
@@ -14,7 +15,7 @@ postgres = ["dep:runlimit-postgres"]
 axum = ["dep:axum", "dep:batter-axum", "dep:tokio", "dep:tower", "dep:serde_json"]
 
 [dependencies]
-batter.workspace = true
+batter-core.workspace = true
 thiserror.workspace = true
 runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee" }
 runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee", optional = true }
@@ -37,11 +38,6 @@ required-features = ["memory"]
 
 [[test]]
 name = "http"
-required-features = ["axum", "memory"]
-
-[[example]]
-name = "quota_service"
-path = "examples/shape.rs"
 required-features = ["axum", "memory"]
 
 [lints]

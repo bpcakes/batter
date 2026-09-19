@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver,
 };
 use sqlx::{Connection, PgConnection, PgPool, postgres::PgPoolOptions};

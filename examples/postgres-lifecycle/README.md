@@ -4,7 +4,7 @@
 `Startup::scoped(...).with_unix_signals("signals")`, slot-owned native pool
 creation, a bounded readiness query and error-preserving owned startup cleanup.
 The initializer parses the application-owned `DATABASE_URL` into native
-`PgConnectOptions`, reserves `postgres.pool` and calls `batter_sqlx::pool_in`,
+`PgConnectOptions`, reserves `postgres.pool` and calls `batter::sqlx::pool_in`,
 which publishes awaited close before returning the lazy pool. Construction does
 not contact PostgreSQL: the following `postgres.probe` stage runs the adapter's
 bounded probe under a five-second child of the root's 15-second startup context.
@@ -27,8 +27,7 @@ The example runs `SELECT 1`; it does not provision a server/database, apply
 migrations, submit durable work, or retry a transaction. SQLx remains a native
 dependency of this executable and is not part of the foundation's library API.
 Live checks exercise real queries and pool closure; they do not establish
-transaction commit/cancellation behavior. Executed versions and platforms are
-recorded in [validation](../../docs/validation.md).
+transaction commit/cancellation behavior.
 
 Every returned failure reaches an explicit exit handler that prints only
 `Error: process failed` and exits with code 1. Original startup

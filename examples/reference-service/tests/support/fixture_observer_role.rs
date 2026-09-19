@@ -1,4 +1,4 @@
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver,
 };
 use sqlx::{Connection, PgPool, postgres::PgPoolOptions};
@@ -48,7 +48,7 @@ async fn role_case(inject_panic: bool) -> ProbeResult {
         );
         return Ok(());
     }
-    batter_test_support::finish(
+    batter::test_support::finish(
         result.map_err(fixture_run::ProbeError::new),
         removed.map(|_| ()),
     )?;

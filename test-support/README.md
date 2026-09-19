@@ -6,7 +6,7 @@ public Batter API. The root remains a virtual workspace with no test target.
 
 Callers supply a `WaitPolicy`; shared code knows no application scenario names,
 package-relative assets, lifecycle APIs, or adapter types. Foundation wrappers
-in `crates/batter/tests/non_yielding/` include these sources and attach their own
+in `crates/batter-core/tests/non_yielding/` include these sources and attach their own
 white-box controls. That suite alone owns the non-yielding fixture and Linux
 Python parent-death probe. HTTP tests import only these shared mechanics and
 provide their own fixture dispatcher and fixed deadline.
@@ -33,9 +33,13 @@ The two-registration arrangement addresses tracing-core 0.1.36's callsite cache
 bug ([upstream #2874](https://github.com/tokio-rs/tracing/issues/2874)) when a thread
 without a subscriber first reaches a callsite. It installs no thread or global
 default and does not retain real capture subscribers indefinitely. The isolated
-`crates/batter/tests/tracing_dispatch.rs` first-hit and bootstrap regressions must pass before removing this
+`crates/batter-core/tests/tracing_dispatch.rs` first-hit and bootstrap regressions must pass before removing this
 workaround on an upstream upgrade. Enabled and filtered callback assertions remain
 in their owning suites; production code does not use this constructor.
+
+`capture.rs` owns the tracing buffer and current-thread runtime wrapper shared by
+the Axum suites and the facade HTTP example. Keep filter construction and dispatch
+bootstrapping here so both consumers exercise the same observation oracle.
 
 The HTTP adapter's shared wrapper also owns complete startup/exercise/teardown
 allowances below its process deadline. Keep phase policy there; the generic

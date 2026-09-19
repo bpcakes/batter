@@ -27,8 +27,7 @@ This verifies the admission rejection independently of transport closure.
 ## Measured behavior
 
 The local resolved graph is Axum 0.8.9, Hyper 1.11.1, hyper-util 0.1.20 and Tokio
-1.53.1. See [primary source inspection](../references.md#http11-lifetimes-reviewed-2026-09-10)
-and [execution evidence](../validation.md#http11-connection-lifetimes-2026-09-10).
+1.53.1. See [primary source inspection](../references.md#http11-lifetimes-reviewed-2026-09-10).
 
 | Scenario | Required observations |
 | --- | --- |

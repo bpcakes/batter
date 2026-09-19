@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     AcquisitionFailure, BodyFailure, ConnectionPlan, FixtureError, FixtureScope, FixtureSuite,
     template_spec,
 };
@@ -177,7 +177,7 @@ fn start_creation(
     template: Option<DatabaseTemplate>,
     cancel_receiver: oneshot::Receiver<()>,
     body_sender: oneshot::Sender<()>,
-) -> batter_sqlx::test_support::FixtureRun<(), FixtureError> {
+) -> batter::sqlx::test_support::FixtureRun<(), FixtureError> {
     suite.start(move |scope| {
         Box::pin(async move {
             let result = tokio::select! {
@@ -192,7 +192,7 @@ fn start_creation(
 
 fn assert_cancelled_report(
     mode: Creation,
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     name: &str,
     before_reclaim: &[String],
 ) {
@@ -270,7 +270,7 @@ async fn failed_template(panic: bool) -> ProbeResult {
 }
 
 fn assert_template_failure(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     panic: bool,
 ) {
     assert!(matches!(

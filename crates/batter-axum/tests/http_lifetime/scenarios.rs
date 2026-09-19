@@ -5,7 +5,7 @@ use super::{
     state::State,
     trace_capture::Capture,
 };
-use batter::{
+use batter_core::{
     BoxError,
     cleanup::SkipReason,
     lifecycle::{Readiness, SharedShutdownReport, ShutdownCause, TaskOutcome},

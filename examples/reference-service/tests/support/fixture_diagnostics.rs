@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use batter_sqlx::test_support::FixtureReport;
+use batter::sqlx::test_support::FixtureReport;
 
 pub struct ProbeError(pub Box<dyn Error + Send + Sync>, String);
 impl ProbeError {
@@ -45,7 +45,7 @@ impl Error for ProbeError {
 pub fn assert_probe(result: Result<(), Box<dyn Error + Send + Sync>>) {
     if let Err(error) = result {
         let summary = if let Some(combined) =
-            error.downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+            error.downcast_ref::<batter::test_support::TestFailure<ProbeError, ProbeError>>()
         {
             format!("{combined:?}")
         } else if let Some(probe) = error.downcast_ref::<ProbeError>() {

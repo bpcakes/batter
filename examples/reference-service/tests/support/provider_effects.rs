@@ -779,7 +779,7 @@ async fn snapshot(pool: &PgPool, job_id: Uuid) -> Result<Snapshot, sqlx::Error> 
 }
 
 fn finish_results(body: ProbeResult, cleanup: ProbeResult) -> ProbeResult {
-    batter_test_support::finish(
+    batter::test_support::finish(
         body.map_err(ProbeError::new),
         cleanup.map_err(ProbeError::new),
     )

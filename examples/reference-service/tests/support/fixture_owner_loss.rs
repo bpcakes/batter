@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{ConnectionPlan, FixtureError, FixtureSuite};
+use batter::sqlx::test_support::{ConnectionPlan, FixtureError, FixtureSuite};
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::oneshot;
 

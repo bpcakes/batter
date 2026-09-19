@@ -1,7 +1,6 @@
 # Architecture decisions
 
-These decisions govern the source implementation and future work. Executed
-checks live in [validation](../validation.md).
+These decisions govern the source implementation and future work.
 
 | ADR | Decision |
 | --- | --- |
@@ -17,5 +16,6 @@ checks live in [validation](../validation.md).
 | [010](010-agent-only-consumption.md) | Optimize the canonical integration path for coding-agent consumers. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
-tests, and an update to the validation/status documents. Do not silently weaken
-them in the name of convenience or compiler compatibility.
+tests, an update to the implemented status, and executed checks recorded in the
+owning Bead. Do not silently weaken them in the name of convenience or compiler
+compatibility.

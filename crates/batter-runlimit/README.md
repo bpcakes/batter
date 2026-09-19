@@ -4,7 +4,7 @@ Optional native atomic quota-before-work execution for Batter. No default
 features; `memory`, `postgres` and `axum` can be selected independently.
 
 ```sh
-cargo run -p batter-runlimit --features axum,memory --example quota_service
+cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked
 cargo test -p batter-runlimit --all-features --locked
 python3 scripts/check_runlimit_features.py
 ```
@@ -31,7 +31,7 @@ selection uses its result and the actual peer, not forwarded headers. Closure
 signatures are checked at `new`. Prepared serving installs peer metadata and one
 retained HTTP observer; the alternative test transport requires an explicit
 synthetic peer. See the
-[compiling example](examples/shape.rs), [API docs](src/http.rs) and
+[facade compiling example](../batter/examples/quota_service.rs), [API docs](src/http.rs) and
 [integration contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
 
 The `postgres` feature only supplies native type/error compatibility. It does not

@@ -36,8 +36,7 @@ This archive is a separate unpublished Cargo workspace, not a root workspace
 member or another supported library. The generated lockfile fixes the evaluated
 registry graph (including Tokio 1.53.1 and SQLx 0.9.0). The native packages now
 use Git revision `d57ec6be61e9f00ccce373b19ca356cafe98f206`, matching the root
-workspace. The original exercise used sibling development sources; the pin
-follow-up and its rerun are recorded in [validation](../../validation.md).
+workspace. The original exercise used sibling development sources.
 
 The executed evidence covers one agent, two bounded assignments and seven
 behavioral checks on Linux/Rust 1.98.1. The supplied signatures guided API

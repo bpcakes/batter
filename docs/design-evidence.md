@@ -38,26 +38,26 @@ source and selected tests, rather than treating yesterday's gaps as current work
 - Lifecycle transitions and admission now share a private state owner. Stopped
   is terminal, unstarted-owner abandonment signals before capture destruction,
   and permanent closure precedes startup/capacity errors. See
-  [state](../crates/batter/src/lifecycle/state.rs),
-  [state tests](../crates/batter/src/lifecycle/state/tests.rs) and
-  [ownership tests](../crates/batter/tests/lifecycle_state.rs).
+  [state](../crates/batter-core/src/lifecycle/state.rs),
+  [state tests](../crates/batter-core/src/lifecycle/state/tests.rs) and
+  [ownership tests](../crates/batter-core/tests/lifecycle_state.rs).
 - Non-yielding subprocess controls and bounded scheduling exploration now have
   recorded execution and defect-rejecting controls. These establish observable
   limits and tested orderings, not scheduler exhaustiveness or preemption. See
-  [subprocess tests](../crates/batter/tests/non_yielding.rs) and
-  [scheduling tests](../crates/batter/tests/scheduling.rs).
+  [subprocess tests](../crates/batter-core/tests/non_yielding.rs) and
+  [scheduling tests](../crates/batter-core/tests/scheduling.rs).
 - HTTP observation is independent of admission. Response severity overrides,
   filtered-span correlation, full owned-future destruction and handler unwinding
   have explicit tests. The real example router retains observation across probes,
   fallback and rejection. See [adapter](../crates/batter-axum/src/lib.rs),
   [correlation tests](../crates/batter-axum/tests/observation/correlation.rs) and
-  [example tests](../crates/batter-axum/examples/http_service/tests.rs).
+  [example tests](../crates/batter/examples/http_service/tests.rs).
 
 The latest combined-source validation records macOS execution on both supported
 toolchains; earlier Linux evidence retains its earlier source scope. Hosted CI
 and live PostgreSQL execution remain unverified in that record. The re-audit
 conclusions use inspected source and recorded evidence; checks for this planning
-change are recorded separately in its Jig session. See [validation](validation.md).
+change are recorded separately in its Jig session.
 
 Core operation, retry and semaphore admission production files are unchanged in
 this commit range. The SQLx demonstration still acquires a pool, probes it and

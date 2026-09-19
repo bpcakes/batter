@@ -3,7 +3,7 @@
 ## Purpose
 
 Demonstrate native SQLx resource ownership with the foundation. This is an
-unpublished executable package consuming the optional `batter-sqlx` adapter.
+unpublished executable package consuming the optional `batter::sqlx` adapter.
 
 Follow the root [Unix-only platform policy](../../AGENTS.md#platform-scope).
 Windows support and non-Unix fallbacks are out of scope.
@@ -11,7 +11,7 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Key entrypoints
 
 - `src/main.rs` selects protected startup and Unix signals, creates the pool with
-  `batter_sqlx::pool_in` (`database_pool`), probes it, and observes startup.
+  `batter::sqlx::pool_in` (`database_pool`), probes it, and observes startup.
 - Its private `serve` and `report_exit` functions retain failures and
   determine the executable outcome; `src/tests.rs` tests those same paths.
 - `src/tests/live.rs` contains explicitly selected tests against an externally
@@ -27,7 +27,7 @@ Windows support and non-Unix fallbacks are out of scope.
 
 Keep pool configuration, schema checks, and application teardown in this
 composition root. Future transactions must use native SQLx transaction values.
-Shared lease disposition, bounded probe and close registration belong in `batter-sqlx`.
+Shared lease disposition, bounded probe and close registration belong in `batter::sqlx`.
 Keep application fixture helpers beside their integration tests.
 
 ## Invariants
@@ -59,7 +59,7 @@ already configured. `scripts/smoke_postgres.py` exercises the built executable's
 readiness, signal exit and pool cleanup; it never provisions PostgreSQL.
 
 Running requires `DATABASE_URL` for an existing local test database. Record a
-live execution separately from compilation in the root validation document.
+live execution separately from compilation in the owning Bead.
 
 The `serve` function starts the owned initializer, awaits its running handoff,
 and checks the shared shutdown outcome. Keep stages and budgets explicit; see

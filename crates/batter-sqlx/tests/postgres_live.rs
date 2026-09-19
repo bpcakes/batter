@@ -1,7 +1,7 @@
 //! Ignored in ordinary gates; scripts/test_sqlx_live.sh requires every case.
 mod support;
 
-use batter::{
+use batter_core::{
     BoxError,
     operation::{Interruption, OperationContext, OperationError},
 };

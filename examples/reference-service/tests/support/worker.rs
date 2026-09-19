@@ -75,7 +75,7 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
     )?);
     let native_pool = pool.clone();
     let native_config = config.jobs_config();
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "worker",
         batter::operation::OperationContext::new(second)?,

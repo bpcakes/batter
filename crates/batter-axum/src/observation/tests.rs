@@ -1,9 +1,9 @@
-#[path = "../../tests/support/capture.rs"]
+#[path = "../../../../test-support/capture.rs"]
 mod capture;
 
 use super::*;
 use axum::body::Body;
-use batter::{operation::OperationContext, telemetry::with_current_dispatch};
+use batter_core::{operation::OperationContext, telemetry::with_current_dispatch};
 use capture::Capture;
 use std::{future::poll_fn, task::Poll};
 

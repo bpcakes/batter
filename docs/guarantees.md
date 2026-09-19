@@ -3,8 +3,7 @@
 These describe the implemented contract and its limits. All workspace packages
 retain Rust 1.94 as their minimum, with development pinned to Rust 1.98.1.
 SQLx 0.9.0 belongs to the optional PostgreSQL adapter and unpublished example
-packages, not the foundation or generic test support. See [validation](validation.md)
-for executed checks. Passing tests do not establish guarantees beyond their scope.
+packages, not the foundation or generic test support. Passing tests do not establish guarantees beyond their scope.
 
 The workspace's platform scope is Unix-only. Windows is unsupported and not
 planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
@@ -238,7 +237,7 @@ work cannot be represented after admission closes. A component already in its
 drain phase observes `ShutdownSignal::cancelled()` directly, while cleanup uses
 its independent budget and, when useful, an independent bounded context.
 
-The [component ownership comparisons](../crates/batter/tests/component_ownership.rs)
+The [component ownership comparisons](../crates/batter-core/tests/component_ownership.rs)
 gate actual child initialization before acknowledgement, then gate child stopping
 and join before dependent cleanup. A deliberately nonconforming wrapper returns
 Ok during drain without joining its child: the direct report succeeds and cleanup
@@ -283,9 +282,8 @@ coexist. Every caught stop-callback panic is published before waiting for native
 settlement, including callbacks for later clock tightening. A pending native
 report cannot hide an already-observed callback failure. Default managed diagnostics omit their contents. The adapter's native
 ownership/classification contract remains necessary; Batter cannot discover
-arbitrary hidden tasks. [Managed contracts](../crates/batter/tests/managed_components.rs)
-exercise actual Tokio descendants and controlled failures. Native adapter/live
-execution is recorded in [validation](validation.md). A panicking third-party stop
+arbitrary hidden tasks. [Managed contracts](../crates/batter-core/tests/managed_components.rs)
+exercise actual Tokio descendants and controlled failures. A panicking third-party stop
 callback can leave retained native settlement pending; the bounded process report
 retains the failure and skips cleanup, without fabricating native termination.
 
@@ -1197,7 +1195,7 @@ any observed shutdown report independently of later reconciliation failures.
 Slow combined-phase and readiness-timeout controls test these diagnostic paths.
 These are test-infrastructure contracts, not runtime-death or general async-drop
 promises. No HTTP/2, WebSocket, capacity or detached-descendant joining claim follows.
-Current Linux evidence and unexecuted macOS/hosted scope are in [validation](validation.md).
+
 
 Default infrastructure responses omit raw errors and use application/problem+json
 with stable codes. `with_failure_renderer` can select an application envelope,
@@ -1590,7 +1588,7 @@ and separately tests its native startup/password wire exchange.
 Focused offline tests prove source policy, native field mapping, changed HTTP
 response deadlines, independent admission capacities and retained startup/cleanup
 failures. Explicit live cases additionally require a disposable PostgreSQL 18
-endpoint; their execution status is recorded in [validation](validation.md).
+endpoint.
 The unpublished reference package now composes these constructors into a command
 and provider-effect worker. Its application-owned protocol proves only stable-key
 reconciliation against the local fixture with a 24-hour retention boundary. No

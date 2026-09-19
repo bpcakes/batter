@@ -1,8 +1,8 @@
+use batter::test_support::TestFailure;
 use batter::{
     settings::SettingsError,
     startup::{StartupCause, StartupError, StartupFailure},
 };
-use batter_test_support::TestFailure;
 use std::sync::Arc;
 use tokio::sync::oneshot::error::RecvError;
 

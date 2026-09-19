@@ -41,7 +41,7 @@ full matrix still compiles the SQLx executable without claiming PostgreSQL
 execution. Existing lifecycle, HTTP, tracing, and cleanup failure contracts
 must pass after relocation, and the public dispatch seam needs direct tests.
 Publication remains a separate decision. See [Cargo references](../references.md#workspace-packaging-reviewed-2026-09-08)
-and [validation](../validation.md) for external semantics and execution evidence.
+for external semantics.
 
 SQLx amendment, 2026-09-09 (`batter-7r3.2`): add a fourth library, independently
 selected `batter-sqlx`, and retain the native lifecycle executable as its runnable
@@ -64,3 +64,27 @@ lock observation. Reference tests consume it through a development dependency;
 application SQL and initializer policy stay there. Default SQLx adapter, core and
 generic leaf graphs exclude the harness. Provisioning and template caching remain
 upstream; no Runledger dependency enters the fixture module.
+
+Facade/core amendment, 2026-09-18 (`batter-tmx.1`): extract the native foundation
+implementation into `batter-core` and reduce `batter` to a source-compatible
+re-exporting facade. The four adapters depend on `batter-core`, never on the
+facade, while the facade retains the foundation examples and later owns explicit
+optional adapter namespaces. The workspace therefore has seven libraries and
+two executable example packages. Core failure and subprocess tests move with the
+implementation; facade doctests and examples exercise the established public
+paths. This amendment changes package ownership and verification routing, not
+native lifecycle, cleanup, tracing, Unix, SQLx, Runledger, or Runlimit semantics.
+
+Facade feature amendment, 2026-09-18 (`batter-tmx.2`): the facade now exposes
+feature-gated `axum`, `sqlx`, `runledger`, `runlimit`, and `test_support` modules,
+plus the existing Runlimit and SQLx fixture forwarding features. Optional
+dependencies use the facade's explicit feature contract and remain owned by
+their adapters or upstream libraries. Isolated temporary consumers check each
+public feature, representative unions, normal dependency reachability, focused
+missing-module failures, and one all-feature type-identity fixture. The runner
+does not enumerate redundant feature products; the direct Runlimit matrix and
+adapter suites retain their existing implementation coverage. Cargo feature
+unification in the full workspace remains insufficient evidence for facade
+optionality, so the temporary consumers keep their own workspace and target
+directory, copy the repository lock, reconcile only their root, and then use
+`--locked` without changing the repository lock.

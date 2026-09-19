@@ -30,7 +30,7 @@ Windows support and non-Unix fallbacks are out of scope.
   HTTP status, response extensions and observation severity.
 - `src/serving.rs` registers a bound native listener/router with the supervisor,
   including opt-in direct TCP peer `ConnectInfo<SocketAddr>` through protected authority.
-- `examples/http_service.rs` demonstrates adoption of these public helpers.
+- `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
@@ -62,16 +62,16 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Edit here for X
 
 Change HTTP policy and rendering here. Change operation/lifecycle semantics in
-`batter`. Keep `RequestPolicy`'s combined readiness and deadline contract unless
+`crates/batter-core`. Keep `RequestPolicy`'s combined readiness and deadline contract unless
 a separately approved API change calls for decoupling. Update the root HTTP
-contract, source map, implemented status, owning Bead, and validation with changes.
+contract, source map and implemented status, then record executed checks in the owning Bead.
 Keep raw durations outside `RequestPolicy::new`; validation belongs to the opaque
 adapter-owned `ResponseConstructionBudget` witness.
 
 ## Invariants
 
 The adapter depends on the foundation, never the reverse. Use
-`batter::telemetry::with_current_dispatch` inside the async request entrypoint to
+`batter_core::telemetry::with_current_dispatch` inside the async request entrypoint to
 retain first-poll capture and protect full future destruction. Keep observation
 guards and nested spans inside the wrapped future. Do not duplicate its private
 pin/drop implementation. Bound response construction without claiming body
@@ -117,7 +117,7 @@ Run from the workspace root:
 
 ```sh
 cargo test -p batter-axum --locked
-cargo build -p batter-axum --example http_service --locked
+cargo build -p batter --features axum --example http_service --locked
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service
 scripts/jig check test
 ```

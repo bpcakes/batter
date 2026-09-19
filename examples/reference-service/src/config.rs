@@ -45,12 +45,12 @@ pub use pool::PoolSettings;
 pub use worker::WorkerSettings;
 
 use crate::{auth::BearerAuthenticator, delivery::OwnerId, request::TrustedPeerPolicy};
+use batter::axum::{RequestPolicy, ResponseConstructionBudget};
 use batter::{
     admission::{Bulkhead, BulkheadCapacity},
     lifecycle::{OperationAdmission, ProcessCapacity, ShutdownBudget, Supervisor},
     settings::{SettingsError, SettingsSource, bounded_u64, milliseconds, read_file},
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 use runledger_runtime::config::JobsConfig;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{

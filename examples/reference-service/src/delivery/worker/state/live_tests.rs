@@ -21,7 +21,7 @@ impl std::fmt::Debug for Failure {
 }
 
 fn finish<T>(body: Result<T, BoxError>, cleanup: Result<(), BoxError>) -> Result<T, BoxError> {
-    Ok(batter_test_support::finish(
+    Ok(batter::test_support::finish(
         body.map_err(Failure),
         cleanup.map_err(Failure),
     )?)
@@ -167,7 +167,7 @@ async fn run_boundaries() -> Result<(), BoxError> {
     let shutdown = harness.shutdown().await;
     finish(
         body,
-        batter_test_support::finish(drained, shutdown).map_err(Into::into),
+        batter::test_support::finish(drained, shutdown).map_err(Into::into),
     )?;
     Ok(())
 }

@@ -10,13 +10,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use batter::{
-    lifecycle::ShutdownHandle,
-    operation::{Interruption, OperationContext},
-};
 use batter_axum::{
     HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http,
     request_admission, request_scope,
+};
+use batter_core::{
+    lifecycle::ShutdownHandle,
+    operation::{Interruption, OperationContext},
 };
 use std::{
     sync::{

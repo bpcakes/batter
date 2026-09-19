@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/batter", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
-default-members = ["crates/batter", "crates/batter-axum", "crates/batter-test-support"]
+members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
+default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
 [workspace.package]
@@ -12,11 +12,14 @@ cognitive_complexity = "warn"
 too_many_lines = "warn"
 
 [workspace.dependencies]
-batter = { path = "crates/batter" }
-batter-sqlx = { path = "crates/batter-sqlx" }
-batter-runledger = { path = "crates/batter-runledger" }
+batter = { path = "crates/batter", default-features = false }
+batter-axum = { path = "crates/batter-axum", default-features = false }
+batter-core = { path = "crates/batter-core" }
+batter-runledger = { path = "crates/batter-runledger", default-features = false }
+batter-runlimit = { path = "crates/batter-runlimit", default-features = false }
+batter-sqlx = { path = "crates/batter-sqlx", default-features = false }
+batter-test-support = { path = "crates/batter-test-support", default-features = false }
 runledger-runtime = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
-batter-test-support = { path = "crates/batter-test-support" }
 pin-project-lite = "0.2.17"
 tokio = { version = "1.53.1", default-features = false }
 tokio-util = { version = "0.7.19", default-features = false }

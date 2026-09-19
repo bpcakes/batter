@@ -8,6 +8,36 @@ Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
 APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.md).
 
+## Facade feature selection
+
+Applications can use `batter` as the single public import root. Its default
+feature set is empty and re-exports the foundation from `batter-core`. Select
+integration namespaces explicitly:
+
+| Facade feature | Public path | Selects |
+| --- | --- | --- |
+| `axum` | `batter::axum` | `batter-axum` |
+| `sqlx` | `batter::sqlx` | `batter-sqlx` |
+| `runledger` | `batter::runledger` | `batter-runledger` |
+| `runlimit` | `batter::runlimit` | `batter-runlimit` |
+| `test-support` | `batter::test_support` | `batter-test-support` |
+| `sqlx-test-support` | `batter::sqlx::test_support` | SQLx adapter fixture support plus generic support |
+
+`runlimit-memory` and `runlimit-postgres` forward only the existing native
+error bridges through `batter::runlimit`; neither selects the other backend or
+HTTP. `runlimit-axum` enables `batter::axum` and
+`batter::runlimit::http`. Native SQLx selected by Runledger or
+`runlimit-postgres` does not expose `batter::sqlx`, and `axum+runlimit` does
+not expose the Runlimit HTTP module. Native versions, TLS/runtime settings,
+storage, fixture provisioning, and policy remain owned by the adapter or
+upstream package.
+
+The facade feature proof runs in temporary external workspaces because the
+workspace's all-feature build unifies optional dependencies. The bounded
+runner checks every declared feature, the representative unions, graph
+optionality, focused disabled imports, and one direct/facade identity fixture.
+The direct Runlimit runner separately retains its eight native combinations.
+
 ## Axum: implemented, with a deliberately small boundary
 
 The real HTTP/1.1 [lifetime suite](../crates/batter-axum/tests/http_lifetime.rs)
@@ -20,7 +50,7 @@ connections. Pending streaming work can survive that report; dependent cleanup
 is conservatively skipped after the unsafe direct exit. Full-disconnect tests
 cover the resolved transport, not immediate universal propagation or write-half
 closure. [ADR-008](adr/008-http-transport-ownership.md) records the measured
-contracts and [validation](validation.md) records platform-specific evidence.
+contracts.
 
 Import `ResponseConstructionBudget`, `RequestPolicy`, `request_admission` and
 `observe_http` from `batter_axum`. Validate the fixed server budget before
@@ -50,7 +80,7 @@ runs after routing and only covers existing routes. A later-added route bypasses
 it; a service wrapper outside routing has no matched route template at entry.
 Place rejecting/status-changing middleware inside observation so its response
 is covered. See the [compiling composition example](../crates/batter-axum/src/lib.rs)
-and [HTTP example](../crates/batter-axum/examples/http_service.rs).
+and [HTTP example](../crates/batter/examples/http_service.rs).
 
 `with_failure_renderer` maps middleware failures into an application-owned
 envelope using a snapshot of request parts. Trusted correlation middleware must
@@ -149,7 +179,7 @@ atomic with subsequent transitions.
 readiness-gated downward-cancelled operation context. Neither policy retains
 `ShutdownHandle` or can request shutdown or approve readiness.
 
-The [HTTP composition root](../crates/batter-axum/examples/http_service.rs) deletes
+The [HTTP composition root](../crates/batter/examples/http_service.rs) deletes
 its local ID, renderer, readiness and serve implementations in favor of these
 helpers. Authentication/metadata policy remains application-owned.
 [Real socket tests](../crates/batter-axum/tests/operational/serving.rs)
@@ -241,9 +271,8 @@ its `CommandScope` slot and native `after_connect` guard to `pool_in` unchanged.
 probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
 source chain. No database abstraction or generic transaction retry is introduced.
-The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Portable checks
-and separately provisioned live executions have distinct evidence in
-[validation](validation.md); compiling the example does not establish pool closure.
+The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Compiling the
+example does not establish pool closure.
 
 Application-owned migration/schema checks happen before readiness. There is no
 automatic migration during a health probe. Size pool capacity alongside admitted
@@ -548,7 +577,7 @@ terminal value remains an adapter assertion, not a proof of native truth. Raw
 subjects, credentials and error strings are not observations.
 Body streaming and detached descendants remain outside response construction.
 
-See the [compiled consumer](../crates/batter-runlimit/examples/shape.rs) and
+See the [compiled consumer](../crates/batter/examples/quota_service.rs) and
 [failure contracts](../crates/batter-runlimit/tests). Fresh-agent usability and
 live PostgreSQL acceptance remain unexecuted for this adapter.
 

@@ -36,7 +36,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use batter_axum::{CorrelationId, HttpFailure, render_infrastructure_failure};
+use batter::axum::{CorrelationId, HttpFailure, render_infrastructure_failure};
 use std::net::{IpAddr, SocketAddr};
 
 /// Trusted IP from the accepted TCP socket, never from an HTTP header.

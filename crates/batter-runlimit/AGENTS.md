@@ -12,7 +12,7 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
 - `batter-axum/src/quota_observation.rs`: the retained HTTP fact writer and read-only observation.
 - `tests/quota.rs`, `tests/http.rs`: native memory, interrupted execution and actual serving.
-- `examples/shape.rs`: runnable library consumer without the reference service.
+- `../batter/examples/quota_service.rs`: runnable facade consumer without the reference service.
 
 ## Edit here for X
 
@@ -49,6 +49,6 @@ No body-stream, detached-task or remote rollback guarantee is added.
 
 ```sh
 cargo test -p batter-runlimit --all-features --locked
-cargo run -p batter-runlimit --features axum,memory --example quota_service --locked
+cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked
 python3 scripts/check_runlimit_features.py
 ```

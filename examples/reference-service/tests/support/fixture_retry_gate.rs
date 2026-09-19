@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -101,8 +101,8 @@ pub async fn active_attempts() -> ProbeResult {
 }
 
 fn assert_report(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
-    before: &[batter_sqlx::test_support::DatabaseProgress],
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
+    before: &[batter::sqlx::test_support::DatabaseProgress],
 ) {
     assert!(!report.is_ok() && report.body.is_ok() && report.drain.is_ok());
     assert_eq!(report.databases.len(), 2);

@@ -18,16 +18,16 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use batter::axum::{
+    CorrelationId, HttpFailure, RequestPolicy, liveness, operational_http,
+    render_infrastructure_failure, request_admission,
+};
 use batter::{
     RegistrationError,
     admission::{Admission, AdmissionError, Bulkhead},
     lifecycle::{LifecycleStatus, OperationAdmission},
     operation::{Interruption, OperationContext},
     registration::RegistrationTarget,
-};
-use batter_axum::{
-    CorrelationId, HttpFailure, RequestPolicy, liveness, operational_http,
-    render_infrastructure_failure, request_admission,
 };
 use serde::Serialize;
 use sqlx::PgPool;
@@ -96,7 +96,7 @@ where
     T: RegistrationTarget + ?Sized,
 {
     let application = router(prepared, lifecycle, admission, pool, health);
-    batter_axum::register_http_with_connect_info_in(target, "http", listener, application)
+    batter::axum::register_http_with_connect_info_in(target, "http", listener, application)
 }
 
 /// In-process request client that always supplies an explicitly selected peer.
@@ -210,8 +210,8 @@ fn router<E: Send + Sync + 'static>(
 ) -> Router {
     let probes = Router::new()
         .route("/live", get(liveness))
-        .route("/ready", get(batter_axum::dependency_readiness::<E>))
-        .with_state(batter_axum::ReadinessPolicy::new(lifecycle, health));
+        .route("/ready", get(batter::axum::dependency_readiness::<E>))
+        .with_state(batter::axum::ReadinessPolicy::new(lifecycle, health));
     router_with_probes(prepared, admission, pool, probes)
 }
 

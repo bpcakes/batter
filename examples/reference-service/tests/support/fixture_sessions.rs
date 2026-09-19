@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     CleanupPhase, ConnectionPlan, FixtureError, FixtureSuite, SessionObserver, observe_blocked,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -11,7 +11,7 @@ use super::{ProbeResult, fixture_run, fixture_run::present};
 const BOUND: Duration = Duration::from_secs(5);
 
 pub async fn phase<T, E>(
-    run: &batter_sqlx::test_support::FixtureRun<T, E>,
+    run: &batter::sqlx::test_support::FixtureRun<T, E>,
     expected: CleanupPhase,
 ) {
     tokio::time::timeout(BOUND, async {
@@ -56,7 +56,7 @@ async fn observe_detached(
     admin: PgPool,
     session_pool: PgPool,
     control: SessionObserver,
-    mut run: batter_sqlx::test_support::FixtureRun<(), FixtureError>,
+    mut run: batter::sqlx::test_support::FixtureRun<(), FixtureError>,
     receive: oneshot::Receiver<DetachedResources>,
 ) -> ProbeResult {
     let (mut blocker, blocker_pid, pid, operation, pools, name, sibling, cleanup) =
@@ -110,7 +110,7 @@ async fn observe_detached(
         sessions_absent,
         absent,
     ]);
-    let report = batter_test_support::finish(report, observations)
+    let report = batter::test_support::finish(report, observations)
         .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
     assert!(joined.is_err_and(|error| error.is_cancelled()));
     assert_session_retention(pending, retained?, &sessions, [pid, blocker_pid]);
@@ -209,7 +209,7 @@ type DetachedResources = (
 );
 
 async fn detached_body(
-    scope: &mut batter_sqlx::test_support::FixtureScope,
+    scope: &mut batter::sqlx::test_support::FixtureScope,
     native: bool,
     send: oneshot::Sender<DetachedResources>,
 ) -> Result<(), FixtureError> {
@@ -246,7 +246,7 @@ async fn detached_body(
         } else {
             let context = batter::operation::OperationContext::new(Duration::from_secs(10))
                 .expect("positive budget");
-            let mut connection = batter_sqlx::PgLease::acquire(&pool, &context)
+            let mut connection = batter::sqlx::PgLease::acquire(&pool, &context)
                 .await
                 .expect("adapter acquire");
             let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -277,7 +277,7 @@ async fn detached_body(
 }
 
 fn assert_observer_report(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     failure: &std::sync::Arc<FixtureError>,
 ) {
     assert_eq!(report.databases[0].observation_failures.len(), 2);
@@ -294,13 +294,13 @@ fn assert_observer_report(
         &report.databases[0].observation_failures[0]
     ));
     assert!(
-        matches!(&report.body, Err(batter_sqlx::test_support::BodyFailure::Returned(FixtureError::Observe(sqlx::Error::Database(error)))) if error.code().as_deref() == Some("22012"))
+        matches!(&report.body, Err(batter::sqlx::test_support::BodyFailure::Returned(FixtureError::Observe(sqlx::Error::Database(error)))) if error.code().as_deref() == Some("22012"))
     );
     assert!(report.databases[0].result.is_ok() && report.drain.is_ok() && !report.is_ok());
 }
 
 fn assert_detached_report(
-    report: &batter_sqlx::test_support::FixtureReport<(), FixtureError>,
+    report: &batter::sqlx::test_support::FixtureReport<(), FixtureError>,
     name: &str,
 ) {
     assert!(report.body.is_ok() && report.drain.is_ok());
@@ -360,7 +360,7 @@ fn combine_observations(results: [ProbeResult; 6]) -> Result<(), fixture_run::Pr
     let mut combined = Ok(());
     for result in results {
         combined =
-            batter_test_support::finish(combined, result.map_err(fixture_run::ProbeError::new))
+            batter::test_support::finish(combined, result.map_err(fixture_run::ProbeError::new))
                 .map_err(|error| fixture_run::ProbeError::new(Box::new(error)));
     }
     combined

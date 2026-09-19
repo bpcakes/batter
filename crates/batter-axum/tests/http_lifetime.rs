@@ -16,7 +16,7 @@ mod server;
 #[path = "http_lifetime/state.rs"]
 mod state;
 #[allow(dead_code)]
-#[path = "support/capture.rs"]
+#[path = "../../../test-support/capture.rs"]
 mod trace_capture;
 
 #[path = "support/http_graceful.rs"]

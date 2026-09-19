@@ -60,7 +60,7 @@ impl WorkerSettings {
     /// The returned native type's Debug exposes its worker identity.
     /// This section-level probe escape hatch does not register or own native work.
     /// A direct caller must transfer prepared work through
-    /// [`batter_runledger::register`] and observe its complete managed settlement.
+    /// [`batter::runledger::register`] and observe its complete managed settlement.
     /// The protected service path uses `PreparedServing` instead.
     pub fn jobs_config(&self) -> JobsConfig {
         self.0.clone()

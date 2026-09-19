@@ -1,6 +1,6 @@
 [package]
 name = "batter"
-description = "Small operational foundation for Tokio services: lifecycle, deadlines, and explicit retries"
+description = "Cohesive facade for Batter's native operational toolkit"
 version = "0.1.0"
 edition.workspace = true
 rust-version = "1.94"
@@ -12,17 +12,35 @@ autoexamples = false
 [lints]
 workspace = true
 
+[features]
+default = []
+axum = ["dep:batter-axum"]
+sqlx = ["dep:batter-sqlx"]
+runledger = ["dep:batter-runledger"]
+runlimit = ["dep:batter-runlimit"]
+runlimit-memory = ["runlimit", "batter-runlimit/memory"]
+runlimit-postgres = ["runlimit", "batter-runlimit/postgres"]
+runlimit-axum = ["runlimit", "axum", "batter-runlimit/axum"]
+test-support = ["dep:batter-test-support"]
+sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
+
 [dependencies]
-pin-project-lite.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal"] }
-tokio-util = { workspace = true, features = ["rt"] }
-tracing.workspace = true
-thiserror.workspace = true
+batter-core = { path = "../batter-core", default-features = false }
+batter-axum = { workspace = true, optional = true }
+batter-sqlx = { workspace = true, optional = true }
+batter-runledger = { workspace = true, optional = true }
+batter-runlimit = { workspace = true, optional = true }
+batter-test-support = { workspace = true, optional = true }
 
 [dev-dependencies]
-batter-test-support.workspace = true
-tracing-core.workspace = true
+axum.workspace = true
+runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee" }
+runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "0a9138fc72f210c2d2ab01d445734a92aaca6aee" }
+sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }
+tower = { workspace = true, features = ["util"] }
+tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [[example]]
@@ -37,3 +55,20 @@ name = "operation_budget"
 [[example]]
 name = "finite_command"
 test = true
+
+[[example]]
+name = "http_service"
+test = true
+required-features = ["axum"]
+
+[[example]]
+name = "owned_pool"
+required-features = ["sqlx"]
+
+[[example]]
+name = "verification"
+required-features = ["sqlx"]
+
+[[example]]
+name = "quota_service"
+required-features = ["runlimit-memory", "runlimit-axum"]

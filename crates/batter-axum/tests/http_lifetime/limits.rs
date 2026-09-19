@@ -1,4 +1,4 @@
-use batter::{cleanup::CleanupBudget, lifecycle::ShutdownBudget};
+use batter_core::{cleanup::CleanupBudget, lifecycle::ShutdownBudget};
 use std::time::Duration;
 
 pub use crate::http_process::{EXERCISE, STARTUP, TEARDOWN};

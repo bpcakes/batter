@@ -3,8 +3,8 @@ use super::{
     support::{Boundary, assert_completion, completions, request},
 };
 use axum::{Router, middleware, routing::get};
-use batter::lifecycle::ShutdownHandle;
 use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http};
+use batter_core::lifecycle::ShutdownHandle;
 use std::time::Duration;
 use tower::{Layer, ServiceExt};
 use tracing::instrument::WithSubscriber;

@@ -1,8 +1,13 @@
-//! An operational foundation, not a new effect runtime or web framework.
+//! Batter's public facade.
 //!
-//! The core uses ordinary futures, typed application errors, and Tokio.
-//! The separate `batter-axum` crate provides a thin HTTP boundary.
-//! The workspace targets Unix backends. Windows is unsupported and not planned.
+//! The operational implementation lives in [`batter_core`]. This crate keeps
+//! the established `batter::...` paths source-compatible and exposes optional
+//! adapter namespaces without changing native ownership.
+//!
+//! The default feature set is empty. Enable only the namespaces an application
+//! uses: `axum`, `sqlx`, `runledger`, `runlimit`, `test-support`, or the
+//! narrower bridge features `runlimit-memory`, `runlimit-postgres`,
+//! `runlimit-axum`, and `sqlx-test-support`.
 //!
 //! # Important limits
 //!
@@ -28,32 +33,89 @@
 
 #![forbid(unsafe_code)]
 
-pub mod admission;
-pub mod cleanup;
-pub mod command;
-pub mod health;
-pub mod lifecycle;
-pub mod operation;
-pub mod readiness;
-pub mod registration;
-pub mod retry;
-pub mod settings;
-pub mod startup;
-pub mod telemetry;
+pub use batter_core::*;
 
-mod completion;
-mod panic_payload;
-mod scoped_dispatch;
-mod validation;
+/// Axum request, browser, readiness, and serving boundaries.
+///
+/// Enabled by the `axum` feature. Native Axum and Tower types remain native;
+/// this module re-exports Batter's adapter surface only.
+///
+/// ```
+/// let _: Option<batter::axum::RequestPolicy> = None;
+/// ```
+#[cfg(feature = "axum")]
+pub mod axum {
+    pub use batter_axum::*;
+}
 
-pub use panic_payload::{PanicPayload, PanicPayloadBusy};
-pub use validation::{ConfigurationError, RegistrationError};
+/// Native SQLx PostgreSQL connection disposition and verification APIs.
+///
+/// Enabled by the `sqlx` feature. The nested `test_support` module additionally
+/// requires `sqlx-test-support` and remains owned by the SQLx adapter.
+///
+/// ```
+/// let _: Option<batter::sqlx::PgLease> = None;
+/// ```
+#[cfg(feature = "sqlx")]
+pub mod sqlx {
+    pub use batter_sqlx::*;
 
-/// Type erasure is confined to process and cleanup boundaries.
-/// Domain and operation APIs retain their concrete error types.
-pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+    /// External-harness fixture ownership for SQLx tests.
+    #[cfg(feature = "sqlx-test-support")]
+    pub mod test_support {
+        pub use batter_sqlx::test_support::*;
+    }
+}
 
-// Private shared test machinery; excluded from the library API and production build.
+/// Runledger initialization and native settlement translation.
+///
+/// Enabled by the `runledger` feature. Durable policy and native supervision
+/// remain owned by Runledger.
+///
+/// ```
+/// let _: Option<batter::runledger::NativeReport> = None;
+/// ```
+#[cfg(feature = "runledger")]
+pub mod runledger {
+    pub use batter_runledger::*;
+}
+
+/// Runlimit quota admission and its selected HTTP/error bridges.
+///
+/// Enabled by `runlimit` or one of its bridge features. The `http` module is
+/// present only with `runlimit-axum`; memory and PostgreSQL bridge features do
+/// not select a storage backend in the facade.
+///
+/// ```
+/// let _: Option<batter::runlimit::EmptyChecks> = None;
+/// ```
+#[cfg(feature = "runlimit")]
+pub mod runlimit {
+    pub use batter_runlimit::*;
+}
+
+/// Generic scripted outcomes and body/cleanup result combination for tests.
+///
+/// Enabled by the `test-support` feature. This does not select SQLx or the
+/// external PostgreSQL harness.
+///
+/// ```
+/// let _: Option<batter::test_support::Script<(), ()>> = None;
+/// ```
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    pub use batter_test_support::*;
+}
+
 #[cfg(test)]
-#[path = "../../../test-support/dispatch.rs"]
-mod test_dispatch;
+mod tests {
+    use super::{BoxError, ConfigurationError, RegistrationError, lifecycle, operation};
+
+    #[test]
+    fn legacy_root_types_are_available_through_the_facade() {
+        let _: fn(ConfigurationError) -> BoxError = BoxError::from;
+        let _: fn(RegistrationError) -> BoxError = BoxError::from;
+        let _: Option<operation::Interruption> = None;
+        let _: Option<lifecycle::Readiness> = None;
+    }
+}

@@ -57,11 +57,11 @@ async fn verification_idle_reset_has_one_expected_native_notice() -> Result {
                     tracing::Dispatch::new(tracing_subscriber::registry().with(notices.clone()));
                 for mode in 0..3 {
                     notices.0.lock().unwrap().clear();
-                    let context = batter::operation::OperationContext::new(
+                    let context = batter_core::operation::OperationContext::new(
                         std::time::Duration::from_secs(10),
                     )?;
                     let operation = tracing::dispatcher::with_default(&dispatch, || {
-                        batter::telemetry::with_current_dispatch(async {
+                        batter_core::telemetry::with_current_dispatch(async {
                             match mode {
                                 0 => {
                                     let plan =

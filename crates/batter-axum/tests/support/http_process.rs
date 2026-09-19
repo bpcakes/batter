@@ -27,15 +27,15 @@ pub const REPORT_DELAY: std::time::Duration = std::time::Duration::from_millis(2
 
 // A real finalizer completes after the exercise allowance, within teardown.
 // This policy is only for the delayed-report success controls.
-pub fn delayed_report_budget() -> batter::lifecycle::ShutdownBudget {
+pub fn delayed_report_budget() -> batter_core::lifecycle::ShutdownBudget {
     use std::time::Duration;
     let short = Duration::from_millis(100);
     let cleanup = Duration::from_millis(2700);
-    let budget = batter::lifecycle::ShutdownBudget::new(
+    let budget = batter_core::lifecycle::ShutdownBudget::new(
         Duration::from_millis(400),
         short,
         short,
-        batter::cleanup::CleanupBudget::new(cleanup, cleanup, short).unwrap(),
+        batter_core::cleanup::CleanupBudget::new(cleanup, cleanup, short).unwrap(),
     )
     .unwrap();
     assert!(EXERCISE < REPORT_DELAY && REPORT_DELAY < cleanup);

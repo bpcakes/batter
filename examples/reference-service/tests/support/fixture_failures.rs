@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     BodyFailure, ConnectionPlan, FixtureBody, FixtureError, FixtureReport, FixtureScope,
     FixtureSuite,
 };
@@ -33,7 +33,7 @@ where
         .max_connections(1)
         .connect(harness.admin_database_url())
         .await?;
-    let session_observer = batter_sqlx::test_support::SessionObserver::new(
+    let session_observer = batter::sqlx::test_support::SessionObserver::new(
         session_pool.clone(),
         Duration::from_secs(5),
     )?;
@@ -214,7 +214,7 @@ pub async fn close_order_and_resumable_wait() -> ProbeResult {
 pub async fn foreign_template_rejected() -> ProbeResult {
     let harness = super::harness().await?;
     let mut foreign = FixtureSuite::new(harness.clone());
-    let spec = batter_sqlx::test_support::template_spec(&[], "foreign-template-control-v1");
+    let spec = batter::sqlx::test_support::template_spec(&[], "foreign-template-control-v1");
     let template = foreign.template(spec, |_| async { Ok(()) }).await?;
     let report = FixtureSuite::new(harness)
         .start(move |scope| {
@@ -251,9 +251,9 @@ pub async fn observer_failure_preserves_body() -> ProbeResult {
     .await;
     let failure = result.expect_err("both body and observer must fail");
     let combined = failure
-        .downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+        .downcast_ref::<batter::test_support::TestFailure<ProbeError, ProbeError>>()
         .expect("retain both branches");
-    let batter_test_support::TestFailure::Both { body, cleanup } = combined else {
+    let batter::test_support::TestFailure::Both { body, cleanup } = combined else {
         panic!("both branches required");
     };
     let report = body
@@ -440,21 +440,21 @@ pub async fn assertion_and_script_failure() -> ProbeResult {
         Box::pin(async move {
             let plan = ConnectionPlan::new(vec![PgPoolOptions::new().max_connections(1)], 0)?;
             let _db = scope.empty(&plan).await?;
-            let script = batter_test_support::Script::<(), std::io::Error>::new([Ok(())]);
+            let script = batter::test_support::Script::<(), std::io::Error>::new([Ok(())]);
             script.next()?;
             // Returned assertion failure plus actual script exhaustion, combined by
             // existing generic finish before the adapter drives native cleanup.
             let assertion = Err::<(), _>(std::io::Error::other("controlled assertion"));
-            batter_test_support::finish(assertion, script.next())?;
+            batter::test_support::finish(assertion, script.next())?;
             Ok(())
         })
     })
     .await;
     let error = result.expect_err("both assertion and verification must survive");
     let outer = error
-        .downcast_ref::<batter_test_support::TestFailure<ProbeError, ProbeError>>()
+        .downcast_ref::<batter::test_support::TestFailure<ProbeError, ProbeError>>()
         .unwrap();
-    let batter_test_support::TestFailure::Body(body) = outer else {
+    let batter::test_support::TestFailure::Body(body) = outer else {
         panic!("cleanup succeeded");
     };
     let report = body
@@ -466,13 +466,13 @@ pub async fn assertion_and_script_failure() -> ProbeResult {
     };
     let both = body
         .0
-        .downcast_ref::<batter_test_support::TestFailure<
+        .downcast_ref::<batter::test_support::TestFailure<
             std::io::Error,
-            batter_test_support::ScriptError<std::io::Error>,
+            batter::test_support::ScriptError<std::io::Error>,
         >>()
         .unwrap();
     assert!(
-        matches!(both, batter_test_support::TestFailure::Both { body, cleanup: batter_test_support::ScriptError::Exhausted } if body.to_string() == "controlled assertion")
+        matches!(both, batter::test_support::TestFailure::Both { body, cleanup: batter::test_support::ScriptError::Exhausted } if body.to_string() == "controlled assertion")
     );
     assert!(report.databases.iter().all(|db| db.result.is_ok()));
     assert!(report.drain.is_ok());

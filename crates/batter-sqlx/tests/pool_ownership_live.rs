@@ -1,6 +1,6 @@
 //! Ignored in ordinary gates; scripts/test_sqlx_live.sh requires every case.
 
-use batter::{
+use batter_core::{
     BoxError, RegistrationError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupRecord, CleanupReport},
     command::{Command, CommandCause},
@@ -340,7 +340,7 @@ async fn authentication_error_keeps_pool_cleanup() -> Result {
     .unwrap();
     assert!(matches!(
         &report.work,
-        Err(CommandCause::Failed(batter::operation::OperationError::Failed(error)))
+        Err(CommandCause::Failed(batter_core::operation::OperationError::Failed(error)))
             if matches!(error.native(), sqlx::Error::Database(database)
                 if database.code().as_deref() == Some("28P01"))
     ));

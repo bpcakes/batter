@@ -6,12 +6,12 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use batter::{
-    lifecycle::ShutdownHandle,
-    operation::{Interruption, OperationContext},
-};
 use batter_axum::{
     HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness, readiness, request_scope,
+};
+use batter_core::{
+    lifecycle::ShutdownHandle,
+    operation::{Interruption, OperationContext},
 };
 use std::{
     sync::{Arc, Mutex},
@@ -56,12 +56,14 @@ fn request_budget_preserves_the_positive_representable_one_year_limit() {
     assert_eq!(ResponseConstructionBudget::new(year).unwrap().get(), year);
     assert!(matches!(
         ResponseConstructionBudget::new(Duration::ZERO),
-        Err(batter::ConfigurationError::Zero("HTTP request budget"))
+        Err(batter_core::ConfigurationError::Zero("HTTP request budget"))
     ));
     for budget in [year + Duration::from_nanos(1), Duration::MAX] {
         assert!(matches!(
             ResponseConstructionBudget::new(budget),
-            Err(batter::ConfigurationError::TooLarge("HTTP request budget"))
+            Err(batter_core::ConfigurationError::TooLarge(
+                "HTTP request budget"
+            ))
         ));
     }
 }
@@ -363,7 +365,7 @@ async fn custom_renderer_owns_status_and_headers_as_well_as_the_error_body() {
 
 #[tokio::test(start_paused = true)]
 async fn forced_process_cancellation_uses_application_renderer_with_original_correlation() {
-    use batter::{
+    use batter_core::{
         cleanup::CleanupBudget,
         lifecycle::{ShutdownBudget, Supervisor},
     };

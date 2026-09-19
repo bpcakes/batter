@@ -11,14 +11,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use batter::{
-    operation::{OperationContext, OperationError},
-    registration::RegistrationTarget,
-};
 use batter_axum::{
     RequestInterruptionResponder, RequestPolicy, operational_http_with_quota,
     quota_observation::{QuotaConsumption, QuotaRecorder, QuotaTerminalFacts},
     request_admission,
+};
+use batter_core::{
+    operation::{OperationContext, OperationError},
+    registration::RegistrationTarget,
 };
 use runlimit_core::{
     BatchDecisionView, Check, ConsumptionStatus, DenialView, Limiter, QuotaMode, RateLimitPolicy,
@@ -370,7 +370,7 @@ impl PreparedHttp {
         self,
         target: &mut T,
         listener: tokio::net::TcpListener,
-    ) -> Result<(), batter::RegistrationError> {
+    ) -> Result<(), batter_core::RegistrationError> {
         batter_axum::register_http_with_connect_info_in(target, "quota.http", listener, self.router)
     }
     /// Consumes the prepared service into an explicit synthetic test transport.

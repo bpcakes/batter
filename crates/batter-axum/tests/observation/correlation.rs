@@ -3,11 +3,11 @@ use super::{
     support::{Boundary, completions, request},
 };
 use axum::{Router, extract::Request, http::StatusCode, routing::get};
-use batter::{
+use batter_axum::{RequestPolicy, ResponseConstructionBudget};
+use batter_core::{
     lifecycle::ShutdownHandle,
     operation::{Interruption, OperationContext},
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget};
 use std::{
     future::{Future, poll_fn},
     sync::{Arc, Mutex},

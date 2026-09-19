@@ -1,4 +1,4 @@
-#[path = "support/capture.rs"]
+#[path = "../../../test-support/capture.rs"]
 mod capture;
 
 use capture::Capture;
@@ -19,8 +19,8 @@ impl Drop for DropTrace {
 #[test]
 fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     use axum::{Router, body::Body, http::Request, middleware, routing::get};
-    use batter::lifecycle::ShutdownHandle;
     use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 
     let scoped = Capture::new();

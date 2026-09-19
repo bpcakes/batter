@@ -1,7 +1,7 @@
 # ADR-008: Observe HTTP transport lifetimes separately
 
 Status: accepted, 2026-09-10. Delivery evidence: `batter-u0m`; component comparison:
-`batter-zu8`. Executed platform and compiler scope is in [validation](../validation.md).
+`batter-zu8`.
 
 ## Context
 

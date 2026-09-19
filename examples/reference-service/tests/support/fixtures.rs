@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use batter_sqlx::test_support::{
+use batter::sqlx::test_support::{
     BodyFailure, ConnectionPlan, FixtureDatabase, FixtureError, FixtureScope, FixtureSuite,
     MigrationBundle, MigrationInput, observe_blocked, template_spec,
 };
@@ -171,7 +171,7 @@ async fn isolated_writes(left: &FixtureDatabase, right: &FixtureDatabase) -> Pro
         write(left.pools()[0].clone(), 31),
         write(right.pools()[0].clone(), 47)
     );
-    batter_test_support::finish(a, b)?;
+    batter::test_support::finish(a, b)?;
     for (fixture, value) in [(left, 31_i64), (right, 47_i64)] {
         let identity: String = sqlx::query_scalar("SELECT current_database()")
             .fetch_one(&fixture.pools()[0])
@@ -244,13 +244,13 @@ pub async fn lock_operation() -> ProbeResult {
             let blocker_closed = blocker.close().await;
             let completed = operation.await;
             drop(observer);
-            let conditions = batter_test_support::finish(observed, blocker_closed);
+            let conditions = batter::test_support::finish(observed, blocker_closed);
             let completed = completed
                 .map_err(|error| ProbeError::new(Box::new(error)))
                 .and_then(|result| result.map_err(|error| ProbeError::new(Box::new(error))));
-            let completed = batter_test_support::finish(completed, conditions);
+            let completed = batter::test_support::finish(completed, conditions);
             let unlocked = released.as_ref().copied().unwrap_or(false);
-            let affected = batter_test_support::finish(completed, released.map(|_| ()))?;
+            let affected = batter::test_support::finish(completed, released.map(|_| ()))?;
             assert!(unlocked);
             assert!(matches!(wrong, Err(FixtureError::ObservationTimeout)));
             assert!(pending);

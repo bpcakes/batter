@@ -1,6 +1,7 @@
 #[path = "../support/configuration_report.rs"]
 mod configuration_report;
 
+use batter::test_support::TestFailure;
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ShutdownBudget, Supervisor},
@@ -8,7 +9,6 @@ use batter::{
     settings::SettingsError,
     startup::{Startup, StartupCause, StartupError},
 };
-use batter_test_support::TestFailure;
 use std::{error::Error, io, sync::Arc, time::Duration};
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, time::Duration};
 
-use batter_sqlx::test_support::{CleanupPhase, FixtureReport, FixtureRun, SessionObserver};
+use batter::sqlx::test_support::{CleanupPhase, FixtureReport, FixtureRun, SessionObserver};
 use sqlx::PgPool;
 
 use super::fixture_diagnostics::ProbeError;

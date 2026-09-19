@@ -76,7 +76,7 @@ pub async fn status(pool: &PgPool, id: Uuid) -> Result<String, sqlx::Error> {
 }
 
 pub fn finish(body: ProbeResult, shutdown: ProbeResult) -> ProbeResult {
-    batter_test_support::finish(
+    batter::test_support::finish(
         body.map_err(ProbeError::new),
         shutdown.map_err(ProbeError::new),
     )
@@ -94,7 +94,7 @@ pub async fn queue_independent_initialization(pool: PgPool) -> ProbeResult {
         .await?;
     let mut process = process(Duration::from_secs(2), Duration::from_secs(1));
     let native_pool = pool.clone();
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "native",
         OperationContext::new(Duration::from_secs(2))?,
@@ -183,7 +183,7 @@ async fn held(pool: PgPool, drop_owner: bool) -> ProbeResult {
         Ok(())
     })?;
     let native_pool = pool.clone();
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "native",
         OperationContext::new(Duration::from_secs(2))?,
@@ -238,7 +238,7 @@ pub async fn business_failure(pool: PgPool) -> ProbeResult {
     let job = enqueue(&pool).await?;
     let mut process = process(Duration::from_secs(2), Duration::from_secs(1));
     let native_pool = pool.clone();
-    batter_runledger::register(
+    batter::runledger::register(
         &mut process,
         "native",
         OperationContext::new(Duration::from_secs(2))?,

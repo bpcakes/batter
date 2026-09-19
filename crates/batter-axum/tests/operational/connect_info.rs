@@ -5,14 +5,14 @@ use axum::{
     response::Response,
     routing::get,
 };
-use batter::{
+use batter_axum::register_http_with_connect_info_in;
+use batter_core::{
     RegistrationError,
     cleanup::CleanupBudget,
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
     startup::Startup,
 };
-use batter_axum::register_http_with_connect_info_in;
 use std::{net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

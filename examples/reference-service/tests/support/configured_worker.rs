@@ -78,7 +78,7 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
         cleanup,
     )?);
     let native_pool = pool.clone();
-    batter_runledger::register(&mut supervisor, "worker", OperationContext::new(second)?, {
+    batter::runledger::register(&mut supervisor, "worker", OperationContext::new(second)?, {
         runledger_runtime::Supervisor::builder(&native_pool, config)?
             .with_catalog(catalog)
             .prepare()?
@@ -168,7 +168,7 @@ async fn enqueue_jobs(
 }
 
 fn finish_results(body: ProbeResult, cleanup: Result<(), BoxError>) -> ProbeResult {
-    batter_test_support::finish(
+    batter::test_support::finish(
         body.map_err(ProbeError::new),
         cleanup.map_err(ProbeError::new),
     )

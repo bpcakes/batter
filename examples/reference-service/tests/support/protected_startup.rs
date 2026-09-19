@@ -65,7 +65,7 @@ fn start() -> Held {
         Box::pin(async move {
             scope.stage("postgres.acquire")?;
             let slot = scope.reserve_cleanup("postgres.pool")?;
-            let pool = batter_sqlx::pool_in(slot, pool_options, connection);
+            let pool = batter::sqlx::pool_in(slot, pool_options, connection);
             let value: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&pool).await?;
             if value != 1 {
                 return Err("unexpected native query result".into());

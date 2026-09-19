@@ -332,7 +332,7 @@ fn assert_completed_stream(fixture: &Fixture) {
 pub fn check_shutdown(
     case: &str,
     fixture: &Fixture,
-    report: &batter::lifecycle::SharedShutdownReport,
+    report: &batter_core::lifecycle::SharedShutdownReport,
 ) {
     if case == "blocked_body_wrapper_abort" {
         fixture.assert_aborted(report);

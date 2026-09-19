@@ -1,4 +1,4 @@
-use batter::{
+use batter_core::{
     lifecycle::{ShutdownBudget, Supervisor},
     operation::{Interruption, OperationContext, OperationError},
 };
@@ -137,7 +137,7 @@ async fn closed_pool_failure_is_native_and_distinct_from_interruption() {
 async fn rejected_registration_retains_caller_pool_ownership() {
     let pool = lazy_pool();
     let second = Duration::from_secs(1);
-    let cleanup = batter::cleanup::CleanupBudget::new(second, second, second).unwrap();
+    let cleanup = batter_core::cleanup::CleanupBudget::new(second, second, second).unwrap();
     let mut supervisor =
         Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
     assert!(register_pool_close(&mut supervisor, "", &pool).is_err());
@@ -153,8 +153,8 @@ async fn rejected_registration_retains_caller_pool_ownership() {
 #[tokio::test]
 async fn slot_owned_pool_registers_close_before_return() {
     let second = Duration::from_secs(1);
-    let budget = batter::cleanup::CleanupBudget::new(second, second, second).unwrap();
-    let mut cleanup = batter::cleanup::CleanupStack::new();
+    let budget = batter_core::cleanup::CleanupBudget::new(second, second, second).unwrap();
+    let mut cleanup = batter_core::cleanup::CleanupStack::new();
     let pool = pool_in(
         cleanup.reserve("pool").unwrap(),
         PgPoolOptions::new(),
@@ -178,7 +178,7 @@ async fn slot_owned_pool_registers_close_before_return() {
 
 #[test]
 fn reservation_rejection_precedes_pool_construction() {
-    let mut cleanup = batter::cleanup::CleanupStack::new();
+    let mut cleanup = batter_core::cleanup::CleanupStack::new();
     assert!(cleanup.reserve("").is_err());
     let first = cleanup.reserve("pool").unwrap();
     first.register(|| async { Ok(()) });
@@ -191,5 +191,5 @@ fn legacy_registration_signature_remains_exact() {
         &mut Supervisor,
         &'static str,
         &sqlx::PgPool,
-    ) -> Result<(), batter::RegistrationError> = register_pool_close;
+    ) -> Result<(), batter_core::RegistrationError> = register_pool_close;
 }

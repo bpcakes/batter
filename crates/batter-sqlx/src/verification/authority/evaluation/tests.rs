@@ -4,7 +4,7 @@ use crate::verification::{
     AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, DiscoveryScope, FindingKind,
     ObjectPrivilege, QualifiedName, RelationPolicy,
 };
-use batter::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationContext, OperationError};
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

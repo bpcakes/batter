@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use batter::{
+use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{RunningSupervisor, ShutdownBudget, Supervisor},
     operation::OperationContext,
@@ -161,5 +161,5 @@ pub fn request_policy(running: &RunningSupervisor, ms: u64) -> batter_axum::Requ
     .with_infrastructure_json()
 }
 pub async fn finish(running: RunningSupervisor) {
-    batter::lifecycle::check_shutdown(running.shutdown().await).unwrap();
+    batter_core::lifecycle::check_shutdown(running.shutdown().await).unwrap();
 }

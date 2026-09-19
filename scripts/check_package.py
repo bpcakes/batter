@@ -10,6 +10,7 @@ import tomllib
 
 EXCLUDED = {"target", ".git", "__pycache__"}
 AGENT_TRANSIENT = {".cache", "runtime", "tmp"}
+AGENT_MARKDOWN_ARCHIVES = {"plans", "reviews"}
 
 
 def files(root: Path, suffix: str) -> list[Path]:
@@ -22,6 +23,16 @@ def files(root: Path, suffix: str) -> list[Path]:
             continue
         candidates.append(path)
     return sorted(candidates)
+
+
+def active_markdown(path: Path, root: Path) -> bool:
+    """Exclude append-only agent history from current-document link checks."""
+    parts = path.relative_to(root).parts
+    return not (
+        len(parts) > 1
+        and parts[0] == ".agent"
+        and parts[1] in AGENT_MARKDOWN_ARCHIVES
+    )
 
 
 def rust_delimiters(text: str) -> str | None:
@@ -102,7 +113,7 @@ def check(root: Path) -> dict[str, object]:
         if problem:
             failures.append(f"{path.relative_to(root)}: {problem}")
     link_count = 0
-    markdown = files(root, ".md")
+    markdown = [path for path in files(root, ".md") if active_markdown(path, root)]
     for path in markdown:
         for match in re.finditer(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", path.read_text()):
             target = match.group(1).split("#", 1)[0]

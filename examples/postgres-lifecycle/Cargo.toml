@@ -12,8 +12,7 @@ readme = "README.md"
 workspace = true
 
 [dependencies]
-batter.workspace = true
-batter-sqlx.workspace = true
+batter = { workspace = true, features = ["sqlx"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 thiserror.workspace = true

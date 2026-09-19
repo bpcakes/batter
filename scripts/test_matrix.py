@@ -8,9 +8,10 @@ import sys
 from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
+CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
+FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
 RUNTIME_TESTS = [
-    ["cargo", "test", "-p", "batter", "--no-default-features", "--lib", "--tests", "--locked"],
+    ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"],
     ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"],
     # A clean developer shell must not hide ambient-state dependencies in tests.
     ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -26,13 +27,15 @@ REFERENCE_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "s
 SQLX_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                      "-p", "test_sqlx_live.py", "-v"]
 RUNLIMIT_FEATURES = [sys.executable, "scripts/check_runlimit_features.py"]
+FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 
 
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
-    for labels, commands in [(["core-library", "runner-controls", "smoke-controls", "reference-runner-controls"],
-                              [CORE_CHECK, RUNNER_TESTS, SMOKE_TESTS, REFERENCE_RUNNER_TESTS]),
-                             (["sqlx-runner-controls"], [SQLX_RUNNER_TESTS]),
+    for labels, commands in [(["core-library", "facade-library", "runner-controls", "smoke-controls"],
+                              [CORE_CHECK, FACADE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
+                             (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls"],
+                              [REFERENCE_RUNNER_TESTS, SQLX_RUNNER_TESTS, FACADE_FEATURES]),
                              (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),
                              (["doctests"], [DOC_TESTS]),
                              (["runlimit-isolated-features"], [RUNLIMIT_FEATURES])]:

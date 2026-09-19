@@ -1,8 +1,8 @@
 #[path = "support/fixture_diagnostics.rs"]
 mod diagnostics;
 
-use batter_sqlx::test_support::FixtureReport;
-use batter_sqlx::test_support::{AcquisitionFailure, BodyFailure, DatabaseCleanup, FixtureError};
+use batter::sqlx::test_support::FixtureReport;
+use batter::sqlx::test_support::{AcquisitionFailure, BodyFailure, DatabaseCleanup, FixtureError};
 use diagnostics::{ProbeError, assert_probe};
 
 fn panic_message(result: Result<(), Box<dyn std::error::Error + Send + Sync>>) -> String {
@@ -28,7 +28,7 @@ fn failed_probe_prints_branches_and_report_counts_without_native_contents() {
         }],
         drain: Err(FixtureError::ObservationTimeout),
     };
-    let result = batter_test_support::finish(
+    let result = batter::test_support::finish(
         report.into_result().map_err(ProbeError::report),
         Err(ProbeError::new("observer-secret".into())),
     )

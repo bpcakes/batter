@@ -1,7 +1,7 @@
 # Provider-backed reference delivery service and compatibility probes
 
 Unpublished, Unix-only application package. Its runnable root initializes the
-atomic delivery command and registers native Runledger through `batter-runledger`.
+atomic delivery command and registers native Runledger through `batter::runledger`.
 Native preparation is inert; Batter owns launch, initialization acknowledgement,
 settlement observation and dependency cleanup. The production registry installs
 the delivery handler and ordinary readiness is approved after component
@@ -32,7 +32,7 @@ An optional positional settings-file path uses the literal format below.
 Environment values override that file; no file is discovered implicitly.
 Protected startup selects `.with_unix_signals("signals")`, so SIGTERM/SIGINT
 listeners exist before the initializer runs. The initializer publishes pool close
-through `batter_sqlx::pool_in`, acquires a connection, applies native and
+through `batter::sqlx::pool_in`, acquires a connection, applies native and
 forward-only application migrations, checks compatibility, synchronizes the
 delivery producer, binds HTTP and registers handler-bearing native preparation.
 A signal during initialization drains startup and awaits cleanup; after handoff
@@ -296,7 +296,7 @@ the full baseline executed on PostgreSQL 18.6. The expanded assertions for
 resumed generation replacement, uncertain admission interruption and terminal
 redelivery also passed on PostgreSQL 18.6 with both supported Rust toolchains.
 Ordinary tests keep database cases ignored and run offline signal controls without
-PostgreSQL. See [validation](../../docs/validation.md) for exact execution scope.
+PostgreSQL.
 
 The external harness owns lease cleanup and each application pool closes before
 lease disposal. The runner checks prerequisites and exact named results through
@@ -308,7 +308,7 @@ The original migration fixtures remain narrow compatibility probes. The producti
 root starts native Runledger with the delivery handler and ordinary readiness
 approval. Reusable
 native pool/lease ownership comes from the optional
-`batter-sqlx/test-support` feature; template isolation and lock-operation probes
+`batter`'s `sqlx-test-support` feature; template isolation and lock-operation probes
 exercise it without importing application policy into the adapter.
 
 The minimal fixture installs a separately budgeted session observer before
@@ -409,8 +409,7 @@ Offline tests cover source/bounds/redaction/native constructors and partial star
 The explicit live inventory additionally includes configured pool timeout/reuse,
 held-handler worker concurrency, failed startup closing its pool before the
 native fixture lease, atomic delivery/reconciliation, and command-root pool,
-deadline, Bulkhead, and finite-process effects. See
-[validation](../../docs/validation.md) for execution status. Provider-backed
+deadline, Bulkhead, and finite-process effects. Provider-backed
 delivery execution is implemented; external-provider adoption remains separate.
 
 Offline native-option, IPv6 and worker-builder checks execute in cleared child

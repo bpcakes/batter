@@ -14,7 +14,7 @@
 //! ```
 //! # #[cfg(feature = "memory")]
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use batter::operation::OperationContext;
+//! use batter_core::operation::OperationContext;
 //! use batter_runlimit::{Checks, Quota, RunResult};
 //! use runlimit_core::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
 //! use runlimit_memory::{MemoryStore, MemoryStoreConfig};

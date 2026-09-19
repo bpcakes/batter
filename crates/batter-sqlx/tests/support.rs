@@ -1,4 +1,4 @@
-use batter::BoxError;
+use batter_core::BoxError;
 use sqlx::{Connection, PgConnection, PgPool, postgres::PgPoolOptions};
 use std::{future::Future, time::Duration};
 use tokio::time::{Instant, timeout};

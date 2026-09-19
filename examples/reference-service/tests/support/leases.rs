@@ -17,7 +17,7 @@ pub async fn probe() -> ProbeResult {
     .await;
     admin.close().await;
     let shutdown = harness.shutdown().await;
-    let result = batter_test_support::finish(body, shutdown);
+    let result = batter::test_support::finish(body, shutdown);
     assert!(
         result.is_ok(),
         "lease body/shutdown failed; both causes retained"
@@ -50,8 +50,8 @@ async fn one_lease(harness: &PostgresHarness, admin: &PgPool, mode: u8) -> Probe
         }
     };
     let drained = harness.drain_deferred_cleanup().await;
-    let cleanup = batter_test_support::finish(cleanup, drained);
-    let (value, present) = batter_test_support::finish(body, cleanup)?;
+    let cleanup = batter::test_support::finish(cleanup, drained);
+    let (value, present) = batter::test_support::finish(body, cleanup)?;
     assert_eq!(value, 1);
     assert!(present);
     let present: bool =

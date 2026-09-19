@@ -12,12 +12,12 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use batter::{
+use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget};
+use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
     operation::{Interruption, OperationContext},
 };
-use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,

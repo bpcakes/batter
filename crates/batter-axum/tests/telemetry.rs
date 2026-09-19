@@ -1,26 +1,12 @@
-#[path = "../../../test-support/dispatch.rs"]
-mod test_dispatch;
+#[allow(dead_code)]
+#[path = "../../../test-support/capture.rs"]
+mod capture;
 
-use batter::operation::OperationContext;
-use std::{
-    io::{self, Write},
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use batter_core::operation::OperationContext;
+use capture::Capture;
+use std::{io, time::Duration};
 use tracing::Instrument;
 use tracing::instrument::WithSubscriber;
-
-#[derive(Clone)]
-struct Buffer(Arc<Mutex<Vec<u8>>>);
-impl Write for Buffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 #[tokio::test]
 async fn http_observes_actual_failure_status_and_nested_context_without_untrusted_values() {
@@ -31,18 +17,11 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
         middleware,
         routing::any,
     };
-    use batter::lifecycle::ShutdownHandle;
     use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let writer = Buffer(output.clone());
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || writer.clone())
-        .with_ansi(false)
-        .without_time()
-        .with_max_level(tracing::Level::INFO)
-        .finish();
+    let capture = Capture::new();
     async {
         let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
         approval.approve();
@@ -99,9 +78,9 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
-    .with_subscriber(test_dispatch::new(subscriber))
+    .with_subscriber(capture.dispatch.clone())
     .await;
-    let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    let text = capture.text();
     assert_http_completion_events(&text);
     for line in text
         .lines()
@@ -148,18 +127,11 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         middleware,
         routing::get,
     };
-    use batter::lifecycle::ShutdownHandle;
     use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let writer = Buffer(output.clone());
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || writer.clone())
-        .with_ansi(false)
-        .without_time()
-        .with_max_level(tracing::Level::INFO)
-        .finish();
+    let capture = Capture::new();
     let router = Router::new()
         .route("/work", get(|| async { "must not execute" }))
         .layer(middleware::from_fn_with_state(
@@ -171,11 +143,11 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         ));
     let response = router
         .oneshot(Request::builder().uri("/work").body(Body::empty()).unwrap())
-        .with_subscriber(test_dispatch::new(subscriber))
+        .with_subscriber(capture.dispatch.clone())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    let text = capture.text();
     let line = text
         .lines()
         .find(|line| line.contains("HTTP response boundary finished"))

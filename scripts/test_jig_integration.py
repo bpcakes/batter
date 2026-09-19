@@ -1,6 +1,7 @@
 """Exercise Jig/CI boundaries in disposable repositories; requires Jig doctor first."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -266,6 +267,25 @@ class JigIntegrationTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_static_package_checks_active_docs_but_not_agent_history(self):
+        with tempfile.TemporaryDirectory(prefix="batter-package-check-") as directory:
+            root = Path(directory)
+            for relative in [".agent/plans/old.md", ".agent/reviews/old.md"]:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("[historical evidence](/tmp/removed-evidence.json)\n")
+            plans = root / ".agent/PLANS.md"
+            plans.write_text("[self](PLANS.md)\n")
+
+            command = [sys.executable, str(ROOT / "scripts/check_package.py"), "--root", str(root)]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            (root / "README.md").write_text("[missing](missing.md)\n")
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("README.md: missing link target missing.md", result.stdout)
+
     def test_archive_keeps_jig_sources_and_excludes_local_artifacts(self):
         with tempfile.TemporaryDirectory(prefix="batter-package-test-") as directory:
             repo = Path(directory) / "repo"
@@ -275,10 +295,12 @@ class ArchiveTests(unittest.TestCase):
                         ".gitattributes", ".agent/jig-contract.json", ".agent/PLANS.md",
                         ".agent/state/receipts.jsonl", ".agent/plans/.gitkeep",
                         "crates/batter/Cargo.toml", "crates/batter/src/lib.rs",
-                        "crates/batter/examples/worker.rs", "crates/batter/tests/lifecycle.rs",
+                        "crates/batter/examples/worker.rs",
+                        "crates/batter-core/Cargo.toml", "crates/batter-core/src/lib.rs",
+                        "crates/batter-core/tests/lifecycle.rs",
                         "test-support/process/watchdog.rs",
                         "crates/batter-axum/Cargo.toml", "crates/batter-axum/src/lib.rs",
-                        "crates/batter-axum/examples/http_service.rs",
+                        "crates/batter/examples/http_service.rs",
                         "crates/batter-test-support/Cargo.toml", "crates/batter-test-support/src/lib.rs",
                         "examples/postgres-lifecycle/Cargo.toml", "examples/postgres-lifecycle/src/main.rs"]
             excluded = [".agent/.cache/runtime.json", ".agent/.cache/adopt/backup.md",
@@ -294,15 +316,35 @@ class ArchiveTests(unittest.TestCase):
             output = Path(directory) / "source.zip"
             subprocess.run([sys.executable, str(repo / "scripts/package.py"), "--output", str(output)],
                            check=True, capture_output=True, text=True, timeout=30)
+            self.assertFalse((repo / "SHA256SUMS").exists())
+            checksum = output.with_suffix(output.suffix + ".sha256")
+            self.assertEqual(
+                checksum.read_text(),
+                f"{hashlib.sha256(output.read_bytes()).hexdigest()}  {output.name}\n",
+            )
             with zipfile.ZipFile(output) as archive:
                 names = set(archive.namelist())
                 inventory = archive.read("batter/SHA256SUMS").decode()
+                inventory_entries = {
+                    name: digest
+                    for line in inventory.splitlines()
+                    for digest, name in [line.split("  ", 1)]
+                }
+                source_members = {
+                    name.removeprefix("batter/")
+                    for name in names
+                    if name != "batter/SHA256SUMS"
+                }
+                self.assertEqual(set(inventory_entries), source_members)
+                for name, expected_digest in inventory_entries.items():
+                    self.assertEqual(
+                        expected_digest,
+                        hashlib.sha256(archive.read("batter/" + name)).hexdigest(),
+                    )
                 for name in included:
                     self.assertIn("batter/" + name, names)
-                    self.assertIn("  " + name + "\n", inventory)
                 for name in excluded:
                     self.assertNotIn("batter/" + name, names)
-                    self.assertNotIn("  " + name + "\n", inventory)
                 self.assertTrue(archive.getinfo("batter/scripts/jig").external_attr >> 16 & 0o111)
 
 

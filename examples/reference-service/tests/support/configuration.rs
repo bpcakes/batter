@@ -1,6 +1,7 @@
 #[path = "configuration_report.rs"]
 mod configuration_report;
 use super::{ProbeResult, fixture_run};
+use batter::sqlx::test_support::ConnectionPlan;
 use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
@@ -9,7 +10,6 @@ use batter::{
     startup::{Startup, StartupError},
 };
 use batter_example_reference_service::config::{MaintenanceSettings, PoolSettings};
-use batter_sqlx::test_support::ConnectionPlan;
 use std::time::Duration;
 
 pub async fn one_slot_pool() -> ProbeResult {
@@ -64,13 +64,13 @@ pub async fn failed_startup_closes_pool_before_lease() -> ProbeResult {
         Err(error) => Err(error.into()),
     };
     let shutdown = harness.shutdown().await;
-    let cleanup = batter_test_support::finish(cleanup, drain);
-    let cleanup = batter_test_support::finish(cleanup, shutdown);
-    let checked = batter_test_support::finish(
+    let cleanup = batter::test_support::finish(cleanup, drain);
+    let cleanup = batter::test_support::finish(cleanup, shutdown);
+    let checked = batter::test_support::finish(
         body.map_err(super::fixture_diagnostics::ProbeError::new),
         absence.map_err(super::fixture_diagnostics::ProbeError::new),
     );
-    batter_test_support::finish(checked, cleanup)?;
+    batter::test_support::finish(checked, cleanup)?;
     Ok(())
 }
 

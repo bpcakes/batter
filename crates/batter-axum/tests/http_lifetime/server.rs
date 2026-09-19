@@ -11,14 +11,14 @@ use axum::{
     response::Response,
     routing::get,
 };
-use batter::{
+use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
+use batter_core::{
     BoxError,
     lifecycle::{
         RunningSupervisor, SharedShutdownReport, ShutdownHandle, Supervisor, SupervisorObserver,
     },
     operation::OperationContext,
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 
@@ -124,7 +124,7 @@ impl Server {
             // The child scenario uses a current-thread runtime with this dispatcher
             // installed for its entire drive, covering Axum's spawned connections.
             let result = tracing::dispatcher::with_default(&dispatch, || {
-                batter::telemetry::with_current_dispatch(async move { serve.await })
+                batter_core::telemetry::with_current_dispatch(async move { serve.await })
             })
             .await;
             server_state.record(if result.is_ok() {

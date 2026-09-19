@@ -5,14 +5,14 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use batter::{
+use batter_core::{
     health::HealthReader,
     lifecycle::LifecycleStatus,
     readiness::{ReadinessEvaluator, ReadinessUnreadyReason},
 };
 use tracing::Level;
 
-pub use batter::readiness::ReadinessDecision;
+pub use batter_core::readiness::ReadinessDecision;
 
 /// Map a valid readiness decision to its default HTTP status.
 ///
@@ -21,7 +21,7 @@ pub use batter::readiness::ReadinessDecision;
 ///
 /// ```
 /// use axum::http::StatusCode;
-/// use batter::readiness::{ReadinessDecision, ReadinessUnreadyReason};
+/// use batter_core::readiness::{ReadinessDecision, ReadinessUnreadyReason};
 /// use batter_axum::readiness_status;
 ///
 /// assert_eq!(readiness_status(ReadinessDecision::Ready), StatusCode::OK);
@@ -44,7 +44,7 @@ pub const fn readiness_status(decision: ReadinessDecision) -> StatusCode {
 /// delegate unmatched decisions here instead of copying the default table.
 ///
 /// ```
-/// use batter::readiness::{ReadinessDecision, ReadinessUnreadyReason};
+/// use batter_core::readiness::{ReadinessDecision, ReadinessUnreadyReason};
 /// use batter_axum::default_readiness_level;
 /// use tracing::Level;
 ///
@@ -85,7 +85,7 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
 ///
 /// ```
 /// use axum::{Router, routing::get};
-/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_core::{health::HealthReader, lifecycle::ShutdownHandle};
 /// use batter_axum::{ReadinessPolicy, dependency_readiness};
 /// fn probes(control: ShutdownHandle, health: HealthReader<std::io::Error>) -> Router {
 ///     Router::new().route("/ready", get(dependency_readiness::<std::io::Error>))
@@ -96,7 +96,7 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
 /// Root shutdown control cannot be retained by readiness policy:
 ///
 /// ```compile_fail,E0308
-/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_core::{health::HealthReader, lifecycle::ShutdownHandle};
 /// use batter_axum::ReadinessPolicy;
 ///
 /// fn cannot_retain_control(control: ShutdownHandle, health: HealthReader<std::io::Error>) {
@@ -114,7 +114,7 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
 /// ```
 ///
 /// ```compile_fail,E0432
-/// use batter::readiness::ReadinessReason;
+/// use batter_core::readiness::ReadinessReason;
 /// ```
 pub struct ReadinessPolicy<E> {
     evaluator: ReadinessEvaluator<E>,

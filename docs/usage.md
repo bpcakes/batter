@@ -3,8 +3,8 @@
 ## Canonical agent consumer path
 
 For services, start from the executable
-[`Startup` rustdoc](../crates/batter/src/startup.rs) or the
-[HTTP composition example](../crates/batter-axum/examples/http_service.rs).
+[`Startup` rustdoc](../crates/batter-core/src/startup.rs) or the
+[HTTP composition example](../crates/batter/examples/http_service.rs).
 These demonstrate owned initialization and transfer to a running driver;
 use `check_shutdown` on its awaited result and retain failures for trusted inspection. Compose
 native Rust/Tokio futures through these boundaries, use validated settings,
@@ -12,7 +12,7 @@ and keep application errors concrete.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
-For finite work, use [`Command`](../crates/batter/src/command.rs) and the
+For finite work, use [`Command`](../crates/batter-core/src/command.rs) and the
 [finite-command example](#finite-commands-and-owned-cleanup). The command owner
 retains registered finalizers after callback errors, unwinding or work cancellation.
 Borrowed waiter cancellation changes no ownership; owner drop requests cancellation
@@ -38,8 +38,27 @@ Determine whether the remedy belongs in the consumer, Batter or a supported
 adapter, or the application/upstream protocol before continuing dependent repairs.
 
 Source examples belong to their owning packages and are part of the workspace
-compile/test matrix. See [validation](validation.md) for executed commands and
-remaining gaps. The Rust snippets below illustrate existing APIs.
+compile/test matrix. The Rust snippets below illustrate existing APIs.
+
+## Select facade namespaces explicitly
+
+The default `batter` dependency exposes the foundation through `batter::...`
+and selects no integration package. Add only the namespaces used by an
+application:
+
+```toml
+[dependencies]
+batter = { version = "0.1", features = ["axum", "sqlx"] }
+```
+
+Use `batter::axum`, `batter::sqlx`, `batter::runledger`,
+`batter::runlimit`, and `batter::test_support` for the corresponding
+feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
+`runlimit-axum` forward the existing native adapter capabilities;
+`sqlx-test-support` additionally exposes `batter::sqlx::test_support` and
+generic test support. Direct adapter packages remain supported when an
+application needs their native package boundary. The complete feature table
+and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
 
 ## Fresh futures and explicit replay
 
@@ -94,7 +113,7 @@ remote provider accepted.
 
 Create `BulkheadCapacity` from the configured count, then hand that validated
 witness to `Bulkhead::new` once and share clones of the resulting bulkhead. The
-[compiled API example](../crates/batter/src/admission.rs) shows the constructor
+[compiled API example](../crates/batter-core/src/admission.rs) shows the constructor
 handoff; admission still uses the caller's `OperationContext` and selected
 `Admission` policy.
 
@@ -106,11 +125,11 @@ The application must choose and test the intended accounting.
 
 ## Supervising a service
 
-[`Startup`](../crates/batter/src/startup.rs) has an executable rustdoc example
+[`Startup`](../crates/batter-core/src/startup.rs) has an executable rustdoc example
 that constructs its supervisor and budgets, reserves resource cleanup, acquires
 a native capacity permit, and starts a channel request service. It waits for
 readiness, checks an actual reply, and awaits shutdown before checking that the
-permit was released. Run it with `cargo test -p batter --doc --locked startup::Startup`.
+permit was released. Run it with `cargo test -p batter-core --doc --locked startup::Startup`.
 
 Successful initialization transfers ownership to a running supervisor. It does
 not mean a finite command has completed. A `Supervisor::new` with no critical
@@ -128,7 +147,7 @@ supervisor. Application helpers that only register work take a concrete
 For a native SQLx pool, reserve its slot and call `batter_sqlx::pool_in`, then run
 an explicit bounded query or `probe`. Await `starting.wait()` to obtain the
 `RunningSupervisor`; startup failure retains initialization and cleanup errors.
-The [HTTP example](../crates/batter-axum/examples/http_service.rs) demonstrates
+The [HTTP example](../crates/batter/examples/http_service.rs) demonstrates
 this complete path with native listener binding and `register_http_in`; the
 [PostgreSQL lifecycle example](../examples/postgres-lifecycle/src/main.rs) and
 [reference root](../examples/reference-service/src/runtime.rs) add `pool_in`, and
@@ -311,16 +330,18 @@ and deterministic or explicitly sampled behavior.
 ## Application HTTP envelopes
 
 Import `RequestPolicy`, `HttpFailure`, `request_admission` and `observe_http`
-from `batter_axum`. Apply admission to business routes and observation to the
+from `batter::axum`. Apply admission to business routes and observation to the
 complete router after merging probes and fallback. Keep trusted identity outside
 observation. Routes added after the observer layer bypass it; assemble first.
 `request_scope` remains the combined compatibility middleware. Replace it with
 `request_admission` when adding outer observation to avoid two HTTP events.
-Select the separate `batter-axum` dependency; the foundation has no HTTP feature.
+The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
+remains available for adapter-owned tests and applications that need that package
+boundary.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
 render your envelope. Install trusted metadata middleware outside the policy so
-it is available even for readiness/deadline failures. The [HTTP example](../crates/batter-axum/examples/http_service.rs)
+it is available even for readiness/deadline failures. The [HTTP example](../crates/batter/examples/http_service.rs)
 uses `operational_http` to generate a UUID and replace incoming header/Tower/
 adapter identities. This opt-in wrapper replaces the outer observer/identity
 pair; it emits one HTTP completion with an event-local ID even when INFO spans
@@ -411,7 +432,7 @@ forced process cancellation first. Cleanup hooks must not use contexts created b
 `OperationAdmission` to cancel teardown. Await the resource's native close
 operation directly, or use
 an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
-still applies. The [extracted-cleanup test](../crates/batter/tests/lifecycle_state.rs)
+still applies. The [extracted-cleanup test](../crates/batter-core/tests/lifecycle_state.rs)
 demonstrates independent teardown after the owner is dropped.
 
 The example's startup completion path returns `StartupFailure` inside `BoxError`
@@ -496,7 +517,7 @@ To inspect why a probe failed, call `reader.snapshot()` and inspect `status()` a
 Readers report expired success as Stale and writer loss as Stopped. Recovered
 probes can restore health without restarting the process.
 
-The [HTTP example](../crates/batter-axum/examples/http_service.rs) runs a simulated
+The [HTTP example](../crates/batter/examples/http_service.rs) runs a simulated
 probe every completion-plus-delay interval and lets the foundation evaluator
 combine its reader with lifecycle state. Its real loopback tests preserve
 process-phase/telemetry behavior, and a

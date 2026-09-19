@@ -251,7 +251,7 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
                     DeliveryWorker::new(pool.clone(), parts.provider, parts.provider_bulkhead)
                         .into_job_handler(),
                 )?;
-                batter_runledger::register_in(scope, "worker", native_startup, {
+                batter::runledger::register_in(scope, "worker", native_startup, {
                     runledger_runtime::Supervisor::builder(&pool, parts.jobs)?
                         .with_registry(registry)
                         .prepare()?
@@ -292,20 +292,20 @@ fn register_pool(
     connect_options: sqlx::postgres::PgConnectOptions,
 ) -> Result<sqlx::PgPool, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
-    Ok(batter_sqlx::pool_in(slot, pool_options, connect_options))
+    Ok(batter::sqlx::pool_in(slot, pool_options, connect_options))
 }
 
 fn register_health(
     mut registration: Registration<'_>,
     pool: sqlx::PgPool,
-) -> Result<HealthReader<OperationError<batter_sqlx::SqlxFailure>>, BoxError> {
+) -> Result<HealthReader<OperationError<batter::sqlx::SqlxFailure>>, BoxError> {
     let second = Duration::from_secs(1);
     let policy = HealthPolicy::new(second, second, Duration::from_secs(3), second)?;
     let reader = HealthMonitor::new(policy, move || {
         let pool = pool.clone();
         async move {
             let context = OperationContext::new(second).expect("static probe budget is valid");
-            batter_sqlx::probe(&pool, &context).await
+            batter::sqlx::probe(&pool, &context).await
         }
     })
     .register_in(&mut registration, "postgres.health")?;

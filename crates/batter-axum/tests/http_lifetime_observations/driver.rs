@@ -4,7 +4,7 @@ use crate::{
     capture::Capture,
     http_process::{EXERCISE, STARTUP, TEARDOWN},
 };
-use batter::lifecycle::SharedShutdownReport;
+use batter_core::lifecycle::SharedShutdownReport;
 use std::sync::Arc;
 use tokio::time::{Instant, timeout, timeout_at};
 

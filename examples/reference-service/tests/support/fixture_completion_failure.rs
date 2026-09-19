@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use batter_sqlx::test_support::{FixtureError, FixtureRun, FixtureSuite, SessionObserver};
+use batter::sqlx::test_support::{FixtureError, FixtureRun, FixtureSuite, SessionObserver};
 use sqlx::postgres::PgPoolOptions;
 
 use super::{ProbeResult, fixture_completion::ObservedRun};

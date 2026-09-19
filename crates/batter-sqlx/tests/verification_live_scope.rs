@@ -1,6 +1,6 @@
 use super::support::{Result, bounded, combine, require};
 use super::{AuthorityFixture, exec, quote};
-use batter::operation::OperationContext;
+use batter_core::operation::OperationContext;
 use batter_sqlx::verification::*;
 use sqlx::Connection;
 use std::time::Duration;

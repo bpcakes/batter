@@ -1,4 +1,4 @@
-use batter::{
+use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
@@ -98,7 +98,7 @@ async fn protected_startup_owns_native_local_initialization_and_settlement() {
         .disable_reaper()
         .prepare()
         .unwrap();
-    let mut starting = batter::startup::Startup::scoped(
+    let mut starting = batter_core::startup::Startup::scoped(
         process(),
         context(),
         CleanupBudget::new(
@@ -110,7 +110,7 @@ async fn protected_startup_owns_native_local_initialization_and_settlement() {
         move |scope| {
             Box::pin(async move {
                 register_in(scope, "native", context(), prepared)?;
-                Ok::<(), batter::RegistrationError>(())
+                Ok::<(), batter_core::RegistrationError>(())
             })
         },
     )
@@ -137,7 +137,7 @@ async fn rejected_registration_and_unstarted_drop_never_build_native_work() {
         &'static str,
         OperationContext,
         runledger_runtime::PreparedSupervisor,
-    ) -> Result<(), batter::RegistrationError> = register;
+    ) -> Result<(), batter_core::RegistrationError> = register;
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
         .unwrap();
@@ -179,7 +179,7 @@ async fn native_validation_failure_keeps_original_error_and_runs_dependency_clea
         .unwrap();
     let building = pool.clone();
     let second = Duration::from_secs(1);
-    let mut starting = batter::startup::Startup::new(
+    let mut starting = batter_core::startup::Startup::new(
         process,
         context(),
         CleanupBudget::new(second, second, second).unwrap(),
@@ -188,7 +188,7 @@ async fn native_validation_failure_keeps_original_error_and_runs_dependency_clea
                 let prepared =
                     runledger_runtime::Supervisor::builder(&building, config())?.prepare()?;
                 register(scope.supervisor(), "native", context(), prepared)?;
-                Ok::<(), batter::BoxError>(())
+                Ok::<(), batter_core::BoxError>(())
             })
         },
     )
@@ -200,10 +200,10 @@ async fn native_validation_failure_keeps_original_error_and_runs_dependency_clea
         }
         Err(error) => error,
     };
-    let batter::startup::StartupError::Failed(report) = error else {
+    let batter_core::startup::StartupError::Failed(report) = error else {
         panic!("startup report missing")
     };
-    let batter::startup::StartupCause::Failed(error) = &report.cause else {
+    let batter_core::startup::StartupCause::Failed(error) = &report.cause else {
         panic!("native cause missing")
     };
     assert!(matches!(

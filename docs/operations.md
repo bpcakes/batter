@@ -5,7 +5,7 @@ load-tested capacity recommendations.
 
 The project targets Unix systems; Windows is unsupported and not planned.
 Example shutdown listeners register SIGINT and SIGTERM directly. See
-[platform scope](adr/007-unix-platform-scope.md) and [validation](validation.md).
+[platform scope](adr/007-unix-platform-scope.md).
 
 ## Startup
 
@@ -161,7 +161,7 @@ RUST_LOG='info,batter=warn'
 ```
 
 Run `BATTER_ENV_FILE=/path/to/file BATTER_REQUEST_TIMEOUT_MS=100 cargo run -p
-batter-axum --example http_service --locked`. The environment selects a 100 ms
+batter --features axum --example http_service --locked`. The environment selects a 100 ms
 response budget rather than the file's 5 ms budget; the demonstration `/work`
 operation takes 25 ms. The selected capacity applies to actual concurrent work.
 Response streaming remains outside this deadline.

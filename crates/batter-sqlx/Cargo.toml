@@ -8,6 +8,7 @@ license.workspace = true
 publish = false
 readme = "README.md"
 autotests = false
+autoexamples = false
 
 [lints]
 workspace = true
@@ -20,7 +21,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harness.git", rev = "3d525e6fc5745ce2e2437c7997de5cccdecff4ac", default-features = false, optional = true }
 batter-test-support = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "time"], optional = true }
-batter.workspace = true
+batter-core.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]

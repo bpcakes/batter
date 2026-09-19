@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use batter::telemetry::with_current_dispatch;
+use batter_core::telemetry::with_current_dispatch;
 use postgres_test_harness::{DatabaseTemplate, Error};
 use tokio::{sync::oneshot, task::JoinHandle};
 
