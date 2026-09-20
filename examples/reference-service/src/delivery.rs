@@ -384,10 +384,10 @@ pub enum UncertainSubmission {
     Commit(#[source] batter::sqlx::PgTransactionError),
     /// A consuming application scope failed without outer rollback acknowledgement.
     #[error("submission scope disposition is uncertain")]
-    Scope(#[source] batter::sqlx::PgScopeError<CommandFailure>),
+    Scope(#[source] Box<batter::sqlx::PgScopeError<CommandFailure>>),
     /// A consuming Runledger operation failed without outer rollback acknowledgement.
     #[error("enqueue scope disposition is uncertain")]
-    Enqueue(#[source] batter::sqlx::PgScopeError<runledger_postgres::Error>),
+    Enqueue(#[source] Box<batter::sqlx::PgScopeError<runledger_postgres::Error>>),
     /// PostgreSQL did not acknowledge rollback of a failed command.
     #[error("rollback acknowledgement was not received")]
     Rollback {

@@ -165,8 +165,8 @@ enum QueryAttemptError {
 enum SubmitAttemptError {
     Begin(PgTransactionError),
     Commit(PgTransactionError),
-    Scope(PgScopeError<CommandFailure>),
-    Enqueue(PgScopeError<runledger_postgres::Error>),
+    Scope(Box<PgScopeError<CommandFailure>>),
+    Enqueue(Box<PgScopeError<runledger_postgres::Error>>),
     Rollback {
         operation: Box<CommandFailure>,
         rollback: PgTransactionError,
@@ -205,7 +205,7 @@ async fn attempt_submit(
     let (tx, prepared) = tx
         .operation(async |sql| prepare_submission(sql, owner, record_id, request).await)
         .await
-        .map_err(SubmitAttemptError::Scope)?;
+        .map_err(|error| SubmitAttemptError::Scope(Box::new(error)))?;
     let (tx, result) = match prepared {
         Err(error) => (tx, Err(error)),
         Ok(PreparedSubmission::Replayed(result)) => (tx, Ok(result)),
@@ -224,7 +224,7 @@ async fn attempt_submit(
             let (tx, outcome) = tx
                 .enqueue_job(&enqueue)
                 .await
-                .map_err(SubmitAttemptError::Enqueue)?;
+                .map_err(|error| SubmitAttemptError::Enqueue(Box::new(error)))?;
             tx.operation(async |sql| {
                 if outcome.disposition != JobEnqueueDisposition::Inserted {
                     return Err(StorageError::Invariant(
@@ -259,7 +259,7 @@ async fn attempt_submit(
                 })
             })
             .await
-            .map_err(SubmitAttemptError::Scope)?
+            .map_err(|error| SubmitAttemptError::Scope(Box::new(error)))?
         }
     };
     match result {
