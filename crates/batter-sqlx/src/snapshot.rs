@@ -1,8 +1,8 @@
 use crate::{
-    PgLease, PgScopedSql, PgTransactionError,
-    atomic::scope::{ScopeSavepoint, command},
+    PgLease, PgTransactionError,
+    atomic::scope::{ScopeSavepoint, command, normalize},
 };
-use sqlx::PgPool;
+use sqlx::{Executor, PgConnection, PgPool, Postgres};
 use std::{error::Error, fmt};
 
 /// Owned read-only inspection on one REPEATABLE READ snapshot.
@@ -24,6 +24,35 @@ use std::{error::Error, fmt};
 /// ```
 pub struct PgReadOnlySnapshot;
 
+/// Read-only SQL capability, distinct from write-oriented [`crate::PgScopedSql`]
+/// and [`crate::PgExecutor`]. PostgreSQL enforces arbitrary SQL text's read-only
+/// restrictions; this type prevents accidental composition with write helpers.
+///
+/// ```compile_fail,E0451
+/// fn forge(connection: &mut sqlx::PgConnection) {
+///     let _ = batter_sqlx::PgReadOnlySql { connection };
+/// }
+/// ```
+/// ```compile_fail,E0308
+/// async fn writer(sql: &mut batter_sqlx::PgScopedSql<'_>) {}
+/// # async fn example(pool: &sqlx::PgPool) {
+/// batter_sqlx::PgReadOnlySnapshot::inspect(pool, async |sql| {
+///     writer(sql).await;
+///     Ok::<_, ()>(())
+/// }).await;
+/// # }
+/// ```
+pub struct PgReadOnlySql<'a> {
+    connection: &'a mut PgConnection,
+}
+
+impl PgReadOnlySql<'_> {
+    /// Execute SQL on the retained read-only snapshot. No native resource escapes.
+    pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
+        &mut *self.connection
+    }
+}
+
 /// Inspection and cleanup failures, with original causes explicitly retained.
 pub enum PgSnapshotError<E> {
     /// Inspection returned an error after successful rollback.
@@ -40,12 +69,12 @@ pub enum PgSnapshotError<E> {
 }
 
 impl PgReadOnlySnapshot {
-    /// Run one inspection; cancellation or panic retires the owned connection.
-    /// Use this for observation, never for application writes. No caller-owned
+    /// Run one inspection; every completion path retires the owned connection.
+    /// Acquisition resets inherited session state. No caller-owned
     /// transaction is accepted or rolled back by this API.
     pub async fn inspect<T, E>(
         pool: &PgPool,
-        inspect: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
+        inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
     ) -> Result<T, PgSnapshotError<E>> {
         let mut lease = PgLease {
             connection: Some(
@@ -56,7 +85,7 @@ impl PgReadOnlySnapshot {
             ),
         };
         let setup = async {
-            command(lease.connection_mut(), "ROLLBACK").await?;
+            normalize(lease.connection_mut()).await?;
             command(
                 lease.connection_mut(),
                 "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
@@ -73,39 +102,35 @@ impl PgReadOnlySnapshot {
         }
         .await;
         let guard = setup.map_err(PgSnapshotError::Transaction)?;
-        let result = inspect(&mut PgScopedSql {
+        let result = inspect(&mut PgReadOnlySql {
             connection: lease.connection_mut(),
         })
         .await;
         match result {
             Ok(value) => {
-                let (isolation, read_only): (String, String) = sqlx::query_as(
-                    "SELECT pg_catalog.current_setting('transaction_isolation'), \
-                     pg_catalog.current_setting('transaction_read_only')",
-                )
-                .fetch_one(lease.connection_mut())
-                .await
-                .map_err(PgTransactionError::from)
-                .map_err(PgSnapshotError::Transaction)?;
-                if isolation != "repeatable read" || read_only != "on" {
-                    return Err(PgSnapshotError::Transaction(
-                        PgTransactionError::TransactionBoundaryLost,
-                    ));
-                }
                 guard
                     .release(lease.connection_mut())
+                    .await
+                    .map_err(PgSnapshotError::Transaction)?;
+                validate(lease.connection_mut())
                     .await
                     .map_err(PgSnapshotError::Transaction)?;
                 command(lease.connection_mut(), "ROLLBACK")
                     .await
                     .map_err(PgSnapshotError::Transaction)?;
-                drop(lease.connection.take());
                 Ok(value)
             }
             Err(inspection) => {
-                // Even a successful rollback cannot undo arbitrary session state
-                // or an early raw COMMIT; failure paths always retire the lease.
-                match command(lease.connection_mut(), "ROLLBACK").await {
+                // The private guard proves this is still the original boundary,
+                // including after an aborted statement. Bare ROLLBACK outside a
+                // transaction only emits a warning and cannot prove this.
+                let cleanup = async {
+                    guard.rollback(lease.connection_mut()).await?;
+                    validate(lease.connection_mut()).await?;
+                    command(lease.connection_mut(), "ROLLBACK").await
+                }
+                .await;
+                match cleanup {
                     Ok(()) => Err(PgSnapshotError::Inspection(inspection)),
                     Err(cleanup) => Err(PgSnapshotError::Cleanup {
                         inspection,
@@ -115,6 +140,22 @@ impl PgReadOnlySnapshot {
             }
         }
     }
+}
+
+async fn validate(connection: &mut PgConnection) -> Result<(), PgTransactionError> {
+    let (isolation, read_only): (String, String) = sqlx::query_as(
+        "SELECT pg_catalog.current_setting('transaction_isolation'), \
+         pg_catalog.current_setting('transaction_read_only')",
+    )
+    .fetch_one(connection)
+    .await?;
+    if isolation != "repeatable read" {
+        return Err(PgTransactionError::TransactionIsolationChanged);
+    }
+    if read_only != "on" {
+        return Err(PgTransactionError::TransactionAccessChanged);
+    }
+    Ok(())
 }
 
 impl<E> fmt::Debug for PgSnapshotError<E> {

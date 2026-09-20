@@ -17,13 +17,14 @@ success, and `Unsettled` never authorizes dependency cleanup.
 The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
-`RunledgerTransaction::begin(&pool)` starts the protected transaction path.
-It reexports Runledger's concrete owner, built on `batter-sqlx`. Use consuming
-`application` scopes for SQLx writes and `enqueue_job` or
-`record_job_enqueue_intent` for domain operations. There is no `view()`, native
-resource extraction, or legacy bridge. Every returned owner has revalidated
-transaction continuity; unfinished, cancelled and failed owners retire their
-connection. Commit and rollback consume it and return explicit acknowledgement.
+`run_atomic(&pool, async |scope| ...)` reexports Runledger's protected runner,
+built on `batter-sqlx`. The initial `PgIntentScope` supports application SQL and
+`record_job_enqueue_intent`. Consume it with `scope.queue()` to enter
+`PgQueueScope` for enqueue operations; intent recording is then unavailable.
+There is no transaction view, owner extraction, separate completion call or legacy
+bridge. Outputs leave the runner only after acknowledged commit; rejected bodies
+only after acknowledged rollback. Uncertainty retains the domain result/error.
+Every completion retires the session, and acquisition resets inherited state.
 
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;

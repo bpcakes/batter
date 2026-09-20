@@ -42,6 +42,11 @@ Pool::close do not acknowledge server-session termination, rollback or remote
 cancellation; detached sessions can exceed max_connections.
 Every SQLx feature must remain independent of Runledger. Never add a callback
 that exposes a replaceable native resource to implement an adapter bridge.
+The canonical run_atomic runner withholds outputs until acknowledged disposition.
+Atomic/snapshot acquisition clears inherited session state and every completion
+retires the connection; the pool-return contract above describes only low-level
+PgLease session work. Snapshot errors require the original guard before clean
+rollback classification; read-only inspectors have a distinct capability.
 Atomic scopes consume their owner and release their parent savepoint (including
 all nested application savepoints) before returning usable state. Inner operation
 errors may return the owner only after rollback and continuity revalidation.

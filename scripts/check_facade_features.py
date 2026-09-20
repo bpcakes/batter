@@ -135,9 +135,9 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
-        lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicTransaction, PgReadOnlySnapshot, pool_in};")
+        lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if "runledger" in chosen:
-        lines.insert(1, "use batter::runledger::{NativeReport, register_in, RunledgerTransaction};")
+        lines.insert(1, "use batter::runledger::{NativeReport, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
     if "runlimit" in chosen or chosen & set(RUNLIMIT_BRIDGES):
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
     if "runlimit-axum" in chosen:
@@ -257,7 +257,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "use batter_sqlx::PgLease as DirectPgLease;",
             "fn sqlx_identity(_: DirectPgLease) {}",
             "const _: fn(PgLease) = sqlx_identity;",
-            "const _: fn(batter::sqlx::PgAtomicTransaction) = |_: batter_sqlx::PgAtomicTransaction| {};",
+            "const _: fn(batter::sqlx::PgAtomicScope) = |_: batter_sqlx::PgAtomicScope| {};",
         ]
     if "sqlx-test-support" in chosen:
         lines += [

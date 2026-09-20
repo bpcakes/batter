@@ -850,17 +850,23 @@ server sessions.
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
 canonical service roots and finite retirement command use `pool_in`.
 
-`PgAtomicTransaction` is the owned transaction composition path. It captures the
-top-level XID at birth and consumes itself for application SQL, library operations,
-commit and rollback. Every scope confines application savepoints beneath its own
-private parent. Only acknowledged cleanup and continuity validation return a
-reusable owner. COMMIT is preceded by validation with no intervening application
-code; acknowledgement is followed by no additional await. Commit cancellation
-can still lose the acknowledgement and is not proof of rollback. The generic
-snapshot runner similarly owns its read-only transaction through rollback. These
-APIs prevent accidental reuse of invalid local state, not arbitrary SQL effects,
-hostile manipulation of internal savepoints, database administration or process
-death. Domain libraries own schema qualification and the meaning of their results.
+`run_atomic` owns the complete READ COMMITTED workflow. Body outputs are withheld
+until acknowledged commit, and rejections until acknowledged rollback; uncertainty
+retains the result and cause. Operations use private savepoints and XID continuity.
+Cancelling a polled inner operation consumes usable state, even if caught by the
+body. There is no await after acknowledged completion. Every completion retires
+the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
+and DISCARD ALL. Native pool hooks are not trusted to clean arbitrary SQL effects.
+
+Runledger's initial intent scope is consumed into a queue scope with no recording
+method. Its named API therefore cannot enqueue then record an intent. Arbitrary SQL
+against internal tables remains an explicitly lower-level escape hatch.
+
+Read-only inspection has a distinct capability and verifies its private guard on
+both success and failure before claiming rollback. These APIs do not sandbox
+arbitrary SQL, external side effects, malicious guard manipulation, or process
+death. The explicitly `low_level` consuming owner leaves output/completion pairing
+to its caller and is not equivalent to the canonical runner.
 
 `PgLease` detaches and drops its client unless `with_connection` receives an
 application `Ok`, observes no unacknowledged typed transaction and successfully

@@ -3,8 +3,8 @@ mod progress;
 
 use batter::operation::{OperationContext, OperationError};
 use batter::{
-    runledger::RunledgerTransaction,
-    sqlx::{PgLease, PgScopeError, PgScopedSql, PgSession, PgTransactionError, SqlxFailure},
+    runledger::run_atomic,
+    sqlx::{PgAtomicError, PgLease, PgScopeError, PgScopedSql, PgSession, SqlxFailure},
 };
 use runledger_postgres::jobs::{JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome};
 use sqlx::PgPool;
@@ -162,30 +162,13 @@ enum QueryAttemptError {
 }
 
 #[derive(Debug)]
-enum SubmitAttemptError {
-    Begin(PgTransactionError),
-    Commit(PgTransactionError),
-    Scope(Box<PgScopeError<CommandFailure>>),
-    Enqueue(Box<PgScopeError<runledger_postgres::Error>>),
-    Rollback {
-        operation: Box<CommandFailure>,
-        rollback: PgTransactionError,
-    },
-}
+struct SubmitAttemptError(Box<PgAtomicError<SubmitResult, CommandFailure>>);
+
 impl SubmitAttemptError {
     fn into_submit_error(self) -> SubmitError {
-        match self {
-            Self::Begin(error) => SubmitError::Storage(StorageError::Transaction(error)),
-            Self::Commit(error) => SubmitError::Uncertain(UncertainSubmission::Commit(error)),
-            Self::Scope(error) => SubmitError::Uncertain(UncertainSubmission::Scope(error)),
-            Self::Enqueue(error) => SubmitError::Uncertain(UncertainSubmission::Enqueue(error)),
-            Self::Rollback {
-                operation,
-                rollback,
-            } => SubmitError::Uncertain(UncertainSubmission::Rollback {
-                operation,
-                rollback,
-            }),
+        match *self.0 {
+            PgAtomicError::Begin(error) => SubmitError::Storage(StorageError::Transaction(error)),
+            error => SubmitError::Uncertain(UncertainSubmission::Atomic(Box::new(error))),
         }
     }
 }
@@ -198,34 +181,42 @@ async fn attempt_submit(
     record_id: Uuid,
     request: &ValidatedSubmit,
 ) -> Result<SettledSubmission, SubmitAttemptError> {
-    let tx = RunledgerTransaction::begin(pool)
-        .await
-        .map_err(SubmitAttemptError::Begin)?;
-    let active = progress.transaction_began();
-    let (tx, prepared) = tx
-        .operation(async |sql| prepare_submission(sql, owner, record_id, request).await)
-        .await
-        .map_err(|error| SubmitAttemptError::Scope(Box::new(error)))?;
-    let (tx, result) = match prepared {
-        Err(error) => (tx, Err(error)),
-        Ok(PreparedSubmission::Replayed(result)) => (tx, Ok(result)),
-        Ok(PreparedSubmission::New(new, generation)) => {
-            let enqueue = JobEnqueue {
-                job_type: JobType::new(DELIVERY_JOB_TYPE),
-                organization_id: Some(owner.as_uuid()),
-                payload: &new.enqueue_payload,
-                priority: Some(ENQUEUE_PRIORITY),
-                max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
-                timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
-                next_run_at: None,
-                idempotency_key: Some(&new.enqueue_idempotency_key),
-                stage: Some(JobStage::Queued),
-            };
-            let (tx, outcome) = tx
-                .enqueue_job(&enqueue)
-                .await
-                .map_err(|error| SubmitAttemptError::Enqueue(Box::new(error)))?;
-            tx.operation(async |sql| {
+    // The callback is invoked only after BEGIN. Retain that distinction for an
+    // interrupted OperationContext without exporting any provisional body output.
+    let mut active = None;
+    let result = run_atomic(pool, async |scope| {
+        active = Some(progress.transaction_began());
+        let mut queue = scope.queue();
+        let prepared = queue
+            .application(async |sql| prepare_submission(sql, owner, record_id, request).await)
+            .await
+            .map_err(command_scope_failure)?;
+        let (new, generation) = match prepared {
+            PreparedSubmission::Replayed(result) => return Ok(result),
+            PreparedSubmission::New(new, generation) => (new, generation),
+        };
+        let enqueue = JobEnqueue {
+            job_type: JobType::new(DELIVERY_JOB_TYPE),
+            organization_id: Some(owner.as_uuid()),
+            payload: &new.enqueue_payload,
+            priority: Some(ENQUEUE_PRIORITY),
+            max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
+            timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
+            next_run_at: None,
+            idempotency_key: Some(&new.enqueue_idempotency_key),
+            stage: Some(JobStage::Queued),
+        };
+        let outcome = queue
+            .enqueue_job(&enqueue)
+            .await
+            .map_err(|error| match error {
+                PgScopeError::Application(error) => {
+                    CommandFailure::Storage(StorageError::Runledger(error))
+                }
+                error => CommandFailure::Storage(StorageError::Enqueue(Box::new(error))),
+            })?;
+        queue
+            .application(async |sql| {
                 if outcome.disposition != JobEnqueueDisposition::Inserted {
                     return Err(StorageError::Invariant(
                         "new command resolved to an existing upstream job",
@@ -259,24 +250,23 @@ async fn attempt_submit(
                 })
             })
             .await
-            .map_err(|error| SubmitAttemptError::Scope(Box::new(error)))?
-        }
-    };
+            .map_err(command_scope_failure)
+    })
+    .await;
+    // No await between runner acknowledgement and retained completion.
     match result {
-        Ok(result) => {
-            let _confirmed = tx
-                .commit()
-                .await
-                .map_err(|error| SubmitAttemptError::Commit(error.into_cause()))?;
-            Ok(active.committed(result))
+        Ok(result) => Ok(active.expect("runner invoked body").committed(result)),
+        Err(PgAtomicError::Rejected(error)) => {
+            Ok(active.expect("runner invoked body").rolled_back(error))
         }
-        Err(operation) => match tx.rollback().await {
-            Ok(_confirmed) => Ok(active.rolled_back(operation)),
-            Err(rollback) => Err(SubmitAttemptError::Rollback {
-                operation: Box::new(operation),
-                rollback,
-            }),
-        },
+        Err(error) => Err(SubmitAttemptError(Box::new(error))),
+    }
+}
+
+fn command_scope_failure(error: PgScopeError<CommandFailure>) -> CommandFailure {
+    match error {
+        PgScopeError::Application(error) => error,
+        error => CommandFailure::Storage(StorageError::Scope(Box::new(error))),
     }
 }
 

@@ -48,7 +48,8 @@ impl Error for PgTransactionError {
 /// Terminal scope failure, retaining both the application and cleanup causes.
 /// Formatting never prints application or database error contents.
 pub enum PgScopeError<E> {
-    /// Application returned an error; the application scope consumed its owner.
+    /// Application returned an error. This alone is not outer rollback evidence;
+    /// the canonical runner supplies the final disposition.
     Application(E),
     /// Setup, continuity, or completion failed after an otherwise successful body.
     Transaction(PgTransactionError),

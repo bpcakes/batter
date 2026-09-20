@@ -1,6 +1,6 @@
 //! Opt-in external PostgreSQL coverage for opaque native database composition.
 use batter_core::operation::OperationContext;
-use batter_runledger::{RunledgerTransaction, verify_schema};
+use batter_runledger::{PgAtomicError, run_atomic, verify_schema};
 use runledger_core::jobs::JobType;
 use runledger_postgres::jobs::JobEnqueueIntent;
 use sqlx::Connection;
@@ -40,30 +40,37 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
             let key = format!("{table}-{id}");
             let intent =
                 JobEnqueueIntent::new(JobType::new("batter.opaque.intent"), &payload, &key);
-            let transaction = RunledgerTransaction::begin(&pool).await?;
-            let (transaction, ()) = transaction
-                .application(async |sql| {
-                    sqlx::query(sqlx::AssertSqlSafe(format!(
-                        "INSERT INTO {table} VALUES ($1)"
-                    )))
-                    .bind(id)
-                    .execute(sql.executor())
-                    .await?;
-                    Ok::<_, sqlx::Error>(())
-                })
-                .await?;
-            let (transaction, recorded) = transaction.record_job_enqueue_intent(&intent).await?;
-            let intent_id = recorded.intent_id;
+            let result = run_atomic(&pool, async |mut scope| {
+                scope
+                    .application(async |sql| {
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "INSERT INTO {table} VALUES ($1)"
+                        )))
+                        .bind(id)
+                        .execute(sql.executor())
+                        .await?;
+                        Ok::<_, sqlx::Error>(())
+                    })
+                    .await
+                    .expect("application write");
+                let recorded = scope
+                    .record_job_enqueue_intent(&intent)
+                    .await
+                    .expect("intent");
+                if commit { Ok(recorded) } else { Err("reject") }
+            })
+            .await;
             if commit {
-                let _confirmed = transaction.commit().await?;
+                assert!(result.is_ok(), "commit acknowledged");
             } else {
-                let _confirmed = transaction.rollback().await?;
+                assert!(matches!(result, Err(PgAtomicError::Rejected("reject"))));
             }
-            let retained: bool =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM job_enqueue_intents WHERE id=$1)")
-                    .bind(intent_id)
-                    .fetch_one(&pool)
-                    .await?;
+            let retained: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM job_enqueue_intents WHERE idempotency_key=$1)",
+            )
+            .bind(&key)
+            .fetch_one(&pool)
+            .await?;
             let audit: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS(SELECT 1 FROM {table} WHERE id=$1)"
             )))

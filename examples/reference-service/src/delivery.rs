@@ -335,6 +335,12 @@ pub enum SubmitRejection {
 /// Concrete storage failures retained behind sanitized HTTP responses.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Application scope failed, retaining both operation and cleanup causes.
+    #[error("application scope failed")]
+    Scope(#[source] Box<batter::sqlx::PgScopeError<CommandFailure>>),
+    /// Runledger scope failed, retaining both operation and cleanup causes.
+    #[error("enqueue scope failed")]
+    Enqueue(#[source] Box<batter::sqlx::PgScopeError<runledger_postgres::Error>>),
     /// Native SQLx failure.
     #[error("PostgreSQL operation failed")]
     Sqlx(#[source] sqlx::Error),
@@ -379,23 +385,10 @@ impl StorageError {
 /// Why submission cannot assert commit or rollback while disposition is unknown.
 #[derive(Debug, thiserror::Error)]
 pub enum UncertainSubmission {
-    /// PostgreSQL did not acknowledge COMMIT.
-    #[error("commit acknowledgement was not received")]
-    Commit(#[source] batter::sqlx::PgTransactionError),
-    /// A consuming application scope failed without outer rollback acknowledgement.
-    #[error("submission scope disposition is uncertain")]
-    Scope(#[source] Box<batter::sqlx::PgScopeError<CommandFailure>>),
-    /// A consuming Runledger operation failed without outer rollback acknowledgement.
-    #[error("enqueue scope disposition is uncertain")]
-    Enqueue(#[source] Box<batter::sqlx::PgScopeError<runledger_postgres::Error>>),
-    /// PostgreSQL did not acknowledge rollback of a failed command.
-    #[error("rollback acknowledgement was not received")]
-    Rollback {
-        /// Original command failure retained alongside rollback failure.
-        operation: Box<CommandFailure>,
-        /// Native rollback failure.
-        rollback: batter::sqlx::PgTransactionError,
-    },
+    /// The runner retains the provisional output or original rejection together
+    /// with its unacknowledged disposition. No result is presented as durable.
+    #[error("atomic submission disposition is uncertain")]
+    Atomic(#[source] Box<batter::sqlx::PgAtomicError<SubmitResult, CommandFailure>>),
     /// The operation boundary stopped polling while the transaction was active,
     /// before commit or rollback acknowledgement.
     #[error("submission was interrupted while transaction disposition was unknown")]

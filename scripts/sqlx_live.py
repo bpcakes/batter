@@ -22,6 +22,13 @@ TARGETS = {
         "snapshot_is_coherent_read_only_and_normalized",
         "snapshot_transaction_control_never_returns_evidence",
         "commit_in_flight_cancellation_and_disconnect_are_uncertain",
+        "snapshot_error_requires_original_guard",
+        "runner_releases_only_acknowledged_outputs",
+        "runner_uncertainty_retains_output_and_rejection",
+        "runner_cannot_commit_after_caught_operation_cancellation",
+        "atomic_and_snapshot_completion_retire_session_state",
+        "acquisition_resets_inherited_state_and_statement_cache",
+        "failed_session_normalization_retires_instead_of_returning",
     },
     "migrations_live": {
         "migration_preserves_native_history_and_retires_checksum_failure",

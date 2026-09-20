@@ -1,5 +1,14 @@
 # Testing and failure-contract coverage
 
+Atomic runner regression coverage (`batter-gzh`) lives in
+`crates/batter-sqlx/tests/atomic_live`: acknowledged output/rejection, retained
+uncertainty, caught inner cancellation, inherited session reset, completion
+retirement/advisory-lock release, and original snapshot-guard cleanup. The explicit
+`scripts/sqlx_live.py` inventory includes these PostgreSQL 18 cases. Rustdoc
+compile-fail tests reject separate completion, escaping scopes, and passing a
+write helper to a read-only inspector. The paired Runledger branch additionally
+rejects enqueue-then-record at compile time and tests intent/queue/app atomicity.
+
 The native adapter's offline contracts run with `cargo test -p batter-runledger
 --locked`: local initialization without a database, zero task starts on rejected
 or unstarted registration, original preparation errors with owned startup cleanup,

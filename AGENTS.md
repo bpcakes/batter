@@ -142,7 +142,7 @@ bounded probes and pool-close registration; `session.rs` owns opaque SQL executi
 and transaction completion without native replacement; server-session termination remains separate.
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
-process ownership, and reexports Runledger's owned transaction and schema snapshot APIs. Native descendant supervision remains in Runledger.
+process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
 transactions and PostgreSQL initialization/maintenance remain upstream-owned.

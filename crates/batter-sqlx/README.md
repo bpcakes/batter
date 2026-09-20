@@ -5,49 +5,48 @@ minimum, Unix-only, unpublished. The foundation does not depend on this package.
 
 ## Owned transactions and snapshots
 
-Use `PgAtomicTransaction::begin(&pool)` for application and library writes that
-must share one READ COMMITTED transaction. The owner has no executor, native
-resource accessor, `Deref`, or public fields. `application(self, async |sql| ...)`
-consumes it and returns `(owner, value)` only after successful revalidation.
-Execute ordinary SQLx queries through `sql.executor()` inside that closure.
+Use `run_atomic(&pool, async |scope| ...)` for application and library writes
+that share one READ COMMITTED transaction. The callback uses
+`scope.application(async |sql| ...)` and ordinary SQLx queries through
+`sql.executor()`. Outputs are provisional inside the callback; the runner
+returns `Ok(T)` only after acknowledged commit. It returns `Rejected(E)` only
+after acknowledged rollback. Unconfirmed commit/rollback retain the body output
+or rejection with the original cause. A lost scope retains the callback result
+as uncertainty, never as a committed result.
 
-Libraries compose with `operation(self, async |sql| ...)`. Its success returns
-`(owner, Result<T, E>)`: an inner error is reusable only after acknowledged
-savepoint rollback and continuity validation. An outer error is terminal and
-retains the application and recovery causes when both failed. Cancellation and
-panic destroy the owner, including cancellation during validation or cleanup.
+Each application operation owns a private savepoint and validates the original
+XID, isolation and access mode. Recoverable errors roll back their savepoint;
+terminal failure or cancellation consumes the usable owner even when the body
+catches the error or abandons an inner future. There is no await after completion
+acknowledgement. Arbitrary SQL and captured external side effects are not a sandbox:
+explicit COMMIT can have irreversible effects, but cannot yield canonical success.
 
-Every scope starts a private randomly named savepoint; releasing its parent
-removes every nested application savepoint. A savepoint made in one application
-scope cannot later undo a completed library operation. XID continuity alone
-would not enforce this. Explicit COMMIT, ROLLBACK and chained transaction control
-are detected before a reusable owner returns. Already committed effects cannot
-be reversed, and this is not a security boundary against hostile SQL deliberately
-discovering and manipulating internal savepoints. Sequences and other
-nontransactional effects are not undone by savepoint rollback.
+Every atomic and snapshot completion retires its physical connection, including
+acknowledged commit/rollback. Acquisition executes ROLLBACK, clears SQLx's statement
+cache, and executes DISCARD ALL before BEGIN. This removes inherited settings,
+temporary objects, roles and session advisory locks; pool `after_connect` session
+customizations are intentionally reset. Express transaction-local settings inside
+the scope. Failed or cancelled reset retires the connection. Retirement releases
+local pool capacity, not synchronous proof of backend termination.
 
-`commit(self)` returns only an opaque `PgCommitConfirmed` or `CommitUnconfirmed`;
-`rollback(self)` returns `PgRollbackConfirmed` or a terminal transaction error.
-Commit validates the original XID and transaction settings immediately before
-COMMIT, so swallowed SQL errors cannot turn an aborted transaction into a false
-confirmation. There is no additional asynchronous cleanup after acknowledged
-completion. Dropping a commit future returns no result and does not prove the
-database rolled back; reconcile that uncertain outcome externally.
+`PgReadOnlySnapshot::inspect(&pool, async |sql| ...)` owns a REPEATABLE READ READ
+ONLY transaction and passes the distinct `PgReadOnlySql` capability. A helper
+requiring `PgScopedSql` or `PgExecutor` cannot accept it. Arbitrary SQL text is
+still checked by PostgreSQL. Inspection errors produce a clean `Inspection(E)`
+only after rollback to the original private guard, guard release, characteristic
+validation and acknowledged outer rollback. Boundary loss retains both causes.
 
-`PgReadOnlySnapshot::inspect(&pool, async |sql| ...)` owns normalization,
-REPEATABLE READ READ ONLY, inspection, boundary validation and acknowledged
-rollback. It returns a result only after the snapshot has finished. Qualify
-authoritative relations: its transaction-local search path is `pg_catalog,
-pg_temp`. Domain compatibility checks and their evidence types remain in the
-consuming library. Catalog inquiry functions can consult caches outside an MVCC
-snapshot; coherent catalog checks need appropriate direct catalog queries and
-DDL locking where object identity matters.
+The snapshot establishes no SELECT before the inspector, allowing it to lock
+authoritative objects before its first snapshot query. Qualify authoritative names;
+the local search path is `pg_catalog, pg_temp`. Catalog cache functions may not
+obey MVCC; use direct catalog reads and appropriate DDL locks.
 
-Both APIs target PostgreSQL 18. Bound the complete consuming workflow in a
-Batter `OperationContext` when deadlines are required. Rust cannot promise
-resource destruction after process death or deliberately forgotten values.
-The executable examples live in the public rustdocs; the external-consumer
-contract is `tests/atomic_live.rs` in the live runner.
+`low_level::PgAtomicTransaction` is the exceptional consuming-owner API. It leaves
+provisional-output/completion pairing with the caller and is not the canonical
+consumer path. Both APIs target PostgreSQL 18. Bound the entire workflow with an
+OperationContext when required. Cancellation returns no result and does not
+prove rollback; process death or deliberately forgotten values remain outside
+local destruction guarantees.
 
 ## Session operations
 
@@ -580,6 +579,6 @@ pool construction. No local result proves server-session termination.
 
 ### Foundation dependency direction
 
-No SQLx feature depends on Runledger. `PgAtomicTransaction`, `PgScopedSql` and
+No SQLx feature depends on Runledger. `run_atomic`, `PgScopedSql` and
 `PgReadOnlySnapshot` are generic building blocks for persistence libraries.
 Domain adapters depend on this package; it never imports their domain types.

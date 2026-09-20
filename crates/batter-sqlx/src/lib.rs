@@ -33,6 +33,7 @@
 #![forbid(unsafe_code)]
 
 mod atomic;
+mod atomic_runner;
 mod failure;
 mod session;
 mod snapshot;
@@ -40,13 +41,19 @@ mod snapshot;
 pub mod verification;
 
 pub use atomic::{
-    CommitUnconfirmed, PgAtomicTransaction, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError,
-    PgScopedSql, PgTransactionError,
+    CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopedSql,
+    PgTransactionError,
 };
+pub use atomic_runner::{PgAtomicError, PgAtomicScope, run_atomic};
+/// Exceptional consuming composition. Outputs are provisional and completion
+/// must be paired by the caller. Prefer [`run_atomic`] on the canonical path.
+pub mod low_level {
+    pub use crate::atomic::PgAtomicTransaction;
+}
 pub use failure::{FailureClass, SqlxFailure};
 use session::PoolReturnReady;
 pub use session::{PgExecutor, PgSession, PgTransaction};
-pub use snapshot::{PgReadOnlySnapshot, PgSnapshotError};
+pub use snapshot::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};
 
 use batter_core::{
     RegistrationError,

@@ -25,8 +25,8 @@ use std::{
 };
 
 pub use runledger_postgres::{
-    PgAtomicTransaction as RunledgerTransaction, SchemaCompatibilitySnapshot,
-    ensure_schema_compatible_after_idempotency_cutover as verify_schema,
+    PgAtomicError, PgIntentScope, PgQueueScope, SchemaCompatibilitySnapshot,
+    ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
 };
 
 /// Original native shutdown evidence. The process report retains this concrete

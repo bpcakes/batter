@@ -445,7 +445,21 @@ context therefore yields Incomplete, including when a separate ACL is present.
 Ordinary placeholder potential remains conservative; a visible loaded parameter
 still supports a positive requirement. No live SET probe enters verification.
 
-## Runledger opaque transaction capability, 2026-09-19
+## Atomic runner session reset, 2026-09-20
+
+PostgreSQL 18 [DISCARD ALL](https://www.postgresql.org/docs/18/sql-discard.html)
+resets session resources, including prepared statements and advisory locks, and
+must run outside a transaction. SQLx 0.9's `Connection::clear_cached_statements`
+clears the driver cache before server DISCARD. Atomic and snapshot scopes reset on
+acquisition and retire on every completion; no post-COMMIT awaited reset can lose
+acknowledgement. [ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html)
+rejects a missing guard, unlike top-level rollback outside a transaction. Snapshot
+error cleanup therefore verifies the original guard before reporting clean rejection.
+
+## Historical Runledger opaque transaction capability, 2026-09-19
+
+This describes the superseded bridge, not the canonical runner introduced by
+`batter-gzh` and the coordinated Runledger branch.
 
 Runledger PR [#15](https://github.com/bpcakes/runledger/pull/15), pinned at
 [`638ee3480f69962597147f5d7bd52822267560b7`](https://github.com/bpcakes/runledger/commit/638ee3480f69962597147f5d7bd52822267560b7),

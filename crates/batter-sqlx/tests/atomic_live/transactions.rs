@@ -74,7 +74,10 @@ async fn application_and_library_operations_commit_together() -> Result {
         let same: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&fixture.pool)
             .await?;
-        assert_eq!(same, previous, "acknowledged commit should permit reuse");
+        assert_ne!(
+            same, previous,
+            "acknowledged commit must retire session state"
+        );
         let (tx, result) =
             library_insert(PgAtomicTransaction::begin(&fixture.pool).await?, &table, 3).await?;
         result?;
@@ -120,13 +123,10 @@ async fn library_insert(
 async fn savepoint_errors_recover_without_partial_writes() -> Result {
     let fixture = fixture().await?;
     let body = async {
-        sqlx::raw_sql("CREATE TEMP TABLE atomic_rows(id integer PRIMARY KEY)")
-            .execute(&fixture.pool)
-            .await?;
         let tx = PgAtomicTransaction::begin(&fixture.pool).await?;
         let (tx, ()) = tx
             .application(async |sql| {
-                sqlx::raw_sql("INSERT INTO atomic_rows VALUES (1); SAVEPOINT application_previous")
+                sqlx::raw_sql("CREATE TEMP TABLE atomic_rows(id integer PRIMARY KEY); INSERT INTO atomic_rows VALUES (1); SAVEPOINT application_previous")
                     .execute(sql.executor())
                     .await?;
                 Ok::<_, sqlx::Error>(())
@@ -168,11 +168,12 @@ async fn savepoint_errors_recover_without_partial_writes() -> Result {
                 .as_deref(),
             Some("23505")
         );
-        let _committed = tx.commit().await?;
-        let rows: Vec<i32> = sqlx::query_scalar("SELECT id FROM atomic_rows ORDER BY id")
-            .fetch_all(&fixture.pool)
-            .await?;
+        let (tx, rows) = tx.application(async |sql| {
+            sqlx::query_scalar::<_, i32>("SELECT id FROM atomic_rows ORDER BY id")
+                .fetch_all(sql.executor()).await
+        }).await?;
         assert_eq!(rows, vec![1, 2]);
+        let _committed = tx.commit().await?;
         Ok(())
     }
     .await;
@@ -231,11 +232,9 @@ async fn swallowed_sql_error_and_application_error_are_terminal() -> Result {
 async fn deferred_and_transport_commit_failures_are_unconfirmed() -> Result {
     let mut fixture = fixture().await?;
     let body = async {
-        sqlx::raw_sql("CREATE TEMP TABLE atomic_deferred(id integer UNIQUE DEFERRABLE INITIALLY DEFERRED)")
-            .execute(&fixture.pool).await?;
         let (tx, previous) = transaction(&fixture.pool).await?;
         let (tx, ()) = tx.application(async |sql| {
-            sqlx::raw_sql("INSERT INTO atomic_deferred VALUES (1), (1)").execute(sql.executor()).await?;
+            sqlx::raw_sql("CREATE TEMP TABLE atomic_deferred(id integer UNIQUE DEFERRABLE INITIALLY DEFERRED); INSERT INTO atomic_deferred VALUES (1), (1)").execute(sql.executor()).await?;
             Ok::<_, sqlx::Error>(())
         }).await?;
         let failure = tx.commit().await.unwrap_err();

@@ -3,13 +3,13 @@
 ## Purpose
 
 Translate Runledger initialization and complete native settlement into Batter
-managed registration, and reexport Runledger's consuming transaction owner. Follow the root Unix-only policy. Native task
+managed registration, and reexport Runledger's phase-scoped atomic runner. Follow the root Unix-only policy. Native task
 ownership, durable job outcomes, registry/catalog policy and database provisioning stay native.
 
 ## Key entrypoints
 
 - `src/lib.rs`: inert registration, startup observation, stop propagation and native report.
-- `src/lib.rs`: opaque `RunledgerTransaction` composition without native connection exposure.
+- `src/lib.rs`: opaque `run_atomic` composition without native connection exposure.
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
 - Reference service: application schema, handler selection and dependency health.
 
@@ -29,8 +29,9 @@ NativeReport owns RuntimeSettlement and derives cleanup authority from its
 unforgeable variants; never restore caller-writable report fields or reclassify
 borrowed evidence. Schema verification owns its read-only transaction and returns
 snapshot evidence; never restore borrowed session/transaction views.
-`RunledgerTransaction` uses consuming application and domain operations backed by
-Batter's SQLx foundation. No raw owner extraction or legacy bridge is supported.
+`run_atomic` owns disposition and consumes the intent phase before queue operations.
+It uses Batter's SQLx foundation and only releases outputs after acknowledgement.
+No raw owner extraction or legacy bridge is supported.
 
 ## Common commands
 

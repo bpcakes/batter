@@ -55,7 +55,10 @@ async fn snapshot_transaction_control_never_returns_evidence() -> Result {
         ] {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let result = PgReadOnlySnapshot::inspect(&fixture.pool, async |sql| {
-                let _ = sender.send(pid(sql).await?);
+                let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(sql.executor())
+                    .await?;
+                let _ = sender.send(backend);
                 sqlx::raw_sql(statement).execute(sql.executor()).await?;
                 Ok::<_, sqlx::Error>(())
             })
@@ -63,6 +66,44 @@ async fn snapshot_transaction_control_never_returns_evidence() -> Result {
             assert!(result.is_err(), "snapshot boundary survived {statement}");
             replacement(&fixture.pool, receiver.await?).await?;
         }
+        Ok(())
+    }
+    .await;
+    fixture.finish(body).await
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL 18"]
+async fn snapshot_error_requires_original_guard() -> Result {
+    let fixture = fixture().await?;
+    let body = async {
+        for statement in [
+            "COMMIT",
+            "ROLLBACK",
+            "COMMIT AND CHAIN",
+            "ROLLBACK AND CHAIN",
+            "COMMIT; BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        ] {
+            let error = PgReadOnlySnapshot::inspect(&fixture.pool, async |sql| {
+                sqlx::raw_sql(statement).execute(sql.executor()).await?;
+                Err::<(), _>(sqlx::Error::Protocol("original inspection failure".into()))
+            })
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(error, PgSnapshotError::Cleanup {
+                inspection: sqlx::Error::Protocol(ref message), ..
+            } if message == "original inspection failure"),
+                "{statement}: {error:?}"
+            );
+        }
+        let error = PgReadOnlySnapshot::inspect(&fixture.pool, async |sql| {
+            sqlx::query("SELECT 1 / 0").execute(sql.executor()).await
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(error, PgSnapshotError::Inspection(ref e)
+            if e.as_database_error().unwrap().code().as_deref() == Some("22012")));
         Ok(())
     }
     .await;

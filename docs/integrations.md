@@ -238,9 +238,9 @@ inferred in this stage. Durable persistence remains with
 
 ## SQLx: owned transactions and session operations
 
-For atomic application/library composition, use `PgAtomicTransaction::begin`,
-consuming `application` and `operation` scopes, then consuming `commit` or
-`rollback`. The operation boundary owns savepoint recovery and XID validation;
+For atomic application/library composition, use `run_atomic(&pool, async |scope| ...)`.
+The runner withholds output until acknowledged completion and owns session retirement.
+Its application operations own savepoint recovery and XID validation;
 downstream code receives only `PgScopedSql::executor()`. `PgReadOnlySnapshot`
 owns generic coherent read-only inspections. See the
 [transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
@@ -405,11 +405,11 @@ especially outcomes around commit. A caller deadline or lost connection does not
 prove rollback. Do not turn an ambiguous outcome into a generic "retryable"
 Batter error. Implement application idempotency/reconciliation separately.
 
-The reference service uses one owned READ COMMITTED `RunledgerTransaction` for
-the command row, application delivery and Runledger enqueue. Consuming application
-scopes and domain operations preserve the transaction's birth identity. Exact
+The reference service uses Runledger's READ COMMITTED `run_atomic` for
+the command row, application delivery and Runledger enqueue. Scoped application
+and domain operations preserve the transaction's birth identity. Exact
 replay reads the committed command identity without enqueueing again; changed
-input conflicts. Commit/rollback return explicit acknowledgement. Interruption
+input conflicts. The runner releases results only after commit/rollback acknowledgement. Interruption
 before acknowledgement retires the connection and leaves uncertainty; no
 asynchronous cleanup follows acknowledged completion. The operation boundary
 retains known completion evidence before telemetry is finalized.
@@ -949,8 +949,9 @@ targets.
 ## Owned native database composition
 
 Use `PgLease::migrate` for application-selected SQLx migrations. For Runledger,
-use `verify_schema(&pool)` and `RunledgerTransaction::begin(&pool)`.
-Application SQL, durable intents and direct enqueue use consuming scopes; no
+use `verify_schema(&pool)` and `run_atomic(&pool, async |scope| ...)`.
+Intent recording precedes the consuming `scope.queue()` transition; enqueue is
+available only in the resulting queue phase. No
 native resource view or compatibility module remains. Dependency direction is
 `batter-runledger -> runledger-postgres -> batter-sqlx -> batter-core`.
 The facade optionally selects the integration; SQLx alone never selects Runledger.

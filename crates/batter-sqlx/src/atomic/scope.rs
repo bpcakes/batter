@@ -1,5 +1,5 @@
 use super::PgTransactionError;
-use sqlx::{Executor, PgConnection, Postgres};
+use sqlx::{Connection, Executor, PgConnection, Postgres};
 
 /// Native SQL execution confined to a library-owned scope.
 ///
@@ -42,6 +42,15 @@ pub(crate) async fn command(
 ) -> Result<(), PgTransactionError> {
     sqlx::raw_sql(statement).execute(connection).await?;
     Ok(())
+}
+
+// Reset inherited session resources before establishing any transaction evidence.
+// Clear the driver's cache first: DISCARD ALL also deallocates server statements.
+// Any failure leaves the owning lease armed for retirement.
+pub(crate) async fn normalize(connection: &mut PgConnection) -> Result<(), PgTransactionError> {
+    command(connection, "ROLLBACK").await?;
+    connection.clear_cached_statements().await?;
+    command(connection, "DISCARD ALL").await
 }
 
 // Identifier comes solely from a locally generated UUID. Never interpolate

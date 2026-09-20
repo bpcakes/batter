@@ -3,13 +3,17 @@
 mod cancellation;
 #[path = "atomic_live/commit.rs"]
 mod commit;
+#[path = "atomic_live/runner.rs"]
+mod runner;
+#[path = "atomic_live/session_state.rs"]
+mod session_state;
 #[path = "atomic_live/snapshots.rs"]
 mod snapshots;
 mod support;
 #[path = "atomic_live/transactions.rs"]
 mod transactions;
 
-use batter_sqlx::{PgAtomicTransaction, PgScopedSql};
+use batter_sqlx::{PgScopedSql, low_level::PgAtomicTransaction};
 use support::{Fixture, Result};
 
 async fn fixture() -> Result<Fixture> {

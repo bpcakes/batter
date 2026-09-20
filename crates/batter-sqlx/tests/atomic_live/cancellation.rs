@@ -30,25 +30,36 @@ async fn cancelled_application_operation_and_snapshot_retire() -> Result {
         let pool = fixture.pool.clone();
         let key = fixture.key;
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let work = async move |sql: &mut PgScopedSql<'_>| {
-            let backend = pid(sql).await?;
-            let _ = sender.send(backend);
-            sqlx::query("SELECT pg_advisory_lock($1)")
-                .bind(key)
-                .execute(sql.executor())
-                .await?;
-            Ok::<_, sqlx::Error>(())
-        };
         let task = tokio::spawn(async move {
             if mode == 2 {
-                let _ = PgReadOnlySnapshot::inspect(&pool, work).await;
+                let _ = PgReadOnlySnapshot::inspect(&pool, async |sql| {
+                    let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                        .fetch_one(sql.executor())
+                        .await?;
+                    let _ = sender.send(backend);
+                    sqlx::query("SELECT pg_advisory_lock($1)")
+                        .bind(key)
+                        .execute(sql.executor())
+                        .await?;
+                    Ok::<_, sqlx::Error>(())
+                })
+                .await;
+                return;
+            }
+            let work = async move |sql: &mut PgScopedSql<'_>| {
+                let backend = pid(sql).await?;
+                let _ = sender.send(backend);
+                sqlx::query("SELECT pg_advisory_lock($1)")
+                    .bind(key)
+                    .execute(sql.executor())
+                    .await?;
+                Ok::<_, sqlx::Error>(())
+            };
+            let tx = PgAtomicTransaction::begin(&pool).await.unwrap();
+            if mode == 0 {
+                let _ = tx.application(work).await;
             } else {
-                let tx = PgAtomicTransaction::begin(&pool).await.unwrap();
-                if mode == 0 {
-                    let _ = tx.application(work).await;
-                } else {
-                    let _ = tx.operation(work).await;
-                }
+                let _ = tx.operation(work).await;
             }
         });
         let body = async {

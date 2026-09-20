@@ -98,11 +98,11 @@ An exact retry returns the same delivery without another enqueue. Changed
 record/generation/payload input conflicts. Another authenticated owner may reuse
 the same key independently and cannot observe the first owner's rows.
 
-The first submission uses an owned READ COMMITTED `RunledgerTransaction`.
-Application preparation, enqueue and application completion use consuming
-savepoint scopes. Known operation errors return an owner only after full recovery;
-the service then rolls back. Commit and rollback return explicit acknowledgement.
-Cancellation or terminal failure retires the connection and leaves uncertainty.
+The first submission uses the READ COMMITTED `run_atomic` runner.
+Application preparation, enqueue and application completion use protected
+savepoint scopes. The runner owns commit/rollback and releases output or rejection
+only after acknowledgement; uncertain results retain the domain output/error.
+All completion paths retire the session; cancellation still leaves uncertainty.
 The service never retries automatically: reconcile by original owner/key, since
 absence while an old session may still settle is not rollback proof. Completion
 evidence is retained inside the operation boundary before telemetry finalization.

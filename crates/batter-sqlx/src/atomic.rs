@@ -3,21 +3,22 @@ pub(crate) mod scope;
 
 pub use error::{CommitUnconfirmed, PgScopeError, PgTransactionError};
 pub use scope::PgScopedSql;
-use scope::{ScopeSavepoint, command};
+use scope::{ScopeSavepoint, command, normalize};
 
 use crate::PgLease;
 use sqlx::PgPool;
 
-/// Library-owned READ COMMITTED, READ WRITE PostgreSQL transaction.
+/// Low-level READ COMMITTED, READ WRITE PostgreSQL transaction owner.
+/// Prefer [`crate::run_atomic`], which withholds outputs until completion.
 ///
 /// Every SQL scope consumes the owner. Cancellation, panic, boundary loss and
-/// unfinished Drop retire the physical connection; retirement does not confirm
-/// server rollback. Acquisition is normalized with ROLLBACK before BEGIN. The
+/// all completion paths retire the physical connection; retirement does not
+/// confirm server rollback. Acquisition resets session state before BEGIN. The
 /// top-level XID is assigned at birth and checked after every scope and before
 /// completion. Use PostgreSQL 18 or later.
 ///
 /// ```no_run
-/// use batter_sqlx::PgAtomicTransaction;
+/// use batter_sqlx::low_level::PgAtomicTransaction;
 /// # async fn example(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
 /// let tx = PgAtomicTransaction::begin(pool).await?;
 /// let (tx, ()) = tx.application(async |sql| {
@@ -31,20 +32,20 @@ use sqlx::PgPool;
 /// ```
 /// Cancellation cannot hand the same owner back to its caller:
 /// ```compile_fail,E0382
-/// async fn cancelled(tx: batter_sqlx::PgAtomicTransaction) {
+/// async fn cancelled(tx: batter_sqlx::low_level::PgAtomicTransaction) {
 ///     let future = tx.application(async |_| Ok::<_, sqlx::Error>(()));
 ///     drop(future);
 ///     tx.commit().await.unwrap();
 /// }
 /// ```
 /// ```compile_fail,E0599
-/// fn extract(mut tx: batter_sqlx::PgAtomicTransaction) {
+/// fn extract(mut tx: batter_sqlx::low_level::PgAtomicTransaction) {
 ///     let _ = tx.executor();
 /// }
 /// ```
 /// ```compile_fail,E0451
 /// fn forge() {
-///     let _ = batter_sqlx::PgAtomicTransaction { lease: todo!(), xid: String::new() };
+///     let _ = batter_sqlx::low_level::PgAtomicTransaction { lease: todo!(), xid: String::new() };
 /// }
 /// ```
 #[must_use = "complete the transaction through a consuming operation"]
@@ -76,7 +77,7 @@ impl PgAtomicTransaction {
         let mut lease = PgLease {
             connection: Some(pool.acquire().await?),
         };
-        command(lease.connection_mut(), "ROLLBACK").await?;
+        normalize(lease.connection_mut()).await?;
         command(
             lease.connection_mut(),
             "BEGIN ISOLATION LEVEL READ COMMITTED READ WRITE",
@@ -112,7 +113,7 @@ impl PgAtomicTransaction {
     /// Cancellation never returns an owner, including during savepoint cleanup.
     ///
     /// ```no_run
-    /// # async fn example(tx: batter_sqlx::PgAtomicTransaction) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(tx: batter_sqlx::low_level::PgAtomicTransaction) -> Result<(), Box<dyn std::error::Error>> {
     /// let (tx, result) = tx.operation(async |sql| {
     ///     sqlx::query("INSERT INTO audit_events (message) VALUES ('operation')")
     ///         .execute(sql.executor()).await?;
@@ -173,7 +174,8 @@ impl PgAtomicTransaction {
         command(self.lease.connection_mut(), "COMMIT")
             .await
             .map_err(CommitUnconfirmed)?;
-        drop(self.lease.connection.take());
+        // The lease retires even after acknowledgement: arbitrary SQL may have
+        // changed session settings or acquired session advisory locks.
         Ok(PgCommitConfirmed(()))
     }
 
@@ -181,7 +183,6 @@ impl PgAtomicTransaction {
     pub async fn rollback(mut self) -> Result<PgRollbackConfirmed, PgTransactionError> {
         self.validate().await?;
         command(self.lease.connection_mut(), "ROLLBACK").await?;
-        drop(self.lease.connection.take());
         Ok(PgRollbackConfirmed(()))
     }
 
