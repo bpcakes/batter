@@ -4,7 +4,7 @@
 
 Translate Runledger initialization and complete native settlement into Batter
 managed registration, and bridge Batter's opaque SQLx transaction to Runledger's
-executor-only enqueue capability. Follow the root Unix-only policy. Native task
+sealed native-resource enqueue capability. Follow the root Unix-only policy. Native task
 ownership, durable job outcomes, registry/catalog policy and database provisioning stay native.
 
 ## Key entrypoints
@@ -28,7 +28,9 @@ original timestamp. Preserve the original native report and conservative depende
 cleanup classification. Do not install tracing subscribers or print error contents.
 NativeReport owns RuntimeSettlement and derives cleanup authority from its
 unforgeable variants; never restore caller-writable report fields or reclassify
-borrowed evidence. Schema verification uses the native session capability.
+borrowed evidence. Schema verification consumes a concrete retained session view.
+`RunledgerTransaction::view()` is constructed inside the SQLx owner from the
+actual transaction; no downstream implementation promise establishes identity.
 The transaction bridge exposes only SQL execution and consuming commit/rollback;
 never add native `DerefMut`, `AsMut`, connection replacement or transaction replacement.
 

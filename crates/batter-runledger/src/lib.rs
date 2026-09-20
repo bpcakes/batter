@@ -46,7 +46,7 @@ use std::{
 ///     .execute(transaction.executor())
 ///     .await?;
 /// let payload = json!({"kind": "example"});
-/// enqueue_job_with_outcome_in_transaction(&mut transaction, &JobEnqueue {
+/// enqueue_job_with_outcome_in_transaction(&mut transaction.view(), &JobEnqueue {
 ///     job_type: JobType::new("example.job"),
 ///     organization_id: None,
 ///     payload: &payload,
@@ -73,6 +73,24 @@ impl<'connection> RunledgerTransaction<'connection> {
         })
     }
 
+    /// Retain this native transaction across one Runledger operation.
+    ///
+    /// Completion cannot consume the transaction while its view is still in use:
+    /// ```compile_fail
+    /// # async fn finish_while_borrowed(
+    /// #     mut transaction: batter_runledger::RunledgerTransaction<'_>,
+    /// #     intent: &runledger_postgres::jobs::JobEnqueueIntent<'_>,
+    /// # ) {
+    /// let mut view = transaction.view();
+    /// transaction.commit().await.unwrap();
+    /// runledger_postgres::jobs::record_job_enqueue_intent_in_transaction(&mut view, intent)
+    ///     .await.unwrap();
+    /// # }
+    /// ```
+    pub fn view(&mut self) -> runledger_postgres::PgTransactionView<'_, 'connection> {
+        self.transaction.runledger_view()
+    }
+
     /// Borrow this exact transaction for one native SQLx operation.
     pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
         self.transaction.executor()
@@ -95,12 +113,6 @@ impl PgExecutor for RunledgerTransaction<'_> {
     }
 }
 
-impl runledger_postgres::PgTransactionExecutor for RunledgerTransaction<'_> {
-    fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
-        self.executor()
-    }
-}
-
 impl std::fmt::Debug for RunledgerTransaction<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RunledgerTransaction")
@@ -115,17 +127,10 @@ impl std::fmt::Debug for RunledgerTransaction<'_> {
 pub async fn verify_schema(
     session: &mut PgSession<'_>,
 ) -> Result<(), runledger_postgres::SchemaCompatibilityError> {
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover_with_executor(
-        &mut SchemaSession(session),
+    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover_with_session(
+        session.runledger_view(),
     )
     .await
-}
-
-struct SchemaSession<'a, 'c>(&'a mut PgSession<'c>);
-impl runledger_postgres::PgSessionExecutor for SchemaSession<'_, '_> {
-    fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
-        self.0.executor()
-    }
 }
 
 /// Original native shutdown evidence. The process report retains this concrete

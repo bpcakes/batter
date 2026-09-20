@@ -343,7 +343,7 @@ async fn submit_in_transaction(
         idempotency_key: Some(&new.enqueue_idempotency_key),
         stage: Some(JobStage::Queued),
     };
-    let outcome = enqueue_job_with_outcome_in_transaction(transaction, &enqueue)
+    let outcome = enqueue_job_with_outcome_in_transaction(&mut transaction.view(), &enqueue)
         .await
         .map_err(StorageError::from)?;
     if outcome.disposition != JobEnqueueDisposition::Inserted {

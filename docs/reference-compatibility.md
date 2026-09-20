@@ -32,21 +32,22 @@ acceptance and status. The current native lifecycle and retirement redesign is o
 On 2026-09-20, `batter-44w` advanced the root Runledger graph from
 `638ee3480f69962597147f5d7bd52822267560b7` to PR
 [#19](https://github.com/bpcakes/runledger/pull/19), immutable commit
-`969e86b76913304b9e58fb934b41f679a9ec812b`. This includes opaque durable-intent and schema
+`c541dad69fcb6c03b39541084538681b2d710a32`. This includes opaque durable-intent and schema
 capabilities plus the intervening native settlement and unconfirmed-commit
 hard cuts. All three native packages use this exact pin; no path override is
 required. The archived `batter-gi4` consumer remains historical evidence at its
 recorded pin, not validation of the new graph.
-At this PR graph, Linux verification on Rust 1.98.1 and minimum Rust 1.94.0
-passes the full workspace,
-feature-isolation checks, doctests, strict Clippy and rustdoc. PostgreSQL 18
-validation passes all 63 SQLx live cases, all 66 reference-service cases and
-both required library boundary probes. The added opaque bridge test separately
-proves native schema verification and atomic application-write/intent commit
-and rollback. All five HTTP process smokes pass (SIGTERM, SIGINT, deadline
-and WARN-filter paths). Native Codex review found no actionable regressions. These results
-cover the new graph; earlier platform and toolchain results below remain
-historical unless explicitly rerun.
+The initial PR implementation at Runledger `969e86b` passed behavioral and CI
+checks but failed construction-invariant review: arbitrary executor implementations
+could claim transaction or session identity. The current revision seals transaction
+execution to native resources and private-representation views, and schema checks
+consume one retained session view. External compile-fail tests cover newtypes,
+routing executors, forgery and resource replacement. Expanded PostgreSQL parity
+and owning-adapter cancellation checks pass locally. Full verification passes on
+Rust 1.98.1 and 1.94.0; the full PostgreSQL suite and all five HTTP smokes pass.
+The bridge also passes repeated runs against one database on both toolchains,
+with cleanup verified after each run. All five final Jig targets pass.
+Hosted evidence for the repaired commits is tracked in the linked PRs.
 
 Earlier paired-checkout validation retains its historical scope. The optional `batter-runledger` adapter
 selects the native runtime. The foundation remains independent of it. SQLx and its
@@ -55,7 +56,7 @@ optional test-support harness retain one native type graph.
 | Source | Selected version/revision | Features and boundary | Disposition |
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
-| Runledger Git | core/postgres/runtime 0.12.0 at `969e86b76913304b9e58fb934b41f679a9ec812b` (PR #19) | Opaque intent/schema executors, native SQLx types, inert preparation, initialization observation and consuming settlement | Immutable PR source selection replaces sibling patches. Earlier live results retain their recorded source scope |
+| Runledger Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Retained native transaction/session views, native SQLx types, inert preparation, initialization observation and consuming settlement | Immutable PR source selection replaces sibling patches. Earlier live results retain their recorded source scope |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |

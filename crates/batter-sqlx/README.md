@@ -529,3 +529,12 @@ The redacted `SqlxFailure` retains the original `MigrateError` inside
 `sqlx::Error::Migrate`; trusted diagnostics may inspect it. There is no raw
 connection callback, second migrator implementation or automatic migration on
 pool construction. No local result proves server-session termination.
+
+### Optional Runledger resource views
+
+The `runledger` feature supplies `PgSession::runledger_view` and
+`PgTransaction::runledger_view`. `batter-runledger` enables it and constructs
+views without exposing the owner's native fields. Runledger's view constructors
+require actual native resources; its transaction execution trait is sealed.
+Schema checks retain one connection for the whole invocation. SQLx-only
+consumers do not resolve the Runledger dependency.

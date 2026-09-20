@@ -18,8 +18,10 @@ The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
 `RunledgerTransaction::begin(&mut PgSession)` is the protected SQLx composition
-path. It owns Batter's opaque transaction, implements Runledger's
-`PgTransactionExecutor`, and exposes only borrow-scoped SQL execution plus
+path. It owns Batter's opaque transaction and supplies `view()` for Runledger's
+sealed transaction execution boundary. The view retains the actual native
+transaction borrow; arbitrary downstream executors are rejected. It exposes
+borrow-scoped application SQL execution plus
 consuming commit/rollback. Application writes, direct enqueue and durable enqueue intents can
 therefore share one transaction without making the physical connection or native
 transaction replaceable. An unfinished transaction cannot authorize pool return:
@@ -33,7 +35,7 @@ cause. Native stop observation drains peers promptly. No caller-owned terminatio
 independent driver, failure side channel or nested cleanup stack is needed.
 
 This unpublished Unix-only adapter consumes Runledger at Git revision
-`969e86b76913304b9e58fb934b41f679a9ec812b`, pinned in the workspace and Cargo.lock.
+`c541dad69fcb6c03b39541084538681b2d710a32`, pinned in the workspace and Cargo.lock.
 No sibling checkout is required. The foundation has no dependency on this adapter.
 
 `verify_schema(&mut PgSession)` bridges the native read-only compatibility check

@@ -3782,3 +3782,12 @@ numeric IDs remain useful only for inspecting one current database generation.
   only its selected protocol: same key/same payload, mismatch conflict, typed
   retained-window absence, expiry and accepted-effect lookup. A real provider
   requires a new primary-source audit and adapter acceptance.
+
+The coordinated resource-view repair is pinned to Runledger
+[`c541dad`](https://github.com/bpcakes/runledger/blob/c541dad69fcb6c03b39541084538681b2d710a32/runledger-postgres/src/transaction_executor.rs).
+Its sealed transaction boundary accepts native transactions and private-representation
+`PgTransactionView` only; `PgSessionView` retains one concrete connection. This
+supersedes the earlier externally implementable executor bridge, whose documented
+identity promises were insufficient for the agent-facing construction policy.
+Native SQLx execution still permits transaction-control SQL, so the views preserve
+native resource identity without claiming to validate arbitrary application SQL.

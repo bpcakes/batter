@@ -64,6 +64,14 @@ impl<'connection> PgSession<'connection> {
         })
     }
 
+    /// Borrow one retained native session for Runledger schema verification.
+    ///
+    /// The view cannot expose or replace the connection owned by this session.
+    #[cfg(feature = "runledger")]
+    pub fn runledger_view(&mut self) -> runledger_postgres::PgSessionView<'_> {
+        runledger_postgres::PgSessionView::new(self.connection)
+    }
+
     pub(crate) fn native_connection(&mut self) -> &mut PgConnection {
         self.connection
     }
@@ -127,7 +135,16 @@ pub struct PgTransaction<'connection> {
     unacknowledged_transactions: &'connection mut usize,
 }
 
-impl PgTransaction<'_> {
+impl<'connection> PgTransaction<'connection> {
+    /// Borrow the actual transaction for Runledger's sealed execution boundary.
+    ///
+    /// The operation retains this borrow through its isolation check and writes;
+    /// neither its native transaction nor connection can be replaced or extracted.
+    #[cfg(feature = "runledger")]
+    pub fn runledger_view(&mut self) -> runledger_postgres::PgTransactionView<'_, 'connection> {
+        runledger_postgres::PgTransactionView::new(&mut self.transaction)
+    }
+
     /// Borrow this exact transaction for one native SQLx operation.
     pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
         &mut *self.transaction

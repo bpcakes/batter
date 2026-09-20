@@ -1,4 +1,4 @@
-use super::support::{Result, require};
+use super::support::{Result, bounded, require};
 use super::{AuthorityFixture, FindingKind, RolePolicy, exec, finding, names_policy, quote};
 use sqlx::{Connection, PgConnection};
 use std::time::Duration;
@@ -77,6 +77,12 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
             .bind(&ledger).fetch_one(&mut fixture.admin).await?;
         let catalog_oid: i64 = sqlx::query_scalar("SELECT 'pg_catalog.pg_parameter_acl'::regclass::oid::bigint")
             .fetch_one(&mut fixture.admin).await?;
+        // Session setup may itself read the parameter ACL catalog. Acquire and
+        // warm the mutator before the barrier, so only its DDL waits on the
+        // verifier's ledger lock, not its connection setup on our catalog lock.
+        let mut mutator = bounded(PgConnection::connect(&fixture.url)).await??;
+        let mutator_pid: i32 = bounded(sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut mutator)).await??;
         let mut blocker = PgConnection::connect(&fixture.url).await?;
         let mut barrier = blocker.begin().await?;
         sqlx::query("LOCK TABLE pg_catalog.pg_parameter_acl IN ACCESS EXCLUSIVE MODE")
@@ -94,9 +100,6 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
              AND relation::bigint=$2 AND mode='AccessShareLock' AND granted)"
         ).bind(pid).bind(oid).fetch_one(&mut fixture.admin).await?;
         require(held, "verifier did not retain the ledger lock across catalog inspection")?;
-        let mut mutator = PgConnection::connect(&fixture.url).await?;
-        let mutator_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-            .fetch_one(&mut mutator).await?;
         let ddl = format!("ALTER TABLE {ledger} ENABLE ROW LEVEL SECURITY");
         let change = sqlx::query(sqlx::AssertSqlSafe(ddl)).execute(&mut mutator);
         tokio::pin!(change);

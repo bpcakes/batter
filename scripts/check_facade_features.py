@@ -116,6 +116,7 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "batter-test-support": "test-support" in chosen or "sqlx-test-support" in chosen,
         "axum": axum,
         "sqlx": sqlx,
+        "runledger-postgres": "runledger" in chosen,
         "runledger-runtime": "runledger" in chosen,
         "runlimit-core": runlimit,
         "runlimit-memory": "runlimit-memory" in chosen,
@@ -218,7 +219,7 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"969e86b76913304b9e58fb934b41f679a9ec812b\" }")
+        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"c541dad69fcb6c03b39541084538681b2d710a32\" }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""
