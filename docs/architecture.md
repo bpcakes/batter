@@ -10,6 +10,15 @@ obligations to reconstruct those protocols are design debt, even when they are
 documented. This policy does not move application-specific protocols into the
 foundation or claim that types can prove arbitrary remote effects.
 
+For the canonical path, locally expressible invalid operational states are not
+accepted as ordinary public inputs or compositions. Opaque validated witnesses,
+consuming transitions, narrow capabilities, exhaustive outcomes and
+library-ordered assembly should make common misuse fail at construction or not
+type-check. Every new or materially changed public API follows the
+[ADR-010 review](adr/010-agent-only-consumption.md#public-api-invalid-state-review);
+escape hatches remain explicitly weaker rather than alternate spellings of the
+protected path.
+
 Examples are consumer contracts, and lower-level escape hatches must state the
 obligations they leave with callers without appearing equivalent to the
 protected path. Proposed design changes should be exercised with independent
@@ -113,8 +122,9 @@ restart and no ignored task-result path.
 Optional bounded finite admission shares process ownership. Root submission
 stops at drain; active scopes may admit descendants until forced cancellation.
 Receipts carry results without owning cancellation or capacity. Successful
-completions increment a counter; task-level failures close admission and initiate
-drain, retaining all failures in the bounded outstanding set. Expected domain
+completions increment a counter; explicit `Fatal` task failures close admission
+and initiate drain, retaining all failures in the bounded outstanding set. A
+plain application error cannot be propagated into a drain with `?`. Expected domain
 rejections are task values. This is not persistent scheduling or general fiber scope.
 
 **Durable lifetime:** work persisted in Runledger. Durable work must not inherit
@@ -177,9 +187,12 @@ must consume `approve_readiness` to obtain `RunningSupervisor`. Registration
 creates one non-cloneable
 `ComponentStartup` for each critical component. The component observes shutdown
 through that value during initialization, then consumes
-`acknowledge_started()` after actual initialization and receives a read-only
-`ShutdownSignal` for its running phase. A standalone signal cannot acknowledge
-startup, repeated acknowledgement does not type-check, and drain cannot be
+`acknowledge_started()` after actual initialization and receives a
+`RunningComponent` for its running phase, whose `stopped()` is the only source of
+the `ComponentExit` proof the component future must return; `abandon()` supplies
+it when drain is observed before initialization. A standalone signal cannot
+acknowledge startup or produce the proof, repeated acknowledgement does not
+type-check, and drain cannot be
 reversed by a late acknowledgement or application approval.
 The composition root retains `ShutdownHandle` only for shutdown requests. The
 one-shot application-start approval remains paired with an unapproved driver

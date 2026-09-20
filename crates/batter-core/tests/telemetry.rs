@@ -4,6 +4,7 @@ mod filtered;
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
 
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     operation::{Interruption, OperationContext},
     retry::{
@@ -91,7 +92,7 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
         );
         let context = OperationContext::new(Duration::from_secs(1)).unwrap();
         let run = context.run("telemetry.dropped", |_| {
-            std::future::pending::<Result<(), io::Error>>()
+            std::future::pending::<Result<(), Fatal<io::Error>>>()
         });
         tokio::pin!(run);
         tokio::select! {
@@ -114,6 +115,69 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
         assert!(line.contains(level), "{line}");
         assert!(line.contains("elapsed_ms="), "{line}");
     }
+}
+
+#[tokio::test]
+async fn resolved_result_is_classified_before_operation_telemetry_finishes() {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let writer = Buffer(output.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .without_time()
+        .with_max_level(tracing::Level::INFO)
+        .finish();
+
+    async {
+        let rejected = OperationContext::new(Duration::from_secs(1))
+            .unwrap()
+            .run_resolved(
+                "telemetry.resolved-failure",
+                |_| async { Ok::<_, io::Error>(()) },
+                |_| {
+                    Err::<(), _>(batter_core::operation::OperationError::Failed(
+                        io::Error::other("retained rejection"),
+                    ))
+                },
+            )
+            .await;
+        assert!(rejected.is_err());
+
+        let retained = Arc::new(Mutex::new(None));
+        let inside = retained.clone();
+        let committed = OperationContext::new(Duration::from_secs(1))
+            .unwrap()
+            .run_resolved(
+                "telemetry.resolved-success",
+                move |scope| async move {
+                    *inside.lock().unwrap() = Some(42);
+                    scope.cancel();
+                    std::future::pending::<Result<(), io::Error>>().await
+                },
+                move |boundary| match retained.lock().unwrap().take() {
+                    Some(value) => Ok(value),
+                    None => boundary.map(|()| unreachable!()),
+                },
+            )
+            .await;
+        assert_eq!(committed.unwrap(), 42);
+    }
+    .with_subscriber(test_dispatch::new(subscriber))
+    .await;
+
+    let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    for (operation, outcome, level) in [
+        ("telemetry.resolved-failure", "failed", "WARN"),
+        ("telemetry.resolved-success", "succeeded", "INFO"),
+    ] {
+        let line = text
+            .lines()
+            .find(|line| line.contains(operation) && line.contains("operation boundary finished"))
+            .unwrap_or_else(|| panic!("missing completion for {operation}: {text}"));
+        assert!(line.contains(&format!("outcome=\"{outcome}\"")), "{line}");
+        assert!(line.contains(level), "{line}");
+    }
+    assert!(!text.contains("retained rejection"), "{text}");
 }
 
 #[tokio::test(start_paused = true)]
@@ -315,7 +379,7 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
             let signal = signal.acknowledge_started();
             signal.draining().await;
             tracing::info!("driver component stopping");
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     supervisor
@@ -339,7 +403,7 @@ async fn finite_work_keeps_submitter_telemetry_after_receipt_drop_without_repare
             .try_spawn("correlated.work", |_| async move {
                 released.await.unwrap();
                 tracing::info!("finite callback invoked");
-                Ok::<_, Infallible>(42)
+                Ok::<_, Fatal<Infallible>>(42)
             })
             .unwrap()
     });

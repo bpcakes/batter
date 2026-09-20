@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 
@@ -104,11 +105,12 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     chosen = set(selected)
     axum = "axum" in chosen or "runlimit-axum" in chosen
     sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger", "runlimit-postgres"})
+    batter_sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger"})
     runlimit = bool(chosen & {"runlimit", *RUNLIMIT_BRIDGES})
     return {
         "batter-core": True,
         "batter-axum": axum,
-        "batter-sqlx": "sqlx" in chosen or "sqlx-test-support" in chosen,
+        "batter-sqlx": batter_sqlx,
         "batter-runledger": "runledger" in chosen,
         "batter-runlimit": runlimit,
         "batter-test-support": "test-support" in chosen or "sqlx-test-support" in chosen,
@@ -131,10 +133,11 @@ def facade_source(selected: tuple[str, ...]) -> str:
     ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
-    if "sqlx" in chosen or "sqlx-test-support" in chosen:
+    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
         lines.insert(1, "use batter::sqlx::{PgLease, pool_in};")
     if "runledger" in chosen:
-        lines.insert(1, "use batter::runledger::{NativeReport, register_in};")
+        lines.insert(1, "use batter::runledger::{NativeReport, RunledgerTransaction, register_in};")
+        lines.append("async fn begin_runledger_transaction(session: &mut batter::sqlx::PgSession<'_>) { let _ = RunledgerTransaction::begin(session).await; }")
     if "runlimit" in chosen or chosen & set(RUNLIMIT_BRIDGES):
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
     if "runlimit-axum" in chosen:
@@ -210,12 +213,12 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
     ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         deps.append("batter-axum = { path = " + json.dumps(str(ROOT / "crates/batter-axum")) + " }")
-    if "sqlx" in chosen or "sqlx-test-support" in chosen:
+    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
         sqlx_features = ", features = [\"test-support\"]" if "sqlx-test-support" in chosen else ""
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"d57ec6be61e9f00ccce373b19ca356cafe98f206\" }")
+        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"638ee3480f69962597147f5d7bd52822267560b7\" }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""
@@ -248,7 +251,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "fn axum_identity(_: DirectRequestPolicy) {}",
             "const _: fn(RequestPolicy) = axum_identity;",
         ]
-    if "sqlx" in chosen or "sqlx-test-support" in chosen:
+    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
         lines += [
             "use batter::sqlx::PgLease;",
             "use batter_sqlx::PgLease as DirectPgLease;",
@@ -371,6 +374,53 @@ def declared_features(metadata: dict) -> None:
         )
 
 
+def internal_batter_crate_roots(metadata: dict) -> tuple[str, ...]:
+    """Return Rust crate roots for facade implementation dependencies."""
+    packages = [package for package in metadata["packages"] if package["name"] == "batter"]
+    if len(packages) != 1:
+        raise RuntimeError("expected exactly one batter facade package")
+    roots = {
+        (dependency.get("rename") or dependency["name"]).replace("-", "_")
+        for dependency in packages[0]["dependencies"]
+        if dependency["kind"] is None and dependency["name"].startswith("batter-")
+    }
+    if "batter_core" not in roots:
+        raise RuntimeError(f"facade dependency discovery omitted batter-core: {sorted(roots)}")
+    return tuple(sorted(roots))
+
+
+def forbidden_example_roots(text: str, roots: tuple[str, ...]) -> set[str]:
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, roots)) + r")\b")
+    return set(pattern.findall(text))
+
+
+def check_facade_import_detector(roots: tuple[str, ...]) -> None:
+    """Prove path, alias and extern forms cannot bypass the recurrence guard."""
+    if forbidden_example_roots("use batter::operation::OperationContext;", roots):
+        raise RuntimeError("public facade path was classified as an internal dependency")
+    for root in roots:
+        for source in (
+            f"use {root}::Thing;",
+            f"use {root} as internal;",
+            f"extern crate {root};",
+        ):
+            if forbidden_example_roots(source, roots) != {root}:
+                raise RuntimeError(f"facade import detector missed {source!r}")
+
+
+def check_facade_example_imports(roots: tuple[str, ...]) -> None:
+    """Keep facade-owned examples on the public consumer path."""
+    violations: list[str] = []
+    for source in sorted((ROOT / "crates/batter/examples").rglob("*.rs")):
+        text = source.read_text()
+        for forbidden in sorted(forbidden_example_roots(text, roots)):
+            violations.append(f"{source.relative_to(ROOT)}: {forbidden}")
+    if violations:
+        raise RuntimeError(
+            "facade-owned examples bypass the public facade:\n" + "\n".join(violations)
+        )
+
+
 def main() -> int:
     requested_toolchain = os.environ.get("RUSTUP_TOOLCHAIN")
     toolchain = requested_toolchain or execute(["rustup", "show", "active-toolchain"], ROOT).split()[0]
@@ -382,6 +432,9 @@ def main() -> int:
                  "--all-features", "--locked"], ROOT
     ))
     declared_features(baseline)
+    internal_roots = internal_batter_crate_roots(baseline)
+    check_facade_import_detector(internal_roots)
+    check_facade_example_imports(internal_roots)
     known = source_tuples(baseline)
     root_lock = (ROOT / "Cargo.lock").read_bytes()
     print(

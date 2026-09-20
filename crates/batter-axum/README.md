@@ -80,20 +80,38 @@ server state, or define response bodies. SameSite and Fetch Metadata remain
 defense-in-depth signals; `Cache-Control: no-store` is not a complete privacy
 guarantee.
 
-Use `RequestPolicy` with
-`middleware::from_fn_with_state(policy, request_admission)` on guarded business
-routes. Merge unguarded probes and fallback, then apply
-`middleware::from_fn(observe_http)` to the assembled router. Install trusted
-server request identity outside observation, and response rejection/status
-transformation inside it. Probes, fallback and rejected requests then receive
-HTTP status/outcome/latency events without acquiring an execution policy.
+Construct each configured route with `ProbePath::new`, then use
+`HttpBoundary::new(RequestPolicy)` with `with_liveness`, `with_readiness` and
+build application routes with `GuardedRouter`, and call `assemble(guarded)`.
+`ProbePath` rejects captures, wildcards and other
+non-literal route syntax before Axum can mount it. The fallible probe-registration
+methods reject a repeated path across all probe kinds before Axum routing can
+panic. Awaited assembly reserves each complete probe route identity and returns
+a sanitized error if any guarded literal, capture or wildcard route can match
+it. `GuardedRouter` retains identities through route, merge and typed nesting;
+opaque `nest_service` input is unavailable because it cannot disclose its
+routes. Assembly queries only a library-owned inert inventory, so it does not
+poll application handlers, fallbacks or middleware. The boundary mounts probes outside admission,
+applies admission to every guarded route plus its default, custom, nested and
+method fallbacks, and installs server correlation with the single HTTP observer
+outermost; the order cannot be changed by the caller. Register the result with
+`AssembledHttp::register_in`.
+Probes receive HTTP status/outcome/latency events without acquiring an execution
+policy. Guarded fallbacks and rejected requests are observed too, but the
+fallback remains inside admission and is rejected while the process is not
+accepting work.
 
-`observe_http` requires no lifecycle state and adds no deadline or operation
-context. `RequestPolicy` keeps readiness and deadlines combined. The existing
-`request_scope` remains the combined observation/admission compatibility entry
-point. When adding outer observation, replace inner `request_scope` with
-`request_admission`: each installed observer emits its own event, with no
-automatic deduplication.
+For compositions the boundary cannot express, `request_admission`, `observe_http`
+and `operational_http` remain available. `observe_http` requires no lifecycle
+state and adds no deadline or operation context. `RequestPolicy` keeps readiness
+and deadlines combined. The existing `request_scope` remains the combined
+observation/admission compatibility entry point. Only the outermost observer
+emits a completion event, so stacking observers cannot duplicate HTTP events.
+Nested Batter middleware publishes retained adapter facts, including quota
+facts, into that observer's shared private state in either operational/quota
+wrapper order. A plain observer may sit outside `operational_http`, but
+`request_scope`, admission, deadlines and other rejecting middleware must sit
+inside it when all outcomes require generated correlation.
 
 HTTP completion events default to WARN for 5xx responses and INFO otherwise.
 Applications can select a different level by returning
@@ -125,8 +143,9 @@ status/outcome alerts still need application-owned probe filtering.
 Axum's `Router::layer` runs after routing and covers only routes/fallback already
 assembled when applied. Routes appended later bypass it. A service wrapper
 outside routing records `<unmatched>` because the matched route template is not
-yet available. The [runnable example](../batter/examples/http_service.rs) and
-[`observe_http` rustdoc](src/lib.rs) demonstrate the supported composition.
+yet available. The [runnable example](../batter/examples/http_service.rs) uses
+`HttpBoundary`; the [`observe_http` rustdoc](src/lib.rs) demonstrates the manual
+composition.
 
 `with_failure_renderer` accepts application-controlled response mapping with a
 snapshot of request parts. Establish trusted metadata outside the boundary.
@@ -198,7 +217,10 @@ import change. Decisions do no probe I/O and are point-in-time observations, not
 atomic with future drain.
 
 Inside protected `Startup::scoped` composition, bind a native `TcpListener`, assemble the
-`Router`, then call `register_http_in(scope, "http", listener, router)`. It acknowledges when
+guarded `GuardedRouter` through `HttpBoundary`, then call
+`AssembledHttp::register_in(scope, "http", listener)`; `register_http_in(scope,
+"http", listener, router)` accepts a plain router for compositions outside the
+boundary. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
 failure and abandoned startup release the listener. Native accept errors are
 retried by Axum. Streaming bodies can outlive response deadlines and direct

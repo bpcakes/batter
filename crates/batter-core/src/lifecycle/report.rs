@@ -4,6 +4,8 @@ use crate::cleanup::CleanupReport;
 /// Complete process report, including teardown failures and unreaped work.
 /// Awaiting the driver does not by itself establish successful shutdown.
 /// Owned drivers return a [`super::SharedShutdownReport`]; binding or explicit dropping bypasses either lint.
+/// Debug and Display are redacted: retained task and cleanup errors are reachable
+/// only through the public fields, never through formatting.
 ///
 /// ```compile_fail
 /// #![deny(unused_must_use)]
@@ -12,7 +14,6 @@ use crate::cleanup::CleanupReport;
 ///     supervisor.run_until(async {}).await;
 /// }
 /// ```
-#[derive(Debug)]
 #[must_use = "inspect the report for failures and incomplete cleanup"]
 pub struct ShutdownReport {
     /// Trigger selected by the coordinator; inspect task/cleanup outcomes for all failures.
@@ -55,6 +56,21 @@ impl ShutdownReport {
     /// Only direct tasks. This does NOT prove detached descendants terminated.
     pub fn all_direct_tasks_joined(&self) -> bool {
         self.unjoined.is_empty()
+    }
+}
+
+impl std::fmt::Debug for ShutdownReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShutdownReport")
+            .field("cause", &self.cause)
+            .field("tasks", &self.tasks)
+            .field("managed", &self.managed)
+            .field("completed_process_tasks", &self.completed_process_tasks)
+            .field("forced_cancellation", &self.forced_cancellation)
+            .field("abort_requested", &self.abort_requested)
+            .field("unjoined", &self.unjoined)
+            .field("cleanup", &self.cleanup)
+            .finish()
     }
 }
 

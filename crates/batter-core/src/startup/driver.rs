@@ -475,7 +475,7 @@ mod tests {
             supervisor.register_reserved("signals", |startup| async move {
                 let shutdown = startup.acknowledge_started();
                 shutdown.draining().await;
-                Ok(())
+                Ok(shutdown.stopped())
             });
             if self.received {
                 handle.request();

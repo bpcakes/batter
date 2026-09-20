@@ -8,6 +8,7 @@ transactions remain application-owned. Follow the root Unix-only policy.
 ## Key entrypoints
 
 - `src/lib.rs`: default-retiring lease, bounded probe, pool cleanup registration.
+- `src/session.rs`: opaque session/transaction execution capabilities and consuming completion.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and
   serving-authority inspection; validated policy construction and canonical
@@ -29,9 +30,16 @@ consumer is `examples/postgres-lifecycle`.
 ## Invariants
 
 Dropping an unsuccessful lease detaches and drops the client connection.
-Only explicit acknowledged completion permits ordinary pool return. Local
-capacity release and Pool::close do not acknowledge server-session termination,
-rollback or remote cancellation; detached sessions can exceed max_connections.
+Ordinary pool return requires a private proof created only after application
+success, zero unacknowledged typed transactions and a successful same-connection
+`ROLLBACK` round trip. This synchronizes raw open or failed transactions that the
+native executor can create but does not reset arbitrary session state. Failure or
+cancellation before that proof retires the connection. Local capacity release and
+Pool::close do not acknowledge server-session termination, rollback or remote
+cancellation; detached sessions can exceed max_connections.
+Public lease closures never receive a native connection or transaction and the
+opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply
+to the same physical connection that was acquired.
 Never log native error contents automatically. Core and generic support remain
 independent of SQLx. Never provision PostgreSQL in this package. Verifier discovery preserves selected
 object identities separately from effective ACL sources. Evaluation shares one

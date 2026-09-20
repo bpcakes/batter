@@ -95,7 +95,8 @@ async fn verification_rejects_oversized_parameter_acl_catalog() -> Result {
         let exact: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_parameter_acl CROSS JOIN LATERAL aclexplode(paracl)")
             .fetch_one(&mut fixture.admin).await?;
         require(exact == 10_000, "capacity fixture did not reach the exact expanded-ACL boundary")?;
-        super::verify_policy(&pool, &policy(&names)?).await?;
+        // This case checks session behaviour, not the verdict.
+        let _report = super::verify_policy(&pool, &policy(&names)?).await?;
         exec(&mut fixture.admin, format!("GRANT SET ON PARAMETER {first} TO {}", quote(&names.unrelated_creator))).await?;
         let context = OperationContext::new(Duration::from_secs(10))?;
         let result = verify(&pool, &context, &policy(&names)?).await;

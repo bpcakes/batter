@@ -1,4 +1,5 @@
 use super::support::{Case, poll_pending, yields};
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     operation::{Interruption, OperationContext, OperationError},
@@ -25,7 +26,7 @@ pub async fn hierarchy_and_drop(case: Case) {
     let (sender, receiver) = oneshot::channel();
     let mut run = Box::pin(sibling.run("dropped-scope", |scope| async move {
         sender.send(scope).unwrap();
-        pending::<Result<(), Infallible>>().await
+        pending::<Result<(), Fatal<Infallible>>>().await
     }));
     poll_pending(run.as_mut()).await;
     let escaped = receiver.await.unwrap();

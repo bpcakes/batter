@@ -1,14 +1,17 @@
 use super::*;
+mod progress;
+
 use batter::operation::{OperationContext, OperationError};
-use batter::sqlx::{PgLease, SqlxFailure};
+use batter::{
+    runledger::RunledgerTransaction,
+    sqlx::{PgLease, PgSession, SqlxFailure},
+};
 use runledger_postgres::jobs::{
-    JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_tx,
+    JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_in_transaction,
 };
-use sqlx::{Connection, PgConnection, PgPool, Postgres, Transaction};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use sqlx::PgPool;
+
+use progress::{SettledSubmission, SubmissionProgress};
 
 impl DeliveryService {
     /// Bind delivery commands to the application-owned native pool.
@@ -30,35 +33,32 @@ impl DeliveryService {
         request: SubmitDelivery,
     ) -> Result<SubmitResult, SubmitError> {
         let request = request.validate(record_id).map_err(SubmitError::Invalid)?;
-        let transaction_active = Arc::new(AtomicBool::new(false));
-        let active_in_operation = transaction_active.clone();
+        let progress = SubmissionProgress::new();
+        let progress_in_operation = progress.clone();
         let pool = self.pool.clone();
         let result = context
-            .run("delivery.submit", move |scope| async move {
-                attempt_submit(
-                    &pool,
-                    &scope,
-                    &active_in_operation,
-                    owner,
-                    record_id,
-                    &request,
-                )
-                .await
-            })
+            .run_resolved(
+                "delivery.submit",
+                move |scope| async move {
+                    attempt_submit(
+                        &pool,
+                        &scope,
+                        &progress_in_operation,
+                        owner,
+                        record_id,
+                        &request,
+                    )
+                    .await
+                },
+                move |result| progress.resolve(result),
+            )
             .await;
         match result {
             Ok(result) => Ok(result),
-            Err(OperationError::Interrupted(interruption))
-                if transaction_active.load(Ordering::Acquire) =>
-            {
-                Err(SubmitError::Uncertain(UncertainSubmission::Interrupted(
-                    interruption,
-                )))
-            }
             Err(OperationError::Interrupted(interruption)) => {
                 Err(SubmitError::Interrupted(interruption))
             }
-            Err(OperationError::Failed(error)) => Err(error.into_submit_error()),
+            Err(OperationError::Failed(error)) => Err(error),
         }
     }
 
@@ -104,8 +104,8 @@ impl DeliveryService {
         query: F,
     ) -> Result<Option<Delivery>, QueryError>
     where
-        F: for<'a> FnOnce(
-            &'a mut PgConnection,
+        F: for<'a, 'connection> FnOnce(
+            &'a mut PgSession<'connection>,
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<Output = Result<Option<Delivery>, StorageError>>
@@ -117,14 +117,16 @@ impl DeliveryService {
         let pool = self.pool.clone();
         let result = context
             .run("delivery.query", move |scope| async move {
-                let mut lease = PgLease::acquire(&pool, &scope)
+                let lease = PgLease::acquire(&pool, &scope)
                     .await
                     .map_err(QueryAttemptError::Acquire)?;
-                let result = query(lease.connection())
+                // Ok authorizes normalization and possible pool return; Err or
+                // interruption retires the checkout.
+                lease
+                    .with_connection(async move |connection| {
+                        query(connection).await.map_err(QueryAttemptError::Storage)
+                    })
                     .await
-                    .map_err(QueryAttemptError::Storage)?;
-                lease.return_to_pool();
-                Ok(result)
             })
             .await;
         match result {
@@ -155,7 +157,6 @@ enum QueryAttemptError {
 enum SubmitAttemptError {
     Acquire(OperationError<SqlxFailure>),
     Begin(sqlx::Error),
-    RolledBack(CommandFailure),
     Commit(sqlx::Error),
     Rollback {
         operation: Box<CommandFailure>,
@@ -173,8 +174,6 @@ impl SubmitAttemptError {
                 SubmitError::Storage(StorageError::Sqlx(error.into_native()))
             }
             Self::Begin(error) => SubmitError::Storage(StorageError::Sqlx(error)),
-            Self::RolledBack(CommandFailure::Rejected(error)) => SubmitError::Rejected(error),
-            Self::RolledBack(CommandFailure::Storage(error)) => SubmitError::Storage(error),
             Self::Commit(error) => SubmitError::Uncertain(UncertainSubmission::Commit(error)),
             Self::Rollback {
                 operation,
@@ -190,42 +189,39 @@ impl SubmitAttemptError {
 async fn attempt_submit(
     pool: &PgPool,
     context: &OperationContext,
-    transaction_active: &AtomicBool,
+    progress: &SubmissionProgress,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
-) -> Result<SubmitResult, SubmitAttemptError> {
-    let mut lease = PgLease::acquire(pool, context)
+) -> Result<SettledSubmission, SubmitAttemptError> {
+    let lease = PgLease::acquire(pool, context)
         .await
         .map_err(SubmitAttemptError::Acquire)?;
-    let mut transaction = lease
-        .connection()
-        .begin()
+    // Retain the acknowledged application disposition before the lease performs
+    // its pool-return normalization. An uncertain transaction or interruption
+    // still retires the checkout.
+    lease
+        .with_connection(async |session| {
+            let mut transaction = RunledgerTransaction::begin(session)
+                .await
+                .map_err(SubmitAttemptError::Begin)?;
+            let active = progress.transaction_began();
+            let result = submit_in_transaction(&mut transaction, owner, record_id, request).await;
+            match result {
+                Ok(result) => match transaction.commit().await {
+                    Ok(()) => Ok(active.committed(result)),
+                    Err(error) => Err(SubmitAttemptError::Commit(error)),
+                },
+                Err(operation) => match transaction.rollback().await {
+                    Ok(()) => Ok(active.rolled_back(operation)),
+                    Err(rollback) => Err(SubmitAttemptError::Rollback {
+                        operation: Box::new(operation),
+                        rollback,
+                    }),
+                },
+            }
+        })
         .await
-        .map_err(SubmitAttemptError::Begin)?;
-    transaction_active.store(true, Ordering::Release);
-    let result = submit_in_transaction(&mut transaction, owner, record_id, request).await;
-    match result {
-        Ok(result) => match transaction.commit().await {
-            Ok(()) => {
-                transaction_active.store(false, Ordering::Release);
-                lease.return_to_pool();
-                Ok(result)
-            }
-            Err(error) => Err(SubmitAttemptError::Commit(error)),
-        },
-        Err(operation) => match transaction.rollback().await {
-            Ok(()) => {
-                transaction_active.store(false, Ordering::Release);
-                lease.return_to_pool();
-                Err(SubmitAttemptError::RolledBack(operation))
-            }
-            Err(rollback) => Err(SubmitAttemptError::Rollback {
-                operation: Box::new(operation),
-                rollback,
-            }),
-        },
-    }
 }
 
 struct NewDelivery {
@@ -265,13 +261,13 @@ fn prepare_new_delivery(
 }
 
 async fn submit_in_transaction(
-    transaction: &mut Transaction<'_, Postgres>,
+    transaction: &mut RunledgerTransaction<'_>,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
 ) -> Result<SubmitResult, CommandFailure> {
     sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(&mut **transaction)
+        .execute(transaction.executor())
         .await
         .map_err(StorageError::from)?;
 
@@ -313,7 +309,7 @@ async fn submit_in_transaction(
     )
     .bind(record_id)
     .bind(owner.as_uuid())
-    .fetch_optional(&mut **transaction)
+    .fetch_optional(transaction.executor())
     .await
     .map_err(StorageError::from)?;
     let Some(generation) = generation else {
@@ -337,7 +333,7 @@ async fn submit_in_transaction(
         idempotency_key: Some(&new.enqueue_idempotency_key),
         stage: Some(JobStage::Queued),
     };
-    let outcome = enqueue_job_with_outcome_tx(transaction, &enqueue)
+    let outcome = enqueue_job_with_outcome_in_transaction(transaction, &enqueue)
         .await
         .map_err(StorageError::from)?;
     if outcome.disposition != JobEnqueueDisposition::Inserted {
@@ -373,7 +369,7 @@ async fn submit_in_transaction(
 }
 
 async fn insert_command_identity(
-    transaction: &mut Transaction<'_, Postgres>,
+    transaction: &mut RunledgerTransaction<'_>,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
@@ -403,14 +399,14 @@ async fn insert_command_identity(
     .bind(ENQUEUE_MAX_ATTEMPTS)
     .bind(ENQUEUE_TIMEOUT_SECONDS)
     .bind(JobStage::Queued.as_db_value())
-    .fetch_optional(&mut **transaction)
+    .fetch_optional(transaction.executor())
     .await
     .map_err(StorageError::from)?;
     Ok(inserted.is_some())
 }
 
 async fn insert_delivery(
-    transaction: &mut Transaction<'_, Postgres>,
+    transaction: &mut RunledgerTransaction<'_>,
     owner: OwnerId,
     request: &ValidatedSubmit,
     delivery_id: Uuid,
@@ -426,7 +422,7 @@ async fn insert_delivery(
     .bind(owner.as_uuid())
     .bind(&request.idempotency_key)
     .bind(outcome.job_id)
-    .execute(&mut **transaction)
+    .execute(transaction.executor())
     .await?;
     if result.rows_affected() != 1 {
         return Err(StorageError::Invariant("delivery insert changed no row"));
@@ -446,7 +442,7 @@ async fn insert_delivery(
         serde_json::to_value(provider_payload)
             .map_err(|_| StorageError::Invariant("provider payload encoding failed"))?,
     )
-    .execute(&mut **transaction)
+    .execute(transaction.executor())
     .await?;
     if effect.rows_affected() != 1 {
         return Err(StorageError::Invariant(

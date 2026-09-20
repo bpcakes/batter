@@ -1,4 +1,5 @@
 use super::*;
+use batter_core::lifecycle::Fatal;
 
 #[tokio::test]
 async fn construction_and_unpolled_run_are_inert_and_writer_loss_is_immediate() {
@@ -42,7 +43,7 @@ async fn drain_destroys_active_probe_before_monitor_return_and_dependency_cleanu
         async move {
             let _guard = guard;
             entered.send(()).unwrap();
-            pending::<Result<(), Infallible>>().await
+            pending::<Result<(), Fatal<Infallible>>>().await
         }
     });
     let reader = monitor.reader();
@@ -50,9 +51,9 @@ async fn drain_destroys_active_probe_before_monitor_return_and_dependency_cleanu
     let completed = events.clone();
     base.register("health", move |startup| async move {
         let shutdown = startup.acknowledge_started();
-        monitor.run(shutdown).await;
+        monitor.run(shutdown.signal()).await;
         completed.lock().unwrap().push("monitor-returned");
-        Ok(())
+        Ok(shutdown.stopped())
     })
     .unwrap();
     let cleanup = events.clone();
@@ -140,7 +141,7 @@ async fn forced_cancellation_destroys_the_direct_probe_before_completion() {
         let guard = EventOnDrop(captured.clone(), "probe-dropped");
         async move {
             let _guard = guard;
-            pending::<Result<(), Infallible>>().await
+            pending::<Result<(), Fatal<Infallible>>>().await
         }
     });
     let reader = monitor.reader();
@@ -167,7 +168,7 @@ async fn outer_task_abort_drops_active_probe_and_invalidates_readers() {
         async move {
             let _guard = guard;
             entered.send(()).unwrap();
-            pending::<Result<(), Infallible>>().await
+            pending::<Result<(), Fatal<Infallible>>>().await
         }
     });
     let reader = monitor.reader();
@@ -190,8 +191,8 @@ async fn probe_panic_remains_a_critical_failure_and_stops_the_writer() {
     let mut base = supervisor();
     base.register("health", move |startup| async move {
         let shutdown = startup.acknowledge_started();
-        monitor.run(shutdown).await;
-        Ok(())
+        monitor.run(shutdown.signal()).await;
+        Ok(shutdown.stopped())
     })
     .unwrap();
     let report = base.start().wait().await.unwrap();

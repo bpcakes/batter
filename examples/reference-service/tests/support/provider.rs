@@ -203,12 +203,16 @@ impl ProviderFixture {
         self.shared.barrier.notify_waiters();
     }
 
-    pub async fn close(mut self) -> ProbeResult {
+    pub async fn close(self) -> ProbeResult {
+        self.close_within(Duration::from_secs(5)).await
+    }
+
+    pub async fn close_within(mut self, limit: Duration) -> ProbeResult {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
         let mut task = self.task.take().expect("provider task is retained");
-        match tokio::time::timeout(Duration::from_secs(5), &mut task).await {
+        match tokio::time::timeout(limit, &mut task).await {
             Ok(result) => {
                 result??;
                 Ok(())

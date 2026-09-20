@@ -6,12 +6,19 @@
 //! by dropping the handler future. Bodies, proxy trust and auth remain
 //! application-owned. Trusted request correlation is explicitly opt-in. The
 //! [`browser`] module supplies validated cookie/header mechanics without an
-//! account, session, authorization, CORS, or CSRF-token model. Keep
-//! liveness/readiness outside admission; apply observation to the assembled
-//! router, including probes and fallback.
+//! account, session, authorization, CORS, or CSRF-token model.
+//!
+//! [`HttpBoundary`] is the canonical composition: it keeps probes outside
+//! admission and installs correlation with the single HTTP observer outermost,
+//! so the layer order is library-owned. Only the outermost observer emits a
+//! completion event; nested Batter middleware contributes adapter facts to
+//! that observer's shared retained state. The individual middlewares remain
+//! available for compositions the boundary cannot express and document the
+//! ordering they leave with the caller.
 
 #![forbid(unsafe_code)]
 
+mod boundary;
 mod correlation;
 mod observation;
 mod readiness;
@@ -22,6 +29,10 @@ pub mod quota_observation;
 /// Browser-carried opaque credential transport primitives.
 pub mod browser;
 
+pub use boundary::{
+    AssembledHttp, BoundaryAssemblyError, GuardedRouter, HttpBoundary, ProbePath, ProbePathError,
+    ProbeRegistrationError,
+};
 pub use correlation::{
     CorrelationId, operational_http, operational_http_with_quota, render_infrastructure_failure,
 };
@@ -68,8 +79,8 @@ type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
 /// header. Request extensions, client headers and route names do not select levels.
 /// Middleware replacing a response or its status must retain, replace or remove
 /// this extension to match its policy. The status-only probes do not set an override.
-/// Nested observers each read the retained override; an outer response rewrite
-/// does not retroactively change an inner observer's status or event level.
+/// Only the outermost observer emits a completion event, so it reads the
+/// override retained on the response it actually returns.
 ///
 /// For an application-identified expected readiness failure, retain 503 and
 /// `http_outcome="server_error"` while selecting INFO. Alerts based on status/outcome
@@ -91,7 +102,19 @@ type FailureRenderer = dyn Fn(HttpFailure, &Parts) -> Response + Send + Sync;
 pub struct HttpObservationLevel(pub Level);
 
 /// Application-selected request deadline and lifecycle gate.
+///
+/// Configuration methods take and return the policy by value, so a discarded
+/// result would silently keep the previous configuration:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_axum::RequestPolicy;
+/// fn discarded(policy: RequestPolicy) {
+///     policy.with_infrastructure_json();
+/// }
+/// ```
 #[derive(Clone)]
+#[must_use = "retain the configured policy; a discarded result keeps the previous configuration"]
 pub struct RequestPolicy {
     admission: OperationAdmission,
     budget: Duration,
@@ -373,9 +396,13 @@ impl IntoResponse for HttpFailure {
 /// Responses default to WARN for 5xx and INFO otherwise; [`HttpObservationLevel`]
 /// in response extensions overrides only the completion-event level.
 ///
-/// Each installed observer emits its own completion event. When adding this
-/// layer, replace inner [`request_scope`] with [`request_admission`] to avoid
-/// duplicate HTTP events. Operation completion events remain separate.
+/// Only the outermost observer emits a completion event. [`observe_http`] and
+/// [`operational_http`] can nest in either order because observation does not
+/// short-circuit. [`request_scope`] also performs admission and can return or
+/// expire without polling inner middleware, so `operational_http` must be
+/// outside it when every response and completion event requires server
+/// correlation. Operation completion events remain separate. Prefer
+/// [`HttpBoundary`], which makes this order unchangeable.
 ///
 /// ```
 /// use axum::{Extension, Router, http::StatusCode, middleware, routing::get};
@@ -395,7 +422,8 @@ impl IntoResponse for HttpFailure {
 ///         context.check().expect("admitted context");
 ///         "ok"
 ///     }))
-///     .route_layer(middleware::from_fn_with_state(
+///     .fallback(|| async { StatusCode::NOT_FOUND })
+///     .layer(middleware::from_fn_with_state(
 ///         RequestPolicy::new(control.operation_admission(), budget),
 ///         request_admission,
 ///     ));
@@ -404,7 +432,6 @@ impl IntoResponse for HttpFailure {
 ///     .route("/ready", get(readiness))
 ///     .with_state(status)
 ///     .merge(guarded)
-///     .fallback(|| async { StatusCode::NOT_FOUND })
 ///     .layer(middleware::from_fn(observe_http));
 /// // Install application-owned server request identity outside observation.
 /// # Ok(())
@@ -417,8 +444,11 @@ pub async fn observe_http(request: Request, next: Next) -> Response {
 /// Apply lifecycle admission and a fixed deadline without HTTP observations.
 ///
 /// Use with `axum::middleware::from_fn_with_state(policy, request_admission)`.
-/// Keep probes and fallback outside admission; see [`observe_http`] for a complete
-/// composition example that observes those routes and admission rejections.
+/// Keep probes outside admission, but assemble the guarded fallback before
+/// applying this layer so unmatched application requests cannot bypass the
+/// lifecycle gate. [`HttpBoundary`] owns that placement. See [`observe_http`]
+/// for a manual composition example that observes probes, guarded fallbacks and
+/// admission rejections.
 ///
 /// Inserts a native `Extension<OperationContext>` for admitted handlers. A Ready
 /// state read is the admission point; a request racing shutdown may enter if
@@ -443,9 +473,24 @@ pub async fn request_admission(
 /// Use with `axum::middleware::from_fn_with_state(policy, request_scope)`.
 /// Retains [`request_admission`]'s policy/context/rendering behavior and
 /// [`observe_http`]'s sanitized response-construction events. Keep probes outside
-/// this middleware's readiness gate. To observe the complete assembled router,
-/// use outer [`observe_http`] and inner [`request_admission`] instead; adding an
-/// observer around this combined entry point produces two HTTP observations.
+/// this middleware's readiness gate. Inside an outer observer this entry point
+/// performs admission only; the outer observer emits the single HTTP event.
+/// When combined with [`operational_http`], install `operational_http` as the
+/// outer layer. This middleware can reject or time out without polling an inner
+/// layer, so the reverse order cannot promise correlation on every completion.
+/// Prefer [`HttpBoundary`], which owns this composition.
+///
+/// ```
+/// use axum::{Router, middleware};
+/// use batter_axum::{operational_http, request_scope, RequestPolicy};
+///
+/// fn ordered(guarded: Router, policy: RequestPolicy) -> Router {
+///     guarded
+///         .route_layer(middleware::from_fn_with_state(policy, request_scope))
+///         // Router layers added later run outside earlier layers.
+///         .layer(middleware::from_fn(operational_http))
+/// }
+/// ```
 pub async fn request_scope(
     State(policy): State<RequestPolicy>,
     request: Request,
@@ -482,7 +527,8 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     }
 }
 
-/// A readiness probe. Mount outside the guarded application router.
+/// A status-only readiness probe. Mount outside the guarded application router;
+/// [`HttpBoundary::with_readiness`] mounts the dependency-aware probe there.
 pub async fn readiness(State(status): State<LifecycleStatus>) -> StatusCode {
     if status.readiness() == Readiness::Ready {
         StatusCode::OK

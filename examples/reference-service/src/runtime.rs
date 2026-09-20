@@ -457,7 +457,7 @@ mod tests {
             .register("component", |startup| async move {
                 let shutdown = startup.shutdown().clone();
                 shutdown.draining().await;
-                Ok(())
+                Ok(startup.abandon())
             })
             .unwrap();
         if let Some(name) = cleanup {

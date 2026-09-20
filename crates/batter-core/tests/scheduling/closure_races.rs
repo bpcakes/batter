@@ -1,4 +1,5 @@
 use super::support::{Case, yields};
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome, SkipReason},
     lifecycle::{
@@ -51,7 +52,7 @@ pub async fn descendant_closure(
         .try_spawn("active-ancestor", |scope| async move {
             scope_tx.send(scope).ok().unwrap();
             released.await.unwrap();
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     let scope = scope_rx.await.unwrap();
@@ -69,12 +70,16 @@ pub async fn descendant_closure(
         submit_barrier.wait().await;
         yields(delay.rotate_left(5)).await;
         case.event("descendant-racing-closure");
-        submitting_scope.try_spawn("racing-descendant", |_| async { Ok::<_, Infallible>(43) })
+        submitting_scope.try_spawn("racing-descendant", |_| async {
+            Ok::<_, Fatal<Infallible>>(43)
+        })
     });
     barrier.wait().await;
     let original_error = closer.await.unwrap();
     assert!(matches!(
-        scope.try_spawn("after-closure", |_| async { Ok::<_, Infallible>(()) }),
+        scope.try_spawn("after-closure", |_| async {
+            Ok::<_, Fatal<Infallible>>(())
+        }),
         Err(ProcessAdmissionError::Closed)
     ));
     let mut completed = 0;
@@ -132,7 +137,7 @@ async fn close_admission(
             process
                 .try_spawn("closing-failure", |_| async move {
                     fail_rx.await.unwrap();
-                    Err::<(), _>(std::io::Error::other("generic failure fixture"))
+                    Err::<(), _>(Fatal(std::io::Error::other("generic failure fixture")))
                 })
                 .unwrap(),
         )

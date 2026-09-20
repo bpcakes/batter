@@ -15,12 +15,17 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
   `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
   `request_scope` compatibility entry point, probes, and failures.
+- `src/boundary.rs` owns the canonical `GuardedRouter`/`HttpBoundary`/`AssembledHttp`
+  composition. Probe routes remain outside admission while the guarded
+  router's default, custom, nested, and method fallbacks remain inside it.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
   fixed private-response headers. They do not own account/session state, CSRF
   token protocols, route selection, CORS, or application error rendering.
 - `src/observation.rs` privately owns response observation and tracing lifetime;
-  its single internal composition entry has no admission policy.
+  its single internal composition entry has no admission policy. Its shared
+  private state lets nested adapter middleware contribute retained facts to
+  the one outer completion event.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
@@ -74,11 +79,23 @@ The adapter depends on the foundation, never the reverse. Use
 `batter_core::telemetry::with_current_dispatch` inside the async request entrypoint to
 retain first-poll capture and protect full future destruction. Keep observation
 guards and nested spans inside the wrapped future. Do not duplicate its private
-pin/drop implementation. Bound response construction without claiming body
+pin/drop implementation. Nested Batter observers intentionally emit once; keep
+adapter facts in the library-owned shared observation state so wrapper order
+cannot discard them. Bound response construction without claiming body
 streaming or detached connection-task shutdown. Keep probe routes separate from
-guarded business routes. Apply `observe_http` after assembling routes/fallback;
-use `request_admission` inside it. Nesting observation around `request_scope`
-intentionally emits twice; no request-extension deduplication is provided.
+guarded business routes. Canonical probes accept only validated `ProbePath`
+values, and duplicate paths must fail through the boundary's sanitized
+configuration error before Axum routing. The canonical guarded builder must
+retain route identities through route, merge and typed nesting; do not admit an
+opaque nested service whose routes cannot be inspected. Awaited assembly must
+reject any guarded route that can match a reserved probe path by querying only
+the inert retained inventory, without polling application code. Do not
+reintroduce raw probe patterns. Apply `observe_http` after
+assembling routes/fallback; use `request_admission` inside it. If generated
+correlation is required, `operational_http` must be outside admission,
+`request_scope`, deadlines, authentication and any other short-circuiting
+middleware. The outermost observer owns emission and nested observation
+entrypoints perform only their other duties.
 Do not log cause contents or untrusted request fields. `operational_http` must
 replace inbound header, Tower and adapter identities before observation and must
 replace inner response IDs. Keep typed server correlation on completion events

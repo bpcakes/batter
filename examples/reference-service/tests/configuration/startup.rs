@@ -78,7 +78,7 @@ fn start(
                     .register("application", |startup| async move {
                         let signal = startup.acknowledge_started();
                         signal.draining().await;
-                        Ok(())
+                        Ok(signal.stopped())
                     })
                     .unwrap();
                 Ok(())

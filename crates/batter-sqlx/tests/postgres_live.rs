@@ -13,7 +13,6 @@ use batter_sqlx::{
         RolePolicy, SchemaPolicy, VerificationPlan, VerificationStatus, verify,
     },
 };
-use sqlx::Connection;
 use std::time::Duration;
 use support::{Fixture, Result, bounded, require};
 use tokio::sync::oneshot;
@@ -35,19 +34,23 @@ async fn blocked_operation(
     stop: oneshot::Receiver<Stop>,
 ) -> std::result::Result<(), OperationError<BoxError>> {
     context.run("test.blocked", |_| async {
-        let mut lease = PgLease::acquire(&pool, &context).await?;
-        let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(lease.connection()).await?;
-        let _ = pid.send(backend);
-        tokio::select! {
-            result = sqlx::query("SELECT pg_advisory_lock($1)").bind(key).execute(lease.connection()) => {
-                result?;
-                Err(std::io::Error::other("blocker unexpectedly released").into())
+        let lease = PgLease::acquire(&pool, &context).await?;
+        lease.with_connection(async |session| {
+            let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(session.executor())
+                .await?;
+            let _ = pid.send(backend);
+            tokio::select! {
+                result = sqlx::query("SELECT pg_advisory_lock($1)").bind(key).execute(session.executor()) => {
+                    result?;
+                    Err(std::io::Error::other("blocker unexpectedly released").into())
+                }
+                signal = stop => match signal {
+                    Ok(Stop::Panic) => panic!("deliberate application unwind"),
+                    _ => Err(std::io::Error::other("concrete application failure").into()),
+                }
             }
-            signal = stop => match signal {
-                Ok(Stop::Panic) => panic!("deliberate application unwind"),
-                _ => Err(std::io::Error::other("concrete application failure").into()),
-            }
-        }
+        }).await
     }).await
 }
 
@@ -191,27 +194,88 @@ async fn repeated_interruptions_leave_independent_residual_sessions() -> Result 
     run_interruption(Stop::Cancel, 3).await
 }
 
+async fn raw_transaction_cleanup(
+    fixture: &Fixture,
+    context: &OperationContext,
+    expected_pid: i32,
+    abort_transaction: bool,
+) -> Result {
+    let lease = PgLease::acquire(&fixture.pool, context).await?;
+    let raw_pid = lease
+        .with_connection(async |session| {
+            sqlx::raw_sql("BEGIN").execute(session.executor()).await?;
+            let raw_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(session.executor())
+                .await?;
+            sqlx::query(
+                "CREATE TEMP TABLE batter_raw_return_guard (marker integer) ON COMMIT DROP",
+            )
+            .execute(session.executor())
+            .await?;
+            sqlx::query("INSERT INTO batter_raw_return_guard VALUES (1)")
+                .execute(session.executor())
+                .await?;
+            if abort_transaction {
+                let failed = sqlx::query("SELECT 1 / 0")
+                    .execute(session.executor())
+                    .await;
+                require(
+                    failed.is_err(),
+                    "raw transaction did not enter failed state",
+                )?;
+            }
+            Ok::<_, BoxError>(raw_pid)
+        })
+        .await?;
+    require(
+        raw_pid == expected_pid,
+        "raw transaction did not use the reusable backend",
+    )?;
+    let (reused_pid, object_absent): (i32, bool) = bounded(
+        sqlx::query_as(
+            "SELECT pg_backend_pid(), to_regclass('pg_temp.batter_raw_return_guard') IS NULL",
+        )
+        .fetch_one(&fixture.pool),
+    )
+    .await??;
+    require(
+        reused_pid == expected_pid,
+        "raw transaction cleanup retired the reusable backend",
+    )?;
+    require(
+        object_absent,
+        "raw transaction state escaped the pool-return boundary",
+    )
+}
+
 async fn success(fixture: &mut Fixture) -> Result {
     let context = OperationContext::new(Duration::from_secs(10))?;
-    let mut lease = PgLease::acquire(&fixture.pool, &context).await?;
-    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(lease.connection())
+    let lease = PgLease::acquire(&fixture.pool, &context).await?;
+    let pid: i32 = lease
+        .with_connection(async |session| {
+            sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(session.executor())
+                .await
+        })
         .await?;
-    lease.return_to_pool();
     probe(&fixture.pool, &context).await?;
     for commit in [true, false] {
-        let mut lease = PgLease::acquire(&fixture.pool, &context).await?;
-        let mut tx = lease.connection().begin().await?;
-        let actual: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-            .fetch_one(&mut *tx)
+        let lease = PgLease::acquire(&fixture.pool, &context).await?;
+        lease
+            .with_connection(async |session| {
+                let mut tx = session.begin().await?;
+                let actual: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(tx.executor())
+                    .await?;
+                require(actual == pid, "acknowledged success did not reuse backend")?;
+                if commit {
+                    tx.commit().await?;
+                } else {
+                    tx.rollback().await?;
+                }
+                Ok::<(), BoxError>(())
+            })
             .await?;
-        require(actual == pid, "acknowledged success did not reuse backend")?;
-        if commit {
-            tx.commit().await?;
-        } else {
-            tx.rollback().await?;
-        }
-        lease.return_to_pool();
     }
     let actual: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
@@ -219,13 +283,44 @@ async fn success(fixture: &mut Fixture) -> Result {
         actual == pid,
         "acknowledged transaction did not permit reuse",
     )?;
+    for abort_transaction in [false, true] {
+        raw_transaction_cleanup(fixture, &context, pid, abort_transaction).await?;
+    }
+    for forget in [false, true] {
+        let lease = PgLease::acquire(&fixture.pool, &context).await?;
+        let abandoned: i32 = lease
+            .with_connection(async |session| {
+                let mut transaction = session.begin().await?;
+                let backend = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(transaction.executor())
+                    .await?;
+                if forget {
+                    std::mem::forget(transaction);
+                } else {
+                    drop(transaction);
+                }
+                Ok::<_, BoxError>(backend)
+            })
+            .await?;
+        require(
+            fixture.pool.size() == 0,
+            "abandoned transaction returned pool capacity",
+        )?;
+        let replacement: i32 =
+            bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool))
+                .await??;
+        require(
+            replacement != abandoned,
+            "abandoned transaction reused its backend",
+        )?;
+    }
     bounded(fixture.pool.close()).await?;
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
-async fn success_and_acknowledged_transactions_reuse() -> Result {
+async fn acknowledged_transactions_reuse_and_abandoned_transactions_retire() -> Result {
     let mut fixture = Fixture::new().await?;
     let body = success(&mut fixture).await;
     fixture.finish(body).await
@@ -515,16 +610,21 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
 
 async fn native_failure(fixture: &mut Fixture) -> Result {
     let context = OperationContext::new(Duration::from_secs(10))?;
-    let mut lease = PgLease::acquire(&fixture.pool, &context).await?;
-    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(lease.connection())
+    let lease = PgLease::acquire(&fixture.pool, &context).await?;
+    let (pid, error) = lease
+        .with_retiring_connection(async |session| {
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(session.executor())
+                .await?;
+            let error = sqlx::query("SELECT 1 / 0 /* secret-query-marker */")
+                .execute(session.executor())
+                .await
+                .err()
+                .ok_or_else(|| std::io::Error::other("expected database failure"))?;
+            Ok::<_, BoxError>((pid, error))
+        })
         .await?;
     fixture.retired.push(pid);
-    let error = sqlx::query("SELECT 1 / 0 /* secret-query-marker */")
-        .execute(lease.connection())
-        .await
-        .err()
-        .ok_or_else(|| std::io::Error::other("expected database failure"))?;
     let error = SqlxFailure::from(error);
     require(
         error.class() == FailureClass::Database,
@@ -543,7 +643,6 @@ async fn native_failure(fixture: &mut Fixture) -> Result {
         format!("{error:?} {error}") == "PostgreSQL operation failed PostgreSQL operation failed",
         "diagnostics were not fixed",
     )?;
-    drop(lease);
     let next: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
     require(next != pid, "failed connection was reused")?;
@@ -560,21 +659,24 @@ async fn native_database_failure_retires_and_preserves_cause() -> Result {
 
 async fn commit_failure(fixture: &mut Fixture) -> Result {
     let context = OperationContext::new(Duration::from_secs(10))?;
-    let mut lease = PgLease::acquire(&fixture.pool, &context).await?;
-    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(lease.connection())
-        .await?;
+    let lease = PgLease::acquire(&fixture.pool, &context).await?;
+    let (pid, error) = lease.with_retiring_connection(async |session| {
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(session.executor())
+            .await?;
+        let mut tx = session.begin().await?;
+        sqlx::query("CREATE TEMP TABLE disposition_commit (value integer UNIQUE DEFERRABLE INITIALLY DEFERRED) ON COMMIT DROP")
+            .execute(tx.executor()).await?;
+        sqlx::query("INSERT INTO disposition_commit VALUES (1), (1)")
+            .execute(tx.executor())
+            .await?;
+        let error =
+            tx.commit().await.err().ok_or_else(|| {
+                std::io::Error::other("expected deferred constraint failure at commit")
+            })?;
+        Ok::<_, BoxError>((pid, error))
+    }).await?;
     fixture.retired.push(pid);
-    let mut tx = lease.connection().begin().await?;
-    sqlx::query("CREATE TEMP TABLE disposition_commit (value integer UNIQUE DEFERRABLE INITIALLY DEFERRED) ON COMMIT DROP")
-        .execute(&mut *tx).await?;
-    sqlx::query("INSERT INTO disposition_commit VALUES (1), (1)")
-        .execute(&mut *tx)
-        .await?;
-    let error =
-        tx.commit().await.err().ok_or_else(|| {
-            std::io::Error::other("expected deferred constraint failure at commit")
-        })?;
     let error = SqlxFailure::from(error);
     require(
         error
@@ -589,7 +691,6 @@ async fn commit_failure(fixture: &mut Fixture) -> Result {
         error.class() == FailureClass::Database,
         "commit error was reclassified as interruption",
     )?;
-    drop(lease);
     let next: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
     require(next != pid, "unsuccessful commit returned its connection")?;

@@ -1,4 +1,5 @@
 use super::support::{Case, poll_pending, supervisor, yields};
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessAdmissionError, ProcessCapacity, ShutdownBudget, Supervisor},
@@ -29,7 +30,7 @@ pub async fn queued_capacity(case: Case) {
             process
                 .try_spawn("queued", move |_| {
                     invoked.fetch_add(1, Ordering::SeqCst);
-                    async { Ok::<_, Infallible>(()) }
+                    async { Ok::<_, Fatal<Infallible>>(()) }
                 })
                 .unwrap(),
         );
@@ -37,7 +38,7 @@ pub async fn queued_capacity(case: Case) {
     case.event("two-queued-driver-held");
     assert_eq!(invoked.load(Ordering::SeqCst), 0);
     assert!(matches!(
-        process.try_spawn("queue-full", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("queue-full", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Full)
     ));
     handle.request();
@@ -59,7 +60,7 @@ pub async fn root_drain(case: Case, delay: u64) {
         submit_barrier.wait().await;
         yields(delay).await;
         case.event("root-submit-call");
-        let result = process.try_spawn("racing-root", |_| async { Ok::<_, Infallible>(41) });
+        let result = process.try_spawn("racing-root", |_| async { Ok::<_, Fatal<Infallible>>(41) });
         case.event(if result.is_ok() {
             "root-accepted"
         } else {
@@ -78,7 +79,7 @@ pub async fn root_drain(case: Case, delay: u64) {
     barrier.wait().await;
     drain.await.unwrap();
     assert!(matches!(
-        after.try_spawn("after-drain", |_| async { Ok::<_, Infallible>(()) }),
+        after.try_spawn("after-drain", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Closed)
     ));
     let accepted = match submitted.await.unwrap() {
@@ -107,23 +108,23 @@ pub async fn descendant_outlives_parent(case: Case) {
                 .try_spawn("child", |child_scope| async move {
                     scope_tx.send(child_scope).ok().unwrap();
                     released.await.unwrap();
-                    Ok::<_, Infallible>(19)
+                    Ok::<_, Fatal<Infallible>>(19)
                 })
                 .unwrap();
-            Ok::<_, Infallible>((scope, child))
+            Ok::<_, Fatal<Infallible>>((scope, child))
         })
         .unwrap();
     let child_scope = scope_rx.await.unwrap();
     let (expired_scope, child) = parent.wait().await.unwrap();
     assert!(matches!(
-        expired_scope.try_spawn("expired", |_| async { Ok::<_, Infallible>(()) }),
+        expired_scope.try_spawn("expired", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Closed)
     ));
     running.handle().request();
     assert!(!child_scope.signal().is_cancelled());
     case.event("parent-finished-child-active-during-drain");
     let grandchild = child_scope
-        .try_spawn("grandchild", |_| async { Ok::<_, Infallible>(23) })
+        .try_spawn("grandchild", |_| async { Ok::<_, Fatal<Infallible>>(23) })
         .unwrap();
     assert_eq!(grandchild.wait().await.unwrap(), 23);
     release.send(()).unwrap();
@@ -147,7 +148,7 @@ pub async fn scope_expiry(case: Case, delay: u64) {
             parent_barrier.wait().await;
             yields(delay).await;
             case.event("ancestor-returning");
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     let scope = scope_rx.await.unwrap();
@@ -157,12 +158,12 @@ pub async fn scope_expiry(case: Case, delay: u64) {
         child_barrier.wait().await;
         yields(delay.rotate_left(11)).await;
         case.event("escaped-scope-submit");
-        scope.try_spawn("racing-child", |_| async { Ok::<_, Infallible>(()) })
+        scope.try_spawn("racing-child", |_| async { Ok::<_, Fatal<Infallible>>(()) })
     });
     barrier.wait().await;
     parent.wait().await.unwrap();
     assert!(matches!(
-        escaped.try_spawn("after-finish", |_| async { Ok::<_, Infallible>(()) }),
+        escaped.try_spawn("after-finish", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Closed)
     ));
     let children = match submit.await.unwrap() {
@@ -198,10 +199,12 @@ pub async fn forced_descendant(case: Case) {
             scope.signal().cancelled().await;
             case.event("force-observed");
             assert!(matches!(
-                scope.try_spawn("forbidden-child", |_| async { Ok::<_, Infallible>(()) }),
+                scope.try_spawn("forbidden-child", |_| async {
+                    Ok::<_, Fatal<Infallible>>(())
+                }),
                 Err(ProcessAdmissionError::Closed)
             ));
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     ready.await.unwrap();

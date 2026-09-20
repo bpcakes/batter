@@ -1,7 +1,17 @@
 //! Explicit client ownership for native SQLx PostgreSQL operations.
 //!
-//! [`PgLease`] retires on drop; only [`PgLease::return_to_pool`] opts into
-//! ordinary SQLx pool return after application-acknowledged completion.
+//! [`PgLease`] retires on drop. [`PgLease::with_connection`] is the only path
+//! back to the SQLx pool: after supplied work completes with `Ok`, the boundary
+//! synchronizes raw PostgreSQL transaction state with an idle-state handshake
+//! ending in `ROLLBACK` and returns only on successful cleanup. It retires when
+//! work returns `Err`, cleanup fails, or its future is dropped by a deadline,
+//! cancellation or unwinding.
+//! Work that must never return its connection uses
+//! [`PgLease::with_retiring_connection`], which also
+//! consumes the lease. Both methods expose only an opaque [`PgSession`], so safe
+//! callers cannot replace the physical connection before disposition. A lease
+//! cannot be returned after an interrupted query because no public API can
+//! borrow it and later choose a different disposition.
 //! Retirement releases local pool capacity, **not** server locks or a confirmed
 //! rollback. Detached server sessions can outlive [`PgPool::close`] and exceed
 //! the pool's `max_connections`. Applications own remote outcome reconciliation.
@@ -11,23 +21,25 @@
 //! use batter_sqlx::{PgLease, SqlxFailure};
 //! use sqlx::{Connection, PgPool};
 //! # async fn example(pool: &PgPool, ctx: &OperationContext) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut lease = PgLease::acquire(pool, ctx).await?;
-//! ctx.run("database.write", move |_| async move {
-//!     let mut tx = lease.connection().begin().await.map_err(SqlxFailure::from)?;
-//!     sqlx::query("SELECT 1").execute(&mut *tx).await.map_err(SqlxFailure::from)?;
-//!     tx.commit().await.map_err(SqlxFailure::from)?;
-//!     lease.return_to_pool(); // Commit acknowledgement, not a timeout inference.
-//!     Ok::<_, SqlxFailure>(())
-//! }).await?;
+//! let lease = PgLease::acquire(pool, ctx).await?;
+//! ctx.run("database.write", |_| lease.with_connection(async |session| {
+//!     let mut tx = session.begin().await.map_err(SqlxFailure::from)?;
+//!     sqlx::query("SELECT 1").execute(tx.executor()).await.map_err(SqlxFailure::from)?;
+//!     // Ok plus the boundary's successful idle-state proof returns the connection.
+//!     tx.commit().await.map_err(SqlxFailure::from)
+//! })).await?;
 //! # Ok(()) }
 //! ```
 #![forbid(unsafe_code)]
 
 mod failure;
+mod session;
 
 pub mod verification;
 
 pub use failure::{FailureClass, SqlxFailure};
+use session::PoolReturnReady;
+pub use session::{PgExecutor, PgSession, PgTransaction};
 
 use batter_core::{
     RegistrationError,
@@ -41,14 +53,24 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-/// One checked-out connection, retired unless explicitly returned after success.
+/// One checked-out connection, retired unless [`Self::with_connection`] proves pool return ready.
 ///
 /// Keep this owner **inside** the operation future so timeout, caller drop and
 /// unwinding destroy it. A lease kept outside a cancelled future remains owned
-/// until its caller drops it. Native transactions borrow this lease, so destroy
-/// their futures/values before disposition. There is no asynchronous Drop,
-/// transaction manager, automatic replay, or protection from process death.
-#[must_use = "keep the lease inside the bounded operation and explicitly choose disposition"]
+/// until its caller drops it. Disposition follows the outcome of the work run
+/// through [`Self::with_connection`]. [`Self::with_retiring_connection`]
+/// consumes the same owner without any pool-return transition. There is no
+/// asynchronous Drop, transaction manager, automatic replay, or protection
+/// from process death.
+///
+/// Pool return cannot be requested directly:
+///
+/// ```compile_fail,E0624
+/// fn cannot_return_directly(lease: batter_sqlx::PgLease) {
+///     lease.return_to_pool();
+/// }
+/// ```
+#[must_use = "keep the lease inside the bounded operation and choose a consuming disposition method"]
 pub struct PgLease {
     connection: Option<PoolConnection<Postgres>>,
 }
@@ -74,23 +96,117 @@ impl PgLease {
             .await
     }
 
-    /// Borrow the native connection for queries, streams or native transactions.
-    ///
-    /// Fully await successful query/commit/rollback before returning the lease.
-    /// Dropping a query stream or transaction is not completion acknowledgement.
-    pub fn connection(&mut self) -> &mut PgConnection {
+    fn connection_mut(&mut self) -> &mut PgConnection {
         self.connection.as_mut().expect("live lease")
     }
 
-    /// Opt into native SQLx pool return after acknowledged successful completion.
+    /// Run work on a connection that is retired for every outcome.
     ///
-    /// SQLx asynchronously checks the connection before reuse and may discard it.
-    /// This method neither waits for that check nor certifies connection state.
-    /// Never call it after an interrupted query or uncertain commit. Await an
-    /// explicit rollback instead of dropping an unfinished transaction when
-    /// choosing reuse; if it was already dropped, retire this lease. Misuse can leave
-    /// SQLx return waiting behind unfinished SQL.
-    pub fn return_to_pool(mut self) {
+    /// This consumes the lease and exposes an opaque SQL execution session only
+    /// within the supplied future. Completion, error, cancellation, deadline and
+    /// unwinding all retire it, so later pool return is unrepresentable. Use
+    /// this for deliberately interrupted native operations and for protocols
+    /// whose failure leaves remote session state uncertain.
+    ///
+    /// ```no_run
+    /// use batter_core::operation::OperationContext;
+    /// use batter_sqlx::{PgLease, SqlxFailure};
+    /// use sqlx::PgPool;
+    /// # async fn example(pool: &PgPool, ctx: &OperationContext) -> Result<i32, Box<dyn std::error::Error>> {
+    /// let lease = PgLease::acquire(pool, ctx).await?;
+    /// let backend = lease.with_retiring_connection(async |session| {
+    ///     sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+    ///         .fetch_one(session.executor())
+    ///         .await
+    ///         .map_err(SqlxFailure::from)
+    /// }).await?;
+    /// # Ok(backend) }
+    /// ```
+    ///
+    /// The old borrow-then-decide transition is intentionally absent:
+    ///
+    /// ```compile_fail,E0599
+    /// fn cannot_borrow_for_later_disposition(mut lease: batter_sqlx::PgLease) {
+    ///     let _ = lease.connection();
+    /// }
+    /// ```
+    pub async fn with_retiring_connection<T>(
+        mut self,
+        work: impl AsyncFnOnce(&mut PgSession<'_>) -> T,
+    ) -> T {
+        let mut session = PgSession::new(self.connection_mut());
+        work(&mut session).await
+    }
+
+    /// Run one unit of work on this connection and let its outcome decide disposition.
+    ///
+    /// `Ok` attempts to synchronize the exact physical connection to an idle
+    /// PostgreSQL transaction state before returning it to the SQLx pool;
+    /// `Err` retires it. Dropping the returned future before completion,
+    /// including during that synchronization or at a deadline or
+    /// cancellation boundary, also retires it, so an interrupted query cannot
+    /// be followed by pool return. Await it inside the bounding operation so
+    /// that boundary owns the drop. SQLx asynchronously checks a returned
+    /// connection before reuse and may discard it. A transaction begun
+    /// through [`PgSession::begin`] must complete with an acknowledged commit
+    /// or rollback before `Ok` can return the connection. Dropping or forgetting
+    /// an unfinished typed transaction preserves the application result but
+    /// retires the connection. Because the native executor can run raw `BEGIN`,
+    /// successful work also runs a `BEGIN`/`ROLLBACK` normalization handshake
+    /// before pool return. Only the final successful rollback authorizes return;
+    /// a cleanup statement that returns failure preserves the application `Ok`
+    /// but retires its connection. Dropping this future during cleanup cannot
+    /// return the application value; it retires the connection. Applications
+    /// whose disposition becomes durable before cleanup must retain that known
+    /// outcome outside the cancellable future. The handshake proves an idle
+    /// transaction boundary, not a reset of arbitrary session settings,
+    /// advisory locks, or prepared transactions.
+    ///
+    /// ```no_run
+    /// use batter_core::operation::OperationContext;
+    /// use batter_sqlx::{PgLease, SqlxFailure};
+    /// use sqlx::PgPool;
+    /// # async fn example(pool: &PgPool, ctx: &OperationContext) -> Result<i64, Box<dyn std::error::Error>> {
+    /// let lease = PgLease::acquire(pool, ctx).await?;
+    /// let count = ctx.run("accounts.count", |_| lease.with_connection(async |session| {
+    ///     sqlx::query_scalar::<_, i64>("SELECT count(*) FROM accounts")
+    ///         .fetch_one(session.executor())
+    ///         .await
+    ///         .map_err(SqlxFailure::from)
+    /// })).await?;
+    /// # Ok(count) }
+    /// ```
+    pub async fn with_connection<T, E>(
+        mut self,
+        work: impl AsyncFnOnce(&mut PgSession<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let (outcome, pool_return) = {
+            let mut session = PgSession::new(self.connection_mut());
+            let outcome = work(&mut session).await;
+            let pool_return = if outcome.is_ok() {
+                session.prepare_pool_return().await
+            } else {
+                None
+            };
+            (outcome, pool_return)
+        };
+        match outcome {
+            Ok(value) => {
+                if let Some(ready) = pool_return {
+                    self.return_to_pool(ready);
+                }
+                // Otherwise dropping the lease retires a session with
+                // unfinished typed work or failed raw-state cleanup while
+                // preserving the application's successful value.
+                Ok(value)
+            }
+            // Dropping the lease retires the connection.
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Native SQLx pool return after acknowledged successful completion.
+    fn return_to_pool(mut self, _ready: PoolReturnReady) {
         drop(self.connection.take());
     }
 }
@@ -122,15 +238,18 @@ pub async fn probe(
         .run("postgres.probe", |_| async {
             // The enclosing boundary already bounds acquisition and query together.
             let connection = pool.acquire().await.map_err(SqlxFailure::from)?;
-            let mut lease = PgLease {
+            let lease = PgLease {
                 connection: Some(connection),
             };
-            sqlx::query("SELECT 1")
-                .execute(lease.connection())
+            lease
+                .with_connection(async |session| {
+                    sqlx::query("SELECT 1")
+                        .execute(session.executor())
+                        .await
+                        .map(|_| ())
+                        .map_err(SqlxFailure::from)
+                })
                 .await
-                .map_err(SqlxFailure::from)?;
-            lease.return_to_pool();
-            Ok(())
         })
         .await
 }

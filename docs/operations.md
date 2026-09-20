@@ -14,8 +14,8 @@ register finalizers, run migrations/schema checks through the application's
 normal path, and perform readiness checks. Set readiness only when dependencies
 and required initialization are complete. Each registered critical component
 receives one `ComponentStartup` value and consumes `acknowledge_started` only
-after actual initialization; the returned `ShutdownSignal` observes its running
-phase. Application approval consumes `UnapprovedSupervisor` and yields
+after actual initialization; the returned `RunningComponent` observes its running
+phase and yields the `ComponentExit` proof the component future returns. Application approval consumes `UnapprovedSupervisor` and yields
 `RunningSupervisor`; Ready is published only once the driver runs and every
 component acknowledges. Canonical `Startup` performs this transition after
 successful initialization. A composition root that deliberately selects

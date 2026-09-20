@@ -1,4 +1,6 @@
 use super::support::{Case, budget, supervisor, yields};
+use batter_core::lifecycle::ComponentExit;
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     lifecycle::{ProcessAdmissionError, Readiness, Supervisor},
@@ -24,7 +26,7 @@ pub async fn receipt_waiter(case: Case, delay: u64) {
         .try_spawn("receipt-independent", |_| async move {
             started.send(()).unwrap();
             released.await.unwrap();
-            Ok::<_, Infallible>(29)
+            Ok::<_, Fatal<Infallible>>(29)
         })
         .unwrap();
     let waiter = tokio::spawn(receipt.wait());
@@ -33,7 +35,7 @@ pub async fn receipt_waiter(case: Case, delay: u64) {
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
     assert!(matches!(
-        process.try_spawn("still-full", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("still-full", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Full)
     ));
     release.send(()).unwrap();
@@ -94,7 +96,7 @@ pub async fn last_owner(case: Case, delay: u64) {
             scope.signal().draining().await;
             assert!(!scope.signal().is_cancelled());
             released.await.unwrap();
-            Ok::<_, Infallible>(31)
+            Ok::<_, Fatal<Infallible>>(31)
         })
         .unwrap();
     ready.await.unwrap();
@@ -134,7 +136,7 @@ pub async fn caller_owned(case: Case, polled: bool) {
             async move {
                 let _guard = DropSignal(Some(dropped));
                 started.send(()).unwrap();
-                pending::<Result<(), BoxError>>().await
+                pending::<Result<ComponentExit, BoxError>>().await
             }
         })
         .unwrap();

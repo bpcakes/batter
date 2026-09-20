@@ -13,8 +13,13 @@ workspace = true
 
 [dependencies]
 batter-core.workspace = true
+batter-sqlx.workspace = true
+runledger-postgres.workspace = true
 runledger-runtime.workspace = true
+sqlx = { workspace = true, features = ["postgres"] }
 
 [dev-dependencies]
+runledger-core.workspace = true
+serde_json = "1"
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }

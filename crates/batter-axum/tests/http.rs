@@ -389,7 +389,7 @@ async fn forced_process_cancellation_uses_application_renderer_with_original_cor
             let shutdown = startup.acknowledge_started();
             started.send(()).unwrap();
             shutdown.cancelled().await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let supervisor = tokio::spawn(supervisor.run_until(std::future::pending()));

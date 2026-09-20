@@ -15,7 +15,7 @@ The default feature set is empty. The available feature/module pairs are:
 | --- | --- |
 | `axum` | `batter::axum` |
 | `sqlx` | `batter::sqlx` |
-| `runledger` | `batter::runledger` |
+| `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
 | `runlimit` | `batter::runlimit` |
 | `runlimit-memory` | native memory error bridge through `batter::runlimit` |
 | `runlimit-postgres` | native PostgreSQL error bridge through `batter::runlimit` |

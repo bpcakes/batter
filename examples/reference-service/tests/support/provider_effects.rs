@@ -20,6 +20,9 @@ mod retry_eligibility;
 
 const OWNER: u128 = 0x401;
 const RECORD: u128 = 0x402;
+// This bounds external test progress; scenario policy clocks remain independent.
+const EXTERNAL_EFFECT_ALLOWANCE: Duration = Duration::from_secs(20);
+
 #[derive(FromRow)]
 struct Snapshot {
     job_status: String,
@@ -50,7 +53,9 @@ pub async fn crash_and_restart(pool: PgPool) -> ProbeResult {
     let first =
         ExecutableChild::start_provider_worker(&endpoint, &provider_url, "provider-crash-first")?;
     let initial = async {
-        fixture.wait_for_acceptance(Duration::from_secs(8)).await?;
+        fixture
+            .wait_for_acceptance(EXTERNAL_EFFECT_ALLOWANCE)
+            .await?;
         let uncertain = snapshot(&pool, job_id).await?;
         if uncertain.job_status != "LEASED"
             || uncertain.attempt != 1
@@ -82,21 +87,21 @@ pub async fn crash_and_restart(pool: PgPool) -> ProbeResult {
             Ok(diagnostics) => Err(format!("{error}; {diagnostics}").into()),
             Err(diagnostics_error) => Err(format!("{error}; {diagnostics_error}").into()),
         };
-        let close = fixture.close().await;
+        let close = fixture.close_within(EXTERNAL_EFFECT_ALLOWANCE).await;
         return finish_results(process_result, close);
     }
 
     let crash = crash(first, endpoint.clone(), provider_url.clone()).await;
     fixture.release_response();
     if let Err(error) = crash {
-        let close = fixture.close().await;
+        let close = fixture.close_within(EXTERNAL_EFFECT_ALLOWANCE).await;
         return finish_results(Err(error), close);
     }
 
     let second =
         ExecutableChild::start_provider_worker(&endpoint, &provider_url, "provider-crash-second")?;
     let observed = async {
-        let completed = wait_for_snapshot(&pool, job_id, Duration::from_secs(10), |snapshot| {
+        let completed = wait_for_snapshot(&pool, job_id, EXTERNAL_EFFECT_ALLOWANCE, |snapshot| {
             snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED"
         })
         .await?;
@@ -127,7 +132,7 @@ pub async fn crash_and_restart(pool: PgPool) -> ProbeResult {
             finish_results(Err(error), shutdown)
         }
     };
-    let provider_result = fixture.close().await;
+    let provider_result = fixture.close_within(EXTERNAL_EFFECT_ALLOWANCE).await;
     finish_results(process_result, provider_result)
 }
 
@@ -144,7 +149,7 @@ async fn replacement_between_attempts(
     let prepared = async {
         let replacement = submit(pool, 0x403, "replacement-between-attempts", 12).await?;
         fixture
-            .wait_for_accepted_count(before.accepted_effects + 1, Duration::from_secs(5))
+            .wait_for_accepted_count(before.accepted_effects + 1, EXTERNAL_EFFECT_ALLOWANCE)
             .await?;
         let uncertain = snapshot(pool, replacement.job_id).await?;
         if uncertain.job_status != "LEASED"
@@ -194,7 +199,7 @@ async fn replacement_between_attempts(
         let completed = wait_for_snapshot(
             pool,
             replacement.job_id,
-            Duration::from_secs(10),
+            EXTERNAL_EFFECT_ALLOWANCE,
             |snapshot| {
                 snapshot.job_status == "DEAD_LETTERED"
                     && snapshot.effect_state == "MANUAL_RESOLUTION"
@@ -238,7 +243,7 @@ pub async fn outcome_contracts(pool: PgPool) -> ProbeResult {
     initialize_schema(&pool).await?;
     let fixture = ProviderFixture::start(DispatchBehavior::AcceptBehindBarrier).await?;
     let body = outcome_body(&pool, &fixture).await;
-    let cleanup = fixture.close().await;
+    let cleanup = fixture.close_within(EXTERNAL_EFFECT_ALLOWANCE).await;
     finish_results(body, cleanup)
 }
 
@@ -276,9 +281,14 @@ async fn admission_phase(
     let observed = async {
         before_release?;
         for submitted in [&first, &second] {
-            wait_for_snapshot(pool, submitted.job_id, Duration::from_secs(5), |snapshot| {
-                snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED"
-            })
+            wait_for_snapshot(
+                pool,
+                submitted.job_id,
+                EXTERNAL_EFFECT_ALLOWANCE,
+                |snapshot| {
+                    snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED"
+                },
+            )
             .await?;
         }
         Ok::<_, BoxError>(())
@@ -327,15 +337,17 @@ async fn uncertain_and_terminal_admission(
     )?;
     let observed = async {
         fixture
-            .wait_for_accepted_count(before.accepted_effects + 1, Duration::from_secs(5))
+            .wait_for_accepted_count(before.accepted_effects + 1, EXTERNAL_EFFECT_ALLOWANCE)
             .await?;
         activate_deferred(pool, &[uncertain.job_id, terminal.job_id]).await?;
 
-        let terminal_snapshot =
-            wait_for_snapshot(pool, terminal.job_id, Duration::from_secs(5), |snapshot| {
-                snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED"
-            })
-            .await?;
+        let terminal_snapshot = wait_for_snapshot(
+            pool,
+            terminal.job_id,
+            EXTERNAL_EFFECT_ALLOWANCE,
+            |snapshot| snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED",
+        )
+        .await?;
         if terminal_snapshot.attempt != 1
             || terminal_snapshot.provider_effect_id.as_deref()
                 != Some("provider:terminal-redelivery")
@@ -345,13 +357,17 @@ async fn uncertain_and_terminal_admission(
             );
         }
 
-        let uncertain_snapshot =
-            wait_for_snapshot(pool, uncertain.job_id, Duration::from_secs(5), |snapshot| {
+        let uncertain_snapshot = wait_for_snapshot(
+            pool,
+            uncertain.job_id,
+            EXTERNAL_EFFECT_ALLOWANCE,
+            |snapshot| {
                 snapshot.job_status == "PENDING"
                     && snapshot.effect_state == "RECONCILE_NEEDED"
                     && snapshot.attempt == 1
-            })
-            .await?;
+            },
+        )
+        .await?;
         if !uncertain_snapshot.acceptance_possible
             || !uncertain_snapshot.resolution_deadline_retained
             || uncertain_snapshot.provider_effect_id.is_some()
@@ -368,9 +384,12 @@ async fn uncertain_and_terminal_admission(
     fixture.set_dispatch(DispatchBehavior::Accept);
     fixture.release_response();
     let observed = match observed {
-        Ok(()) => wait_for_snapshot(pool, blocker.job_id, Duration::from_secs(5), |snapshot| {
-            snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED"
-        })
+        Ok(()) => wait_for_snapshot(
+            pool,
+            blocker.job_id,
+            EXTERNAL_EFFECT_ALLOWANCE,
+            |snapshot| snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "CONFIRMED",
+        )
         .await
         .map(|_| ()),
         Err(error) => Err(error),
@@ -430,9 +449,12 @@ async fn observe_initial_outcomes(
     fixture: &ProviderFixture,
     business: Submitted,
 ) -> Result<(Submitted, usize), BoxError> {
-    let business = wait_for_snapshot(pool, business.job_id, Duration::from_secs(5), |snapshot| {
-        snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "BUSINESS_DENIED"
-    })
+    let business = wait_for_snapshot(
+        pool,
+        business.job_id,
+        EXTERNAL_EFFECT_ALLOWANCE,
+        |snapshot| snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "BUSINESS_DENIED",
+    )
     .await?;
     if business.acceptance_possible || business.provider_effect_id.is_some() {
         return Err("business denial retained an uncertain provider acceptance".into());
@@ -442,7 +464,7 @@ async fn observe_initial_outcomes(
         retry_after_ms: 24 * 60 * 60 * 1_000,
     });
     let known = submit(pool, 0x417, "known-undispatched", 8).await?;
-    let known = wait_for_snapshot(pool, known.job_id, Duration::from_secs(5), |snapshot| {
+    let known = wait_for_snapshot(pool, known.job_id, EXTERNAL_EFFECT_ALLOWANCE, |snapshot| {
         snapshot.job_status == "PENDING"
             && snapshot.effect_state == "RETRYABLE_UNDISPATCHED"
             && snapshot.attempt == 1
@@ -490,7 +512,7 @@ async fn observe_initial_outcomes(
     let accepted_before = fixture.counts().accepted_effects;
     let replacement = submit(pool, 0x414, "generation-replacement", 5).await?;
     fixture
-        .wait_for_accepted_count(accepted_before + 1, Duration::from_secs(5))
+        .wait_for_accepted_count(accepted_before + 1, EXTERNAL_EFFECT_ALLOWANCE)
         .await?;
     let changed =
         sqlx::query("UPDATE reference_records SET generation = 2 WHERE id = $1 AND generation = 1")
@@ -512,7 +534,7 @@ async fn complete_replacement(
     let snapshot = wait_for_snapshot(
         pool,
         replacement.job_id,
-        Duration::from_secs(5),
+        EXTERNAL_EFFECT_ALLOWANCE,
         |snapshot| {
             snapshot.job_status == "DEAD_LETTERED" && snapshot.effect_state == "MANUAL_RESOLUTION"
         },
@@ -554,9 +576,15 @@ async fn expiry_phase(
     }
     let worker = ExecutableChild::start_provider_worker(endpoint, provider_url, "provider-expiry")?;
     let observed = async {
-        let expired = wait_for_snapshot(pool, expired.job_id, Duration::from_secs(5), |snapshot| {
-            snapshot.job_status == "DEAD_LETTERED" && snapshot.effect_state == "MANUAL_RESOLUTION"
-        })
+        let expired = wait_for_snapshot(
+            pool,
+            expired.job_id,
+            EXTERNAL_EFFECT_ALLOWANCE,
+            |snapshot| {
+                snapshot.job_status == "DEAD_LETTERED"
+                    && snapshot.effect_state == "MANUAL_RESOLUTION"
+            },
+        )
         .await?;
         if !expired.acceptance_possible || expired.provider_effect_id.is_some() {
             return Err("retention expiry did not preserve unresolved acceptance".into());
@@ -567,7 +595,7 @@ async fn expiry_phase(
         fixture.set_lookup(super::provider::LookupBehavior::Stored);
         fixture.set_dispatch(DispatchBehavior::BusinessDenied);
         let later = submit(pool, 0x416, "after-terminal-outcome", 7).await?;
-        wait_for_snapshot(pool, later.job_id, Duration::from_secs(5), |snapshot| {
+        wait_for_snapshot(pool, later.job_id, EXTERNAL_EFFECT_ALLOWANCE, |snapshot| {
             snapshot.job_status == "SUCCEEDED" && snapshot.effect_state == "BUSINESS_DENIED"
         })
         .await?;
@@ -592,7 +620,7 @@ async fn submit(pool: &PgPool, record: u128, key: &str, value: i64) -> Result<Su
         .bind(owner.as_uuid())
         .execute(pool)
         .await?;
-    let context = OperationContext::new(Duration::from_secs(5))?;
+    let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
     let result = DeliveryService::new(pool.clone())
         .submit(
             &context,
@@ -688,7 +716,7 @@ async fn wait_for_admission_wait(
     first: &Submitted,
     second: &Submitted,
 ) -> ProbeResult {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(EXTERNAL_EFFECT_ALLOWANCE, async {
         loop {
             let left = snapshot(pool, first.job_id).await?;
             let right = snapshot(pool, second.job_id).await?;

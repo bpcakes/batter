@@ -218,6 +218,20 @@ pub enum UnsupportedSurface {
 }
 
 /// A successful snapshot report.
+///
+/// Verification is a gate: the report must be inspected, not merely awaited.
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_core::operation::OperationContext;
+/// use batter_sqlx::verification::{VerificationPlan, verify};
+/// async fn ignored(pool: &sqlx::PgPool, ctx: &OperationContext, plan: VerificationPlan<'_>)
+///     -> Result<(), Box<dyn std::error::Error>> {
+///     verify(pool, ctx, plan).await?;
+///     Ok(())
+/// }
+/// ```
+#[must_use = "inspect status() before proceeding; verification ran but its outcome is unread"]
 pub struct VerificationReport {
     pub(crate) status: VerificationStatus,
     pub(crate) findings: Vec<Finding>,

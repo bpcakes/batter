@@ -24,8 +24,8 @@ serde_json = "1"
 thiserror.workspace = true
 uuid = { version = "1", features = ["serde", "v7"] }
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
-runledger-core = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
-runledger-postgres = { git = "https://github.com/bpcakes/runledger.git", rev = "d57ec6be61e9f00ccce373b19ca356cafe98f206" }
+runledger-core.workspace = true
+runledger-postgres.workspace = true
 runledger-runtime.workspace = true
 
 [dev-dependencies]

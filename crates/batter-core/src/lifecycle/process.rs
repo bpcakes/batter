@@ -72,8 +72,61 @@ impl ProcessCapacity {
     }
 }
 
-/// A finite task's typed result. A task-level failure initiates process shutdown;
-/// put ordinary business rejection inside T (for example T = Result<Value, Denial>).
+/// A finite task failure that initiates process shutdown.
+///
+/// Finite task futures return `Result<T, Fatal<E>>`. There is deliberately no
+/// `From<E>` conversion, so `?` on an ordinary application error inside a task
+/// does not compile: propagating a business failure cannot silently become a
+/// process drain. Wrap explicitly with `Fatal(error)` for failures that must
+/// stop the process, and keep expected rejections in `T` (for example
+/// `T = Result<Value, Denial>`). Debug and Display never format the cause.
+///
+/// ```compile_fail,E0277
+/// use batter_core::lifecycle::ProcessHandle;
+/// async fn read() -> Result<u32, std::io::Error> { Ok(1) }
+/// fn business_errors_cannot_become_fatal(process: &ProcessHandle) {
+///     let _ = process.try_spawn::<_, _, u32, std::io::Error>("read", |_| async {
+///         let value = read().await?;
+///         Ok(value)
+///     });
+/// }
+/// ```
+#[must_use = "a fatal failure initiates process shutdown; return it from the task"]
+pub struct Fatal<E>(pub E);
+
+impl<E> Fatal<E> {
+    /// Mark an application error as fatal to the process.
+    pub fn new(error: E) -> Self {
+        Self(error)
+    }
+
+    /// Recover the original error.
+    pub fn into_inner(self) -> E {
+        self.0
+    }
+}
+
+impl<E> fmt::Debug for Fatal<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("fatal process task failure")
+    }
+}
+
+impl<E> fmt::Display for Fatal<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("fatal process task failure")
+    }
+}
+
+impl<E: Error + 'static> Error for Fatal<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+/// A finite task's typed result. A [`Fatal`] task-level failure initiates
+/// process shutdown; put ordinary business rejection inside T (for example
+/// T = Result<Value, Denial>).
 #[derive(Debug)]
 pub enum ProcessTaskError<E: Error + 'static> {
     /// The original error is shared with the process shutdown report.
@@ -154,7 +207,7 @@ impl ProcessScope {
     ) -> Result<ProcessReceipt<T, E>, ProcessAdmissionError>
     where
         F: FnOnce(ProcessScope) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, E>> + Send + 'static,
+        Fut: Future<Output = Result<T, Fatal<E>>> + Send + 'static,
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
@@ -186,11 +239,13 @@ impl ProcessHandle {
     /// Submit a finite task after process readiness. Capacity and drain share one
     /// linearization lock. The factory starts only inside a supervisor-owned task.
     ///
-    /// An Err(E) is a process task failure and initiates shutdown. For a normal
-    /// domain denial use Ok(Err(denial)) so the task itself completed successfully.
+    /// The task future returns `Result<T, Fatal<E>>`. `Err(Fatal(error))` is a
+    /// process task failure and initiates shutdown; `?` on a plain application
+    /// error does not compile inside the task. Expected domain denials belong
+    /// in the success value, for example `Ok(Err(denial))`.
     ///
     /// ```
-    /// use batter_core::lifecycle::{ShutdownCause, Supervisor};
+    /// use batter_core::lifecycle::{Fatal, ShutdownCause, Supervisor};
     /// # use batter_core::{BoxError, cleanup::CleanupBudget, lifecycle::ShutdownBudget};
     /// # use std::time::Duration;
     /// # #[tokio::main(flavor = "current_thread")]
@@ -206,7 +261,7 @@ impl ProcessHandle {
     /// let running = supervisor.start();
     /// running.status().wait_ready().await.unwrap();
     /// let receipt = process.try_spawn("refresh", |_| async {
-    ///     Err::<(), _>(std::io::Error::other("refresh failed"))
+    ///     Err::<(), _>(Fatal(std::io::Error::other("refresh failed")))
     /// })?;
     /// assert!(receipt.wait().await.is_err());
     /// let report = running.wait().await?;
@@ -221,7 +276,7 @@ impl ProcessHandle {
     ) -> Result<ProcessReceipt<T, E>, ProcessAdmissionError>
     where
         F: FnOnce(ProcessScope) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, E>> + Send + 'static,
+        Fut: Future<Output = Result<T, Fatal<E>>> + Send + 'static,
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
@@ -236,7 +291,7 @@ impl ProcessHandle {
     ) -> Result<ProcessReceipt<T, E>, ProcessAdmissionError>
     where
         F: FnOnce(ProcessScope) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, E>> + Send + 'static,
+        Fut: Future<Output = Result<T, Fatal<E>>> + Send + 'static,
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
@@ -278,7 +333,7 @@ impl ProcessHandle {
                             expected: true,
                         }
                     }
-                    Err(error) => {
+                    Err(Fatal(error)) => {
                         coordinator.shared.fail_task();
                         let error = Arc::new(error);
                         drop(lease);

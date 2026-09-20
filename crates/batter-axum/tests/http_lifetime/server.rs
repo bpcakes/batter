@@ -105,10 +105,11 @@ impl Server {
         supervisor.register("http.server", move |startup| async move {
             let _lifetime = Lifetime(server_state.clone(), "server-dropped");
             let graceful_state = server_state.clone();
-            let signal = if startup_stuck {
-                startup.shutdown().clone()
+            let (signal, exit) = if startup_stuck {
+                (startup.shutdown().clone(), Err(startup))
             } else {
-                startup.acknowledge_started()
+                let running = startup.acknowledge_started();
+                (running.signal(), Ok(running))
             };
             if unresponsive {
                 std::future::pending::<()>().await;
@@ -132,7 +133,11 @@ impl Server {
             } else {
                 "server-error"
             });
-            result.map_err(Into::into)
+            result?;
+            Ok(match exit {
+                Ok(running) => running.stopped(),
+                Err(startup) => startup.abandon(),
+            })
         })?;
         let cleanup_state = state.clone();
         let delayed_report = scenario == "http-delayed-report";

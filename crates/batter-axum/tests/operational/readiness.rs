@@ -284,9 +284,9 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
         supervisor
             .register("health", move |startup| async move {
                 let signal = startup.acknowledge_started();
-                monitor.run(signal).await;
+                monitor.run(signal.signal()).await;
                 stopped_tx.send(()).unwrap();
-                Ok(())
+                Ok(signal.stopped())
             })
             .unwrap();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -295,7 +295,7 @@ async fn supervised_monitor_stop_during_drain_stays_info_until_process_stops() {
                 let signal = startup.acknowledge_started();
                 signal.draining().await;
                 release_rx.await.unwrap();
-                Ok(())
+                Ok(signal.stopped())
             })
             .unwrap();
         let running = supervisor.start();

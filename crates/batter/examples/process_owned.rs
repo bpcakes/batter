@@ -5,7 +5,7 @@ mod support;
 use batter::{
     BoxError,
     admission::{Admission, Bulkhead, BulkheadCapacity},
-    lifecycle::{ProcessCapacity, Supervisor},
+    lifecycle::{Fatal, ProcessCapacity, Supervisor},
     operation::OperationContext,
 };
 use std::{convert::Infallible, time::Duration};
@@ -50,14 +50,14 @@ async fn main() -> Result<(), BoxError> {
             let _permit = permit;
             tokio::time::sleep(Duration::from_millis(20)).await;
             let _ = finished.send(());
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })?;
         drop(receipt); // A disconnected caller is not the operation's owner.
 
-        // Normal business rejections are values. Err(E) means a process-task
-        // failure, so it must not be used for expected quota denials.
+        // Normal business rejections are values. Only `Err(Fatal(_))` is a
+        // process-task failure, and a plain `?` cannot produce it.
         let denied = process.try_spawn("quota.check", |_scope| async {
-            Ok::<_, Infallible>(Err::<(), _>(Denial::Quota))
+            Ok::<_, Fatal<Infallible>>(Err::<(), _>(Denial::Quota))
         })?;
         assert!(matches!(denied.wait().await?, Err(Denial::Quota)));
         Ok::<_, BoxError>(finished_rx)

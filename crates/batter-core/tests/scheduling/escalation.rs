@@ -1,4 +1,6 @@
 use super::support::Case;
+use batter_core::lifecycle::ComponentExit;
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
@@ -58,7 +60,7 @@ pub async fn outcomes(
     let running = supervisor.start();
     running.status().wait_ready().await.unwrap();
     process
-        .try_spawn("completed", |_| async { Ok::<_, Infallible>(()) })
+        .try_spawn("completed", |_| async { Ok::<_, Fatal<Infallible>>(()) })
         .unwrap()
         .wait()
         .await
@@ -78,7 +80,7 @@ pub async fn outcomes(
                 _ => unreachable!(),
             }
             completion.await;
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     ready.await.unwrap();
@@ -173,7 +175,9 @@ pub async fn coordinator_failure(case: Case) {
     }
     let mut supervisor = supervisor();
     supervisor
-        .register("pending-component", |_| pending::<Result<(), BoxError>>())
+        .register("pending-component", |_| {
+            pending::<Result<ComponentExit, BoxError>>()
+        })
         .unwrap();
     let capture = PanicOnDrop;
     supervisor
@@ -218,7 +222,7 @@ pub async fn unjoined_finite(case: Case) {
                 std::thread::park();
             }
             #[allow(unreachable_code)]
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     entry.await.unwrap();

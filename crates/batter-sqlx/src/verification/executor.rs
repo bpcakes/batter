@@ -1,5 +1,5 @@
 use super::*;
-use sqlx::{Connection, PgConnection};
+use sqlx::Connection;
 
 impl VerificationPlan<'_> {
     fn requests_temporary_namespace(self) -> bool {
@@ -32,35 +32,58 @@ pub(super) fn execute<'a>(
     Box::pin(async move {
         let outcome = context
             .run("postgres.verification", |scope| async move {
-                let mut lease = crate::PgLease::acquire(pool, &scope)
-                    .await
-                    .map_err(|error| match error {
-                        OperationError::Failed(error) => {
-                            OperationError::Failed(VerificationError::Native(error))
-                        }
-                        OperationError::Interrupted(reason) => OperationError::Interrupted(reason),
-                    })?;
-                let report = inspect_checkout(lease.connection(), plan)
-                    .await
-                    .map_err(OperationError::Failed)?;
-                Ok((report, lease))
+                inspect_owned_checkout(pool, scope, plan).await
             })
             .await;
         match outcome {
-            Ok((report, lease)) => {
-                lease.return_to_pool();
-                Ok(report)
-            }
+            Ok(report) => Ok(report),
             Err(OperationError::Failed(error)) => Err(error),
             Err(OperationError::Interrupted(reason)) => Err(OperationError::Interrupted(reason)),
         }
     })
 }
 
+fn inspect_owned_checkout<'a>(
+    pool: &'a PgPool,
+    scope: OperationContext,
+    plan: VerificationPlan<'a>,
+) -> std::pin::Pin<
+    Box<
+        dyn std::future::Future<
+                Output = Result<VerificationReport, OperationError<VerificationError>>,
+            > + Send
+            + 'a,
+    >,
+> {
+    // Keep the lease-owned query graph behind its own allocation boundary. If
+    // this is inlined into `execute`, the unit-test harness's additional
+    // monomorphizations push rustc's async layout query past the default depth.
+    Box::pin(async move {
+        let lease = crate::PgLease::acquire(pool, &scope)
+            .await
+            .map_err(|error| match error {
+                OperationError::Failed(error) => {
+                    OperationError::Failed(VerificationError::Native(error))
+                }
+                OperationError::Interrupted(reason) => OperationError::Interrupted(reason),
+            })?;
+        // Ok plus successful idle-state cleanup returns the checkout;
+        // Err, interruption, or cleanup failure retires it.
+        lease
+            .with_connection(async |connection| inspect_checkout(connection, plan).await)
+            .await
+            .map_err(OperationError::Failed)
+    })
+}
+
 async fn inspect_checkout(
-    connection: &mut PgConnection,
+    session: &mut crate::PgSession<'_>,
     plan: VerificationPlan<'_>,
 ) -> Result<VerificationReport, VerificationError> {
+    // Verification is adapter-owned and needs native connection state and a
+    // custom BEGIN mode. This private access is not part of the public lease
+    // closure capability.
+    let connection = session.native_connection();
     if connection.is_in_transaction() {
         return Err(VerificationError::ConnectionState);
     }

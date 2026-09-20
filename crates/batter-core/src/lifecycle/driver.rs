@@ -69,10 +69,10 @@ pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
 /// Dereferencing borrows the [`ShutdownReport`]; it does not clone its contents
 /// or extend ownership of the running process. Display identifies the shared
 /// owner; its error source is the concrete report, which displays the summary.
-/// Debug may contain application error contents and is not automatically logged.
-/// In particular, do not let this error escape a `main` returning `Result`:
-/// Rust's [`std::process::Termination`] prints its Debug representation to stderr.
-/// Keep rich errors inside the application and choose output at an explicit
+/// Debug and Display are redacted: they report names, outcomes and counts, never
+/// task, cleanup or panic contents. Retained errors stay reachable through the
+/// report's public fields for an application-selected trusted sink. Keep rich
+/// errors inside the application and choose output at an explicit
 /// [`std::process::ExitCode`] boundary, as in the PostgreSQL lifecycle example.
 ///
 /// `must_use` warns when this value is discarded as an expression, including
@@ -283,7 +283,19 @@ impl UnapprovedSupervisor {
 ///     running.approve_readiness();
 /// }
 /// ```
+///
+/// Discarding the started owner requests shutdown immediately, so the owner
+/// must be retained:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_core::lifecycle::Supervisor;
+/// fn discarded(supervisor: Supervisor) {
+///     supervisor.start();
+/// }
+/// ```
 #[derive(Clone)]
+#[must_use = "retain the running owner; dropping the last owner requests shutdown"]
 pub struct RunningSupervisor {
     owner: Arc<DriverOwner>,
     observer: SupervisorObserver,

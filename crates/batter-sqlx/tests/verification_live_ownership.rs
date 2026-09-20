@@ -38,7 +38,8 @@ async fn verification_preserves_separate_caller_raw_transactions() -> Result {
                 )))
                 .execute(&mut fixture.admin)
                 .await?;
-                super::verify_policy(&pool, &policy(&names)?).await?;
+                // This case checks session behaviour, not the verdict.
+                let _report = super::verify_policy(&pool, &policy(&names)?).await?;
                 let retained: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT count(*) FROM {table} WHERE id = -11"
                 )))
@@ -107,7 +108,8 @@ async fn verification_occupied_pool_acquisition_preserves_caller_transaction() -
                 )?;
                 sqlx::query("ROLLBACK").execute(&mut *caller).await?;
                 drop(caller);
-                super::verify_policy(&pool, &policy(&names)?).await?;
+                // This case checks session behaviour, not the verdict.
+                let _report = super::verify_policy(&pool, &policy(&names)?).await?;
                 pool.close().await;
                 Ok(())
             })
@@ -133,7 +135,8 @@ async fn verification_normalizes_abandoned_pooled_raw_transactions() -> Result {
                 .execute(&mut *abandoned)
                 .await?;
                 drop(abandoned);
-                super::verify_policy(&pool, &policy(&names)?).await?;
+                // This case checks session behaviour, not the verdict.
+                let _report = super::verify_policy(&pool, &policy(&names)?).await?;
                 let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                     "SELECT count(*) FROM {table} WHERE id = -13"
                 )))
@@ -155,7 +158,8 @@ async fn verification_normalizes_abandoned_pooled_raw_transactions() -> Result {
                             "the aborted-transaction control did not fail with division by zero")?;
                     }
                     drop(abandoned);
-                    super::verify_policy(&pool, &policy(&names)?).await?;
+                    // This case checks session behaviour, not the verdict.
+                    let _report = super::verify_policy(&pool, &policy(&names)?).await?;
                     let idle: bool = sqlx::query_scalar(
                         "SELECT state = 'idle' AND xact_start IS NULL FROM pg_stat_activity WHERE pid = $1"
                     ).bind(pid).fetch_one(&mut fixture.admin).await?;

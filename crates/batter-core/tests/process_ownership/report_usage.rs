@@ -1,6 +1,7 @@
 //! Compile controls: require the precise lint, rather than any compiler error.
 #![deny(unfulfilled_lint_expectations)]
 
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupStack},
@@ -57,7 +58,7 @@ async fn shared_report_retains_task_and_cleanup_failures_across_owners() {
     let observer = running.observer();
     let receipt = process
         .try_spawn("failed-work", |_| async {
-            Err::<(), _>(std::io::Error::other("task-marker"))
+            Err::<(), _>(Fatal(std::io::Error::other("task-marker")))
         })
         .unwrap();
     assert!(receipt.wait().await.is_err());

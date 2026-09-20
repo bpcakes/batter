@@ -12,6 +12,13 @@ and keep application errors concrete.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
+The canonical path must also make locally expressible invalid operational states
+unrepresentable. When adding or materially changing public API, apply the
+[ADR-010 invalid-state review](adr/010-agent-only-consumption.md#public-api-invalid-state-review):
+do not replace an enforceable ordering, nesting, paired call, phase transition,
+nonempty-input rule, cleanup sequence or exhaustive outcome with caller
+instructions. Application policy and remote effects remain explicit boundaries.
+
 For finite work, use [`Command`](../crates/batter-core/src/command.rs) and the
 [finite-command example](#finite-commands-and-owned-cleanup). The command owner
 retains registered finalizers after callback errors, unwinding or work cancellation.
@@ -148,7 +155,7 @@ For a native SQLx pool, reserve its slot and call `batter_sqlx::pool_in`, then r
 an explicit bounded query or `probe`. Await `starting.wait()` to obtain the
 `RunningSupervisor`; startup failure retains initialization and cleanup errors.
 The [HTTP example](../crates/batter/examples/http_service.rs) demonstrates
-this complete path with native listener binding and `register_http_in`; the
+this complete path with native listener binding and `HttpBoundary`; the
 [PostgreSQL lifecycle example](../examples/postgres-lifecycle/src/main.rs) and
 [reference root](../examples/reference-service/src/runtime.rs) add `pool_in`, and
 the reference root also registers native Runledger preparation with `register_in`.
@@ -160,8 +167,12 @@ obligations are not the canonical agent-consumer integration contract.
 Successful `Startup` initialization supplies application readiness approval by
 default and starts the owned driver. Each direct critical component receives a
 non-cloneable `ComponentStartup`, consumes `acknowledge_started()` after actual
-initialization, and uses the returned read-only `ShutdownSignal` while running;
-supported adapters own this transition for their components. The driver publishes
+initialization, and uses the returned `RunningComponent` while running. The
+component future returns the `ComponentExit` proof from
+`RunningComponent::stopped()`, or from `ComponentStartup::abandon()` when drain
+is observed before initialization, so a component cannot complete without
+acknowledging or explicitly abandoning its startup; supported adapters own this
+transition for their components. The driver publishes
 Ready only after every registered component acknowledges. Use
 `without_readiness_approval()` only when application policy deliberately defers
 approval. Its successful handoff is an `UnapprovedSupervisor`; consume
@@ -248,8 +259,10 @@ may admit bounded descendants during drain; forced cancellation stops both.
 Scope cloning does not keep an already-finished ancestor active. Handle Full
 explicitly when a parent and child compete for the same capacity.
 
-`Err(E)` is a process task failure and starts drain. Ordinary user/business
-rejection is `Ok(Err(denial))` so it remains a successful finite completion.
+A finite task future returns `Result<T, Fatal<E>>`. Only `Err(Fatal(error))` is
+a process task failure and starts drain; `?` on a plain application error does
+not compile inside the task. Ordinary user/business rejection is
+`Ok(Err(denial))` so it remains a successful finite completion.
 The typed receipt and shutdown report share the original failure cause; a lost
 receipt is not authority to cancel the work. Successful tasks increment a
 counter rather than accumulating one report record per operation forever.
@@ -329,30 +342,46 @@ and deterministic or explicitly sampled behavior.
 
 ## Application HTTP envelopes
 
-Import `RequestPolicy`, `HttpFailure`, `request_admission` and `observe_http`
-from `batter::axum`. Apply admission to business routes and observation to the
-complete router after merging probes and fallback. Keep trusted identity outside
-observation. Routes added after the observer layer bypass it; assemble first.
-`request_scope` remains the combined compatibility middleware. Replace it with
-`request_admission` when adding outer observation to avoid two HTTP events.
+Import `GuardedRouter`, `HttpBoundary`, `ProbePath`, `RequestPolicy`,
+`ReadinessPolicy` and `HttpFailure` from `batter::axum`. Construct literal probe routes with
+`ProbePath::new`; raw strings, captures and wildcards cannot cross the canonical
+boundary. `HttpBoundary::new(policy)`, `.with_liveness(path)`,
+`.with_readiness(path, readiness)` and awaited `.assemble(guarded)` then own the layer order:
+probes outside admission, admission around every guarded route including nested
+fallbacks plus its default, custom and method fallbacks, and correlation with the
+single HTTP observer outermost. Declare protected application routes with
+`GuardedRouter`; it retains identities across route, merge and typed nesting,
+while opaque nested services remain a documented low-level composition.
+Assembly returns a sanitized error when a guarded route can match a reserved
+probe path by querying only that inert inventory, without polling application
+code. Register the
+`AssembledHttp` with `register_in`. The individual middlewares
+(`request_admission`, `observe_http`, `request_scope`, `operational_http`)
+remain available for compositions the boundary cannot express and document the
+ordering they leave with the caller. Only the outermost observer emits an HTTP
+completion event; nested Batter middleware contributes retained adapter facts
+to its shared private state. A plain observer may wrap `operational_http`, but
+admission, `request_scope`, deadlines and other rejecting middleware must remain
+inside it to retain generated correlation on every outcome. Routes added after
+assembly sit outside the boundary.
 The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
 remains available for adapter-owned tests and applications that need that package
 boundary.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
 render your envelope. Install trusted metadata middleware outside the policy so
-it is available even for readiness/deadline failures. The [HTTP example](../crates/batter/examples/http_service.rs)
-uses `operational_http` to generate a UUID and replace incoming header/Tower/
-adapter identities. This opt-in wrapper replaces the outer observer/identity
-pair; it emits one HTTP completion with an event-local ID even when INFO spans
-are disabled. Extract `Extension<CorrelationId>` for explicit metadata propagation.
+it is available even for readiness/deadline failures. `HttpBoundary` installs
+`operational_http`, which generates a UUID and replaces incoming header/Tower/
+adapter identities; it emits one HTTP completion with an event-local ID even
+when INFO spans are disabled. Extract `Extension<CorrelationId>` for explicit
+metadata propagation.
 Applications remain responsible for durable uniqueness requirements and trust policy.
 The example selects `with_infrastructure_json()` and uses
 `render_infrastructure_failure` in handlers; legacy Problem JSON and custom
 rendering remain compatible. Readiness uses `ReadinessPolicy` with a read-only
 HealthReader plus `LifecycleStatus`, while request admission receives only
-`OperationAdmission`; owned startup calls `register_http_in` after binding the
-native listener. Construct both projections at the composition root from the
+`OperationAdmission`; owned startup calls `AssembledHttp::register_in` after
+binding the native listener. Construct both projections at the composition root from the
 supervisor or its shutdown handle. These helpers cannot request shutdown or
 approve readiness and do not own domain errors, body streaming or authentication.
 
@@ -447,15 +476,17 @@ downcast the retained source chain. Choose that sink
 deliberately instead of dropping diagnostics or printing the reports' derived
 `Debug` output.
 
-Do not wrap an entire transaction/commit in a blanket retry. Continue to use
-native SQLx transaction parameters where application writes and Runledger enqueue
-must share the transaction. The
+Do not wrap an entire transaction/commit in a blanket retry. Use Batter's opaque
+transaction capability where application writes and Runledger enqueue must share
+the transaction. The
 [reference delivery command](../examples/reference-service/README.md#staged-worker-and-atomic-delivery-command)
 shows the implemented boundary: validate before acquisition; pass one operation
-budget through `PgLease` acquisition and transaction work; return the lease only
-after acknowledged commit/rollback; and reconcile an uncertain result by the
-original authenticated owner and idempotency key. An absent reconciliation row
-while a database session may still settle is not proof of rollback.
+budget through `PgLease` acquisition and opaque transaction work; use
+`RunledgerTransaction` to compose application SQL with Runledger's executor-only
+enqueue capability; return the lease only after acknowledged commit/rollback;
+and reconcile an uncertain result by the original authenticated owner and
+idempotency key. An absent reconciliation row while a database session may still
+settle is not proof of rollback.
 
 ## Tests that do not lose teardown errors
 

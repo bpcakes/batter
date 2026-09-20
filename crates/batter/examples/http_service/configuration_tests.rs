@@ -12,7 +12,7 @@ fn source(pairs: &[(&str, &str)]) -> SettingsSource {
 fn config(pairs: &[(&str, &str)]) -> Config {
     Config::from_sources(None, SettingsSource::default(), source(pairs)).unwrap()
 }
-fn app(config: &Config) -> axum::Router {
+async fn app(config: &Config) -> axum::Router {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let monitor = HealthMonitor::new(
@@ -32,6 +32,9 @@ fn app(config: &Config) -> axum::Router {
         monitor.reader(),
         config.bulkhead_capacity,
     )
+    .await
+    .unwrap()
+    .into_router()
 }
 
 #[test]
@@ -109,6 +112,7 @@ async fn file_and_environment_deadline_change_actual_work_response() {
         let file = read_literal(Cursor::new("BATTER_REQUEST_TIMEOUT_MS=5"), 1024).unwrap();
         let configured = Config::from_sources(Some(file), env, SettingsSource::default()).unwrap();
         let response = app(&configured)
+            .await
             .oneshot(Request::builder().uri("/work").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -129,7 +133,7 @@ async fn actual_router_uses_configured_bulkhead_with_held_work() {
     use tower::ServiceExt;
     for limit in [1, 3] {
         let configured = config(&[("BATTER_BULKHEAD_CAPACITY", &limit.to_string())]);
-        let application = app(&configured);
+        let application = app(&configured).await;
         let request = || Request::builder().uri("/work").body(Body::empty()).unwrap();
         let mut held = Vec::new();
         for _ in 0..limit {

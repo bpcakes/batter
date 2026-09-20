@@ -1,8 +1,9 @@
 //! Process-owned critical tasks, two-stage shutdown, and explicit finalizers.
 //!
 //! Registered components are critical; dynamically admitted process tasks are
-//! finite. Task-level errors initiate shutdown; ordinary business rejection can
-//! remain a typed successful task value. No automatic restart is provided.
+//! finite. A finite task initiates shutdown only by returning [`Fatal`]; ordinary
+//! business rejection remains a typed successful task value and cannot be
+//! propagated into a drain with `?`. No automatic restart is provided.
 
 mod caller_owned;
 mod capability;
@@ -20,15 +21,15 @@ use tasks::TaskSet;
 
 pub use caller_owned::UnapprovedDriver;
 pub use capability::{
-    ComponentStartup, LifecycleStatus, OperationAdmission, Readiness, ReadinessApproval,
-    ShutdownHandle, ShutdownSignal,
+    ComponentExit, ComponentStartup, LifecycleStatus, OperationAdmission, Readiness,
+    ReadinessApproval, RunningComponent, ShutdownHandle, ShutdownSignal,
 };
 pub use driver::{
     DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
     UnapprovedSupervisor, check_shutdown,
 };
 pub use process::{
-    ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt, ProcessScope,
+    Fatal, ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt, ProcessScope,
     ProcessTaskError,
 };
 
@@ -109,7 +110,7 @@ pub enum TaskOutcome {
 }
 
 /// A named task exit with the original error when available.
-#[derive(Debug)]
+/// Debug reports only the name, outcome and whether an error was retained.
 pub struct TaskRecord {
     /// Registered component name or finite operation label. Finite labels may
     /// repeat for concurrent invocations; every failed invocation gets a record.
@@ -118,6 +119,16 @@ pub struct TaskRecord {
     pub outcome: TaskOutcome,
     /// Returned error or JoinError. May contain sensitive application data.
     pub error: Option<BoxError>,
+}
+
+impl std::fmt::Debug for TaskRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskRecord")
+            .field("name", &self.name)
+            .field("outcome", &self.outcome)
+            .field("error", &self.error.as_ref().map(|_| "retained"))
+            .finish()
+    }
 }
 
 impl TaskRecord {
@@ -138,7 +149,7 @@ pub enum ShutdownCause {
     Requested,
     /// A registered critical component exited.
     ComponentExit(&'static str),
-    /// An admitted finite task returned an error or panicked.
+    /// An admitted finite task returned [`Fatal`] or panicked.
     /// Labels may repeat across invocations; success does not initiate shutdown.
     /// Shutdown aborts appear in [`ShutdownReport::abort_requested`] and task outcomes.
     /// See [`ProcessHandle::try_spawn`] for a finite-failure example.
@@ -147,7 +158,8 @@ pub enum ShutdownCause {
     EmptySupervisor,
 }
 
-type ComponentFuture = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'static>>;
+type ComponentFuture =
+    Pin<Box<dyn Future<Output = Result<ComponentExit, BoxError>> + Send + 'static>>;
 struct RegisteredComponent {
     startup: ComponentStartup,
     coordinator: LifecycleCoordinator,
@@ -252,6 +264,11 @@ impl Supervisor {
 
     /// Register long-lived, critical process work. Factories run inside their
     /// owned task, so factory panics are observed like task panics.
+    ///
+    /// The component future must return a [`ComponentExit`] proof, obtainable
+    /// only by acknowledging startup and then calling
+    /// [`RunningComponent::stopped`], or by [`ComponentStartup::abandon`]
+    /// before initialization. A component cannot complete without doing one.
     pub fn register<F, Fut>(
         &mut self,
         name: &'static str,
@@ -259,7 +276,7 @@ impl Supervisor {
     ) -> Result<(), RegistrationError>
     where
         F: FnOnce(ComponentStartup) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+        Fut: Future<Output = Result<ComponentExit, BoxError>> + Send + 'static,
     {
         self.check_component_name(name)?;
         let lifecycle = RegisteredComponent::new(&self.coordinator);
@@ -299,7 +316,7 @@ impl Supervisor {
     pub(crate) fn register_reserved<F, Fut>(&mut self, name: &'static str, factory: F)
     where
         F: FnOnce(ComponentStartup) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), BoxError>> + Send + 'static,
+        Fut: Future<Output = Result<ComponentExit, BoxError>> + Send + 'static,
     {
         let position = self
             .reserved_components
@@ -412,7 +429,7 @@ impl Supervisor {
     /// supervisor.register("worker", |startup| async move {
     ///     let shutdown = startup.acknowledge_started();
     ///     shutdown.draining().await;
-    ///     Ok(())
+    ///     Ok(shutdown.stopped())
     /// })?;
     /// let report = supervisor.run_until(std::future::ready(())).await;
     /// assert!(report.is_success());

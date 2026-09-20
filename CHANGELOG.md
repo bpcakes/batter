@@ -8,6 +8,45 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Make PostgreSQL lease disposition unambiguous: native work either uses the
+  result-driven `with_connection` path or the consuming
+  `with_retiring_connection` path. Both expose only an opaque `PgSession` and
+  opaque transactions with executor-only access, preventing safe replacement of
+  the physical connection before disposition. An unfinished transaction keeps
+  session-owned completion state dirty, so dropping or forgetting it retires the
+  connection even after an application `Ok`. Since the native executor can issue
+  raw transaction-control SQL, pool return additionally requires a private proof
+  created only after a same-connection normalization handshake ends in a
+  successful `ROLLBACK`; open or failed raw transactions are synchronized to
+  idle without warning on the ordinary already-idle path, while cleanup failure retires the
+  connection without changing the application result. The reference submission
+  path uses a typed phase state to retain an acknowledged commit result or
+  rolled-back failure across later cleanup interruption; only interruption while
+  transaction disposition is unknown is reported as uncertain.
+  `OperationContext::run_resolved` applies that retained disposition before
+  telemetry finalization, keeping the observed outcome aligned with the public
+  submission result. The verifier's lease-owned query phase is boxed at its
+  ownership boundary so both ordinary and `test-support` SQLx package test
+  targets stay within rustc's default type-layout query depth. Add
+  `RunledgerTransaction` for
+  atomic application writes and direct enqueue through the upstream capability;
+  the facade's `runledger` feature also exposes its required `sqlx` capability.
+- Keep every guarded `HttpBoundary` fallback behind lifecycle admission while
+  only opaque, validated literal `ProbePath` values can select routes outside
+  it. Repeated probe paths across liveness and readiness declarations now return
+  a sanitized configuration error before Axum can panic. `GuardedRouter` now
+  retains route identities across route, merge and typed nesting, while opaque
+  nested services cannot enter the protected path. Async assembly rejects any
+  retained guarded route identity that can match a reserved probe path by
+  querying a library-owned inert inventory; application handlers, fallbacks and
+  middleware are never polled. Nested operational/quota wrappers now share one
+  library-owned observation state, retaining quota facts on the sole outer
+  completion event in either supported wrapper order. Distinct observer and
+  operational markers preserve correlation when plain `observe_http` is
+  outermost. Document and test the non-commutative boundary: correlation must
+  remain outside admission, deadlines and `request_scope`.
+- Enforce that facade-owned runnable examples import the public `batter` path.
+
 - Soften public status language now that the library is in internal use: drop
   MVP / not-production-validated framing while keeping unpublished-package,
   evidence-scope, and API-limit facts.
@@ -77,11 +116,13 @@ contracts, capability facts and validation history.
   component-start boundary. `Supervisor::register` and constrained
   `Registration::register` factories now receive a non-cloneable
   `ComponentStartup`; consume `acknowledge_started()` after actual initialization
-  and retain its returned observation-only `ShutdownSignal` while running.
+  and retain its returned non-cloneable `RunningComponent` while running, then
+  return its `stopped()` proof after work ends.
   `HealthMonitor::run` no longer acknowledges a registered component: prefer
   `HealthMonitor::register_in`, or explicitly acknowledge the factory's
-  `ComponentStartup` and pass the returned signal to `run`. Passing a clone from
-  `startup.shutdown()` compiles but deliberately leaves readiness pending.
+  `ComponentStartup` and pass `running.signal()` to `run`, retaining the running
+  capability for its final `stopped()` proof. Passing a clone from
+  `startup.shutdown()` deliberately leaves readiness pending.
 - Add an opt-in `RetryOptions` / `execute_with_options` boundary for per-attempt
   deadline caps and optional injected equal jitter. Attempt deadlines are
   recomputed after backoff, cannot exceed the input total/work context, and have
@@ -134,8 +175,12 @@ contracts, capability facts and validation history.
   preparation, before protected startup acquires resources.
 - Replace blocking retained-panic inspection with `PanicPayload::try_inspect`;
   concurrent or recursive inspection now returns `PanicPayloadBusy`.
-- Pin native runtime dependencies to pushed Git revision `d57ec6be61e9f00ccce373b19ca356cafe98f206`
-  in both workspaces, removing the requirement for a sibling development checkout.
+- Advance the root workspace's immutable Runledger source from Git revision
+  `d57ec6be61e9f00ccce373b19ca356cafe98f206` to PR #15 revision
+  `638ee3480f69962597147f5d7bd52822267560b7`, which supplies
+  `PgTransactionExecutor` for the executor-only transaction bridge; no sibling
+  development checkout is required. The frozen consumer-evidence workspace
+  retains the historical revision it evaluated.
 - Capture finite-command interruption at the final poll before future destruction.
   Distinguish native termination before initialization from process drain in
   managed reports, and correct the reference root's empty-registry description.

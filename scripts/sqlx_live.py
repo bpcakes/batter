@@ -17,7 +17,7 @@ TARGETS = {
         "blocked_panic_releases_capacity",
         "blocked_outer_drop_releases_capacity",
         "repeated_interruptions_leave_independent_residual_sessions",
-        "success_and_acknowledged_transactions_reuse",
+        "acknowledged_transactions_reuse_and_abandoned_transactions_retire",
         "verification_uses_one_read_only_snapshot_and_preserves_ledger_policy",
         "native_database_failure_retires_and_preserves_cause",
         "rejected_commit_preserves_native_cause_and_retires",

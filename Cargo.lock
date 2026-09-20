@@ -211,7 +211,11 @@ name = "batter-runledger"
 version = "0.1.0"
 dependencies = [
  "batter-core",
+ "batter-sqlx",
+ "runledger-core",
+ "runledger-postgres",
  "runledger-runtime",
+ "serde_json",
  "sqlx",
  "tokio",
 ]
@@ -410,9 +414,9 @@ checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "cron"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "089df96cf6a25253b4b6b6744d86f91150a3d4df546f31a95def47976b8cba97"
+checksum = "a5dcd6f69605c2956916ce24e8af637b754964c9a83f4662d3a2361654cdba09"
 dependencies = [
  "chrono",
  "once_cell",
@@ -1564,7 +1568,7 @@ dependencies = [
 [[package]]
 name = "runledger-core"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=d57ec6be61e9f00ccce373b19ca356cafe98f206#d57ec6be61e9f00ccce373b19ca356cafe98f206"
+source = "git+https://github.com/bpcakes/runledger.git?rev=638ee3480f69962597147f5d7bd52822267560b7#638ee3480f69962597147f5d7bd52822267560b7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1577,14 +1581,14 @@ dependencies = [
 [[package]]
 name = "runledger-postgres"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=d57ec6be61e9f00ccce373b19ca356cafe98f206#d57ec6be61e9f00ccce373b19ca356cafe98f206"
+source = "git+https://github.com/bpcakes/runledger.git?rev=638ee3480f69962597147f5d7bd52822267560b7#638ee3480f69962597147f5d7bd52822267560b7"
 dependencies = [
  "chrono",
  "cron",
  "runledger-core",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "tracing",
@@ -1593,7 +1597,7 @@ dependencies = [
 [[package]]
 name = "runledger-runtime"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=d57ec6be61e9f00ccce373b19ca356cafe98f206#d57ec6be61e9f00ccce373b19ca356cafe98f206"
+source = "git+https://github.com/bpcakes/runledger.git?rev=638ee3480f69962597147f5d7bd52822267560b7#638ee3480f69962597147f5d7bd52822267560b7"
 dependencies = [
  "async-trait",
  "chrono",

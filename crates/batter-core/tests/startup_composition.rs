@@ -1,3 +1,4 @@
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ProcessCapacity, RunningSupervisor, ShutdownBudget, ShutdownCause, Supervisor},
@@ -63,7 +64,7 @@ async fn finite_work_without_critical_components_has_a_successful_running_lifeti
     running.status().wait_ready().await.unwrap();
     assert_eq!(capacity.available_permits(), 0);
     let receipt = process
-        .try_spawn("calculation", |_| async { Ok::<_, Infallible>(42) })
+        .try_spawn("calculation", |_| async { Ok::<_, Fatal<Infallible>>(42) })
         .unwrap();
     assert_eq!(receipt.wait().await.unwrap(), 42);
     let report = running.shutdown().await.unwrap();

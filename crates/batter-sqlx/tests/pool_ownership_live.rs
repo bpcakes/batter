@@ -190,7 +190,7 @@ async fn startup_query_joins_before_pool_close() -> Result {
                     let shutdown = startup.acknowledge_started();
                     shutdown.draining().await;
                     stopped.lock().unwrap().push("worker");
-                    Ok(())
+                    Ok(shutdown.stopped())
                 })?;
             Ok::<_, BoxError>(())
         })

@@ -56,7 +56,7 @@ pub(super) async fn probe(
         ExecutableChild::start_provider_worker(endpoint, provider_url, "retry-redelivery")?;
     let observed = async {
         let retained =
-            wait_for_snapshot(pool, submitted.job_id, Duration::from_secs(10), |state| {
+            wait_for_snapshot(pool, submitted.job_id, EXTERNAL_EFFECT_ALLOWANCE, |state| {
                 state.attempt == 2
                     && state.job_status == "PENDING"
                     && state.last_error_code.as_deref() == Some("delivery.provider_retry_deferred")
@@ -96,7 +96,7 @@ pub(super) async fn probe(
 }
 
 async fn observe_blocked_completion(pool: &PgPool, job_id: Uuid) -> ProbeResult {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(EXTERNAL_EFFECT_ALLOWANCE, async {
         loop {
             let waiting: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid

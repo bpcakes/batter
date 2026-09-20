@@ -43,6 +43,12 @@ and admitted finite work, not their arbitrary detached children. Cleanup require
 explicit driving, and its guarantees require a live runtime. Automatic
 observations omit error contents; applications choose their subscriber.
 
+When application-owned evidence establishes a final result before cancellable
+cleanup finishes, `OperationContext::run_resolved` applies one synchronous typed
+resolver before telemetry is finalized. The application remains responsible for
+the evidence and any remote-effect claim; dropping the outer future cannot run
+the resolver.
+
 Adapter authors can wrap a future with `batter_core::telemetry::with_current_dispatch`
 to retain the dispatcher captured at the call through polling and destruction.
 Keep observations and nested spans inside that future; it does not capture or

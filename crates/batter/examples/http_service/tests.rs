@@ -63,7 +63,7 @@ async fn readiness_responses() -> [String; 4] {
             let _ = started_tx.send(());
             shutdown.draining().await;
             let _ = release_rx.await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     // The direct-supervisor phase fixture lends the same registration-only view.
@@ -77,7 +77,10 @@ async fn readiness_responses() -> [String; 4] {
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         health.clone(),
         BulkheadCapacity::new(32).unwrap(),
-    );
+    )
+    .await
+    .unwrap()
+    .into_router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop_tx, stop_rx) = oneshot::channel();
@@ -232,7 +235,10 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
         health,
         BulkheadCapacity::new(32).unwrap(),
-    );
+    )
+    .await
+    .unwrap()
+    .into_router();
     let status = || async {
         app.clone()
             .oneshot(

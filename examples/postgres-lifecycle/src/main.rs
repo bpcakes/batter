@@ -78,7 +78,7 @@ async fn run() -> Result<(), BoxError> {
                         .register("application", |startup| async move {
                             let shutdown = startup.acknowledge_started();
                             shutdown.draining().await;
-                            Ok(())
+                            Ok(shutdown.stopped())
                         })?;
                     Ok(())
                 }

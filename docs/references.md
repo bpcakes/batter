@@ -427,6 +427,21 @@ context therefore yields Incomplete, including when a separate ACL is present.
 Ordinary placeholder potential remains conservative; a visible loaded parameter
 still supports a positive requirement. No live SET probe enters verification.
 
+## Runledger opaque transaction capability, 2026-09-19
+
+Runledger PR [#15](https://github.com/bpcakes/runledger/pull/15), pinned at
+[`638ee3480f69962597147f5d7bd52822267560b7`](https://github.com/bpcakes/runledger/commit/638ee3480f69962597147f5d7bd52822267560b7),
+adds [`PgTransactionExecutor`](https://github.com/bpcakes/runledger/blob/638ee3480f69962597147f5d7bd52822267560b7/runledger-postgres/src/transaction_executor.rs).
+Its sole method returns an opaque SQLx `Executor`; it exposes no native
+connection, transaction, completion method, `DerefMut`, or `AsMut`. The three
+[direct-enqueue capability entry points](https://github.com/bpcakes/runledger/blob/638ee3480f69962597147f5d7bd52822267560b7/runledger-postgres/src/jobs/queue/enqueue.rs)
+share the existing implementation and preserve the concrete `DbTx` functions as
+compatibility delegates. The packaged external consumer proves an application
+audit row and the Runledger job/event mutations commit and roll back together
+through a non-`Deref` wrapper on PostgreSQL 18. Batter therefore wraps its own
+opaque transaction in `RunledgerTransaction`; it does not expose the native owner
+merely to satisfy upstream type identity.
+
 ## Pushed native source, 2026-09-12
 
 Verified the clean local Runledger checkout and remote HEAD with `git status`,
@@ -1102,15 +1117,19 @@ The current primary documentation also identifies 0.8.9:
 
 These semantics determine the assembled-router observer placement. Public
 `observe_http` and `request_admission` are additive; `request_scope` remains a
-combined wrapper and nested observers are not deduplicated. No upstream version
-or Cargo.lock change is required.
+combined wrapper. Batter's private shared observation state makes nested
+observers emit once while allowing adapter facts to reach that outer event. No
+upstream version or Cargo.lock change is required.
 
 For the Runlimit protected assembly, rechecked the pinned Axum 0.8.9
 [`Router` implementation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs)
 on 2026-09-18. `route_layer` transforms `path_router` but leaves
 `fallback_router` untouched; nesting a router with a custom fallback adds that
-fallback to the latter. `layer` transforms both routers. `merge` panics when
-both inputs have custom fallbacks, and `reset_fallback` removes a router's
+fallback to the latter. `layer` transforms both routers. When both merged
+routers have default fallbacks, `merge` retains the second router's fallback;
+therefore the guarded router must be the second input when its layered default
+fallback is the protected contract. `merge` panics when both inputs have custom
+fallbacks, and `reset_fallback` removes a router's
 fallback entries before merging. `method_not_allowed_fallback` instead
 modifies `path_router`, which `reset_fallback` does not clear. An isolated
 Axum 0.8.9 reproduction returned the custom 418 method fallback for POST /live
@@ -1120,6 +1139,20 @@ restriction. The pinned [route documentation](https://github.com/tokio-rs/axum/b
 also defines `/{key}` captures and `/{*key}` wildcards, which can match more than
 one path. A public probe builder must reject those patterns before routing;
 otherwise a wildcard GET probe acts as a public fallback for protected paths.
+`ProbePath` therefore accepts only absolute non-empty segments made from ASCII
+unreserved characters and rejects all Axum pattern syntax before `Router::route`.
+The same pinned implementation rejects a second GET handler for one path by
+panicking from `Router::route`. `HttpBoundary` therefore reserves every accepted
+probe identity before invoking Axum and returns `ProbeRegistrationError` for a
+duplicate across liveness and readiness declarations. An already-built guarded
+`Router` exposes no complete route inventory: `nest_service` hides inner matches
+behind Axum's private nested-service route. The canonical path therefore accepts
+`GuardedRouter`, which retains each raw route pattern and qualifies it through
+typed nesting; opaque nested services are unavailable. Awaited assembly builds
+a separate inert Axum router from that inventory and dispatches an `OPTIONS`
+request for each reserved probe path. A literal, capture or wildcard match
+returns sanitized `BoundaryAssemblyError` before merge without polling
+application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
@@ -3628,6 +3661,37 @@ query's connection return is not serialized behind the initializer task on a
 single executor thread. The corresponding PostgreSQL cases were unexecuted at
 that stage. Neither signal acknowledgement nor pool close
 proves immediate server-session termination.
+
+## SQLx raw transaction state at pool return, 2026-09-20
+
+The selected SQLx 0.9.0 source was rechecked before changing lease disposition.
+Its public [`Connection::is_in_transaction`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/connection.rs)
+reads only the database transaction manager's depth. PostgreSQL's
+[`PgTransactionManager`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/transaction.rs)
+increments and decrements that depth around its typed begin/commit/rollback
+methods. In contrast, the PostgreSQL connection's
+[`ReadyForQuery` handling](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/connection/mod.rs)
+records server transaction status in a separate private field. Native executor
+SQL such as raw `BEGIN` changes that server status without changing the public
+managed depth. A typed counter or `is_in_transaction()` therefore cannot prove
+that a native executor left the server idle.
+
+The SQLx pool's
+[`return_to_pool`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/connection.rs)
+uses the PostgreSQL `ping`; the selected
+[`PgConnection::ping`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-postgres/src/connection/mod.rs)
+sends Sync and waits for ReadyForQuery but does not issue rollback. Pool release
+therefore cannot supply the missing idle-state transition. PostgreSQL 18
+[`ROLLBACK`](https://www.postgresql.org/docs/18/sql-rollback.html) ends an open or
+aborted transaction and succeeds with a warning when none exists. Batter now
+first attempts `BEGIN` and then always attempts `ROLLBACK` after application
+success and zero unacknowledged typed transactions. Idle sessions open and close
+an empty transaction without that warning; open sessions can warn and failed
+sessions reject `BEGIN`, but neither intermediate result authorizes return.
+The private pool-return proof is constructed only after the final rollback
+succeeds. Cleanup failure or cancellation leaves the proof
+unconstructable and the lease retires. This proves an idle transaction boundary,
+not reset session settings, session advisory locks or prepared transactions.
 
 ## Rust Beads comment identity, 2026-09-14
 

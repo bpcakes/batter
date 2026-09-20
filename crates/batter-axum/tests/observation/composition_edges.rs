@@ -111,7 +111,7 @@ fn outer_rewriting_does_not_retroactively_change_the_observed_response() {
 }
 
 #[test]
-fn each_nested_observer_inherits_the_retained_response_override() {
+fn outermost_observer_emits_once_with_the_retained_response_override() {
     for inner in [Boundary::Observation, Boundary::Combined] {
         for level in [Level::INFO, Level::ERROR] {
             let capture = Capture::new();
@@ -142,7 +142,8 @@ fn each_nested_observer_inherits_the_retained_response_override() {
             let text = capture.text();
             assert_no_secrets(&text);
             let events = completions(&text);
-            assert_eq!(events.len(), 2, "{text}");
+            // The nested observer performs admission only; the outer one emits.
+            assert_eq!(events.len(), 1, "{text}");
             for event in events {
                 assert_completion(event, 503, "server_error", "/work", "GET");
                 assert!(

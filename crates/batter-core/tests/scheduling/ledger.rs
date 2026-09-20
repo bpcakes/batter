@@ -1,3 +1,4 @@
+use batter_core::lifecycle::Fatal;
 use batter_core::lifecycle::{ProcessAdmissionError, ProcessHandle, ProcessReceipt, ProcessScope};
 use std::{
     convert::Infallible,
@@ -61,7 +62,7 @@ impl Ledger {
                 let value = factory(scope).await;
                 assert_eq!(value, id, "wrong task result identity");
                 ledger.returned(id);
-                Ok::<_, Infallible>(value)
+                Ok::<_, Fatal<Infallible>>(value)
             }
         };
         let result = match via {

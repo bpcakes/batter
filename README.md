@@ -20,6 +20,13 @@ documented. Keep application-specific protocols in the application or a
 supported adapter; agent-only consumption does not call for an opaque DSL,
 extra abstraction layers, or claims that types prove arbitrary remote effects.
 
+On that canonical path, locally expressible invalid operational states must be
+unrepresentable through the public API. A documented ordering, nesting, paired
+call, phase transition, nonempty-input rule, cleanup sequence or exhaustive
+outcome obligation is not enough when Rust ownership, types or library-owned
+assembly can enforce it. Every new or materially changed public API receives the
+[ADR-010 invalid-state review](docs/adr/010-agent-only-consumption.md#public-api-invalid-state-review).
+
 Examples are consumer contracts. When a lower-level escape hatch is necessary,
 its documentation must state the obligations it leaves with the caller and must
 not present it as equivalent to the protected path. Assess proposed changes with
@@ -184,9 +191,11 @@ service.
 
 - A timeout or cancellation drops a future. It does not roll back an external
   effect or prove a write failed. Nothing here supplies exactly-once effects.
-- The supervisor owns registered critical tasks and admitted finite work. Task
-  `Err(E)` initiates drain; put expected business rejections in the success
-  value. Dropping a receipt does not stop work or release its permit.
+- The supervisor owns registered critical tasks and admitted finite work. A
+  finite task initiates drain only by returning `Err(Fatal(error))`; `?` on a
+  plain application error does not compile there, and expected business
+  rejections belong in the success value. Dropping a receipt does not stop work
+  or release its permit.
 - Task abortion is not preemption. Joining a server wrapper does not prove
   detached children stopped. After a panic, requested abort, or unjoined direct
   task, dependent finalizers are skipped and the report is unsuccessful.

@@ -76,8 +76,8 @@ pub enum SkipReason {
     UnsafeTaskExit,
 }
 
-/// A retained cleanup result. Error contents are never automatically logged.
-#[derive(Debug)]
+/// A retained cleanup result. Error contents are never automatically logged;
+/// Debug reports only the name, outcome and whether an error was retained.
 pub struct CleanupRecord {
     /// Developer-controlled name.
     pub name: &'static str,
@@ -85,6 +85,16 @@ pub struct CleanupRecord {
     pub outcome: CleanupOutcome,
     /// Original error or JoinError when available.
     pub error: Option<BoxError>,
+}
+
+impl std::fmt::Debug for CleanupRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CleanupRecord")
+            .field("name", &self.name)
+            .field("outcome", &self.outcome)
+            .field("error", &self.error.as_ref().map(|_| "retained"))
+            .finish()
+    }
 }
 
 impl CleanupRecord {
@@ -108,6 +118,7 @@ pub struct SkippedCleanup {
 
 /// All teardown outcomes; a first error does not conceal later errors.
 /// Inspect the report even after awaiting cleanup: completion can contain failures.
+/// Debug and Display never include retained error contents.
 ///
 /// ```compile_fail
 /// #![deny(unused_must_use)]
@@ -116,7 +127,7 @@ pub struct SkippedCleanup {
 ///     stack.close(budget).await;
 /// }
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 #[must_use = "inspect the report for failures and incomplete cleanup"]
 pub struct CleanupReport {
     /// Attempted hooks in LIFO order.
@@ -133,6 +144,15 @@ impl CleanupReport {
                 .records
                 .iter()
                 .all(|r| r.outcome == CleanupOutcome::Succeeded)
+    }
+}
+
+impl std::fmt::Debug for CleanupReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CleanupReport")
+            .field("records", &self.records)
+            .field("skipped", &self.skipped)
+            .finish()
     }
 }
 

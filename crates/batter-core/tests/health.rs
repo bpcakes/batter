@@ -74,7 +74,9 @@ fn rejected_registration_drops_the_inert_writer_without_invoking_its_probe() {
     let dropped = Arc::new(AtomicUsize::new(0));
     let mut supervisor = supervisor();
     supervisor
-        .register("dependency.health", |_| async { Ok(()) })
+        .register("dependency.health", |startup| async {
+            Ok(startup.abandon())
+        })
         .unwrap();
     let called = calls.clone();
     let captured = Dropped(dropped.clone());
@@ -341,8 +343,8 @@ async fn concrete_failures_and_timeouts_recover_without_draining_the_supervisor(
     let handle = base.handle();
     base.register("health", move |startup| async move {
         let shutdown = startup.acknowledge_started();
-        monitor.run(shutdown).await;
-        Ok(())
+        monitor.run(shutdown.signal()).await;
+        Ok(shutdown.stopped())
     })
     .unwrap();
     let running = base.start();

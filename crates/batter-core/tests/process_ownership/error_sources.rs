@@ -1,4 +1,5 @@
 use super::*;
+use batter_core::lifecycle::Fatal;
 use std::error::Error;
 
 #[tokio::test]
@@ -9,7 +10,9 @@ async fn receipt_and_report_expose_the_same_concrete_source() {
     running.status().wait_ready().await.unwrap();
     let receipt = process
         .try_spawn("shared-error", |_| async {
-            Err::<(), _>(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
+            Err::<(), _>(Fatal(std::io::Error::from(
+                std::io::ErrorKind::ConnectionRefused,
+            )))
         })
         .unwrap();
     let failure = receipt.wait().await.unwrap_err();

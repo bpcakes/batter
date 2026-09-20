@@ -16,16 +16,14 @@ mod support;
 mod tests;
 
 use axum::{
-    Extension, Router,
+    Extension,
     extract::State,
-    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
 use batter::axum::{
-    CorrelationId, HttpFailure, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
-    dependency_readiness, liveness, operational_http, register_http_in,
-    render_infrastructure_failure, request_admission,
+    AssembledHttp, CorrelationId, GuardedRouter, HttpBoundary, HttpFailure, ProbePath,
+    ReadinessPolicy, RequestPolicy, ResponseConstructionBudget, render_infrastructure_failure,
 };
 use batter::{
     BoxError,
@@ -104,29 +102,32 @@ async fn work(
     }
 }
 
-fn router(
+async fn router(
     lifecycle: batter::lifecycle::LifecycleStatus,
     admission: batter::lifecycle::OperationAdmission,
     request_budget: ResponseConstructionBudget,
     dependency: HealthReader<std::io::Error>,
     bulkhead_capacity: BulkheadCapacity,
-) -> Router {
+) -> Result<AssembledHttp, batter::axum::BoundaryAssemblyError> {
     let policy = RequestPolicy::new(admission, request_budget).with_infrastructure_json();
-    let application = Router::new()
+    let application = GuardedRouter::new()
         .route("/work", get(work))
         .route("/fail", get(fail))
         .with_state(AppState {
             outbound: Bulkhead::new(bulkhead_capacity),
-        })
-        .route_layer(middleware::from_fn_with_state(policy, request_admission));
-    // Health endpoints must remain outside the admission gate.
-    let probes = Router::new()
-        .route("/live", get(liveness))
-        .route("/ready", get(dependency_readiness::<std::io::Error>))
-        .with_state(ReadinessPolicy::new(lifecycle, dependency));
-    application
-        .merge(probes)
-        .layer(middleware::from_fn(operational_http))
+        });
+    // The boundary owns the layer order: probes outside admission, one
+    // observer with correlation outermost, admission around every guarded route.
+    HttpBoundary::new(policy)
+        .with_liveness(ProbePath::new("/live").expect("static liveness path is valid"))
+        .expect("liveness path is unique")
+        .with_readiness(
+            ProbePath::new("/ready").expect("static readiness path is valid"),
+            ReadinessPolicy::new(lifecycle, dependency),
+        )
+        .expect("readiness path is unique")
+        .assemble(application)
+        .await
 }
 
 #[tokio::main]
@@ -196,10 +197,11 @@ async fn run() -> Result<(), BoxError> {
                         config.request_budget,
                         health,
                         config.bulkhead_capacity,
-                    );
+                    )
+                    .await?;
                     let listener = tokio::net::TcpListener::bind(config.bind).await?;
                     tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
-                    register_http_in(scope, "http", listener, application)?;
+                    application.register_in(scope, "http", listener)?;
                     Ok(())
                 }
                 .await;

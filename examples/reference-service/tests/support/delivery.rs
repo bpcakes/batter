@@ -3,6 +3,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
 };
+use batter::lifecycle::Fatal;
 use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessAdmissionError, ShutdownBudget, ShutdownHandle},
@@ -610,7 +611,7 @@ async fn assert_process_capacity() -> TestResult {
     supervisor.register("initialized", |startup| async move {
         let signal = startup.acknowledge_started();
         signal.draining().await;
-        Ok(())
+        Ok(signal.stopped())
     })?;
     let process = supervisor
         .process_handle()
@@ -625,10 +626,10 @@ async fn assert_process_capacity() -> TestResult {
     let (release, held) = tokio::sync::oneshot::channel();
     let receipt = process.try_spawn("held", |_| async move {
         held.await.expect("test retains release sender");
-        Ok::<_, Infallible>(())
+        Ok::<_, Fatal<Infallible>>(())
     })?;
     assert!(matches!(
-        process.try_spawn("excess", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("excess", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Full)
     ));
     release.send(()).expect("held task still receives release");

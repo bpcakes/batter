@@ -89,7 +89,7 @@ async fn conforming_component() {
             drained_tx.send(()).unwrap();
             child.await.unwrap();
             component_events.lock().unwrap().push("child-joined");
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let cleanup_events = events.clone();
@@ -160,7 +160,7 @@ async fn nonconforming_component() {
             child_tx.send(child).unwrap();
             let signal = signal.acknowledge_started();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let cleanup_events = events.clone();
@@ -214,7 +214,7 @@ async fn check_exit(exit: Exit) {
         .register("component", move |signal| async move {
             let _shutdown = signal.acknowledge_started();
             match exit {
-                Exit::Early => Ok(()),
+                Exit::Early => Ok(_shutdown.stopped()),
                 Exit::Error => Err(ComponentFailure.into()),
                 Exit::Panic => panic!("fixed component fixture panic"),
                 Exit::Abort => pending().await,

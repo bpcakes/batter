@@ -73,6 +73,15 @@ ordinary OperationError is not a panic recovery mechanism. A never-polled run
 produces no work and no telemetry. Dropping a polled run records `dropped`, not a
 fabricated application failure, and signals its child scope.
 
+`run_resolved` is the explicit boundary for an application whose final result can
+be retained before cancellable local cleanup completes. Its synchronous resolver
+runs exactly once after the completion/interruption choice and before operation
+telemetry is finalized, so the returned typed result and recorded outcome share
+one classification. It cannot await cleanup, extend the deadline, or run when
+the outer future itself is dropped. The application owns the retained evidence
+and may reclassify interruption only from that evidence; Batter does not prove a
+remote commit, rollback, or other effect.
+
 Batter restores the originating tracing dispatcher during polling and destruction
 of its observed futures. Completion/drop events and nested span destruction stay
 with that subscriber when a runtime abort happens outside the original poll.
@@ -191,12 +200,15 @@ retains the same report and errors; dereferencing borrows `ShutdownReport`.
 The wrapper displays `owned shutdown report`; its `Error::source()` exposes the
 concrete report and its summary. Chain-walking diagnostics therefore show the
 task/cleanup summary once, while allowing a concrete report downcast.
-Debug retains application error contents. Propagating such an error out of a
-`main` returning `Result` lets Rust print it through Debug; a sanitized Display
-does not protect that boundary. Applications must select their exit output,
-as shown by the complete `ExitCode` example on `SharedShutdownReport` and the
-SQLx executable. Neither the foundation nor a report wrapper defines a
-universal redaction policy for arbitrary domain errors.
+`ShutdownReport`, `TaskRecord`, `CleanupReport` and `CleanupRecord` implement
+redacted Debug and Display, like the command and startup reports: formatting
+shows names, outcomes and whether an error was retained, never error contents.
+Retained errors are reachable only through the public fields, so disclosure is
+an explicit read. Propagating a report out of a `main` returning `Result`
+therefore prints a redacted summary; applications still select their exit
+output, as shown by the complete `ExitCode` example on `SharedShutdownReport`
+and the SQLx executable. Neither the foundation nor a report wrapper redacts an
+arbitrary domain error that an application formats itself.
 These lints are advisory: binding, explicit dropping, or allowing the lint can
 bypass the warning. They do not prove inspection or successful shutdown.
 
@@ -343,7 +355,9 @@ creation, current-parent lookup and parent cloning. It exercises real finite
 submission without a competing coordinator, so a callback moved under the lock
 fails immediately instead of relying on an async timeout to detect a deadlock.
 
-A finite task's `Err(E)` initiates process drain. Expected business denial should
+A finite task future returns `Result<T, Fatal<E>>`; only `Err(Fatal(error))`
+initiates process drain, and `?` on a plain application error does not compile
+inside the task. Expected business denial should
 be `Ok(Err(denial))`, not a fatal task error. Original failure E is shared with the
 typed receipt and retained report. Successful finite work is counted, not retained
 as an ever-growing history. Failures close admission and are retained for the
@@ -836,12 +850,32 @@ server sessions.
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
 canonical service roots and finite retirement command use `pool_in`.
 
-`PgLease` detaches and drops its client unless the application explicitly calls
-`return_to_pool` after acknowledged query/commit/rollback completion. Keep the
-lease inside the future whose interruption should retire it. Panics propagate;
+`PgLease` detaches and drops its client unless `with_connection` receives an
+application `Ok`, observes no unacknowledged typed transaction and successfully
+executes `ROLLBACK` on that exact connection. Only then does the private
+pool-return proof exist; there is no direct pool-return call, so a failed,
+interrupted or dropped unit of work cannot reach the pool. The consuming
+`with_retiring_connection` path retires for every outcome. Both closures receive
+an opaque `PgSession` whose executor permits SQL and whose `begin` returns an
+opaque `PgTransaction` with consuming commit/rollback. Neither wrapper exposes
+`DerefMut`, `AsMut`, a native connection, or a native transaction, so safe
+application code cannot replace the physical connection before the lease disposes
+it. Native SQL can still issue raw transaction control; the return-time rollback
+synchronizes both open and failed raw transactions without pretending to reset
+arbitrary session settings, session advisory locks or prepared transactions.
+Keep the lease inside the future whose interruption should retire it. Panics propagate;
 Rust's default panic hook can still print payloads. No native error contents are
 added to adapter diagnostics, but trusted source inspection and upstream logging
-remain application-owned.
+remain application-owned. Beginning an opaque transaction records an
+unacknowledged child in its session; only a successful consuming commit or
+rollback clears it. Dropping or forgetting the child cannot authorize pool
+return and instead causes lease retirement. If the return-time cleanup reports
+failure, `with_connection` preserves the application `Ok` but retires its
+connection. Cancellation drops the future, so the generic lease cannot return
+an arbitrary application value; it still retires the connection. A
+disposition-sensitive consumer must retain any acknowledged commit result or
+rolled-back failure outside that cancellable future, as the reference
+submission state machine does.
 
 The optional verification module owns a `PgLease` acquired from the supplied
 serving `PgPool`. One `OperationContext` covers acquisition, raw-state reset,
@@ -1059,10 +1093,31 @@ Neither operation interruption nor native failure classification authorizes repl
 `request_admission` applies the combined readiness/deadline `RequestPolicy` and
 inserts `OperationContext`. `observe_http` independently observes response
 construction without lifecycle state, a deadline or a context extension. The
-existing `request_scope` combines those behaviors for compatibility. Each
-installed observer emits its own HTTP completion event; use outer `observe_http`
-with inner `request_admission` to avoid duplicate observations. Operation events
-remain separate. Subscriber filtering and transport delivery are application-owned.
+existing `request_scope` combines those behaviors for compatibility, and
+`HttpBoundary` assembles probes, admission, correlation and the observer in one
+library-owned order. Its probe methods accept only opaque `ProbePath` values;
+captures, wildcards and other non-literal route syntax are rejected before a
+route can be mounted outside admission. Reusing a path across liveness or
+readiness declarations returns a sanitized `ProbeRegistrationError` before
+Axum routing, rather than panicking during startup. Guarded application routes
+enter the canonical path through `GuardedRouter`, which retains route patterns
+across route, merge and typed nesting. Opaque `nest_service` inputs cannot enter
+that path because their inner route identity is unavailable. Awaited assembly
+sends one inert inspection request per reserved path through a library-owned
+inventory and returns `BoundaryAssemblyError` when it reports a matching route.
+Application handlers, fallbacks and middleware are never polled by that
+inspection, and Axum never receives overlapping routers to merge. Only the outermost observer emits an HTTP completion event;
+nested Batter middleware contributes retained adapter facts to that shared
+observer state, so stacked wrappers cannot duplicate observations or hide inner
+quota facts. Operation events remain separate. Subscriber filtering and
+transport delivery are application-owned.
+
+Observation alone does not short-circuit and may sit outside operational
+correlation. Admission, deadlines and authentication can return without polling
+an inner layer. Therefore a manual composition that promises generated identity
+on every outcome must place `operational_http` outside `request_scope`,
+`request_admission` and other rejecting middleware. The reverse order is not a
+supported composition; the canonical `HttpBoundary` cannot express it.
 
 `ResponseConstructionBudget::new` validates the positive bounded duration once.
 `RequestPolicy::new` consumes that witness and is infallible; it has no raw
@@ -1083,6 +1138,8 @@ unknown; a backend failure retains its native certainty; the other outcomes mean
 not consumed. These facts are independent of final HTTP status, including a
 timeout after admission. The pinned native Runlimit adapter does not emit
 `other_denial`; that value remains available to manual observation writers.
+The quota wrapper publishes its fresh record into the outer observer's shared
+state in either supported operational-wrapper order.
 Ordinary `operational_http` allocates no quota record
 and its completion omits these quota values. The observer retains these facts separately
 from its INFO span, so disabling that span does not remove fields from an enabled
@@ -1109,16 +1166,20 @@ Handlers, failure renderers or middleware inside observation must explicitly
 attach the override to the returned response. It remains in the response's
 extensions for other middleware and is not serialized as a header. Middleware
 replacing a response/status owns retaining, replacing or removing its override.
-Nested observers each read that retained override. An observer records the status
-and override returned by its inner service; middleware outside it can subsequently
-rewrite the response without changing that already completed observation.
+Only the outermost Batter observer emits and reads the retained override on the
+response it returns. Nested Batter wrappers publish their adapter facts into the
+same private observation state instead of producing another event. Middleware
+outside the outermost observer can subsequently rewrite the response without
+changing that already completed observation.
 Request extensions, client headers, route names and missing OperationContext do
 not infer severity. Status-only probes do not add overrides. A future destroyed
 without returning a response remains WARN, even if the handler constructed an
 annotated response internally. No policy callback runs from the guard's Drop.
 
-Assemble guarded routes, unguarded probes and fallback before applying observation
-with `Router::layer`. Axum runs that layer after routing, so matched route
+Assemble the application fallback with the guarded routes, apply admission over
+that complete guarded router, then merge only validated literal probes outside
+admission before applying observation with `Router::layer`. Axum runs that layer
+after routing, so matched route
 **templates** are available; raw paths, queries, headers, bodies and error contents
 are not recorded. Nonstandard methods normalize to `OTHER`; absent route metadata
 uses `<unmatched>`. A wrapper outside routing lacks that metadata at entry even
@@ -1144,10 +1205,11 @@ The admission point is the readiness read. A request racing drain may be admitte
 when that read sees Ready. It receives an OperationContext extension tied to
 forced process cancellation, not immediate drain. Server-side duration is fixed
 by RequestPolicy; the middleware trusts no client deadline or proxy metadata.
-With the documented `Router::route_layer` composition, admission also wraps the
-method fallback of a matched business path: an unsupported method returns 503
-while Starting/Draining, and 405 while Ready. An unmatched path still reaches the
-unguarded fallback and is observed separately.
+With the documented `Router::layer` composition, admission wraps guarded routes
+and their default, custom, nested and method fallbacks: unsupported methods and
+unmatched application paths return 503 while Starting/Draining, and their normal
+405/404 responses while Ready. Only explicitly configured literal probes bypass
+admission, and all responses remain observed.
 
 The timeout ends when Next returns a Response. It does not bound streaming body
 polls, WebSockets, an upstream Tower queue, or slow upload behavior occurring

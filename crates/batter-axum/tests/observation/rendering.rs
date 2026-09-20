@@ -149,7 +149,7 @@ async fn forced_cancellation_retains_original_metadata_and_actual_rendered_statu
             .register("http-owner", |startup| async move {
                 let shutdown = startup.acknowledge_started();
                 shutdown.cancelled().await;
-                Ok(())
+                Ok(shutdown.stopped())
             })
             .unwrap();
         let running = supervisor.start();

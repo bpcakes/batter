@@ -116,6 +116,7 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
 /// ```compile_fail,E0432
 /// use batter_core::readiness::ReadinessReason;
 /// ```
+#[must_use = "retain the configured policy; a discarded result keeps the previous severity"]
 pub struct ReadinessPolicy<E> {
     evaluator: ReadinessEvaluator<E>,
     level: fn(ReadinessDecision) -> Level,

@@ -76,6 +76,20 @@ pub fn register_signals(
 /// signals.register(&mut supervisor)?;
 /// # Ok(()) }
 /// ```
+///
+/// Tokio replaces the OS handler for the whole process at installation, so
+/// discarding this value leaves SIGTERM/SIGINT consumed by nothing. It must be
+/// registered:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_core::lifecycle::{Supervisor, install_signals};
+/// fn discarded(supervisor: &Supervisor) -> Result<(), batter_core::lifecycle::SignalRegistrationError> {
+///     install_signals(supervisor, "signals")?;
+///     Ok(())
+/// }
+/// ```
+#[must_use = "register the installed listeners; dropping them leaves the process signal disposition replaced"]
 pub struct InstalledSignals {
     name: &'static str,
     terminate: Signal,
@@ -125,7 +139,7 @@ impl InstalledSignals {
                 _ = terminate.recv() => handle.request(),
                 _ = interrupt.recv() => handle.request(),
             }
-            Ok(())
+            Ok(shutdown.stopped())
         })?;
         if received {
             supervisor.handle().request();
@@ -149,7 +163,7 @@ impl InstalledSignals {
                 _ = terminate.recv() => handle.request(),
                 _ = interrupt.recv() => handle.request(),
             }
-            Ok(())
+            Ok(shutdown.stopped())
         });
         if received {
             supervisor.handle().request();
@@ -380,7 +394,7 @@ mod tests {
                     scope
                         .supervisor()
                         .on_cleanup("resource", || async { Ok(()) })?;
-                    install_with(scope.supervisor(), "signals", || {
+                    let _installed = install_with(scope.supervisor(), "signals", || {
                         Err(io::Error::other("installation-original"))
                     })?;
                     Ok(())

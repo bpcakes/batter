@@ -1,6 +1,8 @@
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
 
+use batter_core::lifecycle::ComponentExit;
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupStack, SkipReason},
@@ -140,7 +142,7 @@ async fn critical_abort_drops_captures_under_driver_subscriber_and_retains_cance
             };
             let _shutdown = signal.acknowledge_started();
             started.send(()).unwrap();
-            pending::<Result<(), BoxError>>().await
+            pending::<Result<ComponentExit, BoxError>>().await
         })
         .unwrap();
     let running = driver.within("driver", || supervisor.start());
@@ -196,7 +198,7 @@ async fn finite_abort_keeps_submitter_context_while_driver_and_skipped_cleanup_k
                     dropped: None,
                 };
                 started.send(()).unwrap();
-                pending::<Result<(), io::Error>>().await
+                pending::<Result<(), Fatal<io::Error>>>().await
             })
             .unwrap()
     });

@@ -81,7 +81,8 @@ async fn protected_sqlx_absent_lock_cannot_admit_late_ledger() -> Result {
                 tokio::pin!(verification);
                 tokio::select! {
                     result = &mut verification => {
-                        result?;
+                        // This case checks session behaviour, not the verdict.
+                        let _report = result?;
                         return Err(std::io::Error::other(
                             "verifier completed before the missing-ledger barrier"
                         ).into());
@@ -147,7 +148,8 @@ async fn protected_sqlx_name_replacement_is_not_mistaken_for_locked_ledger() -> 
                 tokio::pin!(verification);
                 tokio::select! {
                     result = &mut verification => {
-                        result?;
+                        // This case checks session behaviour, not the verdict.
+                        let _report = result?;
                         return Err(std::io::Error::other(
                             "verifier completed before the protected-ledger barrier"
                         ).into());
@@ -209,7 +211,8 @@ async fn protected_sqlx_history_rejects_post_snapshot_name_replacement() -> Resu
                 tokio::pin!(verification);
                 tokio::select! {
                     result = &mut verification => {
-                        result?;
+                        // This case checks session behaviour, not the verdict.
+                        let _report = result?;
                         return Err(std::io::Error::other(
                             "verifier completed before the protected-history barrier"
                         ).into());
@@ -393,7 +396,8 @@ async fn protected_sqlx_late_attachment_cannot_supply_snapshot_rows() -> Result 
                 tokio::pin!(verification);
                 tokio::select! {
                     result = &mut verification => {
-                        result?;
+                        // This case checks session behaviour, not the verdict.
+                        let _report = result?;
                         return Err(std::io::Error::other(
                             "verifier completed before the snapshot barrier"
                         ).into());

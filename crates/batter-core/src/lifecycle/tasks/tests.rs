@@ -1,5 +1,5 @@
 use super::*;
-use crate::lifecycle::{ComponentStartup, ProcessAdmissionError, ProcessHandle, Readiness};
+use crate::lifecycle::{ComponentStartup, Fatal, ProcessAdmissionError, ProcessHandle, Readiness};
 use std::{convert::Infallible, future::poll_fn, io, task::Poll};
 use tokio::sync::oneshot;
 
@@ -38,11 +38,11 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         tasks.spawn_component(Component {
             name: "component",
             lifecycle,
-            factory: Box::new(move |_, _| {
+            factory: Box::new(move |startup, _| {
                 Box::pin(async move {
                     released.await.unwrap();
                     match outcome {
-                        TaskOutcome::UnexpectedExit => Ok(()),
+                        TaskOutcome::UnexpectedExit => Ok(startup.abandon()),
                         TaskOutcome::Failed => Err(io::Error::other("retained failure").into()),
                         TaskOutcome::Panicked => panic!("component panic"),
                         _ => unreachable!(),
@@ -67,7 +67,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         );
         // Failure closes finite admission before the cause reaches the caller.
         assert!(matches!(
-            process.try_spawn("later", |_| async { Ok::<_, Infallible>(()) }),
+            process.try_spawn("later", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
             Err(ProcessAdmissionError::Closed)
         ));
         tasks.collect_ready(&coordinator);

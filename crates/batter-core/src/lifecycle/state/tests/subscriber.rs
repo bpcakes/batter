@@ -1,4 +1,5 @@
 use super::super::Shared;
+use crate::lifecycle::Fatal;
 use crate::{
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, Supervisor},
@@ -119,7 +120,7 @@ fn subscriber_callbacks_run_before_finite_admission_lock() {
             let receipt = process
                 .try_spawn(
                     "finite.work",
-                    |_| -> std::future::Ready<Result<(), Infallible>> {
+                    |_| -> std::future::Ready<Result<(), Fatal<Infallible>>> {
                         panic!("this test must not invoke the application factory")
                     },
                 )

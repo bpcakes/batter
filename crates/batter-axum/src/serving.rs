@@ -124,8 +124,9 @@ fn register_http_impl(
     direct_peer: bool,
 ) -> Result<(), RegistrationError> {
     registration.register(name, move |startup| async move {
-        let shutdown = startup.acknowledge_started();
-        let draining = async move { shutdown.draining().await };
+        let running = startup.acknowledge_started();
+        let signal = running.signal();
+        let draining = async move { signal.draining().await };
         if direct_peer {
             axum::serve(
                 listener,
@@ -138,6 +139,6 @@ fn register_http_impl(
                 .with_graceful_shutdown(draining)
                 .await?;
         }
-        Ok(())
+        Ok(running.stopped())
     })
 }

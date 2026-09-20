@@ -9,15 +9,77 @@ use axum::{
     http::{Method, StatusCode},
     response::Response,
 };
-use std::future::Future;
+use std::{
+    future::Future,
+    sync::{Arc, Mutex},
+};
 use tokio::time::Instant;
 use tracing::{Instrument, Level};
 
+/// Shared facts owned by the outermost HTTP observer.
+///
+/// Its presence is only the single-observer marker. Operational ownership uses
+/// a distinct extension, so an observer outside [`crate::operational_http`]
+/// cannot suppress correlation setup. Nested Batter middleware publishes facts
+/// here without taking ownership of a second completion event.
+#[derive(Clone, Default)]
+pub(super) struct ObservationState(Arc<Mutex<ObservationFacts>>);
+
+#[derive(Clone, Default)]
+struct ObservationFacts {
+    quota: Option<crate::quota_observation::QuotaObservation>,
+    correlation: Option<CorrelationId>,
+}
+
+impl ObservationState {
+    fn new(
+        quota: Option<crate::quota_observation::QuotaObservation>,
+        correlation: Option<CorrelationId>,
+    ) -> Self {
+        Self(Arc::new(Mutex::new(ObservationFacts {
+            quota,
+            correlation,
+        })))
+    }
+
+    pub(super) fn replace_quota(&self, quota: crate::quota_observation::QuotaObservation) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .quota = Some(quota);
+    }
+
+    pub(super) fn replace_correlation(&self, correlation: CorrelationId) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .correlation = Some(correlation);
+    }
+
+    fn facts(&self) -> ObservationFacts {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
 pub(super) async fn observe_response<F: Future<Output = Response>>(
-    request: Request,
+    mut request: Request,
     run: impl FnOnce(Request) -> F,
 ) -> Response {
-    let mut observation = HttpObservation::new(&request);
+    if request.extensions().get::<ObservationState>().is_some() {
+        return run(request).await;
+    }
+    let state = ObservationState::new(
+        request
+            .extensions()
+            .get::<crate::quota_observation::QuotaObservation>()
+            .cloned(),
+        request.extensions().get::<CorrelationId>().cloned(),
+    );
+    request.extensions_mut().insert(state.clone());
+    let mut observation = HttpObservation::new(&request, state);
     let span = observation.context.clone();
     let response = run(request).instrument(span).await;
     observation.status = Some(response.status());
@@ -26,10 +88,9 @@ pub(super) async fn observe_response<F: Future<Output = Response>>(
 }
 
 struct HttpObservation {
-    quota: Option<crate::quota_observation::QuotaObservation>,
+    state: ObservationState,
     span: tracing::Span,
     context: tracing::Span,
-    correlation: Option<CorrelationId>,
     method: &'static str,
     route: Option<MatchedPath>,
     started: Instant,
@@ -38,7 +99,7 @@ struct HttpObservation {
 }
 
 impl HttpObservation {
-    fn new(request: &Request) -> Self {
+    fn new(request: &Request, state: ObservationState) -> Self {
         let method = match *request.method() {
             Method::GET => "GET",
             Method::HEAD => "HEAD",
@@ -65,13 +126,9 @@ impl HttpObservation {
         // event, and looking up a fallback at Drop could adopt another request.
         let context = span.clone().or_current();
         Self {
-            quota: request
-                .extensions()
-                .get::<crate::quota_observation::QuotaObservation>()
-                .cloned(),
+            state,
             span,
             context,
-            correlation: request.extensions().get::<CorrelationId>().cloned(),
             method,
             route,
             started: Instant::now(),
@@ -113,12 +170,13 @@ impl HttpObservation {
         macro_rules! emitter {
             ($level:expr) => {
                 |observation: &Self, outcome: &str, latency_ms: f64| {
-                    let quota = observation.quota.as_ref().map(|record| record.snapshot());
+                    let facts = observation.state.facts();
+                    let quota = facts.quota.map(|record| record.snapshot());
                     tracing::event!(
                         target: "batter",
                         parent: &observation.context,
                         $level,
-                        request_id = observation.correlation.as_ref().map(CorrelationId::as_str),
+                        request_id = facts.correlation.as_ref().map(CorrelationId::as_str),
                         method = observation.method,
                         route = observation.route.as_ref().map(MatchedPath::as_str).unwrap_or("<unmatched>"),
                         status = observation.status.map(|status| status.as_u16()),

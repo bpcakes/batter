@@ -18,7 +18,7 @@ integration namespaces explicitly:
 | --- | --- | --- |
 | `axum` | `batter::axum` | `batter-axum` |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
-| `runledger` | `batter::runledger` | `batter-runledger` |
+| `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
 | `runlimit` | `batter::runlimit` | `batter-runlimit` |
 | `test-support` | `batter::test_support` | `batter-test-support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` | SQLx adapter fixture support plus generic support |
@@ -26,11 +26,11 @@ integration namespaces explicitly:
 `runlimit-memory` and `runlimit-postgres` forward only the existing native
 error bridges through `batter::runlimit`; neither selects the other backend or
 HTTP. `runlimit-axum` enables `batter::axum` and
-`batter::runlimit::http`. Native SQLx selected by Runledger or
-`runlimit-postgres` does not expose `batter::sqlx`, and `axum+runlimit` does
-not expose the Runlimit HTTP module. Native versions, TLS/runtime settings,
-storage, fixture provisioning, and policy remain owned by the adapter or
-upstream package.
+`batter::runlimit::http`. `runledger` also enables `batter::sqlx` because its
+protected transaction bridge requires `PgSession`; native SQLx selected only by
+`runlimit-postgres` does not expose that namespace. `axum+runlimit` does not
+expose the Runlimit HTTP module. Native versions, TLS/runtime settings, storage,
+fixture provisioning, and policy remain owned by the adapter or upstream package.
 
 The facade feature proof runs in temporary external workspaces because the
 workspace's all-feature build unifies optional dependencies. The bounded
@@ -52,15 +52,22 @@ cover the resolved transport, not immediate universal propagation or write-half
 closure. [ADR-008](adr/008-http-transport-ownership.md) records the measured
 contracts.
 
-Import `ResponseConstructionBudget`, `RequestPolicy`, `request_admission` and
-`observe_http` from `batter_axum`. Validate the fixed server budget before
+Import `ResponseConstructionBudget`, `RequestPolicy`, `ReadinessPolicy`,
+`ProbePath`, `GuardedRouter` and `HttpBoundary` from `batter_axum`. Validate the fixed server budget and
+each literal probe path before
 composition, then pass the retained witness and the supervisor's
 `OperationAdmission` projection to the infallible policy constructor.
-Apply `middleware::from_fn_with_state(policy, request_admission)` with
-`route_layer` to guarded business routes, merge unguarded liveness/readiness and
-fallback, then apply `middleware::from_fn(observe_http)` using `Router::layer`.
-Install trusted server request identity outermost. Observation now covers probes,
-fallback and rejection responses without imposing admission on them. Domain
+`HttpBoundary::new(policy)` mounts liveness and readiness probes outside
+admission, applies admission to every guarded route plus its default, custom,
+nested and method fallbacks, and installs server correlation with the single
+HTTP observer outermost; the caller cannot reorder those layers. Build guarded
+routes through `GuardedRouter`, whose route, merge and typed-nesting operations
+retain an inert identity inventory; opaque nested services remain outside this
+protected path. Await `assemble`: it rejects inventory routes matching a
+reserved probe path before Axum merge, without polling application code. Observation
+covers public probes without admission and covers guarded fallbacks plus
+rejection responses inside admission. The individual
+middlewares remain available for compositions the boundary cannot express. Domain
 services receive their own dependencies through State/FromRef/constructors;
 request operation context arrives through Extension<OperationContext>.
 
@@ -92,9 +99,13 @@ all registered components to acknowledge startup before traffic is admitted.
 
 `RequestPolicy` retains one combined readiness/deadline policy. The independent
 observer requires neither that policy nor lifecycle state. `request_scope` keeps
-the combined observation/admission behavior for compatibility; replace it with
-`request_admission` when installing outer observation. There is no automatic
-observer deduplication. All entry points use
+the combined observation/admission behavior for compatibility. Only the outermost
+observer emits a completion event; observation and operational ownership use
+distinct request extensions, so a plain outer observer cannot suppress inner
+server-generated correlation while stacked observers cannot duplicate HTTP
+events. Admission and deadlines do short-circuit: `operational_http` must be
+outside `request_scope`, `request_admission` and other rejecting middleware if
+every outcome requires its generated identity. All entry points use
 `batter::telemetry::with_current_dispatch` inside their async bodies to preserve
 first-poll capture and full future/span destruction under the captured dispatcher.
 The response-construction boundary excludes later body polling and destruction.
@@ -122,8 +133,9 @@ Choose middleware order deliberately: Batter's timer starts inside its middlewar
 not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
-`register_http_in` registers a bound `TcpListener` and initialized `Router`
-through constrained startup authority. Its opt-in companion
+`AssembledHttp::register_in` registers a boundary-assembled router through
+constrained startup authority; `register_http_in` accepts a plain bound
+`TcpListener` and initialized `Router` for compositions outside the boundary. Its opt-in companion
 `register_http_with_connect_info_in` accepts the same arguments and installs native
 `ConnectInfo<SocketAddr>` for direct-peer admission middleware and handlers.
 The address and port come from the accepted TCP socket; forwarded headers do not
@@ -154,6 +166,11 @@ response ID. Read `Extension<CorrelationId>` for explicit downstream metadata;
 this is never authentication or authority. HTTP completion fields include the ID
 even with INFO spans disabled; native operation spans retain their normal filter
 semantics. Existing custom identity/observe_http and request_scope remain valid.
+A plain observer can wrap `operational_http`, but `request_scope` is supported
+only inside it because admission rejection and deadline expiry can return
+without polling inner middleware. Nested operational/quota wrappers still share
+one completion event and one server-generated correlation identity in either
+of their orders.
 
 `RequestPolicy::with_infrastructure_json` explicitly selects the shared
 code/message/request_id envelope. `render_infrastructure_failure` offers the same
@@ -222,13 +239,23 @@ inferred in this stage. Durable persistence remains with
 ## SQLx: keep transactions visible
 
 `batter-sqlx` is independently selected. `PgLease::acquire` bounds acquisition
-under an existing OperationContext. Move the lease into the operation future;
-native queries and transactions borrow `lease.connection()`. Explicitly call
-`return_to_pool` only after fully awaited successful query, commit or rollback.
-Dropping a transaction/stream does not acknowledge completion. Every other lease
-drop detaches and drops the native client, including errors, unwinding and
-interruption when the operation owns the lease. A lease retained outside a
-cancelled future remains the caller's responsibility.
+under an existing OperationContext. Move the lease into the operation future and
+run its work through `lease.with_connection(async |session| ...)`: after `Ok`,
+Batter executes `ROLLBACK` on that physical connection and returns it only if
+the idle-state synchronization succeeds. `Err`, failed or interrupted cleanup,
+or a dropped future retires it, so an interrupted query cannot be followed by
+pool return. There is no direct pool-return call. Use the consuming
+`lease.with_retiring_connection(async |session| ...)` path when every outcome
+must retire. `PgSession::executor` runs native SQL and `PgSession::begin` returns
+an opaque transaction with consuming commit/rollback; neither wrapper exposes a
+replaceable SQLx connection or transaction.
+Only a successful explicit commit or rollback clears the session's retained
+transaction state. If application code drops or forgets an unfinished
+transaction and returns `Ok`, Batter preserves that result but retires the
+connection. Native execution can issue raw `BEGIN` without changing SQLx's typed
+depth; the return-time rollback handles open and failed raw transactions before
+the private return proof exists. It is not a general session reset. A lease
+retained outside a cancelled future remains the caller's responsibility.
 
 SQLx 0.9 ordinary pool return pings before releasing capacity and can wait behind
 interrupted SQL. Retirement releases that local accounting immediately, but the
@@ -365,22 +392,36 @@ Unknown custom-parameter definitions likewise cannot satisfy required privileges
 their conservative potential SET authority remains separate from positive proof.
 
 For the durable reference path, application writes and Runledger submission must
-use the SAME native SQLx transaction. Preserve upstream error distinctions,
+use the same database transaction through Batter's opaque transaction capability.
+Preserve upstream error distinctions,
 especially outcomes around commit. A caller deadline or lost connection does not
 prove rollback. Do not turn an ambiguous outcome into a generic "retryable"
 Batter error. Implement application idempotency/reconciliation separately.
 
 The reference service now demonstrates that contract for delivery of a versioned
 generic record. A unique `(owner_id, idempotency_key)` command row, delivery row,
-and native Runledger enqueue share one READ COMMITTED transaction and one
-`PgLease`. The command retains its canonical record/generation/JSONB and immutable
+and Runledger enqueue share one READ COMMITTED transaction and one
+`PgLease`. `batter::runledger::RunledgerTransaction` wraps the lease's opaque
+transaction and implements Runledger's executor-only capability, so application
+SQL and enqueue share the transaction without exposing a replaceable native
+connection. The command retains its canonical record/generation/JSONB and immutable
 enqueue inputs. Exact replay reads that committed identity without enqueueing
 again; changed input conflicts. The stable delivery UUID namespaces Runledger's
 key, while the authenticated owner becomes its `organization_id`.
 
-Only acknowledged commit or rollback returns the connection to the pool. Failed
-commit/rollback acknowledgement or interruption after `BEGIN` retires it and
-produces an uncertain response. `GET /delivery-commands/{idempotency_key}` lets
+The typed transaction must acknowledge commit or rollback before the lease can
+attempt its final idle-state proof and return the connection to the pool. Failed
+commit/rollback acknowledgement or interruption while the transaction is active
+leaves its disposition unknown; the reference boundary produces an uncertain
+response and the lease is retired. An abandoned unfinished transaction also
+forces retirement. Once commit or rollback is acknowledged, later interruption
+during idle-state normalization still retires the lease, but the reference
+boundary returns the retained known application outcome. It performs that
+resolution through `OperationContext::run_resolved` before operation telemetry
+is finalized, so acknowledged rollback is observed as the returned application
+failure and acknowledged commit remains success even if later normalization is
+interrupted.
+`GET /delivery-commands/{idempotency_key}` lets
 the same authenticated owner reconcile without a response-generated identifier;
 absence during settlement is not rollback evidence. The command performs no
 automatic transaction replay. Its worker separately owns one selected provider
@@ -573,7 +614,8 @@ serving under process ownership. Its `in_process` alternative requires a synthet
 peer per request and cannot be served or converted into a Router. Probe routes
 are explicitly unguarded. All routes, probes and fallback are covered by one root
 observer with fresh server correlation. Opt-in `operational_http_with_quota` retains
-bounded quota facts across outer timeout or drop. The adapter claims the sole
+bounded quota facts across outer timeout or drop and publishes them into the
+one outer observer in either supported operational-wrapper order. The adapter claims the sole
 writer before protected handlers and discards it before public probe handlers;
 ordinary operational HTTP allocates no
 quota record. Its consuming start/finish API retains `NotChecked` before the

@@ -26,7 +26,8 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Edit here for X
 
 Keep pool configuration, schema checks, and application teardown in this
-composition root. Future transactions must use native SQLx transaction values.
+composition root. Lease-owned transactions use Batter's opaque SQLx transaction
+capability; application-owned pools may still use native SQLx transaction values.
 Shared lease disposition, bounded probe and close registration belong in `batter::sqlx`.
 Keep application fixture helpers beside their integration tests.
 

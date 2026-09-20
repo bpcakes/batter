@@ -22,7 +22,7 @@ pub(super) async fn probe(
 
     let observed = async {
         fixture
-            .wait_for_accepted_count(before.accepted_effects + 1, Duration::from_secs(5))
+            .wait_for_accepted_count(before.accepted_effects + 1, EXTERNAL_EFFECT_ALLOWANCE)
             .await?;
         let uncertain = snapshot(pool, submitted.job_id).await?;
         if uncertain.job_status != "LEASED"
@@ -101,7 +101,7 @@ pub(super) async fn probe(
 
 async fn assert_terminal_projection(pool: &PgPool, delivery_id: Uuid) -> ProbeResult {
     let service = DeliveryService::new(pool.clone());
-    let context = OperationContext::new(Duration::from_secs(2))?;
+    let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
     let owner = OwnerId::new(Uuid::from_u128(OWNER))?;
     let by_id = service
         .get_by_id(&context, owner, delivery_id)
@@ -121,7 +121,7 @@ async fn assert_terminal_projection(pool: &PgPool, delivery_id: Uuid) -> ProbeRe
 }
 
 async fn wait_for_effect_fence_wait(pool: &PgPool) -> ProbeResult {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(EXTERNAL_EFFECT_ALLOWANCE, async {
         loop {
             let waiting: bool = sqlx::query_scalar(
                 "SELECT EXISTS (

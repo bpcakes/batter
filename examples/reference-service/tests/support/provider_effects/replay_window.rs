@@ -29,7 +29,7 @@ pub(super) async fn expired_deadline_probe(
     let worker =
         ExecutableChild::start_provider_worker(endpoint, provider_url, "provider-local-expiry")?;
     let observed = async {
-        let snapshot = wait_for_snapshot(pool, expired.job_id, Duration::from_secs(5), |snapshot| {
+        let snapshot = wait_for_snapshot(pool, expired.job_id, EXTERNAL_EFFECT_ALLOWANCE, |snapshot| {
             snapshot.job_status == "DEAD_LETTERED"
                 && snapshot.effect_state == "MANUAL_RESOLUTION"
         })
@@ -92,7 +92,7 @@ pub(super) async fn probe(
     let worker =
         ExecutableChild::start_provider_worker(endpoint, provider_url, "provider-replay-window")?;
     let observed = async {
-        let snapshot = wait_for_snapshot(pool, replay.job_id, Duration::from_secs(5), |snapshot| {
+        let snapshot = wait_for_snapshot(pool, replay.job_id, EXTERNAL_EFFECT_ALLOWANCE, |snapshot| {
             snapshot.job_status == "PENDING"
                 && snapshot.effect_state == "RECONCILE_NEEDED"
                 && snapshot.attempt == 1

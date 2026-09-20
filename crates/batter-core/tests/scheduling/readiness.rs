@@ -19,7 +19,7 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
             let signal = signal.acknowledge_started();
             first_ack.send(()).unwrap();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     supervisor
@@ -30,7 +30,7 @@ pub async fn approvals(case: Case, order: usize, delay: u64) {
             second_ack.send(()).unwrap();
             released.await.unwrap();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
@@ -83,7 +83,7 @@ pub async fn acknowledgement_race(case: Case, delay: u64) {
             acked.send(()).unwrap();
             released.await.unwrap();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let pending = supervisor.start_unapproved();
@@ -116,7 +116,9 @@ pub async fn critical_exit(case: Case) {
     let mut supervisor =
         Supervisor::with_process_capacity(budget(), ProcessCapacity::new(1).unwrap());
     supervisor
-        .register("uninitialized-exit", |_| async { Ok(()) })
+        .register("uninitialized-exit", |startup| async {
+            Ok(startup.abandon())
+        })
         .unwrap();
     let handle = supervisor.handle();
     let running = supervisor.start();

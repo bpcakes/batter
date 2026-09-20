@@ -8,7 +8,7 @@ pub use report::{
     SettlementEvidence,
 };
 
-use super::{Component, ComponentFuture, RegisteredComponent, ShutdownBudget};
+use super::{Component, ComponentExit, ComponentFuture, RegisteredComponent, ShutdownBudget};
 use crate::{BoxError, operation::OperationContext};
 use std::{
     future::Future,
@@ -226,7 +226,7 @@ impl Registration {
                     drive::start(registration, budget, startup, coordinator, publication);
                     let outcome = waiter.wait().await;
                     if outcome.is_success() {
-                        Ok(())
+                        Ok(ComponentExit::managed())
                     } else {
                         Err(Box::new(ManagedTaskFailed) as BoxError)
                     }

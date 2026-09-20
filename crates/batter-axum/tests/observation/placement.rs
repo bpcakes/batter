@@ -62,7 +62,7 @@ async fn service_wrapper_before_routing_has_no_matched_path_at_entry() {
 }
 
 #[tokio::test]
-async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
+async fn legacy_wrapper_inside_outer_observer_emits_one_completion() {
     let capture = Capture::new();
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
@@ -82,7 +82,7 @@ async fn legacy_wrapper_and_outer_observer_each_emit_their_own_completion() {
         .unwrap();
     assert_eq!(response.status().as_u16(), 200);
     let text = capture.text();
-    assert_eq!(completions(&text).len(), 2, "{text}");
+    assert_eq!(completions(&text).len(), 1, "{text}");
     assert_eq!(
         text.matches("operation boundary finished").count(),
         1,

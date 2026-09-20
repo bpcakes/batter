@@ -1,4 +1,5 @@
 use super::support::{Case, supervisor, yields};
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::CleanupOutcome,
@@ -107,7 +108,7 @@ async fn errors_inner(case: Case, delay: u64) {
         .try_spawn("active-ancestor", |scope| async move {
             scope_tx.send(scope).ok().unwrap();
             released.await.unwrap();
-            Ok::<_, std::convert::Infallible>(())
+            Ok::<_, Fatal<std::convert::Infallible>>(())
         })
         .unwrap();
     let scope = scope_rx.await.unwrap();
@@ -121,7 +122,7 @@ async fn errors_inner(case: Case, delay: u64) {
                     started.send(()).await.unwrap();
                     let _permit = gate.acquire().await.unwrap();
                     yields(delay.wrapping_add(id)).await;
-                    Err::<(), _>(Cause(id))
+                    Err::<(), _>(Fatal(Cause(id)))
                 })
                 .unwrap(),
         );
@@ -139,7 +140,7 @@ async fn errors_inner(case: Case, delay: u64) {
     };
     assert!(matches!(
         scope.try_spawn("after-failure", |_| async {
-            Ok::<_, std::convert::Infallible>(())
+            Ok::<_, Fatal<std::convert::Infallible>>(())
         }),
         Err(ProcessAdmissionError::Closed)
     ));

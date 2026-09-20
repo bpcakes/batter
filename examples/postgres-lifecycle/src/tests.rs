@@ -82,7 +82,7 @@ fn supervisor(task_failure: bool) -> Supervisor {
                 Err(std::io::Error::other("task-credential-marker").into())
             } else {
                 handle.request();
-                Ok(())
+                Ok(_shutdown.stopped())
             }
         })
         .unwrap();

@@ -1,3 +1,5 @@
+use batter_core::lifecycle::Fatal;
+use batter_core::{BoxError, lifecycle::ComponentExit};
 use batter_core::{
     RegistrationError,
     cleanup::CleanupBudget,
@@ -92,7 +94,7 @@ async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
         .register("drain-anchor", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.cancelled().await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let control = process.handle();
@@ -193,14 +195,13 @@ fn abandonment_signals_before_dropping_inert_application_captures() {
         let mut supervisor = supervisor();
         let captured = ObserveAbandonment(supervisor.handle().signal());
         supervisor
-            .register("inert-component", move |_| {
-                let _capture = captured;
-                panic!("abandonment must not start a component");
-                #[allow(unreachable_code)]
-                async {
-                    Ok(())
-                }
-            })
+            .register(
+                "inert-component",
+                move |_startup| -> std::future::Ready<Result<ComponentExit, BoxError>> {
+                    let _capture = captured;
+                    panic!("abandonment must not start a component")
+                },
+            )
             .unwrap();
         let cleanup_capture = ObserveAbandonment(supervisor.handle().signal());
         supervisor
@@ -230,7 +231,7 @@ fn unpolled_driver_retains_startup_ownership_until_dropped() {
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(!handle.signal().is_cancelled());
     assert!(matches!(
-        process.try_spawn("before-poll", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("before-poll", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::NotRunning)
     ));
     drop(driver);
@@ -286,7 +287,7 @@ fn assert_rejections(process: &ProcessHandle, expected: ProcessAdmissionError) {
                 panic!("rejected factory must remain inert");
                 #[allow(unreachable_code)]
                 async {
-                    Ok::<_, Infallible>(())
+                    Ok::<_, Fatal<Infallible>>(())
                 }
             })
             .err()
@@ -315,7 +316,7 @@ async fn admission_precedence_covers_startup_capacity_drain_and_completion() {
     let driver = pending_driver.approve_readiness();
     // Keep the admitted task queued so its only permit cannot be released yet.
     let receipt = process
-        .try_spawn("queued", |_| async { Ok::<_, Infallible>(7) })
+        .try_spawn("queued", |_| async { Ok::<_, Fatal<Infallible>>(7) })
         .unwrap();
     assert_rejections(&process, ProcessAdmissionError::Full);
     handle.request();

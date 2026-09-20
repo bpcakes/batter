@@ -89,7 +89,7 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
                 .register("signals", |shutdown| async move {
                     let shutdown = shutdown.acknowledge_started();
                     shutdown.draining().await;
-                    Ok(())
+                    Ok(shutdown.stopped())
                 })
                 .unwrap();
         }
@@ -445,9 +445,9 @@ fn run_reserved_name_child(managed: bool) {
                             },
                         )?;
                     } else {
-                        scope.registration().register("signals", move |_shutdown| {
+                        scope.registration().register("signals", move |startup| {
                             called.fetch_add(1, Ordering::SeqCst);
-                            async { Ok(()) }
+                            async { Ok(startup.abandon()) }
                         })?;
                     }
                     Ok::<_, RegistrationError>(())
@@ -492,7 +492,7 @@ fn run_running_child() {
                             let shutdown = shutdown.acknowledge_started();
                             shutdown.draining().await;
                             stopped.lock().unwrap().push("worker");
-                            Ok(())
+                            Ok(shutdown.stopped())
                         })?;
                     Ok::<_, RegistrationError>(())
                 })
@@ -527,7 +527,7 @@ fn run_unapproved_child() {
                         .register("worker", |shutdown| async move {
                             let shutdown = shutdown.acknowledge_started();
                             shutdown.draining().await;
-                            Ok(())
+                            Ok(shutdown.stopped())
                         })?;
                     Ok::<_, RegistrationError>(())
                 })

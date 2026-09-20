@@ -34,7 +34,7 @@ pub use policy::HealthPolicy;
 
 use crate::{
     RegistrationError,
-    lifecycle::{ComponentStartup, ShutdownSignal},
+    lifecycle::{ComponentExit, ComponentStartup, ShutdownSignal},
     registration::RegistrationTarget,
 };
 use observation::Publication;
@@ -47,6 +47,19 @@ use tokio::time::{Instant, sleep_until};
 /// future, immediately invalidates readers. It neither spawns nor joins hidden
 /// work. Retained snapshots are historical values, not ownership of this writer.
 /// E stays concrete and need not be Clone; shared failures use `Arc<E>`.
+///
+/// Discarding the writer marks every reader Stopped for good, so the monitor
+/// must be registered or run:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_core::health::{HealthMonitor, HealthPolicy};
+/// use std::convert::Infallible;
+/// fn discarded(policy: HealthPolicy) {
+///     HealthMonitor::new(policy, || async { Ok::<_, Infallible>(()) });
+/// }
+/// ```
+#[must_use = "register or run the monitor; dropping it marks every reader Stopped"]
 pub struct HealthMonitor<F, E> {
     policy: HealthPolicy,
     probe: F,
@@ -114,8 +127,7 @@ impl<F, E> HealthMonitor<F, E> {
         target
             .registration()
             .register(name, move |startup| async move {
-                self.run_registered(startup).await;
-                Ok(())
+                Ok(self.run_registered(startup).await)
             })?;
         Ok(reader)
     }
@@ -142,16 +154,17 @@ impl<F, E> HealthMonitor<F, E> {
         crate::scoped_dispatch::scope(self.run_inner(shutdown)).await;
     }
 
-    async fn run_registered<Fut>(self, startup: ComponentStartup)
+    async fn run_registered<Fut>(self, startup: ComponentStartup) -> ComponentExit
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
         if stopping(startup.shutdown()) {
-            return;
+            return startup.abandon();
         }
-        let shutdown = startup.acknowledge_started();
-        crate::scoped_dispatch::scope(self.run_inner(shutdown)).await;
+        let running = startup.acknowledge_started();
+        crate::scoped_dispatch::scope(self.run_inner(running.signal())).await;
+        running.stopped()
     }
 
     async fn run_inner<Fut>(mut self, shutdown: ShutdownSignal)

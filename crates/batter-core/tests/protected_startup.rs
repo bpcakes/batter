@@ -86,7 +86,7 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
                             }
                         }
                         component_events.lock().unwrap().push("component stopped");
-                        Ok(())
+                        Ok(shutdown.stopped())
                     })?;
                 Ok::<_, batter_core::RegistrationError>(())
             })
@@ -242,7 +242,7 @@ async fn cancelling_a_protected_borrowed_waiter_leaves_initialization_owned() {
                     .register("worker", |shutdown| async move {
                         let shutdown = shutdown.acknowledge_started();
                         shutdown.draining().await;
-                        Ok(())
+                        Ok(shutdown.stopped())
                     })?;
                 Ok::<_, batter_core::RegistrationError>(())
             })

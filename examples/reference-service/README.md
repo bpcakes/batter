@@ -98,13 +98,20 @@ An exact retry returns the same delivery without another enqueue. Changed
 record/generation/payload input conflicts. Another authenticated owner may reuse
 the same key independently and cannot observe the first owner's rows.
 
-The first submission uses one `PgLease`, one READ COMMITTED transaction, and the
-native `enqueue_job_with_outcome_tx` API. Acknowledged commit returns the lease;
-acknowledged rollback returns it after rollback; interruption after `BEGIN` or a
-missing commit/rollback acknowledgement retires it and returns an uncertain
-outcome. The service never retries a transaction automatically. The caller must
-query its original owner/key; absence while the original database session may
-still settle does not prove rollback.
+The first submission uses one `PgLease`, one opaque READ COMMITTED
+`RunledgerTransaction`, and the native executor-only
+`enqueue_job_with_outcome_in_transaction` API. The service retains an
+acknowledged commit result or the original failure behind an acknowledged
+rollback before the lease performs its same-session normalization. Interruption
+while the transaction disposition is unknown retires the connection and returns
+an uncertain outcome; interruption during later lease normalization also retires
+the connection but returns the retained known disposition. Only successful
+normalization authorizes pool return. The service never retries a transaction
+automatically. The caller must query its original owner/key after uncertainty;
+absence while the original database session may still settle does not prove
+rollback. Submission resolves the retained disposition inside the operation
+boundary, before telemetry finalization, so the observed outcome matches the
+public result.
 
 `pending`, `in_flight`, `succeeded`, `dead_lettered`, and `cancelled` are a
 closed application projection of the locked Runledger status vocabulary.

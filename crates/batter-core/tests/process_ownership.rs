@@ -10,6 +10,8 @@ mod startup_capability;
 #[path = "process_ownership/terminal_admission.rs"]
 mod terminal_admission;
 
+use batter_core::lifecycle::ComponentExit;
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, SkipReason},
@@ -75,7 +77,7 @@ async fn completed_work_is_observed_before_abort_after_coordinator_delay() {
     let receipt = process
         .try_spawn("finished", |_| async move {
             finished.await.unwrap();
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     poll_driver_once(driver.as_mut()).await;
@@ -115,11 +117,11 @@ async fn only_unfinished_work_is_aborted_and_real_abort_still_skips_cleanup() {
     let receipt = process
         .try_spawn("finished", |_| async move {
             finished.await.unwrap();
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     let pending_receipt = process
-        .try_spawn("pending", |_| pending::<Result<(), Infallible>>())
+        .try_spawn("pending", |_| pending::<Result<(), Fatal<Infallible>>>())
         .unwrap();
     poll_driver_once(driver.as_mut()).await;
     handle.request();
@@ -166,7 +168,7 @@ async fn completed_failures_retain_causes_when_observed_after_deadline() {
             .try_spawn("failed", move |_| async move {
                 finished.await.unwrap();
                 assert!(!panic_on_finish, "original task panic");
-                Err::<(), _>(std::io::Error::other("original task error"))
+                Err::<(), _>(Fatal(std::io::Error::other("original task error")))
             })
             .unwrap();
         poll_driver_once(driver.as_mut()).await;
@@ -230,7 +232,7 @@ async fn completed_critical_stop_is_observed_after_deadline_without_false_abort(
             let _shutdown = signal.acknowledge_started();
             finished.await.unwrap();
             stopped.send(()).unwrap();
-            Ok(())
+            Ok(_shutdown.stopped())
         })
         .unwrap();
     supervisor
@@ -274,7 +276,7 @@ async fn unstarted_admission_is_inert_and_capacity_is_validated() {
     let in_factory = called.clone();
     let result = process.try_spawn("before-start", move |_| {
         in_factory.store(true, Ordering::SeqCst);
-        async { Ok::<_, Infallible>(()) }
+        async { Ok::<_, Fatal<Infallible>>(()) }
     });
     assert!(matches!(result, Err(ProcessAdmissionError::NotRunning)));
     assert!(!called.load(Ordering::SeqCst));
@@ -292,7 +294,7 @@ async fn readiness_waits_for_every_component_acknowledgement() {
             let signal = signal.acknowledge_started();
             first_tx.send(()).unwrap();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     supervisor
@@ -300,14 +302,14 @@ async fn readiness_waits_for_every_component_acknowledgement() {
             initialize_rx.await.unwrap();
             let signal = signal.acknowledge_started();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let running = supervisor.start();
     first_rx.await.unwrap();
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     assert!(matches!(
-        process.try_spawn("too-soon", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("too-soon", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::NotReady)
     ));
     initialize_tx.send(()).unwrap();
@@ -328,7 +330,7 @@ async fn cancelling_request_waiter_keeps_work_and_permit_owned_until_finish() {
         .try_spawn("admitted-payment", move |_| async move {
             started_tx.send(()).unwrap();
             finish_rx.await.unwrap();
-            Ok::<_, Infallible>(42)
+            Ok::<_, Fatal<Infallible>>(42)
         })
         .unwrap();
     let request = tokio::spawn(receipt.wait());
@@ -336,7 +338,9 @@ async fn cancelling_request_waiter_keeps_work_and_permit_owned_until_finish() {
     request.abort();
     assert!(request.await.unwrap_err().is_cancelled());
     assert!(matches!(
-        process.try_spawn("must-still-be-full", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("must-still-be-full", |_| async {
+            Ok::<_, Fatal<Infallible>>(())
+        }),
         Err(ProcessAdmissionError::Full)
     ));
     finish_tx.send(()).unwrap();
@@ -357,7 +361,7 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
     running.status().wait_ready().await.unwrap();
     let denial = process
         .try_spawn("quota-check", |_| async {
-            Ok::<Result<(), Denial>, Infallible>(Err(Denial::Quota))
+            Ok::<Result<(), Denial>, Fatal<Infallible>>(Err(Denial::Quota))
         })
         .unwrap()
         .wait()
@@ -366,7 +370,7 @@ async fn normal_business_denial_is_a_typed_value_and_does_not_stop_process() {
     assert_eq!(denial, Err(Denial::Quota));
     assert!(!running.status().is_draining());
     let value = process
-        .try_spawn("next-task", |_| async { Ok::<_, Infallible>(23) })
+        .try_spawn("next-task", |_| async { Ok::<_, Fatal<Infallible>>(23) })
         .unwrap()
         .wait()
         .await
@@ -390,7 +394,7 @@ async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
     running.status().wait_ready().await.unwrap();
     let receipt = process
         .try_spawn("failed-task", |_| async {
-            Err::<(), _>(std::io::Error::other("private failure cause"))
+            Err::<(), _>(Fatal(std::io::Error::other("private failure cause")))
         })
         .unwrap();
     drop(receipt);
@@ -408,7 +412,9 @@ async fn unobserved_task_failure_initiates_drain_and_retains_original_source() {
         .unwrap();
     assert_eq!(source.to_string(), "private failure cause");
     assert!(matches!(
-        process.try_spawn("after-failure", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("after-failure", |_| async {
+            Ok::<_, Fatal<Infallible>>(())
+        }),
         Err(ProcessAdmissionError::Closed)
     ));
 }
@@ -429,7 +435,9 @@ async fn finite_factory_panic_is_observed_and_skips_dependent_cleanup() {
     let receipt = process
         .try_spawn(
             "factory-panic",
-            |_| -> std::future::Ready<Result<(), Infallible>> { panic!("task factory panic") },
+            |_| -> std::future::Ready<Result<(), Fatal<Infallible>>> {
+                panic!("task factory panic")
+            },
         )
         .unwrap();
     assert!(matches!(
@@ -468,17 +476,17 @@ async fn admitted_ancestor_can_submit_bounded_children_during_drain() {
                 .try_spawn("descendant", move |_| async move {
                     child_tx.send(()).unwrap();
                     finish_rx.await.unwrap();
-                    Ok::<_, Infallible>(17)
+                    Ok::<_, Fatal<Infallible>>(17)
                 })
                 .unwrap();
-            Ok::<_, Infallible>(child.wait().await.unwrap())
+            Ok::<_, Fatal<Infallible>>(child.wait().await.unwrap())
         })
         .unwrap();
     parent_rx.await.unwrap();
     running.handle().request();
     child_rx.await.unwrap();
     assert!(matches!(
-        process.try_spawn("new-root", |_| async { Ok::<_, Infallible>(()) }),
+        process.try_spawn("new-root", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Closed)
     ));
     finish_tx.send(()).unwrap();
@@ -496,14 +504,16 @@ async fn escaped_scope_expires_when_its_actual_task_finishes() {
     running.status().wait_ready().await.unwrap();
     let scope = process
         .try_spawn("escapes-scope", |scope| async {
-            Ok::<_, Infallible>(scope)
+            Ok::<_, Fatal<Infallible>>(scope)
         })
         .unwrap()
         .wait()
         .await
         .unwrap();
     assert!(matches!(
-        scope.try_spawn("expired-ancestor", |_| async { Ok::<_, Infallible>(()) }),
+        scope.try_spawn("expired-ancestor", |_| async {
+            Ok::<_, Fatal<Infallible>>(())
+        }),
         Err(ProcessAdmissionError::Closed)
     ));
     assert!(running.shutdown().await.unwrap().is_success());
@@ -530,10 +540,12 @@ async fn forced_cancellation_closes_descendant_admission() {
             started_tx.send(()).unwrap();
             scope.signal().cancelled().await;
             assert!(matches!(
-                scope.try_spawn("forbidden-child", |_| async { Ok::<_, Infallible>(()) }),
+                scope.try_spawn("forbidden-child", |_| async {
+                    Ok::<_, Fatal<Infallible>>(())
+                }),
                 Err(ProcessAdmissionError::Closed)
             ));
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     started_rx.await.unwrap();
@@ -641,7 +653,7 @@ async fn owned_driver_panic_is_retained_for_observers_without_hanging() {
     }
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("abort-me", |_| pending::<Result<(), BoxError>>())
+        .register("abort-me", |_| pending::<Result<ComponentExit, BoxError>>())
         .unwrap();
     let value = PanickingDrop;
     supervisor
@@ -682,7 +694,7 @@ async fn cancelling_explicit_coordinator_aborts_owned_task_and_skips_async_clean
             let _guard = NotifyDrop(Some(dropped_tx));
             let _shutdown = signal.acknowledge_started();
             started_tx.send(()).unwrap();
-            pending::<Result<(), BoxError>>().await
+            pending::<Result<ComponentExit, BoxError>>().await
         })
         .unwrap();
     let cleanup_called = Arc::new(AtomicBool::new(false));
@@ -721,7 +733,7 @@ async fn admission_racing_drain_is_either_rejected_or_included_in_shutdown() {
             submit_barrier.wait().await;
             process.try_spawn("racing-admission", move |_| async move {
                 in_task.fetch_add(1, Ordering::SeqCst);
-                Ok::<_, Infallible>(())
+                Ok::<_, Fatal<Infallible>>(())
             })
         });
         let drain_barrier = barrier.clone();
@@ -761,7 +773,7 @@ async fn startup_acknowledgement_racing_drain_cannot_restore_readiness() {
                 let signal = signal.acknowledge_started();
                 started_tx.send(()).unwrap();
                 signal.draining().await;
-                Ok(())
+                Ok(signal.stopped())
             })
             .unwrap();
         let running = supervisor.start();

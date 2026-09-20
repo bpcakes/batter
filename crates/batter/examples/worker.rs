@@ -20,7 +20,7 @@ async fn main() -> Result<(), BoxError> {
                 _ = interval.tick() => tracing::info!("maintenance tick"),
             }
         }
-        Ok(())
+        Ok(shutdown.stopped())
     })?;
     let running = supervisor.start();
     let report = running.wait().await?;

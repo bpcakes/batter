@@ -1,4 +1,5 @@
 use crate::load;
+use batter::lifecycle::Fatal;
 use batter::{
     admission::{Admission, AdmissionError},
     cleanup::CleanupBudget,
@@ -78,7 +79,7 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
             .register("initialized", |startup| async move {
                 let signal = startup.acknowledge_started();
                 signal.draining().await;
-                Ok(())
+                Ok(signal.stopped())
             })
             .unwrap();
         let process = supervisor.process_handle().unwrap();
@@ -94,20 +95,20 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
                 process
                     .try_spawn("held", |_| async move {
                         receive.await.unwrap();
-                        Ok::<_, Infallible>(())
+                        Ok::<_, Fatal<Infallible>>(())
                     })
                     .unwrap(),
             );
         }
         assert!(matches!(
-            process.try_spawn("excess", |_| async { Ok::<_, Infallible>(()) }),
+            process.try_spawn("excess", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
             Err(ProcessAdmissionError::Full)
         ));
         // Capacity remains separate: freeing one bulkhead permit cannot admit a finite task.
         held.pop();
         let permit = bulkhead.enter(&context, Admission::Reject).await.unwrap();
         assert!(matches!(
-            process.try_spawn("still-full", |_| async { Ok::<_, Infallible>(()) }),
+            process.try_spawn("still-full", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
             Err(ProcessAdmissionError::Full)
         ));
         drop(permit);

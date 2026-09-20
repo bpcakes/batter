@@ -246,15 +246,20 @@ async fn detached_body(
         } else {
             let context = batter::operation::OperationContext::new(Duration::from_secs(10))
                 .expect("positive budget");
-            let mut connection = batter::sqlx::PgLease::acquire(&pool, &context)
+            let connection = batter::sqlx::PgLease::acquire(&pool, &context)
                 .await
                 .expect("adapter acquire");
-            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-                .fetch_one(connection.connection())
-                .await?;
-            pid_send.send(pid).expect("pid observer alive");
-            sqlx::query("SELECT pg_advisory_lock(73492)")
-                .execute(connection.connection())
+            connection
+                .with_retiring_connection(async |session| {
+                    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                        .fetch_one(session.executor())
+                        .await?;
+                    pid_send.send(pid).expect("pid observer alive");
+                    sqlx::query("SELECT pg_advisory_lock(73492)")
+                        .execute(session.executor())
+                        .await?;
+                    Ok::<_, sqlx::Error>(())
+                })
                 .await?;
         }
         Ok::<_, sqlx::Error>(())

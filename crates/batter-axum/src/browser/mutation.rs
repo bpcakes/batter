@@ -135,6 +135,7 @@ pub enum FetchSitePolicy {
 /// configured check is ANDed. Passing this policy is neither authentication nor
 /// a complete CSRF guarantee, and non-browser clients can forge browser fields.
 #[derive(Clone, Debug)]
+#[must_use = "retain the configured policy; a discarded result keeps the previous signals"]
 pub struct MutationPolicy {
     origin: Option<BrowserOrigin>,
     required_header: Option<RequiredHeader>,

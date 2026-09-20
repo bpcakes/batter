@@ -8,8 +8,11 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    CorrelationId, HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness,
-    operational_http, render_infrastructure_failure, request_admission,
+    CorrelationId, GuardedRouter, HttpBoundary, HttpFailure, ProbePath, RequestPolicy,
+    ResponseConstructionBudget, liveness, observe_http, operational_http,
+    operational_http_with_quota,
+    quota_observation::{QuotaRecorder, QuotaTerminalFacts},
+    render_infrastructure_failure, request_admission, request_scope,
 };
 use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
 use std::{
@@ -338,6 +341,69 @@ async fn deadline_failure_uses_generated_id_even_when_info_spans_are_disabled() 
     assert!(fields[0].contains("status=503"));
 }
 
+#[test]
+fn manual_request_scope_inside_operational_retains_identity_on_every_short_circuit() {
+    let capture = Capture::new();
+    let responses = capture.block_on(async {
+        let starting = ShutdownHandle::new_unapproved();
+        let starting_policy = RequestPolicy::new(
+            starting.operation_admission(),
+            ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+        )
+        .with_infrastructure_json();
+        let starting_app = Router::new()
+            .route("/work", get(|| async { "unreachable" }))
+            .route_layer(middleware::from_fn_with_state(
+                starting_policy,
+                request_scope,
+            ))
+            .layer(middleware::from_fn(operational_http));
+        let starting = starting_app.oneshot(request("/work")).await.unwrap();
+        assert_eq!(starting.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let starting = id_and_body(starting).await;
+
+        let (ready, approval) = ShutdownHandle::new_with_readiness_approval();
+        approval.approve();
+        let deadline_policy = RequestPolicy::new(
+            ready.operation_admission(),
+            ResponseConstructionBudget::new(Duration::from_millis(10)).unwrap(),
+        )
+        .with_infrastructure_json();
+        let deadline_app = Router::new()
+            .route("/work", get(std::future::pending::<Response>))
+            .route_layer(middleware::from_fn_with_state(
+                deadline_policy,
+                request_scope,
+            ))
+            .layer(middleware::from_fn(operational_http));
+        let deadline = deadline_app.oneshot(request("/work")).await.unwrap();
+        assert_eq!(deadline.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let deadline = id_and_body(deadline).await;
+        [starting, deadline]
+    });
+
+    for ((id, body), code) in responses
+        .iter()
+        .zip(["service_unavailable", "deadline_exceeded"])
+    {
+        assert!(body.contains(&format!(r#""code":"{code}""#)), "{body}");
+        assert!(body.contains(&format!(r#""request_id":"{id}""#)), "{body}");
+    }
+    let text = capture.text();
+    let fields = completion_fields(&text);
+    assert_eq!(fields.len(), 2, "{text}");
+    for (id, _) in responses {
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|event| event.contains(&format!("request_id=\"{id}\"")))
+                .count(),
+            1,
+            "{text}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn missing_typed_correlation_never_falls_back_to_untrusted_headers() {
     let policy = RequestPolicy::new(
@@ -382,7 +448,7 @@ async fn forced_process_cancellation_preserves_handler_body_header_and_event_ide
         .register("control", |startup| async move {
             let signal = startup.acknowledge_started();
             signal.cancelled().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let running = supervisor.start();
@@ -515,4 +581,213 @@ fn never_polled_operational_entry_does_no_application_work_or_observation() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(capture.text().is_empty(), "{}", capture.text());
+}
+
+#[tokio::test]
+async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_probes() {
+    for phase in ["starting", "ready", "draining"] {
+        let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+        if phase != "starting" {
+            approval.approve();
+        }
+        if phase == "draining" {
+            handle.request();
+        }
+        let policy = || {
+            RequestPolicy::new(
+                handle.operation_admission(),
+                ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
+            )
+        };
+        let default = HttpBoundary::new(policy())
+            .with_liveness(ProbePath::new("/live").unwrap())
+            .unwrap()
+            .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+            .await
+            .unwrap()
+            .into_router();
+        let custom = HttpBoundary::new(policy())
+            .with_liveness(ProbePath::new("/live").unwrap())
+            .unwrap()
+            .assemble(
+                GuardedRouter::new()
+                    .route("/work", get(|| async { "ok" }))
+                    .fallback(|| async { StatusCode::IM_A_TEAPOT }),
+            )
+            .await
+            .unwrap()
+            .into_router();
+        let nested = HttpBoundary::new(policy())
+            .with_liveness(ProbePath::new("/live").unwrap())
+            .unwrap()
+            .assemble(
+                GuardedRouter::new().nest(
+                    "/nested",
+                    GuardedRouter::new()
+                        .route("/work", get(|| async { "ok" }))
+                        .fallback(|| async { StatusCode::IM_A_TEAPOT }),
+                ),
+            )
+            .await
+            .unwrap()
+            .into_router();
+
+        for router in [&default, &custom] {
+            assert_eq!(
+                router
+                    .clone()
+                    .oneshot(request("/live"))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK,
+                "probe was gated while {phase}"
+            );
+            let mut method = request("/work");
+            *method.method_mut() = axum::http::Method::POST;
+            let expected = if phase == "ready" {
+                StatusCode::METHOD_NOT_ALLOWED
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            };
+            assert_eq!(
+                router.clone().oneshot(method).await.unwrap().status(),
+                expected,
+                "method fallback escaped admission while {phase}"
+            );
+        }
+
+        let default_missing = if phase == "ready" {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        let custom_missing = if phase == "ready" {
+            StatusCode::IM_A_TEAPOT
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        assert_eq!(
+            default.oneshot(request("/missing")).await.unwrap().status(),
+            default_missing,
+            "default fallback escaped admission while {phase}"
+        );
+        assert_eq!(
+            custom.oneshot(request("/missing")).await.unwrap().status(),
+            custom_missing,
+            "custom fallback escaped admission while {phase}"
+        );
+        assert_eq!(
+            nested
+                .oneshot(request("/nested/missing"))
+                .await
+                .unwrap()
+                .status(),
+            custom_missing,
+            "nested fallback escaped admission while {phase}"
+        );
+    }
+}
+
+#[test]
+fn outer_observer_does_not_suppress_inner_operational_identity() {
+    let capture = Capture::new();
+    let (id, body) = capture.block_on(async {
+        let app = Router::new()
+            .route(
+                "/work",
+                get(
+                    |headers: HeaderMap,
+                     Extension(id): Extension<CorrelationId>,
+                     Extension(native): Extension<RequestId>| async move {
+                        assert_eq!(headers.get_all("x-request-id").iter().count(), 1);
+                        assert_eq!(headers["x-request-id"], *native.header_value());
+                        assert_eq!(id.as_str(), native.header_value().to_str().unwrap());
+                        id.to_string()
+                    },
+                ),
+            )
+            .layer(middleware::from_fn(operational_http))
+            .layer(middleware::from_fn(observe_http));
+        let response = app.oneshot(request("/work")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        id_and_body(response).await
+    });
+    assert_eq!(body, id);
+    let text = capture.text();
+    let events = completion_fields(&text);
+    assert_eq!(events.len(), 1, "{text}");
+    assert!(
+        events[0].contains(&format!("request_id=\"{id}\"")),
+        "{text}"
+    );
+    assert!(!text.contains("secret-"), "{text}");
+}
+
+#[test]
+fn quota_facts_reach_the_single_outer_event_in_both_wrapper_orders() {
+    for quota_outermost in [false, true] {
+        let capture = Capture::new();
+        let (id, body) = capture.block_on(async {
+            let app = Router::new().route(
+                "/work",
+                get(
+                    |headers: HeaderMap,
+                     Extension(id): Extension<CorrelationId>,
+                     Extension(native): Extension<RequestId>,
+                     mut request: Request<Body>| async move {
+                        assert_eq!(headers.get_all("x-request-id").iter().count(), 1);
+                        assert_eq!(headers["x-request-id"], *native.header_value());
+                        assert_eq!(id.as_str(), native.header_value().to_str().unwrap());
+                        QuotaRecorder::take(&mut request)
+                            .expect("quota wrapper installed the sole writer")
+                            .start()
+                            .finish(QuotaTerminalFacts::Allowed);
+                        OperationContext::new(Duration::from_secs(1))
+                            .unwrap()
+                            .run("nested.quota", |_| async {
+                                tracing::info!(request_id = %id, "nested quota identity");
+                                Ok::<_, std::convert::Infallible>(())
+                            })
+                            .await
+                            .unwrap();
+                        id.to_string()
+                    },
+                ),
+            );
+            let app = if quota_outermost {
+                app.layer(middleware::from_fn(operational_http))
+                    .layer(middleware::from_fn(operational_http_with_quota))
+            } else {
+                app.layer(middleware::from_fn(operational_http_with_quota))
+                    .layer(middleware::from_fn(operational_http))
+            };
+            let response = app.oneshot(request("/work")).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            id_and_body(response).await
+        });
+        assert_eq!(body, id);
+        let text = capture.text();
+        let events = completion_fields(&text);
+        assert_eq!(events.len(), 1, "{text}");
+        assert!(
+            events[0].contains(&format!("request_id=\"{id}\"")),
+            "{text}"
+        );
+        assert!(events[0].contains("quota_outcome=\"allowed\""));
+        assert!(events[0].contains("quota_consumption=\"consumed\""));
+        assert!(
+            text.lines()
+                .any(|line| line.contains("nested quota identity") && line.contains(&id)),
+            "{text}"
+        );
+        assert!(
+            text.lines().any(|line| {
+                line.contains("operation boundary finished")
+                    && line.contains("nested.quota")
+                    && line.contains(&id)
+            }),
+            "{text}"
+        );
+    }
 }

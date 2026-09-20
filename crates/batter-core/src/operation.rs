@@ -205,7 +205,74 @@ impl OperationContext {
     {
         // Keep the ordinary boundary direct: routing it through the composite
         // boundary adds another generic async state machine to every caller.
-        crate::scoped_dispatch::scope(self.run_inner(operation, factory, operation_outcome)).await
+        crate::scoped_dispatch::scope(self.run_inner(
+            operation,
+            factory,
+            |result| result,
+            operation_outcome,
+        ))
+        .await
+    }
+
+    /// Resolve retained application evidence before recording the operation outcome.
+    ///
+    /// This is for protocols whose externally visible result can become known
+    /// before cancellable local cleanup finishes. `resolve` runs exactly once
+    /// after this boundary selects completion, cancellation, or deadline, and
+    /// before telemetry is finalized. It is synchronous: it cannot extend the
+    /// deadline or perform more work. Return [`OperationError::Interrupted`] only
+    /// when the final application result is still interruption; translate a
+    /// retained success or failure into the corresponding `Ok` or
+    /// [`OperationError::Failed`] value.
+    ///
+    /// The resolver is application policy. Batter does not verify remote effects
+    /// or whether retained state is authoritative. Dropping this method's outer
+    /// future still records `dropped` and does not invoke `resolve`.
+    ///
+    /// ```
+    /// use batter_core::operation::{OperationContext, OperationError};
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::Duration;
+    ///
+    /// # async fn example() {
+    /// let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    /// let retained = Arc::new(Mutex::new(None));
+    /// let inside = retained.clone();
+    /// let result = context
+    ///     .run_resolved(
+    ///         "example.commit",
+    ///         move |scope| async move {
+    ///             *inside.lock().unwrap() = Some(Ok::<_, &'static str>(42));
+    ///             scope.cancel();
+    ///             std::future::pending::<Result<(), &'static str>>().await
+    ///         },
+    ///         move |boundary| match retained.lock().unwrap().take() {
+    ///             Some(result) => result.map_err(OperationError::Failed),
+    ///             None => boundary.map(|()| unreachable!()),
+    ///         },
+    ///     )
+    ///     .await;
+    /// assert_eq!(result.unwrap(), 42);
+    /// # }
+    /// ```
+    pub async fn run_resolved<T, E, U, R, F, Fut, Resolve>(
+        &self,
+        operation: &'static str,
+        factory: F,
+        resolve: Resolve,
+    ) -> Result<U, OperationError<R>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
+    {
+        crate::scoped_dispatch::scope(self.run_inner(
+            operation,
+            factory,
+            resolve,
+            operation_outcome,
+        ))
+        .await
     }
 
     /// Run with an outcome mapper owned by a composite foundation boundary.
@@ -221,38 +288,45 @@ impl OperationContext {
     {
         // Capture on first poll, as with ordinary async instrumentation. The
         // inner future owns the factory, work, and observation during drop too.
-        crate::scoped_dispatch::scope(self.run_inner(operation, factory, outcome)).await
+        crate::scoped_dispatch::scope(self.run_inner(operation, factory, |result| result, outcome))
+            .await
     }
 
-    async fn run_inner<T, E, F, Fut>(
+    async fn run_inner<T, E, U, R, F, Fut, Resolve>(
         &self,
         operation: &'static str,
         factory: F,
-        outcome: fn(&Result<T, OperationError<E>>) -> Outcome,
-    ) -> Result<T, OperationError<E>>
+        resolve: Resolve,
+        outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+    ) -> Result<U, OperationError<R>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
+        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
         let mut observation = Observation::new(operation);
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();
         let _cancel_on_exit = cancellation.clone().drop_guard();
-        let result = async {
-            self.check()?;
-            tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => {
-                    Err(OperationError::Interrupted(Interruption::Cancelled))
-                }
-                _ = tokio::time::sleep_until(self.deadline) => {
-                    Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
-                }
-                result = async move { factory(scope).await } => {
-                    result.map_err(OperationError::Failed)
+        let result = async move {
+            let boundary = async {
+                self.check()?;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        Err(OperationError::Interrupted(Interruption::Cancelled))
+                    }
+                    _ = tokio::time::sleep_until(self.deadline) => {
+                        Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
+                    }
+                    result = async move { factory(scope).await } => {
+                        result.map_err(OperationError::Failed)
+                    }
                 }
             }
+            .await;
+            resolve(boundary)
         }
         .instrument(span)
         .await;

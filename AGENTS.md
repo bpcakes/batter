@@ -55,13 +55,19 @@ definition is not evidence of a hosted CI execution.
 
 Batter is consumed only through coding agents. Optimize its public integration
 path for agents generating and modifying applications, rather than for a small
-API surface or familiarity alone. Prefer operational invariants enforced by
-library-owned execution, constrained interfaces, validated configuration, and
-executable checks. Repeated consumer instructions to coordinate cancellation,
-joins, registration, finalization, deadline relationships, or error retention
-are design feedback and debt, even when the instructions are accurate. Keep
+API surface or familiarity alone. On the canonical agent-consumer path, make
+invalid operational states unrepresentable whenever Rust ownership, types, or
+API shape can express the invariant. Enforce those invariants through
+library-owned execution, opaque validated values, consuming state transitions,
+constrained capabilities and exhaustive outcomes. Documentation, examples and
+tests are evidence; they are not substitutes for enforcement. A public API that
+allows both a supported composition and a known-invalid ordering, nesting,
+paired call, phase transition, empty input, cleanup sequence or outcome omission
+is design debt even when the correct use is documented. Repeated consumer
+instructions to coordinate cancellation, joins, registration, finalization,
+deadline relationships, or error retention are the same signal. Keep
 application-specific protocols at the application root or in a justified
-supported adapter.
+supported adapter, and do not claim that local types prove remote effects.
 
 Agents maintaining Batter use this guide to preserve contracts and evidence.
 Agents consuming Batter should follow the canonical examples and protected
@@ -73,6 +79,15 @@ contracts. Evaluate design changes with independent failure scenarios and fresh
 agent implementation or modification tasks; label such evaluations proposed
 and unexecuted unless executable evidence exists. See
 [ADR-010](docs/adr/010-agent-only-consumption.md).
+
+For every new or materially changed public API, perform the proactive invalid-
+state review in ADR-010. If a common misuse can reach execution, or still
+compiles where a type-state transition could prevent it, redesign the canonical
+path or record why the invariant is application policy, belongs to an upstream
+dependency, describes an unverifiable remote effect, or cannot be expressed
+locally. Do not wait for repeated review failures to inspect the API shape.
+Low-level escape hatches remain deliberately weaker and must not make a known-
+invalid composition look equivalent to the protected path.
 
 When an example review loop repeats a confirmed invariant failure after repair,
 or a repair introduces a failure in a coupled lifecycle phase, the implementation
@@ -100,7 +115,8 @@ read-only freshness snapshots and writer lifetime.
 including the dependency-first/lifecycle-second read order and unrepresentable
 healthy-as-failure states.
 `crates/batter-core/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
-`crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries and typed failures.
+`crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
+typed failures, and pre-telemetry resolution of application-retained outcomes.
 `crates/batter-core/src/retry.rs` owns replay policy, bounded attempts, and backoff.
 `crates/batter-core/src/admission.rs` owns process-local concurrency permits.
 `crates/batter-core/src/settings.rs` and `settings/` own explicit source reading, bound
@@ -111,15 +127,19 @@ and exposes `with_current_dispatch` for adapter-owned futures.
 publication waits without merging command, startup or process outcome types.
 `crates/batter-core/src/scoped_dispatch.rs` privately retains tracing dispatch through polling and
 full inner-future destruction, without heap allocation.
-`crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter;
+`crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter and
+`boundary.rs` owns the route-inventory-preserving `GuardedRouter` plus the
+library-ordered `HttpBoundary` composition;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics without owning
 credential meaning, authorization, CORS or application error envelopes.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
-bounded probes and pool-close registration; server-session termination remains separate.
+bounded probes and pool-close registration; `session.rs` owns opaque SQL execution
+and transaction completion without native replacement; server-session termination remains separate.
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
-process ownership. Native descendant supervision remains in Runledger.
+process ownership, and bridges the opaque Batter transaction to Runledger's
+executor-only enqueue capability. Native descendant supervision remains in Runledger.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
 transactions and PostgreSQL initialization/maintenance remain upstream-owned.
@@ -155,8 +175,11 @@ current conservative cleanup skipping with "abort then call it clean".
 
 Root finite admission is bounded and linearized with drain. Only an active
 process scope can admit bounded descendants during drain; forced cancellation
-closes both paths. A receipt is a waiter, not a work owner. Task-level errors
-initiate drain; normal business denials belong in successful task values.
+closes both paths. A receipt is a waiter, not a work owner. Only an explicit
+`Fatal` task error initiates drain; `?` on a plain application error must not
+compile inside a finite task, and normal business denials belong in successful
+task values. A registered component future returns a `ComponentExit` proof
+obtainable only by acknowledging startup or explicitly abandoning it.
 Readiness requires application approval, a running driver, and acknowledgement
 from every registered critical component after its actual initialization.
 Owned-driver waiter cancellation must not cancel cleanup. No runtime-death or
@@ -165,8 +188,9 @@ Caller-owned driver emergency cancellation is armed at ownership transfer, even
 before first poll. Unobserved task results are not evidence of running work;
 harvest ready results before escalation and abort only unfinished tasks.
 
-Preserve all task and cleanup errors in reports. Do not log their Debug/Display
-contents automatically; they may contain secrets. Reports are internal objects,
+Preserve all task and cleanup errors in reports. Report Debug/Display are
+redacted by the types themselves; retained errors are reachable only through
+explicit fields, and no report may derive Debug over an error field. Reports are internal objects,
 not HTTP payloads. Domain errors stay concrete. No global tracing subscriber or
 panic-hook installation belongs in the library.
 Owned-future dispatch context must also cover destruction, not just polling.

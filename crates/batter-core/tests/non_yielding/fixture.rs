@@ -82,7 +82,7 @@ fn supervisor(
             assert!(signal.is_draining());
             emit("cancellation-observed");
             drop(lifetime);
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     supervisor

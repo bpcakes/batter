@@ -56,6 +56,21 @@ impl<E> StartupObserver<E> {
 /// the live runtime. Observers never keep this owner or a running owner alive.
 /// `R` is [`RunningSupervisor`] for default startup and
 /// [`UnapprovedSupervisor`] after selecting deferred readiness approval.
+///
+/// Discarding the started owner requests drain before initialization can
+/// hand off, so the owner must be retained:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use batter_core::{cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,
+///     startup::Startup};
+/// fn discarded(supervisor: Supervisor, context: OperationContext, cleanup: CleanupBudget) {
+///     Startup::scoped(supervisor, context, cleanup, |_| Box::pin(async {
+///         Ok::<_, batter_core::RegistrationError>(())
+///     })).start();
+/// }
+/// ```
+#[must_use = "retain the startup owner; dropping it requests drain"]
 pub struct StartingSupervisor<E, R = RunningSupervisor> {
     handle: Option<ShutdownHandle>,
     receiver: oneshot::Receiver<Result<R, StartupError<E>>>,

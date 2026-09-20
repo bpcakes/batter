@@ -16,6 +16,7 @@ use url::{Host, Url};
 /// # Ok::<(), batter_axum::browser::BrowserOriginError>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use = "retain the validated origin"]
 pub struct BrowserOrigin {
     serialized: Box<str>,
     secure: bool,

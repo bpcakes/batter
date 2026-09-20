@@ -1,6 +1,7 @@
 #[path = "../../../test-support/dispatch.rs"]
 mod test_dispatch;
 
+use batter_core::lifecycle::Fatal;
 use batter_core::{operation::OperationContext, telemetry::with_current_dispatch};
 use std::{
     cell::Cell,
@@ -169,7 +170,7 @@ fn aborted_operation_drops_work_and_observation_in_its_scoped_dispatch() {
                     .run("operation.abort", |_| async move {
                         let _resource = DropTrace("operation.resource");
                         started_tx.send(()).unwrap();
-                        std::future::pending::<Result<(), io::Error>>().await
+                        std::future::pending::<Result<(), Fatal<io::Error>>>().await
                     })
                     .await
             }

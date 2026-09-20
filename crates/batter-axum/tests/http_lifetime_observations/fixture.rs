@@ -186,7 +186,17 @@ impl Fixture {
         report
     }
     pub fn assert_clean(&self, report: &SharedShutdownReport) {
-        assert!(report.is_success(), "{report:?}");
+        // Debug is redacted; disclose retained cleanup causes deliberately here.
+        let cleanup_errors: Vec<String> = report
+            .cleanup
+            .records
+            .iter()
+            .filter_map(|record| record.error.as_ref().map(ToString::to_string))
+            .collect();
+        assert!(
+            report.is_success(),
+            "{report:?}; cleanup errors: {cleanup_errors:?}"
+        );
         assert_eq!(report.tasks.len(), 1);
         assert_eq!(report.tasks[0].name, "http");
         assert_eq!(report.tasks[0].outcome, TaskOutcome::Stopped);
@@ -268,10 +278,11 @@ fn register_server(
     supervisor
         .register("http", move |startup| async move {
             let _drop = DropEvent(events.clone(), "server-drop");
-            let shutdown = if acknowledge {
-                startup.acknowledge_started()
+            let (shutdown, exit) = if acknowledge {
+                let running = startup.acknowledge_started();
+                (running.signal(), Ok(running))
             } else {
-                startup.shutdown().clone()
+                (startup.shutdown().clone(), Err(startup))
             };
             let signal_events = events.clone();
             let listener = TrackedListener {
@@ -292,7 +303,11 @@ fn register_server(
             } else {
                 "server-error"
             });
-            result.map_err(Into::into)
+            result?;
+            Ok(match exit {
+                Ok(running) => running.stopped(),
+                Err(startup) => startup.abandon(),
+            })
         })
         .unwrap();
 }

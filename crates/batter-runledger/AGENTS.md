@@ -3,12 +3,14 @@
 ## Purpose
 
 Translate Runledger initialization and complete native settlement into Batter
-managed registration. Follow the root Unix-only policy. Native task ownership,
-durable job outcomes, registry/catalog policy and database provisioning stay native.
+managed registration, and bridge Batter's opaque SQLx transaction to Runledger's
+executor-only enqueue capability. Follow the root Unix-only policy. Native task
+ownership, durable job outcomes, registry/catalog policy and database provisioning stay native.
 
 ## Key entrypoints
 
 - `src/lib.rs`: inert registration, startup observation, stop propagation and native report.
+- `src/lib.rs`: opaque `RunledgerTransaction` composition without native connection exposure.
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
 - Reference service: application schema, handler selection and dependency health.
 
@@ -24,6 +26,8 @@ validation, without awaiting before managed transfer. Never use a durable startu
 witness. Native stop must drain peers before full settlement, and use the parent's
 original timestamp. Preserve the original native report and conservative dependency
 cleanup classification. Do not install tracing subscribers or print error contents.
+The transaction bridge exposes only SQL execution and consuming commit/rollback;
+never add native `DerefMut`, `AsMut`, connection replacement or transaction replacement.
 
 ## Common commands
 

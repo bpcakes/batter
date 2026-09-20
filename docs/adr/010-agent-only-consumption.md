@@ -3,7 +3,9 @@
 ## Status
 
 Accepted guidance, 2026-09-11. Owning Bead: `batter-o4h`.
-No library redesign is implied.
+Strengthened 2026-09-20 by `batter-j6f`. This ADR does not authorize speculative
+redesign, but evidence that the canonical path represents a locally preventable
+invalid state requires the assessment below rather than another caller warning.
 
 ## Context
 
@@ -25,6 +27,14 @@ executable checks. A repeated caller obligation to coordinate cancellation,
 joining, registration, finalization, deadline relationships, or error
 retention is design feedback and debt, even when accurately documented.
 
+On the canonical path, make invalid operational states unrepresentable whenever
+Rust ownership, types, or API shape can express the invariant. Documentation,
+examples and semantic tests demonstrate the contract but do not replace API
+enforcement. A known-invalid ordering, nesting, paired call, phase transition,
+empty input, cleanup sequence or omitted outcome must not remain an ordinary
+peer of the supported composition merely because guidance describes the right
+choice.
+
 The repository keeps one clear canonical supported path. Examples are consumer
 contracts. A lower-level escape hatch may remain for a justified application
 boundary, but it must disclose its obligations and must not appear equivalent to
@@ -39,6 +49,40 @@ implementation or modification tasks. Clean review or test volume alone is not
 evidence of agent usability. Such evaluations are proposed and unexecuted until
 the repository records concrete execution evidence.
 
+## Public API invalid-state review
+
+Every new or materially changed public API must be reviewed before delivery for
+invalid states that its canonical consumers can still construct. Do not wait for
+a recurring example failure. Ask:
+
+1. Can a caller construct a value, phase or route that execution must later
+   reject even though pure construction had enough information to reject it?
+2. Must a caller remember ordering, middleware nesting, a paired completion,
+   cleanup sequencing, non-emptiness, deadline relationships or exhaustive
+   outcome handling for the invariant to hold?
+3. Can authority or lifecycle state be represented by a narrower capability,
+   opaque validated witness, consuming transition or exhaustive enum instead of
+   a broad cloneable handle, raw value, boolean or temporal convention?
+4. Can library-owned assembly or execution make the supported composition the
+   only ordinary path, rather than documenting which combination of individually
+   valid calls is safe?
+5. Is the remaining obligation truly application policy, upstream protocol
+   behavior, or an unverifiable remote effect? If so, keep that boundary explicit
+   and do not imply a stronger local guarantee.
+
+When a common misuse can reach execution, or still compiles where a type-state
+transition could prevent it, redesign the canonical path or record the evidence-
+backed reason it cannot own the invariant. Typical tools are private constructors,
+opaque validated values, nonempty collections, capability tokens, typestate or
+consuming transitions, exhaustive results, and library-ordered composition.
+These are means, not a requirement to introduce a framework or DSL. Prefer the
+smallest native Rust boundary that removes the caller-memory obligation.
+
+A justified low-level escape hatch may expose a weaker contract, but its name,
+placement and documentation must distinguish it from the protected path and list
+the obligations it leaves with the caller. Its existence does not justify making
+the same invalid state representable through the canonical API.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
@@ -49,7 +93,9 @@ not a reason to postpone assessment; reviewer comment counts alone are not a
 trigger or proof of a design gap. "It is only example code" cannot dismiss the
 signal: examples are consumer contracts for the library's intended agents.
 
-Before another dependent repair:
+The proactive review above applies even without a failure. When recurrence or a
+coupled-phase failure supplies stronger evidence, complete these steps before
+another dependent repair:
 
 1. Identify the recurring defects with source, failure-scenario, and repair
    evidence. Separate confirmed defects from duplicate or unsupported reviewer

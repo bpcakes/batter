@@ -257,6 +257,7 @@ impl CookieMaxAge {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use = "retain the validated cookie policy"]
 pub struct BrowserCookie {
     name: CookieName,
     same_site: SameSite,

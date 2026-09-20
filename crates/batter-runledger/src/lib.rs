@@ -14,12 +14,95 @@ use batter_core::{
     operation::OperationContext,
     registration::{Registration, RegistrationTarget},
 };
+use batter_sqlx::{PgExecutor, PgSession};
 use runledger_runtime::{PreparedSupervisor, RuntimeShutdownBudget, RuntimeShutdownReport};
+use sqlx::{Executor, Postgres};
 use std::{
     future::{Future, pending},
     pin::Pin,
     task::{Context, Poll},
 };
+
+/// Opaque Batter transaction accepted by Runledger's transactional enqueue APIs.
+///
+/// Application SQL and Runledger enqueueing share this exact transaction, but
+/// neither caller can extract or replace its SQLx connection. Explicit commit
+/// and rollback remain application-owned.
+///
+/// ```no_run
+/// use batter_runledger::RunledgerTransaction;
+/// use runledger_core::jobs::JobType;
+/// use runledger_postgres::jobs::{
+///     JobEnqueue, enqueue_job_with_outcome_in_transaction,
+/// };
+/// use serde_json::json;
+///
+/// # async fn submit(session: &mut batter_sqlx::PgSession<'_>) -> Result<(), Box<dyn std::error::Error>> {
+/// let mut transaction = RunledgerTransaction::begin(session).await?;
+/// sqlx::query("INSERT INTO application_audit (message) VALUES ('queued')")
+///     .execute(transaction.executor())
+///     .await?;
+/// let payload = json!({"kind": "example"});
+/// enqueue_job_with_outcome_in_transaction(&mut transaction, &JobEnqueue {
+///     job_type: JobType::new("example.job"),
+///     organization_id: None,
+///     payload: &payload,
+///     priority: None,
+///     max_attempts: None,
+///     timeout_seconds: None,
+///     next_run_at: None,
+///     idempotency_key: Some("example-job-1"),
+///     stage: None,
+/// }).await?;
+/// transaction.commit().await?;
+/// # Ok(()) }
+/// ```
+#[must_use = "explicitly commit or roll back the transaction before completing the lease work"]
+pub struct RunledgerTransaction<'connection> {
+    transaction: batter_sqlx::PgTransaction<'connection>,
+}
+
+impl<'connection> RunledgerTransaction<'connection> {
+    /// Begin one explicit transaction from the lease's opaque session.
+    pub async fn begin(session: &'connection mut PgSession<'_>) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            transaction: session.begin().await?,
+        })
+    }
+
+    /// Borrow this exact transaction for one native SQLx operation.
+    pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
+        self.transaction.executor()
+    }
+
+    /// Commit and consume the transaction.
+    pub async fn commit(self) -> Result<(), sqlx::Error> {
+        self.transaction.commit().await
+    }
+
+    /// Roll back and consume the transaction.
+    pub async fn rollback(self) -> Result<(), sqlx::Error> {
+        self.transaction.rollback().await
+    }
+}
+
+impl PgExecutor for RunledgerTransaction<'_> {
+    fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
+        self.executor()
+    }
+}
+
+impl runledger_postgres::PgTransactionExecutor for RunledgerTransaction<'_> {
+    fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
+        self.executor()
+    }
+}
+
+impl std::fmt::Debug for RunledgerTransaction<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RunledgerTransaction")
+    }
+}
 
 /// Original native shutdown evidence. The process report retains this concrete
 /// type under `managed[*].outcome.settlement`; use `downcast_ref::<NativeReport>()`

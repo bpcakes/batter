@@ -81,7 +81,7 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 ///                 }
 ///             }
 ///         }
-///         Ok(())
+///         Ok(shutdown.stopped())
 ///     })?;
 ///     Ok::<_, batter_core::RegistrationError>(())
 /// })).with_unix_signals("signals").start();
@@ -156,7 +156,7 @@ impl<F> Startup<F> {
     /// supervisor.register("worker", |startup| async move {
     ///     let shutdown = startup.acknowledge_started();
     ///     shutdown.draining().await;
-    ///     Ok(())
+    ///     Ok(shutdown.stopped())
     /// })?;
     /// let mut starting = Startup::new(
     ///     supervisor,
@@ -235,7 +235,7 @@ impl Startup<()> {
     ///         scope.registration().register("worker", |startup| async move {
     ///             let shutdown = startup.acknowledge_started();
     ///             shutdown.draining().await;
-    ///             Ok(())
+    ///             Ok(shutdown.stopped())
     ///         })?;
     ///         Ok::<_, batter_core::RegistrationError>(())
     ///     })).start();

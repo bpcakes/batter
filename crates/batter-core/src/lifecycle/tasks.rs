@@ -51,7 +51,7 @@ impl TaskSet {
         let span = tracing::info_span!(target: "batter", "batter.task", task = name).or_current();
         let abort = self.set.spawn(scoped_dispatch::scope(
             async move {
-                let result = factory(startup, coordinator).await;
+                let result = factory(startup, coordinator).await.map(|_exit| ());
                 // Capture the state at completion, never at delayed observation.
                 let expected = classification.is_draining();
                 TaskExit { result, expected }

@@ -1,9 +1,11 @@
 //! Adapter-facing retained quota facts for [`crate::operational_http_with_quota`].
 //!
 //! This is an observation capability, never authentication or quota authority.
-//! The operational middleware creates a fresh private record, replacing inbound
-//! records. A quota adapter takes the writer before invoking application code.
-//! The observer retains its own reader through response construction or drop.
+//! The quota operational middleware creates a fresh private record, replacing
+//! inbound records, and publishes it to the outermost Batter HTTP observer. A
+//! quota adapter takes the writer before invoking application code. The observer
+//! retains its own reader through response construction or drop even when the
+//! quota wrapper is nested inside another supported Batter HTTP wrapper.
 //! No caller callback runs from a destructor and no subject or error text fits
 //! this interface. Ordinary [`crate::operational_http`] allocates no quota record.
 

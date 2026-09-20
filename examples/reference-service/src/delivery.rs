@@ -1,9 +1,11 @@
 //! Owner-scoped, generation-fenced delivery submission and reconciliation.
 //!
 //! A submission inserts its command identity, delivery row, and Runledger job
-//! in one native SQLx transaction. Exact replay reads the committed identity;
-//! it never starts a second enqueue. Any interruption after `BEGIN` is reported
-//! as uncertain and the checked-out connection is retired from the pool.
+//! in one opaque Batter transaction. Exact replay reads the committed identity;
+//! it never starts a second enqueue. Interruption while the transaction disposition
+//! remains unknown is reported as uncertain. After commit or rollback acknowledgement,
+//! interruption during lease normalization preserves the known application outcome,
+//! although the checked-out connection is retired from the pool.
 //!
 //! ```no_run
 //! use batter::operation::OperationContext;
@@ -42,11 +44,11 @@ mod service;
 mod worker;
 pub(crate) use worker::DeliveryWorker;
 
-use batter::operation::Interruption;
+use batter::{operation::Interruption, sqlx::PgExecutor};
 use runledger_core::jobs::{JobDefinitionSettings, JobSpec, JobStage, JobStatus, JobType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{FromRow, PgConnection, PgPool};
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::provider::{EFFECT_PROTOCOL_VERSION, ProviderEffectRequest};
@@ -365,7 +367,7 @@ impl StorageError {
     }
 }
 
-/// Why submission cannot assert commit or rollback after `BEGIN`.
+/// Why submission cannot assert commit or rollback while disposition is unknown.
 #[derive(Debug, thiserror::Error)]
 pub enum UncertainSubmission {
     /// PostgreSQL did not acknowledge COMMIT.
@@ -379,8 +381,9 @@ pub enum UncertainSubmission {
         /// Native rollback failure.
         rollback: sqlx::Error,
     },
-    /// The operation boundary stopped polling after the transaction began.
-    #[error("submission was interrupted after transaction begin")]
+    /// The operation boundary stopped polling while the transaction was active,
+    /// before commit or rollback acknowledgement.
+    #[error("submission was interrupted while transaction disposition was unknown")]
     Interrupted(#[source] Interruption),
 }
 
@@ -568,8 +571,8 @@ impl CommandRow {
     }
 }
 
-async fn load_command(
-    connection: &mut PgConnection,
+async fn load_command<E: PgExecutor + ?Sized>(
+    connection: &mut E,
     owner: OwnerId,
     idempotency_key: &str,
 ) -> Result<Option<CommandRow>, StorageError> {
@@ -582,8 +585,8 @@ enum CommandLookup<'a> {
 }
 
 // Both owner-scoped reads use one SQL snapshot and one identity/projection check.
-async fn load_command_at(
-    connection: &mut PgConnection,
+async fn load_command_at<E: PgExecutor + ?Sized>(
+    connection: &mut E,
     owner: OwnerId,
     lookup: CommandLookup<'_>,
 ) -> Result<Option<CommandRow>, StorageError> {
@@ -619,13 +622,13 @@ async fn load_command_at(
     .bind(owner.as_uuid())
     .bind(idempotency_key)
     .bind(delivery_id)
-    .fetch_optional(connection)
+    .fetch_optional(connection.executor())
     .await
     .map_err(StorageError::from)
 }
 
-async fn load_delivery_by_id(
-    connection: &mut PgConnection,
+async fn load_delivery_by_id<E: PgExecutor + ?Sized>(
+    connection: &mut E,
     owner: OwnerId,
     delivery_id: Uuid,
 ) -> Result<Option<Delivery>, StorageError> {

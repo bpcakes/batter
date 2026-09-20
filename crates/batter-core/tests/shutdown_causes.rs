@@ -1,3 +1,5 @@
+use batter_core::lifecycle::ComponentExit;
+use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::CleanupBudget,
@@ -37,7 +39,7 @@ fn register_healthy_component(supervisor: &mut Supervisor) {
         .register("component", |signal| async move {
             let signal = signal.acknowledge_started();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
 }
@@ -61,7 +63,7 @@ async fn ready_request_precedes_an_unobserved_finite_error() {
         poll_once(driver.as_mut()).await;
         let receipt = process
             .try_spawn("finite", |_| async {
-                Err::<(), _>(std::io::Error::other("finite error"))
+                Err::<(), _>(Fatal(std::io::Error::other("finite error")))
             })
             .unwrap();
         poll_once(driver.as_mut()).await;
@@ -127,7 +129,7 @@ async fn finite_error_and_panic_keep_their_kind_with_a_healthy_component() {
             let receipt = process
                 .try_spawn("finite", move |_| async move {
                     assert!(!panics, "finite task panic");
-                    Err::<(), _>(std::io::Error::other("finite task error"))
+                    Err::<(), _>(Fatal(std::io::Error::other("finite task error")))
                 })
                 .unwrap();
             let failure = receipt.wait().await.unwrap_err();
@@ -165,7 +167,7 @@ async fn first_failure_is_retained_when_the_other_task_kind_fails_during_drain()
                     if finite_first {
                         signal.draining().await;
                     }
-                    Err::<(), BoxError>(std::io::Error::other("component error").into())
+                    Err::<ComponentExit, BoxError>(std::io::Error::other("component error").into())
                 })
                 .unwrap();
             let process = supervisor.process_handle().unwrap();
@@ -176,7 +178,7 @@ async fn first_failure_is_retained_when_the_other_task_kind_fails_during_drain()
                     if !finite_first {
                         scope.signal().draining().await;
                     }
-                    Err::<(), _>(std::io::Error::other("finite error"))
+                    Err::<(), _>(Fatal(std::io::Error::other("finite error")))
                 })
                 .unwrap();
             release.send(()).unwrap();
@@ -223,10 +225,10 @@ async fn descendant_failure_reports_its_own_finite_label() {
             .try_spawn("ancestor", |scope| async move {
                 let descendant = scope
                     .try_spawn("descendant", |_| async {
-                        Err::<(), _>(std::io::Error::other("descendant error"))
+                        Err::<(), _>(Fatal(std::io::Error::other("descendant error")))
                     })
                     .unwrap();
-                Ok::<_, Infallible>(descendant)
+                Ok::<_, Fatal<Infallible>>(descendant)
             })
             .unwrap();
         let descendant = ancestor.wait().await.unwrap();
@@ -258,7 +260,7 @@ async fn finite_shutdown_abort_is_an_outcome_and_preserves_requested_cause() {
         let receipt = process
             .try_spawn("finite", |_| async move {
                 started.send(()).unwrap();
-                std::future::pending::<Result<(), Infallible>>().await
+                std::future::pending::<Result<(), Fatal<Infallible>>>().await
             })
             .unwrap();
         entered.await.unwrap();

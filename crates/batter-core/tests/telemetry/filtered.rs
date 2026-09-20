@@ -1,4 +1,5 @@
 use super::{Buffer, OperationContext};
+use batter_core::lifecycle::Fatal;
 use std::{
     future::{Future, poll_fn},
     io,
@@ -137,7 +138,7 @@ async fn filtered_operation_without_initial_parent_does_not_adopt_drop_context()
     let capture = Capture::new();
     let context = OperationContext::new(Duration::from_secs(1)).unwrap();
     let mut run = Box::pin(context.run("unparented", |_| {
-        std::future::pending::<Result<(), io::Error>>()
+        std::future::pending::<Result<(), Fatal<io::Error>>>()
     }));
     assert!(
         poll_fn(

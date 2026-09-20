@@ -4,12 +4,29 @@ An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Rust 1.94
 minimum, Unix-only, unpublished. The foundation does not depend on this package.
 
 `PgLease::acquire(&pool, &context)` bounds acquisition using the existing operation
-budget. Move the lease into the bounded operation future and use
-`lease.connection()` for native queries and `Connection::begin`. After fully
-awaited successful query, commit or rollback, call `lease.return_to_pool()`.
-Every other drop detaches and drops the client connection, including error,
-unwinding and interruption when the lease is owned by the interrupted future.
-See the crate rustdoc for a compiling native transaction example.
+budget. Move the lease into the bounded operation future and run its work through
+`lease.with_connection(async |session| ...)`: after application work returns
+`Ok`, Batter runs an idle-state handshake ending in `ROLLBACK` on that exact
+physical connection and returns it to the pool only when the final rollback
+succeeds. The handshake opens and rolls back an empty transaction when already
+idle, avoiding PostgreSQL's outside-transaction warning. `Err`,
+failed or interrupted cleanup, unwinding and application interruption retire it.
+There is no direct pool-return call, so an interrupted query can never be followed
+by pool return. Work that must retire for every outcome uses the consuming
+`lease.with_retiring_connection(async |session| ...)` path. Both closures receive
+an opaque `PgSession`: `session.executor()` runs native SQL and
+`session.begin()` returns an opaque `PgTransaction` with consuming
+`commit`/`rollback`. Neither type implements `DerefMut` or `AsMut` for its native
+SQLx owner, so application code cannot replace the physical connection and make
+the lease dispose a different one. Every successful transaction start also marks
+the session ineligible for pool return until commit or rollback succeeds. Dropping
+or forgetting an unfinished transaction preserves the application result but
+retires the connection. Native execution necessarily also permits raw transaction
+control such as `BEGIN`; the same-connection `ROLLBACK` closes both open and
+failed raw transactions before the private pool-return proof can exist. It does
+not reset arbitrary session settings, session advisory locks or prepared
+transactions. See the crate rustdoc for compiling and compile-fail examples of
+both paths.
 
 Retirement releases local pool accounting. It does **not** acknowledge remote
 cancellation, rollback, or server-session disappearance. Interrupted SQL can

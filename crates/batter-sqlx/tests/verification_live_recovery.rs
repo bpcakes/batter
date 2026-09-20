@@ -3,6 +3,9 @@ use super::{AuthorityFixture, FindingKind, RolePolicy, exec, finding, names_poli
 use sqlx::{Connection, PgConnection};
 use std::time::Duration;
 
+// This bounds external PostgreSQL lock progress, not verifier semantics.
+const EXTERNAL_LOCK_ALLOWANCE: Duration = Duration::from_secs(20);
+
 async fn lock_is_pending(observer: &mut PgConnection, pid: i32, relation: i64) -> Result<bool> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks
@@ -15,7 +18,7 @@ async fn lock_is_pending(observer: &mut PgConnection, pid: i32, relation: i64) -
 }
 
 pub(super) async fn pending_lock(observer: &mut PgConnection, pid: i32, relation: i64) -> Result {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(EXTERNAL_LOCK_ALLOWANCE, async {
         loop {
             if lock_is_pending(observer, pid, relation).await? {
                 return Ok(());
@@ -103,7 +106,7 @@ async fn verification_ledger_ddl_after_lock_waits_for_snapshot() -> Result {
             observed = pending_lock(&mut fixture.admin, mutator_pid, oid) => observed?,
         }
         barrier.rollback().await?;
-        let (report, changed) = tokio::time::timeout(Duration::from_secs(5), async {
+        let (report, changed) = tokio::time::timeout(EXTERNAL_LOCK_ALLOWANCE, async {
             tokio::join!(&mut verification, &mut change)
         }).await?;
         changed?;
@@ -228,7 +231,7 @@ async fn verification_ledger_descendant_truncate_waits_for_snapshot() -> Result 
             observed = pending_lock(&mut fixture.admin, mutator_pid, child_oid) => observed?,
         }
         barrier.rollback().await?;
-        let (report, changed) = tokio::time::timeout(Duration::from_secs(5), async {
+        let (report, changed) = tokio::time::timeout(EXTERNAL_LOCK_ALLOWANCE, async {
             tokio::join!(&mut verification, &mut change)
         }).await?;
         changed?;

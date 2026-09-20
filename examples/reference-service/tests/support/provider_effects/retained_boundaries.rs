@@ -31,7 +31,7 @@ pub(super) async fn identity(
         if changed.rows_affected() != 1 {
             return Err("identity corruption did not update exactly one row".into());
         }
-        let context = OperationContext::new(Duration::from_secs(5))?;
+        let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
         for result in [
             service
                 .get_by_id(&context, owner, submitted.delivery_id)
@@ -48,10 +48,11 @@ pub(super) async fn identity(
         ExecutableChild::start_provider_worker(endpoint, provider_url, "retained-identity")?;
     let observed = async {
         for command in commands {
-            let retained = wait_for_snapshot(pool, command.job_id, Duration::from_secs(5), |row| {
-                row.job_status == "DEAD_LETTERED" && row.effect_state == "MANUAL_RESOLUTION"
-            })
-            .await?;
+            let retained =
+                wait_for_snapshot(pool, command.job_id, EXTERNAL_EFFECT_ALLOWANCE, |row| {
+                    row.job_status == "DEAD_LETTERED" && row.effect_state == "MANUAL_RESOLUTION"
+                })
+                .await?;
             // This code distinguishes load rejection from the later request
             // constructor rejecting an invalid provider key.
             if retained.attempt != 1
@@ -117,7 +118,7 @@ pub(super) async fn reconciliation(
         let worker = ExecutableChild::start_provider_worker(endpoint, provider_url, key)?;
         let observed = async {
             let retained =
-                wait_for_snapshot(pool, submitted.job_id, Duration::from_secs(5), |row| {
+                wait_for_snapshot(pool, submitted.job_id, EXTERNAL_EFFECT_ALLOWANCE, |row| {
                     if accepted {
                         row.job_status == "SUCCEEDED" && row.effect_state == "CONFIRMED"
                     } else {
@@ -186,7 +187,7 @@ async fn seed_acceptance(pool: &PgPool, provider_url: &str, delivery: Uuid) -> P
     let response: Value = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5))
+        .timeout(EXTERNAL_EFFECT_ALLOWANCE)
         .build()?
         .post(format!("{provider_url}effects"))
         .bearer_auth(super::super::provider::TOKEN)

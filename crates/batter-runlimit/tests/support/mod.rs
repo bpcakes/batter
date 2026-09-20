@@ -143,8 +143,9 @@ pub async fn running() -> RunningSupervisor {
     let mut supervisor = supervisor();
     supervisor
         .register("component", |startup| async move {
-            startup.acknowledge_started().draining().await;
-            Ok(())
+            let running = startup.acknowledge_started();
+            running.draining().await;
+            Ok(running.stopped())
         })
         .unwrap();
     let running = supervisor.start();

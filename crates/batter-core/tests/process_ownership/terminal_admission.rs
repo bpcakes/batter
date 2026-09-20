@@ -1,4 +1,5 @@
 use super::finite_supervisor;
+use batter_core::lifecycle::Fatal;
 use batter_core::lifecycle::{ProcessAdmissionError, ProcessHandle, Readiness};
 use std::{
     convert::Infallible,
@@ -15,7 +16,7 @@ fn assert_admission_closed(process: &ProcessHandle) {
     let error = process
         .try_spawn("after-closure", move |_| {
             in_factory.store(true, Ordering::SeqCst);
-            async { Ok::<_, Infallible>(()) }
+            async { Ok::<_, Fatal<Infallible>>(()) }
         })
         .err()
         .expect("terminal admission must reject work");

@@ -51,7 +51,7 @@ fn invalid_and_duplicate_component_registration_never_invoke_rejected_factories(
     let mut supervisor = supervisor();
     supervisor
         .registration()
-        .register("worker", |_| async { Ok(()) })
+        .register("worker", |startup| async { Ok(startup.abandon()) })
         .unwrap();
 
     for expected in [
@@ -66,10 +66,10 @@ fn invalid_and_duplicate_component_registration_never_invoke_rejected_factories(
         };
         let error = supervisor
             .registration()
-            .register(name, move |_| {
+            .register(name, move |startup| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 drop(captured);
-                async { Ok(()) }
+                async { Ok(startup.abandon()) }
             })
             .unwrap_err();
         assert_eq!(error, expected);
@@ -123,10 +123,14 @@ fn registration_reborrows_and_reserves_cleanup_without_process_control() {
     let mut registration = supervisor.registration();
     registration
         .registration()
-        .register("first", |_| async { Ok::<_, BoxError>(()) })
+        .register("first", |startup| async {
+            Ok::<_, BoxError>(startup.abandon())
+        })
         .unwrap();
     registration
-        .register("second", |_| async { Ok::<_, BoxError>(()) })
+        .register("second", |startup| async {
+            Ok::<_, BoxError>(startup.abandon())
+        })
         .unwrap();
     registration
         .reserve_cleanup("resource")

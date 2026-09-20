@@ -1,4 +1,5 @@
 use super::support::{Case, supervisor};
+use batter_core::lifecycle::Fatal;
 use batter_core::lifecycle::ProcessAdmissionError;
 use std::{
     convert::Infallible,
@@ -20,7 +21,7 @@ pub async fn capacity_one(case: Case, drain: bool) {
         .try_spawn("ancestor", |scope| async move {
             scope_tx.send(scope).ok().unwrap();
             finish_rx.await.unwrap();
-            Ok::<_, Infallible>(())
+            Ok::<_, Fatal<Infallible>>(())
         })
         .unwrap();
     let scope = scope_rx.await.unwrap();
@@ -34,7 +35,7 @@ pub async fn capacity_one(case: Case, drain: bool) {
     case.event("descendant-submit");
     let rejected = scope.try_spawn("descendant", move |_| {
         in_factory.store(true, Ordering::SeqCst);
-        async { Ok::<_, Infallible>(()) }
+        async { Ok::<_, Fatal<Infallible>>(()) }
     });
     assert!(
         matches!(rejected, Err(ProcessAdmissionError::Full)),
@@ -45,7 +46,7 @@ pub async fn capacity_one(case: Case, drain: bool) {
     finish_tx.send(()).unwrap();
     parent.wait().await.unwrap();
     assert!(matches!(
-        scope.try_spawn("expired", |_| async { Ok::<_, Infallible>(()) }),
+        scope.try_spawn("expired", |_| async { Ok::<_, Fatal<Infallible>>(()) }),
         Err(ProcessAdmissionError::Closed)
     ));
     let report = running.shutdown().await.unwrap();

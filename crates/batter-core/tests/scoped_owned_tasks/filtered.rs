@@ -1,4 +1,5 @@
 use super::*;
+use batter_core::lifecycle::Fatal;
 use std::convert::Infallible;
 
 #[tokio::test(flavor = "current_thread")]
@@ -74,7 +75,7 @@ async fn process_tasks(abort: bool) {
             } else {
                 signal.draining().await;
             }
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     supervisor
@@ -102,7 +103,7 @@ async fn process_tasks(abort: bool) {
                 if abort {
                     pending::<()>().await;
                 }
-                Ok::<_, Infallible>(())
+                Ok::<_, Fatal<Infallible>>(())
             })
             .unwrap()
     });

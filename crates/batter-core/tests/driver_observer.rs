@@ -1,3 +1,4 @@
+use batter_core::lifecycle::ComponentExit;
 use batter_core::{
     BoxError,
     cleanup::CleanupBudget,
@@ -34,7 +35,7 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
         .register("worker", move |startup| async move {
             in_component.fetch_add(1, Ordering::SeqCst);
             startup.shutdown().draining().await;
-            Ok(())
+            Ok(startup.abandon())
         })
         .unwrap();
     let finalized = Arc::new(AtomicUsize::new(0));
@@ -79,7 +80,7 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
 
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("worker", |_| pending::<Result<(), BoxError>>())
+        .register("worker", |_| pending::<Result<ComponentExit, BoxError>>())
         .unwrap();
     let captures_dropped = Arc::new(AtomicUsize::new(0));
     let capture = PanickingDrop(captures_dropped.clone());

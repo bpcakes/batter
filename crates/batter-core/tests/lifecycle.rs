@@ -1,3 +1,4 @@
+use batter_core::lifecycle::ComponentExit;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, SkipReason},
@@ -43,7 +44,7 @@ fn one_shot_readiness_approval_cannot_revive_a_draining_process() {
 async fn unapproved_owner_cannot_revive_a_stopped_process() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("short-lived", |_| async { Ok(()) })
+        .register("short-lived", |startup| async { Ok(startup.abandon()) })
         .unwrap();
     let pending = supervisor.start_unapproved();
     let status = pending.status();
@@ -66,7 +67,7 @@ async fn graceful_shutdown_stops_work_before_closing_dependencies() {
             shutdown.draining().await;
             assert!(!shutdown.is_cancelled());
             flag.store(true, Ordering::SeqCst);
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     supervisor
@@ -112,7 +113,9 @@ async fn all_component_errors_survive_shutdown() {
 #[tokio::test(start_paused = true)]
 async fn early_success_is_a_critical_failure() {
     let mut supervisor = Supervisor::new(budget());
-    supervisor.register("early", |_| async { Ok(()) }).unwrap();
+    supervisor
+        .register("early", |startup| async { Ok(startup.abandon()) })
+        .unwrap();
     let report = supervisor.run_until(pending()).await;
     assert_eq!(report.cause, ShutdownCause::ComponentExit("early"));
     assert_eq!(report.tasks[0].outcome, TaskOutcome::UnexpectedExit);
@@ -131,14 +134,14 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
             completed_rx.await.unwrap();
             assert!(!requesting.status().is_draining());
             requesting.request();
-            Ok(())
+            Ok(_shutdown.stopped())
         })
         .unwrap();
     supervisor
         .register("early", move |signal| async move {
             let _shutdown = signal.acknowledge_started();
             completed_tx.send(()).unwrap();
-            Ok(())
+            Ok(_shutdown.stopped())
         })
         .unwrap();
     let report = supervisor.run_until(pending()).await;
@@ -158,10 +161,12 @@ async fn early_exit_remains_a_failure_when_drain_precedes_join_observation() {
 async fn component_panic_conservatively_skips_resource_finalizers() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("panic", |_| async {
-            panic!("critical defect");
-            #[allow(unreachable_code)]
-            Ok(())
+        .register("panic", |startup| async move {
+            // Typed exit on a branch that is never taken; the poll then panics.
+            if startup.shutdown().is_draining() {
+                return Ok(startup.abandon());
+            }
+            panic!("critical defect")
         })
         .unwrap();
     supervisor
@@ -182,9 +187,10 @@ async fn component_panic_conservatively_skips_resource_finalizers() {
 async fn component_factory_panic_is_observed_by_name() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("factory", |_| -> std::future::Ready<Result<(), BoxError>> {
-            panic!("factory defect")
-        })
+        .register(
+            "factory",
+            |_| -> std::future::Ready<Result<ComponentExit, BoxError>> { panic!("factory defect") },
+        )
         .unwrap();
     let report = supervisor.run_until(pending()).await;
     assert_eq!(report.cause, ShutdownCause::ComponentExit("factory"));
@@ -200,7 +206,7 @@ async fn forced_cooperative_cancellation_can_still_join_cleanly() {
             let shutdown = startup.acknowledge_started();
             shutdown.cancelled().await;
             assert!(shutdown.is_draining());
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let report = supervisor.run_until(async {}).await;
@@ -213,7 +219,9 @@ async fn forced_cooperative_cancellation_can_still_join_cleanly() {
 async fn noncooperative_async_task_is_aborted_and_reported() {
     let mut supervisor = Supervisor::new(budget());
     supervisor
-        .register("ignores-signals", |_| pending::<Result<(), BoxError>>())
+        .register("ignores-signals", |_| {
+            pending::<Result<ComponentExit, BoxError>>()
+        })
         .unwrap();
     supervisor
         .on_cleanup("pool", || async {
@@ -240,7 +248,7 @@ async fn drain_does_not_cancel_previously_admitted_contexts() {
             let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
             assert!(inside.lock().unwrap().take().unwrap().check().is_ok());
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let running = supervisor.start();
@@ -262,7 +270,7 @@ async fn cleanup_failure_makes_otherwise_clean_shutdown_unsuccessful() {
         .register("worker", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     supervisor
@@ -293,7 +301,7 @@ async fn registration_is_inert_until_run() {
             async move {
                 let shutdown = startup.acknowledge_started();
                 shutdown.draining().await;
-                Ok(())
+                Ok(shutdown.stopped())
             }
         })
         .unwrap();
@@ -305,9 +313,19 @@ async fn registration_is_inert_until_run() {
 #[test]
 fn component_registration_rejects_duplicate_names() {
     let mut supervisor = Supervisor::new(budget());
-    supervisor.register("worker", |_| async { Ok(()) }).unwrap();
-    assert!(supervisor.register("worker", |_| async { Ok(()) }).is_err());
-    assert!(supervisor.register("", |_| async { Ok(()) }).is_err());
+    supervisor
+        .register("worker", |startup| async { Ok(startup.abandon()) })
+        .unwrap();
+    assert!(
+        supervisor
+            .register("worker", |startup| async { Ok(startup.abandon()) })
+            .is_err()
+    );
+    assert!(
+        supervisor
+            .register("", |startup| async { Ok(startup.abandon()) })
+            .is_err()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -336,9 +354,9 @@ fn assert_unpolled_caller_owned_drop(unapproved: bool) {
     let mut supervisor = Supervisor::new(budget());
     let flag = called.clone();
     supervisor
-        .register("inert-component", move |_| {
+        .register("inert-component", move |startup| {
             flag.store(true, Ordering::SeqCst);
-            async { Ok(()) }
+            async { Ok(startup.abandon()) }
         })
         .unwrap();
     let flag = cleanup_called.clone();
@@ -380,7 +398,7 @@ async fn dropping_unapproved_started_owner_requests_drain_before_driver_poll() {
         .register("drain-observer", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let status = supervisor.status();
@@ -421,7 +439,7 @@ async fn driver_still_accepts_a_borrowed_non_send_shutdown_future() {
         .register("component", |startup| async move {
             let signal = startup.acknowledge_started();
             signal.draining().await;
-            Ok(())
+            Ok(signal.stopped())
         })
         .unwrap();
     let report = supervisor

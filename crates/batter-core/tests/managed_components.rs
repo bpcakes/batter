@@ -44,7 +44,7 @@ async fn registration_is_inert_and_names_are_shared_with_direct_components() {
         })
         .unwrap();
     assert_eq!(
-        supervisor.register("native", |_| async { Ok(()) }),
+        supervisor.register("native", |startup| async { Ok(startup.abandon()) }),
         Err(RegistrationError::Duplicate("native"))
     );
     assert_eq!(

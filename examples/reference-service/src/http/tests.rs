@@ -521,7 +521,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
         .register("control", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.cancelled().await;
-            Ok(())
+            Ok(shutdown.stopped())
         })
         .unwrap();
     let handle = supervisor.handle();

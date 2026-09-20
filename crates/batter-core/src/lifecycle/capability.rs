@@ -377,22 +377,121 @@ impl ReadinessApproval {
     }
 }
 
+/// Proof that a registered component resolved its startup obligation.
+///
+/// Component futures return `Result<ComponentExit, BoxError>`. The value is
+/// produced only by [`RunningComponent::stopped`] after acknowledgement or by
+/// [`ComponentStartup::abandon`] before it, so a component that runs to
+/// completion without doing either cannot type-check. It carries no data and
+/// cannot be constructed or cloned by applications.
+///
+/// ```compile_fail,E0423
+/// use batter_core::lifecycle::ComponentExit;
+/// let forged = ComponentExit(());
+/// ```
+#[derive(Debug)]
+#[must_use = "return the exit proof from the component future"]
+pub struct ComponentExit(());
+
+impl ComponentExit {
+    /// Exit proof for library-owned managed components.
+    pub(super) fn managed() -> Self {
+        Self(())
+    }
+}
+
+/// The running phase of an acknowledged component.
+///
+/// It offers the component's drain and cancellation observation directly, and
+/// [`Self::stopped`] is the only way to produce the [`ComponentExit`] proof
+/// after acknowledgement. Lower-level drivers that take a plain signal can
+/// clone one with [`Self::signal`]; the proof stays with this value, which is
+/// neither cloneable nor reusable after it has been consumed.
+///
+/// ```compile_fail,E0599
+/// use batter_core::lifecycle::RunningComponent;
+/// fn cannot_clone(running: RunningComponent) {
+///     let duplicate = running.clone();
+/// }
+/// ```
+///
+/// ```compile_fail,E0382
+/// use batter_core::lifecycle::RunningComponent;
+/// fn cannot_stop_twice(running: RunningComponent) {
+///     let first = running.stopped();
+///     let second = running.stopped();
+/// }
+/// ```
+#[must_use = "retain the running component through its work and return stopped() from the component future"]
+pub struct RunningComponent {
+    shutdown: ShutdownSignal,
+}
+
+impl RunningComponent {
+    /// Clone read-only shutdown observation for a lower-level driver.
+    pub fn signal(&self) -> ShutdownSignal {
+        self.shutdown.clone()
+    }
+
+    /// Wait until admission closes and draining begins.
+    pub async fn draining(&self) {
+        self.shutdown.draining().await;
+    }
+
+    /// Wait for cooperative cancellation after the drain allowance is exhausted.
+    pub async fn cancelled(&self) {
+        self.shutdown.cancelled().await;
+    }
+
+    /// Whether drain has already been requested.
+    pub fn is_draining(&self) -> bool {
+        self.shutdown.is_draining()
+    }
+
+    /// Whether forced cooperative cancellation has already been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.shutdown.is_cancelled()
+    }
+
+    /// Produce the exit proof once the component's running work has finished.
+    ///
+    /// Returning it before drain was requested is an unexpected exit and
+    /// initiates shutdown, exactly like any other early success.
+    pub fn stopped(self) -> ComponentExit {
+        ComponentExit(())
+    }
+}
+
 /// The one pending startup obligation of a registered critical component.
 ///
 /// Observe shutdown during initialization through [`Self::shutdown`]. After the
 /// listener, worker, or other component is actually usable, consume this value
-/// with [`Self::acknowledge_started`]. The returned [`ShutdownSignal`] carries
-/// only the observation authority needed by the running component.
+/// with [`Self::acknowledge_started`]. The returned [`RunningComponent`] carries
+/// the observation authority needed by the running component and is the only
+/// source of the [`ComponentExit`] proof a component future must return after
+/// acknowledging. A component that observes drain before it is usable exits
+/// with [`Self::abandon`] instead. A component future therefore cannot return
+/// success without either acknowledging or explicitly abandoning its startup.
 ///
 /// ```no_run
-/// use batter_core::{BoxError, lifecycle::ComponentStartup};
+/// use batter_core::{BoxError, lifecycle::{ComponentExit, ComponentStartup}};
 ///
-/// async fn run_component(startup: ComponentStartup) -> Result<(), BoxError> {
+/// async fn run_component(startup: ComponentStartup) -> Result<ComponentExit, BoxError> {
 ///     if startup.shutdown().is_draining() {
-///         return Ok(());
+///         return Ok(startup.abandon());
 ///     }
-///     let shutdown = startup.acknowledge_started();
-///     shutdown.draining().await;
+///     let running = startup.acknowledge_started();
+///     running.draining().await;
+///     Ok(running.stopped())
+/// }
+/// ```
+///
+/// A component that neither acknowledges nor abandons cannot produce the proof:
+///
+/// ```compile_fail,E0308
+/// use batter_core::{BoxError, lifecycle::{ComponentExit, ComponentStartup}};
+/// async fn never_acknowledges(startup: ComponentStartup) -> Result<ComponentExit, BoxError> {
+///     startup.shutdown().draining().await;
 ///     Ok(())
 /// }
 /// ```
@@ -435,12 +534,21 @@ impl ComponentStartup {
     /// Record actual component initialization and enter the running phase.
     ///
     /// Acknowledgement during drain remains recorded but cannot revive readiness.
-    /// Dropping this value without calling this method leaves startup pending.
-    #[must_use = "retain the returned shutdown signal for the running component"]
-    pub fn acknowledge_started(self) -> ShutdownSignal {
+    /// Dropping this value without calling this method or [`Self::abandon`]
+    /// leaves startup pending, and the component future then has no exit proof.
+    pub fn acknowledge_started(self) -> RunningComponent {
         let Self { shutdown, pending } = self;
         pending.acknowledge();
-        shutdown
+        RunningComponent { shutdown }
+    }
+
+    /// Exit without initializing, typically because drain was observed first.
+    ///
+    /// The readiness gate stays pending, so the process cannot become Ready
+    /// without this component. Returning the proof before drain was requested
+    /// is an unexpected exit and initiates shutdown.
+    pub fn abandon(self) -> ComponentExit {
+        ComponentExit(())
     }
 
     pub(super) fn into_parts(self) -> (ShutdownSignal, PendingComponentStart) {
