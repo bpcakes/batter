@@ -514,3 +514,18 @@ disposable database must be explicitly closed before a corrected retry. Same-ser
 identity and normal native catalog visibility remain caller preconditions; database
 name presence is not a cluster identity check. Redacted report summaries separate
 failed consuming database cleanup from retained pool and observation failures.
+
+
+### Native migration execution
+
+`PgLease::migrate(&Migrator)` consumes the lease while retaining its physical
+connection internally. The application selects and configures its native SQLx
+bundle; SQLx owns migration locking, history and checksum validation. A failed or
+interrupted migration retires the connection, including a native validation error
+that leaves its advisory lock held. Success uses the ordinary idle-state proof
+before reuse. Await the method inside the enclosing operation budget.
+
+The redacted `SqlxFailure` retains the original `MigrateError` inside
+`sqlx::Error::Migrate`; trusted diagnostics may inspect it. There is no raw
+connection callback, second migrator implementation or automatic migration on
+pool construction. No local result proves server-session termination.

@@ -29,12 +29,14 @@ acceptance and status. The current native lifecycle and retirement redesign is o
 
 ## Selected graph
 
-The original Git selections were verified on 2026-09-09. On 2026-09-19 the
-Runledger transaction-capability change was pushed for PR
-[#15](https://github.com/bpcakes/runledger/pull/15) at
-`638ee3480f69962597147f5d7bd52822267560b7`. All three native packages now select
-that immutable PR revision in the manifests and Cargo-generated lockfile. No
-sibling checkout or path override is required.
+On 2026-09-20, `batter-44w` advanced the root Runledger graph from
+`638ee3480f69962597147f5d7bd52822267560b7` to PR
+[#19](https://github.com/bpcakes/runledger/pull/19), immutable commit
+`969e86b76913304b9e58fb934b41f679a9ec812b`. This includes opaque durable-intent and schema
+capabilities plus the intervening native settlement and unconfirmed-commit
+hard cuts. All three native packages use this exact pin; no path override is
+required. The archived `batter-gi4` consumer remains historical evidence at its
+recorded pin, not validation of the new graph.
 Earlier paired-checkout validation retains its historical scope. The optional `batter-runledger` adapter
 selects the native runtime. The foundation remains independent of it. SQLx and its
 optional test-support harness retain one native type graph.
@@ -42,7 +44,7 @@ optional test-support harness retain one native type graph.
 | Source | Selected version/revision | Features and boundary | Disposition |
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
-| Runledger Git | core/postgres/runtime 0.12.0 at `638ee3480f69962597147f5d7bd52822267560b7` (PR #15) | Opaque transaction executor enqueue, native SQLx types, inert preparation, initialization observation and complete settlement | Immutable PR source selection replaces sibling patches. Earlier live results retain their recorded source scope |
+| Runledger Git | core/postgres/runtime 0.12.0 at `969e86b76913304b9e58fb934b41f679a9ec812b` (PR #19) | Opaque intent/schema executors, native SQLx types, inert preparation, initialization observation and consuming settlement | Immutable PR source selection replaces sibling patches. Earlier live results retain their recorded source scope |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |

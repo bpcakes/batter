@@ -10,6 +10,10 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    "migrations_live": {
+        "migration_preserves_native_history_and_retires_checksum_failure",
+        "interrupted_migration_retires_without_waiting_for_server_lock",
+    },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",
         "blocked_deadline_releases_capacity",

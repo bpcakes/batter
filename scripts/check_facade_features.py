@@ -218,7 +218,7 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"638ee3480f69962597147f5d7bd52822267560b7\" }")
+        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"969e86b76913304b9e58fb934b41f679a9ec812b\" }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""

@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add consuming `PgLease::migrate` to run application-selected native SQLx
+  migrations without exposing replaceable connection identity. Preserve native
+  migration errors behind redacted `SqlxFailure` and retire on interruption.
+- Adopt Runledger PR #19 at `969e86b76913304b9e58fb934b41f679a9ec812b`:
+  opaque transactions now compose durable intents; `verify_schema` bridges its
+  session capability. Native shutdown uses its owned signal and consuming,
+  unforgeable settlement; reference retirement retains `CommitUnconfirmed`.
+  Bound the reference query future's private layout without changing ownership.
+
 - Make PostgreSQL lease disposition unambiguous: native work either uses the
   result-driven `with_connection` path or the consuming
   `with_retiring_connection` path. Both expose only an opaque `PgSession` and

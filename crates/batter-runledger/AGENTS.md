@@ -26,6 +26,9 @@ validation, without awaiting before managed transfer. Never use a durable startu
 witness. Native stop must drain peers before full settlement, and use the parent's
 original timestamp. Preserve the original native report and conservative dependency
 cleanup classification. Do not install tracing subscribers or print error contents.
+NativeReport owns RuntimeSettlement and derives cleanup authority from its
+unforgeable variants; never restore caller-writable report fields or reclassify
+borrowed evidence. Schema verification uses the native session capability.
 The transaction bridge exposes only SQL execution and consuming commit/rollback;
 never add native `DerefMut`, `AsMut`, connection replacement or transaction replacement.
 
@@ -34,5 +37,6 @@ never add native `DerefMut`, `AsMut`, connection replacement or transaction repl
 `cargo test -p batter-runledger --locked` and
 `cargo clippy -p batter-runledger --all-targets --locked -- -D warnings`.
 The native dependency uses an immutable Git revision recorded in the workspace
-and Cargo.lock. Update both the root and archived consumer graph when changing
-that revision. Final acceptance includes root two-toolchain/live gates.
+and Cargo.lock. Update the root graph and current compatibility manifest when changing
+that revision. Historical evidence archives remain frozen and must be labeled
+with their original source scope. Final acceptance includes root two-toolchain/live gates.

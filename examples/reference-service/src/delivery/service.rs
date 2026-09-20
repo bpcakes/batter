@@ -105,28 +105,38 @@ impl DeliveryService {
     ) -> Result<Option<Delivery>, QueryError>
     where
         F: for<'a, 'connection> FnOnce(
-            &'a mut PgSession<'connection>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<Output = Result<Option<Delivery>, StorageError>>
-                    + Send
-                    + 'a,
-            >,
-        >,
+                &'a mut PgSession<'connection>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<Option<Delivery>, StorageError>>
+                        + Send
+                        + 'a,
+                >,
+            > + Send
+            + 'static,
     {
         let pool = self.pool.clone();
         let result = context
-            .run("delivery.query", move |scope| async move {
-                let lease = PgLease::acquire(&pool, &scope)
-                    .await
-                    .map_err(QueryAttemptError::Acquire)?;
-                // Ok authorizes normalization and possible pool return; Err or
-                // interruption retires the checkout.
-                lease
-                    .with_connection(async move |connection| {
-                        query(connection).await.map_err(QueryAttemptError::Storage)
-                    })
-                    .await
+            .run("delivery.query", move |scope| {
+                // Erase this private phase's layout while retaining acquisition
+                // and lease destruction inside the operation boundary.
+                let work: std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<
+                                Output = Result<Option<Delivery>, QueryAttemptError>,
+                            > + Send,
+                    >,
+                > = Box::pin(async move {
+                    let lease = PgLease::acquire(&pool, &scope)
+                        .await
+                        .map_err(QueryAttemptError::Acquire)?;
+                    lease
+                        .with_connection(async move |connection| {
+                            query(connection).await.map_err(QueryAttemptError::Storage)
+                        })
+                        .await
+                });
+                work
             })
             .await;
         match result {

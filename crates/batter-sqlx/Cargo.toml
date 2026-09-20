@@ -22,7 +22,7 @@ postgres-test-harness = { git = "https://github.com/bpcakes/postgres-test-harnes
 batter-test-support = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "time"], optional = true }
 batter-core.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate"] }
 
 [dev-dependencies]
 tracing.workspace = true
@@ -48,3 +48,6 @@ required-features = ["test-support"]
 [[test]]
 name = "fixture_offline"
 required-features = ["test-support"]
+
+[[test]]
+name = "migrations_live"

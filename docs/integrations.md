@@ -952,3 +952,19 @@ row-type and PUBLIC settings explicit and is enforced by compilation. Grant-plan
 rendering rejects PostgreSQL's PUBLIC/NONE spellings and reserved `pg_` role
 namespace, but applications still own membership and selection for ordinary role
 targets.
+
+
+## Opaque native database composition
+
+Use `PgLease::migrate` for an application-selected SQLx migration bundle. It
+consumes the lease and retains native connection identity internally; migration
+policy stays with the caller and SQLx. Use `batter::runledger::verify_schema`
+inside `with_connection` for native Runledger compatibility checks. Durable
+handoffs use `record_job_enqueue_intent_in_transaction` with the existing
+`RunledgerTransaction`; no raw transaction or connection escape is required.
+
+`NativeReport` now owns Runledger's consuming settlement classification. Borrow
+`native()` for diagnostics or `settlement()` for the typed outcome. The managed
+adapter derives success and cleanup eligibility from those unforgeable variants,
+not caller-supplied flags. Explicit `CommitUnconfirmed` remains an unknown native
+effect; reference retirement preserves it and never automatically replays it.

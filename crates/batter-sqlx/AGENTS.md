@@ -7,7 +7,7 @@ transactions remain application-owned. Follow the root Unix-only policy.
 
 ## Key entrypoints
 
-- `src/lib.rs`: default-retiring lease, bounded probe, pool cleanup registration.
+- `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
 - `src/session.rs`: opaque session/transaction execution capabilities and consuming completion.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and
