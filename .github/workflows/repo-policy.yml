@@ -29,6 +29,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+      - name: Check out coordinated Runledger integration
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
+          git -C ../runledger checkout --detach 4a973a37427ec5da123d82dd924520fc3b5e455d
       - name: Install Rust toolchain
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
       - name: Cache Jig runtime

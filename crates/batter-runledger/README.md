@@ -32,7 +32,8 @@ cause. Native stop observation drains peers promptly. No caller-owned terminatio
 independent driver, failure side channel or nested cleanup stack is needed.
 
 This unpublished Unix-only adapter uses coordinated sibling Runledger packages
-from `../runledger` while these feature branches are reviewed. Runledger depends
+from `../runledger` while these feature branches are reviewed. CI checks out
+`4a973a37427ec5da123d82dd924520fc3b5e455d`. Runledger depends
 only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
 facade or this integration. Publishing and replacement with immutable released
 package identities remain separate decisions.
