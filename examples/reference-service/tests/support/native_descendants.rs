@@ -123,12 +123,15 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
         .ok_or("native report identity changed")?;
     assert!(
         native
-            .native
-            .unjoined
+            .native()
+            .unjoined()
             .iter()
             .any(|task| task.task == "terminal_observer" && task.abort_requested)
     );
-    assert!(!native.native.is_cooperatively_stopped());
+    assert!(matches!(
+        native.settlement(),
+        runledger_runtime::RuntimeSettlement::Unsettled(_)
+    ));
     assert_eq!(status(&pool, job).await?, "SUCCEEDED");
     Ok(())
 }

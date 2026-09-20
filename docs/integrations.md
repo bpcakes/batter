@@ -402,7 +402,7 @@ The reference service now demonstrates that contract for delivery of a versioned
 generic record. A unique `(owner_id, idempotency_key)` command row, delivery row,
 and Runledger enqueue share one READ COMMITTED transaction and one
 `PgLease`. `batter::runledger::RunledgerTransaction` wraps the lease's opaque
-transaction and implements Runledger's executor-only capability, so application
+transaction and constructs Runledger's native-resource `PgTransactionView`, so application
 SQL and enqueue share the transaction without exposing a replaceable native
 connection. The command retains its canonical record/generation/JSONB and immutable
 enqueue inputs. Exact replay reads that committed identity without enqueueing
@@ -952,3 +952,23 @@ row-type and PUBLIC settings explicit and is enforced by compilation. Grant-plan
 rendering rejects PostgreSQL's PUBLIC/NONE spellings and reserved `pg_` role
 namespace, but applications still own membership and selection for ordinary role
 targets.
+
+
+## Opaque native database composition
+
+Use `PgLease::migrate` for an application-selected SQLx migration bundle. It
+consumes the lease and retains native connection identity internally; migration
+policy stays with the caller and SQLx. Use `batter::runledger::verify_schema`
+inside `with_connection` for native Runledger compatibility checks. Durable
+handoffs use `record_job_enqueue_intent_in_transaction` with the existing
+`RunledgerTransaction::view()`; no raw transaction or connection escape is required.
+The optional `batter-sqlx/runledger` bridge constructs native-resource views
+inside the SQLx owner. Native transaction execution is sealed to actual SQLx
+transactions and those views; schema verification retains one `PgSessionView`
+for its entire invocation. Selecting SQLx alone does not enable Runledger.
+
+`NativeReport` now owns Runledger's consuming settlement classification. Borrow
+`native()` for diagnostics or `settlement()` for the typed outcome. The managed
+adapter derives success and cleanup eligibility from those unforgeable variants,
+not caller-supplied flags. Explicit `CommitUnconfirmed` remains an unknown native
+effect; reference retirement preserves it and never automatically replays it.

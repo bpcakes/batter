@@ -205,6 +205,29 @@ impl PgLease {
         }
     }
 
+    /// Apply an application-selected native SQLx migration bundle on this lease.
+    ///
+    /// The lease is consumed and the physical connection remains private. Native
+    /// SQLx owns migration selection, locking, history and checksum validation;
+    /// this adapter owns only connection disposition. Failure or cancellation
+    /// retires the connection, including migration errors that leave a native
+    /// session advisory lock held. Success follows the normal idle-state proof
+    /// before pool return. Await inside the caller's operation budget.
+    ///
+    /// The original `MigrateError` is retained as `sqlx::Error::Migrate` inside
+    /// the redacted [`SqlxFailure`]. No automatic replay or provisioning policy
+    /// is introduced.
+    pub async fn migrate(self, migrator: &sqlx::migrate::Migrator) -> Result<(), SqlxFailure> {
+        self.with_connection(async |session| {
+            migrator
+                .run_direct(None, session.native_connection(), false)
+                .await
+                .map_err(sqlx::Error::from)
+                .map_err(SqlxFailure::from)
+        })
+        .await
+    }
+
     /// Native SQLx pool return after acknowledged successful completion.
     fn return_to_pool(mut self, _ready: PoolReturnReady) {
         drop(self.connection.take());

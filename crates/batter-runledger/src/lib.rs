@@ -15,10 +15,13 @@ use batter_core::{
     registration::{Registration, RegistrationTarget},
 };
 use batter_sqlx::{PgExecutor, PgSession};
-use runledger_runtime::{PreparedSupervisor, RuntimeShutdownBudget, RuntimeShutdownReport};
+use runledger_runtime::{
+    PreparedSupervisor, RuntimeSettlement, RuntimeShutdownBudget, RuntimeShutdownReport,
+    RuntimeShutdownSignal,
+};
 use sqlx::{Executor, Postgres};
 use std::{
-    future::{Future, pending},
+    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -43,7 +46,7 @@ use std::{
 ///     .execute(transaction.executor())
 ///     .await?;
 /// let payload = json!({"kind": "example"});
-/// enqueue_job_with_outcome_in_transaction(&mut transaction, &JobEnqueue {
+/// enqueue_job_with_outcome_in_transaction(&mut transaction.view(), &JobEnqueue {
 ///     job_type: JobType::new("example.job"),
 ///     organization_id: None,
 ///     payload: &payload,
@@ -70,6 +73,24 @@ impl<'connection> RunledgerTransaction<'connection> {
         })
     }
 
+    /// Retain this native transaction across one Runledger operation.
+    ///
+    /// Completion cannot consume the transaction while its view is still in use:
+    /// ```compile_fail
+    /// # async fn finish_while_borrowed(
+    /// #     mut transaction: batter_runledger::RunledgerTransaction<'_>,
+    /// #     intent: &runledger_postgres::jobs::JobEnqueueIntent<'_>,
+    /// # ) {
+    /// let mut view = transaction.view();
+    /// transaction.commit().await.unwrap();
+    /// runledger_postgres::jobs::record_job_enqueue_intent_in_transaction(&mut view, intent)
+    ///     .await.unwrap();
+    /// # }
+    /// ```
+    pub fn view(&mut self) -> runledger_postgres::PgTransactionView<'_, 'connection> {
+        self.transaction.runledger_view()
+    }
+
     /// Borrow this exact transaction for one native SQLx operation.
     pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
         self.transaction.executor()
@@ -92,33 +113,62 @@ impl PgExecutor for RunledgerTransaction<'_> {
     }
 }
 
-impl runledger_postgres::PgTransactionExecutor for RunledgerTransaction<'_> {
-    fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
-        self.executor()
-    }
-}
-
 impl std::fmt::Debug for RunledgerTransaction<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RunledgerTransaction")
     }
 }
 
+/// Run native schema compatibility checks through an opaque Batter session.
+///
+/// The caller keeps this future inside `PgLease::with_connection` and its
+/// operation budget. No connection is exposed or acquired by this bridge;
+/// native Runledger owns the schema contract and Batter owns lease disposition.
+pub async fn verify_schema(
+    session: &mut PgSession<'_>,
+) -> Result<(), runledger_postgres::SchemaCompatibilityError> {
+    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover_with_session(
+        session.runledger_view(),
+    )
+    .await
+}
+
 /// Original native shutdown evidence. The process report retains this concrete
 /// type under `managed[*].outcome.settlement`; use `downcast_ref::<NativeReport>()`
 /// for explicit inspection. Default formatting uses native redacted diagnostics.
+/// The classification is owned and cannot be forged or relabeled by consumers:
+///
+/// ```compile_fail
+/// # fn forge(settlement: runledger_runtime::RuntimeSettlement) {
+/// let report = batter_runledger::NativeReport { settlement };
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct NativeReport {
-    /// First cause, every observed native loop/descendant outcome and unresolved work.
-    pub native: RuntimeShutdownReport,
+    settlement: RuntimeSettlement,
+}
+
+impl NativeReport {
+    /// Complete native evidence, retained inside its consuming classification.
+    pub fn native(&self) -> &RuntimeShutdownReport {
+        self.settlement.report()
+    }
+
+    /// Borrow the unforgeable native settlement without extracting its authority.
+    pub fn settlement(&self) -> &RuntimeSettlement {
+        &self.settlement
+    }
 }
 
 impl ManagedSettlement for NativeReport {
     fn is_success(&self) -> bool {
-        self.native.is_success()
+        matches!(self.settlement, RuntimeSettlement::Clean(_))
     }
     fn allows_dependency_cleanup(&self) -> bool {
-        self.native.is_cooperatively_stopped()
+        matches!(
+            self.settlement,
+            RuntimeSettlement::Clean(_) | RuntimeSettlement::StoppedWithFailures(_)
+        )
     }
 }
 
@@ -213,7 +263,9 @@ fn register_impl(
             async move { stopping.requested().await },
             move |started| stop.request_shutdown_since(started),
             ReportFuture {
-                inner: Box::pin(native.run_until_shutdown_report(pending(), budget)),
+                inner: Box::pin(
+                    native.run_until_shutdown_report(RuntimeShutdownSignal::pending(), budget),
+                ),
             },
         ))
     })
@@ -227,9 +279,8 @@ struct ReportFuture<F> {
 impl<F: Future<Output = RuntimeShutdownReport>> Future for ReportFuture<F> {
     type Output = NativeReport;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.inner
-            .as_mut()
-            .poll(cx)
-            .map(|native| NativeReport { native })
+        self.inner.as_mut().poll(cx).map(|native| NativeReport {
+            settlement: native.classify(),
+        })
     }
 }

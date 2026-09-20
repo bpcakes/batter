@@ -1,6 +1,6 @@
 use batter_core::{
     cleanup::CleanupBudget,
-    lifecycle::{Readiness, ShutdownBudget, Supervisor},
+    lifecycle::{ManagedSettlement, Readiness, ShutdownBudget, Supervisor},
     operation::OperationContext,
 };
 use batter_runledger::{NativeReport, register, register_in};
@@ -81,8 +81,8 @@ async fn native_local_initialization_requires_no_database_or_durable_witness() {
         .unwrap()
         .downcast_ref::<NativeReport>()
         .unwrap();
-    assert_eq!(native.native.loops.len(), 2);
-    assert!(native.native.is_cooperatively_stopped());
+    assert_eq!(native.native().loops().len(), 2);
+    assert!(native.allows_dependency_cleanup());
 }
 
 #[tokio::test(start_paused = true)]
@@ -126,8 +126,8 @@ async fn protected_startup_owns_native_local_initialization_and_settlement() {
         .unwrap()
         .downcast_ref::<NativeReport>()
         .unwrap();
-    assert_eq!(native.native.loops.len(), 2);
-    assert!(native.native.is_cooperatively_stopped());
+    assert_eq!(native.native().loops().len(), 2);
+    assert!(native.allows_dependency_cleanup());
 }
 
 #[tokio::test(start_paused = true)]

@@ -514,3 +514,27 @@ disposable database must be explicitly closed before a corrected retry. Same-ser
 identity and normal native catalog visibility remain caller preconditions; database
 name presence is not a cluster identity check. Redacted report summaries separate
 failed consuming database cleanup from retained pool and observation failures.
+
+
+### Native migration execution
+
+`PgLease::migrate(&Migrator)` consumes the lease while retaining its physical
+connection internally. The application selects and configures its native SQLx
+bundle; SQLx owns migration locking, history and checksum validation. A failed or
+interrupted migration retires the connection, including a native validation error
+that leaves its advisory lock held. Success uses the ordinary idle-state proof
+before reuse. Await the method inside the enclosing operation budget.
+
+The redacted `SqlxFailure` retains the original `MigrateError` inside
+`sqlx::Error::Migrate`; trusted diagnostics may inspect it. There is no raw
+connection callback, second migrator implementation or automatic migration on
+pool construction. No local result proves server-session termination.
+
+### Optional Runledger resource views
+
+The `runledger` feature supplies `PgSession::runledger_view` and
+`PgTransaction::runledger_view`. `batter-runledger` enables it and constructs
+views without exposing the owner's native fields. Runledger's view constructors
+require actual native resources; its transaction execution trait is sealed.
+Schema checks retain one connection for the whole invocation. SQLx-only
+consumers do not resolve the Runledger dependency.

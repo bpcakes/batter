@@ -21,11 +21,11 @@ pub async fn lost_commit_acknowledgement(pool: PgPool) -> ProbeResult {
     };
     assert_eq!(failure.job_id, job);
     assert_eq!(failure.cancelled_before_failure, 0);
-    let runledger_postgres::Error::QueryError(error) = &failure.native else {
+    let runledger_postgres::Error::CommitUnconfirmed(error) = &failure.native else {
         panic!("retain original SQLx commit cause")
     };
     assert!(matches!(
-        &*error.source_arc().unwrap(),
+        error.sqlx_error(),
         sqlx::Error::Io(_) | sqlx::Error::Protocol(_)
     ));
     let observation = retirement::readback(
@@ -85,8 +85,8 @@ pub async fn commit_error_and_readback(pool: PgPool) -> ProbeResult {
         let RetirementError::Cancellation(failure) = failure(&primary) else { panic!("retain cancellation cause") };
         assert_eq!(failure.job_id, job);
         assert_eq!(failure.cancelled_before_failure, 0);
-        let runledger_postgres::Error::QueryError(error) = &failure.native else { panic!("retain SQLx commit cause") };
-        assert_eq!(error.sqlstate(), Some("23514"));
+        let runledger_postgres::Error::CommitUnconfirmed(error) = &failure.native else { panic!("retain SQLx commit cause") };
+        assert_eq!(error.sqlstate().as_deref(), Some("23514"));
         assert!(!format!("{primary:?}").contains("private cancellation commit"));
         let mut blocked = checking.begin().await?;
         sqlx::query("LOCK job_queue IN ACCESS EXCLUSIVE MODE").execute(&mut *blocked).await?;
@@ -109,8 +109,8 @@ pub async fn commit_error_and_readback(pool: PgPool) -> ProbeResult {
         assert!(matches!(&cancelled.work, Err(CommandCause::Interrupted(_))));
         assert!(cancelled.cleanup.as_ref().is_ok_and(|cleanup| cleanup.is_success()));
         let RetirementError::Cancellation(failure) = super::failure(&retained) else { panic!("primary survives readback cancellation") };
-        let runledger_postgres::Error::QueryError(error) = &failure.native else { panic!("original remains concrete") };
-        assert_eq!(error.source_arc().unwrap().as_database_error().unwrap().message(), "private cancellation commit");
+        let runledger_postgres::Error::CommitUnconfirmed(error) = &failure.native else { panic!("original remains concrete") };
+        assert_eq!(error.sqlx_error().as_database_error().unwrap().message(), "private cancellation commit");
         let observation = retirement::readback(options, identity, job, OperationContext::new(SECOND * 5)?,
             CleanupBudget::new(SECOND, SECOND, SECOND)?).start();
         let actual = batter::command::check_command(observation.wait().await)?;

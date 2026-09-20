@@ -198,7 +198,8 @@ database, `BATTER_SQLX_AUTH_ACCEPT_URL` identifying a known-good password-
 authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
-configuration and case-inventory mismatches, then executes the exact eleven-case
+configuration and case-inventory mismatches, then executes the two-case native
+migration target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
@@ -1848,3 +1849,14 @@ explicit snapshot capture, deletes a required row from an unrelated table and
 attaches it atomically. Both combined and migration-only verification must retain
 the missing migration. A fresh check rejects both inherited parents and children
 with Incomplete, preserves serving identity and reuses the acknowledged session.
+
+
+### Opaque Runledger database bridge
+
+With `DATABASE_URL` pointing to a dedicated disposable PostgreSQL 18 database,
+run `SQLX_OFFLINE=true cargo test -p batter-runledger --locked --test database_live -- --ignored`.
+This executes native schema verification and atomic application-write/intent
+commit and rollback through Batter's opaque session and transaction. SQLx offline
+compilation uses the committed native query metadata; a fresh fixture is not a
+compile-time schema source. The live SQLx runner also requires migration history,
+checksum-failure retirement, and cancellation before a server lock is released.

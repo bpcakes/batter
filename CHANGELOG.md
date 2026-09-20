@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- The opaque Runledger bridge now constructs sealed native-resource views inside
+  the SQLx owner, retaining transaction and session identity for each operation.
+
+- Add consuming `PgLease::migrate` to run application-selected native SQLx
+  migrations without exposing replaceable connection identity. Preserve native
+  migration errors behind redacted `SqlxFailure` and retire on interruption.
+- Adopt Runledger PR #19 at `c541dad69fcb6c03b39541084538681b2d710a32`:
+  opaque transactions now compose durable intents; `verify_schema` bridges its
+  session capability. Native shutdown uses its owned signal and consuming,
+  unforgeable settlement; reference retirement retains `CommitUnconfirmed`.
+  Bound the reference query future's private layout without changing ownership.
+
 - Make PostgreSQL lease disposition unambiguous: native work either uses the
   result-driven `with_connection` path or the consuming
   `with_retiring_connection` path. Both expose only an opaque `PgSession` and

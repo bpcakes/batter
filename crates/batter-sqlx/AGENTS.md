@@ -7,7 +7,7 @@ transactions remain application-owned. Follow the root Unix-only policy.
 
 ## Key entrypoints
 
-- `src/lib.rs`: default-retiring lease, bounded probe, pool cleanup registration.
+- `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
 - `src/session.rs`: opaque session/transaction execution capabilities and consuming completion.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and
@@ -37,6 +37,9 @@ native executor can create but does not reset arbitrary session state. Failure o
 cancellation before that proof retires the connection. Local capacity release and
 Pool::close do not acknowledge server-session termination, rollback or remote
 cancellation; detached sessions can exceed max_connections.
+The optional `runledger` feature constructs native-resource views inside this
+owner; default SQLx selection remains independent of Runledger. Never add a
+callback that exposes a replaceable native resource to implement the bridge.
 Public lease closures never receive a native connection or transaction and the
 opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply
 to the same physical connection that was acquired.

@@ -104,6 +104,9 @@ fn native_failure(error: &runledger_postgres::Error) -> Value {
         }
         runledger_postgres::Error::RollbackFailure(pair) => json!({"kind": "rollback_failure",
             "operation": native_failure(&pair.operation), "rollback_failed": true}),
+        runledger_postgres::Error::CommitUnconfirmed(_) => {
+            json!({"kind": "commit_unconfirmed", "code": "db.transaction_commit_unconfirmed"})
+        }
         runledger_postgres::Error::ConfigError(_) => json!({"kind": "configuration"}),
         runledger_postgres::Error::ConnectionError(_) => json!({"kind": "connection"}),
         runledger_postgres::Error::MigrationError(_) => json!({"kind": "migration"}),
