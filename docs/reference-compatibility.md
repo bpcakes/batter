@@ -37,6 +37,17 @@ capabilities plus the intervening native settlement and unconfirmed-commit
 hard cuts. All three native packages use this exact pin; no path override is
 required. The archived `batter-gi4` consumer remains historical evidence at its
 recorded pin, not validation of the new graph.
+At this PR graph, Linux verification on Rust 1.98.1 and minimum Rust 1.94.0
+passes the full workspace,
+feature-isolation checks, doctests, strict Clippy and rustdoc. PostgreSQL 18
+validation passes all 63 SQLx live cases, all 66 reference-service cases and
+both required library boundary probes. The added opaque bridge test separately
+proves native schema verification and atomic application-write/intent commit
+and rollback. All five HTTP process smokes pass (SIGTERM, SIGINT, deadline
+and WARN-filter paths). Native Codex review found no actionable regressions. These results
+cover the new graph; earlier platform and toolchain results below remain
+historical unless explicitly rerun.
+
 Earlier paired-checkout validation retains its historical scope. The optional `batter-runledger` adapter
 selects the native runtime. The foundation remains independent of it. SQLx and its
 optional test-support harness retain one native type graph.
