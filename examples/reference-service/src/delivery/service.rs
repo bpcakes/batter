@@ -4,11 +4,9 @@ mod progress;
 use batter::operation::{OperationContext, OperationError};
 use batter::{
     runledger::RunledgerTransaction,
-    sqlx::{PgLease, PgSession, SqlxFailure},
+    sqlx::{PgLease, PgScopeError, PgScopedSql, PgSession, PgTransactionError, SqlxFailure},
 };
-use runledger_postgres::jobs::{
-    JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome, enqueue_job_with_outcome_in_transaction,
-};
+use runledger_postgres::jobs::{JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome};
 use sqlx::PgPool;
 
 use progress::{SettledSubmission, SubmissionProgress};
@@ -165,26 +163,22 @@ enum QueryAttemptError {
 
 #[derive(Debug)]
 enum SubmitAttemptError {
-    Acquire(OperationError<SqlxFailure>),
-    Begin(sqlx::Error),
-    Commit(sqlx::Error),
+    Begin(PgTransactionError),
+    Commit(PgTransactionError),
+    Scope(PgScopeError<CommandFailure>),
+    Enqueue(PgScopeError<runledger_postgres::Error>),
     Rollback {
         operation: Box<CommandFailure>,
-        rollback: sqlx::Error,
+        rollback: PgTransactionError,
     },
 }
-
 impl SubmitAttemptError {
     fn into_submit_error(self) -> SubmitError {
         match self {
-            Self::Acquire(OperationError::Interrupted(interruption)) => {
-                SubmitError::Interrupted(interruption)
-            }
-            Self::Acquire(OperationError::Failed(error)) => {
-                SubmitError::Storage(StorageError::Sqlx(error.into_native()))
-            }
-            Self::Begin(error) => SubmitError::Storage(StorageError::Sqlx(error)),
+            Self::Begin(error) => SubmitError::Storage(StorageError::Transaction(error)),
             Self::Commit(error) => SubmitError::Uncertain(UncertainSubmission::Commit(error)),
+            Self::Scope(error) => SubmitError::Uncertain(UncertainSubmission::Scope(error)),
+            Self::Enqueue(error) => SubmitError::Uncertain(UncertainSubmission::Enqueue(error)),
             Self::Rollback {
                 operation,
                 rollback,
@@ -198,40 +192,97 @@ impl SubmitAttemptError {
 
 async fn attempt_submit(
     pool: &PgPool,
-    context: &OperationContext,
+    _context: &OperationContext,
     progress: &SubmissionProgress,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
 ) -> Result<SettledSubmission, SubmitAttemptError> {
-    let lease = PgLease::acquire(pool, context)
+    let tx = RunledgerTransaction::begin(pool)
         .await
-        .map_err(SubmitAttemptError::Acquire)?;
-    // Retain the acknowledged application disposition before the lease performs
-    // its pool-return normalization. An uncertain transaction or interruption
-    // still retires the checkout.
-    lease
-        .with_connection(async |session| {
-            let mut transaction = RunledgerTransaction::begin(session)
+        .map_err(SubmitAttemptError::Begin)?;
+    let active = progress.transaction_began();
+    let (tx, prepared) = tx
+        .operation(async |sql| prepare_submission(sql, owner, record_id, request).await)
+        .await
+        .map_err(SubmitAttemptError::Scope)?;
+    let (tx, result) = match prepared {
+        Err(error) => (tx, Err(error)),
+        Ok(PreparedSubmission::Replayed(result)) => (tx, Ok(result)),
+        Ok(PreparedSubmission::New(new, generation)) => {
+            let enqueue = JobEnqueue {
+                job_type: JobType::new(DELIVERY_JOB_TYPE),
+                organization_id: Some(owner.as_uuid()),
+                payload: &new.enqueue_payload,
+                priority: Some(ENQUEUE_PRIORITY),
+                max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
+                timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
+                next_run_at: None,
+                idempotency_key: Some(&new.enqueue_idempotency_key),
+                stage: Some(JobStage::Queued),
+            };
+            let (tx, outcome) = tx
+                .enqueue_job(&enqueue)
                 .await
-                .map_err(SubmitAttemptError::Begin)?;
-            let active = progress.transaction_began();
-            let result = submit_in_transaction(&mut transaction, owner, record_id, request).await;
-            match result {
-                Ok(result) => match transaction.commit().await {
-                    Ok(()) => Ok(active.committed(result)),
-                    Err(error) => Err(SubmitAttemptError::Commit(error)),
-                },
-                Err(operation) => match transaction.rollback().await {
-                    Ok(()) => Ok(active.rolled_back(operation)),
-                    Err(rollback) => Err(SubmitAttemptError::Rollback {
-                        operation: Box::new(operation),
-                        rollback,
-                    }),
-                },
-            }
-        })
-        .await
+                .map_err(SubmitAttemptError::Enqueue)?;
+            tx.operation(async |sql| {
+                if outcome.disposition != JobEnqueueDisposition::Inserted {
+                    return Err(StorageError::Invariant(
+                        "new command resolved to an existing upstream job",
+                    )
+                    .into());
+                }
+                insert_delivery(
+                    sql,
+                    owner,
+                    request,
+                    new.delivery_id,
+                    &outcome,
+                    &new.provider_key,
+                    &new.provider_payload,
+                )
+                .await?;
+                Ok(SubmitResult {
+                    disposition: SubmitDisposition::Accepted,
+                    delivery: Delivery {
+                        delivery_id: new.delivery_id,
+                        record_id,
+                        generation,
+                        payload: request.payload.clone(),
+                        state: DeliveryState::from_job_status(outcome.status),
+                        provider: ProviderOutcome {
+                            state: ProviderEffectState::AwaitingAttempt,
+                            provider_effect_id: None,
+                            acceptance_possible: false,
+                        },
+                    },
+                })
+            })
+            .await
+            .map_err(SubmitAttemptError::Scope)?
+        }
+    };
+    match result {
+        Ok(result) => {
+            let _confirmed = tx
+                .commit()
+                .await
+                .map_err(|error| SubmitAttemptError::Commit(error.into_cause()))?;
+            Ok(active.committed(result))
+        }
+        Err(operation) => match tx.rollback().await {
+            Ok(_confirmed) => Ok(active.rolled_back(operation)),
+            Err(rollback) => Err(SubmitAttemptError::Rollback {
+                operation: Box::new(operation),
+                rollback,
+            }),
+        },
+    }
+}
+
+enum PreparedSubmission {
+    Replayed(SubmitResult),
+    New(Box<NewDelivery>, i64),
 }
 
 struct NewDelivery {
@@ -270,17 +321,12 @@ fn prepare_new_delivery(
     })
 }
 
-async fn submit_in_transaction(
-    transaction: &mut RunledgerTransaction<'_>,
+async fn prepare_submission(
+    transaction: &mut PgScopedSql<'_>,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
-) -> Result<SubmitResult, CommandFailure> {
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        .execute(transaction.executor())
-        .await
-        .map_err(StorageError::from)?;
-
+) -> Result<PreparedSubmission, CommandFailure> {
     let new = prepare_new_delivery(owner, record_id, request)?;
     let inserted = insert_command_identity(
         transaction,
@@ -305,10 +351,10 @@ async fn submit_in_transaction(
         {
             return Err(SubmitRejection::IdempotencyConflict.into());
         }
-        return Ok(SubmitResult {
+        return Ok(PreparedSubmission::Replayed(SubmitResult {
             disposition: SubmitDisposition::Replayed,
             delivery: retained.delivery()?,
-        });
+        }));
     }
 
     let generation: Option<i64> = sqlx::query_scalar(
@@ -332,54 +378,11 @@ async fn submit_in_transaction(
         .into());
     }
 
-    let enqueue = JobEnqueue {
-        job_type: JobType::new(DELIVERY_JOB_TYPE),
-        organization_id: Some(owner.as_uuid()),
-        payload: &new.enqueue_payload,
-        priority: Some(ENQUEUE_PRIORITY),
-        max_attempts: Some(ENQUEUE_MAX_ATTEMPTS),
-        timeout_seconds: Some(ENQUEUE_TIMEOUT_SECONDS),
-        next_run_at: None,
-        idempotency_key: Some(&new.enqueue_idempotency_key),
-        stage: Some(JobStage::Queued),
-    };
-    let outcome = enqueue_job_with_outcome_in_transaction(&mut transaction.view(), &enqueue)
-        .await
-        .map_err(StorageError::from)?;
-    if outcome.disposition != JobEnqueueDisposition::Inserted {
-        return Err(
-            StorageError::Invariant("new command resolved to an existing upstream job").into(),
-        );
-    }
-    insert_delivery(
-        transaction,
-        owner,
-        request,
-        new.delivery_id,
-        &outcome,
-        &new.provider_key,
-        &new.provider_payload,
-    )
-    .await?;
-    Ok(SubmitResult {
-        disposition: SubmitDisposition::Accepted,
-        delivery: Delivery {
-            delivery_id: new.delivery_id,
-            record_id,
-            generation,
-            payload: request.payload.clone(),
-            state: DeliveryState::from_job_status(outcome.status),
-            provider: ProviderOutcome {
-                state: ProviderEffectState::AwaitingAttempt,
-                provider_effect_id: None,
-                acceptance_possible: false,
-            },
-        },
-    })
+    Ok(PreparedSubmission::New(Box::new(new), generation))
 }
 
 async fn insert_command_identity(
-    transaction: &mut RunledgerTransaction<'_>,
+    transaction: &mut PgScopedSql<'_>,
     owner: OwnerId,
     record_id: Uuid,
     request: &ValidatedSubmit,
@@ -416,7 +419,7 @@ async fn insert_command_identity(
 }
 
 async fn insert_delivery(
-    transaction: &mut RunledgerTransaction<'_>,
+    transaction: &mut PgScopedSql<'_>,
     owner: OwnerId,
     request: &ValidatedSubmit,
     delivery_id: Uuid,

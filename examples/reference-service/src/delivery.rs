@@ -338,6 +338,9 @@ pub enum StorageError {
     /// Native SQLx failure.
     #[error("PostgreSQL operation failed")]
     Sqlx(#[source] sqlx::Error),
+    /// Owned transaction acquisition or initialization failed.
+    #[error("PostgreSQL transaction failed")]
+    Transaction(#[source] batter::sqlx::PgTransactionError),
     /// Native Runledger failure.
     #[error("durable submission failed")]
     Runledger(#[source] runledger_postgres::Error),
@@ -360,6 +363,12 @@ impl From<runledger_postgres::Error> for StorageError {
 
 impl StorageError {
     pub(crate) fn is_pool_unavailable(&self) -> bool {
+        if let Self::Transaction(batter::sqlx::PgTransactionError::Query(error)) = self {
+            return matches!(
+                error.native(),
+                sqlx::Error::PoolClosed | sqlx::Error::PoolTimedOut
+            );
+        }
         matches!(
             self,
             Self::Sqlx(sqlx::Error::PoolClosed | sqlx::Error::PoolTimedOut)
@@ -372,14 +381,20 @@ impl StorageError {
 pub enum UncertainSubmission {
     /// PostgreSQL did not acknowledge COMMIT.
     #[error("commit acknowledgement was not received")]
-    Commit(#[source] sqlx::Error),
+    Commit(#[source] batter::sqlx::PgTransactionError),
+    /// A consuming application scope failed without outer rollback acknowledgement.
+    #[error("submission scope disposition is uncertain")]
+    Scope(#[source] batter::sqlx::PgScopeError<CommandFailure>),
+    /// A consuming Runledger operation failed without outer rollback acknowledgement.
+    #[error("enqueue scope disposition is uncertain")]
+    Enqueue(#[source] batter::sqlx::PgScopeError<runledger_postgres::Error>),
     /// PostgreSQL did not acknowledge rollback of a failed command.
     #[error("rollback acknowledgement was not received")]
     Rollback {
         /// Original command failure retained alongside rollback failure.
         operation: Box<CommandFailure>,
         /// Native rollback failure.
-        rollback: sqlx::Error,
+        rollback: batter::sqlx::PgTransactionError,
     },
     /// The operation boundary stopped polling while the transaction was active,
     /// before commit or rollback acknowledgement.
@@ -413,7 +428,7 @@ pub enum SubmitError {
     /// Commit/rollback disposition is not acknowledged.
     #[error("delivery submission outcome is uncertain")]
     Uncertain(#[source] UncertainSubmission),
-    /// A storage failure whose transaction rollback was acknowledged or never began.
+    /// A storage failure before submission SQL ran, or after acknowledged rollback.
     #[error(transparent)]
     Storage(#[from] StorageError),
 }

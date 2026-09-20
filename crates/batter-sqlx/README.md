@@ -3,6 +3,54 @@
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Rust 1.94
 minimum, Unix-only, unpublished. The foundation does not depend on this package.
 
+## Owned transactions and snapshots
+
+Use `PgAtomicTransaction::begin(&pool)` for application and library writes that
+must share one READ COMMITTED transaction. The owner has no executor, native
+resource accessor, `Deref`, or public fields. `application(self, async |sql| ...)`
+consumes it and returns `(owner, value)` only after successful revalidation.
+Execute ordinary SQLx queries through `sql.executor()` inside that closure.
+
+Libraries compose with `operation(self, async |sql| ...)`. Its success returns
+`(owner, Result<T, E>)`: an inner error is reusable only after acknowledged
+savepoint rollback and continuity validation. An outer error is terminal and
+retains the application and recovery causes when both failed. Cancellation and
+panic destroy the owner, including cancellation during validation or cleanup.
+
+Every scope starts a private randomly named savepoint; releasing its parent
+removes every nested application savepoint. A savepoint made in one application
+scope cannot later undo a completed library operation. XID continuity alone
+would not enforce this. Explicit COMMIT, ROLLBACK and chained transaction control
+are detected before a reusable owner returns. Already committed effects cannot
+be reversed, and this is not a security boundary against hostile SQL deliberately
+discovering and manipulating internal savepoints. Sequences and other
+nontransactional effects are not undone by savepoint rollback.
+
+`commit(self)` returns only an opaque `PgCommitConfirmed` or `CommitUnconfirmed`;
+`rollback(self)` returns `PgRollbackConfirmed` or a terminal transaction error.
+Commit validates the original XID and transaction settings immediately before
+COMMIT, so swallowed SQL errors cannot turn an aborted transaction into a false
+confirmation. There is no additional asynchronous cleanup after acknowledged
+completion. Dropping a commit future returns no result and does not prove the
+database rolled back; reconcile that uncertain outcome externally.
+
+`PgReadOnlySnapshot::inspect(&pool, async |sql| ...)` owns normalization,
+REPEATABLE READ READ ONLY, inspection, boundary validation and acknowledged
+rollback. It returns a result only after the snapshot has finished. Qualify
+authoritative relations: its transaction-local search path is `pg_catalog,
+pg_temp`. Domain compatibility checks and their evidence types remain in the
+consuming library. Catalog inquiry functions can consult caches outside an MVCC
+snapshot; coherent catalog checks need appropriate direct catalog queries and
+DDL locking where object identity matters.
+
+Both APIs target PostgreSQL 18. Bound the complete consuming workflow in a
+Batter `OperationContext` when deadlines are required. Rust cannot promise
+resource destruction after process death or deliberately forgotten values.
+The executable examples live in the public rustdocs; the external-consumer
+contract is `tests/atomic_live.rs` in the live runner.
+
+## Session operations
+
 `PgLease::acquire(&pool, &context)` bounds acquisition using the existing operation
 budget. Move the lease into the bounded operation future and run its work through
 `lease.with_connection(async |session| ...)`: after application work returns
@@ -60,8 +108,8 @@ contents. SQLx logging and Rust panic-hook output remain application-owned.
 Transaction commit uncertainty stays separate from operation interruption;
 neither pool retirement nor an I/O error proves a write did not commit.
 
-No database creation, migration, repository, transaction manager, or replay is
-supplied. Select TLS through native SQLx features in the consumer.
+No database provisioning, repository abstraction or automatic replay is supplied.
+Select TLS through native SQLx features in the consumer.
 
 ## Read-only schema and authority verification
 
@@ -530,11 +578,8 @@ The redacted `SqlxFailure` retains the original `MigrateError` inside
 connection callback, second migrator implementation or automatic migration on
 pool construction. No local result proves server-session termination.
 
-### Optional Runledger resource views
+### Foundation dependency direction
 
-The `runledger` feature supplies `PgSession::runledger_view` and
-`PgTransaction::runledger_view`. `batter-runledger` enables it and constructs
-views without exposing the owner's native fields. Runledger's view constructors
-require actual native resources; its transaction execution trait is sealed.
-Schema checks retain one connection for the whole invocation. SQLx-only
-consumers do not resolve the Runledger dependency.
+No SQLx feature depends on Runledger. `PgAtomicTransaction`, `PgScopedSql` and
+`PgReadOnlySnapshot` are generic building blocks for persistence libraries.
+Domain adapters depend on this package; it never imports their domain types.

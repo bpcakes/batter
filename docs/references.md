@@ -6,6 +6,24 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Owned PostgreSQL scopes: reviewed 2026-09-20
+
+- PostgreSQL 18 [transaction identity functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
+  distinguish assigning a top-level XID from observing an already assigned XID.
+  The owner captures identity at birth and validates continuity after arbitrary SQL.
+- [Transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html)
+  explains statement snapshots under READ COMMITTED and stable transaction
+  snapshots under REPEATABLE READ. Domain schema checks lock authoritative
+  objects before their first snapshot-bearing query and qualify every relation.
+- SQLx 0.9 [PoolConnection](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolConnection.html)
+  provides detach semantics used by the existing retiring lease guard. Retirement
+  releases local pool ownership; it does not prove a blocked backend has stopped.
+
+Runledger now consumes the foundation through coordinated sibling paths; the
+historical Git-pin/view evidence below describes earlier implementations only.
+The new strong path does not retain those views as a compatibility bridge.
+PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
+
 ## Facade feature and resolver semantics: reviewed 2026-09-18
 
 - Cargo's [feature reference](https://doc.rust-lang.org/cargo/reference/features.html)

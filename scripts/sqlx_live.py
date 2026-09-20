@@ -10,6 +10,19 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    "atomic_live": {
+        "transaction_control_is_terminal",
+        "application_and_library_operations_commit_together",
+        "savepoint_errors_recover_without_partial_writes",
+        "swallowed_sql_error_and_application_error_are_terminal",
+        "deferred_and_transport_commit_failures_are_unconfirmed",
+        "unpolled_consuming_scopes_retire_the_owner",
+        "cancelled_application_operation_and_snapshot_retire",
+        "panicking_scope_retires_the_owner",
+        "snapshot_is_coherent_read_only_and_normalized",
+        "snapshot_transaction_control_never_returns_evidence",
+        "commit_in_flight_cancellation_and_disconnect_are_uncertain",
+    },
     "migrations_live": {
         "migration_preserves_native_history_and_retires_checksum_failure",
         "interrupted_migration_retires_without_waiting_for_server_lock",

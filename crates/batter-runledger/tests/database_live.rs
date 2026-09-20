@@ -1,9 +1,8 @@
 //! Opt-in external PostgreSQL coverage for opaque native database composition.
 use batter_core::operation::OperationContext;
 use batter_runledger::{RunledgerTransaction, verify_schema};
-use batter_sqlx::PgLease;
 use runledger_core::jobs::JobType;
-use runledger_postgres::jobs::{JobEnqueueIntent, record_job_enqueue_intent_in_transaction};
+use runledger_postgres::jobs::JobEnqueueIntent;
 use sqlx::Connection;
 use std::time::Duration;
 use tokio::time::{Instant, timeout};
@@ -30,10 +29,7 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
         let table = body_table;
         let context = OperationContext::new(Duration::from_secs(30))?;
         runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
-        PgLease::acquire(&pool, &context)
-            .await?
-            .with_connection(async |session| verify_schema(session).await)
-            .await?;
+        let _snapshot = verify_schema(&pool).await?;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE {table} (id integer PRIMARY KEY)"
         )))
@@ -44,27 +40,25 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
             let key = format!("{table}-{id}");
             let intent =
                 JobEnqueueIntent::new(JobType::new("batter.opaque.intent"), &payload, &key);
-            let intent_id = PgLease::acquire(&pool, &context)
-                .await?
-                .with_connection(async |session| {
-                    let mut transaction = RunledgerTransaction::begin(session).await?;
+            let transaction = RunledgerTransaction::begin(&pool).await?;
+            let (transaction, ()) = transaction
+                .application(async |sql| {
                     sqlx::query(sqlx::AssertSqlSafe(format!(
                         "INSERT INTO {table} VALUES ($1)"
                     )))
                     .bind(id)
-                    .execute(transaction.executor())
+                    .execute(sql.executor())
                     .await?;
-                    let recorded =
-                        record_job_enqueue_intent_in_transaction(&mut transaction.view(), &intent)
-                            .await?;
-                    if commit {
-                        transaction.commit().await?;
-                    } else {
-                        transaction.rollback().await?;
-                    }
-                    Ok::<_, Box<dyn std::error::Error + Send + Sync>>(recorded.intent_id)
+                    Ok::<_, sqlx::Error>(())
                 })
                 .await?;
+            let (transaction, recorded) = transaction.record_job_enqueue_intent(&intent).await?;
+            let intent_id = recorded.intent_id;
+            if commit {
+                let _confirmed = transaction.commit().await?;
+            } else {
+                let _confirmed = transaction.rollback().await?;
+            }
             let retained: bool =
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM job_enqueue_intents WHERE id=$1)")
                     .bind(intent_id)
@@ -132,7 +126,7 @@ async fn cleanup_fixture(control: &mut sqlx::PgConnection, table: &str) -> Resul
 
 // Block the actual verifier on history access, then prove that cancellation
 // retires that same backend before its server-side lock wait can complete.
-async fn schema_cancellation_retires(pool: &sqlx::PgPool, context: &OperationContext) -> Result {
+async fn schema_cancellation_retires(pool: &sqlx::PgPool, _context: &OperationContext) -> Result {
     let url = std::env::var("DATABASE_URL")?;
     let mut blocker = sqlx::PgConnection::connect(&url).await?;
     let mut observer = sqlx::PgConnection::connect(&url).await?;
@@ -144,13 +138,7 @@ async fn schema_cancellation_retires(pool: &sqlx::PgPool, context: &OperationCon
         .fetch_one(pool)
         .await?;
     let body: Result = async {
-        let lease = PgLease::acquire(pool, context).await?;
-        let mut check = Box::pin(lease.with_connection(async |session| {
-            let actual: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-                .fetch_one(session.executor()).await?;
-            assert_eq!(pid, actual, "observed a different session than the verifier");
-            verify_schema(session).await
-        }));
+        let mut check = Box::pin(verify_schema(pool));
         tokio::select! {
             result = &mut check => { result?; return Err("schema verification did not block".into()); }
             result = observe_backend(&mut observer, pid, true) => result?,

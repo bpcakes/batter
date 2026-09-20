@@ -32,14 +32,21 @@
 //! ```
 #![forbid(unsafe_code)]
 
+mod atomic;
 mod failure;
 mod session;
+mod snapshot;
 
 pub mod verification;
 
+pub use atomic::{
+    CommitUnconfirmed, PgAtomicTransaction, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError,
+    PgScopedSql, PgTransactionError,
+};
 pub use failure::{FailureClass, SqlxFailure};
 use session::PoolReturnReady;
 pub use session::{PgExecutor, PgSession, PgTransaction};
+pub use snapshot::{PgReadOnlySnapshot, PgSnapshotError};
 
 use batter_core::{
     RegistrationError,

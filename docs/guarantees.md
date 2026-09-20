@@ -850,6 +850,18 @@ server sessions.
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
 canonical service roots and finite retirement command use `pool_in`.
 
+`PgAtomicTransaction` is the owned transaction composition path. It captures the
+top-level XID at birth and consumes itself for application SQL, library operations,
+commit and rollback. Every scope confines application savepoints beneath its own
+private parent. Only acknowledged cleanup and continuity validation return a
+reusable owner. COMMIT is preceded by validation with no intervening application
+code; acknowledgement is followed by no additional await. Commit cancellation
+can still lose the acknowledgement and is not proof of rollback. The generic
+snapshot runner similarly owns its read-only transaction through rollback. These
+APIs prevent accidental reuse of invalid local state, not arbitrary SQL effects,
+hostile manipulation of internal savepoints, database administration or process
+death. Domain libraries own schema qualification and the meaning of their results.
+
 `PgLease` detaches and drops its client unless `with_connection` receives an
 application `Ok`, observes no unacknowledged typed transaction and successfully
 executes `ROLLBACK` on that exact connection. Only then does the private

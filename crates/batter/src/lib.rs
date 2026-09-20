@@ -70,8 +70,7 @@ pub mod sqlx {
 /// Runledger initialization and native settlement translation.
 ///
 /// Enabled by the `runledger` feature, which also exposes [`crate::sqlx`] for
-/// the opaque transaction capability required by
-/// [`crate::runledger::RunledgerTransaction`]. Durable policy and native
+/// owned PostgreSQL scopes and [`crate::runledger::RunledgerTransaction`]. Durable policy and native
 /// supervision remain owned by Runledger.
 ///
 /// ```

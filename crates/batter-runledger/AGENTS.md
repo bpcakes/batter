@@ -3,8 +3,7 @@
 ## Purpose
 
 Translate Runledger initialization and complete native settlement into Batter
-managed registration, and bridge Batter's opaque SQLx transaction to Runledger's
-sealed native-resource enqueue capability. Follow the root Unix-only policy. Native task
+managed registration, and reexport Runledger's consuming transaction owner. Follow the root Unix-only policy. Native task
 ownership, durable job outcomes, registry/catalog policy and database provisioning stay native.
 
 ## Key entrypoints
@@ -28,17 +27,16 @@ original timestamp. Preserve the original native report and conservative depende
 cleanup classification. Do not install tracing subscribers or print error contents.
 NativeReport owns RuntimeSettlement and derives cleanup authority from its
 unforgeable variants; never restore caller-writable report fields or reclassify
-borrowed evidence. Schema verification consumes a concrete retained session view.
-`RunledgerTransaction::view()` is constructed inside the SQLx owner from the
-actual transaction; no downstream implementation promise establishes identity.
-The transaction bridge exposes only SQL execution and consuming commit/rollback;
-never add native `DerefMut`, `AsMut`, connection replacement or transaction replacement.
+borrowed evidence. Schema verification owns its read-only transaction and returns
+snapshot evidence; never restore borrowed session/transaction views.
+`RunledgerTransaction` uses consuming application and domain operations backed by
+Batter's SQLx foundation. No raw owner extraction or legacy bridge is supported.
 
 ## Common commands
 
 `cargo test -p batter-runledger --locked` and
 `cargo clippy -p batter-runledger --all-targets --locked -- -D warnings`.
-The native dependency uses an immutable Git revision recorded in the workspace
-and Cargo.lock. Update the root graph and current compatibility manifest when changing
-that revision. Historical evidence archives remain frozen and must be labeled
-with their original source scope. Final acceptance includes root two-toolchain/live gates.
+The coordinated native dependency uses sibling paths recorded in the workspace
+and Cargo.lock. Validate both feature branches together; external source state is
+an explicit prerequisite for receipt reuse. Publication is not authorized by this
+local cutover. Final acceptance includes root two-toolchain/live gates.

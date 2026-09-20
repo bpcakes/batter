@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 batter-core.workspace = true
-batter-sqlx = { workspace = true, features = ["runledger"] }
+batter-sqlx.workspace = true
 runledger-postgres.workspace = true
 runledger-runtime.workspace = true
 sqlx = { workspace = true, features = ["postgres"] }

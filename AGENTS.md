@@ -80,6 +80,10 @@ agent implementation or modification tasks; label such evaluations proposed
 and unexecuted unless executable evidence exists. See
 [ADR-010](docs/adr/010-agent-only-consumption.md).
 
+During the coordinated owned-scope cutover, Runledger packages use sibling paths.
+Receipt reuse additionally requires unchanged sibling source and manifests;
+repository-local input hashes alone cannot prove that prerequisite.
+
 For every new or materially changed public API, perform the proactive invalid-
 state review in ADR-010. If a common misuse can reach execution, or still
 compiles where a type-state transition could prevent it, redesign the canonical
@@ -138,8 +142,7 @@ bounded probes and pool-close registration; `session.rs` owns opaque SQL executi
 and transaction completion without native replacement; server-session termination remains separate.
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
-process ownership, and bridges the opaque Batter transaction to Runledger's
-executor-only enqueue capability. Native descendant supervision remains in Runledger.
+process ownership, and reexports Runledger's owned transaction and schema snapshot APIs. Native descendant supervision remains in Runledger.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
 transactions and PostgreSQL initialization/maintenance remain upstream-owned.

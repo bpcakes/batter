@@ -481,9 +481,9 @@ transaction capability where application writes and Runledger enqueue must share
 the transaction. The
 [reference delivery command](../examples/reference-service/README.md#staged-worker-and-atomic-delivery-command)
 shows the implemented boundary: validate before acquisition; pass one operation
-budget through `PgLease` acquisition and opaque transaction work; use
-`RunledgerTransaction` to compose application SQL with Runledger's executor-only
-enqueue capability; return the lease only after acknowledged commit/rollback;
+budget through transaction acquisition and consuming scopes; use
+`RunledgerTransaction` to compose application SQL with Runledger enqueue;
+return the owned connection only after acknowledged commit/rollback;
 and reconcile an uncertain result by the original authenticated owner and
 idempotency key. An absent reconciliation row while a database session may still
 settle is not proof of rollback.

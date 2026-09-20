@@ -236,7 +236,14 @@ by the downstream Runlimit composition, but no quota identity or grant is
 inferred in this stage. Durable persistence remains with
 `batter-7g0`; the new Runlimit adapter does not change that reference-service path.
 
-## SQLx: keep transactions visible
+## SQLx: owned transactions and session operations
+
+For atomic application/library composition, use `PgAtomicTransaction::begin`,
+consuming `application` and `operation` scopes, then consuming `commit` or
+`rollback`. The operation boundary owns savepoint recovery and XID validation;
+downstream code receives only `PgScopedSql::executor()`. `PgReadOnlySnapshot`
+owns generic coherent read-only inspections. See the
+[transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
 
 `batter-sqlx` is independently selected. `PgLease::acquire` bounds acquisition
 under an existing OperationContext. Move the lease into the operation future and
@@ -270,8 +277,8 @@ then independently observe every retired backend disappear.
 `FailureClass` uses native variants and never authorizes replay. Interruption
 remains `OperationError::Interrupted`, separate from native pool timeout or commit
 errors. Trusted source-chain inspection and SQLx's own logging can expose native
-contents. This adapter adds no database creation/recheck, migration, transaction
-manager or retry policy. `register_pool_close` retains caller ownership on
+contents. This adapter adds no database provisioning or retry policy.
+`register_pool_close` retains caller ownership on
 registration failure; the caller must explicitly close that pool.
 
 For a pool created inside a Batter owner, reserve its cleanup name first and call
@@ -398,29 +405,14 @@ especially outcomes around commit. A caller deadline or lost connection does not
 prove rollback. Do not turn an ambiguous outcome into a generic "retryable"
 Batter error. Implement application idempotency/reconciliation separately.
 
-The reference service now demonstrates that contract for delivery of a versioned
-generic record. A unique `(owner_id, idempotency_key)` command row, delivery row,
-and Runledger enqueue share one READ COMMITTED transaction and one
-`PgLease`. `batter::runledger::RunledgerTransaction` wraps the lease's opaque
-transaction and constructs Runledger's native-resource `PgTransactionView`, so application
-SQL and enqueue share the transaction without exposing a replaceable native
-connection. The command retains its canonical record/generation/JSONB and immutable
-enqueue inputs. Exact replay reads that committed identity without enqueueing
-again; changed input conflicts. The stable delivery UUID namespaces Runledger's
-key, while the authenticated owner becomes its `organization_id`.
-
-The typed transaction must acknowledge commit or rollback before the lease can
-attempt its final idle-state proof and return the connection to the pool. Failed
-commit/rollback acknowledgement or interruption while the transaction is active
-leaves its disposition unknown; the reference boundary produces an uncertain
-response and the lease is retired. An abandoned unfinished transaction also
-forces retirement. Once commit or rollback is acknowledged, later interruption
-during idle-state normalization still retires the lease, but the reference
-boundary returns the retained known application outcome. It performs that
-resolution through `OperationContext::run_resolved` before operation telemetry
-is finalized, so acknowledged rollback is observed as the returned application
-failure and acknowledged commit remains success even if later normalization is
-interrupted.
+The reference service uses one owned READ COMMITTED `RunledgerTransaction` for
+the command row, application delivery and Runledger enqueue. Consuming application
+scopes and domain operations preserve the transaction's birth identity. Exact
+replay reads the committed command identity without enqueueing again; changed
+input conflicts. Commit/rollback return explicit acknowledgement. Interruption
+before acknowledgement retires the connection and leaves uncertainty; no
+asynchronous cleanup follows acknowledged completion. The operation boundary
+retains known completion evidence before telemetry is finalized.
 `GET /delivery-commands/{idempotency_key}` lets
 the same authenticated owner reconcile without a response-generated identifier;
 absence during settlement is not rollback evidence. The command performs no
@@ -954,18 +946,14 @@ namespace, but applications still own membership and selection for ordinary role
 targets.
 
 
-## Opaque native database composition
+## Owned native database composition
 
-Use `PgLease::migrate` for an application-selected SQLx migration bundle. It
-consumes the lease and retains native connection identity internally; migration
-policy stays with the caller and SQLx. Use `batter::runledger::verify_schema`
-inside `with_connection` for native Runledger compatibility checks. Durable
-handoffs use `record_job_enqueue_intent_in_transaction` with the existing
-`RunledgerTransaction::view()`; no raw transaction or connection escape is required.
-The optional `batter-sqlx/runledger` bridge constructs native-resource views
-inside the SQLx owner. Native transaction execution is sealed to actual SQLx
-transactions and those views; schema verification retains one `PgSessionView`
-for its entire invocation. Selecting SQLx alone does not enable Runledger.
+Use `PgLease::migrate` for application-selected SQLx migrations. For Runledger,
+use `verify_schema(&pool)` and `RunledgerTransaction::begin(&pool)`.
+Application SQL, durable intents and direct enqueue use consuming scopes; no
+native resource view or compatibility module remains. Dependency direction is
+`batter-runledger -> runledger-postgres -> batter-sqlx -> batter-core`.
+The facade optionally selects the integration; SQLx alone never selects Runledger.
 
 `NativeReport` now owns Runledger's consuming settlement classification. Borrow
 `native()` for diagnostics or `settlement()` for the typed outcome. The managed

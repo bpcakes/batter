@@ -1851,12 +1851,12 @@ the missing migration. A fresh check rejects both inherited parents and children
 with Incomplete, preserves serving identity and reuses the acknowledged session.
 
 
-### Opaque Runledger database bridge
+### Owned Runledger database integration
 
 With `DATABASE_URL` pointing to a dedicated disposable PostgreSQL 18 database,
 run `SQLX_OFFLINE=true cargo test -p batter-runledger --locked --test database_live -- --ignored`.
 This executes native schema verification and atomic application-write/intent
-commit and rollback through Batter's opaque session and transaction. SQLx offline
+commit and rollback through consuming transaction ownership. SQLx offline
 compilation uses the committed native query metadata; a fresh fixture is not a
 compile-time schema source. The live SQLx runner also requires migration history,
 checksum-failure retirement, and cancellation before a server lock is released.

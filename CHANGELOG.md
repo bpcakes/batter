@@ -8,15 +8,19 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- The opaque Runledger bridge now constructs sealed native-resource views inside
-  the SQLx owner, retaining transaction and session identity for each operation.
+- Breaking: replace the Runledger resource-view bridge with consuming owned
+  transactions. `batter-sqlx` provides XID continuity, savepoint recovery,
+  cancellation retirement and explicit completion evidence without a Runledger
+  dependency. Runledger builds domain operations on this foundation; the optional
+  Batter integration reexports that owner and snapshot-authoritative verification.
+  No view compatibility module remains. These unpublished feature branches use
+  coordinated sibling dependencies pending a separate publication decision.
 
 - Add consuming `PgLease::migrate` to run application-selected native SQLx
   migrations without exposing replaceable connection identity. Preserve native
   migration errors behind redacted `SqlxFailure` and retire on interruption.
-- Adopt Runledger PR #19 at `c541dad69fcb6c03b39541084538681b2d710a32`:
-  opaque transactions now compose durable intents; `verify_schema` bridges its
-  session capability. Native shutdown uses its owned signal and consuming,
+- Supersede the PR #19 borrowed-resource composition API. Native shutdown retains
+  its owned signal and consuming,
   unforgeable settlement; reference retirement retains `CommitUnconfirmed`.
   Bound the reference query future's private layout without changing ownership.
 

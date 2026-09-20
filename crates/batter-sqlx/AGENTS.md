@@ -2,13 +2,16 @@
 
 ## Purpose
 
-Optional SQLx 0.9 PostgreSQL connection disposition; native operations and
-transactions remain application-owned. Follow the root Unix-only policy.
+Optional SQLx 0.9 PostgreSQL connection disposition and owned transaction/snapshot
+scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-only policy.
 
 ## Key entrypoints
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
 - `src/session.rs`: opaque session/transaction execution capabilities and consuming completion.
+- `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
+  savepoint recovery and terminal completion evidence.
+- `src/snapshot.rs`: owned REPEATABLE READ READ ONLY inspection boundary.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and
   serving-authority inspection; validated policy construction and canonical
@@ -17,8 +20,8 @@ transactions remain application-owned. Follow the root Unix-only policy.
 
 ## Edit here for X
 
-Keep connection ownership mechanics here and migration, replay, SQL contents,
-transaction completion and provisioning policy in applications. Generic read-only
+Keep connection and transaction lifecycle mechanics here and migration selection,
+replay, domain SQL and provisioning policy in applications. Generic read-only
 verification owns its lease, snapshot and disposition. Non-empty protected plans can
 check exact SQLx 0.9 ledger shape/history, scoped definer `search_path`, and
 coarse reachable current-database ownership; migration selection, routine
@@ -37,9 +40,13 @@ native executor can create but does not reset arbitrary session state. Failure o
 cancellation before that proof retires the connection. Local capacity release and
 Pool::close do not acknowledge server-session termination, rollback or remote
 cancellation; detached sessions can exceed max_connections.
-The optional `runledger` feature constructs native-resource views inside this
-owner; default SQLx selection remains independent of Runledger. Never add a
-callback that exposes a replaceable native resource to implement the bridge.
+Every SQLx feature must remain independent of Runledger. Never add a callback
+that exposes a replaceable native resource to implement an adapter bridge.
+Atomic scopes consume their owner and release their parent savepoint (including
+all nested application savepoints) before returning usable state. Inner operation
+errors may return the owner only after rollback and continuity revalidation.
+Commit validates immediately before COMMIT; no await follows its acknowledgement.
+Never equate retirement, commit cancellation or an unconfirmed commit with rollback.
 Public lease closures never receive a native connection or transaction and the
 opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply
 to the same physical connection that was acquired.

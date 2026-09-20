@@ -459,6 +459,9 @@ fn uncertain_response(
         UncertainSubmission::Commit(_) => "commit_acknowledgement_lost",
         UncertainSubmission::Rollback { .. } => "rollback_acknowledgement_lost",
         UncertainSubmission::Interrupted(_) => "submission_interrupted",
+        UncertainSubmission::Scope(_) | UncertainSubmission::Enqueue(_) => {
+            "submission_scope_uncertain"
+        }
     };
     (
         StatusCode::SERVICE_UNAVAILABLE,
