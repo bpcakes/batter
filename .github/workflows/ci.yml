@@ -20,7 +20,7 @@ jobs:
       - name: Check out coordinated Runledger integration
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-          git -C ../runledger checkout --detach 4a973a37427ec5da123d82dd924520fc3b5e455d
+          git -C ../runledger checkout --detach 70e55a521f61edd85059d57ad1031be8e4be060b
       - name: Install Rust toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
       - name: Compile all workspace targets, including Unix signal examples
@@ -59,7 +59,7 @@ jobs:
       - name: Check out coordinated Runledger integration
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-          git -C ../runledger checkout --detach 4a973a37427ec5da123d82dd924520fc3b5e455d
+          git -C ../runledger checkout --detach 70e55a521f61edd85059d57ad1031be8e4be060b
       - name: Install toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
       - name: Verify (bootstrap only while the initial lockfile is absent)

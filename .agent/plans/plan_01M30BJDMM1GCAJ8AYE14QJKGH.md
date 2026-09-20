@@ -16,8 +16,12 @@ on Batter PR 2 at bb285062, plus the consuming Runledger integration in PR 20.
   and packaged smoke (nine each), and the producer/worker round trip.
 - Passed Rust 1.94 verify.sh; Rust 1.98 matrix, Clippy, fmt and Jig gates in
   run_01M30CQHJBKVWD1WRBKYV55EG6; strict rustdoc and all five HTTP smokes.
-- Final paired revision pins, test diagnostic lint repair, fresh final evidence
-  and PR updates remain to finish.
+- Paired source revisions: Batter a41ec84a9056728fe8af037a234ddd44182f9170
+  and Runledger 70e55a521f61edd85059d57ad1031be8e4be060b. CI pins both.
+- Runledger diagnostic-only lint repairs passed full lint, its atomic runner
+  regression and 13 positive/four compile-fail doctests. A fresh final Batter
+  api:test passed after the peer test-source change (283 seconds). PR updates
+  accompany final evidence and tracker completion.
 
 ## Surprises & Discoveries
 
@@ -59,4 +63,4 @@ The confirmed causes were library/adapter API gaps, not consumer misuse.
 The runner removes separately paired output/completion from the canonical path;
 phase consumption removes the inverse named lock order. Compile-fail and live
 adversarial scenarios are executed evidence, not a fresh-agent usability study.
-Final delivery and paired revision identities will be recorded in the owning Beads.
+Delivery and paired revision identities are recorded in the owning Beads.
