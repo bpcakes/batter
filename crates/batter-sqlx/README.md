@@ -7,6 +7,15 @@ minimum, Unix-only, unpublished. The foundation does not depend on this package.
 
 With an existing operation budget, prefer
 `run_atomic_in(&pool, &context, "operation.name", async |scope| ...)`.
+For declared database authority, construct `PgProfiledPool` and use
+`run_atomic_profiled_in(&database, &context, "operation.name", ...)` instead.
+Its pool and atomic work share the owner's immutable profile. All three native
+pool hooks are owned by the foundation, including normalization before idle
+admission for fast acquisitions. There is no constructor from an arbitrary pool.
+Native pool capacity/lifetime settings remain configurable. Application hooks
+are replaced, not composed; declare authority through `PgSessionProfile`.
+The native pool accessor is a trusted escape hatch, not endpoint attestation.
+Native adapters may further restrict schema lists or temporarily tighten timeouts.
 It returns `Result<T, OperationError<PgAtomicError<T, E>>>` and retains the entire
 native outcome before cancellation/deadline resolution. There is no await
 between acknowledged disposition and retention. A confirmed commit cannot be

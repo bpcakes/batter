@@ -11,6 +11,7 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy",
         "profile_setup_errors_redact_setting_and_role_values",
         "profile_after_connect_logging_redacts_setting_values",
         "profile_before_acquire_logging_redacts_setting_values",

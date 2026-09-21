@@ -1,4 +1,4 @@
-use crate::{PgAtomicError, PgAtomicScope, run_atomic};
+use crate::{PgAtomicError, PgAtomicScope, PgProfiledPool, run_atomic, run_atomic_profiled};
 use batter_core::operation::{OperationContext, OperationError};
 use sqlx::PgPool;
 use std::{convert::Infallible, future::Future, sync::Mutex};
@@ -37,6 +37,37 @@ pub async fn run_atomic_in<T, E>(
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, OperationError<PgAtomicError<T, E>>> {
     retain(context, operation, run_atomic(pool, work)).await
+}
+
+/// Execute atomic work under a pool owner's declared profile and operation budget.
+/// Admission through [`PgProfiledPool::pool`] and this completion path use the
+/// same policy, even though atomic acquisition discards inherited session state.
+/// Profile setup/validation and disposition belong to [`run_atomic_profiled`];
+/// outcome retention and interruption semantics are identical to [`run_atomic_in`].
+///
+/// ```no_run
+/// # async fn example(database: &batter_sqlx::PgProfiledPool,
+/// # context: &batter_core::operation::OperationContext) {
+/// let result = batter_sqlx::run_atomic_profiled_in(database, context, "audit.append",
+///     async |scope| scope.application(async |sql| {
+///         sqlx::query("INSERT INTO audit_events DEFAULT VALUES")
+///             .execute(sql.executor()).await
+///     }).await).await;
+/// # let _ = result;
+/// # }
+/// ```
+pub async fn run_atomic_profiled_in<T, E>(
+    database: &PgProfiledPool,
+    context: &OperationContext,
+    operation: &'static str,
+    work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
+) -> Result<T, OperationError<PgAtomicError<T, E>>> {
+    retain(
+        context,
+        operation,
+        run_atomic_profiled(database.pool(), database.profile(), work),
+    )
+    .await
 }
 
 async fn retain<T, E>(
@@ -176,5 +207,47 @@ mod tests {
         ));
         assert_eq!(called.load(Ordering::SeqCst), 0);
         assert_eq!(pool.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn profiled_unpolled_and_cancelled_work_never_acquires() {
+        let profile = crate::PgSessionProfile::new(
+            "login",
+            "serving",
+            vec!["public".into()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .unwrap();
+        let database = PgProfiledPool::connect_lazy(
+            "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
+            profile,
+            sqlx::postgres::PgPoolOptions::new().min_connections(0),
+        )
+        .unwrap();
+        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let called = AtomicUsize::new(0);
+        drop(run_atomic_profiled_in(
+            &database,
+            &context,
+            "test.profiled",
+            async |_| {
+                called.fetch_add(1, Ordering::SeqCst);
+                Ok::<(), ()>(())
+            },
+        ));
+        context.cancel();
+        let result = run_atomic_profiled_in(&database, &context, "test.profiled", async |_| {
+            called.fetch_add(1, Ordering::SeqCst);
+            Ok::<(), ()>(())
+        })
+        .await;
+        assert!(matches!(
+            result,
+            Err(OperationError::Interrupted(Interruption::Cancelled))
+        ));
+        assert_eq!(called.load(Ordering::SeqCst), 0);
+        assert_eq!(database.pool().size(), 0);
+        database.pool().close().await;
     }
 }

@@ -7,6 +7,8 @@ mod commit;
 mod poison;
 #[path = "atomic_live/profile.rs"]
 mod profile;
+#[path = "atomic_live/profiled_pool.rs"]
+mod profiled_pool;
 #[path = "atomic_live/runner.rs"]
 mod runner;
 #[path = "atomic_live/session_state.rs"]
