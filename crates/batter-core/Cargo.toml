@@ -1,5 +1,6 @@
 [package]
 name = "batter-core"
+links = "batter_core_foundation"
 description = "Native Tokio operational foundation used by the Batter facade"
 version = "0.1.0"
 edition.workspace = true

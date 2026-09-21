@@ -66,18 +66,13 @@ targets. Other Unix targets remain unverified. See
 
 Network access is required to download dependencies on the first run.
 
-The current unpublished Runledger cutover uses coordinated sibling path
-dependencies. Before running a workspace Cargo command in a fresh checkout,
-place the pinned Runledger source beside this repository:
-
-```sh
-git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-git -C ../runledger checkout --detach bfc949bbc32fb2cc5731fb743632b2e432d1f5ae
-```
-
-This cutover constraint does not make Runledger part of Batter's foundation
-dependency graph. Publishing or replacing the paths with immutable package
-identities remains a separate decision.
+The workspace pins Runledger PR #20 and Runlimit PR #9 to immutable Git
+revisions; no sibling checkout is required. Its root patch selects this
+checkout's SQLx foundation for Runledger. Git consumers must repeat that patch
+with their exact Batter revision because Cargo does not inherit dependency
+patches. See [the consumer configuration](docs/reference-compatibility.md#git-consumers).
+Runledger is still an optional adapter dependency, not part of Batter's
+foundation graph. Publishing remains a separate decision.
 
 ```sh
 cargo run -p batter --features axum --example http_service

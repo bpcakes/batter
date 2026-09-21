@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from parallel_process import render_outcomes, run_parallel
+from consumer_manifest import consumer_patches, git_dependency
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
@@ -105,7 +106,7 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     chosen = set(selected)
     axum = "axum" in chosen or "runlimit-axum" in chosen
     sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger", "runlimit-postgres"})
-    batter_sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger"})
+    batter_sqlx = sqlx
     runlimit = bool(chosen & {"runlimit", *RUNLIMIT_BRIDGES})
     return {
         "batter-core": True,
@@ -142,6 +143,8 @@ def facade_source(selected: tuple[str, ...]) -> str:
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
     if "runlimit-axum" in chosen:
         lines.insert(1, "use batter::runlimit::http::{PreparedHttp, TestClient};")
+    if "runlimit-postgres" in chosen:
+        lines.insert(1, "use batter::runlimit::attempts::{AttemptRunner, Authentication};")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
         lines.insert(1, "use batter::test_support::{Script, finish};")
     if "sqlx-test-support" in chosen:
@@ -149,7 +152,15 @@ def facade_source(selected: tuple[str, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def manifest(name: str, dependencies: list[str]) -> str:
+def manifest(name: str, dependencies: list[str], selected: tuple[str, ...] = ()) -> str:
+    # Cargo may resolve the optional Runledger manifest even without its normal
+    # graph enabled. Its foundation patch must remain available in every facade
+    # root. Native backend development patches are needed only when selected.
+    needed = {"batter-sqlx"}
+    if any(feature.startswith("runlimit") for feature in selected):
+        needed.add("runlimit-core")
+    needed.update("runlimit-" + backend for backend in ("memory", "postgres")
+                  if "runlimit-" + backend in selected)
     return (
         "[package]\n"
         f"name = {json.dumps(name)}\n"
@@ -161,6 +172,7 @@ def manifest(name: str, dependencies: list[str]) -> str:
         "[dependencies]\n"
         + "\n".join(dependencies)
         + "\n"
+        + consumer_patches(needed)
     )
 
 
@@ -195,7 +207,7 @@ def run_positive_case(cargo: list[str], host: str, root_lock: bytes,
     label = "-".join(selected) or "default"
     case = parent / f"consumer-{label}"
     (case / "src").mkdir(parents=True)
-    (case / "Cargo.toml").write_text(manifest("facade-feature-consumer", [facade_dependency(selected)]))
+    (case / "Cargo.toml").write_text(manifest("facade-feature-consumer", [facade_dependency(selected)], selected))
     (case / "Cargo.lock").write_bytes(root_lock)
     (case / "src/main.rs").write_text(facade_source(selected))
     metadata = run_metadata(cargo, host, case)
@@ -218,16 +230,16 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { path = " + json.dumps(str(ROOT.parent / "runledger/runledger-runtime")) + " }")
+        deps.append(git_dependency("runledger-runtime", "Cargo.toml", ("workspace", "dependencies")))
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""
         deps.append("batter-runlimit = { path = " + json.dumps(str(ROOT / "crates/batter-runlimit")) + features + " }")
         if "runlimit-memory" in chosen:
-            deps.append("runlimit-memory = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
-            deps.append("runlimit-core = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
+            deps.append(git_dependency("runlimit-memory", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
+            deps.append(git_dependency("runlimit-core", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
         if "runlimit-postgres" in chosen:
-            deps.append("runlimit-postgres = { git = \"https://github.com/bpcakes/runlimit\", rev = \"e91da419216e77e8c83d0bb80c70c297d286d341\" }")
+            deps.append(git_dependency("runlimit-postgres", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
     if "runlimit-axum" in chosen:
         deps.append("tokio = { version = \"1.53.1\", default-features = false, features = [\"net\"] }")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
@@ -285,12 +297,14 @@ def identity_source(selected: tuple[str, ...]) -> str:
         lines += [
             "fn memory_bridge<E: batter::runlimit::ConsumptionError>() {}",
             "fn memory_quota(quota: &batter::runlimit::Quota<runlimit_memory::MemoryStore>, context: &OperationContext, checks: batter::runlimit::Checks<'_, runlimit_core::FixedWindowPolicy>) { let _future = quota.run(context, checks, |_| async { Ok::<(), std::convert::Infallible>(()) }); }",
-            "const _: fn() = memory_bridge::<runlimit_memory::MemoryStoreError>;",
+            "const _: fn() = memory_bridge::<runlimit_memory::MemoryBatchError>;",
+            "const _: fn() = memory_bridge::<runlimit_memory::GcraBatchError>;",
         ]
     if "runlimit-postgres" in chosen:
         lines += [
             "fn postgres_bridge<E: batter::runlimit::ConsumptionError>() {}",
-            "const _: fn() = postgres_bridge::<runlimit_postgres::CheckError>;",
+            "const _: fn() = postgres_bridge::<runlimit_postgres::BatchCheckError>;",
+            "const _: fn(batter::runlimit::attempts::AttemptRunner) = |_: batter_runlimit::attempts::AttemptRunner| {};",
         ]
     if "runlimit-axum" in chosen:
         lines += [
@@ -311,10 +325,14 @@ def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
     label = "-".join(selected) or "default"
     case = parent / f"identity-{label}"
     (case / "src").mkdir(parents=True)
-    (case / "Cargo.toml").write_text(manifest("facade-identity-consumer", identity_dependencies(selected)))
+    (case / "Cargo.toml").write_text(manifest("facade-identity-consumer", identity_dependencies(selected), selected))
     (case / "Cargo.lock").write_bytes(root_lock)
     (case / "src/main.rs").write_text(identity_source(selected))
-    run_metadata(cargo, host, case)
+    metadata = run_metadata(cargo, host, case)
+    for name in ("batter-core", "batter-sqlx"):
+        packages = [package for package in metadata["packages"] if package["name"] == name]
+        if len(packages) != 1:
+            raise RuntimeError(f"identity consumer resolved multiple {name} foundations")
     execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")], case)
 
 
@@ -336,7 +354,7 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
     label = "-".join(selected) or "default"
     case = parent / f"negative-{label}-{disabled}"
     (case / "src").mkdir(parents=True)
-    (case / "Cargo.toml").write_text(manifest("facade-negative-consumer", [facade_dependency(selected)]))
+    (case / "Cargo.toml").write_text(manifest("facade-negative-consumer", [facade_dependency(selected)], selected))
     (case / "Cargo.lock").write_bytes(root_lock)
     (case / "src/main.rs").write_text(f"use {symbol};\nfn main() {{}}\n")
     metadata = run_metadata(cargo, host, case)

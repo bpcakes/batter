@@ -80,9 +80,10 @@ agent implementation or modification tasks; label such evaluations proposed
 and unexecuted unless executable evidence exists. See
 [ADR-010](docs/adr/010-agent-only-consumption.md).
 
-During the coordinated owned-scope cutover, Runledger packages use sibling paths.
-Receipt reuse additionally requires unchanged sibling source and manifests;
-repository-local input hashes alone cannot prove that prerequisite.
+Runledger packages use the immutable Git revision in `Cargo.toml`. The workspace
+patch selects this checkout's SQLx foundation for that native dependency. Git
+consumers must repeat the root patch with their exact Batter revision; Cargo does
+not inherit dependency patches. See `docs/reference-compatibility.md`.
 
 For every new or materially changed public API, perform the proactive invalid-
 state review in ADR-010. If a common misuse can reach execution, or still

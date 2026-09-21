@@ -13,6 +13,19 @@ focused hosted macOS job. Other Unix targets remain unverified. See
 
 ## Native quota execution
 
+The PostgreSQL `AttemptRunner` separately owns outcome-aware attempts: reserve,
+verify outside a transaction, claim a still-live receipt, decide/write application
+state, complete native retry state, and acknowledge commit. The final accepted or
+rejected decision is made inside the transaction. Rejected authentication commits
+its audit and consecutive-failure increment; infrastructure failure rolls back.
+A stale claim never invokes application writes. The native row lock protects a
+valid claim through commit even if the original verification lease expires.
+One original operation budget covers every phase. `batter-sqlx::run_atomic_in`
+retains the full acknowledged or uncertain outcome before boundary telemetry;
+an interruption without acknowledgement cannot establish rollback. Native
+attempt algorithms, lease fencing, storage, and migrations remain Runlimit-owned.
+The runner performs no refund of ordinary quotas and no automatic replay.
+
 The optional `batter-runlimit` adapter owns one native atomic batch before the
 work factory, using the same total operation deadline for both phases. It does
 not implement quota storage, policy validation or transactions. Denial/backend

@@ -21,7 +21,7 @@ use batter_core::{
     registration::RegistrationTarget,
 };
 use runlimit_core::{
-    BatchDecisionView, Check, ConsumptionStatus, DenialView, Limiter, QuotaMode, RateLimitPolicy,
+    BatchDecisionView, Check, ConsumptionStatus, Denial, Limiter, QuotaMode, RateLimitPolicy,
     SubjectKey,
 };
 use std::{
@@ -210,7 +210,7 @@ where
 impl<L, A, K> HttpQuota<L, A, K>
 where
     L: Limiter + 'static,
-    L::Error: ConsumptionError,
+    L::CheckAllError: ConsumptionError,
 {
     /// Builds a boundary with nonempty policies of one native quota mode.
     /// Subject-dependent batch validation remains with Runlimit; native errors
@@ -226,7 +226,7 @@ where
     ///
     /// fn wrong_auth<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
-    ///     L::Error: ConsumptionError,
+    ///     L::CheckAllError: ConsumptionError,
     /// {
     ///     let _ = HttpQuota::new(
     ///         quota, policies,
@@ -245,7 +245,7 @@ where
     ///
     /// fn wrong_selector<L: Limiter + 'static>(quota: Quota<L>, policies: Vec<L::Policy>)
     /// where
-    ///     L::Error: ConsumptionError,
+    ///     L::CheckAllError: ConsumptionError,
     /// {
     ///     let _ = HttpQuota::new(
     ///         quota, policies,
@@ -453,7 +453,7 @@ async fn boundary<L, A, K, P, AE, AF>(
 ) -> Response
 where
     L: Limiter + 'static,
-    L::Error: ConsumptionError,
+    L::CheckAllError: ConsumptionError,
     P: Clone + Send + Sync + 'static,
     AE: std::error::Error + Send + Sync + 'static,
     A: Fn(AuthInput) -> AF + Send + Sync + 'static,
@@ -499,7 +499,7 @@ where
     let checks = boundary
         .policies
         .iter()
-        .map(|policy| Check::new(policy, (boundary.subject)(&principal, peer, policy)))
+        .map(|policy| Check::new((boundary.subject)(&principal, peer, policy).bind(policy)))
         .collect::<Vec<_>>();
     request.extensions_mut().insert(Authenticated(principal));
     match boundary
@@ -540,12 +540,12 @@ where
             response
         }
         RunResult::Rejected { denial, .. } => {
-            let (kind, retry_after) = match denial.view() {
-                DenialView::QuotaExceeded(details) => (
+            let (kind, retry_after) = match denial {
+                Denial::QuotaExceeded(details) => (
                     BoundaryRejection::QuotaExhausted,
                     Some(details.retry_after()),
                 ),
-                DenialView::StorageCapacity { retry_after } => {
+                Denial::StorageCapacity { retry_after } => {
                     (BoundaryRejection::QuotaStorageCapacity, retry_after)
                 }
             };
@@ -571,8 +571,8 @@ fn project_terminal(snapshot: &Snapshot) -> QuotaTerminalFacts {
             BatchDecisionView::Allowed { .. } => QuotaTerminalFacts::Allowed,
             BatchDecisionView::ShadowDenied { .. } => QuotaTerminalFacts::ShadowDenied,
             BatchDecisionView::Denied { denial, .. } => match denial {
-                DenialView::QuotaExceeded(_) => QuotaTerminalFacts::QuotaDenied,
-                DenialView::StorageCapacity { .. } => QuotaTerminalFacts::StorageCapacity,
+                Denial::QuotaExceeded(_) => QuotaTerminalFacts::QuotaDenied,
+                Denial::StorageCapacity { .. } => QuotaTerminalFacts::StorageCapacity,
             },
         },
         Snapshot::Started => unreachable!("only completed quota results"),

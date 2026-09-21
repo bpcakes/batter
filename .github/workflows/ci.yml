@@ -20,10 +20,6 @@ jobs:
         with:
           # Runledger verifies foundation inputs against their immutable ancestor.
           fetch-depth: 0
-      - name: Check out coordinated Runledger integration
-        run: |
-          git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-          git -C ../runledger checkout --detach 58b02c24df4357c5e709f39bf336c67d6815448c
       - name: Install Rust toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
       - name: Compile all workspace targets, including Unix signal examples
@@ -62,10 +58,6 @@ jobs:
         with:
           # Runledger verifies foundation inputs against their immutable ancestor.
           fetch-depth: 0
-      - name: Check out coordinated Runledger integration
-        run: |
-          git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-          git -C ../runledger checkout --detach 58b02c24df4357c5e709f39bf336c67d6815448c
       - name: Install toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
       - name: Verify (bootstrap only while the initial lockfile is absent)

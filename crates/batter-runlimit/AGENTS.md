@@ -11,6 +11,8 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 - `src/lib.rs`: public quota exports and optional HTTP module selection.
 - `src/quota.rs`: nonempty native checks, typed consumption bridge and factory execution.
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
+- `src/attempts.rs`: native pre-authentication reserve, verification, receipt claim,
+  transactional final decision and native completion; no limiter persistence here.
 - `batter-axum/src/quota_observation.rs`: the retained HTTP fact writer and read-only observation.
 - `tests/quota.rs`, `tests/http.rs`: native memory, interrupted execution and actual serving.
 - `../batter/examples/quota_service.rs`: runnable facade consumer without the reference service.
@@ -45,6 +47,15 @@ must force an adapter and contract update at the next pin.
 Authentication meaning and explicitly unguarded probe routes remain application
 policy. PostgreSQL setup/maintenance is not implemented or implicitly performed.
 No body-stream, detached-task or remote rollback guarantee is added.
+
+Attempt verification runs before acquiring the application transaction; the final
+accepted/rejected decision runs inside it after a native live-receipt claim.
+Business rejection is a committed typed value so failure audit and retry state
+survive together. Infrastructure errors roll back. Require `PgProfiledPool` with
+one authoritative schema, binding native admission and completion to its explicit
+policy. Use `batter_sqlx::run_atomic_profiled_in`
+for operation-budget outcome retention; never rebuild a post-commit cleanup/reset
+protocol here. Lease expiry after a locked claim does not revoke that transaction.
 
 ## Common commands
 
