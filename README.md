@@ -66,7 +66,7 @@ targets. Other Unix targets remain unverified. See
 
 Network access is required to download dependencies on the first run.
 
-The workspace pins Runledger PR #20 and Runlimit PR #9 to immutable Git
+The workspace pins Runledger PR #22 and Runlimit PR #9 to immutable Git
 revisions; no sibling checkout is required. Its root patch selects this
 checkout's SQLx foundation for Runledger. Git consumers must repeat that patch
 with their exact Batter revision because Cargo does not inherit dependency

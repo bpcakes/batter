@@ -47,7 +47,7 @@ hosted CI.
 
 The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
 batter-sqlx -> batter-core`. `Cargo.toml` pins all three Runledger packages to
-`b057233d94738cf30ee0706d12fd4d133a6e3493` (shared profile-pool follow-up to merged PR #21). A workspace-root patch for
+`b057233d94738cf30ee0706d12fd4d133a6e3493` (the shared profile-pool implementation from merged PR #22). A workspace-root patch for
 the Runledger Git source selects this checkout's `batter-sqlx`, preserving one
 foundation type identity without a sibling checkout. Foundation packages remain
 unpublished. The canonical
@@ -115,7 +115,7 @@ optional test-support harness retain one native type graph.
 | Source | Selected version/revision | Features and boundary | Disposition |
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
-| Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; current coordinated graph uses PR #20 and the root foundation patch |
+| Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; the current coordinated graph uses PR #22 and the root foundation patch |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |

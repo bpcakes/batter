@@ -30,7 +30,7 @@ requires the original cleanup, exit, capture and watchdog evidence.
   provides detach semantics used by the existing retiring lease guard. Retirement
   releases local pool ownership; it does not prove a blocked backend has stopped.
 
-Runledger now uses the immutable PR #20 Git revision and a root source patch to
+Runledger now uses the immutable implementation commit from PR #22 and a root source patch to
 the same foundation as the facade; see `reference-compatibility.md`. The
 historical sibling-source and Git-pin/view evidence below describes earlier implementations only.
 The new strong path does not retain those views as a compatibility bridge.
