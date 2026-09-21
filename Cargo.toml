@@ -19,9 +19,9 @@ batter-runledger = { path = "crates/batter-runledger", default-features = false 
 batter-runlimit = { path = "crates/batter-runlimit", default-features = false }
 batter-sqlx = { path = "crates/batter-sqlx", default-features = false }
 batter-test-support = { path = "crates/batter-test-support", default-features = false }
-runledger-runtime = { git = "https://github.com/bpcakes/runledger", rev = "bfc949bbc32fb2cc5731fb743632b2e432d1f5ae" }
-runledger-postgres = { git = "https://github.com/bpcakes/runledger", rev = "bfc949bbc32fb2cc5731fb743632b2e432d1f5ae" }
-runledger-core = { git = "https://github.com/bpcakes/runledger", rev = "bfc949bbc32fb2cc5731fb743632b2e432d1f5ae" }
+runledger-runtime = { git = "https://github.com/bpcakes/runledger", rev = "41bca4c0b67c2338b4599f78ec858fca8c7f9eaf" }
+runledger-postgres = { git = "https://github.com/bpcakes/runledger", rev = "41bca4c0b67c2338b4599f78ec858fca8c7f9eaf" }
+runledger-core = { git = "https://github.com/bpcakes/runledger", rev = "41bca4c0b67c2338b4599f78ec858fca8c7f9eaf" }
 
 pin-project-lite = "0.2.17"
 tokio = { version = "1.53.1", default-features = false }

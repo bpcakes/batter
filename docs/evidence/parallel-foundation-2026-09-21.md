@@ -21,3 +21,14 @@ contract, not registry publication evidence or a tamper-resistant build sandbox.
 Initial checkpoint checks: `cargo test -p batter-sqlx --lib --locked` passed
 141 tests; `cargo fmt --all -- --check` passed. Full integration validation is
 pending the native companion update.
+
+The coordinated native pin is Runledger `41bca4c`, retaining `b83abe4`'s profile
+restoration fix and validating actual Cargo foundation sources. Runledger PR #20
+merged during integration; the follow-up is PR #21. Runlimit now selects merged
+PR #9 (`12e035d`) consistently in the adapter and facade examples.
+
+On macOS/Rust 1.98.1 with PostgreSQL 18.6, all-target/all-feature workspace
+compilation, ten live attempt tests, and all 25 owned atomic-scope tests passed.
+The atomic suite includes session-profile restoration and redaction. Full
+two-toolchain verification, HTTP smokes, Jig and final review remain separate
+acceptance checks.

@@ -47,7 +47,7 @@ hosted CI.
 
 The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
 batter-sqlx -> batter-core`. `Cargo.toml` pins all three Runledger packages to
-`bfc949bbc32fb2cc5731fb743632b2e432d1f5ae` (PR #20). A workspace-root patch for
+`41bca4c0b67c2338b4599f78ec858fca8c7f9eaf` (PR #21, following merged PR #20). A workspace-root patch for
 the Runledger Git source selects this checkout's `batter-sqlx`, preserving one
 foundation type identity without a sibling checkout. Foundation packages remain
 unpublished. The canonical
@@ -78,6 +78,13 @@ different foundation revision: identically named Rust types from different Cargo
 sources are not interchangeable. No sibling checkout is required. The
 `batter-mzd` delivery records verification of the final exact Git graph separately
 from older path-source results.
+
+Runledger verifies the actual core/SQLx source directories supplied through Cargo
+dependency metadata against its reviewed foundation revision. Adapter-only pin
+updates do not invalidate that check; foundation source and inherited manifest
+settings remain guarded. Shallow source checkouts must retain the reviewed
+ancestor. The foundation `links` identities prevent duplicate implementations;
+they do not link native libraries or change transaction/runtime behavior.
 
 ### Historical source selections
 
