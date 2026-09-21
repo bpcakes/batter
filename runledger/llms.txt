@@ -1,0 +1,491 @@
+# Runledger LLM Integration Summary
+
+Runledger is a Rust workspace for durable jobs, workflow orchestration, and
+worker runtime loops on PostgreSQL. This summary describes release 0.12.0,
+including the 0.6 through 0.12 continuation, recovery, replay, metrics, event,
+coordination, lease-identity, and durable enqueue-intent contracts. The minimum
+supported versions are Rust 1.94 and PostgreSQL 18.
+
+This file is for downstream agents integrating Runledger into another
+application. It is not an AGENTS.md file and should not be treated as maintainer
+instructions for this repository.
+
+## Imports
+
+```rust
+use runledger_core::prelude::*;
+use runledger_postgres::prelude::*;
+use runledger_runtime::prelude::*;
+```
+
+The preludes intentionally avoid generic `Result` and `Error` aliases so they
+can be imported together.
+
+## Choose The API
+
+| Need | Use |
+| --- | --- |
+| One independent retried unit of work | `enqueue_job` with `JobEnqueue` |
+| Commit application state and future work before its definition exists | `JobEnqueueIntent` + `record_job_enqueue_intent_tx` |
+| Multi-step work with dependencies | `WorkflowDagBuilder` (simple) or workflow run/step builders (advanced) |
+| Multi-step work with a durable JSON result | Declare a result step and use workflow handle APIs |
+| Fan-out, fan-in, or ordered stages | `WorkflowDagBuilder::after_success` / `after_terminal` |
+| Human/API approval or another external gate | External workflow steps |
+| Delayed or recurring entrypoint | `upsert_job_schedule` with `JobScheduleUpsert` |
+| Provider-selected retry lower bound | `JobFailure::retry_not_before_delay` / `retry_not_before` |
+| Another successful bounded slice | `JobCompletion::continue_now` / `continue_after` |
+| One active workflow per application key | `active_key` + `enqueue_or_get_active_workflow` |
+| One job at a time per external resource | `enqueue_job_with_execution_resource` or step `execution_resource` |
+| Recover a canceled or dead-lettered direct job | `compare_and_requeue_job` |
+| Repeat a successful direct job | `compare_and_replay_succeeded_job` |
+| Recover a terminal workflow | `recover_workflow_run` |
+| Worker process lifecycle | `Supervisor::run_until_shutdown_report` |
+| Custom worker lifecycle persistence | `JobLeaseIdentity` with `_for_lease` lifecycle APIs introduced in 0.9.0 |
+| Admin/status views | `get_*` / `list_*` APIs and `count_workflow_runs` in `runledger_postgres::jobs` |
+
+Use `set_job_schedule_active` to pause/resume schedules and
+`set_job_schedule_next_fire_at` to retime a schedule cursor.
+Use `runledger_postgres::jobs::count_workflow_runs_with_scope` with
+`runledger_postgres::jobs::WorkflowRunReadCountFilter` for workflow counters.
+Use `WorkflowRunReadScope::Global` for exact global rows,
+`Organization(id)` for one tenant, and `Admin` only for trusted all-tenant
+surfaces.
+
+For transactional handoff before a job definition exists, record a strictly
+idempotent `JobEnqueueIntent` in the application's `READ COMMITTED` transaction.
+Concurrent recorders for the same key may wait for the transaction that first
+claimed it, so include that wait in caller lock ordering and timeout budgets.
+Record the intent before any operation in that transaction that can lock a
+`job_queue` row. A job-first recorder can create an inverse lock cycle with
+retention's canonical intent-before-job order.
+A record outcome reports point-in-time lifecycle state, not a promotion
+guarantee; an existing intent can be promoted or become conflicted concurrently,
+including before a caller-owned transaction ends.
+A standard worker later promotes registered, enabled types through the ordinary
+enqueue path. Full promotion batches drain immediately; partial and empty
+passes wait for the configured cadence. Use `IntentPromoterConfig` for
+independent controls. Every worker-enabled supervisor promotes by default and
+polls independently when idle. An idle pass is one non-locking eligibility
+query, so capacity plans must include that query rate.
+Disable only redundant or unused promoters, and retain coverage for every type
+that can receive intents. Database failures defer only the affected intent with
+bounded jittered backoff and retry indefinitely; inspect promotion attempt/error
+metadata and monitor pending age and `conflicted_24h`. Full conflicted evidence
+remains available through intent reads/lists. Treat intent payloads and keys as
+sensitive queue data and do not log them. Queue retention must call
+`delete_promoted_job_enqueue_intents_for_jobs_tx` for its exact selected job IDs
+before deleting those jobs in the same transaction. The helper fences
+promotion, deletes promoted-intent links, then locks the selected jobs in the
+canonical intent-before-job order. The retention transaction must use
+`READ COMMITTED`; stronger isolation returns
+`job.intent_retention_unsupported_isolation` before fence acquisition. The
+helper preserves stricter caller timeouts and
+allows up to thirty seconds to acquire the
+exclusive promotion fence, then caps each job- or intent-row lock wait at five
+seconds; every statement is capped at thirty-five seconds. Timeout and deadlock
+errors abort the transaction, which must be rolled back and retried in full.
+Deploy that retention path to every queue-retention caller before enabling
+intent writers.
+
+## Workflow DAG Rule
+
+If work has step dependencies, build a workflow DAG:
+
+```rust
+let run = WorkflowDagBuilder::new("workflow.example", &metadata)
+    .job("a", "jobs.a", &payload_a)?
+    .job("b", "jobs.b", &payload_b)?
+    .after_success("b", ["a"])?
+    .build()?;
+
+enqueue_workflow_run(&pool, &run).await?;
+```
+
+For workflows that should return a durable JSON result, declare one DAG step as
+the result step with `.result_step(...)` or `.try_result_step_key(...)`,
+enqueue with `enqueue_workflow_run_handle`, and wait/read through
+`WorkflowRunHandle::get_status`, `get_run`, or `get_result`. Handler success
+returns `JobCompletion`; use `JobCompletion::with_output(...)` for compact result
+metadata. Prefer explicit wait timeouts in production. The default waits up to
+five minutes. `timeout: None` opts into unbounded waits and may hold a
+PostgreSQL listener connection. Result error codes include
+`workflow.handle_storage_error`, `workflow.run_not_found`,
+`workflow.result_not_declared`, `workflow.result_missing`,
+`workflow.result_unsuccessful_terminal`, and `workflow.result_wait_timeout`.
+External step output is valid only with successful external completion; failed or
+canceled external completions must not provide output. Retrying completion for a
+terminal external step requires matching terminal status and completion metadata;
+changed metadata returns `workflow.external_step_conflicting_completion_retry`.
+For successful completions, changed output returns
+`workflow.external_step_conflicting_output_retry`.
+
+Use `WorkflowRunEnqueueBuilder` and `WorkflowStepEnqueueBuilder` for advanced per-step
+settings, external steps, or hand-authored dependency specs.
+
+`WorkflowDagBuilder` validates workflow shape, not job registration. `.job(...)`
+fails immediately for blank step keys, blank job types, and duplicate step keys.
+`.after_success(...)` / `.after_terminal(...)` fail immediately for blank
+identifiers or an unknown target step. Missing prerequisites, self-dependencies,
+duplicate dependencies, cycles, empty step lists, blank workflow types from
+`new(...)`, and blank idempotency keys fail at `.build()` / `.try_build()`.
+Use lower-level builders when call sites should pass explicit `StepKey` and
+`JobType` values.
+
+Do not manually orchestrate ordinary workflows by polling job status, enqueueing
+dependent jobs from parent handlers, encoding dependency state in payload JSON,
+or adding app-owned workflow edge tables.
+Direct-job recovery rejects workflow-managed jobs with
+`job.workflow_requeue_not_supported`; recover the workflow run instead.
+Use `update_job_payload_uuid_array_field` only for direct pending jobs; inspect
+`JobPayloadUuidArrayFieldUpdate` for `Updated`, `NotFound`, or rejected updates.
+
+## Handler-Selected Retry Timing
+
+Attach `retry_not_before_delay(delay)` or `retry_not_before(timestamp)` only to
+a retryable `JobFailure`. The failed attempt still consumes attempt budget and
+keeps the same run number. PostgreSQL schedules the later of ordinary policy
+backoff and the handler lower bound; exhausted, terminal, and panicked failures
+ignore timing. Use `effective_next_run_at` and `retry_timing_source` for the
+committed schedule. `retry_delay_ms` remains the policy delay even when the
+handler wins, and `requested_retry_not_before` records the resolved request.
+
+Construct `JobFailure` with its constructors because 0.8 made retry timing
+private. `retry_after` and `retry_at` are deprecated in favor of names that make
+the lower-bound semantics explicit. Low-level persistence callers construct
+the non-exhaustive `JobFailureUpdate` with `new` and optional
+`with_retry_timing`.
+
+## Bounded Job Continuation
+
+Direct jobs can use continuation immediately; workflow job steps require the
+persisted `WorkflowStepEnqueueBuilder::allow_handler_continuation()` opt-in,
+which defaults to false and is invalid for external steps. Use
+`JobCompletion::continue_now()` or `continue_after(delay)` only after a bounded,
+successful, idempotent slice. Version checkpoints, read the committed value
+from `JobContext::checkpoint`, enforce an application-owned logical
+deadline/run limit, and use nonzero delays for polling. Continuation does not
+consume `max_attempts`, cannot carry final output, and keeps workflow
+dependencies blocked until final terminal completion. Canary by job type or
+tenant and alert on continuation
+rate, run depth, dead letters, and continuation persistence failures. The
+external-consumer smoke test is the compile-checked continuation example.
+It also exercises pool-owned and caller-transaction recovery, caller-transaction
+successful replay plus an idempotent pool retry, and continuation metrics
+through the packaged crates.
+Use `get_job_continuation_metrics` for stable per-job-type signals:
+`continued_24h`, `active_continued_count`, and `max_active_run_number`. Its
+optional organization filter uses admin aggregation semantics; `None` means all
+scopes, not exact global scope. Active metrics mean the current run was created
+by continuation; later admin recovery does not remain `active` merely because a
+job has older continuation history.
+
+## Active Workflow Keys
+
+Use `WorkflowRunEnqueueBuilder::active_key` only with
+`enqueue_or_get_active_workflow`. Handle `Inserted`, `ExistingActive`, and
+`ExistingIdempotent` explicitly. Active claims are global or organization
+scoped and release only after terminal work is quiescent. Workflow type is not
+part of that scope; namespace keys by type unless cross-type coordination is
+intentional. Active keys are non-blank and limited to 512 bytes. Deferred
+release after cancellation depends on the lease reaper; stopped reaping leaves
+the key reserved until it resumes. `ExistingActive` can carry a terminal
+canceled run during that interval.
+`enqueue_workflow_run_handle` rejects active-key payloads; match the classified
+active enqueue outcome first, then call `workflow_run_handle` with its run ID
+and scope when a result handle is needed.
+
+## Durable Execution Resources
+
+Use `enqueue_job_with_execution_resource` for direct work or
+`WorkflowStepEnqueueBuilder::execution_resource` for job-backed steps.
+Reservation is atomic before leasing; resource-blocked work remains pending at
+attempt zero and consumes no worker claim slot. Keys must be non-blank and at
+most 512 bytes. Resource keys are global across organizations; namespace them
+in the application when tenants must not coordinate. They guarantee mutual
+exclusion, not global FIFO; type-restricted workers order only their eligible
+types. Mixing claim APIs or distinct worker type filters may reorder contenders
+without weakening mutual exclusion.
+The direct enqueue returns `JobEnqueueOutcome`; for keyed jobs, the resource is
+part of the canonical request and cannot change on an idempotent retry.
+A requested batch size is only an upper bound; cross-worker resource races can
+return a short batch. Resource-head discovery scans a bounded 1,024–16,384-job
+window scaled by batch size; a dense same-key prefix can therefore also return
+short. Resource inserts use consistent key order to reduce cross-filter
+deadlock risk. Exclusivity is lease-scoped: the reaper releases an expired owner
+as it transitions the owning job after heartbeat loss, so provider-side effects
+must remain fenced or idempotent if a late handler outlives its lease.
+Stopped reaping leaves expired claims reserved; cleanup is bounded by the
+configured reaper batch limit. Reaped lease transitions commit before
+coordination-claim cleanup. Detailed reaper results expose released-claim counts
+and cleanup errors; the runtime logs cleanup failures and batch saturation.
+Resource-owner heartbeats renew the claim row, and continuation releases it
+between slices so the next slice re-contends.
+Successful direct-job replay preserves the source execution resource.
+
+## Workflow Recovery
+
+Use `recover_workflow_run` to replay a terminal workflow as a new run with
+durable lineage. It reconstructs canonical enqueue plus append history,
+preserves active/resource constraints, continuation opt-ins, and resolved
+per-step queue settings, and uses each source step's latest persisted payload.
+It is idempotent by source run and request key, does not reuse the source's
+workflow idempotency key, and rejects missing/unknown canonical shapes or
+unsupported mutation kinds. Never reopen terminal source steps in place.
+Recovery request keys are non-blank and limited to 512 bytes. Retention cannot
+delete only the recovery run while its source remains because that would erase
+the request idempotency guard.
+Construct the non-exhaustive request with `WorkflowRecoveryRequest::new`; omit
+the organization setter only for an exactly global source. `source_step_id` is
+optional lineage context. `recover_workflow_run_tx` requires a caller-owned
+`READ COMMITTED` transaction and does not commit or roll it back.
+
+## Direct-Job Recovery And Replay
+
+Use `compare_and_requeue_job` for standalone pool-owning recovery and
+`compare_and_requeue_job_tx` for recovery composed in a caller-owned
+`READ COMMITTED` transaction. Prefer
+`CompareAndRequeueJob::from_observed_job` to copy exact scope, terminal status,
+and run number. Always handle `Requeued`, `ExpectationMismatch`, `NotFound`, and
+`CancellationNotQuiesced`; only `Requeued` mutates the job.
+
+Runledger 0.11 removes `requeue_job`; upgrading requires a deliberate migration:
+
+- legacy `organization_id: None` was an unconstrained lookup and is not
+  `JobScope::Global`;
+- `ResetProgressAndCheckpoint` matches legacy state-reset behavior;
+- legacy missing/invalid-state/cancellation errors become typed no-mutation
+  outcomes;
+- `SUCCEEDED` uses the separate successful-replay API rather than recovery.
+
+Use `compare_and_replay_succeeded_job` for a standalone successful replay and
+`compare_and_replay_succeeded_job_tx` for replay composed in a caller-owned
+`READ COMMITTED` transaction. `CompareAndReplaySucceededJob` requires exact
+source scope/run expectations, one stable `replay_request_key` per intentional
+replay action, and a reason. Inspect `CompareAndReplaySucceededJobOutcome`:
+`Replayed.replay.disposition` distinguishes a fresh job from an idempotent
+request retry; `ExpectationMismatch` and `NotFound` create nothing. A replay is
+a new run-1 direct job. The replay operation leaves the successful source and
+output unchanged, and Runledger persists lineage in `job_replays` and the
+replay's `ENQUEUED` event.
+Retention cannot delete only the replay queue row while its successful source
+remains, because that would erase the request's idempotency guard. Source
+deletion cascades lineage, and one retention statement may delete both queue
+rows together.
+Workflow-managed jobs cannot use direct replay.
+
+For durable event consumers, call `list_job_events` and prefer
+`JobEventRecord::decoded_payload()` over hand-decoding Runledger-authored JSON.
+Rust consumers should not hand-parse `requeue_kind`,
+`replayed_from_job_id`, `replayed_from_run_number`, `replay_request_key`, or
+their companion replay fields.
+Match `DecodedRequeuedEventPayload::HandlerContinuation` and
+`DecodedJobEventPayload::SuccessfulReplayEnqueued` for continuation and replay
+provenance. The decoded enums and struct variants are non-exhaustive, so use
+`..` in struct patterns, retain final wildcard arms, and inspect
+`JobEventRecord::payload` as the raw fallback for `Unknown`, `Other`, malformed,
+custom, or future payloads.
+
+## 0.7 To 0.8 Rollout Fence
+
+Apply
+`202607250001_harden_continuation_metrics_payload_validation` and migrations
+through `202607280005_workflow_recoveries`, then deploy 0.8 to every worker,
+reaper, admin, API, CLI, and repair writer with the new paths unused. Activate
+only after every 0.7 process and old lease has quiesced; if releases are
+skipped, quiesce every pre-0.8 process. A PostgreSQL trigger rejects a
+resource-constrained lease without its exact durable claim, so 0.7 workers fail
+loudly instead of violating mutual exclusion but can repeatedly roll back
+affected claim batches. After activation, never start a 0.7 writer until new
+writes are disabled, continuation/resource work is drained, canceled lease
+fences have quiesced, and all 0.8 writers have stopped. Follow the PostgreSQL 18
+activation/rollback queries in `docs/downstream-agent-guide.md`.
+
+Apply `202607190001_job_replays_and_continuation_metrics` before deploying
+successful-replay or continuation-metrics callers; it creates `job_replays` and
+`job_continuation_metrics_rollup`. Apply
+`202607250001_harden_continuation_metrics_payload_validation` for corrected
+continuation metrics. Every migration from `202607190001` through
+`202608180001` is SQLx-history-only and intentionally does not advance the
+custom compatibility fence, so Runledger's filtered older startup and schema
+guards can coexist during expand-first rollout. For code rollback, choose one
+strategy:
+
+1. Recommended: leave all additive migrations applied and use
+   `migrate_after_idempotency_cutover` or
+   `ensure_schema_compatible_after_idempotency_cutover`; these Runledger paths
+   filter SQLx history to the migrations embedded in the release. Patch startup
+   first if the rollback binary calls raw `MIGRATOR.run(...)`.
+2. A raw 0.7 `MIGRATOR.run(...)` rejects `202607250001`, the five
+   `20260728000*` rows, and `202608180001`. SQLx 0.8 can leave its session
+   advisory lock held on that error; close the disposable connection or pool.
+   If startup cannot be patched, use the current artifact to revert those seven
+   migrations in reverse order. This erases workflow-recovery
+   lineage/idempotency, active claims, resource keys/claims, retry audit fields,
+   workflow continuation opt-ins, and enqueue-intent audit/idempotency state
+   while retaining the underlying workflow/job rows. A rollback to pre-0.7 raw
+   code also reverts `202607190001`, deleting relational replay lineage and
+   replay-request idempotency while leaving replay-created queue rows and their
+   lineage-bearing `ENQUEUED` events. Explicitly accept these losses before
+   using either down-migration path.
+
+## Catalog Rule
+
+Use `JobCatalogDefinitionOverrides` for per-job definition differences from
+catalog defaults. Overrides win for fields they set; version, attempts, and
+timeout must be positive. Catalog schedule sync owns `is_active` on every sync;
+use lower-level schedule APIs when admin pause/resume should own active state.
+Active schedules require enabled job definitions. Scheduler catch-up materializes
+at most one stale fire, then advances the cursor to the first future fire.
+
+## Worker Runtime Rule
+
+A `Supervisor` has exactly two terminal methods. Both synchronously return an
+independently owned `RuntimeShutdownDriver`:
+`run_until_shutdown_report(signal, budget)` waits for an external signal, and
+`shutdown_report(budget)` stops immediately. Await the driver directly to obtain
+a `RuntimeShutdownReport`. Dropping the driver requests stop without cancelling
+its independent owner. Bounded settlement continues, and every unobserved report
+emits one redacted diagnostic, including a queued report dropped before polling.
+Pass `RuntimeShutdownSignal::ctrl_c()`, `fallible(future)` for `Result<(), E>`,
+`infallible(future)` for `()`, or `pending()` for handle-only shutdown.
+Custom futures require `Send + 'static` and cancellation safety: dropping them
+must not leave detached application children. The signal runs as the tracked
+`shutdown_signal` descendant on the runtime captured during preparation and
+its join participates in settlement. Use owned captures and keep that runtime
+alive and driven. On Unix, custom Tokio runtimes used with `ctrl_c()` must call
+`enable_io()` or `enable_all()`; missing signal-driver support is retained as
+signal-panic and descendant-join evidence. Awaiting elsewhere does not drive a
+suspended current-thread owner runtime. Owner loss
+produces `RuntimeShutdownSettlement::Interrupted`, which always denies cleanup,
+even with an empty retained task list. There is no terminal method returning a bare success, because a bare
+success cannot say whether everything the runtime owned actually settled.
+
+A signal publishes stop when its output or a caught polling panic is observed,
+before guarded destruction. Both use the same first-cause arbitration, so
+destruction cannot delay the stop request or budget clock; an earlier cause and
+clock remain unchanged. A winning polling panic has cause
+`RuntimeShutdownCause::DescendantFailure { task: "shutdown_signal", .. }`.
+Destruction and join remain tracked settlement obligations.
+Every observed signal error remains available through `report.signal_error()`
+and its typed `Error::source()`, and denies success. First-cause arbitration
+separately controls the primary summary: a winning error has cause
+`RuntimeShutdownCause::SignalFailed` and failure
+`RuntimeShutdownFailure::Signal { source }`; when another source won first, its
+cause and failure keep priority while the later error remains inspectable.
+Native settlement continues, and a normally joined error permits cleanup when
+all other owned work settled. If another cause starts shutdown and the budget
+cancels the
+library-authored Ctrl-C or pending listener, its completed cancellation join is
+accounted because it proves guarded destruction completed. A force-aborted custom
+listener retains its cancelled join and denies cleanup, as does a signal polling
+or destruction panic or an unjoined signal. A non-triggering listener must retire
+within the graceful allowance; zero grace immediately escalates it. The exact
+initiating signal is not aborted by its own request and may use the remaining
+total allowance; if still unjoined it denies cleanup without an abort request.
+Signal error Debug and Display redact source details. Exhaustive matches must
+include the new variants.
+Inspect `report.signal_panic()` for `RuntimeShutdownSignalPanic::Poll`,
+`Destruction`, or `PollAndDestruction`; explicit message fields retain details,
+while Debug redacts them. The raw future is guarded from construction, and its
+poll unwind ends before separate destruction. Dropping an unsubmitted signal
+contains destruction panic and emits a redacted diagnostic (there is no report).
+This requires unwinding to reach the boundary: aborting hooks, panic=abort,
+internal double panics and blocking code cannot be recovered. Non-string panic
+payloads are normalized and their opaque allocations retained to avoid invoking
+possibly panicking payload destructors.
+
+```rust
+let supervisor = Supervisor::builder_from_env(&pool)?
+    .with_registry(registry)
+    .build()?;
+
+async fn close_accounted_pool(
+    _permit: RuntimeShutdownCleanupPermit,
+    pool: &sqlx::PgPool,
+) {
+    pool.close().await;
+}
+
+// Cooperative drain time, then time to abort and join whatever did not stop.
+let budget = RuntimeShutdownBudget::new(
+    std::time::Duration::from_secs(30),
+    std::time::Duration::from_secs(5),
+)?;
+let report = supervisor
+    .run_until_shutdown_report(RuntimeShutdownSignal::ctrl_c(), budget)
+    .await;
+
+match report.classify() {
+    RuntimeSettlement::Clean(clean) => {
+        close_accounted_pool(clean.into_cleanup_permit(), &pool).await;
+    }
+    RuntimeSettlement::StoppedWithFailures(stopped) => {
+        let (permit, failure) = stopped.into_parts();
+        close_accounted_pool(permit, &pool).await;
+        return Err(failure.into());
+    }
+    RuntimeSettlement::Unsettled(unsettled) => {
+        return Err(unsettled.into_failure().into());
+    }
+}
+```
+
+`classify(self)` consumes the report into `RuntimeSettlement`. Match `Clean`,
+`StoppedWithFailures`, and `Unsettled` exhaustively. The first two have distinct
+opaque payloads that can yield one cleanup permit; the latter has no permit.
+`StoppedWithFailures::into_parts()` returns the permit together with its process
+failure. `Unsettled::into_failure()` returns only the process failure. Inspect
+borrowed `report()` evidence before consuming a payload. No payload can be
+relabeled or converted back into an owned report. Historical callback timeouts
+remain `Unsettled` because later native joins cannot account for detached children.
+`failure()` is diagnostic; it is not cleanup authority. The public boolean
+decision methods and repeatable `cleanup_decision()` have been removed.
+Require the permit in the application's cleanup adapter; it proves only this
+runtime's settlement and does not gate direct calls to external pools.
+Both budget phases share one
+clock that starts at the first stop request, from any source. Dropping a
+supervisor requests shutdown but yields no report and detaches the handles.
+
+Use `worker::run_worker_loop`, `scheduler::run_scheduler_loop`, and
+`reaper::run_reaper_loop` only for custom runtime orchestration.
+If constructing `JobsConfig` directly, validate it; invalid configs can surface
+as `RuntimeError::InvalidJobsConfig` or `RuntimeLoopExit::InvalidConfig`.
+
+Custom runtimes should construct one `JobLeaseIdentity` (available since 0.9.0)
+from a claimed job's ID, run number, attempt, and worker ID. On 0.11.0 or later,
+pass it to `heartbeat_job_for_lease`, `mark_job_running_for_lease` with a
+`JobRunningUpdate`, `update_job_ordinary_progress_for_lease` with a
+`JobOrdinaryProgressUpdate`, and the appropriate success/failure/continuation
+`_for_lease` completion function. Reuse that value for the claim so fields from
+different leases cannot be mixed. The older stage-bearing
+`update_job_progress_for_lease` remains a deprecated compatibility wrapper.
+
+## Error Handling
+
+For public surfaces, return `QueryError::code()` and
+`QueryError::client_message()`. Use `QueryError::internal_message()` only for
+trusted diagnostics. `QueryError::kind()` is reserved for the small
+compile-checked cross-crate policy set; ordinary application handling should
+branch on stable codes. Release 0.12 adds the exhaustive
+`QueryErrorKind::PostgresLockNotAvailable` variant; downstream exhaustive
+matches must handle it when upgrading.
+
+`Error::CommitUnconfirmed` is not a failure: a function that owns its
+transaction returns it when `COMMIT` was not acknowledged, and the write may be
+durable. Give it its own match arm. Never route it into a generic retry; read
+the durable state back, or repeat only operations that are idempotent by key.
+Report `CommitUnconfirmed::CODE` and `CommitUnconfirmed::CLIENT_MESSAGE`.
+
+## More Complete Examples
+
+- `runledger-postgres/examples/enqueue_job.rs`
+- `runledger-postgres/examples/workflow_dag.rs`
+- `runledger-postgres/examples/external_gate.rs`
+- `runledger-postgres/examples/append_workflow_steps.rs`
+- `runledger-postgres/examples/schedule_job.rs`
+- `runledger-runtime/examples/worker_binary.rs`
+- `smoke/external-consumer/tests/smoke.rs`
+- `runledger-postgres/tests/workflow_active_claims.rs`
+- `runledger-postgres/tests/job_execution_resources.rs`
+- `runledger-postgres/tests/workflow_recovery.rs`
+- `docs/downstream-agent-guide.md`

@@ -1,0 +1,134 @@
+use super::super::{WorkflowBuildError, WorkflowDagValidationError};
+
+#[test]
+fn workflow_build_error_maps_workflow_and_step_validation_variants() {
+    assert_dag_validation_mappings([
+        (
+            WorkflowDagValidationError::EmptySteps,
+            WorkflowBuildError::EmptySteps,
+        ),
+        (
+            WorkflowDagValidationError::BlankWorkflowType,
+            WorkflowBuildError::BlankWorkflowType,
+        ),
+        (
+            WorkflowDagValidationError::BlankStepKey { step_index: 7 },
+            WorkflowBuildError::BlankStepKey {
+                step_index: Some(7),
+            },
+        ),
+        (
+            WorkflowDagValidationError::BlankStepJobType {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::BlankStepJobType {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::BlankIdempotencyKey,
+            WorkflowBuildError::BlankIdempotencyKey,
+        ),
+        (
+            WorkflowDagValidationError::NonPositiveStepMaxAttempts {
+                step_key: "step.a".to_owned(),
+                max_attempts: 0,
+            },
+            WorkflowBuildError::NonPositiveStepMaxAttempts {
+                step_key: "step.a".to_owned(),
+                max_attempts: 0,
+            },
+        ),
+        (
+            WorkflowDagValidationError::NonPositiveStepTimeoutSeconds {
+                step_key: "step.a".to_owned(),
+                timeout_seconds: 0,
+            },
+            WorkflowBuildError::NonPositiveStepTimeoutSeconds {
+                step_key: "step.a".to_owned(),
+                timeout_seconds: 0,
+            },
+        ),
+        (
+            WorkflowDagValidationError::ExternalStepJobTypeNotAllowed {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::ExternalStepJobTypeNotAllowed {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::ExternalStepQueueSettingsNotAllowed {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::ExternalStepQueueSettingsNotAllowed {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+    ]);
+}
+
+#[test]
+fn workflow_build_error_maps_dependency_validation_variants() {
+    assert_dag_validation_mappings([
+        (
+            WorkflowDagValidationError::BlankDependencyStepKey {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::BlankDependencyStepKey {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::DuplicateStepKey {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::DuplicateStepKey {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::MissingDependency {
+                step_key: "step.a".to_owned(),
+                prerequisite_step_key: "step.b".to_owned(),
+            },
+            WorkflowBuildError::MissingDependency {
+                step_key: "step.a".to_owned(),
+                prerequisite_step_key: "step.b".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::SelfDependency {
+                step_key: "step.a".to_owned(),
+            },
+            WorkflowBuildError::SelfDependency {
+                step_key: "step.a".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::DuplicateDependency {
+                step_key: "step.a".to_owned(),
+                prerequisite_step_key: "step.b".to_owned(),
+            },
+            WorkflowBuildError::DuplicateDependency {
+                step_key: "step.a".to_owned(),
+                prerequisite_step_key: "step.b".to_owned(),
+            },
+        ),
+        (
+            WorkflowDagValidationError::CycleDetected,
+            WorkflowBuildError::CycleDetected,
+        ),
+    ]);
+}
+
+fn assert_dag_validation_mappings(
+    mapping_cases: impl IntoIterator<Item = (WorkflowDagValidationError, WorkflowBuildError)>,
+) {
+    for (validation_error, expected_build_error) in mapping_cases {
+        assert_eq!(
+            WorkflowBuildError::from(validation_error),
+            expected_build_error
+        );
+    }
+}

@@ -455,13 +455,12 @@ resolution deadline.
 
 ## Runledger: optional native lifecycle adapter
 
-The three native Runledger packages use one immutable Git revision. The root
-patch selects the same SQLx foundation as the facade; Git consumers must repeat
-that patch in their workspace root. No sibling checkout is needed. See the
-exact source, patch example and evidence limits in the
-[compatibility manifest](reference-compatibility.md). `batter-runledger` consumes
-inert `PreparedSupervisor` values. Native supervision, durable policy, claim
-behavior, observers, schedules, workflows and retries remain upstream.
+The five native Runledger packages are local workspace members under `runledger/`.
+They share the facade's SQLx foundation without a root patch or sibling checkout.
+The [compatibility manifest](reference-compatibility.md) records source provenance
+and evidence limits. `batter-runledger` consumes inert `PreparedSupervisor`
+values. Native supervision, durable policy, claims, observers, schedules,
+workflows and retries remain owned by Runledger's distinct packages.
 
 Protected startup passes its sealed registration target to
 `batter_runledger::register_in`; the exact legacy `register(&mut Supervisor, ...)`

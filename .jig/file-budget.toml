@@ -6,7 +6,362 @@ category = "source"
 include = [
   "**/*.rs",
 ]
-exclude = []
+exclude = [
+  "runledger/runledger-core/src/jobs/workflow_enqueue/tests/builders.rs",
+  "runledger/runledger-postgres/src/error.rs",
+  "runledger/runledger-postgres/src/jobs/queue/enqueue.rs",
+  "runledger/runledger-postgres/src/jobs/queue/failure_transition.rs",
+  "runledger/runledger-postgres/src/jobs/queue/intents.rs",
+  "runledger/runledger-postgres/src/jobs/types/enqueue.rs",
+  "runledger/runledger-postgres/src/jobs/workflows/mutate/append.rs",
+  "runledger/runledger-postgres/src/jobs/workflows/recovery.rs",
+  "runledger/runledger-postgres/src/migrations.rs",
+  "runledger/runledger-postgres/tests/compare_and_requeue.rs",
+  "runledger/runledger-postgres/tests/job_continuation.rs",
+  "runledger/runledger-postgres/tests/job_enqueue_intents.rs",
+  "runledger/runledger-postgres/tests/job_execution_resources.rs",
+  "runledger/runledger-postgres/tests/migrations.rs",
+  "runledger/runledger-postgres/tests/queue_retry_delay_validation.rs",
+  "runledger/runledger-postgres/tests/schedules.rs",
+  "runledger/runledger-postgres/tests/succeeded_job_replay.rs",
+  "runledger/runledger-postgres/tests/workflow_recovery.rs",
+  "runledger/runledger-postgres/tests/workflow_results.rs",
+  "runledger/runledger-runtime/src/reaper.rs",
+  "runledger/runledger-runtime/src/scheduler/tests.rs",
+  "runledger/runledger-runtime/src/settlement/report.rs",
+  "runledger/runledger-runtime/src/settlement.rs",
+  "runledger/runledger-runtime/src/supervisor/driver/tests.rs",
+  "runledger/runledger-runtime/src/supervisor.rs",
+  "runledger/runledger-runtime/src/task_group/report/tests.rs",
+  "runledger/runledger-runtime/src/worker/completion.rs",
+  "runledger/runledger-runtime/src/worker/tests/completion_and_retry.rs",
+  "runledger/runledger-runtime/src/worker/tests.rs",
+  "runledger/runledger-runtime/src/worker/tests/observer_tasks.rs",
+  "runledger/runledger-runtime/tests/catalog.rs",
+  "runledger/runledger-runtime/tests/idempotency.rs",
+  "runledger/runledger-runtime/tests/worker_loop.rs",
+  "runledger/runledger-runtime/tests/workflow_cancel_lock_order.rs",
+  "runledger/runledger-tui/src/app.rs",
+]
 notice_lines = 400
 warn_lines = 500
 max_lines = 800
+
+# Native source imported from Runledger master 46b5cd085d011e597de9552dfebbed4c19416453.
+# Exact existing-size ceilings preserve the import without granting growth.
+# Remove each specific rule/exclusion when its file is reduced below 800 lines.
+
+[[rules]]
+id = "runledger-import-01"
+category = "source"
+include = ["runledger/runledger-core/src/jobs/workflow_enqueue/tests/builders.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 975
+
+[[rules]]
+id = "runledger-import-02"
+category = "source"
+include = ["runledger/runledger-postgres/src/error.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 915
+
+[[rules]]
+id = "runledger-import-03"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/queue/enqueue.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 903
+
+[[rules]]
+id = "runledger-import-04"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/queue/failure_transition.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 860
+
+[[rules]]
+id = "runledger-import-05"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/queue/intents.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1800
+
+[[rules]]
+id = "runledger-import-06"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/types/enqueue.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 863
+
+[[rules]]
+id = "runledger-import-07"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/workflows/mutate/append.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 836
+
+[[rules]]
+id = "runledger-import-08"
+category = "source"
+include = ["runledger/runledger-postgres/src/jobs/workflows/recovery.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1031
+
+[[rules]]
+id = "runledger-import-09"
+category = "source"
+include = ["runledger/runledger-postgres/src/migrations.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1199
+
+[[rules]]
+id = "runledger-import-10"
+category = "source"
+include = ["runledger/runledger-postgres/tests/compare_and_requeue.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1076
+
+[[rules]]
+id = "runledger-import-11"
+category = "source"
+include = ["runledger/runledger-postgres/tests/job_continuation.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1265
+
+[[rules]]
+id = "runledger-import-12"
+category = "source"
+include = ["runledger/runledger-postgres/tests/job_enqueue_intents.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 3150
+
+[[rules]]
+id = "runledger-import-13"
+category = "source"
+include = ["runledger/runledger-postgres/tests/job_execution_resources.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 820
+
+[[rules]]
+id = "runledger-import-14"
+category = "source"
+include = ["runledger/runledger-postgres/tests/migrations.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 3038
+
+[[rules]]
+id = "runledger-import-15"
+category = "source"
+include = ["runledger/runledger-postgres/tests/queue_retry_delay_validation.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 838
+
+[[rules]]
+id = "runledger-import-16"
+category = "source"
+include = ["runledger/runledger-postgres/tests/schedules.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1426
+
+[[rules]]
+id = "runledger-import-17"
+category = "source"
+include = ["runledger/runledger-postgres/tests/succeeded_job_replay.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1027
+
+[[rules]]
+id = "runledger-import-18"
+category = "source"
+include = ["runledger/runledger-postgres/tests/workflow_recovery.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 839
+
+[[rules]]
+id = "runledger-import-19"
+category = "source"
+include = ["runledger/runledger-postgres/tests/workflow_results.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1341
+
+[[rules]]
+id = "runledger-import-20"
+category = "source"
+include = ["runledger/runledger-runtime/src/reaper.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1177
+
+[[rules]]
+id = "runledger-import-21"
+category = "source"
+include = ["runledger/runledger-runtime/src/scheduler/tests.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1101
+
+[[rules]]
+id = "runledger-import-22"
+category = "source"
+include = ["runledger/runledger-runtime/src/settlement/report.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 936
+
+[[rules]]
+id = "runledger-import-23"
+category = "source"
+include = ["runledger/runledger-runtime/src/settlement.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 825
+
+[[rules]]
+id = "runledger-import-24"
+category = "source"
+include = ["runledger/runledger-runtime/src/supervisor/driver/tests.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1473
+
+[[rules]]
+id = "runledger-import-25"
+category = "source"
+include = ["runledger/runledger-runtime/src/supervisor.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1362
+
+[[rules]]
+id = "runledger-import-26"
+category = "source"
+include = ["runledger/runledger-runtime/src/task_group/report/tests.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 949
+
+[[rules]]
+id = "runledger-import-27"
+category = "source"
+include = ["runledger/runledger-runtime/src/worker/completion.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 814
+
+[[rules]]
+id = "runledger-import-28"
+category = "source"
+include = ["runledger/runledger-runtime/src/worker/tests/completion_and_retry.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1252
+
+[[rules]]
+id = "runledger-import-29"
+category = "source"
+include = ["runledger/runledger-runtime/src/worker/tests.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1047
+
+[[rules]]
+id = "runledger-import-30"
+category = "source"
+include = ["runledger/runledger-runtime/src/worker/tests/observer_tasks.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1098
+
+[[rules]]
+id = "runledger-import-31"
+category = "source"
+include = ["runledger/runledger-runtime/tests/catalog.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 2351
+
+[[rules]]
+id = "runledger-import-32"
+category = "source"
+include = ["runledger/runledger-runtime/tests/idempotency.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1654
+
+[[rules]]
+id = "runledger-import-33"
+category = "source"
+include = ["runledger/runledger-runtime/tests/worker_loop.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1083
+
+[[rules]]
+id = "runledger-import-34"
+category = "source"
+include = ["runledger/runledger-runtime/tests/workflow_cancel_lock_order.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1790
+
+[[rules]]
+id = "runledger-import-35"
+category = "source"
+include = ["runledger/runledger-tui/src/app.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1474

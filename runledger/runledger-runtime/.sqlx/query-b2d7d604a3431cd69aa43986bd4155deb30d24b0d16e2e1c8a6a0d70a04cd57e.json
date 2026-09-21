@@ -1,0 +1,113 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            id,\n            name,\n            job_type,\n            organization_id,\n            payload_template,\n            cron_expr,\n            max_jitter_seconds,\n            next_fire_at\n         FROM job_schedules\n         WHERE is_active = true\n           AND next_fire_at <= $1\n         ORDER BY next_fire_at ASC\n         FOR UPDATE SKIP LOCKED\n         LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "job_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "job_type"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "organization_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "organization_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "payload_template",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "payload_template"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "cron_expr",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "cron_expr"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "max_jitter_seconds",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "max_jitter_seconds"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "next_fire_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "job_schedules",
+            "name": "next_fire_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b2d7d604a3431cd69aa43986bd4155deb30d24b0d16e2e1c8a6a0d70a04cd57e"
+}

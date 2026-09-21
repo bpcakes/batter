@@ -30,8 +30,11 @@ requires the original cleanup, exit, capture and watchdog evidence.
   provides detach semantics used by the existing retiring lease guard. Retirement
   releases local pool ownership; it does not prove a blocked backend has stopped.
 
-Runledger now uses the immutable implementation commit from PR #22 and a root source patch to
-the same foundation as the facade; see `reference-compatibility.md`. The
+Runledger now lives in this workspace, imported from master at
+[`46b5cd085d011e597de9552dfebbed4c19416453`](https://github.com/bpcakes/runledger/commit/46b5cd085d011e597de9552dfebbed4c19416453)
+(PR #22). The fresh remote master was fetched and inspected before import. Its
+native packages use the same local foundation as the facade without a patch;
+see [import provenance](../runledger/IMPORT.md). The
 historical sibling-source and Git-pin/view evidence below describes earlier implementations only.
 The new strong path does not retain those views as a compatibility bridge.
 PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).

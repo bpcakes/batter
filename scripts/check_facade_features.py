@@ -153,10 +153,9 @@ def facade_source(selected: tuple[str, ...]) -> str:
 
 
 def manifest(name: str, dependencies: list[str], selected: tuple[str, ...] = ()) -> str:
-    # Cargo may resolve the optional Runledger manifest even without its normal
-    # graph enabled. Its foundation patch must remain available in every facade
-    # root. Native backend development patches are needed only when selected.
-    needed = {"batter-sqlx"}
+    # Runledger and its foundation resolve directly from the shared workspace.
+    # Retain external Runlimit development patches only when selected.
+    needed = set()
     if any(feature.startswith("runlimit") for feature in selected):
         needed.add("runlimit-core")
     needed.update("runlimit-" + backend for backend in ("memory", "postgres")
@@ -230,7 +229,7 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append(git_dependency("runledger-runtime", "Cargo.toml", ("workspace", "dependencies")))
+        deps.append("runledger-runtime = { path = " + json.dumps(str(ROOT / "runledger/runledger-runtime")) + " }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""

@@ -15,6 +15,8 @@ These decisions govern the source implementation and future work.
 | [009](009-http-lifetime-observations.md) | Measured HTTP/1.1 lifetimes; preserve response-construction ownership. |
 | [010](010-agent-only-consumption.md) | Optimize the canonical integration path for coding-agent consumers. |
 
+| [011](011-native-runledger-workspace.md) | Keep native Runledger packages in the shared workspace without merging runtime ownership. |
+
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the
 owning Bead. Do not silently weaken them in the name of convenience or compiler

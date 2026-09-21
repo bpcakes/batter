@@ -33,4 +33,4 @@ printf 'Workspace tests require loopback TCP sockets and Unix subprocess permiss
 python3 scripts/test_matrix.py
 cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc --workspace --all-features --no-deps --locked
-printf 'Rust verification, including live loopback readiness tests, completed successfully. HTTP process smokes and live PostgreSQL checks are separate.\n'
+printf 'Rust verification, including live loopback readiness tests, completed successfully. Native Runledger PostgreSQL tests are included; HTTP process smokes and Batter adapter live PostgreSQL checks are separate.\n'
