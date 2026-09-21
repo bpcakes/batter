@@ -126,6 +126,9 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
 
 
 ## Common commands
+
+`python3 scripts/check_runlimit_consumer.py` runs native and facade consumers
+from a Git-free source copy with the selected compiler and no consumer patches.
 Run from the repository root:
 
 ```sh

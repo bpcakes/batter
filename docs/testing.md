@@ -1983,5 +1983,21 @@ RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-post
 CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 1.98.1. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
-Runledger PostgreSQL 18 tests are separate. Standalone exported-source native/facade
-consumers are owned by `batter-isdr.2`.
+Runledger PostgreSQL 18 tests are separate.
+
+`python3 scripts/check_runlimit_consumer.py` copies eligible sources outside the
+checkout and runs the retained native smoke plus `runlimit/smoke/facade_consumer.rs`
+from a sibling standalone workspace. The latter proves shared facade/direct/native
+identities, successful work admission and denial without invoking work. All five
+native packages compile. The checker rejects duplicated, missing, remote or
+outside-copy required identities and changed external dependency versions. It
+supplies a public fixture key, needs no database or consumer patches, and checks
+execution markers only after successful process exit. Both fixtures are Jig inputs.
+
+The source workspace's active compiler is passed explicitly to Cargo; an explicit
+`RUSTUP_TOOLCHAIN` takes precedence. Run the check with `RUSTUP_TOOLCHAIN=1.94.0`
+for the minimum compiler. The root lock remains unchanged; the temporary lock may
+only prune unused packages. `python3 -m unittest discover -s scripts -p
+test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
+failure controls. Both commands are part of the bounded root test matrix. The same
+checker can run from an extracted source ZIP; it does not inspect Git history.

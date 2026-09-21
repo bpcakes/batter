@@ -33,6 +33,9 @@ RUNLEDGER_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scrip
 RUNLEDGER_CONSUMER = [sys.executable, "scripts/check_runledger_consumer.py"]
 RUNLEDGER_TOOL_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_runledger_tools.py", "-v"]
+RUNLIMIT_CONSUMER = [sys.executable, "scripts/check_runlimit_consumer.py"]
+RUNLIMIT_CONSUMER_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                              "-p", "test_runlimit_consumer.py", "-v"]
 RUNLIMIT_GRAPH = [sys.executable, "scripts/check_runlimit_workspace.py"]
 RUNLIMIT_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                      "-p", "test_runlimit_workspace.py", "-v"]
@@ -55,7 +58,8 @@ def main():
                              (["doctests"], [DOC_TESTS]),
                              (["runlimit-isolated-features", "runlimit-workspace", "runlimit-controls", "runlimit-default"],
                               [RUNLIMIT_FEATURES, RUNLIMIT_GRAPH, RUNLIMIT_CONTROLS, RUNLIMIT_DEFAULT]),
-                             (["runlimit-release"], [RUNLIMIT_RELEASE])]:
+                             (["runlimit-release", "runlimit-consumer", "runlimit-consumer-controls"],
+                              [RUNLIMIT_RELEASE, RUNLIMIT_CONSUMER, RUNLIMIT_CONSUMER_CONTROLS])]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)
         outcomes = run_parallel(commands, timeout=1500, output_limit=8 * 1024 * 1024,
                                 cwd=ROOT, retain_tail=True)

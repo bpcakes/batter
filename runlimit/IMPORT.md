@@ -21,8 +21,10 @@ Source archives retain SQL and both license names, and mutation fixtures include
 this native root. Root verification preserves default/all-feature tests and lint,
 the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.
 
-The native smoke source is retained at `smoke/native_consumer.rs`; independent
-source-copy execution is task `batter-isdr.2`. Upstream release scripts, Cargo.lock,
+The native smoke source is retained unchanged at `smoke/native_consumer.rs`.
+`python3 scripts/check_runlimit_consumer.py` executes it and the added facade
+quota fixture from exported sources with a standalone Cargo workspace, no Git
+metadata or patches, and the selected compiler (`batter-isdr.2`). Upstream release scripts, Cargo.lock,
 CI/deny configuration, tracker, backlog and execution-plan administration remain
 historical upstream records. This unpublished workspace does not run registry
 release or upstream repository archival. README developer paths and agent guidance

@@ -101,9 +101,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-The original independent smoke consumer is retained at `smoke/native_consumer.rs`.
-Its exported-source execution is owned by delivery task `batter-isdr.2`; the
-workspace's native unit tests and existing facade isolation checks run now.
+Run `python3 scripts/check_runlimit_consumer.py` from the repository root to execute
+the original `smoke/native_consumer.rs` and the facade quota consumer from a
+Git-free source copy. The standalone consumer needs no dependency patches or
+database; it uses a public fixture key. It preserves the selected toolchain and
+locked external versions. Prefix with `RUSTUP_TOOLCHAIN=1.94.0` to check the minimum
+compiler. Root verification also runs this check.
 
 ## Decision model
 
