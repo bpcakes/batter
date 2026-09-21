@@ -48,7 +48,8 @@ pub mod axum {
     pub use batter_axum::*;
 }
 
-/// Native SQLx PostgreSQL connection disposition and verification APIs.
+/// Native SQLx PostgreSQL transaction, snapshot, verification, and connection
+/// disposition APIs.
 ///
 /// Enabled by the `sqlx` feature. The nested `test_support` module additionally
 /// requires `sqlx-test-support` and remains owned by the SQLx adapter.
