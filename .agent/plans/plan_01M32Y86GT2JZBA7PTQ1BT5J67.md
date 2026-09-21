@@ -2,7 +2,7 @@
 Owning Bead: batter-isdr.2; epic batter-isdr. The task begins only after the native import passes its pinned review. Fixed PINNED_BASE: 0d9b40e1e41b3fe61b195a5a219eaee44e28be61.
 
 ## Progress
-Implemented. Git-free original native and facade quota consumers execute on Rust 1.98.1 and 1.94.0. Three independent consumer controls, existing native tool controls and bounded matrix controls pass. Actual extracted ZIP execution passes on both compilers. The updated full minimum-toolchain verify.sh and all five default Jig targets pass; api:test receipt receipt_01M32Z8QVS4YHN26TFEZJTTQN6. Native review remains.
+Implemented. Git-free original native and facade quota consumers execute on Rust 1.98.1 and 1.94.0. Three independent consumer controls, existing native tool controls and bounded matrix controls pass. Actual extracted ZIP execution passes on both compilers. The updated full minimum-toolchain verify.sh and all five default Jig targets pass; api:test receipt receipt_01M32Z8QVS4YHN26TFEZJTTQN6. Native cumulative review completed with no findings. Post-commit api:test receipt receipt_01M32ZQP9T2K87HAZERYHSEB05 and all required gates are fresh. Task and epic complete.
 
 ## Surprises & Discoveries
 The original native smoke is an executable with runtime assertions and an explicit RUNLIMIT_KEY_SECRET input. It needs no database server. Existing Runledger source-copy tooling already excludes Git, environment files and outputs and validates local identities and locked external sources; reuse it while preserving its existing defaults.
