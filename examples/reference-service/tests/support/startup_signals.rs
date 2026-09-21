@@ -2,7 +2,7 @@ use super::{
     ProbeResult,
     startup_process::{self, ExecutableChild, Signal, StartupChild},
 };
-use batter_example_reference_service::schema::initialize_schema;
+use crate::support::profiled::initialize_schema;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};

@@ -41,8 +41,8 @@ pub fn catalog(sender: Option<mpsc::UnboundedSender<Uuid>>) -> JobCatalog {
 }
 
 pub async fn probe(pool: PgPool) -> ProbeResult {
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::migrate(&pool).await?;
+    crate::support::profiled::verify(&pool).await?;
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let catalog = catalog(Some(sender));
     catalog.sync_definitions(&pool).await?;

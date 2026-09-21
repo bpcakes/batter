@@ -9,8 +9,10 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
-- `src/runtime.rs` uses protected startup with library-owned signals, `pool_in`,
-  native preparation and `batter::runledger` registration. It owns PostgreSQL
+- `src/runtime.rs` uses protected startup with library-owned signals, reserves a
+  cleanup slot before constructing the profiled database, and registers pool
+  close before yielding. `src/database.rs` declares direct-login/public policy;
+  native preparation and `batter::runledger` registration share that pool. It owns PostgreSQL
   health sampling, installs the delivery handler and approves ordinary readiness
   after registered components acknowledge initialization. Its startup failures downcast to
   `ProtectedRuntimeStartupFailure`; the earlier wrapper was removed in the

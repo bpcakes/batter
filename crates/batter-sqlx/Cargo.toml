@@ -1,5 +1,6 @@
 [package]
 name = "batter-sqlx"
+links = "batter_sqlx_foundation"
 description = "Owned PostgreSQL transaction, snapshot, verification, and connection disposition APIs"
 version = "0.1.0"
 edition.workspace = true
@@ -55,3 +56,6 @@ name = "migrations_live"
 
 [[test]]
 name = "atomic_live"
+
+[[test]]
+name = "profile"

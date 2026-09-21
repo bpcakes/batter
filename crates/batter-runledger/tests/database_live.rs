@@ -19,17 +19,29 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
         .fetch_one(&mut control)
         .await?;
     let table = format!("opaque_bridge_audit_{suffix}");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy(&url)?;
+    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
+    let login = options.get_username();
+    let profile = batter_runledger::PgSessionProfile::new(
+        login,
+        login,
+        vec!["public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
+    )?;
+    let database = batter_runledger::RunledgerDatabase::connect_lazy(
+        options,
+        profile,
+        sqlx::postgres::PgPoolOptions::new().max_connections(1),
+    )?;
+    let pool = database.pool().clone();
     let body_pool = pool.clone();
     let body_table = table.clone();
     let body = tokio::spawn(async move {
         let pool = body_pool;
         let table = body_table;
         let context = OperationContext::new(Duration::from_secs(30))?;
-        runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
-        let _snapshot = verify_schema(&pool).await?;
+        runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
+        let _snapshot = verify_schema(&database).await?;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE {table} (id integer PRIMARY KEY)"
         )))
@@ -40,7 +52,7 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
             let key = format!("{table}-{id}");
             let intent =
                 JobEnqueueIntent::new(JobType::new("batter.opaque.intent"), &payload, &key);
-            let result = run_atomic(&pool, async |mut scope| {
+            let result = run_atomic(&database, async |mut scope| {
                 scope
                     .application(async |sql| {
                         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -54,7 +66,7 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
                     .await
                     .expect("application write");
                 let recorded = scope
-                    .record_job_enqueue_intent(&intent)
+                    .record_required_job_enqueue_intent(&intent)
                     .await
                     .expect("intent");
                 if commit { Ok(recorded) } else { Err("reject") }
@@ -79,7 +91,7 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
             .await?;
             assert_eq!((retained, audit), (commit, commit));
         }
-        schema_cancellation_retires(&pool, &context).await?;
+        schema_cancellation_retires(&database, &context).await?;
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
     .await
@@ -133,7 +145,11 @@ async fn cleanup_fixture(control: &mut sqlx::PgConnection, table: &str) -> Resul
 
 // Block the actual verifier on history access, then prove that cancellation
 // retires that same backend before its server-side lock wait can complete.
-async fn schema_cancellation_retires(pool: &sqlx::PgPool, _context: &OperationContext) -> Result {
+async fn schema_cancellation_retires(
+    database: &batter_runledger::RunledgerDatabase,
+    _context: &OperationContext,
+) -> Result {
+    let pool = database.pool();
     let url = std::env::var("DATABASE_URL")?;
     let mut blocker = sqlx::PgConnection::connect(&url).await?;
     let mut observer = sqlx::PgConnection::connect(&url).await?;
@@ -145,7 +161,7 @@ async fn schema_cancellation_retires(pool: &sqlx::PgPool, _context: &OperationCo
         .fetch_one(pool)
         .await?;
     let body: Result = async {
-        let mut check = Box::pin(verify_schema(pool));
+        let mut check = Box::pin(verify_schema(database));
         tokio::select! {
             result = &mut check => { result?; return Err("schema verification did not block".into()); }
             result = observe_backend(&mut observer, pid, true) => result?,

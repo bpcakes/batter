@@ -222,10 +222,11 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 scope.stage("postgres.acquire")?;
-                let pool = register_pool(scope, parts.pool_options, parts.connect_options)?;
+                let database = register_pool(scope, parts.pool_options, parts.connect_options)?;
+                let pool = database.pool().clone();
                 drop(pool.acquire().await?);
                 scope.stage("postgres.schema")?;
-                initialize_schema(&pool).await?;
+                initialize_schema(&database).await?;
                 let health = register_health(scope.registration(), pool.clone())?;
 
                 scope.stage("http.bind")?;
@@ -241,7 +242,7 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
                     parts.http,
                     lifecycle.clone(),
                     admission.clone(),
-                    pool.clone(),
+                    database,
                     health,
                 )?;
 
@@ -290,9 +291,15 @@ fn register_pool(
     scope: &mut ProtectedStartupScope,
     pool_options: sqlx::postgres::PgPoolOptions,
     connect_options: sqlx::postgres::PgConnectOptions,
-) -> Result<sqlx::PgPool, BoxError> {
+) -> Result<runledger_postgres::RunledgerDatabase, BoxError> {
     let slot = scope.reserve_cleanup("postgres.pool")?;
-    Ok(batter::sqlx::pool_in(slot, pool_options, connect_options))
+    let database = crate::database::configured(connect_options, pool_options)?;
+    let closing = database.pool().clone();
+    slot.register(move || async move {
+        closing.close().await;
+        Ok(())
+    });
+    Ok(database)
 }
 
 fn register_health(

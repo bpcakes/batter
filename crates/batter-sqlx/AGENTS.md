@@ -52,7 +52,9 @@ excludes ordinary application rejections. Do not broaden downstream wrappers.
 There is no public PgSession::begin or PgTransaction; manual ownership is only
 low_level::PgAtomicTransaction. Crate-level examples must lead with run_atomic.
 Atomic/snapshot acquisition clears inherited session state and every completion
-retires the connection; the pool-return contract above describes only low-level
+retires the connection. Profiled scopes establish declared role/path/settings
+after reset and before BEGIN, and revalidate after arbitrary SQL; profiles are
+policy, not permanent authority evidence. The pool-return contract describes only low-level
 PgLease session work. Snapshot errors require the original guard before clean
 rollback classification; read-only inspectors have a distinct capability.
 Atomic scopes consume their owner and release their parent savepoint (including

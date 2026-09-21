@@ -25,8 +25,9 @@ use std::{
 };
 
 pub use runledger_postgres::{
-    PgAtomicError, PgAtomicUncertainty, PgIntentScope, PgQueueScope, PgScopeFailure, PgScopeLoss,
-    SchemaCompatibilitySnapshot,
+    AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty, PgIntentScope,
+    PgQueueScope, PgScopeFailure, PgScopeLoss, PgSessionProfile, RequiredIntentError,
+    RunledgerDatabase, SchemaCompatibilitySnapshot,
     ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
 };
 

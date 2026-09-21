@@ -29,6 +29,22 @@ acceptance and status. The current native lifecycle and retirement redesign is o
 
 ## Selected graph
 
+The database-profile follow-up (`batter-ldb`) requires `RunledgerDatabase` for
+atomic work, migration and verification. Its immutable profile declares login
+and effective roles, authoritative schema, timeouts and custom settings. The
+reference root declares direct-login/public policy, reserves cleanup before
+constructing the database, and shares its configured pool with ordinary APIs
+and workers. Known conflicted required intents reject inside the runner.
+
+Local follow-up evidence (2026-09-21): full Rust verification passed on 1.94.0
+and 1.98.1; PostgreSQL 18.6 SQLx/adapter live checks, all 66 reference entries and
+both private library probes passed. The coordinated Runledger suite additionally
+tests custom quoted schemas, SET ROLE, timeout/tenant equality and conflict
+rollback. Its retained `docs/evidence/profile-consumer-2026-09-21.*` is a fresh
+compile-only consumer exercise. All five HTTP profiles passed on each supported
+toolchain and all five Jig targets passed. These local passes are not final-head
+hosted CI.
+
 The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
 batter-sqlx -> batter-core`. `Cargo.toml` pins all three Runledger packages to
 `bfc949bbc32fb2cc5731fb743632b2e432d1f5ae` (PR #20). A workspace-root patch for

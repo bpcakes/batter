@@ -43,6 +43,26 @@ pub async fn run_atomic<T, E>(
     let owner = PgAtomicTransaction::begin(pool)
         .await
         .map_err(PgAtomicError::Begin)?;
+    run_owned(owner, work).await
+}
+
+/// Execute with declared role/path/settings restored and verified after reset,
+/// before BEGIN and before invoking the body. Setup failure never runs the body.
+pub async fn run_atomic_profiled<T, E>(
+    pool: &PgPool,
+    profile: &crate::PgSessionProfile,
+    work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
+) -> Result<T, PgAtomicError<T, E>> {
+    let owner = PgAtomicTransaction::begin_profiled(pool, profile)
+        .await
+        .map_err(PgAtomicError::Begin)?;
+    run_owned(owner, work).await
+}
+
+async fn run_owned<T, E>(
+    owner: PgAtomicTransaction,
+    work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
+) -> Result<T, PgAtomicError<T, E>> {
     let mut scope = PgAtomicScope {
         state: ScopeState::Live(owner),
     };

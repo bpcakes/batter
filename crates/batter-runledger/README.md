@@ -17,9 +17,19 @@ success, and `Unsettled` never authorizes dependency cleanup.
 The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
-`run_atomic(&pool, async |scope| ...)` reexports Runledger's protected runner,
+Declare `PgSessionProfile` and construct `RunledgerDatabase`; an arbitrary native
+pool cannot establish serving authority after reset. The profile names login and
+effective roles, the authoritative schema, timeouts and optional tenant settings.
+Ordinary APIs and workers use `database.pool()`; schema and atomic APIs take
+`&database`. Mandatory hooks and owned scopes establish the same policy. Custom
+schemas and SET ROLE are supported; fallback schemas are rejected so missing
+tables cannot resolve elsewhere. Qualify application objects outside the declared
+schema. Provisioning and grants remain application-owned.
+
+`run_atomic(&database, async |scope| ...)` reexports Runledger's protected runner,
 built on `batter-sqlx`. The initial `PgIntentScope` supports application SQL and
-`record_job_enqueue_intent`. Consume it with `scope.queue()` to enter
+`record_required_job_enqueue_intent`. Known conflicts are typed rejections, not
+successful handoffs requiring a later status check. Consume it with `scope.queue()` to enter
 `PgQueueScope` for enqueue operations; intent recording is then unavailable.
 There is no transaction view, owner extraction, separate completion call or legacy
 bridge. Outputs leave the runner only after acknowledged commit; rejected bodies
@@ -45,7 +55,7 @@ only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
 facade or this integration. Publishing and replacement with immutable released
 package identities remain separate decisions.
 
-`verify_schema(&pool)` acquires and owns a read-only repeatable-read transaction.
+`verify_schema(&database)` acquires and owns a read-only repeatable-read transaction.
 Runledger qualifies and checks authoritative objects, returning a
 `SchemaCompatibilitySnapshot` after rollback. It never borrows caller session
 state. The snapshot records one compatible observation, not future validity.

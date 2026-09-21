@@ -13,7 +13,8 @@ pub(super) async fn identity(
     fixture.set_dispatch(DispatchBehavior::Accept);
     fixture.set_lookup(LookupBehavior::Stored);
     let before = fixture.counts();
-    let service = DeliveryService::new(pool.clone());
+    crate::support::profiled::with(pool, async |database| {
+    let service = DeliveryService::new(database.clone());
     let owner = OwnerId::new(Uuid::from_u128(OWNER))?;
     let mut commands = Vec::new();
     for (record, key, corrupt_payload) in [
@@ -80,6 +81,7 @@ pub(super) async fn identity(
     )
     .await;
     finish_results(observed, stopped)
+    }).await
 }
 
 /// A dispatch lower bound never delays the keyed GET that resolves uncertainty.

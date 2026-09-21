@@ -38,12 +38,8 @@ pub async fn read_committed(pool: &PgPool) -> Result<Transaction<'_, Postgres>, 
 }
 
 pub async fn probe(pool: PgPool) -> ProbeResult {
-    assert!(
-        runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool)
-            .await
-            .is_err()
-    );
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
+    assert!(crate::support::profiled::verify(&pool).await.is_err());
+    crate::support::profiled::migrate(&pool).await?;
     let mut migrations = sqlx::migrate!("./migrations");
     migrations.set_ignore_missing(true);
     migrations.run(&pool).await?;
@@ -52,9 +48,9 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
             .fetch_all(&pool)
             .await?;
     assert!(before.len() > 1);
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::migrate(&pool).await?;
     migrations.run(&pool).await?;
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::verify(&pool).await?;
     let after: Vec<(i64, Vec<u8>)> =
         sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)

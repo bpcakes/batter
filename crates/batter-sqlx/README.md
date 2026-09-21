@@ -39,8 +39,25 @@ Every atomic and snapshot completion retires its physical connection, including
 acknowledged commit/rollback. Acquisition executes ROLLBACK, clears SQLx's statement
 cache, and executes DISCARD ALL before BEGIN. This removes inherited settings,
 temporary objects, roles and session advisory locks; pool `after_connect` session
-customizations are intentionally reset. Express transaction-local settings inside
-the scope. Failed or cancelled reset retires the connection. Retirement releases
+customizations are intentionally reset. Do not rely on them for serving authority.
+Use `run_atomic_profiled(&pool, &profile, ...)` and
+`PgReadOnlySnapshot::inspect_profiled(&pool, &profile, ...)` when role, trusted
+schema path, server timeouts or custom tenant settings matter. `PgSessionProfile`
+declares login/effective roles and safely quoted trusted schemas, plus explicit
+statement/lock timeouts and bound custom settings. Setup is library-owned, runs
+after reset and before BEGIN, and is verified before application work. Atomic
+scope boundaries and snapshot cleanup revalidate the retained profile. It is a
+policy declaration, not a permanent authority witness or privilege sandbox.
+Only include schemas whose object creators you trust. Application-specific
+provisioning and required grants remain downstream; no role/schema is created.
+Setting names are ASCII-lowercased before validation; case-variant duplicates
+are rejected, and values remain unchanged. Public `reset_and_apply` errors use
+`sqlx::Error::Configuration` containing `SqlxFailure`: default Debug/Display and
+SQLx pool-hook error logs omit native contents. Deliberate payload downcasting,
+`native()` and error-source inspection retain the original cause. This boundary
+does not redact error-chain reporters, independent SQLx query/notice logging or
+PostgreSQL server logs; configure those separately.
+Failed or cancelled reset/setup retires the connection. Retirement releases
 local pool capacity, not synchronous proof of backend termination.
 
 `PgReadOnlySnapshot::inspect(&pool, async |sql| ...)` owns a REPEATABLE READ READ
@@ -52,7 +69,8 @@ validation and acknowledged outer rollback. Boundary loss retains both causes.
 
 The snapshot establishes no SELECT before the inspector, allowing it to lock
 authoritative objects before its first snapshot query. Qualify authoritative names;
-the local search path is `pg_catalog, pg_temp`. Catalog cache functions may not
+the unprofiled local search path is `pg_catalog, pg_temp`. Profiled inspection
+uses the explicitly declared path. Catalog cache functions may not
 obey MVCC; use direct catalog reads and appropriate DDL locks.
 
 `low_level::PgAtomicTransaction` is the exceptional consuming-owner API. It leaves

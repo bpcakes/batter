@@ -52,6 +52,7 @@ use sqlx::PgPool;
 pub struct PgAtomicTransaction {
     lease: PgLease,
     xid: String,
+    profile: Option<crate::PgSessionProfile>,
 }
 
 /// Acknowledgement of this owner's COMMIT, not an authorization to replay.
@@ -74,10 +75,28 @@ impl PgAtomicTransaction {
     /// Acquire and begin a fresh transaction. Bound the entire consuming workflow
     /// with an OperationContext when a deadline/cancellation lineage is required.
     pub async fn begin(pool: &PgPool) -> Result<Self, PgTransactionError> {
+        Self::begin_with_profile(pool, None).await
+    }
+
+    /// Establish declared session policy after reset and before transaction birth.
+    pub async fn begin_profiled(
+        pool: &PgPool,
+        profile: &crate::PgSessionProfile,
+    ) -> Result<Self, PgTransactionError> {
+        Self::begin_with_profile(pool, Some(profile)).await
+    }
+
+    async fn begin_with_profile(
+        pool: &PgPool,
+        profile: Option<&crate::PgSessionProfile>,
+    ) -> Result<Self, PgTransactionError> {
         let mut lease = PgLease {
             connection: Some(pool.acquire().await?),
         };
         normalize(lease.connection_mut()).await?;
+        if let Some(profile) = profile {
+            profile.apply(lease.connection_mut()).await?;
+        }
         command(
             lease.connection_mut(),
             "BEGIN ISOLATION LEVEL READ COMMITTED READ WRITE",
@@ -86,7 +105,11 @@ impl PgAtomicTransaction {
         let xid = sqlx::query_scalar("SELECT pg_catalog.pg_current_xact_id()::text")
             .fetch_one(lease.connection_mut())
             .await?;
-        Ok(Self { lease, xid })
+        Ok(Self {
+            lease,
+            xid,
+            profile: profile.cloned(),
+        })
     }
 
     /// Run application SQL. Any returned application error consumes the owner.
@@ -182,6 +205,9 @@ impl PgAtomicTransaction {
     }
 
     async fn validate(&mut self) -> Result<(), PgTransactionError> {
+        if let Some(profile) = &self.profile {
+            profile.verify(self.lease.connection_mut()).await?;
+        }
         let (xid, isolation, read_only): (Option<String>, String, String) = sqlx::query_as(
             "SELECT pg_catalog.pg_current_xact_id_if_assigned()::text, \
              pg_catalog.current_setting('transaction_isolation'), \
