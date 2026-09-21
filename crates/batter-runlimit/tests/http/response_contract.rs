@@ -1,6 +1,7 @@
 use super::*;
 use axum::response::{IntoResponse, Response};
 use batter_axum::quota_observation::{QuotaRecorder, QuotaTerminalFacts};
+use runlimit_core::QuotaDenial;
 use serde_json::Value;
 
 async fn assert_fixed_response(response: Response, status: StatusCode, code: &str) {
@@ -547,6 +548,52 @@ async fn fixed_quota_rejections_have_stable_codes_and_no_store() {
             code,
         )
         .await;
+    }
+    finish(running).await;
+}
+
+#[tokio::test]
+async fn retry_after_preserves_native_ceil_seconds_for_both_denial_kinds() {
+    let running = running().await;
+    for (delay, expected) in [
+        (Duration::ZERO, "0"),
+        (Duration::from_nanos(1), "1"),
+        (Duration::from_secs(2), "2"),
+        (Duration::from_millis(2_001), "3"),
+    ] {
+        for (denial, status) in [
+            (
+                Denial::QuotaExceeded(QuotaDenial::new(
+                    runlimit_core::Capacity::new(1).unwrap(),
+                    delay,
+                )),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                Denial::StorageCapacity {
+                    retry_after: Some(delay.into()),
+                },
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let client = prepare(
+                Quota::new(Backend::new(Mode::Return(
+                    BatchDecision::denied(0, 1, denial).unwrap(),
+                ))),
+                vec![policy("owner", 1)],
+                request_policy(&running, 1000),
+                routes(),
+            )
+            .in_process();
+            let response = client
+                .request(request("/work", "Bearer secret-a"), peer())
+                .await;
+            assert_eq!(response.status(), status);
+            assert_eq!(
+                response.headers().get(header::RETRY_AFTER).unwrap(),
+                expected
+            );
+        }
     }
     finish(running).await;
 }
