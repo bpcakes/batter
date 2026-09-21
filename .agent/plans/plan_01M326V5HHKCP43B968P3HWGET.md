@@ -1,0 +1,1 @@
+Advance workflow and adapter documentation pins to merged Runledger #20, including idle-admission profile restoration. Validate paired source guard, both Rust toolchains/HTTP smokes and repository gates. No API or foundation changes.
