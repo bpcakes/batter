@@ -7,15 +7,17 @@ use batter::{
     sqlx::{PgAtomicError, PgLease, PgScopeError, PgScopedSql, PgSession, SqlxFailure},
 };
 use runledger_postgres::jobs::{JobEnqueue, JobEnqueueDisposition, JobEnqueueOutcome};
-use sqlx::PgPool;
 
 use progress::{SettledSubmission, SubmissionProgress};
 
 impl DeliveryService {
     /// Bind delivery commands to the application-owned native pool.
     #[must_use]
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(database: runledger_postgres::RunledgerDatabase) -> Self {
+        Self {
+            pool: database.pool().clone(),
+            database,
+        }
     }
 
     /// Submit one exact, owner-scoped delivery command under the supplied total budget.
@@ -33,13 +35,13 @@ impl DeliveryService {
         let request = request.validate(record_id).map_err(SubmitError::Invalid)?;
         let progress = SubmissionProgress::new();
         let progress_in_operation = progress.clone();
-        let pool = self.pool.clone();
+        let database = self.database.clone();
         let result = context
             .run_resolved(
                 "delivery.submit",
                 move |scope| async move {
                     attempt_submit(
-                        &pool,
+                        &database,
                         &scope,
                         &progress_in_operation,
                         owner,
@@ -180,7 +182,7 @@ impl SubmitAttemptError {
 }
 
 async fn attempt_submit(
-    pool: &PgPool,
+    database: &runledger_postgres::RunledgerDatabase,
     _context: &OperationContext,
     progress: &SubmissionProgress,
     owner: OwnerId,
@@ -190,7 +192,7 @@ async fn attempt_submit(
     // The callback is invoked only after BEGIN. Retain that distinction for an
     // interrupted OperationContext without exporting any provisional body output.
     let mut active = None;
-    let result = run_atomic(pool, async |scope| {
+    let result = run_atomic(database, async |scope| {
         active = Some(progress.transaction_began());
         let mut queue = scope.queue();
         let prepared = queue

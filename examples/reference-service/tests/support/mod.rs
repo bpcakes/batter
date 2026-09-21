@@ -23,6 +23,7 @@ mod live_endpoint;
 pub mod migrations;
 pub mod native_descendants;
 pub mod native_hosted;
+pub mod profiled;
 pub mod protected_startup;
 pub mod retirement;
 pub mod startup_process;

@@ -4,11 +4,9 @@ use super::{
     provider::{DispatchBehavior, ProviderFixture},
     startup_process::{self, ExecutableChild, Signal},
 };
+use crate::support::profiled::initialize_schema;
 use batter::{BoxError, operation::OperationContext};
-use batter_example_reference_service::{
-    delivery::{DeliveryService, OwnerId, SubmitDelivery},
-    schema::initialize_schema,
-};
+use batter_example_reference_service::delivery::{OwnerId, SubmitDelivery};
 use serde_json::Value;
 use sqlx::{Connection, PgConnection, PgPool, types::Uuid};
 use std::{net::SocketAddr, time::Duration};
@@ -283,18 +281,18 @@ async fn pending_delivery(pool: &PgPool, index: u128) -> Result<Uuid, batter::Bo
         .execute(pool)
         .await?;
     let context = OperationContext::new(SUBMISSION_LIMIT)?;
-    let submitted = DeliveryService::new(pool.clone())
-        .submit(
-            &context,
-            owner,
-            record,
-            SubmitDelivery {
-                expected_generation: 1,
-                idempotency_key: format!("production-readiness-{index}"),
-                payload: serde_json::json!({"channel": "example", "index": index}),
-            },
-        )
-        .await?;
+    let submitted = crate::support::profiled::submit(
+        pool,
+        &context,
+        owner,
+        record,
+        SubmitDelivery {
+            expected_generation: 1,
+            idempotency_key: format!("production-readiness-{index}"),
+            payload: serde_json::json!({"channel": "example", "index": index}),
+        },
+    )
+    .await?;
     Ok(
         sqlx::query_scalar("SELECT job_id FROM reference_deliveries WHERE id = $1")
             .bind(submitted.delivery.delivery_id)

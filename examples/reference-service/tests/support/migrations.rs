@@ -16,8 +16,8 @@ pub async fn upgrade_probe(pool: PgPool) -> ProbeResult {
         .fetch_one(&pool)
         .await?;
     assert_upgrade_required(&pool).await?;
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::migrate(&pool).await?;
+    crate::support::profiled::verify(&pool).await?;
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await?;
@@ -27,7 +27,7 @@ pub async fn upgrade_probe(pool: PgPool) -> ProbeResult {
         .await?;
     assert_eq!(values, [42]);
     application.run(&pool).await?;
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::migrate(&pool).await?;
     let repeated: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await?;
@@ -47,8 +47,7 @@ async fn assert_owner_epoch_sequence(pool: &PgPool) -> ProbeResult {
 }
 
 async fn assert_upgrade_required(pool: &PgPool) -> ProbeResult {
-    let missing =
-        runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(pool).await;
+    let missing = crate::support::profiled::verify(pool).await;
     assert!(
         matches!(
             missing,

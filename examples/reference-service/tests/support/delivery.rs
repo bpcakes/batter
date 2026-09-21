@@ -1,4 +1,5 @@
 use super::ProbeResult;
+use crate::support::profiled::initialize_schema;
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
@@ -13,7 +14,6 @@ use batter_example_reference_service::{
     config::ServingSettings,
     delivery::DELIVERY_JOB_TYPE,
     http::{InProcessRequestClient, in_process_client},
-    schema::initialize_schema,
 };
 use serde_json::Value;
 use sqlx::{PgPool, postgres::PgConnectOptions};
@@ -55,7 +55,10 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings
     .expect("live settings are valid")
 }
 
-fn app(settings: &ServingSettings, pool: PgPool) -> InProcessRequestClient {
+fn app(
+    settings: &ServingSettings,
+    pool: runledger_postgres::RunledgerDatabase,
+) -> InProcessRequestClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let second = std::time::Duration::from_secs(1);
@@ -156,6 +159,8 @@ struct CommandFixture {
 async fn prepare_commands(pool: PgPool) -> TestResult<CommandFixture> {
     initialize_schema(&pool).await?;
     initialize_schema(&pool).await?;
+    let database = super::profiled::configured(&pool);
+    let pool = database.pool().clone();
     let owner_a = Uuid::parse_str(OWNER_A)?;
     let owner_b = Uuid::parse_str(OWNER_B)?;
     let record_a = Uuid::parse_str("00000000-0000-0000-0000-000000000201")?;
@@ -170,8 +175,8 @@ async fn prepare_commands(pool: PgPool) -> TestResult<CommandFixture> {
     .bind(owner_b)
     .execute(&pool)
     .await?;
-    let app_a = app(&settings(OWNER_A, TOKEN_A, &[]), pool.clone());
-    let app_b = app(&settings(OWNER_B, TOKEN_B, &[]), pool.clone());
+    let app_a = app(&settings(OWNER_A, TOKEN_A, &[]), database.clone());
+    let app_b = app(&settings(OWNER_B, TOKEN_B, &[]), database);
     Ok(CommandFixture {
         pool,
         app_a,
@@ -468,10 +473,15 @@ async fn assert_persistence(fixture: &CommandFixture) -> TestResult {
 
 pub async fn command_and_reconciliation(pool: PgPool) -> ProbeResult {
     let fixture = prepare_commands(pool).await?;
-    let delivery_id = initial_command(&fixture).await?;
-    ownership_and_replacement(&fixture, delivery_id).await?;
-    assert_persistence(&fixture).await?;
-    projection::probe(&fixture, delivery_id).await
+    let result = async {
+        let delivery_id = initial_command(&fixture).await?;
+        ownership_and_replacement(&fixture, delivery_id).await?;
+        assert_persistence(&fixture).await?;
+        projection::probe(&fixture, delivery_id).await
+    }
+    .await;
+    fixture.pool.close().await;
+    result
 }
 
 mod projection;
@@ -512,12 +522,13 @@ async fn assert_pool_timeout(options: PgConnectOptions, missing: &str) -> TestRe
             ("BATTER_REQUEST_TIMEOUT_MS", "1500"),
         ],
     );
-    let pool_timeout = pool_timeout_settings
-        .pool_options()
-        .connect_with(options)
-        .await?;
+    let database = batter_example_reference_service::database::configured(
+        options,
+        pool_timeout_settings.pool_options(),
+    )?;
+    let pool_timeout = database.pool();
     let held = pool_timeout.acquire().await?;
-    let pool_timeout_app = app(&pool_timeout_settings, pool_timeout.clone());
+    let pool_timeout_app = app(&pool_timeout_settings, database.clone());
     let outcome = failure_code(&pool_timeout_app, missing, TOKEN_A).await?;
     assert_eq!(
         outcome,
@@ -541,12 +552,13 @@ async fn assert_request_deadline(options: PgConnectOptions, missing: &str) -> Te
             ("BATTER_REQUEST_TIMEOUT_MS", "30"),
         ],
     );
-    let deadline_pool = deadline_settings
-        .pool_options()
-        .connect_with(options)
-        .await?;
+    let database = batter_example_reference_service::database::configured(
+        options,
+        deadline_settings.pool_options(),
+    )?;
+    let deadline_pool = database.pool();
     let held = deadline_pool.acquire().await?;
-    let deadline_app = app(&deadline_settings, deadline_pool.clone());
+    let deadline_app = app(&deadline_settings, database.clone());
     let outcome = failure_code(&deadline_app, missing, TOKEN_A).await?;
     assert_eq!(
         outcome,
@@ -571,12 +583,13 @@ async fn assert_bulkhead(options: PgConnectOptions, missing: &str) -> TestResult
             ("BATTER_BULKHEAD_CAPACITY", "1"),
         ],
     );
-    let bulkhead_pool = bulkhead_settings
-        .pool_options()
-        .connect_with(options)
-        .await?;
+    let database = batter_example_reference_service::database::configured(
+        options,
+        bulkhead_settings.pool_options(),
+    )?;
+    let bulkhead_pool = database.pool();
     let held = bulkhead_pool.acquire().await?;
-    let bulkhead_app = app(&bulkhead_settings, bulkhead_pool.clone());
+    let bulkhead_app = app(&bulkhead_settings, database.clone());
     let mut first = Box::pin(envelope_request(
         &bulkhead_app,
         Method::GET,

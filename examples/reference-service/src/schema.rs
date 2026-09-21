@@ -1,11 +1,11 @@
 //! Repeated, forward-only startup for Runledger and application schema history.
 
 use crate::delivery::delivery_job_spec;
+use runledger_postgres::RunledgerDatabase;
 use runledger_postgres::jobs::{
     JobDefinitionCatalogSyncError, JobDefinitionCatalogSyncMode, JobDefinitionUpsert,
     sync_catalog_job_definitions_tx,
 };
-use sqlx::PgPool;
 
 /// Startup schema/producer-definition failure with every native cause retained.
 #[derive(Debug, thiserror::Error)]
@@ -35,8 +35,11 @@ pub enum SchemaInitializationError {
 /// Safe to call on repeated startup. Existing operator-disabled Runledger job
 /// definitions remain disabled. Handler registration remains a separate inert
 /// runtime-composition step; this function starts no worker.
-pub async fn initialize_schema(pool: &PgPool) -> Result<(), SchemaInitializationError> {
-    runledger_postgres::migrate_after_idempotency_cutover(pool)
+pub async fn initialize_schema(
+    database: &RunledgerDatabase,
+) -> Result<(), SchemaInitializationError> {
+    let pool = database.pool();
+    runledger_postgres::migrate_after_idempotency_cutover(database)
         .await
         .map_err(SchemaInitializationError::RunledgerSchema)?;
 
@@ -47,7 +50,7 @@ pub async fn initialize_schema(pool: &PgPool) -> Result<(), SchemaInitialization
         .await
         .map_err(SchemaInitializationError::ApplicationMigration)?;
 
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(pool)
+    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(database)
         .await
         .map_err(SchemaInitializationError::RunledgerSchema)?;
 

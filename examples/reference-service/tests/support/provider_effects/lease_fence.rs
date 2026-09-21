@@ -100,24 +100,27 @@ pub(super) async fn probe(
 }
 
 async fn assert_terminal_projection(pool: &PgPool, delivery_id: Uuid) -> ProbeResult {
-    let service = DeliveryService::new(pool.clone());
-    let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
-    let owner = OwnerId::new(Uuid::from_u128(OWNER))?;
-    let by_id = service
-        .get_by_id(&context, owner, delivery_id)
-        .await?
-        .ok_or("lease-lost delivery missing")?;
-    let by_key = service
-        .get_by_key(&context, owner, "stale-lease-fence")
-        .await?
-        .ok_or("lease-lost command missing")?;
-    assert_eq!(by_id, by_key);
-    assert_eq!(
-        by_id.provider.state,
-        batter_example_reference_service::delivery::ProviderEffectState::Exhausted
-    );
-    assert!(by_id.provider.acceptance_possible);
-    Ok(())
+    crate::support::profiled::with(pool, async |database| {
+        let service = DeliveryService::new(database.clone());
+        let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
+        let owner = OwnerId::new(Uuid::from_u128(OWNER))?;
+        let by_id = service
+            .get_by_id(&context, owner, delivery_id)
+            .await?
+            .ok_or("lease-lost delivery missing")?;
+        let by_key = service
+            .get_by_key(&context, owner, "stale-lease-fence")
+            .await?
+            .ok_or("lease-lost command missing")?;
+        assert_eq!(by_id, by_key);
+        assert_eq!(
+            by_id.provider.state,
+            batter_example_reference_service::delivery::ProviderEffectState::Exhausted
+        );
+        assert!(by_id.provider.acceptance_possible);
+        Ok(())
+    })
+    .await
 }
 
 async fn wait_for_effect_fence_wait(pool: &PgPool) -> ProbeResult {

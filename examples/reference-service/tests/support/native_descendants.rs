@@ -43,7 +43,7 @@ impl JobLifecycleObserver for HeldCallback {
 }
 
 pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
-    batter_example_reference_service::schema::initialize_schema(&pool).await?;
+    crate::support::profiled::initialize_schema(&pool).await?;
     let catalog = super::worker::catalog(None);
     catalog.sync_definitions(&pool).await?;
     let job = enqueue(&pool).await?;
