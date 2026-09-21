@@ -1,10 +1,12 @@
 # batter
 
-A cohesive facade for a native operational foundation built on Tokio, with
-separate Axum, SQLx, Runledger, and Runlimit adapters. Keep your normal futures,
-application error enums, SQLx pools, transactions, and routers. Standardize how
-work is owned, bounded, observed, and stopped—not how every business operation
-is written.
+Batter is the public facade for a native Tokio operational foundation.
+`batter-core` owns process lifecycle, startup, finite commands, operation
+budgets, retry, admission, health/readiness, cleanup, and telemetry. Optional
+adapters own Axum request/server boundaries, PostgreSQL transaction and snapshot
+scopes, Runledger lifecycle and atomic enqueue integration, and Runlimit
+quota-before-work. Application futures, domain errors, SQLx queries and pools,
+and routers remain native.
 
 It is for Tokio services that need owned shutdown, deadlines, and cleanup. It is
 not a web framework, DI container, or a replacement for application types.
@@ -45,7 +47,12 @@ and report the design concern before continuing dependent repairs.
 
 Version 0.1.0. Publishing is disabled; no registry name has been reserved.
 Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
-The updated macOS CI job has not run. See [current status](docs/status.md).
+Hosted Linux verification and focused macOS jobs passed on both supported
+toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
+for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
+package-description, and rustdoc refresh in this checkout postdates that run.
+Live PostgreSQL evidence remains scoped to the separately recorded runs. See
+[current status](docs/status.md).
 
 ## Platform support
 
@@ -58,6 +65,14 @@ targets. Other Unix targets remain unverified. See
 ## Quick start
 
 Network access is required to download dependencies on the first run.
+
+The workspace pins Runledger PR #20 and Runlimit PR #9 to immutable Git
+revisions; no sibling checkout is required. Its root patch selects this
+checkout's SQLx foundation for Runledger. Git consumers must repeat that patch
+with their exact Batter revision because Cargo does not inherit dependency
+patches. See [the consumer configuration](docs/reference-compatibility.md#git-consumers).
+Runledger is still an optional adapter dependency, not part of Batter's
+foundation graph. Publishing remains a separate decision.
 
 ```sh
 cargo run -p batter --features axum --example http_service
@@ -107,19 +122,26 @@ cargo run -p batter --example process_owned
 cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
 DATABASE_URL='postgres://user:password@localhost/database' \
+  cargo run -p batter --features sqlx --example owned_pool
+cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service
+DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
 
-The PostgreSQL example connects to an existing database, probes it with `SELECT
-1`, demonstrates partial-startup cleanup, and registers native pool closure. It
-does not create/drop databases or migrate a Runledger schema. Use only a local
-test database; never commit real connection secrets.
+The `postgres_lifecycle` example connects to an existing database, probes it
+with `SELECT 1`, shows partial-startup cleanup, and registers native pool
+closure. It does not create/drop databases or migrate a Runledger schema. Every
+`DATABASE_URL` command above must target a local test database; never commit
+real connection secrets.
 
 `finite_command` uses `command::Command` to own one native loopback operation and
 retain cleanup independently of its waiter.
 Service startup is a different ownership path; see
 [usage](docs/usage.md#finite-commands-and-owned-cleanup) and the
 executable [`Startup` example](crates/batter-core/src/startup.rs).
+The eighth facade example, `verification`, requires an explicit migration
+manifest and authority policy; see the
+[SQLx verifier guide](crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
 
 ## Use as a local dependency
 
@@ -136,7 +158,8 @@ batter = { path = "../batter/crates/batter" }
 batter-core = { path = "../batter/crates/batter-core" }
 # Add this dependency for the HTTP adapter.
 batter-axum = { path = "../batter/crates/batter-axum" }
-# Add for explicit SQLx PostgreSQL connection disposition.
+# Add for owned PostgreSQL transaction/snapshot scopes, verification, and
+# explicit low-level connection disposition.
 batter-sqlx = { path = "../batter/crates/batter-sqlx" }
 
 [dev-dependencies]
@@ -160,8 +183,8 @@ lower library minimum.
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
-| `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Optional native PostgreSQL connection disposition. |
-| `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Optional native initialization, stop-clock and settlement integration. |
+| `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, explicit low-level connection disposition, and opt-in fixtures. |
+| `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Native initialization and settlement plus a phase-scoped atomic enqueue runner and schema snapshots built on `batter-sqlx`. |
 | `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution and protected authenticated HTTP assembly. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
@@ -171,15 +194,15 @@ PostgreSQL provisioning stays in the external `postgres-test-harness` repository
 it is not a workspace member. The optional `batter-sqlx/test-support` feature is
 selected by reference tests; the default adapter graph excludes the harness.
 The optional `batter-runledger` adapter owns native initialization and settlement.
-The reference uses Runledger's transactional producer API and registers one
-application-owned provider-effect handler. Its selected loopback-test protocol
-uses a stable key, canonical payload matching, lookup reconciliation and an
-explicit 24-hour retention boundary; this is not an exactly-once or arbitrary
-provider guarantee. `batter-runlimit` preserves native quota decisions and consumption
-certainty under an operation budget; optional HTTP assembly owns auth/quota/body
-ordering. Its `memory`, `postgres`, and `axum` features are independent and off by
-default. It does not own PostgreSQL initialization or maintenance. Run its finite
-example with `cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service`.
+The reference uses its intent-to-queue `run_atomic` API, built on Batter-owned
+SQLx scopes, and registers one application-owned provider-effect handler. Its
+selected loopback-test protocol uses a stable key, canonical payload matching,
+lookup reconciliation and an explicit 24-hour retention boundary; this is not an
+exactly-once or arbitrary provider guarantee. `batter-runlimit` preserves native
+quota decisions and consumption certainty under an operation budget; optional
+HTTP assembly owns auth/quota/body ordering. Its `memory`, `postgres`, and `axum`
+features are independent and off by default. It does not own PostgreSQL
+initialization or maintenance.
 Ownership boundaries
 are in [integrations](docs/integrations.md); delivery tasks live in the
 [Beads backlog](docs/roadmap.md). The

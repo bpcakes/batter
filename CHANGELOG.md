@@ -20,6 +20,8 @@ contracts, capability facts and validation history.
   semantics; custom native type integrations require source migration. Add memory
   GCRA batch-error compatibility and explicit independent-consumer source patches.
 
+- Refresh the landing documentation, package descriptions and hosted evidence
+  after the owned PostgreSQL scope cutover (`batter-q1t`).
 - Breaking: replace the Runledger resource-view bridge with consuming owned
   transactions. `batter-sqlx` provides XID continuity, savepoint recovery,
   cancellation retirement and explicit completion evidence without a Runledger
