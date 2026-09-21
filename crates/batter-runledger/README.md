@@ -50,7 +50,9 @@ This unpublished Unix-only adapter pins Runledger Git revision
 Runledger's SQLx foundation to the same source as the facade. Git consumers must
 repeat that root patch, as shown in the
 [compatibility manifest](../../docs/reference-compatibility.md#git-consumers);
-no sibling checkout is required. Runledger depends
+no sibling checkout is required. This revision includes the session-profile
+restoration before native pool idle admission delivered in Runledger PR #20.
+Runledger depends
 only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
 facade or this integration. Publishing and replacement with immutable released
 package identities remain separate decisions.
