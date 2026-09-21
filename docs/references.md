@@ -3867,3 +3867,13 @@ native resource identity without claiming to validate arbitrary application SQL.
   does not list extra applied database versions. The refresh tool separately
   compares `_sqlx_migrations` versions and success status with canonical sources.
   A live PostgreSQL 18 control executes this ahead-of-checkout case.
+
+## Native Runlimit import, 2026-09-21
+
+The inspected primary source is Runlimit master
+[`12e035dac504a1d348c2058ee7ade8e61f2e7974`](https://github.com/bpcakes/runlimit/tree/12e035dac504a1d348c2058ee7ade8e61f2e7974).
+Its manifests define four 0.3.0 packages and PostgreSQL 0.3.1, Rust 1.94 and dual
+MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
+release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
+tests against PostgreSQL 16. The import preserves those native source contracts;
+[provenance](../runlimit/IMPORT.md) records adapted workspace administration.

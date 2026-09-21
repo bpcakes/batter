@@ -77,6 +77,14 @@ source identity, workspace membership, disabled publishing, dependency direction
 and canonical migration/cache copies. It does not require `.git` or a historical
 Batter ancestor and permits reviewing coordinated foundation changes in one PR.
 
+Runlimit's five native packages also resolve from `runlimit/`, imported from
+master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. Direct native Git consumers must
+select the same Batter revision as the facade; do not mix former Runlimit Git
+sources with local native types. No dependency patch is required. Package versions,
+SQL migrations and lock/key protocols remain unchanged; see
+[Runlimit provenance](../runlimit/IMPORT.md). `scripts/check_runlimit_workspace.py`
+checks local identities, native dependency direction and original SQL/license digests.
+
 ### Historical source selections
 
 On 2026-09-20, `batter-44w` advanced the root Runledger graph from

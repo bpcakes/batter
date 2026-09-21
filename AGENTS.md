@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains eleven library packages, the Runledger TUI, and two SQLx example packages,
+This workspace contains sixteen library packages, the Runledger TUI, and two SQLx example packages,
 with failure-contract tests, doctests, and eight runnable demonstrations plus a
 read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
@@ -149,7 +149,8 @@ translates native initialization, stop clocks and complete settlement into manag
 process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
-transactions and PostgreSQL initialization/maintenance remain upstream-owned.
+transactions and PostgreSQL initialization/maintenance remain owned by the distinct
+packages under `runlimit/`; see their guide and ADR-012.
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
 process machinery included by foundation and Axum integration tests. It is not

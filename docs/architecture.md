@@ -418,3 +418,11 @@ Use narrow dependencies or Axum FromRef in applications. Do not pass a giant
 AppContext merely to avoid constructor arguments. Add construction machinery
 only after repeated real applications demonstrate that it simplifies—not hides—
 resource ownership and partial-failure behavior.
+
+## Native Runlimit workspace ownership
+
+Five native packages under `runlimit/` share source and validation with Batter,
+while retaining policy, quota/attempt persistence, migrations and transport-helper
+ownership. None depends on Batter. `batter-runlimit` remains the optional operational
+adapter; the facade default graph still excludes native backends. See
+[ADR-012](adr/012-native-runlimit-workspace.md).

@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from parallel_process import render_outcomes, run_parallel
-from consumer_manifest import consumer_patches, git_dependency
+from consumer_manifest import consumer_patches
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
@@ -235,10 +235,10 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         features = ", features = " + json.dumps(native_features) if native_features else ""
         deps.append("batter-runlimit = { path = " + json.dumps(str(ROOT / "crates/batter-runlimit")) + features + " }")
         if "runlimit-memory" in chosen:
-            deps.append(git_dependency("runlimit-memory", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
-            deps.append(git_dependency("runlimit-core", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
+            deps.append('runlimit-memory = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + ' }')
+            deps.append('runlimit-core = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-core")) + ' }')
         if "runlimit-postgres" in chosen:
-            deps.append(git_dependency("runlimit-postgres", "crates/batter-runlimit/Cargo.toml", ("dependencies",)))
+            deps.append('runlimit-postgres = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-postgres")) + ' }')
     if "runlimit-axum" in chosen:
         deps.append("tokio = { version = \"1.53.1\", default-features = false, features = [\"net\"] }")
     if "test-support" in chosen or "sqlx-test-support" in chosen:

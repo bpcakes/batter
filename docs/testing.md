@@ -1962,3 +1962,26 @@ With Docker, `psql` and SQLx CLI 0.9.0 installed, run
 to include the live database-ahead regression. It applies an extra migration to an
 owned disposable PostgreSQL 18 container, removes that migration from its source
 fixture, and proves refresh rejects it before copying or preparing sources.
+
+## Native Runlimit workspace verification
+
+Root verification includes native default and all-feature tests, both native lint
+configurations, doctests, existing facade/adapter isolation, source graph and asset
+controls, and the release-mode memory corruption fail-closed regression.
+`python3 scripts/check_runlimit_workspace.py` checks the actual Cargo graph and
+immutable imported SQL/license digests. The source archive and mutation-workspace
+inventories retain `runlimit/`, its SQL assets and both licenses.
+
+Native PostgreSQL tests stay explicit and ignored in ordinary tests. Against a
+disposable database, run both feature configurations:
+
+```sh
+RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --locked -- --ignored --test-threads=1
+RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
+```
+
+CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
+1.98.1. A workflow definition is not hosted execution evidence. The native test
+fixtures own isolated schemas; database provisioning remains external. Existing
+Runledger PostgreSQL 18 tests are separate. Standalone exported-source native/facade
+consumers are owned by `batter-isdr.2`.

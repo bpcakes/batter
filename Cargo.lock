@@ -2789,30 +2789,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "runlimit-axum"
+version = "0.3.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "http-body",
+ "runlimit-core",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "runlimit-core"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=12e035dac504a1d348c2058ee7ade8e61f2e7974#12e035dac504a1d348c2058ee7ade8e61f2e7974"
 dependencies = [
  "hmac",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
+ "thiserror",
+]
+
+[[package]]
+name = "runlimit-http"
+version = "0.3.0"
+dependencies = [
+ "http",
+ "runlimit-core",
  "thiserror",
 ]
 
 [[package]]
 name = "runlimit-memory"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=12e035dac504a1d348c2058ee7ade8e61f2e7974#12e035dac504a1d348c2058ee7ade8e61f2e7974"
 dependencies = [
  "runlimit-core",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
 [[package]]
 name = "runlimit-postgres"
 version = "0.3.1"
-source = "git+https://github.com/bpcakes/runlimit?rev=12e035dac504a1d348c2058ee7ade8e61f2e7974#12e035dac504a1d348c2058ee7ade8e61f2e7974"
 dependencies = [
  "runlimit-core",
+ "runlimit-memory",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "sqlx",
  "thiserror",

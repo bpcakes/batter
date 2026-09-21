@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service", "runledger/runledger-core", "runledger/runledger-postgres", "runledger/runledger-runtime", "runledger/runledger-test-support", "runledger/runledger-tui"]
+members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service", "runledger/runledger-core", "runledger/runledger-postgres", "runledger/runledger-runtime", "runledger/runledger-test-support", "runledger/runledger-tui", "runlimit/runlimit-axum", "runlimit/runlimit-core", "runlimit/runlimit-http", "runlimit/runlimit-memory", "runlimit/runlimit-postgres"]
 default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
@@ -40,3 +40,9 @@ sqlx = { version = "0.9.0", default-features = false }
 tracing-subscriber = "0.3.23"
 tower = "0.5.3"
 url = { version = "2.5.8", default-features = false, features = ["std"] }
+
+runlimit-axum = { path = "runlimit/runlimit-axum" }
+runlimit-core = { path = "runlimit/runlimit-core" }
+runlimit-http = { path = "runlimit/runlimit-http" }
+runlimit-memory = { path = "runlimit/runlimit-memory" }
+runlimit-postgres = { path = "runlimit/runlimit-postgres" }

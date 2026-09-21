@@ -17,6 +17,8 @@ These decisions govern the source implementation and future work.
 
 | [011](011-native-runledger-workspace.md) | Keep native Runledger packages in the shared workspace without merging runtime ownership. |
 
+| [012](012-native-runlimit-workspace.md) | Keep native Runlimit packages local while preserving policy, storage and transport ownership. |
+
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the
 owning Bead. Do not silently weaken them in the name of convenience or compiler
