@@ -17,6 +17,9 @@ jobs:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Runledger verifies foundation inputs against their immutable ancestor.
+          fetch-depth: 0
       - name: Check out coordinated Runledger integration
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
@@ -56,6 +59,9 @@ jobs:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Runledger verifies foundation inputs against their immutable ancestor.
+          fetch-depth: 0
       - name: Check out coordinated Runledger integration
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
