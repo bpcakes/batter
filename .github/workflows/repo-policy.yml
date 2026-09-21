@@ -32,7 +32,7 @@ jobs:
       - name: Check out coordinated Runledger integration
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-          git -C ../runledger checkout --detach 58b02c24df4357c5e709f39bf336c67d6815448c
+          git -C ../runledger checkout --detach cb496bb2046fa14cfd9b54ad9983c99316f7f999
       - name: Install Rust toolchain
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
       - name: Cache Jig runtime

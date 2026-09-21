@@ -12,9 +12,11 @@ This plan delivers the upstream half of CreditKit Bead `creditkit-platform-at-re
 - [x] (2026-09-21) Moved the exact Rust 1.94 detached source/package/public-consumer gate into Batter; source, verified package and unpacked artifact all passed, and the Jig contract recognizes the new action.
 - [x] (2026-09-21) Synced the feature branch from baseline `398ed96` through current `origin/master` `c3a6304`, preserving the extraction while incorporating the merged Runledger CI pin.
 - [x] (2026-09-21) Native review cycle 1 found two portability-gate defects; removed GNU-only `dirname --` usage and made the independent Node.js fixture generator part of the authoritative detached gate. The repaired exact Rust 1.94 gate passed in full.
-- [ ] Run focused and plan-associated validation, stage all upstream changes, run native Codex review to convergence, then commit and push the reviewed immutable revision.
+- [x] (2026-09-21) Native review cycle 2 reported no findings; committed and pushed the reviewed extraction as immutable Batter revision `e29ff2a2d59b8e79f53ba7f3a31bc19e6e4b4844`.
+- [x] (2026-09-21) Updated the coordinated Runledger release-line pin in separately reviewed revision `cb496bb2046fa14cfd9b54ad9983c99316f7f999`, repinned Batter CI, and passed the full facade feature/isolation/type-identity matrix.
+- [x] (2026-09-21) Plan-associated `verify` passed all five required targets: strict workspace Clippy, formatting, the complete test matrix, Jig contract, and file budget.
 
-Restart checkpoint: upstream implementation, repaired portability gate, leaf Clippy, formatting, and Jig contract pass on current Batter master. The full facade runner reaches the coordinated Runledger foundation-pin guard because adding the workspace member changes root `Cargo.toml`. The next action is native review cycle 2, then commit/push this Batter revision, update the Runledger revision used by this Batter release line to that commit, repin Batter's clean-checkout Runledger revision, and finish the full gates.
+Restart checkpoint: the upstream extraction and its coordinated Runledger pin are complete and remotely immutable. Batter is at `e29ff2a` plus the companion CI-pin worktree change; all focused and plan-associated gates pass. The remaining actions are to stage the companion/receipt/plan changes, run one native review over all uncommitted changes, commit and push the final Batter PR head, and verify the remote branch.
 
 ## Surprises & Discoveries
 
@@ -48,7 +50,9 @@ Restart checkpoint: upstream implementation, repaired portability gate, leaf Cli
 
 ## Outcomes & Retrospective
 
-Not yet complete. No upstream revision is available until validation and native review pass and the reviewed commit is pushed. Publication to a registry is explicitly out of scope.
+The standalone proprietary `batter-at-rest` package now lives in Batter without runtime or database dependencies, and the optional facade preserves direct-package type identity while keeping the default dependency graph crypto-free. Production source remains byte-identical to the reviewed CreditKit implementation; the upstream fixture is application-neutral and independently regenerated with Node standard crypto. Exact Rust 1.94 detached source, package, unpacked-artifact, public-consumer, and sensitivity checks pass.
+
+Native review found and resolved two portability-gate defects: GNU-only `dirname --` usage and omission of the independent generator from the authoritative gate. A second review found no actionable defects. The reviewed source revision is `e29ff2a2d59b8e79f53ba7f3a31bc19e6e4b4844`; coordinated Runledger revision `cb496bb2046fa14cfd9b54ad9983c99316f7f999` pins it. The full facade matrix and fresh plan-associated `verify` profile pass. Registry publication remains explicitly out of scope.
 
 ## Context and boundaries
 
