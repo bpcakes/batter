@@ -14,7 +14,7 @@ claimed states. No migration, publication, merge, retry policy or legacy bridge.
 - [x] T-01: foundation states and narrow error types.
 - [x] T-02: manual API removal and downstream adoption.
 - [x] T-03: adversarial tests and fresh consumer exercise.
-- [ ] T-04: final verification and coordinated PR updates.
+- [x] T-04: final verification and coordinated PR updates prepared for push.
 
 ## Surprises & Discoveries
 
@@ -45,7 +45,10 @@ the error classification examples now live in an included rustdoc page, preservi
 both compile-fail assertions and the existing limit. All five final gates passed
 in run `run_01M31GKMX91J8HTFETX2H9S2Q1`; API test receipt
 `receipt_01M31GYJYF9SQ37R4AYPK3S256`. The relocated reference doctests also
-passed on Rust 1.94.0. Companion pin updates and PR publication remain.
+passed on Rust 1.94.0. Batter foundation `77d639c71f07762f2d94635ae609173894285831`
+is pinned by Runledger `b3ce9c4970ad7aae66bc7896fc5c032c4f29329d`; Batter CI pins
+that Runledger source. Both PR descriptions include the new regression and
+fresh-consumer evidence; hosted checks must evaluate the pushed heads separately.
 The no-history consumer agent selected run_atomic and compiled first try; code
 and limitations are in docs/evidence/atomic-consumer-2026-09-21. It found a stale
 Runledger downstream-guide native transaction example, now corrected. This is
