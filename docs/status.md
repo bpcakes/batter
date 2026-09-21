@@ -1,5 +1,12 @@
 # Implementation status
 
+2026-09-21 smoke-fixture correction (`batter-p7d`): the Python PostgreSQL
+smoke child now uses short timed waits instead of an unbounded native signal
+wait. This addresses the deferred-callback race observed in PR #2's macOS
+push run; signal, cleanup, exit and watchdog assertions are unchanged. The
+13 smoke controls and 400 repeated signal tests pass locally on Linux/Python
+3.12.3. Hosted validation of this correction is pending.
+
 Updated: 2026-09-18. Typed settings and the atomic reference command have complete
 Linux evidence on Rust 1.94.0 and 1.98.1. The `batter-lp2.4` hard-cutover runner
 had 64 entries after removing two exact legacy aliases. After the request-metadata

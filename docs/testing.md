@@ -1585,7 +1585,10 @@ Run `python3 scripts/test_smoke_postgres.py -v` without a database. Its thirteen
 tests include real child processes for both signals, inherited SIGINT ignore,
 split/ANSI readiness, absent or partial readiness, early exit, output overflow
 before/after readiness, ignored shutdown signals, nonzero exits and missing
-cleanup. Forced shutdown is checked with both a runnable child and one stopped
+cleanup. The Python fixture uses short timed waits rather than `signal.pause()`:
+a signal arriving before the native wait must not strand its deferred Python
+callback until a second signal. Signal receipt, cleanup, exit and watchdog
+assertions remain unchanged. Forced shutdown is checked with both a runnable child and one stopped
 by SIGSTOP after readiness: it requires the real SIGTERM request and watchdog
 kill/reap, without depending on a child callback before the short deadline.
 Other controls interrupt the parent during readiness and reject a complete line

@@ -6,6 +6,17 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL smoke fixture signal wait: reviewed 2026-09-21
+
+Python's [signal execution contract](https://docs.python.org/3/library/signal.html#execution-of-python-signal-handlers)
+defers Python callbacks beyond the native signal handler. The inspected
+[CPython 3.14.7 implementation](https://github.com/python/cpython/blob/v3.14.7/Modules/signalmodule.c)
+calls native `pause()` before `PyErr_CheckSignals()`: delivery just before that
+wait can leave a Python callback pending until another signal. The smoke-test
+fixture now uses short timed waits so returning to the interpreter does not
+require another signal. Its parent still sends only the requested signal and
+requires the original cleanup, exit, capture and watchdog evidence.
+
 ## Owned PostgreSQL scopes: reviewed 2026-09-20
 
 - PostgreSQL 18 [transaction identity functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
