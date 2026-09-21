@@ -458,6 +458,13 @@ still supports a positive requirement. No live SET probe enters verification.
 
 ## Atomic runner session reset, 2026-09-20
 
+Profile follow-up (2026-09-21): [SET ROLE](https://www.postgresql.org/docs/18/sql-set-role.html)
+changes the effective role, while DISCARD resets session authorization and settings.
+The [PostgreSQL 18 search-path rules](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SEARCH-PATH)
+place an omitted pg_catalog first and use the first explicit ordinary schema for
+unqualified DDL. Profile paths quote every declared schema and put pg_temp last;
+Runledger admits one authoritative ordinary schema to prevent fallback placement.
+
 PostgreSQL 18 [DISCARD ALL](https://www.postgresql.org/docs/18/sql-discard.html)
 resets session resources, including prepared statements and advisory locks, and
 must run outside a transaction. SQLx 0.9's `Connection::clear_cached_statements`

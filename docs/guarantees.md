@@ -863,6 +863,15 @@ body. There is no await after acknowledged completion. Every completion retires
 the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
 and DISCARD ALL. Native pool hooks are not trusted to clean arbitrary SQL effects.
 
+`PgSessionProfile` lets `run_atomic_profiled` and `inspect_profiled` re-establish
+explicit login/effective roles, trusted schema path, timeouts and custom settings
+after reset, before beginning a transaction. Validation precedes callback access
+and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
+still lock authoritative objects before their first snapshot-bearing query.
+Arbitrary SQL can cause effects before revalidation; profiles do not sandbox SQL.
+The Runledger runner requires `RunledgerDatabase`; ordinary runtime SQL uses its
+mandatorily profiled pool, not an independently configured native pool.
+
 Runledger's initial intent scope is consumed into a queue scope with no recording
 method. Its named API therefore cannot enqueue then record an intent. Arbitrary SQL
 against internal tables remains an explicitly lower-level escape hatch.

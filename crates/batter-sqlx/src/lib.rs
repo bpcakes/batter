@@ -39,6 +39,7 @@
 mod atomic;
 mod atomic_runner;
 mod failure;
+mod profile;
 mod session;
 mod snapshot;
 
@@ -48,13 +49,16 @@ pub use atomic::{
     CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopeFailure,
     PgScopeLoss, PgScopedSql, PgTransactionError,
 };
-pub use atomic_runner::{PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic};
+pub use atomic_runner::{
+    PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic, run_atomic_profiled,
+};
 /// Exceptional consuming composition. Outputs are provisional and completion
 /// must be paired by the caller. Prefer [`run_atomic`] on the canonical path.
 pub mod low_level {
     pub use crate::atomic::PgAtomicTransaction;
 }
 pub use failure::{FailureClass, SqlxFailure};
+pub use profile::{PgProfileError, PgSessionProfile};
 use session::PoolReturnReady;
 pub use session::{PgExecutor, PgSession};
 pub use snapshot::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};
