@@ -20,7 +20,8 @@ No migrations, releases or PR merges are authorized by this work.
 - Shared profile pool checkpoint `e9c5b04` committed; focused foundation checks passed.
 - Runledger PR #22 delegates to it; full native tests and packaged smoke passed.
 - Attempt runner cutover and 14 live tests passed. Old unprofiled-completion
-  mutation fails the new regression. Full matrix, Jig and native review pending.
+  mutation fails the new regression. Both full Rust matrices, ten HTTP smokes,
+  final Jig gate and stable-range native review passed.
 
 ## Surprises & Discoveries
 
@@ -100,5 +101,8 @@ Pool policy does not attest endpoint identity or concurrent privilege changes.
 
 ## Outcomes & Retrospective
 
-Pending execution. Security-boundary investigation is independent; final native
-review remains required. No claim of downstream deployment or load readiness.
+Implemented and locally verified. Independent boundary investigation and bypass
+review found no additional issue; native review is clean across the original
+stable range. Runledger PR #22 preserves its public API while delegating the shared
+pool machinery. PR checks are the hosted evidence; downstream deployment and
+load readiness remain outside this task. See docs/evidence/parallel-foundation-2026-09-21.md.

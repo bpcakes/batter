@@ -86,6 +86,19 @@ a committed result. Existing rejection/success audit and retry-state cases pass.
 Temporarily restoring unprofiled completion caused the custom-schema regression
 to fail with `AttemptError::Atomic`; the mutation was removed before acceptance.
 
-Full two-toolchain verification, final Jig receipts and full stable-range native
-review remain pending. Downstream adoption remains separate; no application
-limiter code or consumer repository changes are included.
+Both full Rust 1.98.1 and 1.94.0 verification matrices passed, including Clippy,
+rustdoc and all ten rebuilt HTTP smoke profiles. All 26 live atomic tests passed.
+A fresh GitHub-only consumer compiled the profile-owned attempt runner and shared
+Runledger profile identity with no sibling checkout and a deliberately invalid
+`RUNLEDGER_BATTER_SOURCE`. Final Jig gate passed; `api:test` receipt is
+`receipt_01M32CAHRTKVB1HCXT3KZ3RVXD` under plan
+`plan_01M326CSKANTPZKQ2E292FDP0M`.
+
+Native review of the original stable range `ac127530..f2a883c` reported no findings.
+Runledger's final native review `a8f6283..a5048e4` also reported no findings; its
+374 PostgreSQL and 497 runtime tests/doctests and nine packaged-consumer tests
+passed. The old P1 is fixed by the ownership boundary, not a caller workaround.
+Hosted results remain attached to PR #3 and companion PR #22. The existing native
+tracker normalization conflict is documented in that companion; unrelated records
+were not rewritten. Downstream adoption remains separate; no application limiter
+code or consumer repository changes are included.
