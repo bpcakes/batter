@@ -1,4 +1,6 @@
-use crate::{PgScopeError, PgScopedSql, PgTransactionError, atomic::PgAtomicTransaction};
+use crate::{
+    PgScopeError, PgScopeLoss, PgScopedSql, PgTransactionError, atomic::PgAtomicTransaction,
+};
 use sqlx::PgPool;
 use std::{error::Error, fmt};
 
@@ -41,22 +43,40 @@ pub async fn run_atomic<T, E>(
     let owner = PgAtomicTransaction::begin(pool)
         .await
         .map_err(PgAtomicError::Begin)?;
-    let mut scope = PgAtomicScope { owner: Some(owner) };
+    let mut scope = PgAtomicScope {
+        state: ScopeState::Live(owner),
+    };
     let result = work(&mut scope).await;
-    let Some(owner) = scope.owner.take() else {
-        return Err(PgAtomicError::ScopeLost { result });
+    let owner = match scope.state {
+        ScopeState::Live(owner) => owner,
+        ScopeState::InFlight => {
+            return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
+                result,
+                cause: PgScopeLoss::OperationAbandoned,
+            }));
+        }
+        ScopeState::Poisoned(cause) => {
+            return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
+                result,
+                cause,
+            }));
+        }
     };
     match result {
         Ok(output) => match owner.commit().await {
             Ok(_) => Ok(output),
-            Err(cause) => Err(PgAtomicError::CommitUnconfirmed {
-                output,
-                cause: cause.into_cause(),
-            }),
+            Err(cause) => Err(PgAtomicError::Uncertain(
+                PgAtomicUncertainty::CommitUnconfirmed {
+                    output,
+                    cause: cause.into_cause(),
+                },
+            )),
         },
         Err(rejection) => match owner.rollback().await {
             Ok(_) => Err(PgAtomicError::Rejected(rejection)),
-            Err(cause) => Err(PgAtomicError::RollbackUnconfirmed { rejection, cause }),
+            Err(cause) => Err(PgAtomicError::Uncertain(
+                PgAtomicUncertainty::RollbackUnconfirmed { rejection, cause },
+            )),
         },
     }
 }
@@ -65,7 +85,13 @@ pub async fn run_atomic<T, E>(
 /// extraction is exposed. Cancelling a polled operation permanently consumes
 /// the usable state, even if the callback catches the cancellation and returns.
 pub struct PgAtomicScope {
-    owner: Option<PgAtomicTransaction>,
+    state: ScopeState,
+}
+
+enum ScopeState {
+    Live(PgAtomicTransaction),
+    InFlight,
+    Poisoned(PgScopeLoss),
 }
 
 impl PgAtomicScope {
@@ -76,12 +102,28 @@ impl PgAtomicScope {
         &mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
     ) -> Result<T, PgScopeError<E>> {
-        let owner = self.owner.take().ok_or(PgScopeError::Transaction(
-            PgTransactionError::TransactionBoundaryLost,
-        ))?;
-        let (owner, result) = owner.operation(work).await?;
-        self.owner = Some(owner);
-        result.map_err(PgScopeError::Application)
+        let owner = match std::mem::replace(&mut self.state, ScopeState::InFlight) {
+            ScopeState::Live(owner) => owner,
+            state => {
+                let cause = match state {
+                    ScopeState::InFlight => PgScopeLoss::OperationAbandoned,
+                    ScopeState::Poisoned(cause) => cause,
+                    ScopeState::Live(_) => unreachable!(),
+                };
+                self.state = ScopeState::Poisoned(cause.clone());
+                return Err(PgScopeError::Terminal(cause.into()));
+            }
+        };
+        match owner.operation(work).await {
+            Ok((owner, result)) => {
+                self.state = ScopeState::Live(owner);
+                result.map_err(PgScopeError::Application)
+            }
+            Err(failure) => {
+                self.state = ScopeState::Poisoned(failure.loss());
+                Err(PgScopeError::Terminal(failure))
+            }
+        }
     }
 }
 
@@ -92,6 +134,18 @@ pub enum PgAtomicError<T, E> {
     Begin(PgTransactionError),
     /// Domain rejection after acknowledged rollback of the original transaction.
     Rejected(E),
+    /// Disposition was not acknowledged; retains provisional output/rejection
+    /// and its original failure or explicit abandonment reason.
+    Uncertain(PgAtomicUncertainty<T, E>),
+}
+
+/// Only unacknowledged dispositions. Known begin failures and acknowledged
+/// rejections cannot be constructed as members of this type.
+/// ```compile_fail,E0308
+/// use batter_sqlx::{PgAtomicError, PgAtomicUncertainty};
+/// let uncertain: PgAtomicUncertainty<(), ()> = PgAtomicError::Rejected(());
+/// ```
+pub enum PgAtomicUncertainty<T, E> {
     /// The body succeeded, but commit was not acknowledged. No automatic replay.
     CommitUnconfirmed {
         /// Provisional body output; not evidence of durable effects.
@@ -111,6 +165,8 @@ pub enum PgAtomicError<T, E> {
     ScopeLost {
         /// Provisional result, including any returned operation/cleanup causes.
         result: Result<T, E>,
+        /// First terminal cause, or explicit abandonment when no error returned.
+        cause: PgScopeLoss,
     },
 }
 
@@ -124,20 +180,43 @@ impl<T, E> fmt::Display for PgAtomicError<T, E> {
         f.write_str(match self {
             Self::Begin(_) => "PostgreSQL atomic workflow setup failed",
             Self::Rejected(_) => "PostgreSQL atomic workflow rejected and rolled back",
-            Self::CommitUnconfirmed { .. } => "PostgreSQL atomic workflow commit unconfirmed",
-            Self::RollbackUnconfirmed { .. } => "PostgreSQL atomic workflow rollback unconfirmed",
-            Self::ScopeLost { .. } => "PostgreSQL atomic workflow scope lost",
+            Self::Uncertain(_) => "PostgreSQL atomic workflow disposition unconfirmed",
         })
     }
 }
 impl<T, E: Error + 'static> Error for PgAtomicError<T, E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Begin(cause)
-            | Self::CommitUnconfirmed { cause, .. }
-            | Self::RollbackUnconfirmed { cause, .. } => Some(cause),
-            Self::Rejected(error) | Self::ScopeLost { result: Err(error) } => Some(error),
-            Self::ScopeLost { result: Ok(_) } => None,
+            Self::Begin(cause) => Some(cause),
+            Self::Rejected(error) => Some(error),
+            Self::Uncertain(error) => error.source(),
         }
+    }
+}
+
+impl<T, E> fmt::Debug for PgAtomicUncertainty<T, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl<T, E> fmt::Display for PgAtomicUncertainty<T, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::CommitUnconfirmed { .. } => "PostgreSQL atomic workflow commit unconfirmed",
+            Self::RollbackUnconfirmed { .. } => "PostgreSQL atomic workflow rollback unconfirmed",
+            Self::ScopeLost { .. } => "PostgreSQL atomic workflow scope lost",
+        })
+    }
+}
+
+impl<T, E: Error + 'static> Error for PgAtomicUncertainty<T, E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(match self {
+            Self::CommitUnconfirmed { cause, .. } | Self::RollbackUnconfirmed { cause, .. } => {
+                cause
+            }
+            Self::ScopeLost { cause, .. } => cause,
+        })
     }
 }

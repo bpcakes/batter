@@ -168,7 +168,13 @@ impl SubmitAttemptError {
     fn into_submit_error(self) -> SubmitError {
         match *self.0 {
             PgAtomicError::Begin(error) => SubmitError::Storage(StorageError::Transaction(error)),
-            error => SubmitError::Uncertain(UncertainSubmission::Atomic(Box::new(error))),
+            PgAtomicError::Rejected(CommandFailure::Rejected(error)) => {
+                SubmitError::Rejected(error)
+            }
+            PgAtomicError::Rejected(CommandFailure::Storage(error)) => SubmitError::Storage(error),
+            PgAtomicError::Uncertain(error) => {
+                SubmitError::Uncertain(UncertainSubmission::Atomic(Box::new(error)))
+            }
         }
     }
 }
@@ -213,7 +219,9 @@ async fn attempt_submit(
                 PgScopeError::Application(error) => {
                     CommandFailure::Storage(StorageError::Runledger(error))
                 }
-                error => CommandFailure::Storage(StorageError::Enqueue(Box::new(error))),
+                PgScopeError::Terminal(error) => {
+                    CommandFailure::Storage(StorageError::Enqueue(Box::new(error)))
+                }
             })?;
         queue
             .application(async |sql| {
@@ -266,7 +274,9 @@ async fn attempt_submit(
 fn command_scope_failure(error: PgScopeError<CommandFailure>) -> CommandFailure {
     match error {
         PgScopeError::Application(error) => error,
-        error => CommandFailure::Storage(StorageError::Scope(Box::new(error))),
+        PgScopeError::Terminal(error) => {
+            CommandFailure::Storage(StorageError::Scope(Box::new(error)))
+        }
     }
 }
 

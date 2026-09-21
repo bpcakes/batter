@@ -8,7 +8,7 @@ scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-onl
 ## Key entrypoints
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
-- `src/session.rs`: opaque session/transaction execution capabilities and consuming completion.
+- `src/session.rs`: low-level opaque session execution; no public transaction-start authority.
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.
 - `src/snapshot.rs`: owned REPEATABLE READ READ ONLY inspection boundary.
@@ -34,7 +34,7 @@ consumer is `examples/postgres-lifecycle`.
 
 Dropping an unsuccessful lease detaches and drops the client connection.
 Ordinary pool return requires a private proof created only after application
-success, zero unacknowledged typed transactions and a successful same-connection
+success and a successful same-connection
 `ROLLBACK` round trip. This synchronizes raw open or failed transactions that the
 native executor can create but does not reset arbitrary session state. Failure or
 cancellation before that proof retires the connection. Local capacity release and
@@ -43,6 +43,12 @@ cancellation; detached sessions can exceed max_connections.
 Every SQLx feature must remain independent of Runledger. Never add a callback
 that exposes a replaceable native resource to implement an adapter bridge.
 The canonical run_atomic runner withholds outputs until acknowledged disposition.
+Its Live/InFlight/Poisoned state retains the first terminal cause independently
+of callback error handling. Abandonment is explicit, not a synthetic DB failure.
+Only PgAtomicUncertainty may represent uncertain disposition; PgScopeFailure
+excludes ordinary application rejections. Do not broaden downstream wrappers.
+There is no public PgSession::begin or PgTransaction; manual ownership is only
+low_level::PgAtomicTransaction. Crate-level examples must lead with run_atomic.
 Atomic/snapshot acquisition clears inherited session state and every completion
 retires the connection; the pool-return contract above describes only low-level
 PgLease session work. Snapshot errors require the original guard before clean

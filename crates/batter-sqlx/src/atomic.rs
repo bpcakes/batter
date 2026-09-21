@@ -1,7 +1,7 @@
 mod error;
 pub(crate) mod scope;
 
-pub use error::{CommitUnconfirmed, PgScopeError, PgTransactionError};
+pub use error::{CommitUnconfirmed, PgScopeError, PgScopeFailure, PgScopeLoss, PgTransactionError};
 pub use scope::PgScopedSql;
 use scope::{ScopeSavepoint, command, normalize};
 
@@ -97,7 +97,7 @@ impl PgAtomicTransaction {
         self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
     ) -> Result<(Self, T), PgScopeError<E>> {
-        let (owner, result) = self.operation(work).await?;
+        let (owner, result) = self.operation(work).await.map_err(PgScopeError::Terminal)?;
         match result {
             Ok(value) => Ok((owner, value)),
             Err(error) => Err(PgScopeError::Application(error)),
@@ -128,23 +128,18 @@ impl PgAtomicTransaction {
     pub async fn operation<T, E>(
         mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
-    ) -> Result<(Self, Result<T, E>), PgScopeError<E>> {
-        self.validate().await.map_err(PgScopeError::Transaction)?;
-        let savepoint = ScopeSavepoint::begin(self.lease.connection_mut())
-            .await
-            .map_err(PgScopeError::Transaction)?;
+    ) -> Result<(Self, Result<T, E>), PgScopeFailure<E>> {
+        self.validate().await?;
+        let savepoint = ScopeSavepoint::begin(self.lease.connection_mut()).await?;
         let result = work(&mut PgScopedSql {
             connection: self.lease.connection_mut(),
         })
         .await;
         match result {
             Ok(value) => {
-                self.validate().await.map_err(PgScopeError::Transaction)?;
-                savepoint
-                    .release(self.lease.connection_mut())
-                    .await
-                    .map_err(PgScopeError::Transaction)?;
-                self.validate().await.map_err(PgScopeError::Transaction)?;
+                self.validate().await?;
+                savepoint.release(self.lease.connection_mut()).await?;
+                self.validate().await?;
                 Ok((self, Ok(value)))
             }
             Err(application) => {
@@ -157,9 +152,9 @@ impl PgAtomicTransaction {
                 .await;
                 match recovery {
                     Ok(()) => Ok((self, Err(application))),
-                    Err(recovery) => Err(PgScopeError::Recovery {
+                    Err(recovery) => Err(PgScopeFailure::Recovery {
                         application,
-                        recovery,
+                        recovery: recovery.into(),
                     }),
                 }
             }

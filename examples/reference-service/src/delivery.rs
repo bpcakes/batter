@@ -333,14 +333,15 @@ pub enum SubmitRejection {
 }
 
 /// Concrete storage failures retained behind sanitized HTTP responses.
+#[doc = include_str!("delivery/error_contracts.md")]
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     /// Application scope failed, retaining both operation and cleanup causes.
     #[error("application scope failed")]
-    Scope(#[source] Box<batter::sqlx::PgScopeError<CommandFailure>>),
+    Scope(#[source] Box<batter::sqlx::PgScopeFailure<CommandFailure>>),
     /// Runledger scope failed, retaining both operation and cleanup causes.
     #[error("enqueue scope failed")]
-    Enqueue(#[source] Box<batter::sqlx::PgScopeError<runledger_postgres::Error>>),
+    Enqueue(#[source] Box<batter::sqlx::PgScopeFailure<runledger_postgres::Error>>),
     /// Native SQLx failure.
     #[error("PostgreSQL operation failed")]
     Sqlx(#[source] sqlx::Error),
@@ -383,12 +384,13 @@ impl StorageError {
 }
 
 /// Why submission cannot assert commit or rollback while disposition is unknown.
+/// See [`StorageError`] for the compile-checked error classification contracts.
 #[derive(Debug, thiserror::Error)]
 pub enum UncertainSubmission {
     /// The runner retains the provisional output or original rejection together
     /// with its unacknowledged disposition. No result is presented as durable.
     #[error("atomic submission disposition is uncertain")]
-    Atomic(#[source] Box<batter::sqlx::PgAtomicError<SubmitResult, CommandFailure>>),
+    Atomic(#[source] Box<batter::sqlx::PgAtomicUncertainty<SubmitResult, CommandFailure>>),
     /// The operation boundary stopped polling while the transaction was active,
     /// before commit or rollback acknowledgement.
     #[error("submission was interrupted while transaction disposition was unknown")]

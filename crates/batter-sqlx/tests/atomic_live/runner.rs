@@ -1,5 +1,5 @@
 use super::*;
-use batter_sqlx::{PgAtomicError, PgScopeError, run_atomic};
+use batter_sqlx::{PgAtomicError, PgAtomicUncertainty, PgScopeError, PgScopeLoss, run_atomic};
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
@@ -79,16 +79,16 @@ async fn runner_uncertainty_retains_output_and_rejection() -> Result {
             }).await?;
             Ok::<_, PgScopeError<sqlx::Error>>(73)
         }).await.unwrap_err();
-        assert!(matches!(error, PgAtomicError::CommitUnconfirmed { output: 73, .. }));
+        assert!(matches!(error, PgAtomicError::Uncertain(PgAtomicUncertainty::CommitUnconfirmed { output: 73, .. })));
         let error = run_atomic(&fixture.pool, async |scope| {
             let previous = scope.application(async |sql| pid(sql).await).await?;
             sqlx::query("SELECT pg_terminate_backend($1)").bind(previous)
                 .execute(&mut fixture.observer).await.map_err(PgScopeError::Application)?;
             Err::<(), _>(PgScopeError::Application(sqlx::Error::Protocol("retained rejection".into())))
         }).await.unwrap_err();
-        assert!(matches!(error, PgAtomicError::RollbackUnconfirmed {
+        assert!(matches!(error, PgAtomicError::Uncertain(PgAtomicUncertainty::RollbackUnconfirmed {
             rejection: PgScopeError::Application(sqlx::Error::Protocol(ref message)), ..
-        } if message == "retained rejection"));
+        }) if message == "retained rejection"));
         assert!(!format!("{error:?}").contains("retained rejection"));
         Ok(())
     }.await;
@@ -116,13 +116,30 @@ async fn runner_cannot_commit_after_caught_operation_cancellation() -> Result {
                 result = fixture.blocked(previous) => result.expect("observed server lock"),
             }
             drop(operation);
+            let mut invoked = false;
+            let later = scope
+                .application(async |_| {
+                    invoked = true;
+                    Ok::<(), sqlx::Error>(())
+                })
+                .await;
+            assert!(!invoked, "abandoned scope invoked subsequent work");
+            assert!(matches!(
+                later,
+                Err(PgScopeError::Terminal(
+                    batter_sqlx::PgScopeFailure::OperationAbandoned
+                ))
+            ));
             // Even deliberately swallowing the cancellation cannot resurrect the owner.
             Ok::<_, PgScopeError<sqlx::Error>>(91)
         })
         .await;
         assert!(matches!(
             result,
-            Err(PgAtomicError::ScopeLost { result: Ok(91) })
+            Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
+                result: Ok(91),
+                cause: PgScopeLoss::OperationAbandoned,
+            }))
         ));
         fixture.replacement_and_close().await
     }

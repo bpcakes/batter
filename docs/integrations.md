@@ -253,13 +253,11 @@ the idle-state synchronization succeeds. `Err`, failed or interrupted cleanup,
 or a dropped future retires it, so an interrupted query cannot be followed by
 pool return. There is no direct pool-return call. Use the consuming
 `lease.with_retiring_connection(async |session| ...)` path when every outcome
-must retire. `PgSession::executor` runs native SQL and `PgSession::begin` returns
-an opaque transaction with consuming commit/rollback; neither wrapper exposes a
-replaceable SQLx connection or transaction.
-Only a successful explicit commit or rollback clears the session's retained
-transaction state. If application code drops or forgets an unfinished
-transaction and returns `Ok`, Batter preserves that result but retires the
-connection. Native execution can issue raw `BEGIN` without changing SQLx's typed
+must retire. `PgSession::executor` is low-level SQL without atomic-result
+guarantees. There is no public session `begin` or `PgTransaction`; use `run_atomic`
+for writes whose output requires acknowledged disposition. Exceptional manual
+ownership is only `low_level::PgAtomicTransaction`. The session exposes no
+replaceable SQLx connection. Native execution can issue raw `BEGIN` without changing SQLx's typed
 depth; the return-time rollback handles open and failed raw transactions before
 the private return proof exists. It is not a general session reset. A lease
 retained outside a cancelled future remains the caller's responsibility.

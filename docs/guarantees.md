@@ -852,7 +852,12 @@ canonical service roots and finite retirement command use `pool_in`.
 
 `run_atomic` owns the complete READ COMMITTED workflow. Body outputs are withheld
 until acknowledged commit, and rejections until acknowledged rollback; uncertainty
-retains the result and cause. Operations use private savepoints and XID continuity.
+retains the result and cause through the narrow `PgAtomicUncertainty` type.
+Caught terminal failures poison the scope with their first shared native cause;
+later calls cannot replace it or invoke new work. A dropped polled operation
+records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
+application rejections and terminal scope failures use separate types.
+Operations use private savepoints and XID continuity.
 Cancelling a polled inner operation consumes usable state, even if caught by the
 body. There is no await after acknowledged completion. Every completion retires
 the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
@@ -869,13 +874,14 @@ death. The explicitly `low_level` consuming owner leaves output/completion pairi
 to its caller and is not equivalent to the canonical runner.
 
 `PgLease` detaches and drops its client unless `with_connection` receives an
-application `Ok`, observes no unacknowledged typed transaction and successfully
+application `Ok` and successfully
 executes `ROLLBACK` on that exact connection. Only then does the private
 pool-return proof exist; there is no direct pool-return call, so a failed,
 interrupted or dropped unit of work cannot reach the pool. The consuming
 `with_retiring_connection` path retires for every outcome. Both closures receive
-an opaque `PgSession` whose executor permits SQL and whose `begin` returns an
-opaque `PgTransaction` with consuming commit/rollback. Neither wrapper exposes
+an opaque low-level `PgSession` whose executor permits SQL but has no typed
+transaction-start method or atomic-result guarantee. The old public
+`PgTransaction` protocol is removed. This wrapper exposes no
 `DerefMut`, `AsMut`, a native connection, or a native transaction, so safe
 application code cannot replace the physical connection before the lease disposes
 it. Native SQL can still issue raw transaction control; the return-time rollback

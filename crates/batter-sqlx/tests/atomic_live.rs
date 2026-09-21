@@ -3,6 +3,8 @@
 mod cancellation;
 #[path = "atomic_live/commit.rs"]
 mod commit;
+#[path = "atomic_live/poison.rs"]
+mod poison;
 #[path = "atomic_live/runner.rs"]
 mod runner;
 #[path = "atomic_live/session_state.rs"]

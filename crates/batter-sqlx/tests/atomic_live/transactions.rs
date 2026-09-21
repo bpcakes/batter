@@ -1,5 +1,5 @@
 use super::*;
-use batter_sqlx::{PgScopeError, PgTransactionError};
+use batter_sqlx::{PgScopeError, PgScopeFailure, PgTransactionError};
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
@@ -21,10 +21,9 @@ async fn transaction_control_is_terminal() -> Result {
                 .await;
             assert!(
                 matches!(
-                    result,
-                    Err(PgScopeError::Transaction(
-                        PgTransactionError::TransactionBoundaryLost
-                    ))
+                    &result,
+                    Err(PgScopeError::Terminal(PgScopeFailure::Transaction(cause)))
+                        if matches!(cause.as_ref(), PgTransactionError::TransactionBoundaryLost)
                 ),
                 "{statement}: {result:?}"
             );
@@ -104,7 +103,7 @@ async fn library_insert(
     id: i32,
 ) -> std::result::Result<
     (PgAtomicTransaction, std::result::Result<(), sqlx::Error>),
-    PgScopeError<sqlx::Error>,
+    PgScopeFailure<sqlx::Error>,
 > {
     tx.operation(async |sql| {
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -194,7 +193,8 @@ async fn swallowed_sql_error_and_application_error_are_terminal() -> Result {
             .await;
         assert!(matches!(
             result,
-            Err(PgScopeError::Transaction(PgTransactionError::Query(_)))
+            Err(PgScopeError::Terminal(PgScopeFailure::Transaction(cause)))
+                if matches!(cause.as_ref(), PgTransactionError::Query(_))
         ));
         replacement(&fixture.pool, previous).await?;
         let (tx, previous) = transaction(&fixture.pool).await?;
@@ -215,7 +215,7 @@ async fn swallowed_sql_error_and_application_error_are_terminal() -> Result {
             .unwrap_err();
         assert!(matches!(
             error,
-            PgScopeError::Recovery {
+            PgScopeFailure::Recovery {
                 application: sqlx::Error::Protocol(_),
                 ..
             }

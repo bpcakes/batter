@@ -458,11 +458,13 @@ fn uncertain_response(
     let code = match uncertain {
         UncertainSubmission::Interrupted(_) => "submission_interrupted",
         UncertainSubmission::Atomic(error) => match &**error {
-            batter::sqlx::PgAtomicError::CommitUnconfirmed { .. } => "commit_acknowledgement_lost",
-            batter::sqlx::PgAtomicError::RollbackUnconfirmed { .. } => {
+            batter::sqlx::PgAtomicUncertainty::CommitUnconfirmed { .. } => {
+                "commit_acknowledgement_lost"
+            }
+            batter::sqlx::PgAtomicUncertainty::RollbackUnconfirmed { .. } => {
                 "rollback_acknowledgement_lost"
             }
-            _ => "submission_scope_uncertain",
+            batter::sqlx::PgAtomicUncertainty::ScopeLost { .. } => "submission_scope_uncertain",
         },
     };
     (

@@ -23,7 +23,10 @@ built on `batter-sqlx`. The initial `PgIntentScope` supports application SQL and
 `PgQueueScope` for enqueue operations; intent recording is then unavailable.
 There is no transaction view, owner extraction, separate completion call or legacy
 bridge. Outputs leave the runner only after acknowledged commit; rejected bodies
-only after acknowledged rollback. Uncertainty retains the domain result/error.
+only after acknowledged rollback. `PgAtomicUncertainty` retains the domain
+result/error and cause. Caught terminal failures retain the first database poison
+cause; abandoned operations are classified separately. `PgScopeFailure` cannot
+contain an ordinary application rejection.
 Every completion retires the session, and acquisition resets inherited state.
 
 Native graceful and abort/join allowances come from the process budget's drain and

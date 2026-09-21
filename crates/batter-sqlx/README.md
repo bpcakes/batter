@@ -11,8 +11,13 @@ that share one READ COMMITTED transaction. The callback uses
 `sql.executor()`. Outputs are provisional inside the callback; the runner
 returns `Ok(T)` only after acknowledged commit. It returns `Rejected(E)` only
 after acknowledged rollback. Unconfirmed commit/rollback retain the body output
-or rejection with the original cause. A lost scope retains the callback result
-as uncertainty, never as a committed result.
+or rejection with the original cause, under `PgAtomicError::Uncertain` and the
+narrow `PgAtomicUncertainty` enum. A lost scope retains the callback result and
+the first terminal database cause even if the callback catches it. Dropping a
+polled operation records `PgScopeLoss::OperationAbandoned` instead of inventing
+a database failure. Later operations return the retained loss without running SQL.
+`PgScopeError::Application` is a recovered operation rejection;
+`PgScopeError::Terminal(PgScopeFailure)` cannot contain a plain business rejection.
 
 Each application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
@@ -48,7 +53,7 @@ OperationContext when required. Cancellation returns no result and does not
 prove rollback; process death or deliberately forgotten values remain outside
 local destruction guarantees.
 
-## Session operations
+## Low-level session operations (not transaction workflows)
 
 `PgLease::acquire(&pool, &context)` bounds acquisition using the existing operation
 budget. Move the lease into the bounded operation future and run its work through
@@ -61,14 +66,12 @@ failed or interrupted cleanup, unwinding and application interruption retire it.
 There is no direct pool-return call, so an interrupted query can never be followed
 by pool return. Work that must retire for every outcome uses the consuming
 `lease.with_retiring_connection(async |session| ...)` path. Both closures receive
-an opaque `PgSession`: `session.executor()` runs native SQL and
-`session.begin()` returns an opaque `PgTransaction` with consuming
-`commit`/`rollback`. Neither type implements `DerefMut` or `AsMut` for its native
-SQLx owner, so application code cannot replace the physical connection and make
-the lease dispose a different one. Every successful transaction start also marks
-the session ineligible for pool return until commit or rollback succeeds. Dropping
-or forgetting an unfinished transaction preserves the application result but
-retires the connection. Native execution necessarily also permits raw transaction
+an opaque `PgSession`: `session.executor()` runs native SQL, but there is no
+`session.begin()` or public `PgTransaction`. Use `run_atomic` for application
+transactions; only `low_level::PgAtomicTransaction` offers exceptional manual
+ownership. The session does not implement `DerefMut` or `AsMut`, so application
+code cannot replace the physical connection before disposition. Low-level
+session results are not transaction evidence. Native execution permits raw transaction
 control such as `BEGIN`; the same-connection `ROLLBACK` closes both open and
 failed raw transactions before the private pool-return proof can exist. It does
 not reset arbitrary session settings, session advisory locks or prepared

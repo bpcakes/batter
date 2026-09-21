@@ -1546,8 +1546,9 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 61-case inventory: eleven PostgreSQL lease/disposition and
-read-only-verification cases, fourteen owned-pool cases and thirty-six authority-
+an exact 84-case inventory: twenty-one owned atomic/snapshot cases, two migration
+cases, eleven PostgreSQL lease/disposition and read-only-verification cases,
+fourteen owned-pool cases and thirty-six authority-
 and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
 missing/checksum/unsuccessful rows, bounded oversized-ledger rejection,
@@ -1872,3 +1873,10 @@ commit and rollback through consuming transaction ownership. SQLx offline
 compilation uses the committed native query metadata; a fresh fixture is not a
 compile-time schema source. The live SQLx runner also requires migration history,
 checksum-failure retirement, and cancellation before a server lock is released.
+
+The atomic suite also catches and discards terminal operation errors deliberately.
+It requires the runner to retain the original shared boundary/recovery cause with
+the callback's output or replacement rejection. Repeated calls after poison must
+not invoke SQL or replace that cause; caught cancellation remains explicitly
+`OperationAbandoned`. Compile-fail rustdoc rejects the removed session transaction
+API and wrapping known rejections as uncertainty or terminal storage failures.
