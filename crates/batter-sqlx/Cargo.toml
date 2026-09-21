@@ -1,6 +1,6 @@
 [package]
 name = "batter-sqlx"
-description = "Explicit PostgreSQL connection disposition for native SQLx operations"
+description = "Owned PostgreSQL transaction, snapshot, verification, and connection disposition APIs"
 version = "0.1.0"
 edition.workspace = true
 rust-version = "1.94"

@@ -7,8 +7,9 @@ packages, not the foundation or generic test support. Passing tests do not estab
 
 The workspace's platform scope is Unix-only. Windows is unsupported and not
 planned; no non-Unix process or signal fallback is provided. Linux x86_64 and
-macOS arm64 have execution evidence on both supported toolchains. The updated
-macOS CI job and other Unix targets remain unverified. See [ADR-007](adr/007-unix-platform-scope.md).
+macOS arm64 have execution evidence on both supported toolchains, including the
+focused hosted macOS job. Other Unix targets remain unverified. See
+[ADR-007](adr/007-unix-platform-scope.md).
 
 ## Native quota execution
 

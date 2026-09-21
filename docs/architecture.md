@@ -53,9 +53,9 @@ application composition root
   |                         operation + retry + admission + settings
   |-- native tracing subscriber and exporters (application-owned)
   |-- optional batter-axum -> batter-core + Axum / Tower
-  |-- optional batter-sqlx -> batter-core + native SQLx PgPool / Transaction
+  |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
   |     `-- opt-in test-support -> external harness + generic test support
-  |-- optional batter-runledger -> batter-core + native runtime preparation / settlement
+  |-- optional batter-runledger -> batter-core + batter-sqlx + native Runledger
   |-- optional batter-runlimit -> batter-core + native Runlimit core
   |     |-- opt-in memory / postgres -> native storage and error bridges
   |     `-- opt-in axum -> batter-axum + native serving
@@ -84,12 +84,15 @@ tests can use its generic scripts without pulling higher layers back into the
 foundation. Cross-package fixtures belong in their application/example test
 targets. Reusable pool/lease/template composition is opt-in under the SQLx
 adapter test-support feature, selected by reference development dependencies.
-The external harness retains provisioning and template-cache ownership. The optional SQLx
-adapter shares the observed connection disposition mechanism while preserving
-native transactions and application policy. The implemented optional
-`batter-runledger` adapter translates owned native preparation, initialization,
-stop clocks and complete settlement into managed process ownership; native
-supervision and durable policy remain in Runledger. The optional `batter-runlimit`
+The external harness retains provisioning and template-cache ownership. The
+optional SQLx adapter owns opaque transaction and read-only snapshot scopes and
+exposes connection disposition only through its low-level APIs; application
+SQL, pools and policy remain native. The implemented optional
+`batter-runledger` adapter adds a phase-scoped atomic enqueue runner and schema
+snapshots built on those SQLx scopes. It also translates owned native
+preparation, initialization, stop clocks and complete settlement into managed
+process ownership; native supervision and durable policy remain in Runledger.
+The optional `batter-runlimit`
 adapter owns quota-before-work execution, not a second limiter. Its HTTP boundary
 owns async authentication, one atomic native batch, body ordering and retained
 quota facts; its opaque prepared service owns the required serving metadata.

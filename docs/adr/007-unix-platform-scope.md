@@ -14,10 +14,14 @@ Do not add Windows
 branches, non-Unix fallback implementations, compatibility layers, or CI jobs.
 Keep the policy visible in the root README/AGENTS, package guides and rustdoc.
 
-Linux x86_64 and macOS arm64 have executed the full verification matrix and
-rebuilt HTTP smoke tests on Rust 1.94.0 and 1.98.1 (HTTP uses 1.98.1). This host
-evidence is separate from the updated macOS CI job, which has not run yet. Other
-Unix systems remain unverified; scope does not imply validation on every target.
+Linux x86_64 and macOS arm64 have executed the full verification matrix on Rust
+1.94.0 and 1.98.1; the recorded local HTTP smoke run used Rust 1.98.1. Focused
+hosted macOS jobs also pass on both toolchains for commit
+`56814038f2a9cf6a34688ee39cd9f0e433487a1e`. They type-check every workspace
+target, build and smoke-test the HTTP example, and exercise the subprocess,
+scheduling, ownership, report-doctest, database-independent lifecycle, Axum and
+readiness suites. Other Unix systems remain unverified; scope does not imply
+validation on every target.
 
 Consequences: example shutdown registers SIGINT/SIGTERM listeners directly,
 acknowledging readiness only after registration succeeds. The subprocess
