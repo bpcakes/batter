@@ -102,8 +102,8 @@ the library. Do not disguise unresolved uncertainty as successful rollback.
 
 - [x] Inspected baseline and upgraded adapter to current typed quota APIs.
 - [x] Protected runner and ten explicit PostgreSQL 18 live tests complete.
-- [ ] Full toolchain/feature validation and external git consumer pass.
-- [ ] Native review clean and PR delivered.
+- [x] Full toolchain/feature validation and external Git consumer pass.
+- [x] Initial native review clean and PR [#3](https://github.com/bpcakes/batter/pull/3) opened.
 
 ## Surprises & Discoveries
 
@@ -143,3 +143,25 @@ inside the same poll that returns the simulated acknowledged outcome; both succe
 and native error remain intact. All four focused tests pass (141 library tests
 are now discovered). This distinguishes observed acknowledgement from the separate
 simultaneous-but-unobserved completion test, which remains interrupted.
+
+Integration evidence: a fresh Rust 1.94 Git-only consumer of Batter `c0151b8`,
+including SQLx, Runledger and PostgreSQL Runlimit, compiled with the documented
+root foundation patch. Metadata showed one foundation identity and no sibling
+path dependencies. Native review `ac12753..c0151b8` reported no findings.
+Both full toolchain matrices and ten live attempt tests passed at Runlimit
+`36ba4ee`; all five HTTP smokes passed on both toolchains. The full SQLx suite
+(84 cases), native Runledger bridge and 66 reference cases passed in the
+preceding integration graph. These are local PostgreSQL 18.6 results, not hosted
+or production claims.
+
+Runlimit PR #9 is now pinned at `bf3c5cd1ba3e96f55ca4c635d79bab9b35e8978d`,
+including its cleanup candidate-clock correction and forward-only index migration.
+The HTTP retry-header test moved unchanged into its existing response-contract
+module to satisfy the file budget; 36 focused HTTP tests and Clippy passed.
+Final exact-pin matrices passed on Rust 1.94.0 and 1.98.1, including strict
+rustdoc; all ten PostgreSQL attempt tests passed. All five Jig targets passed,
+including `api:test` receipt `receipt_01M31V4HM4YW1W5JT66TZBDNZA`.
+The final pin and closure commit receives another native review over the original
+`ac12753` base. No runtime, limiter-storage or application-policy code is
+duplicated in the consumer. Production deployment and the application cutover
+remain outside this delivery.
