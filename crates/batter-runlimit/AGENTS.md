@@ -51,7 +51,9 @@ No body-stream, detached-task or remote rollback guarantee is added.
 Attempt verification runs before acquiring the application transaction; the final
 accepted/rejected decision runs inside it after a native live-receipt claim.
 Business rejection is a committed typed value so failure audit and retry state
-survive together. Infrastructure errors roll back. Use `batter_sqlx::run_atomic_in`
+survive together. Infrastructure errors roll back. Require `PgProfiledPool` with
+one authoritative schema, binding native admission and completion to its explicit
+policy. Use `batter_sqlx::run_atomic_profiled_in`
 for operation-budget outcome retention; never rebuild a post-commit cleanup/reset
 protocol here. Lease expiry after a locked claim does not revoke that transaction.
 

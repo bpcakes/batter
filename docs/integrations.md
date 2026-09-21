@@ -625,14 +625,20 @@ native completion, and acknowledged commit. Credential verification occurs
 outside the application transaction; final replay and account-status checks
 occur inside it. `Authentication::Rejected` commits failure state and audit,
 while infrastructure errors roll back. A stale claim prevents the application
-callback. `run_atomic_in` retains acknowledged and uncertain results before
+callback. Construction requires `PgProfiledPool` with one authoritative schema;
+native admission and completion share its immutable declared profile. The SQLx
+foundation owns all pool normalization hooks, including release before fast-path
+reuse. No arbitrary hook-bearing pool can construct the attempt owner.
+`run_atomic_profiled_in` retains acknowledged and uncertain results before
 operation resolution. A valid claim holds its native row lock through commit;
 verification-lease expiry after claim does not revoke that transaction.
 
 See the [compiled quota consumer](../crates/batter/examples/quota_service.rs),
 [attempt consumer rustdoc](../crates/batter-runlimit/src/attempts.rs), and
-[failure contracts](../crates/batter-runlimit/tests). Ten explicit PostgreSQL 18
-attempt tests passed locally. Fresh-agent usability evaluation remains unexecuted.
+[failure contracts](../crates/batter-runlimit/tests). Fourteen explicit PostgreSQL 18
+attempt tests passed locally, including restricted-role/custom-schema admission
+and completion, profile drift, and missing-authoritative-table rejection.
+Fresh-agent usability evaluation remains unexecuted.
 
 ## postgres-test-harness: optional native fixtures
 

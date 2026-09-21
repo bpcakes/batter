@@ -56,3 +56,36 @@ the escalation stopped implementation; neither has a final passing receipt.
 An earlier Jig run was invalidated by integration-document edits during its
 read-only collection. Runledger PR #21's final native review is clean and all
 five required hosted checks passed at `d574cbf`.
+
+## Authorized profile correction
+
+The user authorized the profile/API correction after Runledger #21 merged.
+The execution plan is `.agent/plans/attempt-profile-ownership.md`.
+`PgProfiledPool` now owns the previously native connect/acquire/release hooks in
+the SQLx foundation. Runledger delegates without changing its public database
+API (follow-up PR #22). `AttemptRunner` requires that owner and one authoritative
+schema; its retained completion uses the same owner through
+`run_atomic_profiled_in`. An arbitrary pool no longer compiles as its constructor
+argument. Native Runlimit policy, storage, budgets and migrations are unchanged.
+
+Invalid-state review: no separate admission/completion profile setter exists;
+native admission uses the owned pool, and profiled completion reapplies and
+revalidates its exact declaration. Custom schema fallback is rejected at
+construction. Native access remains a trusted SQL escape hatch, not endpoint
+attestation or a privilege sandbox. The independent boundary investigator and
+candidate bypass reviewer found no additional concrete issue in this design.
+
+Focused execution on PostgreSQL 18.6: 142 SQLx unit tests, profile construction
+tests and SQLx doctests passed; the shared pool live regression passed. All 14
+live attempt tests and adapter tests/Clippy passed. New cases observe native
+admission through an invoker trigger and compare restricted role, quoted custom
+schema and RLS setting with the final decision. Forbidden table access remains
+denied; missing authoritative tables cannot fall back to public; wrong-login
+configuration invokes neither application factory; profile drift cannot publish
+a committed result. Existing rejection/success audit and retry-state cases pass.
+Temporarily restoring unprofiled completion caused the custom-schema regression
+to fail with `AttemptError::Atomic`; the mutation was removed before acceptance.
+
+Full two-toolchain verification, final Jig receipts and full stable-range native
+review remain pending. Downstream adoption remains separate; no application
+limiter code or consumer repository changes are included.

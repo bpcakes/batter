@@ -13,14 +13,14 @@
 //!     KeyHasher, PolicyId, ScopeId, QuotaPeriod, attempts::AttemptPolicy,
 //! }};
 //! use std::{convert::Infallible, time::Duration};
-//! # async fn example(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example(database: batter_sqlx::PgProfiledPool) -> Result<(), Box<dyn std::error::Error>> {
 //! let period = |seconds| QuotaPeriod::new(Duration::from_secs(seconds));
 //! let policy = AttemptPolicy::new(PolicyId::new("credential.verify")?,
 //!     ScopeId::new("identifier")?, period(1)?, period(60)?, period(300)?, period(30)?)?;
 //! let hasher = KeyHasher::new([7; 32])?; // Example only; inject the application's key.
 //! let subject = hasher.hash_attempt_for(&policy, "normalized-identifier");
 //! let context = OperationContext::new(Duration::from_secs(2))?;
-//! let runner = AttemptRunner::new(pool);
+//! let runner = AttemptRunner::new(database)?;
 //! let result = runner.run(&context, subject,
 //!     |_scope| async { Ok::<_, Infallible>(true) }, // Bounded credential verification.
 //!     async |sql, credential_matches| {
@@ -41,6 +41,13 @@
 //! ```
 //!
 //! Attempt receipts and separate completion cannot escape the runner:
+//! An arbitrary hook-bearing pool cannot construct the canonical owner:
+//! ```compile_fail,E0308
+//! fn unprofiled(pool: sqlx::PgPool) {
+//!     let runner = batter_runlimit::attempts::AttemptRunner::new(pool);
+//! }
+//! ```
+//!
 //! ```compile_fail
 //! fn extract(runner: batter_runlimit::attempts::AttemptRunner) {
 //!     let receipt = runner.receipt();
@@ -57,7 +64,7 @@
 //! ```
 
 use batter_core::operation::{Interruption, OperationContext, OperationError};
-use batter_sqlx::{PgAtomicError, PgScopeError, PgScopedSql};
+use batter_sqlx::{PgAtomicError, PgProfiledPool, PgScopeError, PgScopedSql};
 use runlimit_core::attempts::{
     AttemptAdmission, AttemptCompletion, AttemptDenial, AttemptObservation, AttemptObserver,
     AttemptOutcome, AttemptSubject, StagedAttemptCompletion, observe_attempt_safely,
@@ -66,7 +73,6 @@ use runlimit_postgres::{
     CheckError, PostgresConfig,
     attempts::{PgAttemptClaimResult, PostgresAttemptLimiter},
 };
-use sqlx::PgPool;
 use std::{error::Error, fmt, future::Future, sync::Arc};
 
 /// The application's final decision, made under the owned database transaction.
@@ -237,7 +243,11 @@ impl<T: 'static, R: 'static, V: Error + 'static, E: Error + 'static> Error
 
 /// Canonical PostgreSQL attempt owner, independent of authenticated HTTP quota.
 /// Construction is inert. The caller explicitly installs the native attempts
-/// migration and supplies a pool with the application tables in the same database.
+/// migration and supplies a profile-owned pool with application tables in the
+/// same database. Both native admission and atomic completion establish that
+/// owner's declared policy. Exactly one authoritative schema is supported;
+/// application tables elsewhere must be qualified. Native admission retains its
+/// own operation-budget timeouts; the profile supplies baseline session policy.
 ///
 /// The runner owns reserve -> verify -> claim -> decide/write -> finish -> commit.
 /// A claimed receipt locks its native row until transaction disposition; expiry
@@ -250,17 +260,26 @@ impl<T: 'static, R: 'static, V: Error + 'static, E: Error + 'static> Error
 /// loses the caller's result; detached work and arbitrary external effects are
 /// not supervised or rolled back.
 pub struct AttemptRunner {
+    database: PgProfiledPool,
     limiter: PostgresAttemptLimiter,
     observer: Option<Arc<dyn AttemptObserver>>,
 }
 
 impl AttemptRunner {
-    /// Use one pool for native admission and the application transaction.
-    pub fn new(pool: PgPool) -> Self {
-        Self {
-            limiter: PostgresAttemptLimiter::new(pool),
-            observer: None,
+    /// Bind admission and completion to one immutable profile-owned pool.
+    /// Reject fallback schemas before execution: native attempt queries must
+    /// not resolve missing authoritative tables in another ordinary schema.
+    pub fn new(database: PgProfiledPool) -> Result<Self, sqlx::Error> {
+        if database.profile().trusted_schemas().len() != 1 {
+            return Err(sqlx::Error::Protocol(
+                "attempt runner requires one authoritative schema, without fallback schemas".into(),
+            ));
         }
+        Ok(Self {
+            limiter: PostgresAttemptLimiter::new(database.pool().clone()),
+            database,
+            observer: None,
+        })
     }
 
     /// Select native storage budgets/capacity before execution.
@@ -323,8 +342,8 @@ impl AttemptRunner {
                             phase: AttemptPhase::Verification,
                         },
                     })?;
-            let result = batter_sqlx::run_atomic_in(
-                self.limiter.pool(),
+            let result = batter_sqlx::run_atomic_profiled_in(
+                &self.database,
                 context,
                 "attempt.complete",
                 async |scope| {

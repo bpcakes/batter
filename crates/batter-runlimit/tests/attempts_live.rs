@@ -4,7 +4,7 @@ use batter_core::operation::OperationContext;
 use batter_runlimit::attempts::{
     AttemptError, AttemptPhase, AttemptRunner, AttemptWriteError, Authentication,
 };
-use batter_sqlx::{PgAtomicError, PgScopeError};
+use batter_sqlx::{PgAtomicError, PgProfiledPool, PgScopeError, PgSessionProfile};
 use runlimit_core::{KeyHasher, PolicyId, QuotaPeriod, ScopeId, attempts::*};
 use runlimit_postgres::attempts::PostgresAttemptLimiter;
 use sqlx::PgPool;
@@ -16,7 +16,11 @@ use std::{
 
 static INITIALIZED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
+#[path = "attempts_live/profile.rs"]
+mod profile;
+
 struct Fixture {
+    database: PgProfiledPool,
     pool: PgPool,
     runner: AttemptRunner,
     native: PostgresAttemptLimiter,
@@ -28,11 +32,18 @@ struct Fixture {
 impl Fixture {
     async fn new(case: &str, lease_ms: u64) -> Self {
         let url = std::env::var("DATABASE_URL").expect("explicit live suite requires DATABASE_URL");
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(8)
-            .connect(&url)
-            .await
-            .unwrap();
+        let options: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
+        let login = options.get_username();
+        let profile = PgSessionProfile::new(
+            login,
+            login,
+            vec!["public".into()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .unwrap();
+        let database = PgProfiledPool::connect(options, profile, 8).await.unwrap();
+        let pool = database.pool().clone();
         let native = PostgresAttemptLimiter::new(pool.clone());
         INITIALIZED.get_or_init(|| async {
             let version: String = sqlx::query_scalar("SHOW server_version_num")
@@ -61,7 +72,8 @@ impl Fixture {
         )
         .unwrap();
         Self {
-            runner: AttemptRunner::new(pool.clone()),
+            runner: AttemptRunner::new(database.clone()).unwrap(),
+            database,
             pool,
             native,
             policy,
@@ -356,7 +368,8 @@ async fn acknowledged_commit_survives_observer_cancellation_at_publication() {
     }
     let f = Fixture::new("commit-cancel", 2000).await;
     let operation = context(1000);
-    let runner = AttemptRunner::new(f.pool.clone())
+    let runner = AttemptRunner::new(f.database.clone())
+        .unwrap()
         .with_observer(std::sync::Arc::new(CancelAfterCommit(operation.clone())));
     let fixture = &f;
     let output = operation

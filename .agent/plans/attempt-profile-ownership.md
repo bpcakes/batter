@@ -17,7 +17,10 @@ No migrations, releases or PR merges are authorized by this work.
 ## Progress
 
 - Merged Runledger #21 pin adopted; focused adapter compilation passed.
-- Profile boundary inspected; implementation and end-to-end validation pending.
+- Shared profile pool checkpoint `e9c5b04` committed; focused foundation checks passed.
+- Runledger PR #22 delegates to it; full native tests and packaged smoke passed.
+- Attempt runner cutover and 14 live tests passed. Old unprofiled-completion
+  mutation fails the new regression. Full matrix, Jig and native review pending.
 
 ## Surprises & Discoveries
 

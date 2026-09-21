@@ -45,6 +45,14 @@ reservation, credential verification outside a transaction, and an owned SQLx
 transaction that claims the receipt, invokes final application checks/writes,
 and completes retry state. Its module rustdoc is a compiling consumer example.
 
+Construct it with `AttemptRunner::new(database)?`, where `database` is a
+`batter_sqlx::PgProfiledPool`. Declare login/effective roles, one authoritative
+schema, baseline timeouts and any custom settings in `PgSessionProfile` before
+connecting. Arbitrary pools and fallback schema lists are not accepted. The
+shared foundation owns connect/acquire/release normalization; completion applies
+the same profile after reset and revalidates it. Native admission still owns its
+transaction budget and may tighten timeouts. Provisioning/grants remain external.
+
 The application callback returns `Authentication::Accepted(value)` or
 `Authentication::Rejected(reason)`. Both are committed domain outcomes. Rejection
 therefore preserves failure audit together with the incremented failure state.
@@ -57,7 +65,7 @@ claimed transaction. No raw connection, attempt receipt, or separate completion
 call escapes the canonical runner.
 
 Admission, verification and completion share the supplied `OperationContext`
-deadline. The SQLx `run_atomic_in` helper retains acknowledged output and native
+deadline. The SQLx `run_atomic_profiled_in` helper retains acknowledged output and native
 uncertainty before deadline resolution. No automatic retry follows an uncertain
 commit. Interrupted verification leaves a native lease for conservative expiry;
 it does not reset failures. Observations report completion only after commit.
