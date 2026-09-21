@@ -47,7 +47,7 @@ independent driver, failure side channel or nested cleanup stack is needed.
 
 This unpublished Unix-only adapter uses coordinated sibling Runledger packages
 from `../runledger` while these feature branches are reviewed. CI checks out
-`bc89fe7a60b6831155ce44230ec2e0851db3b396`. Runledger depends
+`7da3ce5d086023ddd71d9b0e50a97d26954535a9`. Runledger depends
 only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
 facade or this integration. Publishing and replacement with immutable released
 package identities remain separate decisions.
