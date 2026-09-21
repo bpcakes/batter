@@ -890,10 +890,10 @@ arbitrary session settings, session advisory locks or prepared transactions.
 Keep the lease inside the future whose interruption should retire it. Panics propagate;
 Rust's default panic hook can still print payloads. No native error contents are
 added to adapter diagnostics, but trusted source inspection and upstream logging
-remain application-owned. Beginning an opaque transaction records an
-unacknowledged child in its session; only a successful consuming commit or
-rollback clears it. Dropping or forgetting the child cannot authorize pool
-return and instead causes lease retirement. If the return-time cleanup reports
+remain application-owned. `run_atomic` is the canonical acknowledged-disposition
+path; `low_level::PgAtomicTransaction` is the exceptional explicit owner.
+The low-level session has no typed transaction lifecycle, and raw transaction-control
+SQL carries no typed atomic-result guarantee. If the return-time cleanup reports
 failure, `with_connection` preserves the application `Ok` but retires its
 connection. Cancellation drops the future, so the generic lease cannot return
 an arbitrary application value; it still retires the connection. A
