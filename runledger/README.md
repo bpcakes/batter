@@ -1904,12 +1904,41 @@ copies so builds do not depend on the working directory. Canonical migrations
 are in `runledger/migrations/`, with identical copies in the PostgreSQL and test
 support packages. Root verification rejects drift in either set.
 
-When SQL or schema changes, regenerate metadata with SQLx CLI 0.9.0 against
-PostgreSQL 18 after applying the canonical migrations, then synchronize both
-package caches and migration copies. Existing migrations are immutable: schema
-changes use a new forward migration. The shared-workspace refresh command and
-its controls are tracked by `batter-biqv.2`; until that task closes, automated
-cache refresh has not been validated in this layout.
+When SQL or schema changes, install SQLx CLI 0.9.0 and make `psql` available:
+
+```bash
+cargo install sqlx-cli --version 0.9.0 --no-default-features --features rustls,postgres
+# From the Batter root, with DATABASE_URL pointing to PostgreSQL 18
+# and the canonical migrations already applied:
+python3 scripts/refresh_runledger_sqlx.py
+```
+
+The command checks the server major and migration checksums before preparation.
+It does not apply migrations or create databases. It prepares native packages in
+a disposable source copy, verifies the generated metadata with an offline build,
+then synchronizes `runledger/.sqlx/`, both package caches and both migration
+copies. A failed preparation or offline build leaves the original assets intact.
+Review the resulting diff. Existing migrations remain immutable; schema changes
+require a new forward migration. Avoid concurrent source edits during refresh.
+
+### Standalone source consumers
+
+From the Batter root:
+
+```bash
+python3 scripts/check_runledger_consumer.py
+```
+
+This ordinary verification command exports a disposable source copy without Git
+metadata, environments or build outputs. An independent consumer manifest uses
+paths into that copy without patches, compiles and runs direct/facade type
+identity checks, then executes the native producer/worker transaction and shutdown
+test from the copy. Docker is required. This proves source consumption, not
+registry publication or `.crate` archive compatibility.
+
+`python3 scripts/check_runledger_workspace.py` also checks these README quick-start
+blocks against their compiled examples. Update both together when the examples
+change.
 
 ### Development conventions
 

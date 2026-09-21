@@ -14,6 +14,9 @@ cite private application paths remain linked at their immutable upstream source
 instead of becoming broken local references. Old tracker/planning artifacts, repository
 CI, release automation and paired-checkout smoke/attestation machinery are not
 active in Batter. The original revision remains the reference for those artifacts.
+Shared-workspace consumer verification and SQLx refresh are maintained by
+`scripts/check_runledger_consumer.py` and `scripts/refresh_runledger_sqlx.py` at the
+Batter root; README snippet checks live in the shared graph/asset checker.
 Historical research, migration notes and evidence under `docs/` and CHANGELOG
 retain their original scope and do not establish verification of this import.
 

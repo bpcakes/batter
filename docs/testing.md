@@ -1929,3 +1929,25 @@ Imported files above the existing 800-line budget have per-file ceilings fixed
 at their exact imported size. They remain measured and cannot grow under those
 ceilings; ordinary new Rust files keep the 800-line limit. This avoids mixing a
 native source reorganization into the behavior-preserving import.
+
+## Runledger standalone sources and cache maintenance
+
+`python3 scripts/check_runledger_consumer.py` runs in the normal test matrix. It
+copies export-eligible sources to a temporary directory without `.git`, rejects
+local dependencies outside that copy and external dependency drift, compiles and
+runs direct/facade identity checks in a separate consumer workspace with no patch
+table, then executes the copied native producer/worker PostgreSQL test. Its
+temporary lock is seeded from the root lock, which must remain unchanged. Docker
+is required for the worker round trip. `scripts/test_runledger_tools.py` exercises
+source omissions, forbidden dependency locations, version drift, missing/mismatched
+README snippets and rejected migration/refresh states.
+
+`python3 scripts/refresh_runledger_sqlx.py` requires SQLx CLI 0.9.0, `psql` and an
+explicit `DATABASE_URL` for PostgreSQL 18 with the canonical migrations already
+applied. It never applies migrations. Preparation happens in a disposable source
+copy; only after successful offline compilation are the original native cache and
+migration copies synchronized. The failed-prepare and failed-offline-build controls
+assert byte-for-byte preservation of original assets. The canonical migrations
+are inputs, never rewritten by this command. Review the resulting source diff and
+avoid editing sources concurrently with refresh. This command is a developer tool,
+not application database provisioning or a registry publication path.

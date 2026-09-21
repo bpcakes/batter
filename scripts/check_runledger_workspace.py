@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -73,13 +74,29 @@ def validate_assets(root):
             raise ValueError("bundled SQLx metadata differs: " + name)
 
 
+def validate_readme(root):
+    native = Path(root) / "runledger"
+    snippets = re.findall(r"<!-- quick-start-source: ([^\n]+) -->\n```rust\n(.*?)\n```",
+                          (native / "README.md").read_text(), re.DOTALL)
+    expected = {"runledger-runtime/examples/producer_worker/" + name + ".rs"
+                for name in ("shared", "producer", "worker")}
+    expected.add("runledger-runtime/examples/support/database.rs")
+    if len(snippets) != len(expected) or {path for path, _ in snippets} != expected:
+        raise ValueError("README must retain all four compiled quick-start snippets")
+    for path, snippet in snippets:
+        compiled = (native / path).read_text().split("\n#[cfg(test)]", 1)[0].rstrip()
+        if snippet != compiled:
+            raise ValueError("README snippet differs from its compiled example: " + path)
+
+
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--format-version", "1", "--all-features", "--locked"], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
-    print("Runledger: five local packages, one foundation identity, acyclic ownership, matching assets")
+    validate_readme(ROOT)
+    print("Runledger: local packages, one foundation identity, acyclic ownership, matching assets and snippets")
 
 
 if __name__ == "__main__":
