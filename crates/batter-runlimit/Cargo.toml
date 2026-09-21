@@ -19,9 +19,9 @@ batter-core.workspace = true
 batter-sqlx = { workspace = true, optional = true }
 sqlx = { workspace = true, features = ["postgres"], optional = true }
 thiserror.workspace = true
-runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "bf3c5cd1ba3e96f55ca4c635d79bab9b35e8978d" }
-runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "bf3c5cd1ba3e96f55ca4c635d79bab9b35e8978d", optional = true }
-runlimit-postgres = { git = "https://github.com/bpcakes/runlimit", rev = "bf3c5cd1ba3e96f55ca4c635d79bab9b35e8978d", optional = true }
+runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "c335806447bea60aadd08b46318a8d92dd45b68a" }
+runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "c335806447bea60aadd08b46318a8d92dd45b68a", optional = true }
+runlimit-postgres = { git = "https://github.com/bpcakes/runlimit", rev = "c335806447bea60aadd08b46318a8d92dd45b68a", optional = true }
 axum = { workspace = true, optional = true }
 batter-axum = { path = "../batter-axum", optional = true }
 tokio = { workspace = true, features = ["net"], optional = true }
