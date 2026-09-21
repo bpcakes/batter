@@ -302,13 +302,23 @@ class ArchiveTests(unittest.TestCase):
                         "crates/batter-axum/Cargo.toml", "crates/batter-axum/src/lib.rs",
                         "crates/batter/examples/http_service.rs",
                         "crates/batter-test-support/Cargo.toml", "crates/batter-test-support/src/lib.rs",
-                        "examples/postgres-lifecycle/Cargo.toml", "examples/postgres-lifecycle/src/main.rs"]
+                        "examples/postgres-lifecycle/Cargo.toml", "examples/postgres-lifecycle/src/main.rs",
+                        "runledger/llms.txt", "runledger/docs/evidence/change.patch",
+                        "runledger/runledger-postgres/Cargo.toml",
+                        "runledger/runledger-postgres/src/jobs/queue/claim_ids.sql",
+                        "runledger/migrations/202603280001_runledger_baseline.up.sql",
+                        "runledger/runledger-postgres/migrations/202603280001_runledger_baseline.up.sql",
+                        "runledger/runledger-test-support/migrations/202603280001_runledger_baseline.up.sql",
+                        "runledger/.sqlx/query-example.json",
+                        "runledger/runledger-postgres/.sqlx/query-example.json",
+                        "runledger/runledger-runtime/.sqlx/query-example.json"]
             excluded = [".agent/.cache/runtime.json", ".agent/.cache/adopt/backup.md",
                         ".agent/runtime/session.json", ".agent/tmp/note.md",
                         ".agent/state/adopt-last.json", ".agent/plans/example.md.lock",
                         ".env", "target/cache.rs", "validation/local/check.json",
                         "crates/batter/target/cache.rs", "examples/postgres-lifecycle/target/cache.rs",
-                        "examples/postgres-lifecycle/.env"]
+                        "examples/postgres-lifecycle/.env", "runledger/runledger-postgres/.env",
+                        "runledger/runledger-postgres/target/cache.rs"]
             for name in included + excluded:
                 path = repo / name
                 path.parent.mkdir(parents=True, exist_ok=True)

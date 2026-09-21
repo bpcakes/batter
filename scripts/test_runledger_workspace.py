@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from check_runledger_workspace import NATIVE, validate_assets, validate_graph
+from package import eligible
 
 
 class GraphTests(unittest.TestCase):
@@ -86,3 +87,18 @@ class AssetTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'differs|differ'):
                     validate_assets(root)
                 target.write_text('original')
+
+
+class ArchiveAssetTests(unittest.TestCase):
+    def test_native_compile_time_sql_and_migrations_are_archived(self):
+        root = Path(__file__).resolve().parent.parent
+        native = root / "runledger"
+        required = [native / "runledger-postgres/src/jobs/queue/claim_ids.sql"]
+        for directory in [native / "migrations", native / "runledger-postgres/migrations",
+                          native / "runledger-test-support/migrations"]:
+            migrations = list(directory.glob("*.sql"))
+            self.assertTrue(migrations, directory)
+            required.extend(migrations)
+        for path in required:
+            with self.subTest(path=path):
+                self.assertTrue(eligible(path, root), "archive must retain compiled SQL and migrations")
