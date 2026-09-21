@@ -1938,7 +1938,10 @@ local dependencies outside that copy and external dependency drift, compiles and
 runs direct/facade identity checks in a separate consumer workspace with no patch
 table, then executes the copied native producer/worker PostgreSQL test. Its
 temporary lock is seeded from the root lock, which must remain unchanged. Docker
-is required for the worker round trip. `scripts/test_runledger_tools.py` exercises
+is required for the worker round trip. The repository's active Rust toolchain
+(or explicit `RUSTUP_TOOLCHAIN`) is retained outside its directory. The single
+worker test runs serially with output capture, so application stdout cannot
+interrupt the required success record. `scripts/test_runledger_tools.py` exercises
 source omissions, forbidden dependency locations, version drift, missing/mismatched
 README snippets and rejected migration/refresh states.
 

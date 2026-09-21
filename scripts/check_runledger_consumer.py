@@ -30,10 +30,18 @@ def require_round_trip(output):
         raise RuntimeError("copied worker round-trip test did not execute successfully")
 
 
+def selected_cargo(root):
+    toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or run(
+        ["rustup", "show", "active-toolchain"], root).split()[0]
+    return ["cargo", "+" + toolchain]
+
+
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
+    cargo = selected_cargo(ROOT)
+    print("Native standalone consumer toolchain=" + cargo[1])
     locked = (ROOT / "Cargo.lock").read_bytes()
-    metadata = json.loads(run(["cargo", "metadata", "--format-version", "1",
+    metadata = json.loads(run([*cargo, "metadata", "--format-version", "1",
                                "--all-features", "--locked"], ROOT))
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")).resolve() / "runledger-consumer"
     with tempfile.TemporaryDirectory(prefix="batter-native-consumer-") as directory:
@@ -55,13 +63,15 @@ def main():
         (consumer / "Cargo.lock").write_bytes(locked)
         (consumer / "src/main.rs").write_text(IDENTITY)
         # Cargo may prune the seeded temporary lock; it must retain every selected source/version.
-        resolved = json.loads(run(["cargo", "metadata", "--format-version", "1", "--offline"], consumer))
+        resolved = json.loads(run([*cargo, "metadata", "--format-version", "1", "--offline"], consumer))
         validate_consumer(resolved, source, consumer, external_sources(metadata))
-        run(["env", "SQLX_OFFLINE=true", "cargo", "run", "--locked", "--offline",
+        run(["env", "SQLX_OFFLINE=true", *cargo, "run", "--locked", "--offline",
              "--target-dir", str(target)], consumer, echo=True)
-        output = run(["cargo", "test", "-p", "runledger-runtime", "--example", "worker",
+        # Capture application output so it cannot split libtest's result line.
+        # A single selected test also exercises serial libtest formatting on every run.
+        output = run(["env", "RUST_TEST_NOCAPTURE=0", *cargo, "test", "-p", "runledger-runtime", "--example", "worker",
                       "--locked", "--offline", "--target-dir", str(target), "--",
-                      "--exact", ROUND_TRIP, "--nocapture"], source, echo=True)
+                      "--exact", ROUND_TRIP, "--test-threads=1"], source, echo=True)
         require_round_trip(output)
     if (ROOT / "Cargo.lock").read_bytes() != locked:
         raise RuntimeError("source lockfile changed during standalone consumer verification")

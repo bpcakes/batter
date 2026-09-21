@@ -10,12 +10,22 @@ import unittest
 from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
-from check_runledger_consumer import ROUND_TRIP, require_round_trip
+from check_runledger_consumer import ROUND_TRIP, require_round_trip, selected_cargo
 from refresh_runledger_sqlx import migrations_current, query, refresh
 from runledger_source import copy_source, run, validate_consumer
 
 
 class SourceTests(unittest.TestCase):
+    def test_standalone_toolchain_comes_from_source_or_explicit_override(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch('check_runledger_consumer.run', return_value='1.98.1-host (overridden by source)') as command:
+            self.assertEqual(selected_cargo(Path('/source')), ['cargo', '+1.98.1-host'])
+            command.assert_called_once_with(['rustup', 'show', 'active-toolchain'], Path('/source'))
+        with patch.dict(os.environ, RUSTUP_TOOLCHAIN='1.94.0'), \
+             patch('check_runledger_consumer.run') as command:
+            self.assertEqual(selected_cargo(Path('/source')), ['cargo', '+1.94.0'])
+            command.assert_not_called()
+
     def test_missing_ignored_failed_or_different_worker_test_cannot_pass(self):
         good = f"test {ROUND_TRIP} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored"
         require_round_trip(good)
