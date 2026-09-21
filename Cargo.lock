@@ -1572,7 +1572,7 @@ dependencies = [
 [[package]]
 name = "runledger-core"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger?rev=41bca4c0b67c2338b4599f78ec858fca8c7f9eaf#41bca4c0b67c2338b4599f78ec858fca8c7f9eaf"
+source = "git+https://github.com/bpcakes/runledger?rev=a8f62833d4801c342b4e4244aeae8607fc26ae35#a8f62833d4801c342b4e4244aeae8607fc26ae35"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1585,7 +1585,7 @@ dependencies = [
 [[package]]
 name = "runledger-postgres"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger?rev=41bca4c0b67c2338b4599f78ec858fca8c7f9eaf#41bca4c0b67c2338b4599f78ec858fca8c7f9eaf"
+source = "git+https://github.com/bpcakes/runledger?rev=a8f62833d4801c342b4e4244aeae8607fc26ae35#a8f62833d4801c342b4e4244aeae8607fc26ae35"
 dependencies = [
  "batter-sqlx",
  "chrono",
@@ -1603,7 +1603,7 @@ dependencies = [
 [[package]]
 name = "runledger-runtime"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger?rev=41bca4c0b67c2338b4599f78ec858fca8c7f9eaf#41bca4c0b67c2338b4599f78ec858fca8c7f9eaf"
+source = "git+https://github.com/bpcakes/runledger?rev=a8f62833d4801c342b4e4244aeae8607fc26ae35#a8f62833d4801c342b4e4244aeae8607fc26ae35"
 dependencies = [
  "async-trait",
  "chrono",

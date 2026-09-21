@@ -47,7 +47,7 @@ hosted CI.
 
 The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
 batter-sqlx -> batter-core`. `Cargo.toml` pins all three Runledger packages to
-`41bca4c0b67c2338b4599f78ec858fca8c7f9eaf` (PR #21, following merged PR #20). A workspace-root patch for
+`a8f62833d4801c342b4e4244aeae8607fc26ae35` (merged PR #21, following merged PR #20). A workspace-root patch for
 the Runledger Git source selects this checkout's `batter-sqlx`, preserving one
 foundation type identity without a sibling checkout. Foundation packages remain
 unpublished. The canonical

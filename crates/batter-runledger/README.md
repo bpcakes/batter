@@ -46,7 +46,7 @@ cause. Native stop observation drains peers promptly. No caller-owned terminatio
 independent driver, failure side channel or nested cleanup stack is needed.
 
 This unpublished Unix-only adapter pins Runledger Git revision
-`41bca4c0b67c2338b4599f78ec858fca8c7f9eaf`. The workspace root patches
+`a8f62833d4801c342b4e4244aeae8607fc26ae35` (merged PR #21). The workspace root patches
 Runledger's SQLx foundation to the same source as the facade. Git consumers must
 repeat that root patch, as shown in the
 [compatibility manifest](../../docs/reference-compatibility.md#git-consumers);
