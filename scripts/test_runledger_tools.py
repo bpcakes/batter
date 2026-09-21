@@ -3,14 +3,16 @@ import copy
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from check_runledger_workspace import validate_readme
 from check_runledger_consumer import ROUND_TRIP, require_round_trip
-from refresh_runledger_sqlx import migrations_current, refresh
-from runledger_source import copy_source, validate_consumer
+from refresh_runledger_sqlx import migrations_current, query, refresh
+from runledger_source import copy_source, run, validate_consumer
 
 
 class SourceTests(unittest.TestCase):
@@ -111,7 +113,7 @@ class RefreshTests(unittest.TestCase):
                 self.assertFalse(migrations_current(output))
 
     def fixture(self, root):
-        for name in ('migrations/new.sql', '.sqlx/query-old.json',
+        for name in ('migrations/001_new.up.sql', 'migrations/001_new.down.sql', '.sqlx/query-old.json',
                      'runledger-postgres/migrations/old.sql', 'runledger-test-support/migrations/old.sql',
                      'runledger-postgres/.sqlx/query-old.json', 'runledger-runtime/.sqlx/query-old.json'):
             path = root / "runledger" / name
@@ -140,7 +142,7 @@ class RefreshTests(unittest.TestCase):
 
                 with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
                      patch('refresh_runledger_sqlx.run', side_effect=command), \
-                     patch('refresh_runledger_sqlx.subprocess.run', return_value=subprocess.CompletedProcess([], 0, '180006\n')):
+                     patch('refresh_runledger_sqlx.query', side_effect=['180006', '1:true']):
                     with self.assertRaisesRegex(RuntimeError, 'deliberate'):
                         refresh(root)
                 after = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
@@ -160,3 +162,50 @@ class RefreshTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     refresh(Path.cwd())
             self.assertFalse(any('prepare' in args for args in calls))
+
+    def test_extra_missing_or_failed_migration_inventory_never_prepares(self):
+        for inventory in ('1:true\n2:true', '', '1:false'):
+            with self.subTest(inventory=inventory), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.fixture(root)
+                with patch.dict(os.environ, DATABASE_URL='postgresql://fixture'), \
+                     patch('refresh_runledger_sqlx.run', side_effect=['sqlx-cli 0.9.0', '1/installed initial']) as command, \
+                     patch('refresh_runledger_sqlx.query', side_effect=['180006', inventory]):
+                    with self.assertRaisesRegex(ValueError, 'inventory must exactly match'):
+                        refresh(root)
+                    self.assertEqual(command.call_count, 2)
+
+    @unittest.skipUnless(os.environ.get('RUNLEDGER_REFRESH_LIVE') == '1',
+                         'set RUNLEDGER_REFRESH_LIVE=1 with Docker, psql and SQLx CLI 0.9.0')
+    def test_database_ahead_of_checkout_is_rejected_before_preparation(self):
+        root = Path(__file__).resolve().parent.parent
+        container = run(['docker', 'run', '-d', '--rm', '-e', 'POSTGRES_PASSWORD=fixture',
+                         '-p', '127.0.0.1::5432', 'postgres:18'], root).strip()
+        try:
+            deadline = time.monotonic() + 60
+            while subprocess.run(['docker', 'exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+                if time.monotonic() >= deadline:
+                    self.fail('owned PostgreSQL fixture did not become ready')
+                time.sleep(0.25)
+            port = run(['docker', 'port', container, '5432/tcp'], root).strip().rsplit(':', 1)[1]
+            with tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(os.environ, DATABASE_URL=f'postgresql://postgres:fixture@127.0.0.1:{port}/postgres'):
+                source = Path(directory)
+                migrations = source / 'runledger/migrations'
+                shutil.copytree(root / 'runledger/migrations', migrations)
+                extra = migrations / '999999999999_review_fixture.up.sql'
+                extra.write_text('SELECT 1;')
+                run(['cargo', 'sqlx', 'migrate', 'run', '--no-dotenv', '--source', str(migrations)], source)
+                extra.unlink()
+                info = run(['env', 'NO_COLOR=1', 'CARGO_TERM_COLOR=never', 'cargo', 'sqlx',
+                            'migrate', 'info', '--no-dotenv', '--source', str(migrations)], source)
+                self.assertTrue(migrations_current(info))  # SQLx omits the extra applied version.
+                self.assertIn('999999999999', query(source, os.environ['DATABASE_URL'],
+                                                   'SELECT version FROM _sqlx_migrations', 'inventory'))
+                with patch('refresh_runledger_sqlx.copy_source') as prepare_copy:
+                    with self.assertRaisesRegex(ValueError, 'inventory must exactly match'):
+                        refresh(source)
+                    prepare_copy.assert_not_called()
+        finally:
+            run(['docker', 'rm', '-f', '-v', container], root)

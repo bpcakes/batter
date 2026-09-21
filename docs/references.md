@@ -3859,3 +3859,11 @@ native resource identity without claiming to validate arbitrary application SQL.
 - PostgreSQL 18's [server logging controls](https://www.postgresql.org/docs/18/runtime-config-logging.html)
   are a separate boundary. Client-side redacted formatting cannot sanitize server
   logs, independent SQLx query/notice events or error-chain reporters.
+
+## Native SQLx metadata refresh, 2026-09-21
+
+- SQLx CLI 0.9.0's [`migrate info` implementation](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-cli/src/migrate.rs)
+  iterates locally resolved migrations and looks up their applied records; it
+  does not list extra applied database versions. The refresh tool separately
+  compares `_sqlx_migrations` versions and success status with canonical sources.
+  A live PostgreSQL 18 control executes this ahead-of-checkout case.

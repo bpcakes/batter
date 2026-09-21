@@ -1944,10 +1944,18 @@ README snippets and rejected migration/refresh states.
 
 `python3 scripts/refresh_runledger_sqlx.py` requires SQLx CLI 0.9.0, `psql` and an
 explicit `DATABASE_URL` for PostgreSQL 18 with the canonical migrations already
-applied. It never applies migrations. Preparation happens in a disposable source
+applied. Applied versions and successful status must exactly match the canonical
+inventory; a database ahead of the checkout is rejected even though SQLx's
+`migrate info` omits its extra versions. It never applies migrations. Preparation happens in a disposable source
 copy; only after successful offline compilation are the original native cache and
 migration copies synchronized. The failed-prepare and failed-offline-build controls
 assert byte-for-byte preservation of original assets. The canonical migrations
 are inputs, never rewritten by this command. Review the resulting source diff and
 avoid editing sources concurrently with refresh. This command is a developer tool,
 not application database provisioning or a registry publication path.
+
+With Docker, `psql` and SQLx CLI 0.9.0 installed, run
+`RUNLEDGER_REFRESH_LIVE=1 python3 -m unittest discover -s scripts -p test_runledger_tools.py`
+to include the live database-ahead regression. It applies an extra migration to an
+owned disposable PostgreSQL 18 container, removes that migration from its source
+fixture, and proves refresh rejects it before copying or preparing sources.

@@ -1913,7 +1913,8 @@ cargo install sqlx-cli --version 0.9.0 --no-default-features --features rustls,p
 python3 scripts/refresh_runledger_sqlx.py
 ```
 
-The command checks the server major and migration checksums before preparation.
+The command checks the server major, migration checksums and exact applied
+migration inventory before preparation, rejecting databases ahead of the checkout.
 It does not apply migrations or create databases. It prepares native packages in
 a disposable source copy, verifies the generated metadata with an offline build,
 then synchronizes `runledger/.sqlx/`, both package caches and both migration

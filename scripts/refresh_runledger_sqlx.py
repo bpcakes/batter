@@ -40,6 +40,22 @@ def sync_files(source, destination, suffix):
             path.unlink()
 
 
+def query(root, database, sql, purpose):
+    # psql expands URI connection strings through --dbname, not PGDATABASE.
+    # Do not expose its credential-bearing arguments or connection diagnostics.
+    try:
+        result = subprocess.run(
+            ["psql", "--dbname", database, "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c",
+             sql],
+            env={**os.environ, "PGCONNECT_TIMEOUT": "10"},
+            cwd=root, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError(f"PostgreSQL {purpose} query could not complete; check psql and DATABASE_URL") from None
+    if result.returncode:
+        raise RuntimeError(f"PostgreSQL {purpose} query failed; check DATABASE_URL and connectivity")
+    return result.stdout.strip()
+
+
 def refresh(root):
     root = Path(root).resolve()
     database = os.environ.get("DATABASE_URL")
@@ -48,19 +64,7 @@ def refresh(root):
     cli_version = run(["cargo", "sqlx", "--version"], root).split()
     if not cli_version or cli_version[-1] != "0.9.0":
         raise ValueError("SQLx CLI 0.9.0 is required to match the workspace dependency")
-    # psql expands URI connection strings through --dbname, not PGDATABASE.
-    # Do not expose its credential-bearing arguments or connection diagnostics.
-    try:
-        result = subprocess.run(
-            ["psql", "--dbname", database, "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-c",
-             "SELECT current_setting('server_version_num')"],
-            env={**os.environ, "PGCONNECT_TIMEOUT": "10"},
-            cwd=root, capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired):
-        raise RuntimeError("PostgreSQL version query could not complete; check psql and DATABASE_URL") from None
-    if result.returncode:
-        raise RuntimeError("PostgreSQL version query failed; check DATABASE_URL and connectivity")
-    version = result.stdout.strip()
+    version = query(root, database, "SELECT current_setting('server_version_num')", "version")
     if not re.fullmatch(r"18\d{4}", version):
         raise ValueError("SQLx metadata refresh requires PostgreSQL 18")
     print("SQLx refresh server_version_num=" + version)
@@ -68,6 +72,15 @@ def refresh(root):
                 "--no-dotenv", "--source", "runledger/migrations"], root)
     if not migrations_current(info):
         raise ValueError("canonical Runledger migrations must be installed without checksum drift")
+    # SQLx info iterates local migrations and omits extra database versions.
+    expected = {str(int(path.name.split('_', 1)[0])) + ':true'
+                for path in (root / 'runledger/migrations').glob('*.sql')
+                if not path.name.endswith('.down.sql')}
+    applied = query(root, database,
+                    "SELECT version::text || ':' || success::text FROM _sqlx_migrations ORDER BY version",
+                    "migration inventory").splitlines()
+    if not expected or set(applied) != expected:
+        raise ValueError("database migration inventory must exactly match canonical Runledger migrations")
     target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target")).resolve() / "runledger-prepare"
     with tempfile.TemporaryDirectory(prefix="batter-native-prepare-") as directory:
         candidate = copy_source(root, Path(directory) / "source")

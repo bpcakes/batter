@@ -6,9 +6,11 @@ Owning Bead: batter-biqv.2. PINNED_BASE: f0dbc3fe5161dde53e70a4b02e18d3b149dbd72
 Prove that a source copy without Git metadata can build and run direct native Runledger alongside the Batter facade, and restore native SQLx metadata maintenance in the shared workspace.
 
 ## Progress
-Implementation complete. Standalone consumers and copied worker round trip pass on Rust 1.98.1 and 1.94.0 with PostgreSQL 18.6. A real SQLx 0.9.0 refresh in a disposable copy passes preparation, offline compilation, asset checks and canonical migration preservation. Eight independent tooling controls pass. Both complete verify.sh matrices and all ten HTTP profiles pass. The final missing/ignored/failed worker guard was additionally executed on both toolchains. Final Jig api:test receipt receipt_01M32Q76WP16Q6N7GDJMPV2J9T passes; evidence and required gates are fresh. Native review pending.
+Implementation complete. Standalone consumers and copied worker round trip pass on Rust 1.98.1 and 1.94.0 with PostgreSQL 18.6. A real SQLx 0.9.0 refresh in a disposable copy passes preparation, offline compilation, asset checks and canonical migration preservation. Nine independent tooling controls and the opt-in live database-ahead control pass. Both complete verify.sh matrices and all ten HTTP profiles pass. The final missing/ignored/failed worker guard was additionally executed on both toolchains. Final Jig api:test receipt receipt_01M32Q76WP16Q6N7GDJMPV2J9T passes; evidence and required gates are fresh. Native review round one found omitted extra applied migrations in SQLx info. Explicit applied-version/status comparison and a real extra-migration regression repair the root cause; repair validation passed, including live rejection and successful refresh, complete Rust 1.94 verification and fresh default api:test receipt_01M32RZFEF5JC5KW9QQ24SJW12. Cumulative re-review pending.
 
 ## Surprises & Discoveries
+Overlapping toolchain matrix reruns hit the native six-second retention-fence assertion (7.85 seconds). The unchanged assertion passed in isolation; both sequential matrix reruns passed. No timing limit was relaxed.
+
 The import review repaired the two existing mutation copy inventories and the ZIP source allowlist. Actual extracted archives already compile all workspace targets on both Rust versions. This task adds a durable independent consumer/worker proof and maintained developer commands, not registry publication.
 
 ## Decision Log
