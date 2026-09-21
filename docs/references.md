@@ -6,6 +6,35 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL smoke fixture signal wait: reviewed 2026-09-21
+
+Python's [signal execution contract](https://docs.python.org/3/library/signal.html#execution-of-python-signal-handlers)
+defers Python callbacks beyond the native signal handler. The inspected
+[CPython 3.14.7 implementation](https://github.com/python/cpython/blob/v3.14.7/Modules/signalmodule.c)
+calls native `pause()` before `PyErr_CheckSignals()`: delivery just before that
+wait can leave a Python callback pending until another signal. The smoke-test
+fixture now uses short timed waits so returning to the interpreter does not
+require another signal. Its parent still sends only the requested signal and
+requires the original cleanup, exit, capture and watchdog evidence.
+
+## Owned PostgreSQL scopes: reviewed 2026-09-20
+
+- PostgreSQL 18 [transaction identity functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
+  distinguish assigning a top-level XID from observing an already assigned XID.
+  The owner captures identity at birth and validates continuity after arbitrary SQL.
+- [Transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html)
+  explains statement snapshots under READ COMMITTED and stable transaction
+  snapshots under REPEATABLE READ. Domain schema checks lock authoritative
+  objects before their first snapshot-bearing query and qualify every relation.
+- SQLx 0.9 [PoolConnection](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolConnection.html)
+  provides detach semantics used by the existing retiring lease guard. Retirement
+  releases local pool ownership; it does not prove a blocked backend has stopped.
+
+Runledger now consumes the foundation through coordinated sibling paths; the
+historical Git-pin/view evidence below describes earlier implementations only.
+The new strong path does not retain those views as a compatibility bridge.
+PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
+
 ## Facade feature and resolver semantics: reviewed 2026-09-18
 
 - Cargo's [feature reference](https://doc.rust-lang.org/cargo/reference/features.html)
@@ -427,7 +456,21 @@ context therefore yields Incomplete, including when a separate ACL is present.
 Ordinary placeholder potential remains conservative; a visible loaded parameter
 still supports a positive requirement. No live SET probe enters verification.
 
-## Runledger opaque transaction capability, 2026-09-19
+## Atomic runner session reset, 2026-09-20
+
+PostgreSQL 18 [DISCARD ALL](https://www.postgresql.org/docs/18/sql-discard.html)
+resets session resources, including prepared statements and advisory locks, and
+must run outside a transaction. SQLx 0.9's `Connection::clear_cached_statements`
+clears the driver cache before server DISCARD. Atomic and snapshot scopes reset on
+acquisition and retire on every completion; no post-COMMIT awaited reset can lose
+acknowledgement. [ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html)
+rejects a missing guard, unlike top-level rollback outside a transaction. Snapshot
+error cleanup therefore verifies the original guard before reporting clean rejection.
+
+## Historical Runledger opaque transaction capability, 2026-09-19
+
+This describes the superseded bridge, not the canonical runner introduced by
+`batter-gzh` and the coordinated Runledger branch.
 
 Runledger PR [#15](https://github.com/bpcakes/runledger/pull/15), pinned at
 [`638ee3480f69962597147f5d7bd52822267560b7`](https://github.com/bpcakes/runledger/commit/638ee3480f69962597147f5d7bd52822267560b7),

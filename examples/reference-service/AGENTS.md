@@ -79,7 +79,7 @@ external harness's required URL API. Reject IPv6 literals at this private live
 boundary; SQLx's URL consumer cannot use their brackets for TCP lookup. Direct
 root native IPv6 options remain supported. Native parser tests guard the handoff.
 Use one native SQLx graph and explicit application-owned transactions. Delivery
-submission uses one `PgLease` and one READ COMMITTED transaction for command,
+submission uses `run_atomic` and one READ COMMITTED transaction for command,
 delivery and Runledger rows. Exact replay never re-enqueues. Owner/key identity,
 record generation, canonical payload and immutable enqueue fields stay retained;
 uncertain commit/rollback acknowledgement is reconciled by owner/key and is never

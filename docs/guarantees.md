@@ -850,14 +850,38 @@ server sessions.
 elsewhere, with caller-owned cleanup if registration fails. The workspace's
 canonical service roots and finite retirement command use `pool_in`.
 
+`run_atomic` owns the complete READ COMMITTED workflow. Body outputs are withheld
+until acknowledged commit, and rejections until acknowledged rollback; uncertainty
+retains the result and cause through the narrow `PgAtomicUncertainty` type.
+Caught terminal failures poison the scope with their first shared native cause;
+later calls cannot replace it or invoke new work. A dropped polled operation
+records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
+application rejections and terminal scope failures use separate types.
+Operations use private savepoints and XID continuity.
+Cancelling a polled inner operation consumes usable state, even if caught by the
+body. There is no await after acknowledged completion. Every completion retires
+the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
+and DISCARD ALL. Native pool hooks are not trusted to clean arbitrary SQL effects.
+
+Runledger's initial intent scope is consumed into a queue scope with no recording
+method. Its named API therefore cannot enqueue then record an intent. Arbitrary SQL
+against internal tables remains an explicitly lower-level escape hatch.
+
+Read-only inspection has a distinct capability and verifies its private guard on
+both success and failure before claiming rollback. These APIs do not sandbox
+arbitrary SQL, external side effects, malicious guard manipulation, or process
+death. The explicitly `low_level` consuming owner leaves output/completion pairing
+to its caller and is not equivalent to the canonical runner.
+
 `PgLease` detaches and drops its client unless `with_connection` receives an
-application `Ok`, observes no unacknowledged typed transaction and successfully
+application `Ok` and successfully
 executes `ROLLBACK` on that exact connection. Only then does the private
 pool-return proof exist; there is no direct pool-return call, so a failed,
 interrupted or dropped unit of work cannot reach the pool. The consuming
 `with_retiring_connection` path retires for every outcome. Both closures receive
-an opaque `PgSession` whose executor permits SQL and whose `begin` returns an
-opaque `PgTransaction` with consuming commit/rollback. Neither wrapper exposes
+an opaque low-level `PgSession` whose executor permits SQL but has no typed
+transaction-start method or atomic-result guarantee. The old public
+`PgTransaction` protocol is removed. This wrapper exposes no
 `DerefMut`, `AsMut`, a native connection, or a native transaction, so safe
 application code cannot replace the physical connection before the lease disposes
 it. Native SQL can still issue raw transaction control; the return-time rollback
@@ -866,10 +890,10 @@ arbitrary session settings, session advisory locks or prepared transactions.
 Keep the lease inside the future whose interruption should retire it. Panics propagate;
 Rust's default panic hook can still print payloads. No native error contents are
 added to adapter diagnostics, but trusted source inspection and upstream logging
-remain application-owned. Beginning an opaque transaction records an
-unacknowledged child in its session; only a successful consuming commit or
-rollback clears it. Dropping or forgetting the child cannot authorize pool
-return and instead causes lease retirement. If the return-time cleanup reports
+remain application-owned. `run_atomic` is the canonical acknowledged-disposition
+path; `low_level::PgAtomicTransaction` is the exceptional explicit owner.
+The low-level session has no typed transaction lifecycle, and raw transaction-control
+SQL carries no typed atomic-result guarantee. If the return-time cleanup reports
 failure, `with_connection` preserves the application `Ok` but retires its
 connection. Cancellation drops the future, so the generic lease cannot return
 an arbitrary application value; it still retires the connection. A

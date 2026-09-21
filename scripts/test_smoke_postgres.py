@@ -41,7 +41,10 @@ elif mode not in ("never-ready", "interrupt"):
     sys.stderr.write("ready\\x1b[0m\\r\\n")
     sys.stderr.flush()
 while True:
-    signal.pause()
+    # CPython defers the Python callback. A signal just before pause() enters
+    # its native wait can leave that callback pending until a second signal.
+    # Return to the interpreter even when delivery precedes the native wait.
+    time.sleep(0.01)
 '''
 
 

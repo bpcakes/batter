@@ -259,61 +259,18 @@ async fn success(fixture: &mut Fixture) -> Result {
         })
         .await?;
     probe(&fixture.pool, &context).await?;
-    for commit in [true, false] {
-        let lease = PgLease::acquire(&fixture.pool, &context).await?;
-        lease
-            .with_connection(async |session| {
-                let mut tx = session.begin().await?;
-                let actual: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-                    .fetch_one(tx.executor())
-                    .await?;
-                require(actual == pid, "acknowledged success did not reuse backend")?;
-                if commit {
-                    tx.commit().await?;
-                } else {
-                    tx.rollback().await?;
-                }
-                Ok::<(), BoxError>(())
-            })
-            .await?;
-    }
     let actual: i32 =
         bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool)).await??;
     require(
         actual == pid,
-        "acknowledged transaction did not permit reuse",
+        "successful low-level session did not permit reuse",
     )?;
     for abort_transaction in [false, true] {
         raw_transaction_cleanup(fixture, &context, pid, abort_transaction).await?;
     }
-    for forget in [false, true] {
-        let lease = PgLease::acquire(&fixture.pool, &context).await?;
-        let abandoned: i32 = lease
-            .with_connection(async |session| {
-                let mut transaction = session.begin().await?;
-                let backend = sqlx::query_scalar("SELECT pg_backend_pid()")
-                    .fetch_one(transaction.executor())
-                    .await?;
-                if forget {
-                    std::mem::forget(transaction);
-                } else {
-                    drop(transaction);
-                }
-                Ok::<_, BoxError>(backend)
-            })
-            .await?;
-        require(
-            fixture.pool.size() == 0,
-            "abandoned transaction returned pool capacity",
-        )?;
-        let replacement: i32 =
-            bounded(sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&fixture.pool))
-                .await??;
-        require(
-            replacement != abandoned,
-            "abandoned transaction reused its backend",
-        )?;
-    }
+    // Sessions no longer expose typed begin/drop/forget compositions. Their
+    // absence is compile-fail tested; atomic_live covers the owned runner and
+    // the single low-level owner's completion and cancellation disposition.
     bounded(fixture.pool.close()).await?;
     Ok(())
 }
@@ -658,26 +615,26 @@ async fn native_database_failure_retires_and_preserves_cause() -> Result {
 }
 
 async fn commit_failure(fixture: &mut Fixture) -> Result {
-    let context = OperationContext::new(Duration::from_secs(10))?;
-    let lease = PgLease::acquire(&fixture.pool, &context).await?;
-    let (pid, error) = lease.with_retiring_connection(async |session| {
+    let tx = batter_sqlx::low_level::PgAtomicTransaction::begin(&fixture.pool).await?;
+    let (tx, pid) = tx.application(async |session| {
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(session.executor())
             .await?;
-        let mut tx = session.begin().await?;
         sqlx::query("CREATE TEMP TABLE disposition_commit (value integer UNIQUE DEFERRABLE INITIALLY DEFERRED) ON COMMIT DROP")
-            .execute(tx.executor()).await?;
+            .execute(session.executor()).await?;
         sqlx::query("INSERT INTO disposition_commit VALUES (1), (1)")
-            .execute(tx.executor())
+            .execute(session.executor())
             .await?;
-        let error =
-            tx.commit().await.err().ok_or_else(|| {
-                std::io::Error::other("expected deferred constraint failure at commit")
-            })?;
-        Ok::<_, BoxError>((pid, error))
+        Ok::<_, sqlx::Error>(pid)
     }).await?;
+    let error = tx
+        .commit()
+        .await
+        .expect_err("deferred constraint failure at commit");
     fixture.retired.push(pid);
-    let error = SqlxFailure::from(error);
+    let batter_sqlx::PgTransactionError::Query(error) = error.into_cause() else {
+        return Err(std::io::Error::other("expected native commit cause").into());
+    };
     require(
         error
             .native()

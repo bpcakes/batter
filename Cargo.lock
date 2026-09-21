@@ -248,11 +248,11 @@ dependencies = [
  "batter-test-support",
  "futures-util",
  "postgres-test-harness",
- "runledger-postgres",
  "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1570,7 +1570,6 @@ dependencies = [
 [[package]]
 name = "runledger-core"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=c541dad69fcb6c03b39541084538681b2d710a32#c541dad69fcb6c03b39541084538681b2d710a32"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1583,8 +1582,8 @@ dependencies = [
 [[package]]
 name = "runledger-postgres"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=c541dad69fcb6c03b39541084538681b2d710a32#c541dad69fcb6c03b39541084538681b2d710a32"
 dependencies = [
+ "batter-sqlx",
  "chrono",
  "cron",
  "runledger-core",
@@ -1599,7 +1598,6 @@ dependencies = [
 [[package]]
 name = "runledger-runtime"
 version = "0.12.0"
-source = "git+https://github.com/bpcakes/runledger.git?rev=c541dad69fcb6c03b39541084538681b2d710a32#c541dad69fcb6c03b39541084538681b2d710a32"
 dependencies = [
  "async-trait",
  "chrono",

@@ -10,6 +10,29 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    "atomic_live": {
+        "transaction_control_is_terminal",
+        "application_and_library_operations_commit_together",
+        "savepoint_errors_recover_without_partial_writes",
+        "swallowed_sql_error_and_application_error_are_terminal",
+        "deferred_and_transport_commit_failures_are_unconfirmed",
+        "unpolled_consuming_scopes_retire_the_owner",
+        "cancelled_application_operation_and_snapshot_retire",
+        "panicking_scope_retires_the_owner",
+        "snapshot_is_coherent_read_only_and_normalized",
+        "snapshot_transaction_control_never_returns_evidence",
+        "commit_in_flight_cancellation_and_disconnect_are_uncertain",
+        "snapshot_error_requires_original_guard",
+        "runner_releases_only_acknowledged_outputs",
+        "runner_uncertainty_retains_output_and_rejection",
+        "runner_cannot_commit_after_caught_operation_cancellation",
+        "caught_boundary_loss_retains_first_cause",
+        "caught_recovery_failure_retains_poison_and_callback_rejection",
+        "poisoned_scope_repeats_original_cause_without_invoking_work",
+        "atomic_and_snapshot_completion_retire_session_state",
+        "acquisition_resets_inherited_state_and_statement_cache",
+        "failed_session_normalization_retires_instead_of_returning",
+    },
     "migrations_live": {
         "migration_preserves_native_history_and_retires_checksum_failure",
         "interrupted_migration_retires_without_waiting_for_server_lock",

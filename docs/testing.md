@@ -1,5 +1,14 @@
 # Testing and failure-contract coverage
 
+Atomic runner regression coverage (`batter-gzh`) lives in
+`crates/batter-sqlx/tests/atomic_live`: acknowledged output/rejection, retained
+uncertainty, caught inner cancellation, inherited session reset, completion
+retirement/advisory-lock release, and original snapshot-guard cleanup. The explicit
+`scripts/sqlx_live.py` inventory includes these PostgreSQL 18 cases. Rustdoc
+compile-fail tests reject separate completion, escaping scopes, and passing a
+write helper to a read-only inspector. The paired Runledger branch additionally
+rejects enqueue-then-record at compile time and tests intent/queue/app atomicity.
+
 The native adapter's offline contracts run with `cargo test -p batter-runledger
 --locked`: local initialization without a database, zero task starts on rejected
 or unstarted registration, original preparation errors with owned startup cleanup,
@@ -1537,8 +1546,9 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 61-case inventory: eleven PostgreSQL lease/disposition and
-read-only-verification cases, fourteen owned-pool cases and thirty-six authority-
+an exact 84-case inventory: twenty-one owned atomic/snapshot cases, two migration
+cases, eleven PostgreSQL lease/disposition and read-only-verification cases,
+fourteen owned-pool cases and thirty-six authority-
 and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
 missing/checksum/unsuccessful rows, bounded oversized-ledger rejection,
@@ -1576,7 +1586,10 @@ Run `python3 scripts/test_smoke_postgres.py -v` without a database. Its thirteen
 tests include real child processes for both signals, inherited SIGINT ignore,
 split/ANSI readiness, absent or partial readiness, early exit, output overflow
 before/after readiness, ignored shutdown signals, nonzero exits and missing
-cleanup. Forced shutdown is checked with both a runnable child and one stopped
+cleanup. The Python fixture uses short timed waits rather than `signal.pause()`:
+a signal arriving before the native wait must not strand its deferred Python
+callback until a second signal. Signal receipt, cleanup, exit and watchdog
+assertions remain unchanged. Forced shutdown is checked with both a runnable child and one stopped
 by SIGSTOP after readiness: it requires the real SIGTERM request and watchdog
 kill/reap, without depending on a child callback before the short deadline.
 Other controls interrupt the parent during readiness and reject a complete line
@@ -1851,12 +1864,19 @@ the missing migration. A fresh check rejects both inherited parents and children
 with Incomplete, preserves serving identity and reuses the acknowledged session.
 
 
-### Opaque Runledger database bridge
+### Owned Runledger database integration
 
 With `DATABASE_URL` pointing to a dedicated disposable PostgreSQL 18 database,
 run `SQLX_OFFLINE=true cargo test -p batter-runledger --locked --test database_live -- --ignored`.
 This executes native schema verification and atomic application-write/intent
-commit and rollback through Batter's opaque session and transaction. SQLx offline
+commit and rollback through consuming transaction ownership. SQLx offline
 compilation uses the committed native query metadata; a fresh fixture is not a
 compile-time schema source. The live SQLx runner also requires migration history,
 checksum-failure retirement, and cancellation before a server lock is released.
+
+The atomic suite also catches and discards terminal operation errors deliberately.
+It requires the runner to retain the original shared boundary/recovery cause with
+the callback's output or replacement rejection. Repeated calls after poison must
+not invoke SQL or replace that cause; caught cancellation remains explicitly
+`OperationAbandoned`. Compile-fail rustdoc rejects the removed session transaction
+API and wrapping known rejections as uncertainty or terminal storage failures.

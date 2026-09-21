@@ -456,9 +456,16 @@ fn uncertain_response(
     metadata: &TrustedRequestMetadata,
 ) -> Response {
     let code = match uncertain {
-        UncertainSubmission::Commit(_) => "commit_acknowledgement_lost",
-        UncertainSubmission::Rollback { .. } => "rollback_acknowledgement_lost",
         UncertainSubmission::Interrupted(_) => "submission_interrupted",
+        UncertainSubmission::Atomic(error) => match &**error {
+            batter::sqlx::PgAtomicUncertainty::CommitUnconfirmed { .. } => {
+                "commit_acknowledgement_lost"
+            }
+            batter::sqlx::PgAtomicUncertainty::RollbackUnconfirmed { .. } => {
+                "rollback_acknowledgement_lost"
+            }
+            batter::sqlx::PgAtomicUncertainty::ScopeLost { .. } => "submission_scope_uncertain",
+        },
     };
     (
         StatusCode::SERVICE_UNAVAILABLE,

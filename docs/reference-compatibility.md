@@ -29,6 +29,22 @@ acceptance and status. The current native lifecycle and retirement redesign is o
 
 ## Selected graph
 
+The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
+batter-sqlx -> batter-core`, using sibling path dependencies. CI selects immutable
+companion revisions in each repository's workflows; the adapter README records
+the Runledger revision. Foundation packages remain unpublished. The canonical
+transaction API is `run_atomic`, with intent-before-queue typestate, retained
+poison causes and a distinct `PgAtomicUncertainty`. Public native transaction
+views and the old session transaction wrapper have been removed.
+
+The latest local validation used PostgreSQL 18.6, both supported Rust toolchains,
+the 84-case SQLx suite, the reference inventory and adapter probe. The
+[fresh consumer exercise](evidence/atomic-consumer-2026-09-21/README.md) records
+its exact compile-only scope. Older evidence below retains its recorded source
+scope; it does not validate the current graph by itself.
+
+### Historical source selections
+
 On 2026-09-20, `batter-44w` advanced the root Runledger graph from
 `638ee3480f69962597147f5d7bd52822267560b7` to PR
 [#19](https://github.com/bpcakes/runledger/pull/19), immutable commit
@@ -39,7 +55,7 @@ required. The archived `batter-gi4` consumer remains historical evidence at its
 recorded pin, not validation of the new graph.
 The initial PR implementation at Runledger `969e86b` passed behavioral and CI
 checks but failed construction-invariant review: arbitrary executor implementations
-could claim transaction or session identity. The current revision seals transaction
+could claim transaction or session identity. That historical revision sealed transaction
 execution to native resources and private-representation views, and schema checks
 consume one retained session view. External compile-fail tests cover newtypes,
 routing executors, forgery and resource replacement. Expanded PostgreSQL parity
@@ -56,7 +72,7 @@ optional test-support harness retain one native type graph.
 | Source | Selected version/revision | Features and boundary | Disposition |
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
-| Runledger Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Retained native transaction/session views, native SQLx types, inert preparation, initialization observation and consuming settlement | Immutable PR source selection replaces sibling patches. Earlier live results retain their recorded source scope |
+| Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; current coordinated graph uses sibling sources and workflow companion pins |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |
@@ -92,11 +108,11 @@ protected-startup rows are listed in
 
 | Required contract | Public API and probe | Evidence / limitation |
 | --- | --- | --- |
-| Native types | Example library `native_pool`, `native_transaction`, `native_connection`; native arguments to `enqueue_job_with_outcome_tx` | Compiler-checked identities and rustdoc sample. `cargo metadata --locked --format-version 1` and `cargo tree -p batter-example-reference-service --duplicates` resolve SQLx 0.9.0 only |
+| Native types | Example library native pool/connection signatures; canonical `run_atomic` with scoped SQLx execution | Compiler-checked identities and rustdoc sample. `cargo metadata --locked --format-version 1` and `cargo tree -p batter-example-reference-service --duplicates` resolve SQLx 0.9.0 only |
 | Independent SQLx verification | `cargo test -p batter-example-postgres-lifecycle --test native_sqlx --locked` | Native pool, connection and transaction signatures compile; an unpolled factory opens no connection. This focused target requires neither Runledger nor the harness and provides a template for optional adapter verification |
 | Fresh/repeated startup | `migrate_after_idempotency_cutover`, `ensure_schema_compatible_after_idempotency_cutover`; `migrations_and_transactional_enqueue` | Empty startup is rejected before initialization; upstream/application migrations share `_sqlx_migrations`; checksums/history survive repeated startup |
 | Initialized-schema upgrade | Same public migration/check entrypoints; `initialized_schema_upgrade` | Fixture through upstream version `202608240002` is rejected for missing `202609050001`, then upgrades; the application owner-epoch sequence advances and application row 42/history survive repeated startup |
-| Transactional enqueue | `enqueue_job_with_outcome_tx`; `migrations_and_transactional_enqueue` | READ COMMITTED is set/read back. Application insert and enqueue both disappear after rollback; committed retry returns Existing with the original ID; another owner gets a distinct Inserted job |
+| Transactional enqueue | `run_atomic`, consuming intent-to-queue transition; `migrations_and_transactional_enqueue` | Application writes and enqueue share the owned transaction. Rejected work rolls back; successful output is withheld until commit acknowledgement. Retry returns Existing with the original ID; another owner gets a distinct Inserted job |
 | Immutable canonical fields | Same transactional API/probe | Payload, priority, max attempts, timeout, schedule and stage changes each yield `job.idempotency_conflict`. A later stored priority change preserves the original snapshot/retry ID. REPEATABLE READ yields `job.enqueue_idempotency_unsupported_isolation` |
 | Isolated durable execution | `isolated_durable_execution_and_shutdown` | Actual typed handler invocation and independent persisted success after awaited shutdown; test-only proof, separate from production initialization |
 | Native initialization | `native_initialization_without_queue_writes` | Local loop acknowledgement succeeds while job-queue writes are blocked; application approval remains independent |

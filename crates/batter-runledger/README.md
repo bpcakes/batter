@@ -17,16 +17,17 @@ success, and `Unsettled` never authorizes dependency cleanup.
 The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
-`RunledgerTransaction::begin(&mut PgSession)` is the protected SQLx composition
-path. It owns Batter's opaque transaction and supplies `view()` for Runledger's
-sealed transaction execution boundary. The view retains the actual native
-transaction borrow; arbitrary downstream executors are rejected. It exposes
-borrow-scoped application SQL execution plus
-consuming commit/rollback. Application writes, direct enqueue and durable enqueue intents can
-therefore share one transaction without making the physical connection or native
-transaction replaceable. An unfinished transaction cannot authorize pool return:
-dropping or forgetting the wrapper causes the enclosing lease to retire its
-connection.
+`run_atomic(&pool, async |scope| ...)` reexports Runledger's protected runner,
+built on `batter-sqlx`. The initial `PgIntentScope` supports application SQL and
+`record_job_enqueue_intent`. Consume it with `scope.queue()` to enter
+`PgQueueScope` for enqueue operations; intent recording is then unavailable.
+There is no transaction view, owner extraction, separate completion call or legacy
+bridge. Outputs leave the runner only after acknowledged commit; rejected bodies
+only after acknowledged rollback. `PgAtomicUncertainty` retains the domain
+result/error and cause. Caught terminal failures retain the first database poison
+cause; abandoned operations are classified separately. `PgScopeFailure` cannot
+contain an ordinary application rejection.
+Every completion retires the session, and acquisition resets inherited state.
 
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;
@@ -34,11 +35,14 @@ earlier discoveries shorten active phase waits without replacing the first nativ
 cause. Native stop observation drains peers promptly. No caller-owned termination gate,
 independent driver, failure side channel or nested cleanup stack is needed.
 
-This unpublished Unix-only adapter consumes Runledger at Git revision
-`c541dad69fcb6c03b39541084538681b2d710a32`, pinned in the workspace and Cargo.lock.
-No sibling checkout is required. The foundation has no dependency on this adapter.
+This unpublished Unix-only adapter uses coordinated sibling Runledger packages
+from `../runledger` while these feature branches are reviewed. CI checks out
+`bfc949bbc32fb2cc5731fb743632b2e432d1f5ae`. Runledger depends
+only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
+facade or this integration. Publishing and replacement with immutable released
+package identities remain separate decisions.
 
-`verify_schema(&mut PgSession)` bridges the native read-only compatibility check
-inside the caller's consuming lease operation. It neither exposes a connection
-nor substitutes a local schema verifier. Runledger owns the exact schema policy;
-Batter owns the session's physical identity and disposition.
+`verify_schema(&pool)` acquires and owns a read-only repeatable-read transaction.
+Runledger qualifies and checks authoritative objects, returning a
+`SchemaCompatibilitySnapshot` after rollback. It never borrows caller session
+state. The snapshot records one compatible observation, not future validity.

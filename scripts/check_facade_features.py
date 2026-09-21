@@ -135,10 +135,9 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
-        lines.insert(1, "use batter::sqlx::{PgLease, pool_in};")
+        lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if "runledger" in chosen:
-        lines.insert(1, "use batter::runledger::{NativeReport, RunledgerTransaction, register_in};")
-        lines.append("async fn begin_runledger_transaction(session: &mut batter::sqlx::PgSession<'_>) { let _ = RunledgerTransaction::begin(session).await; }")
+        lines.insert(1, "use batter::runledger::{NativeReport, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
     if "runlimit" in chosen or chosen & set(RUNLIMIT_BRIDGES):
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
     if "runlimit-axum" in chosen:
@@ -219,7 +218,7 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
     if "runledger" in chosen:
         deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { git = \"https://github.com/bpcakes/runledger.git\", rev = \"c541dad69fcb6c03b39541084538681b2d710a32\" }")
+        deps.append("runledger-runtime = { path = " + json.dumps(str(ROOT.parent / "runledger/runledger-runtime")) + " }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""
@@ -258,6 +257,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "use batter_sqlx::PgLease as DirectPgLease;",
             "fn sqlx_identity(_: DirectPgLease) {}",
             "const _: fn(PgLease) = sqlx_identity;",
+            "const _: fn(batter::sqlx::PgAtomicScope) = |_: batter_sqlx::PgAtomicScope| {};",
         ]
     if "sqlx-test-support" in chosen:
         lines += [

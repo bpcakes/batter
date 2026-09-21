@@ -1,4 +1,22 @@
-//! Explicit client ownership for native SQLx PostgreSQL operations.
+//! Library-owned atomic PostgreSQL workflows and read-only snapshots.
+//!
+//! [`run_atomic`] releases output only after acknowledged commit, with known
+//! rejection separate from [`PgAtomicUncertainty`]. [`PgReadOnlySnapshot`] owns
+//! coherent read-only inspection. Both retire their session on every path.
+//!
+//! ```no_run
+//! # async fn example(pool: &sqlx::PgPool) -> Result<i64, Box<dyn std::error::Error>> {
+//! let id = batter_sqlx::run_atomic(pool, async |scope| {
+//!     scope.application(async |sql| {
+//!         sqlx::query_scalar::<_, i64>("INSERT INTO records DEFAULT VALUES RETURNING id")
+//!             .fetch_one(sql.executor()).await
+//!     }).await
+//! }).await?;
+//! # Ok(id) }
+//! ```
+//!
+//! Exceptional manual ownership is confined to [`low_level`]. The lease/session
+//! APIs below are low-level connection disposition, not atomic result evidence.
 //!
 //! [`PgLease`] retires on drop. [`PgLease::with_connection`] is the only path
 //! back to the SQLx pool: after supplied work completes with `Ok`, the boundary
@@ -16,30 +34,30 @@
 //! rollback. Detached server sessions can outlive [`PgPool::close`] and exceed
 //! the pool's `max_connections`. Applications own remote outcome reconciliation.
 //!
-//! ```no_run
-//! use batter_core::operation::OperationContext;
-//! use batter_sqlx::{PgLease, SqlxFailure};
-//! use sqlx::{Connection, PgPool};
-//! # async fn example(pool: &PgPool, ctx: &OperationContext) -> Result<(), Box<dyn std::error::Error>> {
-//! let lease = PgLease::acquire(pool, ctx).await?;
-//! ctx.run("database.write", |_| lease.with_connection(async |session| {
-//!     let mut tx = session.begin().await.map_err(SqlxFailure::from)?;
-//!     sqlx::query("SELECT 1").execute(tx.executor()).await.map_err(SqlxFailure::from)?;
-//!     // Ok plus the boundary's successful idle-state proof returns the connection.
-//!     tx.commit().await.map_err(SqlxFailure::from)
-//! })).await?;
-//! # Ok(()) }
-//! ```
 #![forbid(unsafe_code)]
 
+mod atomic;
+mod atomic_runner;
 mod failure;
 mod session;
+mod snapshot;
 
 pub mod verification;
 
+pub use atomic::{
+    CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopeFailure,
+    PgScopeLoss, PgScopedSql, PgTransactionError,
+};
+pub use atomic_runner::{PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic};
+/// Exceptional consuming composition. Outputs are provisional and completion
+/// must be paired by the caller. Prefer [`run_atomic`] on the canonical path.
+pub mod low_level {
+    pub use crate::atomic::PgAtomicTransaction;
+}
 pub use failure::{FailureClass, SqlxFailure};
 use session::PoolReturnReady;
-pub use session::{PgExecutor, PgSession, PgTransaction};
+pub use session::{PgExecutor, PgSession};
+pub use snapshot::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};
 
 use batter_core::{
     RegistrationError,
@@ -147,11 +165,9 @@ impl PgLease {
     /// cancellation boundary, also retires it, so an interrupted query cannot
     /// be followed by pool return. Await it inside the bounding operation so
     /// that boundary owns the drop. SQLx asynchronously checks a returned
-    /// connection before reuse and may discard it. A transaction begun
-    /// through [`PgSession::begin`] must complete with an acknowledged commit
-    /// or rollback before `Ok` can return the connection. Dropping or forgetting
-    /// an unfinished typed transaction preserves the application result but
-    /// retires the connection. Because the native executor can run raw `BEGIN`,
+    /// connection before reuse and may discard it. This is low-level session
+    /// work, not a transaction workflow: use [`run_atomic`] to withhold outputs
+    /// until acknowledged disposition. Because the executor can run raw `BEGIN`,
     /// successful work also runs a `BEGIN`/`ROLLBACK` normalization handshake
     /// before pool return. Only the final successful rollback authorizes return;
     /// a cleanup statement that returns failure preserves the application `Ok`
@@ -196,7 +212,7 @@ impl PgLease {
                     self.return_to_pool(ready);
                 }
                 // Otherwise dropping the lease retires a session with
-                // unfinished typed work or failed raw-state cleanup while
+                // failed raw-state cleanup while
                 // preserving the application's successful value.
                 Ok(value)
             }

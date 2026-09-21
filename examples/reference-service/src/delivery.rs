@@ -333,11 +333,21 @@ pub enum SubmitRejection {
 }
 
 /// Concrete storage failures retained behind sanitized HTTP responses.
+#[doc = include_str!("delivery/error_contracts.md")]
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Application scope failed, retaining both operation and cleanup causes.
+    #[error("application scope failed")]
+    Scope(#[source] Box<batter::sqlx::PgScopeFailure<CommandFailure>>),
+    /// Runledger scope failed, retaining both operation and cleanup causes.
+    #[error("enqueue scope failed")]
+    Enqueue(#[source] Box<batter::sqlx::PgScopeFailure<runledger_postgres::Error>>),
     /// Native SQLx failure.
     #[error("PostgreSQL operation failed")]
     Sqlx(#[source] sqlx::Error),
+    /// Owned transaction acquisition or initialization failed.
+    #[error("PostgreSQL transaction failed")]
+    Transaction(#[source] batter::sqlx::PgTransactionError),
     /// Native Runledger failure.
     #[error("durable submission failed")]
     Runledger(#[source] runledger_postgres::Error),
@@ -360,6 +370,12 @@ impl From<runledger_postgres::Error> for StorageError {
 
 impl StorageError {
     pub(crate) fn is_pool_unavailable(&self) -> bool {
+        if let Self::Transaction(batter::sqlx::PgTransactionError::Query(error)) = self {
+            return matches!(
+                error.native(),
+                sqlx::Error::PoolClosed | sqlx::Error::PoolTimedOut
+            );
+        }
         matches!(
             self,
             Self::Sqlx(sqlx::Error::PoolClosed | sqlx::Error::PoolTimedOut)
@@ -368,19 +384,13 @@ impl StorageError {
 }
 
 /// Why submission cannot assert commit or rollback while disposition is unknown.
+/// See [`StorageError`] for the compile-checked error classification contracts.
 #[derive(Debug, thiserror::Error)]
 pub enum UncertainSubmission {
-    /// PostgreSQL did not acknowledge COMMIT.
-    #[error("commit acknowledgement was not received")]
-    Commit(#[source] sqlx::Error),
-    /// PostgreSQL did not acknowledge rollback of a failed command.
-    #[error("rollback acknowledgement was not received")]
-    Rollback {
-        /// Original command failure retained alongside rollback failure.
-        operation: Box<CommandFailure>,
-        /// Native rollback failure.
-        rollback: sqlx::Error,
-    },
+    /// The runner retains the provisional output or original rejection together
+    /// with its unacknowledged disposition. No result is presented as durable.
+    #[error("atomic submission disposition is uncertain")]
+    Atomic(#[source] Box<batter::sqlx::PgAtomicUncertainty<SubmitResult, CommandFailure>>),
     /// The operation boundary stopped polling while the transaction was active,
     /// before commit or rollback acknowledgement.
     #[error("submission was interrupted while transaction disposition was unknown")]
@@ -413,7 +423,7 @@ pub enum SubmitError {
     /// Commit/rollback disposition is not acknowledged.
     #[error("delivery submission outcome is uncertain")]
     Uncertain(#[source] UncertainSubmission),
-    /// A storage failure whose transaction rollback was acknowledged or never began.
+    /// A storage failure before submission SQL ran, or after acknowledged rollback.
     #[error(transparent)]
     Storage(#[from] StorageError),
 }
