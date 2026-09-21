@@ -228,11 +228,13 @@ dependencies = [
  "axum",
  "batter-axum",
  "batter-core",
+ "batter-sqlx",
  "http-body",
  "runlimit-core",
  "runlimit-memory",
  "runlimit-postgres",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tower",
@@ -1570,6 +1572,7 @@ dependencies = [
 [[package]]
 name = "runledger-core"
 version = "0.12.0"
+source = "git+https://github.com/bpcakes/runledger?rev=bfc949bbc32fb2cc5731fb743632b2e432d1f5ae#bfc949bbc32fb2cc5731fb743632b2e432d1f5ae"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1582,6 +1585,7 @@ dependencies = [
 [[package]]
 name = "runledger-postgres"
 version = "0.12.0"
+source = "git+https://github.com/bpcakes/runledger?rev=bfc949bbc32fb2cc5731fb743632b2e432d1f5ae#bfc949bbc32fb2cc5731fb743632b2e432d1f5ae"
 dependencies = [
  "batter-sqlx",
  "chrono",
@@ -1598,6 +1602,7 @@ dependencies = [
 [[package]]
 name = "runledger-runtime"
 version = "0.12.0"
+source = "git+https://github.com/bpcakes/runledger?rev=bfc949bbc32fb2cc5731fb743632b2e432d1f5ae#bfc949bbc32fb2cc5731fb743632b2e432d1f5ae"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1616,7 +1621,7 @@ dependencies = [
 [[package]]
 name = "runlimit-core"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=e91da419216e77e8c83d0bb80c70c297d286d341#e91da419216e77e8c83d0bb80c70c297d286d341"
+source = "git+https://github.com/bpcakes/runlimit?rev=36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5#36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5"
 dependencies = [
  "hmac",
  "sha2 0.11.0",
@@ -1626,7 +1631,7 @@ dependencies = [
 [[package]]
 name = "runlimit-memory"
 version = "0.3.0"
-source = "git+https://github.com/bpcakes/runlimit?rev=e91da419216e77e8c83d0bb80c70c297d286d341#e91da419216e77e8c83d0bb80c70c297d286d341"
+source = "git+https://github.com/bpcakes/runlimit?rev=36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5#36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5"
 dependencies = [
  "runlimit-core",
  "thiserror",
@@ -1635,7 +1640,7 @@ dependencies = [
 [[package]]
 name = "runlimit-postgres"
 version = "0.3.1"
-source = "git+https://github.com/bpcakes/runlimit?rev=e91da419216e77e8c83d0bb80c70c297d286d341#e91da419216e77e8c83d0bb80c70c297d286d341"
+source = "git+https://github.com/bpcakes/runlimit?rev=36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5#36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5"
 dependencies = [
  "runlimit-core",
  "sha2 0.11.0",

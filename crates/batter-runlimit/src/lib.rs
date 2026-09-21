@@ -21,7 +21,7 @@
 //! use std::{convert::Infallible, time::Duration};
 //! let policy = FixedWindowPolicy::new(PolicyId::new("api.read")?, ScopeId::new("owner")?, 5, Duration::from_secs(60))?;
 //! let hasher = KeyHasher::new([7; 32])?; // Test key; production loads its own secret.
-//! let checks = [Check::new(&policy, hasher.hash_for(&policy, "owner-a"))];
+//! let checks = [Check::new(hasher.hash_for(&policy, "owner-a"))];
 //! let quota = Quota::new(MemoryStore::new(MemoryStoreConfig::new(100)?));
 //! let context = OperationContext::new(Duration::from_secs(1))?;
 //! let result = quota.run(&context, Checks::new(&checks)?, |_| async {
@@ -33,11 +33,21 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+/// Outcome-aware PostgreSQL attempts under one operation and transaction owner.
+#[cfg(feature = "postgres")]
+pub mod attempts;
 pub mod quota;
+
+/// The exact native policy and decision types used by this adapter.
+pub use runlimit_core as native;
+
 pub use quota::{
     Admission, AllowedBatch, Checks, ConsumptionError, EmptyChecks, InterruptedCheck, Quota,
     RunResult,
 };
+/// The selected native PostgreSQL backend and its explicit migrations.
+#[cfg(feature = "postgres")]
+pub use runlimit_postgres as postgres;
 
 /// Authenticated HTTP assembly, selected with the `axum` feature.
 #[cfg(feature = "axum")]

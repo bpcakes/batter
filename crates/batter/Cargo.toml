@@ -34,8 +34,8 @@ batter-test-support = { workspace = true, optional = true }
 
 [dev-dependencies]
 axum.workspace = true
-runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "e91da419216e77e8c83d0bb80c70c297d286d341" }
-runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "e91da419216e77e8c83d0bb80c70c297d286d341" }
+runlimit-core = { git = "https://github.com/bpcakes/runlimit", rev = "36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5" }
+runlimit-memory = { git = "https://github.com/bpcakes/runlimit", rev = "36ba4ee9207fd6834a8de9bf602c1d9ebb154cf5" }
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }

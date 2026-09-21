@@ -38,6 +38,20 @@ Source presence and package-integrity checks are not type checking.
 
 ## Verification commands
 
+Outcome-aware attempt acceptance uses an explicit disposable PostgreSQL 18:
+`DATABASE_URL=... cargo test -p batter-runlimit --features postgres --test attempts_live -- --ignored`.
+Ten cases cover committed failure audit, success reset preserving audit, native
+denial without factory invocation, stale claim before application writes,
+operational rollback, final replay rejection after successful verification,
+one parent budget, verification cancellation, acknowledged commit with immediate
+parent cancellation, lock-protected claim across lease expiry, and unconfirmed
+commit without replay (some cases cover multiple invariants). The ordinary suite
+discovers these cases but leaves them ignored; absence of the explicit command is
+not live evidence. SQLx library tests separately control simultaneous deadline
+and acknowledgement readiness, retained errors and preflight factory inertness.
+Rustdoc compilation enforces typed application decisions and inaccessible receipt
+completion. See the adapter README's ADR-010 assessment for remaining policy limits.
+
 The native quota adapter's `cargo test -p batter-runlimit --all-features --locked`
 uses real memory-store atomic decisions and scripted pending/uncertain failures.
 Its real memory-store regression also drops an unpolled `Quota::run` future and

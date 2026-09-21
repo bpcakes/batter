@@ -455,8 +455,10 @@ resolution deadline.
 
 ## Runledger: optional native lifecycle adapter
 
-The three native Runledger packages use one immutable Git revision, with no
-sibling path overrides; see the exact source and evidence limits in the
+The three native Runledger packages use one immutable Git revision. The root
+patch selects the same SQLx foundation as the facade; Git consumers must repeat
+that patch in their workspace root. No sibling checkout is needed. See the
+exact source, patch example and evidence limits in the
 [compatibility manifest](reference-compatibility.md). `batter-runledger` consumes
 inert `PreparedSupervisor` values. Native supervision, durable policy, claim
 behavior, observers, schedules, workflows and retries remain upstream.
@@ -500,13 +502,15 @@ The worker creates a new execution context with its own deadline/retry policy.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` pins native revision `e91da419216e77e8c83d0bb80c70c297d286d341`
-(core/memory 0.3.0, PostgreSQL 0.3.1). There are no default features. `memory`
-and `postgres` enable native error bridges; `axum` selects HTTP assembly.
+`batter-runlimit` pins native core/memory 0.3.0 and PostgreSQL 0.3.1 at the exact
+revision in its Cargo manifest. There are no default features. `memory`
+enables fixed-window/GCRA error bridges; `postgres` enables the native error
+bridge and canonical outcome-aware attempt runner; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,
 transactions and migrations remain Runlimit's responsibilities. PostgreSQL
-initialization and maintenance remain application/native-owned and have no new
-live acceptance claim. The reference service has not adopted this adapter.
+initialization and maintenance remain application/native-owned. The reference
+service has not adopted this adapter. Explicit live attempt acceptance and its
+limits are documented in the adapter README and testing guide.
 
 `Quota::run(context, Checks::new(&checks)?, work_factory)` performs one native
 `Limiter::check_all`. An empty protected batch is rejected before execution.
@@ -558,13 +562,13 @@ native opaque keys; closure signatures are checked at `new`. Handlers extract
 `Authenticated<P>`, whose constructor is private; raw `Extension<P>` is never
 authentication evidence and can be overwritten by unrelated middleware. No
 forwarded-header/proxy trust is inferred. Behind a proxy,
-the direct peer is the proxy. Authorization and pre-authentication throttling
-remain application concerns; this order is not a universal security claim.
+the direct peer is the proxy. Authorization remains application policy;
+pre-authentication attempts use the separate `AttemptRunner` described below.
 
 One batch is intentional: stacked native single-check HTTP layers can charge an
 earlier quota before a later denial. This adapter reuses native atomic checking,
 not native single-policy HTTP layering. Shadow denial permits work. For an enforced native denial, `Retry-After` is present exactly when the
-native `DenialView` supplies a `RetryAfter`. Its `seconds()` value is the native
+native `Denial` supplies a `Delay`. Its `seconds()` value is the native
 whole-second result: zero stays `0`, and positive subsecond remainder rounds
 up (for example, 1 ns to `1`, 2001 ms to `3`). Denials without a retry delay,
 authentication failures and backend failures omit the header. Concrete
@@ -581,15 +585,15 @@ boundary rejections use exactly one JSON
 | Missing protected composition context, direct peer, or observer | 500 | `missing_context`, `missing_peer`, or `missing_observer` respectively |
 
 The three 500 codes are defensive faults outside the supported opaque
-`PreparedHttp` serving path. The pinned native `DenialView` has exhaustive
+`PreparedHttp` serving path. The pinned native `Denial` has exhaustive
 quota-exhausted and storage-capacity reasons. A new reason requires an explicit
 adapter mapping before a later Runlimit revision compiles. The generic
 observation writer retains `other_denial` for manual assertions outside this
 native adapter; this adapter does not emit it at the current pin.
-The PostgreSQL bridge explicitly maps both commit-outcome-loss and commit-timeout
-failures to `PossiblyConsumed`, committed malformed responses to `Consumed`, and
-all current pre-commit or rolled-back failures to `NotConsumed`. Its wildcard is
-reserved for a future non-exhaustive upstream variant and remains conservative.
+The PostgreSQL bridge delegates certainty to native `BatchCheckError::consumption`:
+commit-outcome-loss and commit-timeout are `PossiblyConsumed`; pre-commit failures
+are `NotConsumed`. The native exhaustive errors no longer contain a
+post-commit malformed-response variant. Native decisions are built before commit.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
 quota rejection. `request_admission` captures the original request metadata without the
 private quota writer and installs an opaque interruption responder for the inner
@@ -615,9 +619,20 @@ terminal value remains an adapter assertion, not a proof of native truth. Raw
 subjects, credentials and error strings are not observations.
 Body streaming and detached descendants remain outside response construction.
 
-See the [compiled consumer](../crates/batter/examples/quota_service.rs) and
-[failure contracts](../crates/batter-runlimit/tests). Fresh-agent usability and
-live PostgreSQL acceptance remain unexecuted for this adapter.
+The independent `attempts::AttemptRunner` owns native reservation, bounded
+verification, transaction-scoped receipt claim, final application decision,
+native completion, and acknowledged commit. Credential verification occurs
+outside the application transaction; final replay and account-status checks
+occur inside it. `Authentication::Rejected` commits failure state and audit,
+while infrastructure errors roll back. A stale claim prevents the application
+callback. `run_atomic_in` retains acknowledged and uncertain results before
+operation resolution. A valid claim holds its native row lock through commit;
+verification-lease expiry after claim does not revoke that transaction.
+
+See the [compiled quota consumer](../crates/batter/examples/quota_service.rs),
+[attempt consumer rustdoc](../crates/batter-runlimit/src/attempts.rs), and
+[failure contracts](../crates/batter-runlimit/tests). Ten explicit PostgreSQL 18
+attempt tests passed locally. Fresh-agent usability evaluation remains unexecuted.
 
 ## postgres-test-harness: optional native fixtures
 

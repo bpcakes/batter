@@ -8,13 +8,26 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add optional PostgreSQL `AttemptRunner`: native pre-authentication admission,
+  bounded credential verification, transaction-fenced final decisions and atomic
+  attempt/application completion. Durable rejections preserve failure audit;
+  stale claims cannot invoke application work. Native uncertainty is retained,
+  with no automatic replay or traffic-quota refund.
+- Add `batter-sqlx::run_atomic_in` to preserve acknowledged atomic outcomes under
+  an existing operation deadline. No caller-owned completion retention is needed.
+- Update the Runlimit adapter for native typed subjects, capacities, exhaustive
+  denials and separate single/batch errors. Existing quota workflows keep their
+  semantics; custom native type integrations require source migration. Add memory
+  GCRA batch-error compatibility and explicit independent-consumer source patches.
+
 - Breaking: replace the Runledger resource-view bridge with consuming owned
   transactions. `batter-sqlx` provides XID continuity, savepoint recovery,
   cancellation retirement and explicit completion evidence without a Runledger
   dependency. Runledger builds domain operations on this foundation; the optional
   Batter integration reexports that owner and snapshot-authoritative verification.
   No view compatibility module remains. These unpublished feature branches use
-  coordinated sibling dependencies pending a separate publication decision.
+  coordinated Git pins and a consumer-root foundation patch pending a separate
+  publication decision; see `docs/reference-compatibility.md`.
 
 - Add consuming `PgLease::migrate` to run application-selected native SQLx
   migrations without exposing replaceable connection identity. Preserve native

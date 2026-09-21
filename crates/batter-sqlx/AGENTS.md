@@ -11,6 +11,8 @@ scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-onl
 - `src/session.rs`: low-level opaque session execution; no public transaction-start authority.
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.
+- `src/atomic_context.rs`: `run_atomic_in` retains native completion before
+  operation-budget resolution; callers do not own acknowledgement publication.
 - `src/snapshot.rs`: owned REPEATABLE READ READ ONLY inspection boundary.
 - `src/failure.rs`: redacted native causes and conservative classifications.
 - `src/verification.rs` and `src/verification/`: owned read-only migration and

@@ -37,6 +37,7 @@
 #![forbid(unsafe_code)]
 
 mod atomic;
+mod atomic_context;
 mod atomic_runner;
 mod failure;
 mod session;
@@ -48,6 +49,7 @@ pub use atomic::{
     CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopeFailure,
     PgScopeLoss, PgScopedSql, PgTransactionError,
 };
+pub use atomic_context::run_atomic_in;
 pub use atomic_runner::{PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic};
 /// Exceptional consuming composition. Outputs are provisional and completion
 /// must be paired by the caller. Prefer [`run_atomic`] on the canonical path.

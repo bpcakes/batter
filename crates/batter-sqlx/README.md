@@ -5,6 +5,15 @@ minimum, Unix-only, unpublished. The foundation does not depend on this package.
 
 ## Owned transactions and snapshots
 
+With an existing operation budget, prefer
+`run_atomic_in(&pool, &context, "operation.name", async |scope| ...)`.
+It returns `Result<T, OperationError<PgAtomicError<T, E>>>` and retains the entire
+native outcome before cancellation/deadline resolution. There is no await
+between acknowledged disposition and retention. A confirmed commit cannot be
+replaced by a later local timeout; an unobserved commit remains uncertain and
+must not be replayed automatically. The callback has exactly the same constrained
+SQL capability as `run_atomic`. Dropping the outer future still loses its result.
+
 Use `run_atomic(&pool, async |scope| ...)` for application and library writes
 that share one READ COMMITTED transaction. The callback uses
 `scope.application(async |sql| ...)` and ordinary SQLx queries through

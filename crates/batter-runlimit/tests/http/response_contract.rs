@@ -37,7 +37,9 @@ async fn nested_check_cancellation_uses_admission_renderer_and_original_id() {
             Ok::<_, AuthError>(Principal("owner-a"))
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -70,7 +72,9 @@ async fn cancellation_after_native_grant_keeps_consumption_and_uses_admission_re
             }
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -98,7 +102,9 @@ async fn deadline_during_authentication_uses_admission_renderer() {
             Ok::<_, AuthError>(Principal("owner-a"))
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -131,7 +137,9 @@ async fn public_probe_cannot_claim_quota_writer() {
         vec![policy("owner", 1)],
         |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -164,7 +172,9 @@ async fn empty_public_probe_set_prepares_without_public_handlers() {
             vec![policy("owner", 1)],
             |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
             move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-                hasher.hash_for(policy, principal.0)
+                hasher
+                    .hash_for(policy, principal.0)
+                    .into_unbound_subject_key()
             },
         )
         .unwrap()
@@ -359,7 +369,9 @@ async fn protected_root_fallback_survives_declared_public_probe() {
             }
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -454,7 +466,9 @@ async fn timeout_renderer_cannot_publish_quota_during_authentication() {
         vec![policy("owner", 1)],
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -508,7 +522,9 @@ async fn fixed_quota_rejections_have_stable_codes_and_no_store() {
 
     for (mode, code) in [
         (
-            Mode::Return(BatchDecision::denied(0, 1, Denial::storage_capacity(None))),
+            Mode::Return(
+                BatchDecision::denied(0, 1, Denial::StorageCapacity { retry_after: None }).unwrap(),
+            ),
             "quota_storage_capacity",
         ),
         (
@@ -618,7 +634,9 @@ async fn protected_root_fallback_without_probes_keeps_all_request_gates() {
             }
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
