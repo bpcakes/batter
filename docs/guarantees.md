@@ -869,6 +869,12 @@ explicit login/effective roles, trusted schema path, timeouts and custom setting
 after reset, before beginning a transaction. Validation precedes callback access
 and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
 still lock authoritative objects before their first snapshot-bearing query.
+Setting keys are ASCII-lowercased before validation and duplicate detection;
+values are preserved. Public profile reset/setup failures carry a `SqlxFailure`
+inside `sqlx::Error::Configuration`, so default formatting and SQLx's pool-hook
+error logs omit native contents. The native cause remains deliberately accessible
+through the payload and its error source. This does not protect independent
+query/notice logs, error-chain reporters or PostgreSQL server logs.
 Arbitrary SQL can cause effects before revalidation; profiles do not sandbox SQL.
 The Runledger runner requires `RunledgerDatabase`; ordinary runtime SQL uses its
 mandatorily profiled pool, not an independently configured native pool.

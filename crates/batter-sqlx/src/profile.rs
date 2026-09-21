@@ -101,13 +101,15 @@ impl PgSessionProfile {
     /// Declare a custom dotted setting (for example an application tenant GUC),
     /// application_name, or timezone. Authority, path, transaction defaults and
     /// timeouts cannot be overridden through this extension point. Values must
-    /// round-trip through current_setting exactly; no secret values are logged.
+    /// round-trip through current_setting exactly. Names are ASCII-lowercased
+    /// before validation; case-variant duplicates are rejected. Values are not
+    /// normalized. See [`Self::reset_and_apply`] for setup-error logging limits.
     pub fn with_setting(
         mut self,
         name: impl Into<String>,
         value: impl Into<String>,
     ) -> Result<Self, PgProfileError> {
-        let name = name.into();
+        let name = name.into().to_ascii_lowercase();
         let value = value.into();
         let custom = name.contains('.')
             && name.split('.').all(|part| {
@@ -137,13 +139,24 @@ impl PgSessionProfile {
     /// Reset an exclusively owned idle session, then establish and verify policy.
     /// This performs no application work and returns no lasting validity witness.
     /// The resource owner must retire the connection on failure/cancellation.
+    ///
+    /// Every failure is returned as [`sqlx::Error::Configuration`] containing a
+    /// [`crate::SqlxFailure`]. Default Debug/Display, including SQLx pool-hook
+    /// error logs, omit native contents. Trusted callers can downcast that
+    /// payload and inspect `SqlxFailure::native()` or its error source. This does
+    /// not redact error-chain reporters, independent SQLx query/notice logging,
+    /// or PostgreSQL server logs; configure those separately.
     pub async fn reset_and_apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-        sqlx::raw_sql("ROLLBACK").execute(&mut *connection).await?;
-        connection.clear_cached_statements().await?;
-        sqlx::raw_sql("DISCARD ALL")
-            .execute(&mut *connection)
-            .await?;
-        self.apply(connection).await
+        async {
+            sqlx::raw_sql("ROLLBACK").execute(&mut *connection).await?;
+            connection.clear_cached_statements().await?;
+            sqlx::raw_sql("DISCARD ALL")
+                .execute(&mut *connection)
+                .await?;
+            self.apply(connection).await
+        }
+        .await
+        .map_err(|error| sqlx::Error::Configuration(Box::new(crate::SqlxFailure::from(error))))
     }
 
     pub(crate) async fn apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {

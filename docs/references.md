@@ -3841,3 +3841,17 @@ supersedes the earlier externally implementable executor bridge, whose documente
 identity promises were insufficient for the agent-facing construction policy.
 Native SQLx execution still permits transaction-control SQL, so the views preserve
 native resource identity without claiming to validate arbitrary application SQL.
+
+## Profile setup error boundary, 2026-09-21
+
+- PostgreSQL 18's [parameter-setting documentation](https://www.postgresql.org/docs/18/config-setting.html)
+  specifies case-insensitive parameter names. Profile builders canonicalize keys,
+  not values, before allowlist and duplicate checks.
+- SQLx 0.9.0's [pool hook documentation](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolOptions.html#method.after_connect)
+  documents logging of hook errors. The inspected `sqlx-core-0.9.0/src/pool/inner.rs`
+  uses `%error` for both `after_connect` and `before_acquire` failures. Live tests
+  capture those actual events; profile setup wraps native failures before they
+  reach these hooks, while retaining the native error for deliberate inspection.
+- PostgreSQL 18's [server logging controls](https://www.postgresql.org/docs/18/runtime-config-logging.html)
+  are a separate boundary. Client-side redacted formatting cannot sanitize server
+  logs, independent SQLx query/notice events or error-chain reporters.

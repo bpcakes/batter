@@ -92,3 +92,34 @@ fn timeouts_are_exact_bounded_milliseconds() {
         .is_ok()
     );
 }
+
+#[test]
+fn setting_keys_are_case_insensitive_and_duplicates_are_rejected() {
+    for (lower, upper) in [
+        ("app.tenant", "APP.TENANT"),
+        ("timezone", "TimeZone"),
+        ("application_name", "APPLICATION_NAME"),
+    ] {
+        for (first, second) in [(lower, upper), (upper, lower)] {
+            for value in ["first", "different"] {
+                assert!(
+                    profile(vec!["public".into()])
+                        .unwrap()
+                        .with_setting(first, "first")
+                        .unwrap()
+                        .with_setting(second, value)
+                        .is_err(),
+                    "case-variant duplicate accepted: {first}, {second}"
+                );
+            }
+        }
+    }
+    for forbidden in ["ROLE", "Search_Path", "Statement_Timeout", "ROW_SECURITY"] {
+        assert!(
+            profile(vec!["public".into()])
+                .unwrap()
+                .with_setting(forbidden, "value")
+                .is_err()
+        );
+    }
+}

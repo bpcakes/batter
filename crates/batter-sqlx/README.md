@@ -41,6 +41,13 @@ scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
 Only include schemas whose object creators you trust. Application-specific
 provisioning and required grants remain downstream; no role/schema is created.
+Setting names are ASCII-lowercased before validation; case-variant duplicates
+are rejected, and values remain unchanged. Public `reset_and_apply` errors use
+`sqlx::Error::Configuration` containing `SqlxFailure`: default Debug/Display and
+SQLx pool-hook error logs omit native contents. Deliberate payload downcasting,
+`native()` and error-source inspection retain the original cause. This boundary
+does not redact error-chain reporters, independent SQLx query/notice logging or
+PostgreSQL server logs; configure those separately.
 Failed or cancelled reset/setup retires the connection. Retirement releases
 local pool capacity, not synchronous proof of backend termination.
 
