@@ -11,6 +11,10 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "profile_setup_errors_redact_setting_and_role_values",
+        "profile_after_connect_logging_redacts_setting_values",
+        "profile_before_acquire_logging_redacts_setting_values",
+        "mixed_case_profile_settings_preserve_values",
         "transaction_control_is_terminal",
         "application_and_library_operations_commit_together",
         "savepoint_errors_recover_without_partial_writes",

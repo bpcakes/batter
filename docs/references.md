@@ -458,6 +458,13 @@ still supports a positive requirement. No live SET probe enters verification.
 
 ## Atomic runner session reset, 2026-09-20
 
+Profile follow-up (2026-09-21): [SET ROLE](https://www.postgresql.org/docs/18/sql-set-role.html)
+changes the effective role, while DISCARD resets session authorization and settings.
+The [PostgreSQL 18 search-path rules](https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-SEARCH-PATH)
+place an omitted pg_catalog first and use the first explicit ordinary schema for
+unqualified DDL. Profile paths quote every declared schema and put pg_temp last;
+Runledger admits one authoritative ordinary schema to prevent fallback placement.
+
 PostgreSQL 18 [DISCARD ALL](https://www.postgresql.org/docs/18/sql-discard.html)
 resets session resources, including prepared statements and advisory locks, and
 must run outside a transaction. SQLx 0.9's `Connection::clear_cached_statements`
@@ -3834,3 +3841,17 @@ supersedes the earlier externally implementable executor bridge, whose documente
 identity promises were insufficient for the agent-facing construction policy.
 Native SQLx execution still permits transaction-control SQL, so the views preserve
 native resource identity without claiming to validate arbitrary application SQL.
+
+## Profile setup error boundary, 2026-09-21
+
+- PostgreSQL 18's [parameter-setting documentation](https://www.postgresql.org/docs/18/config-setting.html)
+  specifies case-insensitive parameter names. Profile builders canonicalize keys,
+  not values, before allowlist and duplicate checks.
+- SQLx 0.9.0's [pool hook documentation](https://docs.rs/sqlx/0.9.0/sqlx/pool/struct.PoolOptions.html#method.after_connect)
+  documents logging of hook errors. The inspected `sqlx-core-0.9.0/src/pool/inner.rs`
+  uses `%error` for both `after_connect` and `before_acquire` failures. Live tests
+  capture those actual events; profile setup wraps native failures before they
+  reach these hooks, while retaining the native error for deliberate inspection.
+- PostgreSQL 18's [server logging controls](https://www.postgresql.org/docs/18/runtime-config-logging.html)
+  are a separate boundary. Client-side redacted formatting cannot sanitize server
+  logs, independent SQLx query/notice events or error-chain reporters.

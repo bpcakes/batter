@@ -76,6 +76,24 @@ impl PgReadOnlySnapshot {
         pool: &PgPool,
         inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
     ) -> Result<T, PgSnapshotError<E>> {
+        Self::inspect_with_profile(pool, None, inspect).await
+    }
+
+    /// Establish session authority before BEGIN. Profile verification cannot
+    /// take the inspection snapshot before the inspector acquires its locks.
+    pub async fn inspect_profiled<T, E>(
+        pool: &PgPool,
+        profile: &crate::PgSessionProfile,
+        inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
+    ) -> Result<T, PgSnapshotError<E>> {
+        Self::inspect_with_profile(pool, Some(profile), inspect).await
+    }
+
+    async fn inspect_with_profile<T, E>(
+        pool: &PgPool,
+        profile: Option<&crate::PgSessionProfile>,
+        inspect: impl AsyncFnOnce(&mut PgReadOnlySql<'_>) -> Result<T, E>,
+    ) -> Result<T, PgSnapshotError<E>> {
         let mut lease = PgLease {
             connection: Some(
                 pool.acquire()
@@ -86,16 +104,21 @@ impl PgReadOnlySnapshot {
         };
         let setup = async {
             normalize(lease.connection_mut()).await?;
+            if let Some(profile) = profile {
+                profile.apply(lease.connection_mut()).await?;
+            }
             command(
                 lease.connection_mut(),
                 "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
             )
             .await?;
-            command(
-                lease.connection_mut(),
-                "SET LOCAL search_path = pg_catalog, pg_temp",
-            )
-            .await?;
+            if profile.is_none() {
+                command(
+                    lease.connection_mut(),
+                    "SET LOCAL search_path = pg_catalog, pg_temp",
+                )
+                .await?;
+            }
             // No SELECT before the inspector: it may lock authoritative objects
             // before its first query establishes the snapshot.
             ScopeSavepoint::begin(lease.connection_mut()).await
@@ -108,6 +131,13 @@ impl PgReadOnlySnapshot {
         .await;
         match result {
             Ok(value) => {
+                if let Some(profile) = profile {
+                    profile
+                        .verify(lease.connection_mut())
+                        .await
+                        .map_err(PgTransactionError::from)
+                        .map_err(PgSnapshotError::Transaction)?;
+                }
                 guard
                     .release(lease.connection_mut())
                     .await
@@ -126,6 +156,9 @@ impl PgReadOnlySnapshot {
                 // transaction only emits a warning and cannot prove this.
                 let cleanup = async {
                     guard.rollback(lease.connection_mut()).await?;
+                    if let Some(profile) = profile {
+                        profile.verify(lease.connection_mut()).await?;
+                    }
                     validate(lease.connection_mut()).await?;
                     command(lease.connection_mut(), "ROLLBACK").await
                 }

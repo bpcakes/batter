@@ -10,6 +10,18 @@ use std::time::Instant;
 
 mod confirmation;
 
+async fn with_profiled<T, E>(
+    pool: &PgPool,
+    work: impl AsyncFnOnce(&runledger_postgres::RunledgerDatabase) -> Result<T, E>,
+) -> Result<T, E> {
+    let database =
+        crate::database::configured((*pool.connect_options()).clone(), pool.options().clone())
+            .expect("test profile");
+    let result = work(&database).await;
+    database.pool().close().await;
+    result
+}
+
 #[derive(thiserror::Error)]
 #[error("provider state probe failed (cause retained)")]
 struct Failure(#[source] BoxError);
@@ -173,7 +185,10 @@ async fn run_boundaries() -> Result<(), BoxError> {
 }
 
 async fn probes(pool: &PgPool) -> Result<(), BoxError> {
-    crate::schema::initialize_schema(pool).await?;
+    with_profiled(pool, async |database| {
+        crate::schema::initialize_schema(database).await
+    })
+    .await?;
     let worker = worker(pool)?;
     for effect_lock in [false, true] {
         lock_only_expiry(&worker, effect_lock).await?;
@@ -262,18 +277,21 @@ async fn claimed(pool: &PgPool) -> Result<(JobContext, DeliveryJobPayload), BoxE
         .bind(owner.as_uuid())
         .execute(pool)
         .await?;
-    let command = DeliveryService::new(pool.clone())
-        .submit(
-            &OperationContext::new(Duration::from_secs(5))?,
-            owner,
-            record,
-            SubmitDelivery {
-                expected_generation: 1,
-                idempotency_key: record.to_string(),
-                payload: json!({"scenario":"state-boundary"}),
-            },
-        )
-        .await?;
+    let command = with_profiled(pool, async |database| {
+        DeliveryService::new(database.clone())
+            .submit(
+                &OperationContext::new(Duration::from_secs(5)).expect("static budget"),
+                owner,
+                record,
+                SubmitDelivery {
+                    expected_generation: 1,
+                    idempotency_key: record.to_string(),
+                    payload: json!({"scenario":"state-boundary"}),
+                },
+            )
+            .await
+    })
+    .await?;
     let (job_id, value): (Uuid, Value) = sqlx::query_as(
         "SELECT d.job_id, c.enqueue_payload FROM reference_deliveries d
           JOIN reference_delivery_commands c ON c.delivery_id = d.id WHERE d.id = $1",

@@ -947,7 +947,12 @@ targets.
 ## Owned native database composition
 
 Use `PgLease::migrate` for application-selected SQLx migrations. For Runledger,
-use `verify_schema(&pool)` and `run_atomic(&pool, async |scope| ...)`.
+construct `RunledgerDatabase` with an explicit `PgSessionProfile`, then use
+`verify_schema(&database)` and `run_atomic(&database, async |scope| ...)`.
+The database owns mandatory acquisition hooks for role/schema/timeout/tenant
+policy; workers and ordinary operations use `database.pool()`. Atomic and snapshot
+reset re-establish the same policy before exposing SQL. Required intent recording
+rejects known conflicts inside the transaction, before application state commits.
 Intent recording precedes the consuming `scope.queue()` transition; enqueue is
 available only in the resulting queue phase. No
 native resource view or compatibility module remains. Dependency direction is

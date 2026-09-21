@@ -49,7 +49,7 @@ fn catalog() -> JobCatalog {
 }
 
 async fn setup(pool: &PgPool) -> Result<(PgConnectOptions, DatabaseIdentity), BoxError> {
-    batter_example_reference_service::schema::initialize_schema(pool).await?;
+    crate::support::profiled::initialize_schema(pool).await?;
     catalog().sync_definitions(pool).await?;
     let (system, oid): (i64, i64) = sqlx::query_as(
         "SELECT system_identifier, oid::bigint FROM pg_control_system(), pg_database WHERE datname=current_database()"

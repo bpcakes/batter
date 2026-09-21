@@ -48,8 +48,8 @@ impl JobHandler for HeldWitness {
 }
 
 pub async fn probe(pool: PgPool) -> ProbeResult {
-    runledger_postgres::migrate_after_idempotency_cutover(&pool).await?;
-    runledger_postgres::ensure_schema_compatible_after_idempotency_cutover(&pool).await?;
+    crate::support::profiled::migrate(&pool).await?;
+    crate::support::profiled::verify(&pool).await?;
     for limit in [1, 2] {
         one_capacity(&pool, limit).await?;
     }

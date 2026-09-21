@@ -4,11 +4,9 @@ use super::{
     provider::{DispatchBehavior, ProviderFixture},
     startup_process::{self, ExecutableChild, Signal},
 };
+use crate::support::profiled::initialize_schema;
 use batter::{BoxError, operation::OperationContext};
-use batter_example_reference_service::{
-    delivery::{DeliveryService, OwnerId, SubmitDelivery},
-    schema::initialize_schema,
-};
+use batter_example_reference_service::delivery::{DeliveryService, OwnerId, SubmitDelivery};
 use serde_json::json;
 use sqlx::{FromRow, PgPool, types::Uuid};
 use std::time::Duration;
@@ -621,18 +619,18 @@ async fn submit(pool: &PgPool, record: u128, key: &str, value: i64) -> Result<Su
         .execute(pool)
         .await?;
     let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
-    let result = DeliveryService::new(pool.clone())
-        .submit(
-            &context,
-            owner,
-            record_id,
-            SubmitDelivery {
-                expected_generation: 1,
-                idempotency_key: key.to_owned(),
-                payload: json!({"scenario": key, "value": value}),
-            },
-        )
-        .await?;
+    let result = crate::support::profiled::submit(
+        pool,
+        &context,
+        owner,
+        record_id,
+        SubmitDelivery {
+            expected_generation: 1,
+            idempotency_key: key.to_owned(),
+            payload: json!({"scenario": key, "value": value}),
+        },
+    )
+    .await?;
     let job_id = sqlx::query_scalar("SELECT job_id FROM reference_deliveries WHERE id = $1")
         .bind(result.delivery.delivery_id)
         .fetch_one(pool)

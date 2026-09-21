@@ -69,9 +69,11 @@ fn production_app() -> Router {
     let prepared_http = settings.prepare_http();
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
-    let pool = settings
-        .pool_options()
-        .connect_lazy_with(settings.connect_options_from_process().unwrap());
+    let pool = crate::database::configured(
+        settings.connect_options_from_process().unwrap(),
+        settings.pool_options(),
+    )
+    .unwrap();
     // Isolated business-route tests deliberately have no published health.
     let second = Duration::from_secs(1);
     let monitor = batter::health::HealthMonitor::new(
@@ -271,9 +273,11 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
 async fn canonical_registration_supplies_native_peer_to_the_business_boundary() {
     let settings = settings();
     let prepared = settings.prepare_http();
-    let pool = settings
-        .pool_options()
-        .connect_lazy_with(settings.connect_options_from_process().unwrap());
+    let pool = crate::database::configured(
+        settings.connect_options_from_process().unwrap(),
+        settings.pool_options(),
+    )
+    .unwrap();
     let second = Duration::from_secs(1);
     let monitor = batter::health::HealthMonitor::new(
         batter::health::HealthPolicy::new(second, second, Duration::from_secs(3), second).unwrap(),

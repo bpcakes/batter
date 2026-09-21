@@ -29,8 +29,8 @@ use batter::{
     operation::{Interruption, OperationContext},
     registration::RegistrationTarget,
 };
+use runledger_postgres::RunledgerDatabase;
 use serde::Serialize;
-use sqlx::PgPool;
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -60,14 +60,14 @@ struct AppState {
 ///     registration::RegistrationTarget,
 /// };
 /// use batter_example_reference_service::{config::PreparedHttp, http::register_in};
-/// use sqlx::PgPool;
+/// use runledger_postgres::RunledgerDatabase;
 /// use tokio::net::TcpListener;
 ///
 /// fn register<E: Send + Sync + 'static, T: RegistrationTarget + ?Sized>(
 ///     target: &mut T,
 ///     prepared: PreparedHttp,
 ///     control: ShutdownHandle,
-///     pool: PgPool,
+///     pool: RunledgerDatabase,
 ///     health: HealthReader<E>,
 ///     listener: TcpListener,
 /// ) -> Result<(), batter::RegistrationError> {
@@ -88,7 +88,7 @@ pub fn register_in<E, T>(
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
-    pool: PgPool,
+    pool: RunledgerDatabase,
     health: batter::health::HealthReader<E>,
 ) -> Result<(), RegistrationError>
 where
@@ -149,12 +149,12 @@ impl InProcessRequestClient {
 /// ```
 /// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
 /// use batter_example_reference_service::{config::PreparedHttp, http::in_process_client};
-/// use sqlx::PgPool;
+/// use runledger_postgres::RunledgerDatabase;
 ///
 /// fn can_issue_test_requests(
 ///     prepared: PreparedHttp,
 ///     control: ShutdownHandle,
-///     pool: PgPool,
+///     pool: RunledgerDatabase,
 ///     health: HealthReader<()>,
 /// ) -> batter_example_reference_service::http::InProcessRequestClient {
 ///     in_process_client(
@@ -172,12 +172,12 @@ impl InProcessRequestClient {
 /// ```compile_fail,E0308
 /// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
 /// use batter_example_reference_service::{config::PreparedMaintenance, http::in_process_client};
-/// use sqlx::PgPool;
+/// use runledger_postgres::RunledgerDatabase;
 ///
 /// fn cannot_route(
 ///     prepared: PreparedMaintenance,
 ///     control: ShutdownHandle,
-///     pool: PgPool,
+///     pool: RunledgerDatabase,
 ///     health: HealthReader<()>,
 /// ) {
 ///     let application = in_process_client(
@@ -193,7 +193,7 @@ pub fn in_process_client<E: Send + Sync + 'static>(
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
-    pool: PgPool,
+    pool: RunledgerDatabase,
     health: batter::health::HealthReader<E>,
 ) -> InProcessRequestClient {
     InProcessRequestClient {
@@ -205,7 +205,7 @@ fn router<E: Send + Sync + 'static>(
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
-    pool: PgPool,
+    pool: RunledgerDatabase,
     health: batter::health::HealthReader<E>,
 ) -> Router {
     let probes = Router::new()
@@ -218,7 +218,7 @@ fn router<E: Send + Sync + 'static>(
 fn router_with_probes(
     prepared: PreparedHttp,
     admission: OperationAdmission,
-    pool: PgPool,
+    pool: RunledgerDatabase,
     probes: Router,
 ) -> Router {
     let state = AppState {

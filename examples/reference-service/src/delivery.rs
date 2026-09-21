@@ -16,7 +16,7 @@
 //! use std::time::Duration;
 //! use uuid::Uuid;
 //!
-//! # async fn submit(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn submit(pool: runledger_postgres::RunledgerDatabase) -> Result<(), Box<dyn std::error::Error>> {
 //! let owner = OwnerId::new(Uuid::from_u128(1))?;
 //! let record_id = Uuid::from_u128(2);
 //! let context = OperationContext::new(Duration::from_secs(2))?;
@@ -446,6 +446,7 @@ pub enum QueryError {
 #[derive(Clone)]
 pub struct DeliveryService {
     pool: PgPool,
+    database: runledger_postgres::RunledgerDatabase,
 }
 
 /// Immutable, versioned payload stored in the authoritative Runledger job.

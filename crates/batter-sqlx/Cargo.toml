@@ -55,3 +55,6 @@ name = "migrations_live"
 
 [[test]]
 name = "atomic_live"
+
+[[test]]
+name = "profile"

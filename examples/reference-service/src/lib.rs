@@ -55,5 +55,6 @@ pub mod request;
 /// Owned staged service startup and shutdown composition.
 pub mod runtime;
 
+pub mod database;
 /// Forward-only application/Runledger startup migration and definition sync.
 pub mod schema;

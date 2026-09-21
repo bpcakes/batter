@@ -84,7 +84,7 @@ pub fn finish(body: ProbeResult, shutdown: ProbeResult) -> ProbeResult {
 }
 
 pub async fn queue_independent_initialization(pool: PgPool) -> ProbeResult {
-    batter_example_reference_service::schema::initialize_schema(&pool).await?;
+    crate::support::profiled::initialize_schema(&pool).await?;
     crate::support::worker::catalog(None)
         .sync_definitions(&pool)
         .await?;
@@ -160,7 +160,7 @@ pub async fn owner_drop(pool: PgPool) -> ProbeResult {
 }
 
 async fn held(pool: PgPool, drop_owner: bool) -> ProbeResult {
-    batter_example_reference_service::schema::initialize_schema(&pool).await?;
+    crate::support::profiled::initialize_schema(&pool).await?;
     let (entered, mut entering) = mpsc::unbounded_channel();
     let release = Arc::new(Semaphore::new(0));
     let completed = Arc::new(AtomicBool::new(false));
@@ -232,7 +232,7 @@ impl JobHandler for Reject {
 }
 
 pub async fn business_failure(pool: PgPool) -> ProbeResult {
-    batter_example_reference_service::schema::initialize_schema(&pool).await?;
+    crate::support::profiled::initialize_schema(&pool).await?;
     let catalog = JobCatalog::new().handler(Reject);
     catalog.sync_definitions(&pool).await?;
     let job = enqueue(&pool).await?;
