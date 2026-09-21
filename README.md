@@ -150,7 +150,7 @@ manifest and authority policy; see the
 
 ## Use as a local dependency
 
-Path dependencies only. Every workspace package is `publish = false`. The toml
+Git or path dependencies only. Every workspace package is `publish = false`. The toml
 below assumes this repository is checked out as `batter` beside the consumer:
 
 ```toml
@@ -159,6 +159,9 @@ below assumes this repository is checked out as `batter` beside the consumer:
 batter = { path = "../batter/crates/batter" }
 # Select optional toolkit namespaces explicitly, for example:
 # batter = { path = "../batter/crates/batter", features = ["axum"] }
+# Standalone Rust 1.94 encryption/MAC leaf, also available through feature
+# `at-rest` as `batter::at_rest` with identical types.
+batter-at-rest = { path = "../batter/crates/batter-at-rest" }
 # Direct foundation implementation, when an adapter or focused consumer needs it.
 batter-core = { path = "../batter/crates/batter-core" }
 # Add this dependency for the HTTP adapter.
@@ -173,19 +176,20 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 
 ## Packages
 
-The default `batter` graph does not bring in Axum, SQLx, or test utilities.
+The default `batter` graph does not bring in encryption, Axum, SQLx, or test utilities.
 Adapter APIs are also available from their direct packages. The facade exposes
-`batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
+`batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
 `batter::test_support` through additive opt-in features; `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
 documented bridges. Each package declares its own version and Rust
-minimum (currently 0.1.0 and 1.94). The default toolchain is 1.98.1. SQLx 0.9.0
-sets that floor in the adapter and examples; extracting it does not establish a
-lower library minimum.
+minimum. Runtime/foundation packages currently require Rust 1.94; the standalone
+`batter-at-rest` leaf retains an independently verified Rust 1.94 minimum. The
+default toolchain is 1.98.1. SQLx 0.9.0 sets the runtime/adapter floor.
 
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
+| `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | Synchronous standalone envelope encryption and stable MAC keys; proprietary and not covered by the root MIT license. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, explicit low-level connection disposition, and opt-in fixtures. |

@@ -14,6 +14,7 @@ workspace = true
 
 [features]
 default = []
+at-rest = ["dep:batter-at-rest"]
 axum = ["dep:batter-axum"]
 sqlx = ["dep:batter-sqlx"]
 runledger = ["dep:batter-runledger", "sqlx"]
@@ -26,6 +27,7 @@ sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
 [dependencies]
 batter-core = { path = "../batter-core", default-features = false }
+batter-at-rest = { workspace = true, optional = true }
 batter-axum = { workspace = true, optional = true }
 batter-sqlx = { workspace = true, optional = true }
 batter-runledger = { workspace = true, optional = true }

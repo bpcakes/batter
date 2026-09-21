@@ -16,6 +16,7 @@ integration namespaces explicitly:
 
 | Facade feature | Public path | Selects |
 | --- | --- | --- |
+| `at-rest` | `batter::at_rest` | `batter-at-rest` |
 | `axum` | `batter::axum` | `batter-axum` |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
@@ -23,7 +24,10 @@ integration namespaces explicitly:
 | `test-support` | `batter::test_support` | `batter-test-support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` | SQLx adapter fixture support plus generic support |
 
-`runlimit-memory` and `runlimit-postgres` forward only the existing native
+`at-rest` re-exports the standalone, synchronous `batter-at-rest` package with
+the same type identities. Direct `batter_at_rest` use remains supported and
+does not select `batter-core` or a runtime. `runlimit-memory` and
+`runlimit-postgres` forward only the existing native
 error bridges through `batter::runlimit`; neither selects the other backend or
 HTTP. `runlimit-axum` enables `batter::axum` and
 `batter::runlimit::http`. `runledger` also enables `batter::sqlx` because its

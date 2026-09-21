@@ -38,8 +38,8 @@ collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
-`batter-runledger` and `batter-runlimit` adapters, and `batter-test-support`
-utilities are seven separate libraries;
+`batter-runledger` and `batter-runlimit` adapters, `batter-test-support`
+utilities, and the standalone `batter-at-rest` crypto leaf are eight separate libraries;
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
@@ -51,6 +51,7 @@ application composition root
   |-- native services / concrete constructors / domain errors
   |-- batter facade -> batter-core lifecycle + cleanup
   |                         operation + retry + admission + settings
+  |     `-- opt-in at-rest -> standalone batter-at-rest leaf
   |-- native tracing subscriber and exporters (application-owned)
   |-- optional batter-axum -> batter-core + Axum / Tower
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
@@ -63,7 +64,7 @@ application composition root
 ```
 
 The facade's default feature set is empty, so an ordinary `batter` dependency
-selects only `batter-core`. Applications opt into `batter::axum`,
+selects only `batter-core`. Applications opt into `batter::at_rest`, `batter::axum`,
 `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
 `batter::test_support` explicitly. `runlimit-memory`, `runlimit-postgres`,
 `runlimit-axum`, and `sqlx-test-support` forward the existing adapter features;

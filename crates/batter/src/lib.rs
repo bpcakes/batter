@@ -5,8 +5,8 @@
 //! adapter namespaces without changing native ownership.
 //!
 //! The default feature set is empty. Enable only the namespaces an application
-//! uses: `axum`, `sqlx`, `runledger`, `runlimit`, `test-support`, or the
-//! narrower bridge features `runlimit-memory`, `runlimit-postgres`,
+//! uses: `at-rest`, `axum`, `sqlx`, `runledger`, `runlimit`, `test-support`, or
+//! the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
 //! `runlimit-axum`, and `sqlx-test-support`.
 //!
 //! # Important limits
@@ -34,6 +34,20 @@
 #![forbid(unsafe_code)]
 
 pub use batter_core::*;
+
+/// Synchronous envelope encryption and stable MAC keys.
+///
+/// Enabled by the `at-rest` feature. The implementation remains the standalone
+/// [`batter_at_rest`] package, and every item has the same type identity through
+/// the direct and facade paths.
+///
+/// ```
+/// let _: Option<batter::at_rest::Keyring> = None;
+/// ```
+#[cfg(feature = "at-rest")]
+pub mod at_rest {
+    pub use batter_at_rest::*;
+}
 
 /// Axum request, browser, readiness, and serving boundaries.
 ///

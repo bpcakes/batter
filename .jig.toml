@@ -358,6 +358,35 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+description = "Prove that batter-at-rest is portable at its declared Rust 1.94 boundary."
+intent = "check"
+effects = ["read_only", "process", "external"]
+inputs = [
+    ".jig.toml",
+    ".github/workflows/batter-at-rest-portability.yml",
+    "crates/batter-at-rest/*",
+    "crates/batter-at-rest/**/*",
+    "scripts/check-batter-at-rest-portability.sh",
+]
+inputs_policy = "whole_repository"
+
+[repository.actions.target]
+component = "repo"
+action = "batter-at-rest-portability"
+
+[repository.actions.runner]
+kind = "shell"
+command = "repo_batter_at_rest_portability_command"
+
+[repository.actions.provenance]
+effects = "declared"
+inputs = "declared"
+inputs_policy = "inferred"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
+[[repository.actions]]
 description = "Validate the checked-in Jig repository contract."
 inputs_policy = "whole_repository"
 intent = "check"
@@ -453,6 +482,7 @@ api_clippy_command = "cargo clippy --workspace --all-targets --all-features --lo
 api_fmt_command = "cargo fmt --all -- --check"
 api_test_command = "python3 scripts/test_matrix.py"
 api_test_locked_command = "python3 scripts/test_matrix.py"
+repo_batter_at_rest_portability_command = "scripts/check-batter-at-rest-portability.sh"
 repo_bootstrap_command = "cargo fetch --locked"
 
 [execution]

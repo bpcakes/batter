@@ -1,8 +1,8 @@
 # batter
 
 `batter` is the public facade for the native Tokio operational toolkit. It
-keeps the established `batter::...` foundation paths while optional Axum,
-SQLx, Runledger, Runlimit, and test-support namespaces are selected through
+keeps the established `batter::...` foundation paths while optional at-rest,
+Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected through
 additive facade features.
 
 The implementation of the foundation lives in [`batter-core`](../batter-core).
@@ -13,6 +13,7 @@ The default feature set is empty. The available feature/module pairs are:
 
 | Feature | Namespace or capability |
 | --- | --- |
+| `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity |
 | `axum` | `batter::axum` |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
@@ -30,7 +31,7 @@ For example:
 batter = { path = "../batter", features = ["axum", "runlimit-axum"] }
 ```
 
-The facade selects namespaces; native Axum, SQLx, Runledger, Runlimit and the
+The facade selects namespaces; `batter-at-rest`, native Axum, SQLx, Runledger, Runlimit and the
 external PostgreSQL harness remain direct ecosystem dependencies with their
 existing ownership and configuration.
 
