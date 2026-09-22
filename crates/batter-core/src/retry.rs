@@ -325,7 +325,7 @@ pub struct Attempt {
     pub number: u32,
     /// Cannot extend the original deadline. Cancelled when this attempt ends.
     /// The callback observes cancellation here; it cannot request cancellation
-    /// without an owner retained outside the callback.
+    /// through this context. A controller must retain owner authority separately.
     pub context: OperationContext,
 }
 
@@ -338,6 +338,44 @@ pub struct Attempt {
 /// [`RetryError::Interrupted`], even when the factory returned `Ok` in the same
 /// poll. The callback must not block or create detached work. Choose ONE retry
 /// owner across service/client/job layers.
+///
+/// A dedicated child owner lets a controller stop this sequence without
+/// cancelling its caller or sibling operations. The `Attempt` argument supplies
+/// only an observation and execution context; the closure explicitly retains
+/// the child owner:
+///
+/// ```
+/// use batter_core::{
+///     operation::{Interruption, OperationOwner},
+///     retry::{self, ReplaySafety, RetryDecision, RetryError, RetryPolicy},
+/// };
+/// use std::time::Duration;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let caller = OperationOwner::new(Duration::from_secs(5))?;
+/// let retry_owner = caller.context().child(Duration::from_secs(2))?;
+/// let sibling = caller.context().child(Duration::from_secs(2))?;
+/// let policy = RetryPolicy::new(1, Duration::from_millis(1), Duration::from_millis(1))?;
+/// let result = retry::execute(
+///     retry_owner.context(),
+///     "provider.read",
+///     ReplaySafety::Idempotent,
+///     &policy,
+///     |_| {
+///         retry_owner.cancel();
+///         async { Ok::<u8, std::io::Error>(7) }
+///     },
+///     |_| RetryDecision::Stop,
+/// ).await;
+/// assert!(matches!(result, Err(RetryError::Interrupted {
+///     reason: Interruption::Cancelled, ..
+/// })));
+/// assert!(caller.context().check().is_ok());
+/// assert!(sibling.context().check().is_ok());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn execute<T, E, F, Fut, C>(
     context: &OperationContext,
     operation: &'static str,

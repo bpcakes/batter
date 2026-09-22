@@ -130,6 +130,12 @@ deadline is terminal and typed separately from total deadline expiration; it is
 not sent to the classifier or retried. The callback's `attempt.context` carries
 that exact child deadline and downward cancellation.
 
+To let a controller cancel this retry sequence without cancelling its caller or
+sibling work, derive a child owner from the caller's context, pass that child's
+context to `retry::execute_with_options`, and retain the child owner. Cancelling
+the caller's owner also cancels its other descendants. `Attempt.context` does
+not grant the callback cancellation authority.
+
 This is not a classifier to copy onto arbitrary writes. For provider Retry-After,
 parse and validate the remote value in that provider's adapter, then return
 RetryDecision::RetryAfter. Do not classify by matching error-message text. A

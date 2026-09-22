@@ -161,10 +161,15 @@ The attempt future is dropped and its child context is cancelled; this does not
 join detached work or establish a remote effect's outcome.
 
 `Interrupted { reason: Cancelled, .. }` means cancellation was observed in the
-input lineage or the current attempt scope. A factory may cancel its public
-`Attempt.context`; that stops the retry sequence but does not cancel the input
-context. Retry reconciles that attempt token after the factory returns and before
-accepting a value or classifying an error, including a same-poll cancellation.
+input lineage or the current attempt scope. Retry callbacks receive
+`Attempt.context` for observation and execution, not cancellation authority.
+A controller can stop the sequence through a retained owner of its input context
+or an ancestor, which also cancels that owner's other descendants. To stop only
+one retry sequence while leaving its caller and siblings active, derive a
+dedicated child owner from the caller's context and execute the sequence through
+that child's context. Retry reconciles cancellation after the factory returns
+and before accepting a value or classifying an error, including a same-poll
+cancellation.
 An error returned in that poll is retained as `last_error` but is not classified
 or replayed; a returned value is discarded. The result does not by itself
 identify which scope originated the cancellation.
