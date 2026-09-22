@@ -1,10 +1,15 @@
 //! Consumer error policy over the single owned atomic runner.
 mod context;
+mod fast;
 use crate::{
     PgAtomicError, PgAtomicScope, PgAtomicUncertainty, PgScopeError, PgScopeFailure, PgScopeLoss,
     PgScopedSql, PgSessionProfile, PgTransactionError, run_atomic, run_atomic_profiled,
 };
-pub use context::{run_atomic_profiled_with_in, run_atomic_with_in};
+pub use context::{
+    run_atomic_fail_fast_with_in, run_atomic_profiled_fail_fast_with_in,
+    run_atomic_profiled_with_in, run_atomic_with_in,
+};
+pub use fast::{PgScopeRolledBack, run_atomic_fail_fast_with, run_atomic_profiled_fail_fast_with};
 use sqlx::PgPool;
 use std::marker::PhantomData;
 
@@ -135,36 +140,91 @@ pub async fn run_atomic_profiled_with<T, P: PgFailurePolicy<T>>(
 /// A scope whose error type is fixed for the transaction. There is no public
 /// constructor, owner extraction, or completion method. `T` is the final body
 /// output, independent of the output of any individual SQL operation.
-pub struct PgPolicyScope<'a, T, P> {
-    inner: &'a mut PgAtomicScope,
+pub struct PgPolicyScope<'a, T, P: PgFailurePolicy<T>> {
+    inner: ScopeKind<'a, P::Error>,
     policy: &'a P,
     output: PhantomData<fn() -> T>,
+}
+
+enum ScopeKind<'a, E> {
+    Recoverable(&'a mut PgAtomicScope),
+    FailFast {
+        scope: &'a mut fast::FastScope,
+        closed: fn(PgScopeRolledBack) -> E,
+    },
 }
 
 impl<'a, T, P: PgFailurePolicy<T>> PgPolicyScope<'a, T, P> {
     fn new(inner: &'a mut PgAtomicScope, policy: &'a P) -> Self {
         Self {
-            inner,
+            inner: ScopeKind::Recoverable(inner),
             policy,
             output: PhantomData,
         }
     }
 
-    /// Run SQL in a recoverable private savepoint. An ordinary rejection rolls
-    /// back this scope and returns the consumer error unchanged. A lost scope
-    /// maps through the required policy and permanently prevents further work.
-    /// Results inside the transaction remain provisional until runner success.
+    fn new_fast(inner: &'a mut fast::FastScope, policy: &'a P) -> Self
+    where
+        P::Error: From<PgScopeRolledBack>,
+    {
+        Self {
+            inner: ScopeKind::FailFast {
+                scope: inner,
+                closed: P::Error::from,
+            },
+            policy,
+            output: PhantomData,
+        }
+    }
+
+    /// Run SQL using the runner's selected failure behavior. The ordinary
+    /// runner recovers a private savepoint; the fail-fast runner acknowledges
+    /// whole-transaction rollback on rejection and permanently closes the scope.
+    /// A lost scope maps through the required uncertainty policy. Results remain
+    /// provisional until runner success.
     pub async fn sql<U>(
         &mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
     ) -> Result<U, P::Error> {
-        self.inner
-            .application(work)
-            .await
-            .map_err(|error| match error {
-                PgScopeError::Application(error) => error,
-                PgScopeError::Terminal(failure) => self.policy.scope_lost(failure),
-            })
+        match &mut self.inner {
+            ScopeKind::Recoverable(inner) => {
+                inner.application(work).await.map_err(|error| match error {
+                    PgScopeError::Application(error) => error,
+                    PgScopeError::Terminal(failure) => self.policy.scope_lost(failure),
+                })
+            }
+            ScopeKind::FailFast { scope, closed } => {
+                scope.sql(work).await.map_err(|error| match error {
+                    fast::FastError::Application(error) => error,
+                    fast::FastError::Terminal(failure) => self.policy.scope_lost(failure),
+                    fast::FastError::RolledBack(confirmed) => closed(confirmed),
+                })
+            }
+        }
+    }
+
+    /// Explicitly recover this operation using a private savepoint, including
+    /// when the runner selected fail-fast SQL. A prior fail-fast rejection still
+    /// prevents invocation; this method cannot resurrect a rolled-back owner.
+    pub async fn recoverable_sql<U>(
+        &mut self,
+        work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
+    ) -> Result<U, P::Error> {
+        match &mut self.inner {
+            ScopeKind::Recoverable(inner) => {
+                inner.application(work).await.map_err(|error| match error {
+                    PgScopeError::Application(error) => error,
+                    PgScopeError::Terminal(failure) => self.policy.scope_lost(failure),
+                })
+            }
+            ScopeKind::FailFast { scope, closed } => {
+                scope.recoverable(work).await.map_err(|error| match error {
+                    fast::FastError::Application(error) => error,
+                    fast::FastError::Terminal(failure) => self.policy.scope_lost(failure),
+                    fast::FastError::RolledBack(confirmed) => closed(confirmed),
+                })
+            }
+        }
     }
 }
 

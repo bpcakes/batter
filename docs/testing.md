@@ -64,12 +64,28 @@ acknowledged rejection, caught terminal failure, abandoned work, paired recovery
 causes, setup failure, and commit/rollback uncertainty. Native
 `runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
 across SQL, intent recording, queue operations and required-conflict rollback.
-The exact SQLx live inventory now includes 42 atomic tests (105 total); execution
+The policy delivery inventory included 42 atomic tests (105 total); execution
 on macOS arm64 passed all 105 cases on Rust 1.98.1 and 1.94.0 with PostgreSQL
 18.6. Both full verification scripts and five HTTP smokes per toolchain passed;
 required Jig gates passed. The first minimum-toolchain workspace run encountered
 a Docker port-resolution failure in the existing `job_read_scope` fixture. That
 target and the full rerun passed unchanged. See `batter-a0qb`.
+
+Fail-fast controls in `atomic_live::{fail_fast,fail_fast_context,fail_fast_loss,fail_fast_profile}`
+add eight cases (50 atomic, 113 total live): exact two/three statement counts,
+explicit recovery, prior-write rollback before error return, caught rejection
+refusal, transaction replacement, abandoned work, uncertain commit/cleanup and
+profile drift, and retained rollback after caught-error cancellation. The native policy consumer runs in both recovery modes. On macOS arm64, both full verification scripts, all 113 live cases against
+PostgreSQL 18.6 and all five HTTP smokes per toolchain passed on Rust 1.98.1 and
+1.94.0. Required Jig gates passed (`api:test` receipt
+`receipt_01M35P4NHNZAPBC4KN2WZ1AFH2`). Independent review found a caught-rollback
+cancellation gap; the repaired regression and follow-up review passed. The first
+Rust 1.98.1 live run reported cleanup failure in the existing late-ledger-attachment
+test; its unchanged focused rerun and full suite rerun passed. The initial cause
+was not reproduced or established beyond the retained cleanup diagnostic. See
+`batter-wobk`. The exact live runner serializes tracing-counter
+cases; a parallel focused invocation produced a counter-only failure and the
+unchanged serial run passed.
 
 ## Verification commands
 

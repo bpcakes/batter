@@ -1,5 +1,9 @@
+use super::fast::{self, RollbackSlot};
 use super::{PgFailurePolicy, PgPolicyScope, run_atomic_profiled_with, run_atomic_with};
-use crate::{PgProfiledPool, atomic_context::retain};
+use crate::{
+    PgProfiledPool,
+    atomic_context::{retain, retain_with_fallback},
+};
 use batter_core::operation::{OperationContext, OperationError};
 use sqlx::PgPool;
 
@@ -56,6 +60,57 @@ pub async fn run_atomic_profiled_with_in<T, P: PgFailurePolicy<T>>(
     .await
 }
 
+/// Fail-fast counterpart of [`run_atomic_with_in`], preserving acknowledged
+/// whole rollback and refusing success after a caught rejection. Uses the same
+/// original operation budget and retained completion boundary.
+pub async fn run_atomic_fail_fast_with_in<T, P: PgFailurePolicy<T>>(
+    pool: &PgPool,
+    context: &OperationContext,
+    operation: &'static str,
+    policy: &P,
+    work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
+) -> Result<T, OperationError<P::Error>>
+where
+    P::Error: From<super::PgScopeRolledBack>,
+{
+    let rollback = RollbackSlot::default();
+    retain_with_fallback(
+        context,
+        operation,
+        fast::run(pool, None, policy, work, rollback.clone()),
+        || rollback.get().map(|confirmed| Err(confirmed.into())),
+    )
+    .await
+}
+
+/// Profiled fail-fast workflow using the pool's immutable profile and the
+/// parent's existing budget. Interruption still does not prove rollback.
+pub async fn run_atomic_profiled_fail_fast_with_in<T, P: PgFailurePolicy<T>>(
+    database: &PgProfiledPool,
+    context: &OperationContext,
+    operation: &'static str,
+    policy: &P,
+    work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
+) -> Result<T, OperationError<P::Error>>
+where
+    P::Error: From<super::PgScopeRolledBack>,
+{
+    let rollback = RollbackSlot::default();
+    retain_with_fallback(
+        context,
+        operation,
+        fast::run(
+            database.pool(),
+            Some(database.profile()),
+            policy,
+            work,
+            rollback.clone(),
+        ),
+        || rollback.get().map(|confirmed| Err(confirmed.into())),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,21 +118,27 @@ mod tests {
     use batter_core::operation::Interruption;
 
     struct NeverCalled;
-    impl PgFailurePolicy<()> for NeverCalled {
-        type Error = ();
-        fn begin_failed(&self, _: PgTransactionError) {
-            panic!("begin attempted")
-        }
-        fn scope_lost(&self, _: PgScopeFailure<()>) {
-            panic!("scope attempted")
-        }
-        fn commit_unconfirmed(&self, _: (), _: PgTransactionError) {
-            panic!("commit attempted")
-        }
-        fn rollback_unconfirmed(&self, _: (), _: PgTransactionError) {
+    struct Unreachable;
+    impl From<super::super::PgScopeRolledBack> for Unreachable {
+        fn from(_: super::super::PgScopeRolledBack) -> Self {
             panic!("rollback attempted")
         }
-        fn scope_lost_after_body(&self, _: Result<(), ()>, _: PgScopeLoss) {
+    }
+    impl PgFailurePolicy<()> for NeverCalled {
+        type Error = Unreachable;
+        fn begin_failed(&self, _: PgTransactionError) -> Unreachable {
+            panic!("begin attempted")
+        }
+        fn scope_lost(&self, _: PgScopeFailure<Unreachable>) -> Unreachable {
+            panic!("scope attempted")
+        }
+        fn commit_unconfirmed(&self, _: (), _: PgTransactionError) -> Unreachable {
+            panic!("commit attempted")
+        }
+        fn rollback_unconfirmed(&self, _: Unreachable, _: PgTransactionError) -> Unreachable {
+            panic!("rollback attempted")
+        }
+        fn scope_lost_after_body(&self, _: Result<(), Unreachable>, _: PgScopeLoss) -> Unreachable {
             panic!("body attempted")
         }
     }
@@ -97,6 +158,15 @@ mod tests {
                 panic!("unpolled body");
             },
         ));
+        drop(run_atomic_fail_fast_with_in(
+            &pool,
+            &context,
+            "fast.unpolled",
+            &NeverCalled,
+            async |_| {
+                panic!("unpolled fast body");
+            },
+        ));
         context.cancel();
         let result = run_atomic_with_in(
             &pool,
@@ -105,6 +175,20 @@ mod tests {
             &NeverCalled,
             async |_| {
                 panic!("cancelled body");
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OperationError::Interrupted(Interruption::Cancelled))
+        ));
+        let result = run_atomic_fail_fast_with_in(
+            &pool,
+            &context,
+            "fast.cancelled",
+            &NeverCalled,
+            async |_| {
+                panic!("cancelled fast body");
             },
         )
         .await;

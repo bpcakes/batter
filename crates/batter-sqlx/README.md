@@ -61,12 +61,32 @@ returning runners remain source compatible. See the policy runner rustdoc for a
 complete generic consumer example and `tests/atomic_live/policy.rs` for a concrete
 policy that retains each uncertain outcome.
 
-Each application operation owns a private savepoint and validates the original
+Each recoverable application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
 terminal failure or cancellation consumes the usable owner even when the body
 catches the error or abandons an inner future. There is no await after completion
 acknowledgement. Arbitrary SQL and captured external side effects are not a sandbox:
 explicit COMMIT can have irreversible effects, but cannot yield canonical success.
+
+For whole-transaction rejection, select `run_atomic_fail_fast_with` (or its
+profiled and budgeted variants). Successful `scope.sql` calls run the body and one
+validation: two statements for a one-query unprofiled call, three when profiled.
+There is one private guard at transaction setup, with no savepoint per successful
+call. An ordinary SQL/application error rolls back all prior transaction writes
+before returning the original error. Failed recovery, changed transaction identity,
+transport loss and abandoned work remain uncertain outcomes handled by the policy.
+The guard permits recovery from PostgreSQL's failed-transaction state before
+checking original transaction identity; a bare ROLLBACK cannot prove that identity.
+
+The fast runner requires `Error: From<PgScopeRolledBack>`. If the callback catches
+a rejection, later SQL is refused and an outer `Ok` becomes this known-rollback
+error. The evidence is unforgeable; the original error already belongs to the
+callback and need not implement Clone. `scope.recoverable_sql(...)` explicitly
+selects a per-operation savepoint when recovery is wanted. It cannot revive a
+closed transaction. Application-created savepoints may persist between successful
+fast calls; recoverable calls still release nested savepoints with their private
+parent. Native Runledger's `run_atomic_fail_fast_with` applies the same behavior
+to SQL and named intent/queue operations without changing their phase ordering.
 
 Every atomic and snapshot completion retires its physical connection, including
 acknowledged commit/rollback. Acquisition executes ROLLBACK, clears SQLx's statement
@@ -86,7 +106,7 @@ scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
 
 Profile validation reads roles, path, every declared schema/timeout/setting and
-atomic continuity in one SQL statement. Successful atomic operations validate
+atomic continuity in one SQL statement. Successful recoverable operations validate
 once after the body, then await RELEASE without another validation. Unprofiled
 operations omit the opening check because the opaque owner has run no arbitrary
 SQL since birth or its previous validation. Profiled operations retain an opening

@@ -8,7 +8,7 @@ use crate::{
     Error, RunledgerDatabase,
     jobs::{JobEnqueue, JobEnqueueIntent, JobEnqueueIntentOutcome, JobEnqueueOutcome},
 };
-use batter_sqlx::{PgFailurePolicy, PgPolicyScope, PgScopedSql};
+use batter_sqlx::{PgFailurePolicy, PgPolicyScope, PgScopeRolledBack, PgScopedSql};
 
 /// Run a workflow with one consumer error type for SQL and named operations.
 ///
@@ -48,20 +48,64 @@ pub async fn run_atomic_with<T, P: PgFailurePolicy<T>>(
     .await
 }
 
+/// Run named intent/queue operations and SQL with fail-fast rollback behavior.
+/// Ordinary rejection closes the whole transaction; explicit recoverable SQL
+/// remains available through the phase's `recoverable_sql` method. The same
+/// mandatory uncertainty policy and consuming phase transition apply.
+///
+/// ```no_run
+/// use runledger_postgres::{PgFailurePolicy, PgScopeRolledBack, RequiredIntentError, RunledgerDatabase};
+/// async fn submit<P: PgFailurePolicy<()>>(
+///     db: &RunledgerDatabase, policy: &P,
+///     intent: &runledger_postgres::jobs::JobEnqueueIntent<'_>,
+/// ) -> Result<(), P::Error>
+/// where P::Error: From<RequiredIntentError> + From<PgScopeRolledBack> {
+///     runledger_postgres::run_atomic_fail_fast_with(db, policy, async |mut scope| {
+///         scope.record_required_job_enqueue_intent(intent).await?;
+///         Ok(())
+///     }).await
+/// }
+/// ```
+pub async fn run_atomic_fail_fast_with<T, P: PgFailurePolicy<T>>(
+    database: &RunledgerDatabase,
+    policy: &P,
+    work: impl AsyncFnOnce(PgPolicyIntentScope<'_, T, P>) -> Result<T, P::Error>,
+) -> Result<T, P::Error>
+where
+    P::Error: From<PgScopeRolledBack>,
+{
+    batter_sqlx::run_atomic_profiled_fail_fast_with(
+        database.pool(),
+        database.profile(),
+        policy,
+        async |inner| work(PgPolicyIntentScope { inner }).await,
+    )
+    .await
+}
+
 /// Initial intent phase with the transaction's consumer error type fixed.
 /// Consume with [`Self::queue`] before performing named queue operations.
-pub struct PgPolicyIntentScope<'a, T, P> {
+pub struct PgPolicyIntentScope<'a, T, P: PgFailurePolicy<T>> {
     inner: PgPolicyScope<'a, T, P>,
 }
 
 impl<'a, T, P: PgFailurePolicy<T>> PgPolicyIntentScope<'a, T, P> {
-    /// Run application SQL in a recoverable scope with the fixed error type.
+    /// Run application SQL with the runner-selected behavior and fixed error type.
     /// Arbitrary SQL must not bypass the named operations' lock ordering.
     pub async fn sql<U>(
         &mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
     ) -> Result<U, P::Error> {
         self.inner.sql(work).await
+    }
+
+    /// Recover this SQL operation with its own savepoint, even in a fail-fast
+    /// workflow. A previous fail-fast rejection still refuses further work.
+    pub async fn recoverable_sql<U>(
+        &mut self,
+        work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
+    ) -> Result<U, P::Error> {
+        self.inner.recoverable_sql(work).await
     }
 
     /// Record a required handoff. Known durable conflicts are consumer errors.
@@ -117,17 +161,26 @@ impl<'a, T, P: PgFailurePolicy<T>> PgPolicyIntentScope<'a, T, P> {
 ///     }).await;
 /// }
 /// ```
-pub struct PgPolicyQueueScope<'a, T, P> {
+pub struct PgPolicyQueueScope<'a, T, P: PgFailurePolicy<T>> {
     inner: PgPolicyScope<'a, T, P>,
 }
 
 impl<T, P: PgFailurePolicy<T>> PgPolicyQueueScope<'_, T, P> {
-    /// Run application SQL in a recoverable scope with the fixed error type.
+    /// Run application SQL with the runner-selected behavior and fixed error type.
     pub async fn sql<U>(
         &mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
     ) -> Result<U, P::Error> {
         self.inner.sql(work).await
+    }
+
+    /// Recover this SQL operation with its own savepoint, even in a fail-fast
+    /// workflow. A previous fail-fast rejection still refuses further work.
+    pub async fn recoverable_sql<U>(
+        &mut self,
+        work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
+    ) -> Result<U, P::Error> {
+        self.inner.recoverable_sql(work).await
     }
 
     /// Enqueue after leaving the intent phase. Output remains provisional.
