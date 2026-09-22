@@ -2045,6 +2045,13 @@ CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
 
+The pool-budget regression polls admission and cleanup into a pending pool
+acquisition while holding the only connection. Each wait exceeds the entire
+operation budget before releasing the connection, so starting that deadline
+before acquisition must fail. The fresh two-second work budget leaves headroom
+for the retained 100 ms SQL triggers and commit; success still requires the
+exact quota and cleanup outcomes (`batter-qhps`).
+
 The GCRA replenishment regression drives the persisted database clock through
 0, 199, 200, 399 and 400 ms after exhausting a two-unit burst. It checks exact
 denial delays, one-unit replenishment and no full burst reset at the period
