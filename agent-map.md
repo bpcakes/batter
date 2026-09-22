@@ -9,6 +9,7 @@ Fast jump index for agent-facing guidance in this repository.
 ## Nested guides
 
 - [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
+- [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.94 portability, and proprietary license boundary.
 - [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
   cleanup, admission, dependency health, settings, and telemetry.
 - [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, browser credential

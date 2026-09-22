@@ -130,6 +130,7 @@ class JigIntegrationTests(unittest.TestCase):
         for name, content in {
             "crates/example/src/lib.rs": "pub fn example() {}\n",
             "crates/example/tests/fixture.txt": "example fixture\n",
+            "crates/batter-at-rest/README.md": "Compiled crate documentation\n",
             "examples/example/migrations/001.sql": "SELECT 1;\n",
             "test-support/temp_dir.rs": "// shared test fixture\n",
             ".beads/issues.jsonl": '{"status":"open"}\n',
@@ -185,6 +186,7 @@ class JigIntegrationTests(unittest.TestCase):
         plan = self.prepare_freshness()
         previous = self.freshness_check(plan)
         for count, name in enumerate([
+            "crates/batter-at-rest/README.md",
             "crates/example/src/lib.rs", "crates/example/tests/fixture.txt",
             "examples/example/migrations/001.sql", "test-support/temp_dir.rs",
             "scripts/example_helper.py", "scripts/new_helper.py",

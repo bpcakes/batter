@@ -24,7 +24,7 @@ Keep facade examples on public `batter::...` paths.
 
 ## Invariants
 
-The facade must not duplicate runtime code or create a second type identity.
+The facade must not duplicate runtime or leaf code or create a second type identity.
 The default normal dependency graph contains only `batter-core`; adapters must
 depend on core rather than this facade. Preserve concrete errors, native futures,
 explicit cleanup, tracing target `batter`, and the Unix-only scope.

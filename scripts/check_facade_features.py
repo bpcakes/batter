@@ -16,6 +16,7 @@ from consumer_manifest import consumer_patches
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
+    "at-rest",
     "axum",
     "sqlx",
     "runledger",
@@ -86,6 +87,7 @@ def feature_cases() -> list[tuple[str, ...]]:
     """
     return [
         (),
+        ("at-rest",),
         ("axum",),
         ("sqlx",),
         ("runledger",),
@@ -104,12 +106,19 @@ def feature_cases() -> list[tuple[str, ...]]:
 
 def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     chosen = set(selected)
+    at_rest = "at-rest" in chosen
     axum = "axum" in chosen or "runlimit-axum" in chosen
     sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger", "runlimit-postgres"})
     batter_sqlx = sqlx
     runlimit = bool(chosen & {"runlimit", *RUNLIMIT_BRIDGES})
     return {
         "batter-core": True,
+        "batter-at-rest": at_rest,
+        "aes-gcm": at_rest,
+        "aes": at_rest,
+        "ghash": at_rest,
+        "polyval": at_rest,
+        "ctr": at_rest,
         "batter-axum": axum,
         "batter-sqlx": batter_sqlx,
         "batter-runledger": "runledger" in chosen,
@@ -133,6 +142,8 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "use batter::operation::OperationContext;",
         "fn main() {}",
     ]
+    if "at-rest" in chosen:
+        lines.insert(1, "use batter::at_rest::{Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
@@ -192,6 +203,8 @@ def check_graph(metadata: dict, selected: tuple[str, ...], known: set[tuple[str,
     if drift:
         raise RuntimeError(f"{selected}: temporary consumer dependency drift: {sorted(drift)}")
     names = normal_names(metadata)
+    if "batter-at-rest" in names and "test-support" in resolved_features(metadata, "batter-at-rest"):
+        raise RuntimeError(f"{selected}: production graph enabled batter-at-rest/test-support")
     for package, expected in expected_graph(selected).items():
         if (package in names) != expected:
             raise RuntimeError(
@@ -222,6 +235,8 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         facade_dependency(selected),
         "batter-core = { path = " + json.dumps(str(ROOT / "crates/batter-core")) + " }",
     ]
+    if "at-rest" in chosen:
+        deps.append("batter-at-rest = { path = " + json.dumps(str(ROOT / "crates/batter-at-rest")) + " }")
     if "axum" in chosen or "runlimit-axum" in chosen:
         deps.append("batter-axum = { path = " + json.dumps(str(ROOT / "crates/batter-axum")) + " }")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
@@ -255,6 +270,13 @@ def identity_source(selected: tuple[str, ...]) -> str:
         "fn core_identity(_: CoreOperationContext) {}",
         "fn main() { let _: fn(OperationContext) = core_identity; }",
     ]
+    if "at-rest" in chosen:
+        lines += [
+            "use batter::at_rest::Keyring;",
+            "use batter_at_rest::Keyring as DirectKeyring;",
+            "fn at_rest_identity(_: DirectKeyring) {}",
+            "const _: fn(Keyring) = at_rest_identity;",
+        ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines += [
             "use batter::axum::RequestPolicy;",
@@ -337,6 +359,7 @@ def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
 
 def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     return [
+        ((), "at-rest", "batter::at_rest"),
         ((), "axum", "batter::axum"),
         ((), "sqlx", "batter::sqlx"),
         ((), "runledger", "batter::runledger"),

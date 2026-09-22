@@ -6,6 +6,7 @@
     "api_fmt_command",
     "api_test_command",
     "api_test_locked_command",
+    "repo_batter_at_rest_portability_command",
     "repo_bootstrap_command"
   ],
   "tools": [
@@ -114,6 +115,7 @@
         "process"
       ],
       "inputs": [
+        "crates/batter-at-rest/README.md",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain",
@@ -314,6 +316,7 @@
         "process"
       ],
       "inputs": [
+        "crates/batter-at-rest/README.md",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain",
@@ -417,6 +420,7 @@
         "process"
       ],
       "inputs": [
+        "crates/batter-at-rest/README.md",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain",
@@ -540,6 +544,39 @@
       },
       "target": {
         "action": "bootstrap",
+        "component": "repo"
+      }
+    },
+    {
+      "description": "Prove that batter-at-rest is portable at its declared Rust 1.94 boundary.",
+      "effects": [
+        "read_only",
+        "process",
+        "external"
+      ],
+      "inputs": [
+        ".jig.toml",
+        ".github/workflows/batter-at-rest-portability.yml",
+        "crates/batter-at-rest/*",
+        "crates/batter-at-rest/**/*",
+        "scripts/check-batter-at-rest-portability.sh"
+      ],
+      "inputs_policy": "whole_repository",
+      "intent": "check",
+      "provenance": {
+        "effects": "declared",
+        "inputs": "declared",
+        "inputs_policy": "inferred",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      },
+      "runner": {
+        "command": "repo_batter_at_rest_portability_command",
+        "kind": "shell"
+      },
+      "target": {
+        "action": "batter-at-rest-portability",
         "component": "repo"
       }
     },

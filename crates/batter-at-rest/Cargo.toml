@@ -1,0 +1,29 @@
+[package]
+name = "batter-at-rest"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+license = "LicenseRef-CreditKit-Proprietary"
+description = "Standalone application-layer envelope encryption and stable MAC keys"
+readme = "README.md"
+
+[features]
+test-support = []
+
+[dependencies]
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc", "zeroize"] }
+hkdf = "0.12.4"
+hmac = "0.12.1"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+zeroize = "1.8.2"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+mod_module_files = "warn"

@@ -1,8 +1,8 @@
 # batter
 
 `batter` is the public facade for the native Tokio operational toolkit. It
-keeps the established `batter::...` foundation paths while optional Axum,
-SQLx, Runledger, Runlimit, and test-support namespaces are selected through
+keeps the established `batter::...` foundation paths while optional at-rest,
+Axum, SQLx, Runledger, Runlimit, and test-support namespaces are selected through
 additive facade features.
 
 The implementation of the foundation lives in [`batter-core`](../batter-core).
@@ -13,6 +13,7 @@ The default feature set is empty. The available feature/module pairs are:
 
 | Feature | Namespace or capability |
 | --- | --- |
+| `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [proprietary dependency](../batter-at-rest/LICENSE) |
 | `axum` | `batter::axum` |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
@@ -30,9 +31,14 @@ For example:
 batter = { path = "../batter", features = ["axum", "runlimit-axum"] }
 ```
 
-The facade selects namespaces; native Axum, SQLx, Runledger, Runlimit and the
+The facade selects namespaces; `batter-at-rest`, native Axum, SQLx, Runledger, Runlimit and the
 external PostgreSQL harness remain direct ecosystem dependencies with their
 existing ownership and configuration.
+
+The standalone encryption package can be selected directly as `batter-at-rest`;
+the facade always retains its normal `batter-core` dependency. Cargo unifies
+dependency features, so audit the final application's resolved graph. Feature
+isolation in this facade is not a security boundary.
 
 This crate follows the workspace's [Unix-only platform policy](../../README.md#platform-support).
 Windows is unsupported and not planned.
@@ -48,3 +54,6 @@ cargo run -p batter --example finite_command
 ```
 
 Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
+The optional `batter-at-rest` dependency is separately licensed under
+[`LicenseRef-CreditKit-Proprietary`](../batter-at-rest/LICENSE); the facade's MIT
+license does not grant rights to that dependency.
