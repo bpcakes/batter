@@ -401,10 +401,9 @@ Facade consumer graphs reject the leaf's `test-support` feature and check the
 AES/GCM dependency family; shared hashes used by other adapters are not treated as
 exclusive evidence of at-rest feature selection.
 
-CI targets MSRV 1.94.0, the pinned 1.98.1 toolchain, and stable. Until a
-lockfile exists, its bootstrap path explicitly generates one and formats in the
-checkout. Once the validated lockfile is committed, CI uses the strict
-nonmutating path. [Run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
+CI targets MSRV 1.94.0, the pinned 1.98.1 toolchain, and stable. CI requires the
+checked-in lockfile and uses the strict verification path; missing lockfiles fail
+before cache metadata resolution. [Run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 passed the Linux verification matrix and the focused macOS jobs for commit
 `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. It does not validate the later
 documentation, package-description, and rustdoc refresh. Both platforms run the
@@ -412,6 +411,31 @@ five HTTP smoke modes, including the two WARN-filtered profiles. The macOS job
 also runs the adapter integration tests and live database-independent example
 tests. This remains focused hosted evidence, not a full hosted macOS matrix or
 hosted PostgreSQL validation.
+
+The Rust workflow runs on pull requests, pushes to `master`, merge groups and
+manual dispatch. Feature-branch pushes use their PR run instead of starting a
+second complete matrix; branches without a PR can use manual dispatch.
+Superseded runs for the same PR/ref are cancelled. All seven matrix jobs remain:
+three Linux verification jobs, two focused macOS jobs, and two native Runlimit
+PostgreSQL jobs. Existing test, lint, documentation and HTTP smoke commands remain
+required, with no cache-hit condition bypassing them. Job timeouts are 45 minutes
+for full Linux verification, 30 for macOS and 15 for native Runlimit PostgreSQL.
+
+The pinned Rust cache action restores Cargo downloads and compiled dependencies
+after toolchain installation. Its default keys separate jobs, compiler/host,
+manifests, lockfiles and compiler environment. Only `master` saves caches, which
+PRs can restore; this avoids per-PR cache churn. Workspace and incremental build
+artifacts are excluded by the action, which disables incremental compilation.
+Temporary isolated-consumer builds still run in their own target directories.
+
+For the optimization baseline, [PR run 35697207609](https://github.com/bpcakes/batter/actions/runs/35697207609)
+took about 26 minutes elapsed and 92 total runner-minutes across its seven jobs;
+the same branch also started [push run 35697202800](https://github.com/bpcakes/batter/actions/runs/35697202800).
+Eliminating that duplicate reduces two full Rust matrices to one per PR update.
+The optimized workflow passed [PR run 35713923253](https://github.com/bpcakes/batter/actions/runs/35713923253)
+at `19c3575`, before the at-rest merge; cache speedups remain unmeasured.
+This public repository's standard hosted runner usage does not establish
+a billed dollar saving. See [primary references](references.md#github-actions-scheduling-and-caching-reviewed-2026-09-22).
 
 The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines`
 at warning level in all workspace packages. Root `clippy.toml` sets their thresholds to
@@ -788,7 +812,11 @@ is retained for Jig compatibility; these checks do not need a vault passphrase.
 
 The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
 adds Jig installation, contract, guide, file-budget, and integration regression
-checks. It caches only the installed runtime directories, keyed by runner OS and
+checks. `batter-at-rest-portability.yml` separately verifies detached source,
+packaging and an external consumer on Rust 1.94.0 when its crate, gate script or
+workflow changes; merge groups and manual dispatch also run it. Its gate creates
+a fresh Cargo home and target directories, independently of the workspace cache.
+The policy workflow caches only installed runtime directories, keyed by runner OS and
 architecture plus the source/configuration, contract, toolchain, installer, and
 workflow contents. A cache miss builds the selected revision; a hit still passes
 Jig's compatibility and source-stamp checks. Cache reuse on hosted runners has
@@ -824,7 +852,7 @@ append-only JSONL records retain union merging.
 Repository customizations omit the generated duplicate Rust/agent-map workflows and the
 checkout helper. Review `jig update` output before accepting it: a full template
 refresh can restore these defaults and replace managed guide/ignore blocks.
-Keep the two-workflow split, regression checks, runtime cache, and Rust-only
+Keep the three-workflow split, regression checks, runtime cache, and Rust-only
 settings when refreshing the harness. The plan merge override sits outside the
 managed attributes block so a regenerated union rule cannot silently replace it.
 
@@ -2003,6 +2031,17 @@ CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 1.98.1. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
+
+The GCRA replenishment regression drives the persisted database clock through
+0, 199, 200, 399 and 400 ms after exhausting a two-unit burst. It checks exact
+denial delays, one-unit replenishment and no full burst reset at the period
+boundary. A separate test brackets the admission watermark with real PostgreSQL
+clock samples. Neither check requires the runner to schedule requests inside a
+subsecond wall-clock window. The former sleep-based test failed when a delayed
+request correctly received newly replenished quota (`batter-jtnk`). An injected
+220 ms pause reproduces that failure and passes with the repaired clock fixture;
+mutations replacing continuous time with period buckets or the database sample
+with zero are rejected by the respective tests.
 
 `python3 scripts/check_runlimit_consumer.py` copies eligible sources outside the
 checkout and runs the retained native smoke plus `runlimit/smoke/facade_consumer.rs`

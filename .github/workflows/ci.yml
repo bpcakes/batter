@@ -1,13 +1,21 @@
 name: Rust verification
 on:
   push:
+    branches: [master]
   pull_request:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: rust-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   native-runlimit-postgres:
     name: Native Runlimit PostgreSQL (${{ matrix.rust }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +40,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # PRs reuse master caches without creating a cache for every PR.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Execute native PostgreSQL tests with default and all features
         run: |
           cargo test -p runlimit-postgres --tests --locked -- --ignored --test-threads=1
@@ -51,6 +64,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Compile all workspace targets, including Unix signal examples
         run: cargo check --workspace --all-features --all-targets --locked
       - name: Exercise Unix subprocess and scheduling contracts
@@ -76,6 +93,7 @@ jobs:
 
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -86,17 +104,17 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install toolchain
         run: rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
+      - name: Require the checked-in lockfile before cache metadata resolution
+        run: test -f Cargo.lock
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Verify Docker prerequisite for native PostgreSQL 18 tests
         run: docker info
-      - name: Verify (bootstrap only while the initial lockfile is absent)
+      - name: Verify locked workspace
         shell: bash
-        run: |
-          if [[ -f Cargo.lock ]]; then
-            bash scripts/verify.sh
-          else
-            echo 'Initial unverified snapshot: bootstrap formats and resolves. Commit its outputs after validation.'
-            bash scripts/verify.sh --bootstrap
-          fi
+        run: bash scripts/verify.sh
       - name: Build and smoke-test the HTTP example
         run: |
           cargo build -p batter --features axum --example http_service --locked

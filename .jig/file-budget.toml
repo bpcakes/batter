@@ -15,7 +15,6 @@ exclude = [
   "runlimit/runlimit-postgres/src/admission.rs",
   "runlimit/runlimit-postgres/src/lib.rs",
   "runlimit/runlimit-postgres/tests/attempts.rs",
-  "runlimit/runlimit-postgres/tests/gcra.rs",
   "runlimit/runlimit-postgres/tests/postgres.rs",
   "runledger/runledger-core/src/jobs/workflow_enqueue/tests/builders.rs",
   "runledger/runledger-postgres/src/error.rs",
@@ -449,15 +448,6 @@ exclude = []
 notice_lines = 400
 warn_lines = 500
 max_lines = 838
-
-[[rules]]
-id = "runlimit-import-38"
-category = "source"
-include = ["runlimit/runlimit-postgres/tests/gcra.rs"]
-exclude = []
-notice_lines = 400
-warn_lines = 500
-max_lines = 810
 
 [[rules]]
 id = "runlimit-import-40"
