@@ -29,6 +29,16 @@ and its [duplicate push run](https://github.com/bpcakes/batter/actions/runs/3569
 establish the duplicated execution. They predate the optimization and do not
 establish a cache hit or elapsed-time improvement for the revised workflow.
 
+## At-rest facade feature review, 2026-09-22
+
+The [Cargo feature-unification contract](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
+states that dependency features are additive across the resolved graph. The
+at-rest facade checks therefore inspect resolved features and reject activation
+of the leaf's `test-support` feature in production consumer cases. An individual
+manifest's defaults cannot establish application-wide isolation. The cryptographic
+v1 format, HKDF inputs, public signatures and MAC concatenation contract are
+unchanged by this review repair.
+
 ## PostgreSQL smoke fixture signal wait: reviewed 2026-09-21
 
 Python's [signal execution contract](https://docs.python.org/3/library/signal.html#execution-of-python-signal-handlers)
