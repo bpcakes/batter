@@ -4,6 +4,7 @@
 Own PostgreSQL 18 testcontainers, per-test databases and process-bound container cleanup.
 
 ## Key entrypoints
+`src/lib.rs` exports the public database fixtures and scoped environment helper.
 `src/postgres_container.rs`, `src/container_lifecycle/`, `src/db_lifecycle.rs`,
 `tests/container_lifecycle.rs`, and `build.rs`.
 
