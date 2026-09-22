@@ -1,0 +1,38 @@
+[package]
+publish = false
+name = "runledger-test-support"
+version = "0.12.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+description = "Test support utilities for Runledger PostgreSQL integration tests"
+readme = "../README.md"
+repository = "https://github.com/bpcakes/batter"
+homepage = "https://github.com/bpcakes/batter"
+documentation = "https://docs.rs/runledger-test-support"
+exclude = ["AGENTS.md"]
+keywords = ["jobs", "workflows", "postgres", "testing"]
+categories = ["development-tools::testing", "database"]
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cognitive_complexity = "warn"
+too_many_lines = "deny"
+allow_attributes_without_reason = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "deny"
+future_not_send = "deny"
+large_futures = "deny"
+large_stack_frames = "deny"
+
+[dependencies]
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "migrate", "uuid"] }
+testcontainers = { version = "0.28", features = ["watchdog"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }

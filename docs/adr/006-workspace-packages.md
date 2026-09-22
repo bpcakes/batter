@@ -88,3 +88,5 @@ unification in the full workspace remains insufficient evidence for facade
 optionality, so the temporary consumers keep their own workspace and target
 directory, copy the repository lock, reconcile only their root, and then use
 `--locked` without changing the repository lock.
+
+Native Runledger amendment, 2026-09-21 (`batter-biqv.1`): [ADR-011](011-native-runledger-workspace.md) adds four native libraries and the TUI binary under `runledger/`, all unpublished. Native ownership and optional facade adoption remain separate.

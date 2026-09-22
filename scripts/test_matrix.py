@@ -27,6 +27,12 @@ REFERENCE_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "s
 SQLX_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                      "-p", "test_sqlx_live.py", "-v"]
 RUNLIMIT_FEATURES = [sys.executable, "scripts/check_runlimit_features.py"]
+RUNLEDGER_GRAPH = [sys.executable, "scripts/check_runledger_workspace.py"]
+RUNLEDGER_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                      "-p", "test_runledger_workspace.py", "-v"]
+RUNLEDGER_CONSUMER = [sys.executable, "scripts/check_runledger_consumer.py"]
+RUNLEDGER_TOOL_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                          "-p", "test_runledger_tools.py", "-v"]
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 
 
@@ -36,6 +42,8 @@ def main():
                               [CORE_CHECK, FACADE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
                              (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls"],
                               [REFERENCE_RUNNER_TESTS, SQLX_RUNNER_TESTS, FACADE_FEATURES]),
+                             (["runledger-workspace", "runledger-graph-controls", "runledger-consumer", "runledger-tool-controls"],
+                              [RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS, RUNLEDGER_CONSUMER, RUNLEDGER_TOOL_CONTROLS]),
                              (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),
                              (["doctests"], [DOC_TESTS]),
                              (["runlimit-isolated-features"], [RUNLIMIT_FEATURES])]:

@@ -45,17 +45,13 @@ earlier discoveries shorten active phase waits without replacing the first nativ
 cause. Native stop observation drains peers promptly. No caller-owned termination gate,
 independent driver, failure side channel or nested cleanup stack is needed.
 
-This unpublished Unix-only adapter pins Runledger Git revision
-`b057233d94738cf30ee0706d12fd4d133a6e3493` (the shared profile-pool implementation from merged PR #22). The workspace root patches
-Runledger's SQLx foundation to the same source as the facade. Git consumers must
-repeat that root patch, as shown in the
-[compatibility manifest](../../docs/reference-compatibility.md#git-consumers);
-no sibling checkout is required. This revision includes the session-profile
-restoration before native pool idle admission delivered in Runledger PR #20.
-Runledger depends
-only on `batter-sqlx`, which depends on `batter-core`; neither depends on the
-facade or this integration. Publishing and replacement with immutable released
-package identities remain separate decisions.
+This unpublished Unix-only adapter consumes the native Runledger packages in
+this workspace. They were imported from master
+`46b5cd085d011e597de9552dfebbed4c19416453`, including PR #22. Local package paths
+select the same SQLx foundation as the facade without dependency patches or a
+sibling checkout. See [the compatibility manifest](../../docs/reference-compatibility.md#git-consumers).
+Runledger persistence depends on `batter-sqlx`, which depends on `batter-core`;
+neither depends on the facade or this adapter. Publishing remains a separate decision.
 
 `verify_schema(&database)` acquires and owns a read-only repeatable-read transaction.
 Runledger qualifies and checks authoritative objects, returning a

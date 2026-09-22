@@ -23,7 +23,7 @@ def eligible(path: Path, root: Path) -> bool:
         return False
     if path.name.startswith(".env") or path.suffix in {".log", ".zip", ".pyc"}:
         return False
-    allowed = {".rs", ".md", ".toml", ".py", ".sh", ".yml", ".yaml", ".json", ".jsonl"}
+    allowed = {".rs", ".md", ".toml", ".py", ".sh", ".yml", ".yaml", ".json", ".jsonl", ".sql", ".txt", ".patch"}
     named = {"LICENSE", "Cargo.lock", ".gitignore", ".gitattributes", ".gitkeep"}
     if relative.as_posix() == "scripts/jig":
         return True

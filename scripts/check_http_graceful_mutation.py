@@ -28,7 +28,7 @@ axum = Path(packages[0]['manifest_path']).parent
 print('SUBJECT', subject, flush=True)
 for name in ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml']:
     shutil.copy2(root/name, subject/name)
-for name in ['.cargo', 'crates', 'examples', 'test-support', 'scripts']:
+for name in ['.cargo', 'crates', 'examples', 'test-support', 'runledger', 'scripts']:
     shutil.copytree(root/name, subject/name, ignore=shutil.ignore_patterns('target','__pycache__'))
 shutil.copytree(axum, subject/'mutation-axum')
 manifest = subject/'Cargo.toml'

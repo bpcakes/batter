@@ -1,0 +1,176 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH dependency_updates AS (\n                SELECT dependent_step_id, dependency_unsatisfied\n                FROM unnest($1::uuid[], $2::boolean[])\n                    AS direct_dependents(dependent_step_id, dependency_unsatisfied)\n             )\n             UPDATE workflow_steps AS ws\n             SET dependency_count_pending = ws.dependency_count_pending - 1,\n                 dependency_count_unsatisfied = ws.dependency_count_unsatisfied +\n                    CASE WHEN dependency_updates.dependency_unsatisfied THEN 1 ELSE 0 END,\n                 updated_at = now()\n             FROM dependency_updates\n             WHERE ws.id = dependency_updates.dependent_step_id\n               AND ws.workflow_run_id = $3\n             RETURNING\n                ws.id,\n                ws.workflow_run_id,\n                ws.execution_kind::text AS \"execution_kind!\",\n                ws.job_type,\n                ws.organization_id,\n                ws.payload,\n                ws.priority,\n                ws.max_attempts,\n                ws.timeout_seconds,\n                ws.stage,\n                ws.execution_resource_key,\n                ws.status::text AS \"status!\",\n                ws.dependency_count_pending,\n                ws.dependency_count_unsatisfied",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_run_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "workflow_run_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "execution_kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "job_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "job_type"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "organization_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "organization_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "priority",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "priority"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "max_attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "max_attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "timeout_seconds",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "timeout_seconds"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "stage",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "stage"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "execution_resource_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "execution_resource_key"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "status!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "dependency_count_pending",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "dependency_count_pending"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "dependency_count_unsatisfied",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "workflow_steps",
+            "name": "dependency_count_unsatisfied"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "BoolArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "1ebbc119a0b111fd4d82785e510b98a6a8d0a3de8c32e9bc5433f3df5fdb1bd8"
+}
