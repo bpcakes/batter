@@ -5,7 +5,7 @@ readonly REQUIRED_RUST_TOOLCHAIN="1.94.0"
 readonly EXPECTED_RUST_VERSION="1.94"
 readonly EXPECTED_PACKAGE="batter-at-rest"
 readonly EXPECTED_VERSION="0.1.0"
-readonly EXPECTED_LICENSE="LicenseRef-CreditKit-Proprietary"
+readonly EXPECTED_LICENSE="MIT"
 
 script_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
-license = "LicenseRef-CreditKit-Proprietary"
+license = "MIT"
 description = "Standalone application-layer envelope encryption and stable MAC keys"
 readme = "README.md"
 

@@ -115,7 +115,7 @@ cause has been removed.
 `batter-core` implementation and owns optional adapter namespaces plus the
 public foundation examples; it contains no duplicate runtime.
 `crates/batter-at-rest` owns synchronous envelope encryption and stable MAC keys.
-It has explicit standalone metadata and proprietary licensing; the facade may
+It has explicit standalone metadata and carries its own copy of the workspace MIT license; the facade may
 only re-export its types behind the opt-in `at-rest` feature.
 `crates/batter-core/src/lifecycle.rs` and `crates/batter-core/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.

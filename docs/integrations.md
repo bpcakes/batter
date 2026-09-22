@@ -27,8 +27,8 @@ integration namespaces explicitly:
 `at-rest` re-exports the standalone, synchronous `batter-at-rest` package with
 the same type identities. Direct `batter_at_rest` use remains supported and
 does not select `batter-core` or a runtime. The optional leaf retains its
-[proprietary license](../crates/batter-at-rest/LICENSE), including through the MIT
-facade. Cargo feature unification means applications must inspect their complete
+own copy of the [MIT license](../crates/batter-at-rest/LICENSE), including when
+selected through the facade. Cargo feature unification means applications must inspect their complete
 resolved graph; facade feature checks do not establish a security boundary.
 See the leaf's [integration obligations](../crates/batter-at-rest/README.md#security-and-lifecycle-boundary)
 for authoritative context, bounded work, and fenced rotation persistence.

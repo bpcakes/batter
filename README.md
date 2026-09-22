@@ -189,7 +189,7 @@ examples; extracting it does not establish a lower library minimum.
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
-| `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | Synchronous standalone envelope encryption and stable MAC keys; proprietary and not covered by the root MIT license. |
+| `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | MIT-licensed synchronous standalone envelope encryption and stable MAC keys. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, explicit low-level connection disposition, and opt-in fixtures. |
@@ -276,7 +276,6 @@ compiler, lint, and test failures without weakening the documented contracts.
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Registry publication remains a separate decision.
-The optional `batter-at-rest` package is an exception: it uses
-[`LicenseRef-CreditKit-Proprietary`](crates/batter-at-rest/LICENSE), including when
-selected through the MIT facade's `at-rest` feature.
+MIT; see [LICENSE](LICENSE). The standalone `batter-at-rest` package carries a
+crate-local copy of the same license so detached Cargo packages include it.
+Registry publication remains a separate decision.

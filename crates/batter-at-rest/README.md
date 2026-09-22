@@ -96,8 +96,8 @@ cargo +1.94.0 package --allow-dirty
 ```
 
 Packageability is local validation, not publication authorization. The crate
-remains `publish = false` and `LicenseRef-CreditKit-Proprietary`; changes must
-preserve both declarations and the crate-local `LICENSE`. Consumers may store `Envelope::encode()` and
+remains `publish = false` and is licensed under the MIT license carried in its
+crate-local `LICENSE`. Consumers may store `Envelope::encode()` and
 the ciphertext body in separate row columns or store `SealedPayload::encode()`
 as one external object. Both layouts use the same authenticated format and
 must reconstruct only through the public decoders.
