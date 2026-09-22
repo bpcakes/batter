@@ -178,7 +178,7 @@ The facade-owned example binds `127.0.0.1:3000` by default and provides `/live`,
 `BATTER_ENV_FILE` may name one literal dotenv file; there is no default `.env`
 search. SIGINT/SIGTERM initiate shutdown on Unix.
 
-Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
+Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed.
 
 The HTTP composition example combines lifecycle readiness with a cached reader
 from the foundation health monitor. Its simulated probe runs independently of

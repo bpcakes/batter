@@ -91,7 +91,8 @@ orchestration in `runtime`, and SQL/state-machine logic in `postgres`.
 
 ## Installation
 
-The five native packages live in Batter's workspace and remain **unpublished**.
+The five native packages live in Batter's workspace as the coordinated 0.13.0
+crates.io release candidate.
 The import preserves Runledger master at
 `46b5cd085d011e597de9552dfebbed4c19416453`; see [provenance](IMPORT.md).
 For a service beside a Batter checkout:
@@ -130,8 +131,8 @@ use runledger_runtime::prelude::*;
 
 ## Owned transaction and schema scopes
 
-All workspace packages have `publish = false`. Shared workspace adoption does
-not authorize registry publication or change transaction ownership.
+All five native package manifests restrict publication to crates.io. Shared
+workspace adoption does not itself prove publication or change transaction ownership.
 
 Use `run_atomic(&database, async |mut scope| ...)`. The `RunledgerDatabase` owns
 mandatory acquisition/release hooks and an immutable `PgSessionProfile`. It declares
@@ -1642,7 +1643,7 @@ Two supported startup modes:
   Externally managed DDL can validate the `NOT VALID` cutover constraints after
   this check passes.
 
-For consumers of the coordinated source packages (currently unpublished):
+For consumers of the coordinated 0.13.0 source packages:
 
 - `runledger_postgres::MIGRATOR` embeds the vendored
   `runledger-postgres/migrations/` copy for expert inspection, checksum
@@ -1954,9 +1955,9 @@ change.
 
 ## Publication and version history
 
-All packages retain version 0.12.0 and `publish = false`. This workspace has no
-Runledger release or publication command. A future publication requires its own
-decision and registry-consumer validation.
+All packages use coordinated version 0.13.0 and restrict publication to crates.io.
+The `batter-ddc` release task owns registry-consumer validation and publication
+evidence; editing the manifests is not evidence that an upload completed.
 
 Observable contract changes to call out in release notes for this line:
 

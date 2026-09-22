@@ -45,3 +45,13 @@ ceilings rather than an unrelated source refactor in this migration.
 Fresh-agent usability evaluation is proposed and unexecuted. Standalone source
 consumer verification and shared-workspace maintenance tools belong to the
 second delivery task. The upstream repository is not archived by this decision.
+
+## Publication amendment
+
+On 2026-09-22, `batter-ddc` prepared all five native packages as coordinated
+version 0.13.0 crates restricted to crates.io. This semver-minor release signals
+the breaking pre-1.0 API changes recorded in the changelog. Internal path
+dependencies carry registry versions, while native ownership, migrations,
+package identities, and the dependency direction through `batter-sqlx` remain
+unchanged. Artifact validation and an explicit upload record are still required
+before claiming the release exists on the registry.

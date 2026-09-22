@@ -1,12 +1,15 @@
 [package]
 name = "batter-at-rest"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.94"
-publish = false
+publish = ["crates-io"]
 license = "MIT"
 description = "Standalone application-layer envelope encryption and stable MAC keys"
 readme = "README.md"
+repository = "https://github.com/bpcakes/batter"
+homepage = "https://github.com/bpcakes/batter"
+documentation = "https://docs.rs/batter-at-rest"
 
 [features]
 test-support = []

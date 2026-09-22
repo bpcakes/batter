@@ -1,11 +1,14 @@
 [package]
 name = "batter-runledger"
 description = "Owned Runledger initialization and native descendant settlement for Batter"
-version = "0.1.0"
+version = "0.0.1"
 edition.workspace = true
 rust-version = "1.94"
 license.workspace = true
-publish = false
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/batter-runledger"
+publish = ["crates-io"]
 readme = "README.md"
 
 [lints]

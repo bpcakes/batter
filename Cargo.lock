@@ -263,7 +263,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "batter"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "batter-at-rest",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "batter-at-rest"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "aes-gcm",
  "hkdf 0.12.4",
@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "batter-axum"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "batter-core",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "batter-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "batter-test-support",
  "pin-project-lite",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "batter-runledger"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "batter-core",
  "batter-sqlx",
@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "batter-runlimit"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "batter-axum",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "batter-sqlx"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "batter-core",
  "batter-test-support",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "batter-test-support"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "thiserror",
 ]
@@ -2839,7 +2839,7 @@ dependencies = [
 
 [[package]]
 name = "runledger-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "runledger-postgres"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "batter-sqlx",
  "chrono",
@@ -2872,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "runledger-runtime"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "runledger-test-support"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "sqlx",
  "testcontainers",
@@ -2902,7 +2902,7 @@ dependencies = [
 
 [[package]]
 name = "runledger-tui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2918,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "runlimit-axum"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2930,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "runlimit-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hmac 0.13.0",
  "serde",
@@ -2941,7 +2941,7 @@ dependencies = [
 
 [[package]]
 name = "runlimit-http"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "http",
  "runlimit-core",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "runlimit-memory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "runlimit-core",
  "serde",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "runlimit-postgres"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "runlimit-core",
  "runlimit-memory",

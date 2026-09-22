@@ -4,6 +4,12 @@ All notable changes to this workspace are documented here.
 
 ## [Unreleased]
 
+[Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
+
+## [0.13.0] - 2026-09-22
+
+[Release source](https://github.com/bpcakes/batter/tree/runledger-v0.13.0/runledger)
+
 - Breaking: replace borrowed transaction/session capabilities with `run_atomic`
   backed by Batter's SQLx foundation. Results leave the runner only after
   acknowledged disposition; uncertainty retains domain output/error. Consume

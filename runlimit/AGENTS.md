@@ -3,7 +3,8 @@
 ## Purpose
 Five native packages in the root Batter workspace own policy validation, key derivation,
 quota/attempt storage and transport adapters. Follow the root guide and Beads tracker.
-Keep native versions/licenses, strict lints and disabled publishing. These packages
+Keep coordinated version 0.4.0, native licenses, strict lints, and publication
+restricted to crates.io. These packages
 cannot depend on Batter or introduce its facade into native consumption.
 
 ## Key entrypoints

@@ -8,6 +8,12 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ("core", "postgres", "runtime", "test-support", "tui")
+EXPECTED_PUBLISH = ["crates-io"]
+EXPECTED_VERSIONS = {
+    **{"runledger-" + suffix: "0.13.0" for suffix in NATIVE},
+    "batter-core": "0.0.1",
+    "batter-sqlx": "0.0.1",
+}
 
 
 def validate_graph(metadata, root):
@@ -25,8 +31,10 @@ def validate_graph(metadata, root):
             raise ValueError("package must resolve from this workspace: " + name)
         if package["id"] not in metadata["workspace_members"]:
             raise ValueError("package must be a workspace member: " + name)
-        if package.get("publish") != []:
-            raise ValueError("package must remain unpublished: " + name)
+        if package.get("publish") != EXPECTED_PUBLISH:
+            raise ValueError("package must target crates.io publication: " + name)
+        if package["version"] != EXPECTED_VERSIONS[name]:
+            raise ValueError("package has an unexpected release version: " + name)
         selected[name] = package
 
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
@@ -96,7 +104,7 @@ def main():
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
     validate_readme(ROOT)
-    print("Runledger: local packages, one foundation identity, acyclic ownership, matching assets and snippets")
+    print("Runledger: publishable local packages, one foundation identity, acyclic ownership, matching assets and snippets")
 
 
 if __name__ == "__main__":

@@ -53,5 +53,5 @@ cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
 ```
 
-Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed, including
-the optional `batter-at-rest` dependency.
+Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed,
+including the optional `batter-at-rest` dependency.

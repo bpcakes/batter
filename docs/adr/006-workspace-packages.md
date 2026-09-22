@@ -90,3 +90,10 @@ directory, copy the repository lock, reconcile only their root, and then use
 `--locked` without changing the repository lock.
 
 Native Runledger amendment, 2026-09-21 (`batter-biqv.1`): [ADR-011](011-native-runledger-workspace.md) adds four native libraries and the TUI binary under `runledger/`, all unpublished. Native ownership and optional facade adoption remain separate.
+
+Publication amendment, 2026-09-22 (`batter-ddc`): prepare the eight Batter
+libraries as version 0.0.1 packages restricted to crates.io. Every internal
+path dependency also declares its registry version. The two example packages
+remain unpublished. This supersedes the earlier publication flags without
+changing package ownership, feature isolation, runtime behavior, or the rule
+that an upload requires explicit owner authorization and artifact validation.

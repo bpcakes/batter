@@ -112,5 +112,5 @@ external effects. Fresh-agent consumer evaluation remains unexecuted.
 - Arbitrary application SQL, captured pools, exported values, and external effects
   are not sandboxed. The API does not claim to prove those remote behaviors.
 
-Response-body streaming remains outside HTTP response construction. Packages
-remain unpublished.
+Response-body streaming remains outside HTTP response construction. Version
+0.0.1 targets crates.io together with native Runlimit 0.4.0.

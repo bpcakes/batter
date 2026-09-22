@@ -20,4 +20,4 @@ Add them as a development dependency. They do not drive teardown after a panic
 or cancellation: the test must await cleanup before combining results.
 
 From the workspace root, run `cargo test -p batter-test-support --locked`.
-Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
+Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed.

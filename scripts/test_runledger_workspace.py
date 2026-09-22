@@ -4,7 +4,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from check_runledger_workspace import NATIVE, validate_assets, validate_graph
+from check_runledger_workspace import (
+    EXPECTED_PUBLISH,
+    EXPECTED_VERSIONS,
+    NATIVE,
+    validate_assets,
+    validate_graph,
+)
 from package import eligible
 
 
@@ -16,7 +22,9 @@ class GraphTests(unittest.TestCase):
         nodes = []
         for name in names:
             directory = "runledger" if name.startswith("runledger-") else "crates"
-            packages.append(dict(name=name, id=name, source=None, publish=[],
+            packages.append(dict(name=name, id=name, source=None,
+                                 publish=EXPECTED_PUBLISH.copy(),
+                                 version=EXPECTED_VERSIONS.get(name, "0.0.1"),
                                  manifest_path=str(self.root / directory / name / "Cargo.toml")))
             nodes.append(dict(id=name, deps=[]))
         self.metadata = dict(packages=packages, workspace_members=names,
@@ -56,9 +64,9 @@ class GraphTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "foundation must not depend"):
             validate_graph(self.metadata, self.root)
 
-    def test_publishing_is_rejected(self):
+    def test_wrong_publication_policy_is_rejected(self):
         self.metadata["packages"][0]["publish"] = None
-        with self.assertRaisesRegex(ValueError, "unpublished"):
+        with self.assertRaisesRegex(ValueError, "crates.io publication"):
             validate_graph(self.metadata, self.root)
 
     def test_missing_workspace_membership_is_rejected(self):

@@ -1,7 +1,7 @@
 [package]
-publish = false
+publish = ["crates-io"]
 name = "runledger-tui"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT"
@@ -9,6 +9,7 @@ description = "Read-only terminal UI for monitoring Runledger jobs and workflows
 readme = "../README.md"
 repository = "https://github.com/bpcakes/batter"
 homepage = "https://github.com/bpcakes/batter"
+documentation = "https://docs.rs/runledger-tui"
 keywords = ["jobs", "workflows", "postgres", "tui"]
 categories = ["command-line-utilities", "asynchronous"]
 

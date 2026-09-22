@@ -1,7 +1,8 @@
 # batter-sqlx
 
-An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Rust 1.94
-minimum, Unix-only, unpublished. The foundation does not depend on this package.
+An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
+0.0.1, Rust 1.94 minimum, Unix-only, and targeting crates.io. The foundation
+does not depend on this package.
 
 ## Owned transactions and snapshots
 

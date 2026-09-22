@@ -1,11 +1,15 @@
 [package]
 name = "batter-runlimit"
 description = "Protected native Runlimit quota execution and optional authenticated HTTP composition"
-version = "0.1.0"
+version = "0.0.1"
 edition.workspace = true
 rust-version = "1.94"
 license.workspace = true
-publish = false
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/batter-runlimit"
+publish = ["crates-io"]
+readme = "README.md"
 autoexamples = false
 
 [features]
@@ -23,7 +27,7 @@ runlimit-core = { workspace = true }
 runlimit-memory = { workspace = true, optional = true }
 runlimit-postgres = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-batter-axum = { path = "../batter-axum", optional = true }
+batter-axum = { path = "../batter-axum", version = "0.0.1", optional = true }
 tokio = { workspace = true, features = ["net"], optional = true }
 tower = { workspace = true, features = ["util"], optional = true }
 serde_json = { version = "1", optional = true }

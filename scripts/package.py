@@ -37,7 +37,7 @@ def digest(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[1]
-    parser.add_argument("--output", type=Path, default=root.parent / "batter-0.1.0-mvp.zip")
+    parser.add_argument("--output", type=Path, default=root.parent / "batter-0.0.1.zip")
     args = parser.parse_args()
     paths = sorted(path for path in root.rglob("*") if eligible(path, root))
     inventory = "".join(f"{digest(path)}  {path.relative_to(root).as_posix()}\n" for path in paths)

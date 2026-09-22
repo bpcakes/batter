@@ -7,6 +7,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE = ('core', 'memory', 'postgres', 'http', 'axum')
+EXPECTED_PUBLISH = ['crates-io']
+EXPECTED_VERSION = '0.4.0'
 
 
 def validate_graph(metadata, root):
@@ -24,8 +26,10 @@ def validate_graph(metadata, root):
             raise ValueError('native package must resolve locally: ' + name)
         if package['id'] not in metadata['workspace_members']:
             raise ValueError('native package must be a workspace member: ' + name)
-        if package.get('publish') != []:
-            raise ValueError('native package must remain unpublished: ' + name)
+        if package.get('publish') != EXPECTED_PUBLISH:
+            raise ValueError('native package must target crates.io publication: ' + name)
+        if package['version'] != EXPECTED_VERSION:
+            raise ValueError('native package has an unexpected release version: ' + name)
         selected[name] = package['id']
     nodes = {n['id']: n for n in metadata['resolve']['nodes']}
     names = {p['id']: p['name'] for p in packages}
@@ -68,4 +72,4 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
-    print('Runlimit: five local unpublished identities, native ownership and imported SQL/licenses verified')
+    print('Runlimit: five publishable local identities, native ownership and imported SQL/licenses verified')
