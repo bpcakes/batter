@@ -21,6 +21,9 @@ use runlimit_postgres::{
 use sqlx::{AssertSqlSafe, PgPool, postgres::PgPoolOptions};
 use tokio::sync::Barrier;
 
+#[path = "gcra/clock.rs"]
+mod clock;
+
 static NEXT_SCHEMA: AtomicU64 = AtomicU64::new(0);
 
 struct Database {
@@ -451,26 +454,6 @@ async fn bounded_cleanup_releases_slots_and_skips_busy_shards() {
             .unwrap();
     assert_eq!(ledger, 1);
     assert_eq!(limiter.cleanup_expired(2).await.unwrap(), 1);
-    db.teardown().await;
-}
-
-#[tokio::test]
-#[ignore = "requires disposable PostgreSQL"]
-async fn database_time_replenishes_continuously_without_window_boundary_burst() {
-    let db = Database::new().await;
-    let policy = policy(2, 400, 2);
-    let check = Check::new(subject(1, 0, &policy).bind(&policy));
-    let limiter = db.limiter();
-    assert!(
-        limiter
-            .check(&check.with_cost(2).unwrap())
-            .await
-            .unwrap()
-            .permits_request()
-    );
-    tokio::time::sleep(Duration::from_millis(230)).await;
-    assert!(limiter.check(&check).await.unwrap().permits_request());
-    assert!(!limiter.check(&check).await.unwrap().permits_request());
     db.teardown().await;
 }
 

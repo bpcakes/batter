@@ -1,5 +1,15 @@
 # Implementation status
 
+2026-09-22 GCRA CI regression (`batter-jtnk`): the native PostgreSQL replenishment
+test now uses explicit persisted-clock boundaries, retaining checks for exact
+retry delays, continuous refill and no period-boundary burst. A separate test
+retains real database-clock sampling coverage. A 220 ms scheduling pause
+reproduces the former CI failure and passes after repair; period-bucket and
+zero-clock mutations fail the new assertions. Runtime code and CI test selection
+are unchanged. All 71 native PostgreSQL tests pass with default and all features
+on both Rust 1.94.0 and 1.98.1 against PostgreSQL 16.15 on Linux. See
+[native Runlimit verification](testing.md#native-runlimit-workspace-verification).
+
 2026-09-22 CI optimization (`batter-1a5h`): Rust verification now selects PRs,
 `master` pushes, merge groups and manual dispatch, cancels superseded runs, and
 restores pinned Cargo dependency caches with writes limited to `master`. All

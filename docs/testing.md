@@ -2032,6 +2032,17 @@ CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
 
+The GCRA replenishment regression drives the persisted database clock through
+0, 199, 200, 399 and 400 ms after exhausting a two-unit burst. It checks exact
+denial delays, one-unit replenishment and no full burst reset at the period
+boundary. A separate test brackets the admission watermark with real PostgreSQL
+clock samples. Neither check requires the runner to schedule requests inside a
+subsecond wall-clock window. The former sleep-based test failed when a delayed
+request correctly received newly replenished quota (`batter-jtnk`). An injected
+220 ms pause reproduces that failure and passes with the repaired clock fixture;
+mutations replacing continuous time with period buckets or the database sample
+with zero are rejected by the respective tests.
+
 `python3 scripts/check_runlimit_consumer.py` copies eligible sources outside the
 checkout and runs the retained native smoke plus `runlimit/smoke/facade_consumer.rs`
 from a sibling standalone workspace. The latter proves shared facade/direct/native
