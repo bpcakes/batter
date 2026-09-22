@@ -1,5 +1,19 @@
 # Implementation status
 
+2026-09-22 CI optimization (`batter-1a5h`): Rust verification now selects PRs,
+`master` pushes, merge groups and manual dispatch, cancels superseded runs, and
+restores pinned Cargo dependency caches with writes limited to `master`. All
+seven matrix jobs and existing semantic checks remain. Missing lockfiles fail
+instead of bootstrapping, and jobs have explicit timeouts. The baseline PR took
+about 26 minutes and 92 runner-minutes while a duplicate push matrix also ran.
+Actionlint 1.7.12, all 11 Jig integration regressions, guide/map checks and the
+comparison preserving existing matrix entries and check commands pass locally.
+The full Rust 1.98.1 Jig profile passes with fresh receipts for tests, strict
+Clippy, formatting, contract and file budgets on Linux. Cache-restore metadata
+inspection preserves an outdated lockfile on both supported Rust toolchains.
+Hosted execution and cache speedups for the revised workflow remain unverified;
+see [CI coverage and baseline](testing.md).
+
 2026-09-21 native Runlimit import (`batter-isdr.1`): five native packages from
 master `12e035dac504a1d348c2058ee7ade8e61f2e7974` now resolve locally. Versions,
 licenses, native APIs and immutable SQL/protocols are preserved. Local macOS arm64
