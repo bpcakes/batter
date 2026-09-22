@@ -501,8 +501,8 @@ The worker creates a new execution context with its own deadline/retry policy.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` pins native core/memory 0.3.0 and PostgreSQL 0.3.1 at the exact
-revision in its Cargo manifest. There are no default features. `memory`
+`batter-runlimit` consumes local native core/memory 0.3.0 and PostgreSQL 0.3.1
+from `runlimit/`, imported from master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. There are no default features. `memory`
 enables fixed-window/GCRA error bridges; `postgres` enables the native error
 bridge and canonical outcome-aware attempt runner; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,

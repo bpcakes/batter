@@ -1962,3 +1962,42 @@ With Docker, `psql` and SQLx CLI 0.9.0 installed, run
 to include the live database-ahead regression. It applies an extra migration to an
 owned disposable PostgreSQL 18 container, removes that migration from its source
 fixture, and proves refresh rejects it before copying or preparing sources.
+
+## Native Runlimit workspace verification
+
+Root verification includes native default and all-feature tests, both native lint
+configurations, doctests, existing facade/adapter isolation, source graph and asset
+controls, and the release-mode memory corruption fail-closed regression.
+`python3 scripts/check_runlimit_workspace.py` checks the actual Cargo graph and
+immutable imported SQL/license digests. The source archive and mutation-workspace
+inventories retain `runlimit/`, its SQL assets and both licenses.
+
+Native PostgreSQL tests stay explicit and ignored in ordinary tests. Against a
+disposable database, run both feature configurations:
+
+```sh
+RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --locked -- --ignored --test-threads=1
+RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
+```
+
+CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
+1.98.1. A workflow definition is not hosted execution evidence. The native test
+fixtures own isolated schemas; database provisioning remains external. Existing
+Runledger PostgreSQL 18 tests are separate.
+
+`python3 scripts/check_runlimit_consumer.py` copies eligible sources outside the
+checkout and runs the retained native smoke plus `runlimit/smoke/facade_consumer.rs`
+from a sibling standalone workspace. The latter proves shared facade/direct/native
+identities, successful work admission and denial without invoking work. All five
+native packages compile. The checker rejects duplicated, missing, remote or
+outside-copy required identities and changed external dependency versions. It
+supplies a public fixture key, needs no database or consumer patches, and checks
+execution markers only after successful process exit. Both fixtures are Jig inputs.
+
+The source workspace's active compiler is passed explicitly to Cargo; an explicit
+`RUSTUP_TOOLCHAIN` takes precedence. Run the check with `RUSTUP_TOOLCHAIN=1.94.0`
+for the minimum compiler. The root lock remains unchanged; the temporary lock may
+only prune unused packages. `python3 -m unittest discover -s scripts -p
+test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
+failure controls. Both commands are part of the bounded root test matrix. The same
+checker can run from an extracted source ZIP; it does not inspect Git history.

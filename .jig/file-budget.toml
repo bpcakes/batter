@@ -7,6 +7,16 @@ include = [
   "**/*.rs",
 ]
 exclude = [
+  "runlimit/runlimit-axum/tests/layer.rs",
+  "runlimit/runlimit-core/src/decision.rs",
+  "runlimit/runlimit-core/src/policy.rs",
+  "runlimit/runlimit-memory/src/gcra.rs",
+  "runlimit/runlimit-memory/src/store.rs",
+  "runlimit/runlimit-postgres/src/admission.rs",
+  "runlimit/runlimit-postgres/src/lib.rs",
+  "runlimit/runlimit-postgres/tests/attempts.rs",
+  "runlimit/runlimit-postgres/tests/gcra.rs",
+  "runlimit/runlimit-postgres/tests/postgres.rs",
   "runledger/runledger-core/src/jobs/workflow_enqueue/tests/builders.rs",
   "runledger/runledger-postgres/src/error.rs",
   "runledger/runledger-postgres/src/jobs/queue/enqueue.rs",
@@ -365,3 +375,95 @@ exclude = []
 notice_lines = 400
 warn_lines = 500
 max_lines = 1474
+
+# Native Runlimit snapshot 12e035dac504a1d348c2058ee7ade8e61f2e7974.
+# Exact inherited sizes; no unrelated source refactor or growth exemption.
+[[rules]]
+id = "runlimit-import-1"
+category = "source"
+include = ["runlimit/runlimit-axum/tests/layer.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 883
+
+[[rules]]
+id = "runlimit-import-6"
+category = "source"
+include = ["runlimit/runlimit-core/src/decision.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1147
+
+[[rules]]
+id = "runlimit-import-13"
+category = "source"
+include = ["runlimit/runlimit-core/src/policy.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1153
+
+[[rules]]
+id = "runlimit-import-21"
+category = "source"
+include = ["runlimit/runlimit-memory/src/gcra.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1388
+
+[[rules]]
+id = "runlimit-import-24"
+category = "source"
+include = ["runlimit/runlimit-memory/src/store.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 2127
+
+[[rules]]
+id = "runlimit-import-28"
+category = "source"
+include = ["runlimit/runlimit-postgres/src/admission.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 850
+
+[[rules]]
+id = "runlimit-import-33"
+category = "source"
+include = ["runlimit/runlimit-postgres/src/lib.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 1252
+
+[[rules]]
+id = "runlimit-import-37"
+category = "source"
+include = ["runlimit/runlimit-postgres/tests/attempts.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 838
+
+[[rules]]
+id = "runlimit-import-38"
+category = "source"
+include = ["runlimit/runlimit-postgres/tests/gcra.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 810
+
+[[rules]]
+id = "runlimit-import-40"
+category = "source"
+include = ["runlimit/runlimit-postgres/tests/postgres.rs"]
+exclude = []
+notice_lines = 400
+warn_lines = 500
+max_lines = 2841

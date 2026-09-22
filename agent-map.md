@@ -37,6 +37,8 @@ Fast jump index for agent-facing guidance in this repository.
 - [Native test support](./runledger/runledger-test-support/AGENTS.md).
 - [Operator TUI](./runledger/runledger-tui/AGENTS.md).
 
+- [Native Runlimit](./runlimit/AGENTS.md): validated policy, bounded native backends, transport helpers and immutable migrations.
+
 ## Private shared test sources
 
 - [Repository process machinery](./test-support/README.md): std-only Unix launch,

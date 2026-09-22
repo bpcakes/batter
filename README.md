@@ -70,9 +70,10 @@ Network access is required to download dependencies on the first run.
 
 Runledger's five native packages are part of this workspace, imported from
 master `46b5cd085d011e597de9552dfebbed4c19416453`. Local dependencies select one
-SQLx foundation without sibling checkouts or dependency patches. Runlimit remains
-pinned to its immutable Git revision. See [consumer configuration](docs/reference-compatibility.md#git-consumers)
-and [Runledger ownership and provenance](runledger/IMPORT.md).
+SQLx foundation without sibling checkouts or dependency patches. Runlimit's five
+native packages are also local, imported from master
+`12e035dac504a1d348c2058ee7ade8e61f2e7974`. See [consumer configuration](docs/reference-compatibility.md#git-consumers)
+and native [Runledger](runledger/IMPORT.md) / [Runlimit](runlimit/IMPORT.md) provenance.
 Runledger remains optional for facade consumers and is absent from the default
 foundation graph. All packages remain unpublished.
 
@@ -175,8 +176,10 @@ Adapter APIs are also available from their direct packages. The facade exposes
 `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
 `batter::test_support` through additive opt-in features; `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
-documented bridges. Each package declares its own version and Rust
-minimum (currently 0.1.0 and 1.94). The default toolchain is 1.98.1. SQLx 0.9.0
+documented bridges. Each package declares its own version and Rust minimum.
+Foundation/adapters remain 0.1.0; native Runledger remains 0.12.0 and native
+Runlimit remains 0.3.0 (PostgreSQL 0.3.1). All retain Rust 1.94 as their minimum.
+The default toolchain is 1.98.1. SQLx 0.9.0
 sets that floor in the adapter and examples; extracting it does not establish a
 lower library minimum.
 
@@ -189,6 +192,11 @@ lower library minimum.
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Native initialization and settlement plus a phase-scoped atomic enqueue runner and schema snapshots built on `batter-sqlx`. |
 | `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution and protected authenticated HTTP assembly. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
+| `runlimit-core` | [runlimit/runlimit-core](runlimit/README.md) | Native validated policies, subject keys and decisions. |
+| `runlimit-memory` | [runlimit/runlimit-memory](runlimit/README.md) | Native bounded process-local quota and attempt storage. |
+| `runlimit-postgres` | [runlimit/runlimit-postgres](runlimit/README.md) | Native replica-safe persistence, migrations and maintenance. |
+| `runlimit-http` | [runlimit/runlimit-http](runlimit/README.md) | Native framework-neutral response metadata. |
+| `runlimit-axum` | [runlimit/runlimit-axum](runlimit/README.md) | Native caller-controlled admission layer. |
 | `runledger-core` | [runledger/runledger-core](runledger/README.md) | Durable job/workflow types and validation. |
 | `runledger-postgres` | [runledger/runledger-postgres](runledger/README.md) | Native persistence using the workspace SQLx foundation. |
 | `runledger-runtime` | [runledger/runledger-runtime](runledger/README.md) | Native workers, scheduling and descendant supervision. |

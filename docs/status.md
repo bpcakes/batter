@@ -1,5 +1,16 @@
 # Implementation status
 
+2026-09-21 native Runlimit import (`batter-isdr.1`): five native packages from
+master `12e035dac504a1d348c2058ee7ade8e61f2e7974` now resolve locally. Versions,
+licenses, native APIs and immutable SQL/protocols are preserved. Local macOS arm64
+verification passes on Rust 1.94.0 and 1.98.1, including both complete verification
+matrices and all ten built HTTP smoke profiles. Native PostgreSQL tests pass with
+default and all features on both toolchains against PostgreSQL 16.15 in Docker.
+Both mutation oracles reject broken variants while accepting the originals.
+Jig api:test, formatting, strict lint, contract and file-budget gates pass.
+No hosted execution is claimed. See [ADR-012](adr/012-native-runlimit-workspace.md).
+
+
 2026-09-21 native Runledger import (`batter-biqv.1`): five native packages from
 master `46b5cd085d011e597de9552dfebbed4c19416453` now share the root Cargo graph.
 Local macOS arm64 verification passes on Rust 1.94.0 and 1.98.1, including native
@@ -127,6 +138,7 @@ exercise the later documentation, package-description, or rustdoc refresh.
 | Concern | Source status | Evidence / boundary |
 | --- | --- | --- |
 | Standalone native consumers and maintenance | Implemented; two-toolchain and live verification, `batter-biqv.2` | Git-free copied sources compile and execute direct/facade identity plus the native producer/worker round trip on both Rust versions against PostgreSQL 18.6. A real SQLx 0.9.0 refresh on a disposable copy passes online preparation, offline compilation and asset checks; canonical migrations remain unchanged. Negative controls cover source/dependency drift, snippets, migration states and failed preparation. |
+| Native Runlimit workspace | Implemented; two-toolchain validation passed, `batter-isdr.1` | Five local native packages preserve imported versions, source algorithms, migrations and dual licenses; graph/asset controls, native verification and PostgreSQL CI retained. Git-free native/facade consumers execute on Rust 1.94.0 and 1.98.1 (`batter-isdr.2`), preserving locked external versions and proving admitted work and denial without work. |
 | Native Runledger workspace | Implemented; `batter-biqv.1` | Five local packages from master `46b5cd085d011e597de9552dfebbed4c19416453`; unique foundation identity, one-way dependencies, unchanged migrations/caches, native PostgreSQL/container tests, both Rust verification runs and all HTTP profiles pass locally. Standalone consumer/tooling follow-up: `batter-biqv.2`. |
 | Outcome-aware attempt composition | Implemented; profile correction verified; `batter-mzd`, `batter-979` | `AttemptRunner` requires a profile-owned pool and one authoritative schema for native admission and atomic completion. The shared SQLx pool owner normalizes all acquisition/release paths; `run_atomic_profiled_in` retains native atomic outcomes before operation resolution. Fourteen live PG18 tests cover restricted authority/schema, drift/fallback rejection, audit/failure state, stale claims, shared budget, cancellation and uncertain commit without replay. Existing quota workflows remain unchanged. Both Rust matrices, HTTP smokes, Jig and stable-range native review passed; see the parallel-foundation evidence record. |
 | Owned PostgreSQL transaction/snapshot scopes | Implemented; `batter-psi`, follow-ups `batter-gzh`, `batter-ldb`, `batter-oth` | `run_atomic` withholds outputs until acknowledged disposition, retains uncertainty, validates birth XID/isolation and encloses work in private savepoints. Profiled variants restore declared role/schema/settings after reset and revalidate them. All sessions retire; `PgReadOnlySnapshot` owns coherent read-only inspection. Runledger consumes the foundation through its configured database type, with known-conflict rejection. PG18 adversarial and compile-fail tests cover boundaries, partial writes, cancellation, and unconfirmed completion. Profile setup now redacts default/hook error diagnostics while retaining native causes, and rejects case-variant duplicate settings (`batter-oth`). |
