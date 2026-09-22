@@ -3,6 +3,8 @@ use runledger_postgres::jobs::{JobEnqueue, JobEnqueueIntent};
 use runledger_postgres::{PgAtomicError, run_atomic};
 use runledger_test_support::{setup_ephemeral_pool, teardown_ephemeral_pool};
 
+#[path = "atomic_runner/policy.rs"]
+mod policy;
 mod support;
 
 #[tokio::test]

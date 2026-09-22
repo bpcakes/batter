@@ -872,6 +872,16 @@ later calls cannot replace it or invoke new work. A dropped polled operation
 records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
 application rejections and terminal scope failures use separate types.
 Operations use private savepoints and XID continuity.
+The policy-based `run_atomic_with` / `run_atomic_profiled_with` entry points
+fix the consumer error type before entering SQL. They use the same owned runner;
+policy mapping cannot restore a lost owner or turn an uncertain disposition into
+`Ok(T)`. All five failure-policy methods are required, and receive concrete
+provisional output, rejection and native causes as applicable. Interpreting or
+discarding these values in consumer error mapping is application policy, not a
+remote-effect proof. The `_with_in` variants preserve completion before local
+budget resolution. Native Runledger keeps the same policy through its consuming
+intent-to-queue transition and named operations.
+
 Profile and atomic continuity validation share one statement. After successful
 work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
 RELEASE. Unprofiled opening checks are omitted while ownership excludes intervening

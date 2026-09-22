@@ -11,6 +11,13 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "policy_abandoned_operation_cannot_be_caught_into_success",
+        "policy_infers_errors_and_preserves_recovery_and_rejection",
+        "policy_caught_loss_cannot_run_more_work_or_commit",
+        "policy_recovery_loss_keeps_rejection_and_native_cause",
+        "policy_completion_uncertainty_keeps_output_and_rejection",
+        "policy_begin_failure_does_not_invoke_body",
+
         "combined_validation_rejects_each_setting_and_recovers_local_changes",
         "combined_validation_rejects_role_and_schema_privilege_drift",
         "atomic_scope_statement_counts_include_recovery_and_completion",

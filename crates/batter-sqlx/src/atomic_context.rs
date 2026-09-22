@@ -70,7 +70,7 @@ pub async fn run_atomic_profiled_in<T, E>(
     .await
 }
 
-async fn retain<T, E>(
+pub(crate) async fn retain<T, E>(
     context: &OperationContext,
     operation: &'static str,
     work: impl Future<Output = Result<T, E>>,

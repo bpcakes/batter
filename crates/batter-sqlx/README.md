@@ -38,6 +38,29 @@ a database failure. Later operations return the retained loss without running SQ
 `PgScopeError::Application` is a recovered operation rejection;
 `PgScopeError::Terminal(PgScopeFailure)` cannot contain a plain business rejection.
 
+For one consumer error type across the entire workflow, use
+`run_atomic_with(&pool, &policy, async |mut scope| ...)` and `scope.sql(...)`.
+`PgFailurePolicy<T>` selects an associated `Error` once, so both closures infer
+that error and native SQLx `?` uses its ordinary `From<sqlx::Error>` conversion.
+The five required policy methods cover begin failure, terminal scope failure,
+commit uncertainty, rollback uncertainty, and scope loss after the body. There
+are no default uncertainty handlers. The last three receive the provisional
+output or rejection with the original cause; a failed scope recovery receives
+both application and recovery errors. The policy owns their application meaning
+and retention. The runner independently keeps its first loss cause: catching a
+mapped error cannot restore work or commit authority. No error cloning, dynamic
+error erasure, or second transaction implementation is needed.
+
+`run_atomic_profiled_with` applies the declared profile. With an existing budget,
+use `run_atomic_with_in` or `run_atomic_profiled_with_in`; these retain completion
+before boundary resolution and return `OperationError<Policy::Error>`, keeping
+interruption distinct from an acknowledged disposition. Native Runledger exposes
+`run_atomic_with` with the same policy, fixed-error SQL and named intent/queue
+methods. Its queue transition still consumes the intent phase. Existing enum-
+returning runners remain source compatible. See the policy runner rustdoc for a
+complete generic consumer example and `tests/atomic_live/policy.rs` for a concrete
+policy that retains each uncertain outcome.
+
 Each application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
 terminal failure or cancellation consumes the usable owner even when the body

@@ -3,6 +3,10 @@
 //! [`run_atomic`] releases output only after acknowledged commit, with known
 //! rejection separate from [`PgAtomicUncertainty`]. [`PgReadOnlySnapshot`] owns
 //! coherent read-only inspection. Both retire their session on every path.
+//! Choose [`run_atomic_with`] to bind one consumer error type through a required
+//! [`PgFailurePolicy`]; its `scope.sql(...)` closures support native SQLx `?`
+//! without repeated error-type annotations. [`run_atomic_with_in`] preserves
+//! these outcomes within an existing operation budget.
 //!
 //! ```no_run
 //! # async fn example(pool: &sqlx::PgPool) -> Result<i64, Box<dyn std::error::Error>> {
@@ -38,6 +42,7 @@
 
 mod atomic;
 mod atomic_context;
+mod atomic_policy;
 mod atomic_runner;
 mod failure;
 mod profile;
@@ -52,6 +57,10 @@ pub use atomic::{
     PgScopeLoss, PgScopedSql, PgTransactionError,
 };
 pub use atomic_context::{run_atomic_in, run_atomic_profiled_in};
+pub use atomic_policy::{
+    PgFailurePolicy, PgPolicyScope, run_atomic_profiled_with, run_atomic_profiled_with_in,
+    run_atomic_with, run_atomic_with_in,
+};
 pub use atomic_runner::{
     PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic, run_atomic_profiled,
 };

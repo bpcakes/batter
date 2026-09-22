@@ -25,10 +25,12 @@ use std::{
 };
 
 pub use runledger_postgres::{
-    AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty, PgIntentScope,
-    PgQueueScope, PgScopeFailure, PgScopeLoss, PgSessionProfile, RequiredIntentError,
-    RunledgerDatabase, SchemaCompatibilitySnapshot,
+    AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty,
+    PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
+    PgScopeFailure, PgScopeLoss, PgSessionProfile, RequiredIntentError, RunledgerDatabase,
+    SchemaCompatibilitySnapshot,
     ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
+    run_atomic_with,
 };
 
 /// Original native shutdown evidence. The process report retains this concrete

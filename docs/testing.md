@@ -58,6 +58,19 @@ Independent-session schema removal and USAGE revocation must prevent callback
 invocation. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
 ordinary workspace tests discover them but leave them ignored.
 
+Policy-based atomic runners are covered by `atomic_live::policy` and
+`atomic_live::policy_cancellation`: fixed native `?` inference, recovered errors,
+acknowledged rejection, caught terminal failure, abandoned work, paired recovery
+causes, setup failure, and commit/rollback uncertainty. Native
+`runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
+across SQL, intent recording, queue operations and required-conflict rollback.
+The exact SQLx live inventory now includes 42 atomic tests (105 total); execution
+on macOS arm64 passed all 105 cases on Rust 1.98.1 and 1.94.0 with PostgreSQL
+18.6. Both full verification scripts and five HTTP smokes per toolchain passed;
+required Jig gates passed. The first minimum-toolchain workspace run encountered
+a Docker port-resolution failure in the existing `job_read_scope` fixture. That
+target and the full rerun passed unchanged. See `batter-a0qb`.
+
 ## Verification commands
 
 Outcome-aware attempt acceptance uses an explicit disposable PostgreSQL 18:

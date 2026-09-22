@@ -1,15 +1,17 @@
 //! Acknowledged atomic workflows with a one-way intent-to-queue phase.
 mod intent;
+mod policy;
 use crate::{
     Error, RunledgerDatabase,
     jobs::{JobEnqueue, JobEnqueueIntent, JobEnqueueIntentOutcome, JobEnqueueOutcome},
 };
 use batter_sqlx::PgAtomicScope;
 pub use batter_sqlx::{
-    PgAtomicError, PgAtomicUncertainty, PgScopeError, PgScopeFailure, PgScopeLoss, PgScopedSql,
-    PgTransactionError,
+    PgAtomicError, PgAtomicUncertainty, PgFailurePolicy, PgScopeError, PgScopeFailure, PgScopeLoss,
+    PgScopedSql, PgTransactionError,
 };
 pub use intent::{AcceptedIntentOutcome, AcceptedIntentState, IntentConflict, RequiredIntentError};
+pub use policy::{PgPolicyIntentScope, PgPolicyQueueScope, run_atomic_with};
 
 /// Run application writes and Runledger operations in one owned transaction.
 /// Outputs leave this runner only after acknowledged commit; rejections only
