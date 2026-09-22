@@ -2,7 +2,6 @@ use batter_core::{
     BoxError, RegistrationError,
     cleanup::CleanupBudget,
     lifecycle::{ManagedComponent, ManagedSettlement, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     registration::RegistrationTarget,
 };
 use std::{

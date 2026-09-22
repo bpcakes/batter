@@ -2,6 +2,7 @@ use super::OperationContext;
 use crate::{ConfigurationError, validation};
 use std::time::Duration;
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// An explicitly independent root's absolute deadline.
 ///
@@ -81,6 +82,12 @@ impl OperationOwner {
     pub fn at(deadline: RootDeadline) -> Self {
         Self {
             context: OperationContext::at(deadline.instant()),
+        }
+    }
+
+    pub(crate) fn under(deadline: RootDeadline, parent: &CancellationToken) -> Self {
+        Self {
+            context: OperationContext::under(deadline.instant(), parent),
         }
     }
 

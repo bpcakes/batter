@@ -2,7 +2,7 @@ use batter_core::{
     RegistrationError,
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ManagedComponent, ManagedSettlement, Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
+    operation::{OperationContext, OperationOwner},
     startup::{InitializationError, Startup, StartupCause, StartupError},
 };
 use std::{
@@ -43,6 +43,12 @@ fn cleanup_budget() -> CleanupBudget {
         Duration::from_secs(1),
     )
     .unwrap()
+}
+
+fn context(seconds: u64) -> OperationContext {
+    OperationOwner::new(Duration::from_secs(seconds))
+        .unwrap()
+        .into_context()
 }
 
 fn supervisor() -> Supervisor {
@@ -93,17 +99,10 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
                 })
                 .unwrap();
         }
-        let specification = Startup::scoped(
-            process,
-            batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            move |_scope| {
-                called.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async { Ok::<_, RegistrationError>(()) })
-            },
-        );
+        let specification = Startup::scoped(process, context(1), cleanup_budget(), move |_scope| {
+            called.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok::<_, RegistrationError>(()) })
+        });
         let specification = match case {
             "invalid" => specification.with_unix_signals(""),
             "occupied" => specification.with_unix_signals("signals"),
@@ -145,10 +144,9 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
 
 #[tokio::test]
 async fn repeated_policy_precedes_preexisting_cancellation() {
-    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-        .unwrap()
-        .into_context();
-    context.cancel();
+    let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
+    owner.cancel();
+    let context = owner.into_context();
     let calls = Arc::new(AtomicUsize::new(0));
     let called = calls.clone();
     let mut starting = Startup::scoped(supervisor(), context, cleanup_budget(), move |_scope| {
@@ -255,9 +253,7 @@ fn run_repeated_cleanup_child() {
         let started = cleanup_started.clone();
         let mut starting = Startup::scoped(
             supervisor(),
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
+            context(5),
             CleanupBudget::new(
                 REPEATED_CLEANUP_TOTAL,
                 Duration::from_secs(5),
@@ -320,24 +316,17 @@ fn run_held_child() {
     runtime().block_on(async {
         let process = supervisor();
         let handle = process.handle();
-        let mut starting = Startup::scoped(
-            process,
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            |scope| {
-                Box::pin(async move {
-                    scope.reserve_cleanup("resource")?.register(|| async {
-                        println!("held-cleanup");
-                        Ok(())
-                    });
-                    println!("held-ready");
-                    std::io::stdout().flush().unwrap();
-                    std::future::pending::<Result<(), RegistrationError>>().await
-                })
-            },
-        )
+        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
+            Box::pin(async move {
+                scope.reserve_cleanup("resource")?.register(|| async {
+                    println!("held-cleanup");
+                    Ok(())
+                });
+                println!("held-ready");
+                std::io::stdout().flush().unwrap();
+                std::future::pending::<Result<(), RegistrationError>>().await
+            })
+        })
         .with_unix_signals("signals")
         .start();
         let report = failure(starting.wait().await);
@@ -351,13 +340,8 @@ fn run_held_child() {
 fn run_waiter_child() {
     runtime().block_on(async {
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
-        let mut starting = Startup::scoped(
-            supervisor(),
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            move |scope| {
+        let mut starting =
+            Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
                 Box::pin(async move {
                     scope
                         .reserve_cleanup("resource")?
@@ -365,10 +349,9 @@ fn run_waiter_child() {
                     entered_tx.send(()).unwrap();
                     std::future::pending::<Result<(), RegistrationError>>().await
                 })
-            },
-        )
-        .with_unix_signals("signals")
-        .start();
+            })
+            .with_unix_signals("signals")
+            .start();
         entered_rx.await.unwrap();
         assert!(
             tokio::time::timeout(Duration::from_millis(1), starting.wait())
@@ -407,14 +390,9 @@ fn run_startup_child() {
                 println!("startup-cleanup");
                 Ok(())
             });
-        let mut starting = Startup::scoped(
-            process,
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            |_scope| Box::pin(std::future::pending::<Result<(), RegistrationError>>()),
-        )
+        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |_scope| {
+            Box::pin(std::future::pending::<Result<(), RegistrationError>>())
+        })
         .with_unix_signals("signals")
         .start();
         println!("start-returned");
@@ -436,40 +414,31 @@ fn run_reserved_name_child(managed: bool) {
             .reserve_cleanup("signals")
             .unwrap()
             .register(|| async { Ok(()) });
-        let mut starting = Startup::scoped(
-            process,
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            move |scope| {
-                Box::pin(async move {
-                    if managed {
-                        scope.registration().register_managed(
-                            "signals",
-                            batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-                                .unwrap()
-                                .into_context(),
-                            move |_shutdown| {
-                                called.fetch_add(1, Ordering::SeqCst);
-                                Ok(ManagedComponent::new(
-                                    async { Ok(()) },
-                                    pending(),
-                                    |started| started,
-                                    async { NativeReport },
-                                ))
-                            },
-                        )?;
-                    } else {
-                        scope.registration().register("signals", move |startup| {
+        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), move |scope| {
+            Box::pin(async move {
+                if managed {
+                    scope.registration().register_managed(
+                        "signals",
+                        context(1),
+                        move |_shutdown| {
                             called.fetch_add(1, Ordering::SeqCst);
-                            async { Ok(startup.abandon()) }
-                        })?;
-                    }
-                    Ok::<_, RegistrationError>(())
-                })
-            },
-        )
+                            Ok(ManagedComponent::new(
+                                async { Ok(()) },
+                                pending(),
+                                |started| started,
+                                async { NativeReport },
+                            ))
+                        },
+                    )?;
+                } else {
+                    scope.registration().register("signals", move |startup| {
+                        called.fetch_add(1, Ordering::SeqCst);
+                        async { Ok(startup.abandon()) }
+                    })?;
+                }
+                Ok::<_, RegistrationError>(())
+            })
+        })
         .with_unix_signals("signals")
         .start();
         let report = failure(starting.wait().await);
@@ -490,13 +459,8 @@ fn run_running_child() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let stopped = events.clone();
         let cleaned = events.clone();
-        let mut starting = Startup::scoped(
-            supervisor(),
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            move |scope| {
+        let mut starting =
+            Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
                 Box::pin(async move {
                     scope
                         .reserve_cleanup("resource")?
@@ -514,10 +478,9 @@ fn run_running_child() {
                         })?;
                     Ok::<_, RegistrationError>(())
                 })
-            },
-        )
-        .with_unix_signals("signals")
-        .start();
+            })
+            .with_unix_signals("signals")
+            .start();
         let running = starting.wait().await.unwrap();
         running.status().wait_ready().await.unwrap();
         println!("running-ready");
@@ -534,25 +497,18 @@ fn run_unapproved_child() {
     runtime().block_on(async {
         let process = supervisor();
         let handle = process.handle();
-        let mut starting = Startup::scoped(
-            process,
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            |scope| {
-                Box::pin(async move {
-                    scope
-                        .registration()
-                        .register("worker", |shutdown| async move {
-                            let shutdown = shutdown.acknowledge_started();
-                            shutdown.draining().await;
-                            Ok(shutdown.stopped())
-                        })?;
-                    Ok::<_, RegistrationError>(())
-                })
-            },
-        )
+        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |scope| {
+            Box::pin(async move {
+                scope
+                    .registration()
+                    .register("worker", |shutdown| async move {
+                        let shutdown = shutdown.acknowledge_started();
+                        shutdown.draining().await;
+                        Ok(shutdown.stopped())
+                    })?;
+                Ok::<_, RegistrationError>(())
+            })
+        })
         .without_readiness_approval()
         .with_unix_signals("signals")
         .start();
@@ -572,25 +528,18 @@ fn run_owner_loss_child() {
         let closed = Arc::new(AtomicUsize::new(0));
         let closing = closed.clone();
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
-        let starting = Startup::scoped(
-            supervisor(),
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            move |scope| {
-                Box::pin(async move {
-                    scope
-                        .reserve_cleanup("resource")?
-                        .register(move || async move {
-                            closing.fetch_add(1, Ordering::SeqCst);
-                            Ok(())
-                        });
-                    entered_tx.send(()).unwrap();
-                    std::future::pending::<Result<(), RegistrationError>>().await
-                })
-            },
-        )
+        let starting = Startup::scoped(supervisor(), context(5), cleanup_budget(), move |scope| {
+            Box::pin(async move {
+                scope
+                    .reserve_cleanup("resource")?
+                    .register(move || async move {
+                        closing.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    });
+                entered_tx.send(()).unwrap();
+                std::future::pending::<Result<(), RegistrationError>>().await
+            })
+        })
         .with_unix_signals("signals")
         .start();
         let observer = starting.observer();
@@ -610,14 +559,9 @@ fn run_owner_loss_child() {
 
 fn run_default_termination_child(configured: bool) {
     runtime().block_on(async {
-        let specification = Startup::scoped(
-            supervisor(),
-            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
-                .unwrap()
-                .into_context(),
-            cleanup_budget(),
-            |_scope| Box::pin(std::future::pending::<Result<(), RegistrationError>>()),
-        );
+        let specification = Startup::scoped(supervisor(), context(5), cleanup_budget(), |_scope| {
+            Box::pin(std::future::pending::<Result<(), RegistrationError>>())
+        });
         if configured {
             let configured = specification.with_unix_signals("signals");
             drop(configured);

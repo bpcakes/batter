@@ -4,7 +4,10 @@ use batter_runlimit::quota::{Admission, Checks, InterruptedCheck, Quota, RunResu
 use runlimit_core::{BatchDecision, Check, ConsumptionStatus, Denial, QuotaMode};
 use std::{
     convert::Infallible,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use support::*;
@@ -101,14 +104,15 @@ async fn never_polled_and_pre_cancelled_do_no_backend_or_factory_work() {
     let quota = Quota::new(backend.clone());
     let policy = policy("owner", 1);
     let checks = [Check::new(subject(1).bind(&policy))];
-    let context = context(100);
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_millis(100)).unwrap();
+    let context = owner.context().clone();
     let calls = AtomicUsize::new(0);
     let work = |_| {
         calls.fetch_add(1, Ordering::SeqCst);
         async { Ok::<_, Infallible>(()) }
     };
     drop(quota.run(&context, Checks::new(&checks).unwrap(), work));
-    context.cancel();
+    owner.cancel();
     let result = quota
         .run(&context, Checks::new(&checks).unwrap(), work)
         .await;
@@ -214,8 +218,10 @@ async fn unresolved_quota_timeout_drops_backend_and_never_starts_work() {
 
 #[tokio::test]
 async fn cancellation_after_quota_return_preserves_grant_without_starting_work() {
-    let context = context(100);
-    let quota = Quota::new(Backend::new(Mode::CancelThenAllow(context.clone())));
+    let owner =
+        Arc::new(batter_core::operation::OperationOwner::new(Duration::from_millis(100)).unwrap());
+    let context = owner.context().clone();
+    let quota = Quota::new(Backend::new(Mode::CancelThenAllow(owner)));
     let policy = policy("owner", 1);
     let checks = [Check::new(subject(1).bind(&policy))];
     let calls = AtomicUsize::new(0);
@@ -413,8 +419,10 @@ async fn native_memory_grant_stays_spent_after_post_grant_cancellation() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 1);
     let checks = [Check::new(subject(32).bind(&policy))];
-    let operation = context(100);
-    let cancelling = operation.clone();
+    let owner =
+        Arc::new(batter_core::operation::OperationOwner::new(Duration::from_millis(100)).unwrap());
+    let operation = owner.context().clone();
+    let cancelling = Arc::clone(&owner);
     let calls = AtomicUsize::new(0);
     let result = quota
         .run(&operation, Checks::new(&checks).unwrap(), |_| {

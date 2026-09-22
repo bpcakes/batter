@@ -2,7 +2,6 @@ use batter_core::lifecycle::Fatal;
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ProcessCapacity, RunningSupervisor, ShutdownBudget, ShutdownCause, Supervisor},
-    operation::OperationContext,
     startup::Startup,
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};

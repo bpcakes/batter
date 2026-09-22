@@ -1,6 +1,5 @@
 use super::support::{Result, require};
 use super::{AuthorityFixture, exec, quote};
-use batter_core::operation::OperationContext;
 use batter_sqlx::verification::{
     AllowedPrivilege, AuthorityPolicyBuilder, DatabasePolicy, DiscoveryScope, FindingKind,
     Identifier, ObjectPrivilege, ParameterName, ParameterPolicy, PublicGrant, PublicObject,

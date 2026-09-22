@@ -1,8 +1,5 @@
 //! Offline maintenance command. Deployment revocation remains external.
-use batter::{
-    BoxError, cleanup::CleanupBudget, command::CommandOutcome, operation::OperationContext,
-    settings::SettingsSource,
-};
+use batter::{BoxError, cleanup::CleanupBudget, command::CommandOutcome, settings::SettingsSource};
 use batter_example_reference_service::{
     config::MaintenanceSettings,
     retirement::{self, DatabaseIdentity, RetirementError, RetirementReport},

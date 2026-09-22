@@ -3,10 +3,7 @@
 
 use batter::sqlx::{SqlxFailure, pool_in, probe};
 use batter::{
-    RegistrationError,
-    cleanup::CleanupBudget,
-    command::Command,
-    operation::{OperationContext, OperationError},
+    RegistrationError, cleanup::CleanupBudget, command::Command, operation::OperationError,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};

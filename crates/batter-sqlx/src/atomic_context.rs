@@ -111,11 +111,11 @@ mod tests {
     #[tokio::test]
     async fn acknowledged_output_and_native_error_survive_completion_poll_cancellation() {
         for outcome in [Ok(42), Err("commit uncertain")] {
-            let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-                .unwrap()
-                .into_context();
+            let owner =
+                batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+            let context = owner.context().clone();
             let result = retain(&context, "test.atomic", async {
-                context.cancel();
+                owner.cancel();
                 outcome
             })
             .await;
@@ -195,15 +195,14 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://unused@127.0.0.1:1/unused")
             .unwrap();
-        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-            .unwrap()
-            .into_context();
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
         let called = AtomicUsize::new(0);
         drop(run_atomic_in(&pool, &context, "test.atomic", async |_| {
             called.fetch_add(1, Ordering::SeqCst);
             Ok::<(), ()>(())
         }));
-        context.cancel();
+        owner.cancel();
         let result = run_atomic_in(&pool, &context, "test.atomic", async |_| {
             called.fetch_add(1, Ordering::SeqCst);
             Ok::<(), ()>(())
@@ -233,9 +232,8 @@ mod tests {
             sqlx::postgres::PgPoolOptions::new().min_connections(0),
         )
         .unwrap();
-        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-            .unwrap()
-            .into_context();
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
         let called = AtomicUsize::new(0);
         drop(run_atomic_profiled_in(
             &database,
@@ -246,7 +244,7 @@ mod tests {
                 Ok::<(), ()>(())
             },
         ));
-        context.cancel();
+        owner.cancel();
         let result = run_atomic_profiled_in(&database, &context, "test.profiled", async |_| {
             called.fetch_add(1, Ordering::SeqCst);
             Ok::<(), ()>(())

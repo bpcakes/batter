@@ -11,7 +11,6 @@ use batter::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget},
-    operation::OperationContext,
     settings::SettingsSource,
     startup::{
         InitializationError, StartingSupervisor, Startup, StartupCause, StartupError,

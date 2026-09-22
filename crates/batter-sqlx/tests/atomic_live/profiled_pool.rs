@@ -2,7 +2,6 @@ use super::{
     fixture,
     support::{Result, bounded},
 };
-use batter_core::operation::OperationContext;
 use batter_sqlx::{PgProfiledPool, PgSessionProfile, run_atomic_profiled_in};
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;

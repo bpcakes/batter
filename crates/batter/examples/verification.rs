@@ -1,7 +1,7 @@
 //! Run the generic read-only PostgreSQL verifier against an externally
 //! provisioned database. The migration and grant policy stays application-owned.
 
-use batter::operation::{Interruption, OperationContext, OperationError};
+use batter::operation::{Interruption, OperationError};
 use batter::sqlx::verification::VerificationError;
 use batter::sqlx::verification::{
     CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope, ExactRoleManifest,

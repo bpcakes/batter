@@ -4,7 +4,7 @@ use crate::verification::{
     AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, DiscoveryScope, FindingKind,
     ObjectPrivilege, QualifiedName, RelationPolicy,
 };
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError};
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -72,9 +72,8 @@ fn large_snapshot() -> (
 #[tokio::test]
 async fn loaded_evaluation_yields_and_cancellation_wins_before_a_report() {
     let (snapshot, policy) = large_snapshot();
-    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
-        .unwrap()
-        .into_context();
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(30)).unwrap();
+    let context = owner.context().clone();
     let operation = context.run("test.evaluation", |_| {
         evaluate_snapshot(snapshot, &policy, Vec::new(), false)
     });
@@ -82,7 +81,7 @@ async fn loaded_evaluation_yields_and_cancellation_wins_before_a_report() {
     // The first poll enters the real post-load evaluator and must yield before
     // completion. Removing its checkpoints makes this assertion fail.
     assert!(futures_util::poll!(&mut operation).is_pending());
-    context.cancel();
+    owner.cancel();
     assert!(matches!(
         operation.await,
         Err(OperationError::Interrupted(Interruption::Cancelled))

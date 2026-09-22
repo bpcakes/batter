@@ -5,7 +5,7 @@ use super::{
     startup_process::{self, ExecutableChild, Signal},
 };
 use crate::support::profiled::initialize_schema;
-use batter::{BoxError, operation::OperationContext};
+use batter::BoxError;
 use batter_example_reference_service::delivery::{OwnerId, SubmitDelivery};
 use serde_json::Value;
 use sqlx::{Connection, PgConnection, PgPool, types::Uuid};

@@ -3,7 +3,6 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     command::{CommandCause, SharedCommandReport},
-    operation::OperationContext,
 };
 use batter_example_reference_service::retirement::{
     self, DatabaseIdentity, RetirementError, RetirementReport,

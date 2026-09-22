@@ -10,7 +10,6 @@ use batter_core::{
     RegistrationError,
     cleanup::CleanupBudget,
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     startup::Startup,
 };
 use std::{net::SocketAddr, time::Duration};

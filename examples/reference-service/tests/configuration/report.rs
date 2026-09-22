@@ -5,7 +5,6 @@ use batter::test_support::TestFailure;
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{ShutdownBudget, Supervisor},
-    operation::OperationContext,
     settings::SettingsError,
     startup::{Startup, StartupCause, StartupError},
 };

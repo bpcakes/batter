@@ -13,7 +13,6 @@ use batter::runlimit::{
 use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, Supervisor},
-    operation::OperationContext,
 };
 use runlimit_core::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
 use runlimit_memory::{MemoryStore, MemoryStoreConfig};

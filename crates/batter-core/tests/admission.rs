@@ -59,11 +59,12 @@ async fn closing_wakes_waiters() {
 
 #[tokio::test(start_paused = true)]
 async fn cancelled_call_is_not_admitted_even_when_capacity_exists() {
-    let context = context();
-    context.cancel();
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let context = owner.context();
+    owner.cancel();
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     assert!(matches!(
-        bulkhead.enter(&context, Admission::Reject).await,
+        bulkhead.enter(context, Admission::Reject).await,
         Err(AdmissionError::Interrupted(Interruption::Cancelled))
     ));
 }

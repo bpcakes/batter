@@ -6,7 +6,6 @@ use batter::{
     BoxError,
     admission::{Admission, Bulkhead, BulkheadCapacity},
     lifecycle::{Fatal, ProcessCapacity, Supervisor},
-    operation::OperationContext,
 };
 use std::{convert::Infallible, time::Duration};
 use tokio::sync::oneshot;

@@ -6,7 +6,7 @@ mod test_dispatch;
 
 use batter_core::lifecycle::Fatal;
 use batter_core::{
-    operation::{Interruption, OperationContext},
+    operation::Interruption,
     retry::{
         self, ReplaySafety, RetryError, RetryExecutionError, RetryOptions, RetryPolicy, StopReason,
     },
@@ -71,9 +71,8 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
         .with_max_level(tracing::Level::INFO)
         .finish();
     async {
-        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-            .unwrap()
-            .into_context();
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context();
         assert_eq!(
             context
                 .run("telemetry.success", |_| async { Ok::<_, io::Error>(42) })
@@ -81,7 +80,7 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
                 .unwrap(),
             42
         );
-        context.cancel();
+        owner.cancel();
         assert!(
             context
                 .run("telemetry.cancelled", |_| async { Ok::<_, io::Error>(()) })
@@ -155,14 +154,14 @@ async fn resolved_result_is_classified_before_operation_telemetry_finishes() {
 
         let retained = Arc::new(Mutex::new(None));
         let inside = retained.clone();
-        let committed = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-            .map(|owner| owner.into_context())
-            .unwrap()
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
+        let committed = context
             .run_resolved(
                 "telemetry.resolved-success",
-                move |scope| async move {
+                move |_| async move {
                     *inside.lock().unwrap() = Some(42);
-                    scope.cancel();
+                    owner.cancel();
                     std::future::pending::<Result<(), io::Error>>().await
                 },
                 move |boundary| match retained.lock().unwrap().take() {
@@ -224,9 +223,11 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
             })
         ));
 
-        let input = batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+        let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(2))
             .unwrap()
             .into_context();
+        let owner = Arc::new(parent.child(Duration::from_secs(2)).unwrap());
+        let input = owner.context().clone();
         let cancelled: Result<(), _> = retry::execute_with_options(
             &input,
             "telemetry.retry-cancelled",
@@ -235,9 +236,12 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
             RetryOptions::new()
                 .with_attempt_maximum(Duration::from_secs(1))
                 .unwrap(),
-            |attempt| async move {
-                attempt.context.cancel();
-                Err("secret-cancelled-error")
+            move |_| {
+                let owner = Arc::clone(&owner);
+                async move {
+                    owner.cancel();
+                    Err("secret-cancelled-error")
+                }
             },
             |_| panic!("cancelled attempt must not classify"),
         )
@@ -250,7 +254,7 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
                 last_error: Some("secret-cancelled-error"),
             })
         ));
-        assert!(input.check().is_ok());
+        assert!(parent.check().is_ok());
 
         let succeeded = retry::execute_with_options(
             &batter_core::operation::OperationOwner::new(Duration::from_secs(2))

@@ -3,7 +3,6 @@ use crate::config::MaintenanceSettings;
 use batter::{
     cleanup::CleanupBudget,
     command::{Command, CommandCause},
-    operation::OperationContext,
     settings::SettingsSource,
 };
 use sqlx::{Connection, PgConnection, postgres::PgSslMode};

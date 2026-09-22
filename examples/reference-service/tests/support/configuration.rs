@@ -5,7 +5,6 @@ use batter::sqlx::test_support::ConnectionPlan;
 use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     settings::SettingsSource,
     startup::{Startup, StartupError},
 };

@@ -1,7 +1,7 @@
 use super::*;
 use batter_core::{
     command::{Command, CommandCause},
-    operation::{Interruption, OperationContext},
+    operation::Interruption,
 };
 
 #[tokio::test(flavor = "current_thread")]

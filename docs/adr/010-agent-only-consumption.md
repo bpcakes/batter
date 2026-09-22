@@ -83,6 +83,28 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Operation authority assessment (`batter-tc9w.1`)
+
+A cloneable context previously let a consumer cancel the shared operation or
+construct an unrelated root while processing a child callback. That made a
+sibling or parent interruption possible through an ordinary execution argument.
+The canonical path now passes cloneable `OperationContext` only for observation
+and execution. Non-cloneable `OperationOwner` retains explicit cancellation;
+child owners derive their deadline and token from the complete parent context.
+`RootDeadline` preserves absolute time for an explicitly independent root, and
+`OperationAdmission` returns an owner linked to process cancellation only after
+readiness. Compile-fail rustdocs reject context cancellation, independent root
+construction through a context, and owner cloning. Runtime regressions cover
+child isolation, deadline clamping and process cancellation.
+
+The application root still chooses when an independent operation is appropriate;
+local types cannot prove that policy. An owner may deliberately give up its
+authority with `into_context`, and dropping it does not cancel detached work.
+The application must still await any work it owns and keep cleanup separate from
+process cancellation. These are explicit ownership limits, not claims of async
+drop or remote effect rollback. Fresh-agent usability evaluation is proposed
+and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

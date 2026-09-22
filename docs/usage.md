@@ -67,11 +67,29 @@ generic test support. Direct adapter packages remain supported when an
 application needs their native package boundary. The complete feature table
 and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
 
+## Operation ownership and migration
+
+Create an independent application-root operation with `OperationOwner::new`, or
+select an absolute `RootDeadline` and pass it to `OperationOwner::at`. Keep the
+owner when the application must cancel that operation; pass `owner.context()`
+to execution APIs. Derive a child owner with `context.child(budget)`, which
+clamps its deadline and inherits cancellation from the parent. A process entry
+point uses `OperationAdmission::admit_root(deadline)` and receives an owner
+linked to forced process cancellation.
+
+When migrating a former `OperationContext::new` or `OperationContext::at` call,
+decide whether it is an independent root or a child of an existing operation.
+Replace root construction with `OperationOwner`; derive children from the
+parent context. Replace `context.cancel()` with cancellation through retained
+owner authority. A callback receiving only `OperationContext` cannot cancel
+its shared scope. `into_context()` explicitly relinquishes that authority.
+Neither owner drop nor context drop joins detached work.
+
 ## Fresh futures and explicit replay
 
 ```rust
 use batter::{
-    operation::OperationContext,
+    operation::OperationOwner,
     retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
 };
 use std::time::Duration;
@@ -81,14 +99,14 @@ async fn read_from_provider() -> Result<u64, std::io::Error> {
 }
 
 async fn example() -> Result<u64, Box<dyn std::error::Error>> {
-    let context = batter::operation::OperationOwner::new(Duration::from_secs(3))?.into_context();
+    let owner = OperationOwner::new(Duration::from_secs(3))?;
     let policy = RetryPolicy::new(
         3, Duration::from_millis(50), Duration::from_millis(400),
     )?;
     let options = RetryOptions::new()
         .with_attempt_maximum(Duration::from_millis(500))?;
     let result = retry::execute_with_options(
-        &context,
+        owner.context(),
         "provider.read",
         ReplaySafety::Idempotent,
         &policy,
@@ -460,7 +478,7 @@ An extracted stack may be closed after dropping the supervisor; that drop signal
 forced process cancellation first. Cleanup hooks must not use contexts created by
 `OperationAdmission` to cancel teardown. Await the resource's native close
 operation directly, or use
-an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
+an independent `OperationOwner::new` for cleanup; the stack's `CleanupBudget`
 still applies. The [extracted-cleanup test](../crates/batter-core/tests/lifecycle_state.rs)
 demonstrates independent teardown after the owner is dropped.
 

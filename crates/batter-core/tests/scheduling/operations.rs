@@ -2,7 +2,7 @@ use super::support::{Case, poll_pending, yields};
 use batter_core::lifecycle::Fatal;
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
-    operation::{Interruption, OperationContext, OperationError},
+    operation::{Interruption, OperationError},
 };
 use std::{
     convert::Infallible,
@@ -16,19 +16,17 @@ use std::{
 use tokio::sync::{Barrier, oneshot};
 
 pub async fn hierarchy_and_drop(case: Case) {
-    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
-        .unwrap()
-        .into_context();
-    let child = parent
-        .child(Duration::from_secs(60))
-        .unwrap()
-        .into_context();
+    let parent_owner =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(30)).unwrap();
+    let parent = parent_owner.context().clone();
+    let child_owner = parent.child(Duration::from_secs(60)).unwrap();
+    let child = child_owner.context().clone();
     let sibling = parent
         .child(Duration::from_secs(60))
         .unwrap()
         .into_context();
     assert_eq!(child.deadline(), parent.deadline());
-    child.cancel();
+    child_owner.cancel();
     assert_eq!(child.check(), Err(Interruption::Cancelled));
     assert!(parent.check().is_ok() && sibling.check().is_ok());
     let (sender, receiver) = oneshot::channel();
@@ -48,7 +46,7 @@ pub async fn hierarchy_and_drop(case: Case) {
         async { Ok::<_, Infallible>(()) }
     }));
     assert!(!invoked.load(Ordering::SeqCst));
-    parent.cancel();
+    parent_owner.cancel();
     assert_eq!(sibling.check(), Err(Interruption::Cancelled));
     case.event("downward-cancellation-and-drop-checked");
 }
@@ -62,7 +60,8 @@ pub async fn branch_priority(case: Case, cancel: bool, expire: bool) {
     } else {
         Duration::from_secs(20)
     };
-    let context = parent.child(duration).unwrap().into_context();
+    let owner = parent.child(duration).unwrap();
+    let context = owner.context().clone();
     let (scope_tx, scope_rx) = oneshot::channel();
     let (finish, finished) = oneshot::channel();
     let mut run = Box::pin(context.run("simultaneous-branches", |scope| async move {
@@ -76,7 +75,7 @@ pub async fn branch_priority(case: Case, cancel: bool, expire: bool) {
         tokio::time::sleep_until(context.deadline()).await;
     }
     if cancel {
-        context.cancel();
+        owner.cancel();
     }
     finish.send(()).unwrap();
     case.event("branches-ready-before-repoll");
@@ -100,10 +99,8 @@ pub async fn completion_race(case: Case, delay: u64) {
     let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
         .unwrap()
         .into_context();
-    let context = parent
-        .child(Duration::from_secs(20))
-        .unwrap()
-        .into_context();
+    let owner = parent.child(Duration::from_secs(20)).unwrap();
+    let context = owner.context().clone();
     let sibling = parent
         .child(Duration::from_secs(20))
         .unwrap()
@@ -128,7 +125,7 @@ pub async fn completion_race(case: Case, delay: u64) {
     let cancel = tokio::spawn(async move {
         cancelling.wait().await;
         yields(delay.rotate_left(3)).await;
-        context.cancel();
+        owner.cancel();
         case.event("operation-cancel-returned");
     });
     barrier.wait().await;
@@ -147,7 +144,8 @@ pub async fn bulkhead_preflight(case: Case, delay: u64) {
         .unwrap()
         .into_context();
     let permit = bulkhead.enter(&fresh, Admission::Reject).await.unwrap();
-    let context = fresh.child(Duration::from_secs(20)).unwrap().into_context();
+    let owner = fresh.child(Duration::from_secs(20)).unwrap();
+    let context = owner.context().clone();
     let waiter_context = context.clone();
     let waiting_bulkhead = bulkhead.clone();
     let waiter = tokio::spawn(async move {
@@ -160,7 +158,7 @@ pub async fn bulkhead_preflight(case: Case, delay: u64) {
         drop(permit);
     });
     yields(delay.rotate_left(7)).await;
-    context.cancel();
+    owner.cancel();
     release.await.unwrap();
     match waiter.await.unwrap() {
         Ok(permit) => drop(permit),

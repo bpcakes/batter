@@ -7,7 +7,6 @@ use batter_core::{
         ProcessAdmissionError, ProcessCapacity, ProcessHandle, Readiness, ShutdownBudget,
         ShutdownSignal, Supervisor,
     },
-    operation::OperationContext,
 };
 use std::{
     convert::Infallible,
@@ -47,7 +46,7 @@ fn operation_admission_returns_the_observed_lifecycle_state() {
         ))
         .unwrap();
     assert_eq!(
-        expired.check(),
+        expired.context().check(),
         Err(batter_core::operation::Interruption::DeadlineExceeded)
     );
     let admitted = admission
@@ -58,7 +57,11 @@ fn operation_admission_returns_the_observed_lifecycle_state() {
         admission.admit_root(batter_core::operation::RootDeadline::at(deadline)),
         Err(Readiness::Draining)
     ));
-    assert_eq!(admitted.check(), Ok(()), "drain is not forced cancellation");
+    assert_eq!(
+        admitted.context().check(),
+        Ok(()),
+        "drain is not forced cancellation"
+    );
 }
 
 #[tokio::test]
@@ -71,14 +74,14 @@ async fn operation_admission_is_downward_only_and_closes_after_stop() {
     let running = process.start();
     status.wait_ready().await.unwrap();
 
-    let context = admission
+    let owner = admission
         .admit_root(batter_core::operation::RootDeadline::at(
             tokio::time::Instant::now() + Duration::from_secs(1),
         ))
         .unwrap();
-    context.cancel();
+    owner.cancel();
     assert_eq!(
-        context.check(),
+        owner.context().check(),
         Err(batter_core::operation::Interruption::Cancelled)
     );
     assert!(
@@ -132,8 +135,8 @@ async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
 
     assert_eq!(status.readiness(), Readiness::Draining);
     match &admitted {
-        Ok(context) => assert_eq!(
-            context.check(),
+        Ok(owner) => assert_eq!(
+            owner.context().check(),
             Ok(()),
             "an admission linearized before drain survives the drain phase"
         ),
@@ -142,9 +145,9 @@ async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
 
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(running.wait().await.unwrap().is_success());
-    if let Ok(context) = admitted {
+    if let Ok(owner) = admitted {
         assert_eq!(
-            context.check(),
+            owner.context().check(),
             Err(batter_core::operation::Interruption::Cancelled)
         );
     }

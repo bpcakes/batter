@@ -2,7 +2,7 @@
 mod test_dispatch;
 
 use batter_core::lifecycle::Fatal;
-use batter_core::{operation::OperationContext, telemetry::with_current_dispatch};
+use batter_core::telemetry::with_current_dispatch;
 use std::{
     cell::Cell,
     future::Future,

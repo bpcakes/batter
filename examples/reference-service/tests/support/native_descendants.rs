@@ -2,7 +2,7 @@ use super::{
     ProbeResult,
     native_hosted::{config, enqueue, process, status},
 };
-use batter::{cleanup::SkipReason, operation::OperationContext};
+use batter::cleanup::SkipReason;
 use runledger_core::prelude::async_trait;
 use runledger_runtime::{JobLifecycleObserver, JobSucceededEvent};
 use sqlx::PgPool;

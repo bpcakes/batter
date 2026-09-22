@@ -1,4 +1,4 @@
-use super::{Buffer, OperationContext};
+use super::Buffer;
 use batter_core::lifecycle::Fatal;
 use std::{
     future::{Future, poll_fn},

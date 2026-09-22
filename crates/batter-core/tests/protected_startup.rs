@@ -2,7 +2,6 @@ use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     startup::{
         InitializationError, ProtectedStartupScope, Startup, StartupCause, StartupError,
         StartupFuture, StartupObserver,

@@ -3,7 +3,6 @@ use batter_core::{
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader, HealthStatus, ProbeOutcome},
     lifecycle::{Readiness, ShutdownBudget, ShutdownHandle, Supervisor},
-    operation::OperationContext,
     startup::Startup,
 };
 use std::{

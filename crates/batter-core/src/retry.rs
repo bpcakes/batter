@@ -324,8 +324,8 @@ pub struct Attempt {
     /// One-based attempt number.
     pub number: u32,
     /// Cannot extend the original deadline. Cancelled when this attempt ends.
-    /// Cancelling this scope stops the retry sequence but does not cancel the
-    /// input execution context.
+    /// The callback observes cancellation here; it cannot request cancellation
+    /// without an owner retained outside the callback.
     pub context: OperationContext,
 }
 
@@ -369,9 +369,8 @@ where
 /// terminal and returns [`RetryExecutionError::AttemptDeadlineExceeded`]; it is
 /// not classified or retried. Cancellation observed in the input lineage or
 /// current [`Attempt`] scope and expiration of the original total deadline
-/// remain distinct [`RetryExecutionError::Interrupted`] outcomes. Explicitly
-/// cancelling [`Attempt::context`] stops the sequence without cancelling the
-/// input `context`.
+/// remain distinct [`RetryExecutionError::Interrupted`] outcomes. A caller that
+/// must stop the sequence retains ownership of the input context or its parent.
 ///
 /// Attempt interruption drops the owned future and cancels its child scope. It
 /// does not establish a remote effect's outcome or join detached work.

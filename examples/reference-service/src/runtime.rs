@@ -11,7 +11,7 @@ use batter::{
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::{DriverOutcome, ShutdownBudget, check_shutdown},
-    operation::{OperationContext, OperationError},
+    operation::OperationError,
     registration::Registration,
     startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
 };
@@ -340,7 +340,7 @@ mod tests {
     const PRIVATE: &str = "private-marker";
     type ProtectedReport = StartupFailure<InitializationError<InitializationFailure>>;
 
-    fn context() -> OperationContext {
+    fn context() -> batter::operation::OperationContext {
         batter::operation::OperationOwner::new(Duration::from_secs(5))
             .unwrap()
             .into_context()

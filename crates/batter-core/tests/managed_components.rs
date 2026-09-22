@@ -14,7 +14,6 @@ use batter_core::{
     BoxError, RegistrationError,
     cleanup::SkipReason,
     lifecycle::{ManagedComponent, ManagedInitialization, Readiness},
-    operation::OperationContext,
 };
 use managed_support::*;
 use std::{

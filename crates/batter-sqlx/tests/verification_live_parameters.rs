@@ -3,7 +3,7 @@ use super::{
     AuthorityFixture, Names, VerificationPolicy, exact_finding, exec, names_policy, quote,
     verify_combined as verify,
 };
-use batter_core::operation::{OperationContext, OperationError};
+use batter_core::operation::OperationError;
 use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, ObjectPrivilege, ParameterName, ParameterPolicy, RolePolicy,
     VerificationError,

@@ -1,5 +1,5 @@
 use super::*;
-use batter::{cleanup::CleanupBudget, command::Command, operation::OperationContext};
+use batter::{cleanup::CleanupBudget, command::Command};
 use batter_example_reference_service::retirement::CancellationFailure;
 use sqlx::types::Uuid;
 use std::time::Duration;

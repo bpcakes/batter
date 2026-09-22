@@ -193,7 +193,6 @@ async fn verification_distinguishes_hidden_parameters_from_missing_objects() -> 
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 #[allow(clippy::too_many_lines)]
 async fn verification_reserved_custom_parameter_requirement() -> Result {
-    use batter_core::operation::OperationContext;
     use batter_sqlx::verification::{
         AuthorityPolicyBuilder, DatabasePolicy, PublicGrant, verify_authority,
     };

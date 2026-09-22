@@ -2,7 +2,7 @@ use super::support::{Result, require};
 use super::{
     AuthorityFixture, Names, VerificationPolicy, names_policy, quote, verify_combined as verify,
 };
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError};
 use batter_sqlx::verification::RolePolicy;
 use std::time::Duration;
 

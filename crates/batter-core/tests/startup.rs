@@ -1,7 +1,7 @@
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::{Interruption, OperationContext},
+    operation::Interruption,
     startup::{
         PanicPayloadBusy, Startup, StartupCause, StartupError, StartupFuture, StartupOutcome,
         StartupScope,
@@ -251,10 +251,9 @@ async fn never_started_and_already_cancelled_initializers_are_inert() {
         Box::pin(async { Ok(()) })
     }));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
-        .unwrap()
-        .into_context();
-    context.cancel();
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+    owner.cancel();
+    let context = owner.into_context();
     let called = calls.clone();
     let mut starting = Startup::new(supervisor(), context, cleanup_budget(), move |_| {
         called.fetch_add(1, Ordering::SeqCst);

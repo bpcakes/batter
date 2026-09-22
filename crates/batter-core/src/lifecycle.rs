@@ -394,7 +394,7 @@ impl Supervisor {
     /// Dropping the supervisor signals forced process cancellation even after
     /// this extraction. Finalizers must use cleanup independent of admitted
     /// operation contexts (for example, a fresh
-    /// [`crate::operation::OperationContext::new`]), not
+    /// [`crate::operation::OperationOwner::new`]), not
     /// a context derived from [`OperationAdmission`]. The stack's
     /// [`CleanupBudget`] still bounds explicit teardown.
     pub fn take_cleanup(&mut self) -> CleanupStack {

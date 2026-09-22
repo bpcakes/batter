@@ -1,9 +1,6 @@
 //! Explicit work/finalization phases and per-execution retry jitter.
 
-use batter::{
-    operation::OperationContext,
-    retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
-};
+use batter::retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy};
 use std::{collections::hash_map::RandomState, hash::BuildHasher, time::Duration};
 
 #[tokio::main]

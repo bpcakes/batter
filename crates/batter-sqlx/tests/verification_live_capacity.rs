@@ -1,6 +1,6 @@
 use super::support::{Result, require};
 use super::{AuthorityFixture, exec, names_policy, quote};
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError};
 use batter_sqlx::verification::{
     AllowedPrivilege, FindingKind, Identifier, ObjectPrivilege, QualifiedName, RelationPolicy,
     RolePolicy, VerificationStatus, verify,
@@ -238,7 +238,8 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             false,
             false,
         )?;
-        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?;
+        let context = owner.context().clone();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
         let task_pool = pool.clone();
         let task_context = context.clone();
@@ -267,7 +268,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             )?;
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        context.cancel();
+        owner.cancel();
         let result = tokio::time::timeout(Duration::from_secs(5), &mut task).await??;
         require(
             matches!(result, Err(OperationError::Interrupted(Interruption::Cancelled))),

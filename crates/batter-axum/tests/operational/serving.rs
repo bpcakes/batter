@@ -9,7 +9,6 @@ use batter_axum::{
 use batter_core::{
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
 use std::{

@@ -3,7 +3,6 @@ use crate::temp_dir;
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget},
-    operation::OperationContext,
     settings::{RedactedError, SettingsError},
     startup::{StartingSupervisor, Startup, StartupCause, StartupError},
 };

@@ -4,7 +4,6 @@ use batter::{
     admission::{Admission, AdmissionError},
     cleanup::CleanupBudget,
     lifecycle::{ProcessAdmissionError, ShutdownBudget, ShutdownHandle},
-    operation::OperationContext,
 };
 use std::{convert::Infallible, time::Duration};
 

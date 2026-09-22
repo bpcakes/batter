@@ -8,7 +8,6 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, Supervisor, check_shutdown},
-    operation::OperationContext,
 };
 use runledger_core::{
     jobs::{JobCompletion, JobContext, JobFailure, JobType},

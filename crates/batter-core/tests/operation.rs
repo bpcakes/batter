@@ -1,6 +1,6 @@
 use batter_core::{
     ConfigurationError,
-    operation::{Interruption, OperationContext, OperationError},
+    operation::{Interruption, OperationError},
 };
 use std::{
     future::pending,
@@ -38,24 +38,19 @@ async fn child_cannot_extend_deadline() {
     let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
         .unwrap()
         .into_context();
-    let child = parent
-        .child(Duration::from_secs(20))
-        .unwrap()
-        .into_context();
-    assert_eq!(parent.deadline(), child.deadline());
+    let child = parent.child(Duration::from_secs(20)).unwrap();
+    assert_eq!(parent.deadline(), child.context().deadline());
     child.cancel();
-    assert_eq!(child.check(), Err(Interruption::Cancelled));
+    assert_eq!(child.context().check(), Err(Interruption::Cancelled));
     assert!(parent.check().is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn parent_cancellation_propagates_to_child() {
-    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
-        .unwrap()
-        .into_context();
-    let child = parent.child(Duration::from_secs(1)).unwrap().into_context();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let child = parent.context().child(Duration::from_secs(1)).unwrap();
     parent.cancel();
-    assert_eq!(child.check(), Err(Interruption::Cancelled));
+    assert_eq!(child.context().check(), Err(Interruption::Cancelled));
 }
 
 #[tokio::test(start_paused = true)]
@@ -81,12 +76,12 @@ async fn expired_context_does_not_invoke_factory() {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_wins_when_deadline_is_also_expired() {
-    let context = batter_core::operation::OperationOwner::at(
+    let owner = batter_core::operation::OperationOwner::at(
         batter_core::operation::RootDeadline::at(Instant::now()),
-    )
-    .into_context();
-    context.cancel();
-    let result = context
+    );
+    owner.cancel();
+    let result = owner
+        .context()
         .run("cancelled", |_| async { Ok::<_, std::io::Error>(()) })
         .await;
     assert!(matches!(
@@ -283,14 +278,15 @@ async fn finalization_uses_original_deadline_and_cannot_reset_its_allowance() {
 
 #[tokio::test(start_paused = true)]
 async fn work_cancellation_preserves_finalization_but_parent_cancellation_does_not() {
-    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
-        .unwrap()
-        .into_context();
-    let phases = parent.reserve_finalization(Duration::from_secs(3)).unwrap();
-    phases.work().cancel();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let phases = parent
+        .context()
+        .reserve_finalization(Duration::from_secs(3))
+        .unwrap();
+    phases.cancel_work();
     assert_eq!(phases.work().check(), Err(Interruption::Cancelled));
     assert!(phases.finalization().check().is_ok());
-    assert!(parent.check().is_ok());
+    assert!(parent.context().check().is_ok());
     parent.cancel();
     assert_eq!(phases.finalization().check(), Err(Interruption::Cancelled));
 }

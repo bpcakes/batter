@@ -1,6 +1,5 @@
 //! Native migration behavior under opaque lease ownership.
 mod support;
-use batter_core::operation::OperationContext;
 use batter_sqlx::PgLease;
 use sqlx::{
     Connection, SqlSafeStr,

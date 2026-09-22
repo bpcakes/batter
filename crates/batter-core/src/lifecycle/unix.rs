@@ -231,7 +231,6 @@ mod tests {
     use crate::{
         cleanup::CleanupBudget,
         lifecycle::ShutdownBudget,
-        operation::OperationContext,
         startup::{Startup, StartupCause, StartupError},
     };
     use std::{

@@ -60,7 +60,8 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
     } else {
         Duration::from_secs(30)
     };
-    let context = batter_core::operation::OperationOwner::new(budget)?.into_context();
+    let owner = batter_core::operation::OperationOwner::new(budget)?;
+    let context = owner.context().clone();
     let (pid_tx, pid_rx) = oneshot::channel();
     let (stop_tx, stop_rx) = oneshot::channel();
     let mut task = tokio::spawn(blocked_operation(
@@ -75,7 +76,7 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
         fixture.retired.push(pid);
         fixture.blocked(pid).await?;
         match mode {
-            Stop::Cancel => context.cancel(),
+            Stop::Cancel => owner.cancel(),
             Stop::Drop => task.abort(),
             Stop::Error | Stop::Panic => {
                 let _ = stop_tx.send(mode);

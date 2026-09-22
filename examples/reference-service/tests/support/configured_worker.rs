@@ -7,7 +7,6 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, Supervisor, check_shutdown},
-    operation::OperationContext,
     settings::SettingsSource,
 };
 use batter_example_reference_service::config::WorkerSettings;

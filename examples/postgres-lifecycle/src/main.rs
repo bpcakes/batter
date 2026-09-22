@@ -7,7 +7,6 @@ mod tests;
 use batter::{
     BoxError,
     lifecycle::{Supervisor, check_shutdown},
-    operation::OperationContext,
     startup::{ProtectedStartupScope, ScopedStartup, Startup, StartupFuture},
 };
 use sqlx::{
