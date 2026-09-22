@@ -39,7 +39,8 @@ collection of wrappers around every dependency.
 The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
 `batter-runledger` and `batter-runlimit` adapters, and `batter-test-support`
-utilities are seven separate libraries;
+utilities are seven separate libraries; four native Runledger libraries and its
+operator TUI also live in the workspace under `runledger/`;
 `batter-example-postgres-lifecycle` is an unpublished executable package;
 `batter-example-reference-service` owns native upstream compatibility probes.
 Public functions accept native futures, concrete errors, and runtime
@@ -417,3 +418,11 @@ Use narrow dependencies or Axum FromRef in applications. Do not pass a giant
 AppContext merely to avoid constructor arguments. Add construction machinery
 only after repeated real applications demonstrate that it simplifies—not hides—
 resource ownership and partial-failure behavior.
+
+## Native Runlimit workspace ownership
+
+Five native packages under `runlimit/` share source and validation with Batter,
+while retaining policy, quota/attempt persistence, migrations and transport-helper
+ownership. None depends on Batter. `batter-runlimit` remains the optional operational
+adapter; the facade default graph still excludes native backends. See
+[ADR-012](adr/012-native-runlimit-workspace.md).

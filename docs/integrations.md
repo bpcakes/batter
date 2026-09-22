@@ -455,13 +455,12 @@ resolution deadline.
 
 ## Runledger: optional native lifecycle adapter
 
-The three native Runledger packages use one immutable Git revision. The root
-patch selects the same SQLx foundation as the facade; Git consumers must repeat
-that patch in their workspace root. No sibling checkout is needed. See the
-exact source, patch example and evidence limits in the
-[compatibility manifest](reference-compatibility.md). `batter-runledger` consumes
-inert `PreparedSupervisor` values. Native supervision, durable policy, claim
-behavior, observers, schedules, workflows and retries remain upstream.
+The five native Runledger packages are local workspace members under `runledger/`.
+They share the facade's SQLx foundation without a root patch or sibling checkout.
+The [compatibility manifest](reference-compatibility.md) records source provenance
+and evidence limits. `batter-runledger` consumes inert `PreparedSupervisor`
+values. Native supervision, durable policy, claims, observers, schedules,
+workflows and retries remain owned by Runledger's distinct packages.
 
 Protected startup passes its sealed registration target to
 `batter_runledger::register_in`; the exact legacy `register(&mut Supervisor, ...)`
@@ -502,8 +501,8 @@ The worker creates a new execution context with its own deadline/retry policy.
 
 ## Runlimit: optional protected native quota adapter
 
-`batter-runlimit` pins native core/memory 0.3.0 and PostgreSQL 0.3.1 at the exact
-revision in its Cargo manifest. There are no default features. `memory`
+`batter-runlimit` consumes local native core/memory 0.3.0 and PostgreSQL 0.3.1
+from `runlimit/`, imported from master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. There are no default features. `memory`
 enables fixed-window/GCRA error bridges; `postgres` enables the native error
 bridge and canonical outcome-aware attempt runner; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,

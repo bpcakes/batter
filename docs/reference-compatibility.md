@@ -45,15 +45,12 @@ compile-only consumer exercise. All five HTTP profiles passed on each supported
 toolchain and all five Jig targets passed. These local passes are not final-head
 hosted CI.
 
-The current coordinated PR graph is `batter-runledger -> runledger-postgres ->
-batter-sqlx -> batter-core`. `Cargo.toml` pins all three Runledger packages to
-`b057233d94738cf30ee0706d12fd4d133a6e3493` (the shared profile-pool implementation from merged PR #22). A workspace-root patch for
-the Runledger Git source selects this checkout's `batter-sqlx`, preserving one
-foundation type identity without a sibling checkout. Foundation packages remain
-unpublished. The canonical
-transaction API is `run_atomic`, with intent-before-queue typestate, retained
-poison causes and a distinct `PgAtomicUncertainty`. Public native transaction
-views and the old session transaction wrapper have been removed.
+The local graph is `batter-runledger -> runledger-postgres -> batter-sqlx ->
+batter-core`. All five native Runledger packages now live in this workspace,
+imported from master `46b5cd085d011e597de9552dfebbed4c19416453` (including merged
+PR #22). Cargo resolves local package paths; no cross-repository patch is needed.
+All packages remain unpublished. Native transaction and runtime ownership are
+unchanged; see [import provenance](../runledger/IMPORT.md).
 
 The preceding owned-scope validation used PostgreSQL 18.6, both supported Rust toolchains,
 the 84-case SQLx suite, the reference inventory and adapter probe. The
@@ -63,28 +60,30 @@ scope; it does not validate the current graph by itself.
 
 ### Git consumers
 
-Cargo does not inherit patches from dependencies. Until Runledger's coordinated
-foundation dependency is published, a consumer selecting Batter from Git must
-also put this patch in its own workspace root, replacing `BATTER_REV` with the
-same immutable commit used for its Batter dependency:
+Select `batter` or a direct Runledger package from the same immutable Batter Git
+revision. Cargo discovers the package in this workspace and follows its local
+path dependencies from that checkout; consumers need no Runledger source patch.
+Do not mix old Runledger-repository packages with these workspace packages.
+The foundation `links` identities still prevent duplicate implementations.
 
 ```toml
-[patch."https://github.com/bpcakes/runledger"]
-batter-sqlx = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV" }
+[dependencies]
+batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", features = ["runledger"] }
+runledger-runtime = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV" }
 ```
 
-This is dependency-source selection, not a runtime workflow change. Do not use a
-different foundation revision: identically named Rust types from different Cargo
-sources are not interchangeable. No sibling checkout is required. The
-`batter-mzd` delivery records verification of the final exact Git graph separately
-from older path-source results.
+`scripts/check_runledger_workspace.py` checks actual Cargo metadata for local
+source identity, workspace membership, disabled publishing, dependency direction
+and canonical migration/cache copies. It does not require `.git` or a historical
+Batter ancestor and permits reviewing coordinated foundation changes in one PR.
 
-Runledger verifies the actual core/SQLx source directories supplied through Cargo
-dependency metadata against its reviewed foundation revision. Adapter-only pin
-updates do not invalidate that check; foundation source and inherited manifest
-settings remain guarded. Shallow source checkouts must retain the reviewed
-ancestor. The foundation `links` identities prevent duplicate implementations;
-they do not link native libraries or change transaction/runtime behavior.
+Runlimit's five native packages also resolve from `runlimit/`, imported from
+master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. Direct native Git consumers must
+select the same Batter revision as the facade; do not mix former Runlimit Git
+sources with local native types. No dependency patch is required. Package versions,
+SQL migrations and lock/key protocols remain unchanged; see
+[Runlimit provenance](../runlimit/IMPORT.md). `scripts/check_runlimit_workspace.py`
+checks local identities, native dependency direction and original SQL/license digests.
 
 ### Historical source selections
 
@@ -115,7 +114,7 @@ optional test-support harness retain one native type graph.
 | Source | Selected version/revision | Features and boundary | Disposition |
 | --- | --- | --- | --- |
 | SQLx registry | 0.9.0 | `runtime-tokio`, `postgres`, `uuid`, `chrono`, `json`, `migrate`, `macros`; one resolved SQLx/core/PostgreSQL version | Compiled on Rust 1.98.1 and 1.94.0; live transactions executed on Linux |
-| Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; the current coordinated graph uses PR #22 and the root foundation patch |
+| Runledger historical Git | core/postgres/runtime 0.12.0 at `c541dad69fcb6c03b39541084538681b2d710a32` (PR #19) | Superseded native transaction/session views; native SQLx types, inert preparation, initialization observation and consuming settlement | Historical evidence only; the current graph uses the local imported native packages |
 | postgres-test-harness Git | 0.2.0 at `3d525e6fc5745ce2e2437c7997de5cccdecff4ac` | `default-features = false`; external PostgreSQL through tokio-postgres; optional SQLx test-support dependency; reference development dependency | Compiled on both toolchains; external lease cleanup paths executed |
 | reqwest registry | 0.12.28 | Application-only provider transport with `json` and `rustls-tls-webpki-roots`; defaults disabled, redirects disabled at construction, no proxy discovery or automatic replay | Compiled on Rust 1.98.1 and minimum Rust 1.94.0; the selected protocol executed through the real loopback fixture and production worker on both toolchains |
 | Runledger registry | 0.12.0 | Downloaded manifest requires SQLx 0.8.6 and Rust 1.88 | Inspected-only; incompatible with the selected native SQLx 0.9 type identity |

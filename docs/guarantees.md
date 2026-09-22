@@ -1809,3 +1809,22 @@ column allowances. Required-policy validation and discovery share that rule.
 Native privilege inquiry functions can observe newer catalog state than a
 repeatable-read ACL query; required and excess checks therefore use the same
 captured data and native inquiries serve as differential test references.
+
+## Shared Runledger workspace
+
+The optional adapter and native Runledger packages now resolve from one checkout.
+The package ownership graph remains acyclic: native persistence consumes the
+SQLx foundation, while native runtime supervision and durable policy stay in
+Runledger. The old Git-revision source rejection is removed; Cargo identity and
+failure-contract tests validate coordinated changes. Migration SQL and offline
+metadata were imported unchanged. This source move does not migrate a deployed
+database, broaden Unix support, publish packages or prove remote effects.
+
+## Native Runlimit source identity
+
+The shared workspace resolves one local identity for each native Runlimit package.
+Graph controls reject remote/duplicate identities, publication and reversed native
+ownership; imported SQL/license digests detect accidental changes. This does not
+change quota semantics, authorize replay after uncertain commit, or make local
+storage a fleet-wide limit. Persisted migrations and key/lock protocols remain
+compatible with the imported revision. See [provenance](../runlimit/IMPORT.md).

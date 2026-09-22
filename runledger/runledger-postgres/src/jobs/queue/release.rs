@@ -1,0 +1,244 @@
+use sqlx::types::Uuid;
+
+use crate::{DbPool, DbTx, Error, Result};
+
+use super::super::errors::{
+    lease_owner_mismatch_error, unstarted_claim_release_not_applicable_error,
+};
+use super::super::types::JobLeaseIdentity;
+use super::super::workflows::on_claim_released;
+use super::attempts::ATTEMPT_CLAIM_ORIGIN_WORKER_PRESTART;
+use super::events::{
+    RequeuedEventPayload, RequeuedJobEvent,
+    insert_requeued_event_tx as insert_job_requeued_event_tx,
+};
+use super::lifecycle_timeouts::{cap_job_row_lock_timeout_tx, restore_job_row_lock_timeout_tx};
+
+#[derive(Clone, Copy)]
+pub(super) struct UnstartedClaimIdentity<'a> {
+    pub job_id: Uuid,
+    pub run_number: i32,
+    pub attempt: i32,
+    pub worker_id: Option<&'a str>,
+}
+
+impl<'a> UnstartedClaimIdentity<'a> {
+    const fn from_live_lease(identity: JobLeaseIdentity<'a>) -> Self {
+        Self {
+            job_id: identity.job_id,
+            run_number: identity.run_number,
+            attempt: identity.attempt,
+            worker_id: Some(identity.worker_id),
+        }
+    }
+
+    const fn should_reset_started_at(self) -> bool {
+        self.attempt == 1
+    }
+}
+
+pub(super) enum TryReleaseUnstartedClaimResult {
+    Released,
+    NotApplicable,
+}
+
+async fn classify_unstarted_release_not_applicable_tx(
+    tx: &mut DbTx<'_>,
+    identity: UnstartedClaimIdentity<'_>,
+) -> Result<Error> {
+    let row = sqlx::query!(
+        "SELECT
+            jq.status::text AS \"status?\",
+            jq.worker_id
+         FROM job_queue jq
+         WHERE jq.id = $1
+           AND jq.run_number = $2
+         LIMIT 1",
+        identity.job_id,
+        identity.run_number,
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| {
+        Error::from_query_sqlx_with_context("classify unstarted claim release miss", error)
+    })?;
+
+    let lease_owned_by_other_worker = row.as_ref().is_some_and(|row| {
+        row.status.as_deref() == Some("LEASED")
+            && identity.worker_id.is_some()
+            && row.worker_id.as_deref() != identity.worker_id
+    });
+
+    Ok(if lease_owned_by_other_worker {
+        lease_owner_mismatch_error()
+    } else {
+        unstarted_claim_release_not_applicable_error()
+    })
+}
+
+async fn release_unstarted_job_queue_row_tx(
+    tx: &mut DbTx<'_>,
+    identity: UnstartedClaimIdentity<'_>,
+    retry_delay_ms: i32,
+) -> Result<u64> {
+    let rows_affected = sqlx::query!(
+        "UPDATE job_queue
+         SET status = 'PENDING',
+             attempt = attempt - 1,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             worker_id = NULL,
+             next_run_at = now() + ($6::bigint * interval '1 millisecond'),
+             started_at = CASE
+                WHEN $5 THEN NULL
+                ELSE started_at
+             END,
+             status_reason = NULL,
+             last_error_code = NULL,
+             last_error_message = NULL,
+             output = NULL,
+             updated_at = now()
+         WHERE id = $1
+           AND run_number = $2
+           AND attempt = $3
+           AND status = 'LEASED'
+           AND ($4::text IS NULL OR worker_id = $4)
+           AND EXISTS (
+                SELECT 1
+                FROM job_attempts ja
+                WHERE ja.job_id = $1
+                  AND ja.run_number = $2
+                  AND ja.attempt = $3
+                  AND ja.claim_origin = $7
+                  AND ja.execution_started_persisted_at IS NULL
+           )",
+        identity.job_id,
+        identity.run_number,
+        identity.attempt,
+        identity.worker_id,
+        identity.should_reset_started_at(),
+        i64::from(retry_delay_ms.max(0)),
+        ATTEMPT_CLAIM_ORIGIN_WORKER_PRESTART,
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("release unstarted job claim", error))?
+    .rows_affected();
+
+    Ok(rows_affected)
+}
+
+async fn delete_attempt_row_tx(
+    tx: &mut DbTx<'_>,
+    identity: UnstartedClaimIdentity<'_>,
+) -> Result<()> {
+    sqlx::query!(
+        "DELETE FROM job_attempts
+         WHERE job_id = $1
+           AND run_number = $2
+           AND attempt = $3
+           AND claim_origin = $4
+           AND execution_started_persisted_at IS NULL",
+        identity.job_id,
+        identity.run_number,
+        identity.attempt,
+        ATTEMPT_CLAIM_ORIGIN_WORKER_PRESTART,
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("delete unstarted job attempt", error))?;
+
+    Ok(())
+}
+
+pub(super) async fn try_release_unstarted_job_claim_tx(
+    tx: &mut DbTx<'_>,
+    identity: UnstartedClaimIdentity<'_>,
+    reason: &str,
+    retry_delay_ms: i32,
+) -> Result<TryReleaseUnstartedClaimResult> {
+    let updated = release_unstarted_job_queue_row_tx(tx, identity, retry_delay_ms).await?;
+    if updated == 0 {
+        return Ok(TryReleaseUnstartedClaimResult::NotApplicable);
+    }
+
+    finish_unstarted_job_claim_release_tx(tx, identity, reason).await?;
+
+    Ok(TryReleaseUnstartedClaimResult::Released)
+}
+
+async fn finish_unstarted_job_claim_release_tx(
+    tx: &mut DbTx<'_>,
+    identity: UnstartedClaimIdentity<'_>,
+    reason: &str,
+) -> Result<()> {
+    on_claim_released(tx, identity.job_id, identity.should_reset_started_at()).await?;
+    delete_attempt_row_tx(tx, identity).await?;
+    insert_job_requeued_event_tx(
+        tx,
+        RequeuedJobEvent {
+            job_id: identity.job_id,
+            completed_run_number: identity.run_number,
+            attempt: Some(identity.attempt),
+            stage: None,
+            progress_done: None,
+            progress_total: None,
+            payload: RequeuedEventPayload::Basic { reason },
+        },
+        "insert unstarted-claim requeued event",
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn release_unstarted_job_claim_tx(
+    tx: &mut DbTx<'_>,
+    identity: JobLeaseIdentity<'_>,
+    reason: &str,
+    retry_delay_ms: i32,
+) -> Result<()> {
+    let identity = UnstartedClaimIdentity::from_live_lease(identity);
+    let previous_lock_timeout = cap_job_row_lock_timeout_tx(
+        tx,
+        "cap unstarted job claim release row-lock acquisition timeout",
+    )
+    .await?;
+    let updated = release_unstarted_job_queue_row_tx(tx, identity, retry_delay_ms).await?;
+    restore_job_row_lock_timeout_tx(
+        tx,
+        &previous_lock_timeout,
+        "restore unstarted job claim release row-lock timeout",
+    )
+    .await?;
+
+    if updated == 0 {
+        return Err(classify_unstarted_release_not_applicable_tx(tx, identity).await?);
+    }
+
+    finish_unstarted_job_claim_release_tx(tx, identity, reason).await
+}
+
+/// Releases an exact live worker lease before execution has started.
+///
+/// Expired-lease recovery may have no worker id, so it remains on the
+/// reaper-only nullable identity path.
+pub async fn release_unstarted_job_claim(
+    pool: &DbPool,
+    identity: JobLeaseIdentity<'_>,
+    reason: &str,
+    retry_delay_ms: i32,
+) -> Result<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| Error::ConnectionError(error.to_string()))?;
+
+    release_unstarted_job_claim_tx(&mut tx, identity, reason, retry_delay_ms).await?;
+
+    tx.commit()
+        .await
+        .map_err(|error| Error::commit_unconfirmed("commit release unstarted job claim", error))?;
+
+    Ok(())
+}

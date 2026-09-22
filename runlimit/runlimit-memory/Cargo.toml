@@ -1,0 +1,39 @@
+[package]
+name = "runlimit-memory"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Hard-bounded in-memory fixed-window and GCRA rate limiting"
+documentation = "https://docs.rs/runlimit-memory"
+readme = "../README.md"
+repository = "https://github.com/bpcakes/runlimit"
+keywords = ["rate-limit", "throttling", "security"]
+categories = ["web-programming"]
+
+[features]
+serde = ["dep:serde", "runlimit-core/serde"]
+
+[dependencies]
+runlimit-core.workspace = true
+serde = { version = "1.0.219", features = ["derive"], optional = true }
+thiserror = { version = "2.0.12" }
+
+[dev-dependencies]
+serde_json = { version = "1.0.140" }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cognitive_complexity = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

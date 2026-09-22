@@ -28,6 +28,17 @@ Fast jump index for agent-facing guidance in this repository.
   worker/command root, native type identity, typed settings constructors, live
   migration/job/lease probes and pinned upstream contracts.
 
+## Native Runledger packages
+
+- [Native ownership and PostgreSQL baseline](./runledger/AGENTS.md).
+- [Core](./runledger/runledger-core/AGENTS.md).
+- [PostgreSQL persistence](./runledger/runledger-postgres/AGENTS.md).
+- [Runtime](./runledger/runledger-runtime/AGENTS.md).
+- [Native test support](./runledger/runledger-test-support/AGENTS.md).
+- [Operator TUI](./runledger/runledger-tui/AGENTS.md).
+
+- [Native Runlimit](./runlimit/AGENTS.md): validated policy, bounded native backends, transport helpers and immutable migrations.
+
 ## Private shared test sources
 
 - [Repository process machinery](./test-support/README.md): std-only Unix launch,
