@@ -6,6 +6,29 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## GitHub Actions scheduling and caching: reviewed 2026-09-22
+
+- GitHub's [workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+  defines push branch filters, PR/merge-group/manual triggers and concurrency
+  cancellation. The Rust workflow keeps existing check names and matrix entries
+  while restricting push runs to `master`.
+- [Swatinem/rust-cache at the selected commit](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/README.md)
+  documents dependency-only caching, job/compiler/environment keys, disabled
+  incremental compilation and `save-if`. The upstream `v2` tag resolved to
+  `6323deb102c322ba6fcbdcafc7e3dddab59af2b6`; the workflow pins that commit.
+- GitHub's [dependency cache reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
+  describes PR access to base-branch caches. Saving only from `master` keeps
+  reusable caches without uploading a separate set for every PR.
+- GitHub's [billing documentation](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+  states that standard hosted runners are free for public repositories. The
+  inspected repository is public; runner-minute reductions are not measured
+  billing reductions. Cache storage has a separate allowance.
+
+The [baseline PR run](https://github.com/bpcakes/batter/actions/runs/35697207609)
+and its [duplicate push run](https://github.com/bpcakes/batter/actions/runs/35697202800)
+establish the duplicated execution. They predate the optimization and do not
+establish a cache hit or elapsed-time improvement for the revised workflow.
+
 ## At-rest facade feature review, 2026-09-22
 
 The [Cargo feature-unification contract](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
