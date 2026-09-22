@@ -246,3 +246,18 @@ fn composite_decoder_rejects_bad_magic_and_every_truncation() {
         assert!(SealedPayload::decode(&encoded[..length]).is_err());
     }
 }
+
+#[test]
+fn composite_byte_mutations_either_reject_or_round_trip_canonically() {
+    let sealed = SealedPayload::from_parts(envelope(), vec![0x44; TAG_BYTES + 3]).unwrap();
+    let encoded = sealed.encode();
+    for offset in 0..encoded.len() {
+        for replacement in 0..=u8::MAX {
+            let mut candidate = encoded.clone();
+            candidate[offset] = replacement;
+            if let Ok(decoded) = SealedPayload::decode(&candidate) {
+                assert_eq!(decoded.encode(), candidate);
+            }
+        }
+    }
+}

@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains eight library packages and two SQLx example packages,
+This workspace contains seventeen library packages, the Runledger TUI, and two SQLx example packages,
 with failure-contract tests, doctests, and eight runnable demonstrations plus a
 read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
@@ -81,9 +81,13 @@ agent implementation or modification tasks; label such evaluations proposed
 and unexecuted unless executable evidence exists. See
 [ADR-010](docs/adr/010-agent-only-consumption.md).
 
-During the coordinated owned-scope cutover, Runledger packages use sibling paths.
-Receipt reuse additionally requires unchanged sibling source and manifests;
-repository-local input hashes alone cannot prove that prerequisite.
+Runledger's five native packages live under `runledger/` in this workspace.
+They use local package dependencies and the same SQLx foundation as the facade;
+no paired checkout, root dependency patch or Git source attestation is required.
+Keep native job/persistence/supervision ownership in those packages and keep
+Runledger independent of the Batter facade. PostgreSQL 18 native tests retain
+Runledger's own Docker test support; Batter SQLx fixture provisioning remains
+external. See `runledger/AGENTS.md` and `docs/reference-compatibility.md`.
 
 For every new or materially changed public API, perform the proactive invalid-
 state review in ADR-010. If a common misuse can reach execution, or still
@@ -149,7 +153,8 @@ translates native initialization, stop clocks and complete settlement into manag
 process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
-transactions and PostgreSQL initialization/maintenance remain upstream-owned.
+transactions and PostgreSQL initialization/maintenance remain owned by the distinct
+packages under `runlimit/`; see their guide and ADR-012.
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
 process machinery included by foundation and Axum integration tests. It is not
@@ -218,7 +223,9 @@ supervision, persistence, policy validation, and provisioning responsibilities.
 The core foundation must not depend on adapters, and the facade must not be
 required by adapters. `batter-test-support` remains a
 generic leaf crate, including in tests; composition fixtures belong with their
-example/application. PostgreSQL provisioning remains external to this workspace.
+example/application. Batter SQLx fixture provisioning remains in the external
+harness; the imported native Runledger test-support package retains its own
+Docker provisioning for native tests.
 Never implement a second job queue, workflow engine, outbox, limiter storage
 engine, database harness, or repository abstraction here.
 
@@ -290,8 +297,8 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 ## Backend Defaults
 
-- The root is a virtual workspace. Rust package roots are `crates` and
-  `examples`; follow each package's nearest guide.
+- The root is a virtual workspace. Rust package roots are `crates`, `examples`, and
+  `runledger`; follow each package's nearest guide.
 - Add crate-level `AGENTS.md` files when a crate has meaningful ownership, entrypoint, or invariant guidance that should travel with that crate.
 
 - Keep transport logic thin and business logic in the owning crate.

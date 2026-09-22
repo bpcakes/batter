@@ -37,7 +37,8 @@ No raw owner extraction or legacy bridge is supported.
 
 `cargo test -p batter-runledger --locked` and
 `cargo clippy -p batter-runledger --all-targets --locked -- -D warnings`.
-The coordinated native dependency uses sibling paths recorded in the workspace
-and Cargo.lock. Validate both feature branches together; external source state is
-an explicit prerequisite for receipt reuse. Publication is not authorized by this
-local cutover. Final acceptance includes root two-toolchain/live gates.
+The native packages live under `runledger/` in the shared workspace. Run
+`scripts/check_runledger_workspace.py` to check actual Cargo source identity and
+ownership direction. No source pin, sibling checkout or foundation patch remains.
+Validate both feature branches together. Publication is not authorized by this
+cutover. Final acceptance includes root two-toolchain/live gates.

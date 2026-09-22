@@ -37,9 +37,11 @@
 #![forbid(unsafe_code)]
 
 mod atomic;
+mod atomic_context;
 mod atomic_runner;
 mod failure;
 mod profile;
+mod profiled_pool;
 mod session;
 mod snapshot;
 
@@ -49,6 +51,7 @@ pub use atomic::{
     CommitUnconfirmed, PgCommitConfirmed, PgRollbackConfirmed, PgScopeError, PgScopeFailure,
     PgScopeLoss, PgScopedSql, PgTransactionError,
 };
+pub use atomic_context::{run_atomic_in, run_atomic_profiled_in};
 pub use atomic_runner::{
     PgAtomicError, PgAtomicScope, PgAtomicUncertainty, run_atomic, run_atomic_profiled,
 };
@@ -59,6 +62,7 @@ pub mod low_level {
 }
 pub use failure::{FailureClass, SqlxFailure};
 pub use profile::{PgProfileError, PgSessionProfile};
+pub use profiled_pool::PgProfiledPool;
 use session::PoolReturnReady;
 pub use session::{PgExecutor, PgSession};
 pub use snapshot::{PgReadOnlySnapshot, PgReadOnlySql, PgSnapshotError};

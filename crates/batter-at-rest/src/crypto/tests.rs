@@ -444,6 +444,69 @@ fn maximum_plaintext_size_is_accepted_exactly() {
 }
 
 #[test]
+fn later_randomness_failures_and_changed_key_rewrap_return_only_errors() {
+    let old = keyring("old", &[("old", 1)]);
+    let rotating = keyring("new", &[("old", 1), ("new", 2)]);
+    let context = row_context();
+    // Exhaust the deterministic source at each of seal's three requests.
+    for available in [0, SECRET_KEY_BYTES, SECRET_KEY_BYTES + NONCE_BYTES] {
+        let mut random = FixedRandom::new(vec![0x42; available]);
+        assert_eq!(
+            old.seal_with_random(&context, b"payload", &mut random)
+                .unwrap_err(),
+            Error::RandomnessUnavailable
+        );
+        assert!(random.is_exhausted());
+    }
+    let sealed = old.seal(&context, b"payload").unwrap();
+    let before = sealed.encode();
+    assert_eq!(
+        rotating
+            .rewrap_with_random(&context, sealed.envelope(), &mut FailingRandom)
+            .unwrap_err(),
+        Error::RandomnessUnavailable
+    );
+    assert_eq!(sealed.encode(), before);
+    assert_eq!(
+        old.open(&context, sealed.as_ref()).unwrap().as_slice(),
+        b"payload"
+    );
+}
+
+#[test]
+fn successful_rewrap_does_not_authenticate_a_corrupted_body() {
+    let old = keyring("old", &[("old", 1)]);
+    let rotating = keyring("new", &[("old", 1), ("new", 2)]);
+    let context = row_context();
+    let sealed = old.seal(&context, b"payload").unwrap();
+    let mut corrupted = sealed.ciphertext().to_vec();
+    corrupted[0] ^= 1;
+    for keyring in [&old, &rotating] {
+        let wrapper = keyring.rewrap(&context, sealed.envelope()).unwrap();
+        let envelope = sealed.envelope().with_wrapped_key(wrapper);
+        assert_eq!(
+            keyring
+                .open(
+                    &context,
+                    SealedPayloadRef::new(&envelope, &corrupted).unwrap()
+                )
+                .unwrap_err(),
+            Error::AuthenticationFailed
+        );
+        assert_eq!(
+            keyring
+                .open(
+                    &context,
+                    SealedPayloadRef::new(&envelope, sealed.ciphertext()).unwrap()
+                )
+                .unwrap()
+                .as_slice(),
+            b"payload"
+        );
+    }
+}
+
+#[test]
 fn maximum_context_and_key_id_seal_decode_and_open() {
     let key_id = "k".repeat(crate::MAX_KEY_ID_BYTES);
     let keyring = Keyring::new(

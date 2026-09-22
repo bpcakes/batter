@@ -23,8 +23,7 @@ use batter_runlimit::{
     quota::{ConsumptionError, Quota},
 };
 use runlimit_core::{
-    BatchDecision, ConsumptionStatus, Denial, FixedWindowPolicy, KeyHasher, Limiter, QuotaDenial,
-    QuotaMode,
+    BatchDecision, ConsumptionStatus, Denial, FixedWindowPolicy, KeyHasher, Limiter, QuotaMode,
 };
 use std::{
     convert::Infallible,
@@ -59,7 +58,7 @@ fn prepare<L>(
 ) -> PreparedHttp
 where
     L: Limiter<Policy = FixedWindowPolicy> + 'static,
-    L::Error: ConsumptionError,
+    L::CheckAllError: ConsumptionError,
 {
     let hasher = KeyHasher::new([9; 32]).unwrap();
     HttpQuota::new(
@@ -81,9 +80,13 @@ where
         },
         move |principal: &Principal, peer: DirectPeer, policy: &FixedWindowPolicy| {
             if policy.scope().as_str() == "peer" {
-                hasher.hash_for(policy, peer.ip().to_string())
+                hasher
+                    .hash_for(policy, peer.ip().to_string())
+                    .into_unbound_subject_key()
             } else {
-                hasher.hash_for(policy, principal.0)
+                hasher
+                    .hash_for(policy, principal.0)
+                    .into_unbound_subject_key()
             }
         },
     )
@@ -233,47 +236,6 @@ async fn denied_request_does_not_poll_body_or_call_handler_and_identity_cannot_b
         .request(request("/work", "Bearer secret-b"), peer())
         .await;
     assert_eq!(other_owner.status(), StatusCode::OK);
-    finish(running).await;
-}
-
-#[tokio::test]
-async fn retry_after_preserves_native_ceil_seconds_for_both_denial_kinds() {
-    let running = running().await;
-    for (delay, expected) in [
-        (Duration::ZERO, "0"),
-        (Duration::from_nanos(1), "1"),
-        (Duration::from_secs(2), "2"),
-        (Duration::from_millis(2_001), "3"),
-    ] {
-        for (denial, status) in [
-            (
-                Denial::quota_exceeded(QuotaDenial::try_new(1, delay).unwrap()),
-                StatusCode::TOO_MANY_REQUESTS,
-            ),
-            (
-                Denial::storage_capacity(Some(delay)),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-        ] {
-            let client = prepare(
-                Quota::new(Backend::new(Mode::Return(BatchDecision::denied(
-                    0, 1, denial,
-                )))),
-                vec![policy("owner", 1)],
-                request_policy(&running, 1000),
-                routes(),
-            )
-            .in_process();
-            let response = client
-                .request(request("/work", "Bearer secret-a"), peer())
-                .await;
-            assert_eq!(response.status(), status);
-            assert_eq!(
-                response.headers().get(header::RETRY_AFTER).unwrap(),
-                expected
-            );
-        }
-    }
     finish(running).await;
 }
 
@@ -533,7 +495,9 @@ async fn shadow_and_storage_and_backend_outcomes_remain_distinct() {
     assert!(capture.events()[0].contains("quota_consumption=\"not_consumed\""));
     for (mode, expected) in [
         (
-            Mode::Return(BatchDecision::denied(0, 1, Denial::storage_capacity(None))),
+            Mode::Return(
+                BatchDecision::denied(0, 1, Denial::StorageCapacity { retry_after: None }).unwrap(),
+            ),
             "storage_capacity",
         ),
         (
@@ -645,7 +609,9 @@ async fn authentication_timeout_never_reaches_quota_or_handler() {
         vec![policy("owner", 1)],
         |_input: AuthInput| std::future::pending::<Result<Principal, AuthError>>(),
         move |principal: &Principal, _: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()
@@ -711,7 +677,9 @@ async fn protected_routes_are_guarded_by_default_and_public_probes_are_explicit(
             }
         },
         move |principal: &Principal, _: DirectPeer, policy: &FixedWindowPolicy| {
-            hasher.hash_for(policy, principal.0)
+            hasher
+                .hash_for(policy, principal.0)
+                .into_unbound_subject_key()
         },
     )
     .unwrap()

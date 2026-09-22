@@ -1,7 +1,7 @@
 mod support;
 use batter_core::operation::{Interruption, OperationError};
 use batter_runlimit::quota::{Admission, Checks, InterruptedCheck, Quota, RunResult};
-use runlimit_core::{BatchDecision, Check, ConsumptionStatus, Denial, DenialView, QuotaMode};
+use runlimit_core::{BatchDecision, Check, ConsumptionStatus, Denial, QuotaMode};
 use std::{
     convert::Infallible,
     sync::atomic::{AtomicUsize, Ordering},
@@ -12,7 +12,7 @@ use support::*;
 #[tokio::test]
 async fn native_quota_runs_once_and_rejects_before_work_factory() {
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let quota = Quota::new(memory());
     let calls = AtomicUsize::new(0);
     let result = quota
@@ -30,7 +30,7 @@ async fn native_quota_runs_once_and_rejects_before_work_factory() {
     };
     assert_eq!(allowances.len(), 1);
     let allowance = allowances.iter().next().unwrap();
-    assert_eq!(allowance.capacity(), 1);
+    assert_eq!(allowance.capacity().get(), 1);
     assert_eq!(allowance.available(), 0);
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| {
@@ -48,21 +48,26 @@ async fn native_quota_runs_once_and_rejects_before_work_factory() {
     };
     assert_eq!(index, 0);
     assert_eq!(batch_size.get(), 1);
-    assert!(matches!(denial.view(), DenialView::QuotaExceeded(_)));
+    assert!(matches!(denial, Denial::QuotaExceeded(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
 async fn storage_denial_retains_exact_retry_delay_without_running_work() {
     let delay = Duration::from_millis(2_001);
-    let backend = Backend::new(Mode::Return(BatchDecision::denied(
-        0,
-        1,
-        Denial::storage_capacity(Some(delay)),
-    )));
+    let backend = Backend::new(Mode::Return(
+        BatchDecision::denied(
+            0,
+            1,
+            Denial::StorageCapacity {
+                retry_after: Some(delay.into()),
+            },
+        )
+        .unwrap(),
+    ));
     let quota = Quota::new(backend);
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let calls = AtomicUsize::new(0);
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| {
@@ -78,9 +83,9 @@ async fn storage_denial_retains_exact_retry_delay_without_running_work() {
     else {
         panic!("expected a storage denial");
     };
-    let DenialView::StorageCapacity {
+    let Denial::StorageCapacity {
         retry_after: Some(retry_after),
-    } = denial.view()
+    } = denial
     else {
         panic!("expected a typed storage retry delay");
     };
@@ -95,7 +100,7 @@ async fn never_polled_and_pre_cancelled_do_no_backend_or_factory_work() {
     let backend = Backend::new(Mode::Return(allowed()));
     let quota = Quota::new(backend.clone());
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let context = context(100);
     let calls = AtomicUsize::new(0);
     let work = |_| {
@@ -122,7 +127,7 @@ async fn never_polled_and_pre_cancelled_do_no_backend_or_factory_work() {
 async fn never_polled_quota_does_not_consume_native_memory() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let context = context(100);
 
     drop(
@@ -154,7 +159,7 @@ async fn native_memory_trait_futures_defer_consumption_until_polled() {
     for batch in [false, true] {
         let store = memory();
         let policy = policy("owner", 1);
-        let checks = [Check::new(&policy, subject(1))];
+        let checks = [Check::new(subject(1).bind(&policy))];
 
         if batch {
             drop(runlimit_core::Limiter::check_all(&store, &checks));
@@ -188,7 +193,7 @@ async fn unresolved_quota_timeout_drops_backend_and_never_starts_work() {
     let backend = Backend::new(Mode::Pending);
     let quota = Quota::new(backend.clone());
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let result = quota
         .run(&context(10), Checks::new(&checks).unwrap(), |_| async {
             panic!("work must not start");
@@ -212,7 +217,7 @@ async fn cancellation_after_quota_return_preserves_grant_without_starting_work()
     let context = context(100);
     let quota = Quota::new(Backend::new(Mode::CancelThenAllow(context.clone())));
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let calls = AtomicUsize::new(0);
     let result = quota
         .run(&context, Checks::new(&checks).unwrap(), |_| {
@@ -234,7 +239,7 @@ async fn cancellation_after_quota_return_preserves_grant_without_starting_work()
 async fn admission_and_work_share_one_total_budget() {
     let quota = Quota::new(Backend::new(Mode::Delay(Duration::from_millis(6))));
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let start = tokio::time::Instant::now();
     let result = quota
         .run(&context(10), Checks::new(&checks).unwrap(), |_| async {
@@ -258,11 +263,11 @@ async fn native_atomic_batch_denial_does_not_consume_the_other_bucket() {
     let first = policy("owner", 1);
     let second = policy("peer", 1);
     // Exhaust only the second bucket before the attempted atomic admission.
-    store.check(&Check::new(&second, subject(2))).unwrap();
+    store.check(&Check::new(subject(2).bind(&second))).unwrap();
     let quota = Quota::new(store);
     let both = [
-        Check::new(&first, subject(1)),
-        Check::new(&second, subject(2)),
+        Check::new(subject(1).bind(&first)),
+        Check::new(subject(2).bind(&second)),
     ];
     let RunResult::Rejected {
         index: 1,
@@ -277,7 +282,7 @@ async fn native_atomic_batch_denial_does_not_consume_the_other_bucket() {
         panic!("expected the second check to deny the two-check batch");
     };
     assert_eq!(batch_size.get(), 2);
-    let just_first = [Check::new(&first, subject(1))];
+    let just_first = [Check::new(subject(1).bind(&first))];
     assert!(matches!(
         quota
             .run(
@@ -293,7 +298,7 @@ async fn native_atomic_batch_denial_does_not_consume_the_other_bucket() {
 #[tokio::test]
 async fn native_shadow_denial_allows_work_and_preserves_native_decision() {
     let policy = policy("owner", 1).with_quota_mode(QuotaMode::Shadow);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let quota = Quota::new(memory());
     let _ = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| async {
@@ -322,7 +327,7 @@ async fn native_shadow_denial_allows_work_and_preserves_native_decision() {
     };
     assert_eq!(index, 0);
     assert_eq!(batch_size.get(), 1);
-    assert_eq!(denial.capacity(), 1);
+    assert_eq!(denial.capacity().get(), 1);
 }
 
 #[tokio::test]
@@ -335,7 +340,7 @@ async fn backend_error_preserves_cause_and_certainty_without_retry() {
         let backend = Backend::new(Mode::Fail(certainty));
         let quota = Quota::new(backend.clone());
         let policy = policy("owner", 1);
-        let checks = [Check::new(&policy, subject(1))];
+        let checks = [Check::new(subject(1).bind(&policy))];
         let result = quota
             .run(&context(100), Checks::new(&checks).unwrap(), |_| async {
                 panic!("must not run");
@@ -356,7 +361,7 @@ async fn backend_error_preserves_cause_and_certainty_without_retry() {
 async fn borrowed_work_and_concrete_domain_error_need_no_box_or_static_bound() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 10);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let mut local = String::new();
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| async {
@@ -378,7 +383,7 @@ async fn borrowed_work_and_concrete_domain_error_need_no_box_or_static_bound() {
 async fn native_memory_grant_stays_spent_after_domain_failure() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(31))];
+    let checks = [Check::new(subject(31).bind(&policy))];
     let calls = AtomicUsize::new(0);
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| {
@@ -407,7 +412,7 @@ async fn native_memory_grant_stays_spent_after_domain_failure() {
 async fn native_memory_grant_stays_spent_after_post_grant_cancellation() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 1);
-    let checks = [Check::new(&policy, subject(32))];
+    let checks = [Check::new(subject(32).bind(&policy))];
     let operation = context(100);
     let cancelling = operation.clone();
     let calls = AtomicUsize::new(0);
@@ -441,7 +446,7 @@ async fn native_memory_grant_stays_spent_after_post_grant_cancellation() {
 async fn downstream_retries_do_not_repeat_http_quota_consumption() {
     let quota = Quota::new(memory());
     let policy = policy("owner", 2);
-    let checks = [Check::new(&policy, subject(1))];
+    let checks = [Check::new(subject(1).bind(&policy))];
     let mut attempts = 0;
     let result = quota
         .run(&context(100), Checks::new(&checks).unwrap(), |_| async {
@@ -477,8 +482,8 @@ async fn native_mixed_mode_rejection_is_retained_not_reimplemented() {
     let first = policy("owner", 1);
     let second = policy("peer", 1).with_quota_mode(QuotaMode::Shadow);
     let both = [
-        Check::new(&first, subject(1)),
-        Check::new(&second, subject(2)),
+        Check::new(subject(1).bind(&first)),
+        Check::new(subject(2).bind(&second)),
     ];
     let result = Quota::new(memory())
         .run(&context(100), Checks::new(&both).unwrap(), |_| async {
@@ -503,55 +508,41 @@ fn empty_checks_rejected() {
 #[test]
 fn native_postgres_certainty_bridge_is_lossless() {
     use batter_runlimit::ConsumptionError;
-    use runlimit_postgres::CheckError;
+    use runlimit_postgres::{BatchCheckError, CheckError, CheckPhase};
     // Mirrors the exact pinned native errors.rs classifier; no database is needed.
     // Infer SQLx's error through From<io::Error>, avoiding a test-only SQLx dependency.
     let cases = [
         (
-            CheckError::InvalidBatch(runlimit_core::BatchError::BatchTooLarge {
+            BatchCheckError::InvalidBatch(runlimit_core::BatchError::BatchTooLarge {
                 actual: 2,
                 maximum: 1,
             }),
             ConsumptionStatus::NotConsumed,
         ),
         (
-            CheckError::DefinitelyNotConsumed(std::io::Error::other("before commit").into()),
+            CheckError::DefinitelyNotConsumed(std::io::Error::other("before commit").into()).into(),
             ConsumptionStatus::NotConsumed,
         ),
         (
-            CheckError::CommitOutcomeUnknown(std::io::Error::other("lost confirmation").into()),
+            CheckError::CommitOutcomeUnknown(std::io::Error::other("lost confirmation").into())
+                .into(),
             ConsumptionStatus::PossiblyConsumed,
         ),
         (
             CheckError::TimedOutBeforeCommit {
-                operation: "acquire",
-            },
+                phase: CheckPhase::AcquiringConnection,
+            }
+            .into(),
             ConsumptionStatus::NotConsumed,
         ),
         (
-            CheckError::CommitTimedOut,
+            CheckError::CommitTimedOut.into(),
             ConsumptionStatus::PossiblyConsumed,
-        ),
-        (
-            CheckError::StorageInvariant("malformed counter"),
-            ConsumptionStatus::NotConsumed,
-        ),
-        (
-            CheckError::ResponseInvariant,
-            ConsumptionStatus::NotConsumed,
-        ),
-        (
-            CheckError::CommittedResponseInvariant,
-            ConsumptionStatus::Consumed,
         ),
     ];
     for (error, expected) in cases {
         assert_eq!(error.consumption(), expected, "{error:?}");
-        assert_eq!(
-            error.may_have_consumed_quota(),
-            expected != ConsumptionStatus::NotConsumed,
-            "{error:?}"
-        );
+        assert_eq!(ConsumptionError::consumption(&error), expected, "{error:?}");
     }
     fn postgres_type_identity(
         limiter: runlimit_postgres::PostgresLimiter,
@@ -566,8 +557,8 @@ fn negative_control_stacked_native_single_checks_partially_charge_a_denied_reque
     let store = memory();
     let first = policy("owner", 1);
     let second = policy("peer", 1);
-    let owner = Check::new(&first, subject(1));
-    let peer = Check::new(&second, subject(2));
+    let owner = Check::new(subject(1).bind(&first));
+    let peer = Check::new(subject(2).bind(&second));
     store.check(&peer).unwrap();
     assert!(store.check(&owner).unwrap().permits_request());
     assert!(!store.check(&peer).unwrap().permits_request());
@@ -578,19 +569,19 @@ fn negative_control_stacked_native_single_checks_partially_charge_a_denied_reque
 #[test]
 fn native_memory_error_certainty_covers_every_pinned_variant() {
     use batter_runlimit::ConsumptionError;
-    use runlimit_memory::MemoryStoreError;
+    use runlimit_memory::MemoryBatchError;
 
     let errors = [
-        MemoryStoreError::InvalidBatch(runlimit_core::BatchError::BatchTooLarge {
+        MemoryBatchError::InvalidBatch(runlimit_core::BatchError::BatchTooLarge {
             actual: 2,
             maximum: 1,
         }),
-        MemoryStoreError::BatchExceedsShardCapacity {
+        MemoryBatchError::BatchExceedsShardCapacity {
             shard_index: 0,
             key_count: 2,
             capacity: 1,
         },
-        MemoryStoreError::PoisonedShard { shard_index: 0 },
+        MemoryBatchError::PoisonedShard(runlimit_memory::PoisonedShardError { shard_index: 0 }),
     ];
     for error in errors {
         assert_eq!(error.consumption(), ConsumptionStatus::NotConsumed);

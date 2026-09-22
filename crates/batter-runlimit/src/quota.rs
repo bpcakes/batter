@@ -2,8 +2,8 @@
 
 use batter_core::operation::{Interruption, OperationContext, OperationError};
 use runlimit_core::{
-    Allowance, BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Denial, DenialView,
-    Limiter, QuotaDenial, RateLimitPolicy,
+    Allowance, BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Denial, Limiter,
+    QuotaDenial, RateLimitPolicy,
 };
 use std::{future::Future, num::NonZeroUsize, sync::Arc};
 
@@ -14,9 +14,9 @@ pub trait ConsumptionError: std::error::Error + Send + Sync + 'static {
 }
 
 #[cfg(feature = "memory")]
-impl ConsumptionError for runlimit_memory::MemoryStoreError {
+impl ConsumptionError for runlimit_memory::MemoryBatchError {
     fn consumption(&self) -> ConsumptionStatus {
-        use runlimit_memory::MemoryStoreError::*;
+        use runlimit_memory::MemoryBatchError::*;
         match self {
             InvalidBatch(_) | BatchExceedsShardCapacity { .. } | PoisonedShard { .. } => {
                 ConsumptionStatus::NotConsumed
@@ -26,19 +26,18 @@ impl ConsumptionError for runlimit_memory::MemoryStoreError {
 }
 
 #[cfg(feature = "postgres")]
-impl ConsumptionError for runlimit_postgres::CheckError {
+impl ConsumptionError for runlimit_postgres::BatchCheckError {
     fn consumption(&self) -> ConsumptionStatus {
-        use runlimit_postgres::CheckError::*;
+        self.consumption()
+    }
+}
+
+#[cfg(feature = "memory")]
+impl ConsumptionError for runlimit_memory::GcraBatchError {
+    fn consumption(&self) -> ConsumptionStatus {
         match self {
-            CommittedResponseInvariant => ConsumptionStatus::Consumed,
-            CommitOutcomeUnknown(_) | CommitTimedOut => ConsumptionStatus::PossiblyConsumed,
-            InvalidBatch(_)
-            | DefinitelyNotConsumed(_)
-            | TimedOutBeforeCommit { .. }
-            | StorageInvariant(_)
-            | ResponseInvariant => ConsumptionStatus::NotConsumed,
-            // Forward-compatible uncertainty, never a string-based classification.
-            _ => ConsumptionStatus::PossiblyConsumed,
+            Self::Store(error) => error.consumption(),
+            Self::ArithmeticOverflow => ConsumptionStatus::NotConsumed,
         }
     }
 }
@@ -192,7 +191,7 @@ impl<L> Clone for Quota<L> {
 
 impl<L: Limiter> Quota<L>
 where
-    L::Error: ConsumptionError,
+    L::CheckAllError: ConsumptionError,
 {
     /// Share a prepared native limiter. See the crate-level runnable example.
     pub fn new(limiter: L) -> Self {
@@ -211,7 +210,7 @@ where
         context: &OperationContext,
         checks: Checks<'_, L::Policy>,
         work: F,
-    ) -> RunResult<T, E, L::Error>
+    ) -> RunResult<T, E, L::CheckAllError>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
@@ -232,7 +231,7 @@ where
         checks: Checks<'_, L::Policy>,
         mut record: Record,
         work: F,
-    ) -> RunResult<T, E, L::Error>
+    ) -> RunResult<T, E, L::CheckAllError>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
@@ -262,24 +261,11 @@ where
                         return RunResult::Rejected {
                             index,
                             batch_size,
-                            denial: match denial {
-                                DenialView::QuotaExceeded(details) => {
-                                    Denial::quota_exceeded(details)
-                                }
-                                DenialView::StorageCapacity { retry_after } => {
-                                    Denial::storage_capacity(
-                                        retry_after.map(|delay| delay.duration()),
-                                    )
-                                }
-                            },
+                            denial,
                         };
                     }
-                    BatchDecisionView::Allowed { .. } => Admission::Allowed {
-                        allowances: AllowedBatch(
-                            decision
-                                .try_into_allowed()
-                                .expect("native allowed view must yield allowances"),
-                        ),
+                    BatchDecisionView::Allowed { allowances } => Admission::Allowed {
+                        allowances: AllowedBatch(allowances.to_vec()),
                     },
                     BatchDecisionView::ShadowDenied {
                         index,

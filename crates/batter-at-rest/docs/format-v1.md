@@ -87,7 +87,16 @@ Wrapping AAD is ASCII magic `ATRA`, `role:u8 = 2`, `format_version:u8 = 1`, the 
 
 Seal generates a random data key, payload nonce, and wrapping nonce. Open authenticates the wrapper before authenticating the body and returns plaintext only after both succeed. Rewrap authenticates the wrapper and context, then encrypts the same data key under the current wrapping key with a fresh wrapping nonce. It returns only `WrappedKey` metadata and deliberately does not inspect or attest to an unread body. If the stored wrapping-key ID already is current, rewrap still authenticates it and returns the exact existing wrapper.
 
-A replacement wrapper is valid only with the exact descriptor supplied to rewrap. A storage adapter must persist it with a compare-and-swap condition on the descriptor bytes, complete envelope, or an equivalent row revision that covers them. If the condition fails because a concurrent writer resealed the payload, the adapter must discard the replacement and retry from a fresh read; it must never overwrite the new wrapper with metadata derived from an older descriptor.
+A replacement wrapper is valid only with the exact descriptor supplied to rewrap.
+A storage adapter must compare-and-swap against the complete old envelope or a
+storage revision covering every envelope change, including rewrap. Descriptor-only
+comparison detects a reseal but misses competing rotations that preserve the
+descriptor. The write must also enforce the active key-policy generation, or run
+under exclusive maintenance that excludes obsolete writers. Otherwise a stale
+writer can replace a newer-key wrapper with an older-key wrapper, even after a
+successful fresh read. On conflict, discard the replacement and reload both the
+record and active key policy. These persistence guarantees belong to the storage
+and policy owner; this synchronous metadata operation cannot enforce them.
 
 Random 96-bit wrapping nonces require fewer than `2^32` wrapper encryptions under any one derived wrapping key. The counter is shared by every process using the same master-key, namespace, and purpose combination, including distinct IDs that alias identical master bytes. Seal and different-key rewrap consume one invocation; same-key rewrap does not. This stateless crate does not enforce the aggregate count; the consuming key-configuration and provisioning owner must enforce a conservative key lifetime or traffic ceiling and rotate before the limit. Rewrap preserves the data key and body, so it is not sufficient after master-key compromise; compromise recovery requires full open-and-reseal plus treatment of historical wrapper copies.
 

@@ -51,7 +51,9 @@ Hosted Linux verification and focused macOS jobs passed on both supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 for commit `56814038f2a9cf6a34688ee39cd9f0e433487a1e`. The documentation,
 package-description, and rustdoc refresh in this checkout postdates that run.
-Live PostgreSQL evidence remains scoped to the separately recorded runs. See
+The full workspace verification now requires Docker for native Runledger
+PostgreSQL 18 tests. Batter adapter/reference live PostgreSQL evidence remains
+scoped to the separately recorded runs. See
 [current status](docs/status.md).
 
 ## Platform support
@@ -66,18 +68,14 @@ targets. Other Unix targets remain unverified. See
 
 Network access is required to download dependencies on the first run.
 
-The current unpublished Runledger cutover uses coordinated sibling path
-dependencies. Before running a workspace Cargo command in a fresh checkout,
-place the pinned Runledger source beside this repository:
-
-```sh
-git clone --filter=blob:none --no-checkout https://github.com/bpcakes/runledger.git ../runledger
-git -C ../runledger checkout --detach bfc949bbc32fb2cc5731fb743632b2e432d1f5ae
-```
-
-This cutover constraint does not make Runledger part of Batter's foundation
-dependency graph. Publishing or replacing the paths with immutable package
-identities remains a separate decision.
+Runledger's five native packages are part of this workspace, imported from
+master `46b5cd085d011e597de9552dfebbed4c19416453`. Local dependencies select one
+SQLx foundation without sibling checkouts or dependency patches. Runlimit's five
+native packages are also local, imported from master
+`12e035dac504a1d348c2058ee7ade8e61f2e7974`. See [consumer configuration](docs/reference-compatibility.md#git-consumers)
+and native [Runledger](runledger/IMPORT.md) / [Runlimit](runlimit/IMPORT.md) provenance.
+Runledger remains optional for facade consumers and is absent from the default
+foundation graph. All packages remain unpublished.
 
 ```sh
 cargo run -p batter --features axum --example http_service
@@ -181,10 +179,12 @@ Adapter APIs are also available from their direct packages. The facade exposes
 `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
 `batter::test_support` through additive opt-in features; `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
-documented bridges. Each package declares its own version and Rust
-minimum. Runtime/foundation packages currently require Rust 1.94; the standalone
-`batter-at-rest` leaf retains an independently verified Rust 1.94 minimum. The
-default toolchain is 1.98.1. SQLx 0.9.0 sets the runtime/adapter floor.
+documented bridges. Each package declares its own version and Rust minimum.
+Foundation/adapters remain 0.1.0; native Runledger remains 0.12.0 and native
+Runlimit remains 0.3.0 (PostgreSQL 0.3.1). All retain Rust 1.94 as their minimum.
+The standalone `batter-at-rest` leaf verifies that minimum independently. The
+default toolchain is 1.98.1. SQLx 0.9.0 sets that floor in the adapter and
+examples; extracting it does not establish a lower library minimum.
 
 | Package | Location | Job |
 | --- | --- | --- |
@@ -196,6 +196,16 @@ default toolchain is 1.98.1. SQLx 0.9.0 sets the runtime/adapter floor.
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Native initialization and settlement plus a phase-scoped atomic enqueue runner and schema snapshots built on `batter-sqlx`. |
 | `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution and protected authenticated HTTP assembly. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
+| `runlimit-core` | [runlimit/runlimit-core](runlimit/README.md) | Native validated policies, subject keys and decisions. |
+| `runlimit-memory` | [runlimit/runlimit-memory](runlimit/README.md) | Native bounded process-local quota and attempt storage. |
+| `runlimit-postgres` | [runlimit/runlimit-postgres](runlimit/README.md) | Native replica-safe persistence, migrations and maintenance. |
+| `runlimit-http` | [runlimit/runlimit-http](runlimit/README.md) | Native framework-neutral response metadata. |
+| `runlimit-axum` | [runlimit/runlimit-axum](runlimit/README.md) | Native caller-controlled admission layer. |
+| `runledger-core` | [runledger/runledger-core](runledger/README.md) | Durable job/workflow types and validation. |
+| `runledger-postgres` | [runledger/runledger-postgres](runledger/README.md) | Native persistence using the workspace SQLx foundation. |
+| `runledger-runtime` | [runledger/runledger-runtime](runledger/README.md) | Native workers, scheduling and descendant supervision. |
+| `runledger-test-support` | [runledger/runledger-test-support](runledger/README.md) | Native PostgreSQL 18 container-backed tests. |
+| `runledger-tui` | [runledger/runledger-tui](runledger/README.md#operator-tui) | Separate read-only operator binary. |
 | `batter-example-postgres-lifecycle` | [examples/postgres-lifecycle](examples/postgres-lifecycle/README.md) | Native SQLx composition; an executable, not a library API. |
 | `batter-example-reference-service` | [examples/reference-service](examples/reference-service/README.md) | Atomic authenticated delivery command, provider-effect reconciliation, explicit direct-peer/request correlation, pinned compatibility probes, validated constructors, and an explicit live test target. |
 
@@ -267,3 +277,6 @@ compiler, lint, and test failures without weakening the documented contracts.
 ## License
 
 MIT; see [LICENSE](LICENSE). Registry publication remains a separate decision.
+The optional `batter-at-rest` package is an exception: it uses
+[`LicenseRef-CreditKit-Proprietary`](crates/batter-at-rest/LICENSE), including when
+selected through the MIT facade's `at-rest` feature.

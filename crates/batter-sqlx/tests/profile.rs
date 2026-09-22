@@ -1,4 +1,4 @@
-use batter_sqlx::PgSessionProfile;
+use batter_sqlx::{PgProfiledPool, PgSessionProfile};
 use std::time::Duration;
 
 fn profile(schemas: Vec<String>) -> Result<PgSessionProfile, batter_sqlx::PgProfileError> {
@@ -122,4 +122,13 @@ fn setting_keys_are_case_insensitive_and_duplicates_are_rejected() {
                 .is_err()
         );
     }
+}
+
+#[tokio::test]
+async fn profiled_pool_rejects_zero_capacity_before_connecting() {
+    let options = "postgres://login@127.0.0.1:1/unused".parse().unwrap();
+    assert!(matches!(
+        PgProfiledPool::connect(options, profile(vec!["public".into()]).unwrap(), 0).await,
+        Err(sqlx::Error::Protocol(_))
+    ));
 }

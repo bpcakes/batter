@@ -14,7 +14,8 @@ const _: () = assert!(MAX_CANONICAL_ENVELOPE_BYTES <= MAX_ENVELOPE_BYTES);
 const ENVELOPE_MAGIC: &[u8; 4] = b"ATRE";
 const SEALED_MAGIC: &[u8; 4] = b"ATRS";
 
-/// Immutable content authority: cryptographic format and payload nonce.
+/// Structurally validated content metadata: cryptographic format and payload nonce.
+/// Decoding does not authenticate these values; successful cryptographic operations do.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ContentDescriptor {
     format_version: u8,
@@ -63,7 +64,7 @@ impl ContentDescriptor {
         self.format_version
     }
 
-    /// Returns the authenticated payload nonce.
+    /// Returns the payload nonce; decoding alone does not authenticate it.
     #[must_use]
     pub fn payload_nonce(&self) -> &[u8; NONCE_BYTES] {
         &self.payload_nonce
@@ -80,7 +81,7 @@ impl fmt::Debug for ContentDescriptor {
     }
 }
 
-/// Rotatable metadata containing an authenticated encrypted data key.
+/// Structurally validated metadata containing an encrypted data key and its tag.
 #[derive(Clone, Eq, PartialEq)]
 pub struct WrappedKey {
     key_id: KeyId,
@@ -167,7 +168,8 @@ impl fmt::Debug for WrappedKey {
     }
 }
 
-/// A validated envelope header composed of immutable content and rotatable key metadata.
+/// A structurally validated header with immutable content and rotatable key metadata.
+/// Construction and decoding do not verify authentication tags.
 #[derive(Clone, Eq, PartialEq)]
 pub struct Envelope {
     descriptor: ContentDescriptor,
@@ -247,7 +249,8 @@ impl fmt::Debug for Envelope {
     }
 }
 
-/// An owned envelope header and authenticated ciphertext body.
+/// An owned envelope header and bounded ciphertext body, including its tag.
+/// Construction and decoding validate structure, not cryptographic authenticity.
 #[derive(Eq, PartialEq)]
 pub struct SealedPayload {
     envelope: Envelope,
@@ -271,9 +274,9 @@ impl SealedPayload {
         let envelope = Envelope::decode(decoder.length_prefixed_u16()?)?;
         let body_length = usize::try_from(decoder.u32()?).map_err(|_| Error::MalformedEncoding)?;
         validate_body_length(body_length)?;
-        let ciphertext = decoder.take(body_length)?.to_vec();
+        let ciphertext = decoder.take(body_length)?;
         decoder.finish()?;
-        Self::from_parts(envelope, ciphertext)
+        Self::from_parts(envelope, ciphertext.to_vec())
     }
 
     /// Encodes the envelope and body into one canonical portable value.
@@ -296,7 +299,7 @@ impl SealedPayload {
         &self.envelope
     }
 
-    /// Returns the authenticated ciphertext body, including its tag.
+    /// Returns the ciphertext body, including its unverified authentication tag.
     #[must_use]
     pub fn ciphertext(&self) -> &[u8] {
         &self.ciphertext
@@ -323,7 +326,8 @@ impl fmt::Debug for SealedPayload {
     }
 }
 
-/// A borrowed decrypt view over a validated header and split ciphertext body.
+/// A borrowed decrypt view over a structurally validated header and bounded body.
+/// Construction does not authenticate the header or body.
 #[derive(Clone, Copy)]
 pub struct SealedPayloadRef<'a> {
     envelope: &'a Envelope,
@@ -331,7 +335,7 @@ pub struct SealedPayloadRef<'a> {
 }
 
 impl<'a> SealedPayloadRef<'a> {
-    /// Validates and borrows an independently stored header and body.
+    /// Checks body length and borrows an independently stored header and body.
     pub fn new(envelope: &'a Envelope, ciphertext: &'a [u8]) -> Result<Self, Error> {
         validate_body(ciphertext)?;
         Ok(Self {

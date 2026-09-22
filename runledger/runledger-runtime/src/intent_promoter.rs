@@ -1,0 +1,121 @@
+use runledger_core::jobs::JobType;
+use runledger_postgres::jobs;
+use tokio::sync::watch;
+use tracing::{info, warn};
+
+use crate::RuntimeLoopExit;
+use crate::config::{IntentPromoterConfig, JobsConfig};
+use crate::registry::JobRegistry;
+use crate::shutdown;
+
+/// Promotes durable enqueue intents for registered job types until shutdown.
+///
+/// Promotion is deliberately independent from ordinary queue claiming so a
+/// slow or contended intent pass cannot delay execution of already-queued
+/// jobs. The loop derives its allowlist from `registry` and requests up to
+/// [`JobsConfig::claim_batch_size`] intents per pass; the persistence layer may
+/// enforce a lower per-transaction safety cap. Full storage batches continue
+/// immediately; partial or empty passes wait for either shutdown or
+/// [`JobsConfig::poll_interval`].
+///
+/// [`crate::Supervisor`] starts this loop automatically whenever its worker is
+/// enabled. Custom process orchestration that runs [`crate::worker::run_worker_loop`]
+/// directly must also run this loop if it uses durable enqueue intents.
+pub async fn run_intent_promoter_loop(
+    pool: runledger_postgres::DbPool,
+    registry: JobRegistry,
+    config: JobsConfig,
+    shutdown: watch::Receiver<bool>,
+) -> RuntimeLoopExit {
+    run_intent_promoter_loop_with_config(
+        pool,
+        registry,
+        IntentPromoterConfig::from_jobs_config(&config),
+        shutdown,
+    )
+    .await
+}
+
+/// Promotes durable enqueue intents with intent-specific polling controls.
+///
+/// The configured batch size is a requested limit; the persistence layer may
+/// enforce a lower per-transaction safety cap. A full storage batch is followed
+/// immediately by another pass so a backlog is not rate-limited by the idle
+/// polling cadence. The loop yields between full batches and checks shutdown
+/// before each pass. A shutdown request also cancels an in-flight storage pass;
+/// the persistence operation owns its transaction, so cancellation rolls it
+/// back instead of leaving partial promotion state.
+pub async fn run_intent_promoter_loop_with_config(
+    pool: runledger_postgres::DbPool,
+    registry: JobRegistry,
+    config: IntentPromoterConfig,
+    shutdown: watch::Receiver<bool>,
+) -> RuntimeLoopExit {
+    run_intent_promoter_loop_initialized(pool, registry, config, shutdown, None).await
+}
+
+pub(crate) async fn run_intent_promoter_loop_initialized(
+    pool: runledger_postgres::DbPool,
+    registry: JobRegistry,
+    config: IntentPromoterConfig,
+    mut shutdown: watch::Receiver<bool>,
+    mut startup: Option<crate::startup::LoopStartup>,
+) -> RuntimeLoopExit {
+    if let Err(error) = config.validate() {
+        warn!(%error, "invalid jobs config; stopping intent promoter loop");
+        return RuntimeLoopExit::InvalidConfig(error);
+    }
+
+    let promotable_job_types = registry.registered_static_types();
+
+    crate::startup::acknowledge(&mut startup);
+
+    loop {
+        if shutdown::is_requested_or_closed(&shutdown) {
+            return intent_promoter_shutdown_complete();
+        }
+
+        let should_wait = tokio::select! {
+            biased;
+            () = shutdown::wait_for_request(&mut shutdown) => {
+                return intent_promoter_shutdown_complete();
+            }
+            should_wait = promotion_pass_should_wait(
+                &pool,
+                &promotable_job_types,
+                config.batch_size(),
+            ) => should_wait,
+        };
+
+        if should_wait {
+            if shutdown::wait_for_request_or_timeout(&mut shutdown, config.poll_interval()).await {
+                return intent_promoter_shutdown_complete();
+            }
+        } else {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+async fn promotion_pass_should_wait(
+    pool: &runledger_postgres::DbPool,
+    promotable_job_types: &[JobType<'static>],
+    limit: i64,
+) -> bool {
+    if promotable_job_types.is_empty() {
+        return true;
+    }
+
+    match jobs::promote_job_enqueue_intents_for_types(pool, promotable_job_types, limit).await {
+        Ok(report) => !report.batch_was_full(),
+        Err(error) => {
+            warn!(%error, "job enqueue intent promotion failed");
+            true
+        }
+    }
+}
+
+fn intent_promoter_shutdown_complete() -> RuntimeLoopExit {
+    info!("intent promoter shutdown complete");
+    RuntimeLoopExit::Shutdown
+}

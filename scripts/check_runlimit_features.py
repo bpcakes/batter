@@ -10,10 +10,11 @@ import sys
 import tempfile
 
 from parallel_process import render_outcomes, run_parallel
+from consumer_manifest import consumer_patches
 
 ROOT = Path(__file__).resolve().parent.parent
 FEATURE_PACKAGES = {"memory": ("runlimit-memory",),
-                    "postgres": ("runlimit-postgres", "sqlx"),
+                    "postgres": ("runlimit-postgres", "sqlx", "batter-sqlx"),
                     "axum": ("batter-axum", "axum")}
 
 
@@ -77,7 +78,11 @@ def main():
                 manifest = ('[package]\nname="runlimit-feature-consumer"\nversion="0.0.0"\n'
                             'edition="2024"\npublish=false\n[workspace]\nresolver="3"\n'
                             '[dependencies]\nbatter-runlimit={path=' + json.dumps(str(ROOT / "crates/batter-runlimit")) +
-                            ', default-features=false, features=' + json.dumps(selected) + '}\n')
+                            ', default-features=false, features=' + json.dumps(selected) + '}\n'
+                            + consumer_patches({"runlimit-core"} | {
+                                "runlimit-" + feature for feature in selected
+                                if feature in {"memory", "postgres"}
+                            }))
                 (fixture / "Cargo.toml").write_text(manifest)
                 shutil.copyfile(ROOT / "Cargo.lock", fixture / "Cargo.lock")
                 source = "use batter_runlimit::{Checks, Quota, RunResult};\n"

@@ -12,7 +12,7 @@ async fn quota_drop_destroys_uninvoked_work_factory_under_original_dispatch() {
     let later = Capture::new("warn");
     let quota = Quota::new(Backend::new(Mode::Pending));
     let policy = policy("owner", 1);
-    let checks = [runlimit_core::Check::new(&policy, subject(1))];
+    let checks = [runlimit_core::Check::new(subject(1).bind(&policy))];
     let context = context(1000);
     let guard = OnDrop;
     let mut future = Box::pin(quota.run(

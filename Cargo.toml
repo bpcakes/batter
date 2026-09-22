@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/batter", "crates/batter-at-rest", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service"]
+members = ["crates/batter", "crates/batter-at-rest", "crates/batter-core", "crates/batter-axum", "crates/batter-sqlx", "crates/batter-runledger", "crates/batter-runlimit", "crates/batter-test-support", "examples/postgres-lifecycle", "examples/reference-service", "runledger/runledger-core", "runledger/runledger-postgres", "runledger/runledger-runtime", "runledger/runledger-test-support", "runledger/runledger-tui", "runlimit/runlimit-axum", "runlimit/runlimit-core", "runlimit/runlimit-http", "runlimit/runlimit-memory", "runlimit/runlimit-postgres"]
 default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
@@ -20,9 +20,13 @@ batter-runledger = { path = "crates/batter-runledger", default-features = false 
 batter-runlimit = { path = "crates/batter-runlimit", default-features = false }
 batter-sqlx = { path = "crates/batter-sqlx", default-features = false }
 batter-test-support = { path = "crates/batter-test-support", default-features = false }
-runledger-runtime = { version = "0.12.0", path = "../runledger/runledger-runtime" }
-runledger-postgres = { version = "0.12.0", path = "../runledger/runledger-postgres" }
-runledger-core = { version = "0.12.0", path = "../runledger/runledger-core" }
+runledger-runtime = { path = "runledger/runledger-runtime" }
+runledger-postgres = { path = "runledger/runledger-postgres" }
+runledger-core = { path = "runledger/runledger-core" }
+
+runledger-test-support = { path = "runledger/runledger-test-support" }
+cron = "0.17"
+
 pin-project-lite = "0.2.17"
 tokio = { version = "1.53.1", default-features = false }
 tokio-util = { version = "0.7.19", default-features = false }
@@ -37,3 +41,9 @@ sqlx = { version = "0.9.0", default-features = false }
 tracing-subscriber = "0.3.23"
 tower = "0.5.3"
 url = { version = "2.5.8", default-features = false, features = ["std"] }
+
+runlimit-axum = { path = "runlimit/runlimit-axum" }
+runlimit-core = { path = "runlimit/runlimit-core" }
+runlimit-http = { path = "runlimit/runlimit-http" }
+runlimit-memory = { path = "runlimit/runlimit-memory" }
+runlimit-postgres = { path = "runlimit/runlimit-postgres" }

@@ -30,23 +30,7 @@ async fn main() {
     .unwrap();
     let hasher = KeyHasher::new([7; 32]).unwrap(); // Deterministic test secret only.
     let quota = Quota::new(MemoryStore::new(MemoryStoreConfig::new(100).unwrap()));
-    let checks = [Check::new(&policy, hasher.hash_for(&policy, "owner-a"))];
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
-    let result = quota
-        .run(&context, Checks::new(&checks).unwrap(), |_scope| async {
-            Ok::<_, Infallible>(42)
-        })
-        .await;
-    let RunResult::Admitted {
-        admission: Admission::Allowed { allowances },
-        work: Ok(42),
-    } = result
-    else {
-        panic!("expected native admission and work");
-    };
-    assert_eq!(allowances.len(), 1);
-    assert_eq!(allowances.iter().next().unwrap().capacity(), 1);
-    println!("native quota + work: passed");
+    demonstrate_native_admission(&quota, &policy, &hasher).await;
 
     let second = Duration::from_secs(1);
     let cleanup = CleanupBudget::new(second, second, second).unwrap();
@@ -78,7 +62,11 @@ async fn main() {
                 Err(std::io::Error::other("authentication failed"))
             }
         },
-        move |principal, _peer, policy| hasher.hash_for(policy, principal),
+        move |principal, _peer, policy| {
+            hasher
+                .hash_for(policy, principal)
+                .into_unbound_subject_key()
+        },
     )
     .unwrap();
     let probes = PublicProbes::new()
@@ -122,4 +110,28 @@ async fn main() {
     assert_eq!(statuses, [200, 429]);
     batter::lifecycle::check_shutdown(running.shutdown().await).unwrap();
     println!("protected HTTP status sequence: {statuses:?}");
+}
+
+async fn demonstrate_native_admission(
+    quota: &Quota<MemoryStore>,
+    policy: &FixedWindowPolicy,
+    hasher: &KeyHasher,
+) {
+    let checks = [Check::new(hasher.hash_for(policy, "owner-a"))];
+    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let result = quota
+        .run(&context, Checks::new(&checks).unwrap(), |_scope| async {
+            Ok::<_, Infallible>(42)
+        })
+        .await;
+    let RunResult::Admitted {
+        admission: Admission::Allowed { allowances },
+        work: Ok(42),
+    } = result
+    else {
+        panic!("expected native admission and work");
+    };
+    assert_eq!(allowances.len(), 1);
+    assert_eq!(allowances.iter().next().unwrap().capacity().get(), 1);
+    println!("native quota + work: passed");
 }

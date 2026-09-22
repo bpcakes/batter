@@ -6,6 +6,16 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## At-rest facade feature review, 2026-09-22
+
+The [Cargo feature-unification contract](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
+states that dependency features are additive across the resolved graph. The
+at-rest facade checks therefore inspect resolved features and reject activation
+of the leaf's `test-support` feature in production consumer cases. An individual
+manifest's defaults cannot establish application-wide isolation. The cryptographic
+v1 format, HKDF inputs, public signatures and MAC concatenation contract are
+unchanged by this review repair.
+
 ## PostgreSQL smoke fixture signal wait: reviewed 2026-09-21
 
 Python's [signal execution contract](https://docs.python.org/3/library/signal.html#execution-of-python-signal-handlers)
@@ -30,8 +40,12 @@ requires the original cleanup, exit, capture and watchdog evidence.
   provides detach semantics used by the existing retiring lease guard. Retirement
   releases local pool ownership; it does not prove a blocked backend has stopped.
 
-Runledger now consumes the foundation through coordinated sibling paths; the
-historical Git-pin/view evidence below describes earlier implementations only.
+Runledger now lives in this workspace, imported from master at
+[`46b5cd085d011e597de9552dfebbed4c19416453`](https://github.com/bpcakes/runledger/commit/46b5cd085d011e597de9552dfebbed4c19416453)
+(PR #22). The fresh remote master was fetched and inspected before import. Its
+native packages use the same local foundation as the facade without a patch;
+see [import provenance](../runledger/IMPORT.md). The
+historical sibling-source and Git-pin/view evidence below describes earlier implementations only.
 The new strong path does not retain those views as a compatibility bridge.
 PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
 
@@ -3855,3 +3869,21 @@ native resource identity without claiming to validate arbitrary application SQL.
 - PostgreSQL 18's [server logging controls](https://www.postgresql.org/docs/18/runtime-config-logging.html)
   are a separate boundary. Client-side redacted formatting cannot sanitize server
   logs, independent SQLx query/notice events or error-chain reporters.
+
+## Native SQLx metadata refresh, 2026-09-21
+
+- SQLx CLI 0.9.0's [`migrate info` implementation](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-cli/src/migrate.rs)
+  iterates locally resolved migrations and looks up their applied records; it
+  does not list extra applied database versions. The refresh tool separately
+  compares `_sqlx_migrations` versions and success status with canonical sources.
+  A live PostgreSQL 18 control executes this ahead-of-checkout case.
+
+## Native Runlimit import, 2026-09-21
+
+The inspected primary source is Runlimit master
+[`12e035dac504a1d348c2058ee7ade8e61f2e7974`](https://github.com/bpcakes/runlimit/tree/12e035dac504a1d348c2058ee7ade8e61f2e7974).
+Its manifests define four 0.3.0 packages and PostgreSQL 0.3.1, Rust 1.94 and dual
+MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
+release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
+tests against PostgreSQL 16. The import preserves those native source contracts;
+[provenance](../runlimit/IMPORT.md) records adapted workspace administration.

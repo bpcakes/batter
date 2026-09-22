@@ -1,0 +1,1 @@
+Combine both existing streams. Add Cargo source metadata; Runledger validates the actual compiled foundation and relevant inherited inputs. Refresh native pins and validate both contracts, Git consumer, two toolchains and CI. Preserve commits and stable review base.

@@ -31,8 +31,14 @@ pub fn subject(n: u8) -> SubjectKey {
 }
 pub fn allowed() -> BatchDecision {
     BatchDecision::allowed(vec![
-        Allowance::try_new(10, 9, Duration::from_secs(60)).unwrap(),
+        Allowance::new(
+            runlimit_core::Capacity::new(10).unwrap(),
+            9,
+            Duration::from_secs(60),
+        )
+        .unwrap(),
     ])
+    .unwrap()
 }
 pub fn context(ms: u64) -> OperationContext {
     OperationContext::new(Duration::from_millis(ms)).unwrap()
@@ -90,15 +96,15 @@ impl Drop for DropCount {
 }
 impl Limiter for Backend {
     type Policy = FixedWindowPolicy;
-    type Error = BackendFailure;
-    async fn check(&self, check: &Check<'_, Self::Policy>) -> Result<Decision, Self::Error> {
-        Ok(self
-            .check_all(std::slice::from_ref(check))
-            .await?
-            .try_into_single_decision()
-            .unwrap())
+    type CheckError = BackendFailure;
+    type CheckAllError = BackendFailure;
+    async fn check(&self, _: &Check<'_, Self::Policy>) -> Result<Decision, Self::CheckError> {
+        unreachable!("the adapter must use one atomic batch")
     }
-    async fn check_all(&self, _: &[Check<'_, Self::Policy>]) -> Result<BatchDecision, Self::Error> {
+    async fn check_all(
+        &self,
+        _: &[Check<'_, Self::Policy>],
+    ) -> Result<BatchDecision, Self::CheckAllError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let _drop = DropCount(self.dropped.clone());
         self.entered.notify_one();

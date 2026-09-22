@@ -4,6 +4,10 @@
 
 The envelope side deliberately has one format and three operations: seal, open, and metadata-only rewrap. `MacKey` separately signs stable application identities with HMAC-SHA256; it does not define their message encoding or rotation policy. The crate has no SQL, object-store, configuration, async-runtime, network, serde, Batter-runtime, or application dependency.
 
+The fixed-byte encryption and MAC keys below are **demonstration-only**. Provision
+independent high-entropy keys using an operating-system cryptographic random
+source and load them through your application's protected key-management path.
+
 ```rust
 use batter_at_rest::{Context, KeyId, Keyring, SecretKey};
 
@@ -40,7 +44,14 @@ key.verify_segments([b"purpose".as_slice(), b"message".as_slice()], &tag)?;
 # Ok::<(), batter_at_rest::Error>(())
 ```
 
-The encoded `Envelope` is authenticated metadata. Its `ContentDescriptor` is immutable across rewrap and contains the format version and payload nonce. Its `WrappedKey` contains the wrapping-key ID, wrapping nonce, and encrypted data key. `SealedPayload` combines an envelope with the ciphertext body; `SealedPayloadRef` lets a storage adapter decrypt borrowed split columns or an object body without concatenating them.
+The encoded `Envelope` contains metadata covered by authentication tags. Decoding
+and construction validate structure only; `open` authenticates the wrapper and
+body, while `rewrap` authenticates only the wrapper. Its `ContentDescriptor` is
+immutable across rewrap and contains the format version and payload nonce. Its
+`WrappedKey` contains the wrapping-key ID, wrapping nonce, and encrypted data key.
+`SealedPayload` combines an envelope with the ciphertext body; `SealedPayloadRef`
+lets a storage adapter decrypt borrowed split columns or an object body without
+concatenating them.
 
 See [`docs/format-v1.md`](docs/format-v1.md) for normative bytes and limits.
 
@@ -64,7 +75,8 @@ checks source-manifest structure and detached dependency metadata, runs tests
 and the independent Node.js fixed-vector generator plus an all-target build,
 creates a standalone lockfile and verified local Cargo
 package, and repeats the tests and build against the unpacked `.crate`
-artifact. Its external integration test uses only this crate's public API.
+artifact. A separate consumer manifest then runs public-API tests against only
+the unpacked artifact, with default features and without package dev-dependencies.
 Negative probes also prove that workspace-inherited metadata, dependency
 source overrides, and a parent-relative dependency fail for their intended
 reasons, and that crate/caller Cargo configuration cannot enter the isolated
@@ -95,6 +107,30 @@ must reconstruct only through the public decoders.
 The protected data is recoverable secrets and sensitive consumer content persisted in PostgreSQL, object storage, or backups. The in-scope attacker can read one of those stores or accidentally substitute ciphertext, wrappers, or descriptors between application owners, resources, purposes, and payload schemas. The trust boundary is the trusted application process, which holds keys and plaintext, to storage adapters, which hold authenticated metadata and ciphertext. AES-256-GCM prevents plaintext recovery from a read-only disclosure and rejects accidental cross-context or cross-part substitution. HKDF-SHA256 separates wrapping keys by namespace and purpose.
 
 Authorization must succeed before decryption. Database constraints, transactions, retention, deletion, access control, and storage encryption remain necessary; this crate does not replace them. Storage-only encryption cannot authenticate the application's owner/resource/schema meaning and does not mitigate a store disclosure at the application boundary, which is why this control exists.
+
+Reconstruct the expected context from the authenticated principal and authoritative
+application state, not solely from metadata stored alongside ciphertext. Define
+canonical identifier bytes and separate purposes or resource-bound contexts for
+credential slots that must not be interchangeable. Tenant-token binding does not
+distinguish slots sharing tenant, namespace, purpose, and schema. Authentication
+does not establish freshness: rollback-sensitive records need an independently
+trusted expected revision. Schema changes require explicit old-context reads and
+resealing under the new context; never reinterpret a persisted schema label.
+
+Persist rewrap results using a compare-and-swap against the complete old envelope
+or a revision covering every envelope update. Comparing only the content
+descriptor misses competing rotations. Also fence obsolete key policies using a
+checked generation or exclusive maintenance that excludes stale writers. Reload
+both the record and current key policy after conflict. Track wrapper migration
+separately from body authentication; metadata-only rewrap cannot attest to a body
+it never reads.
+
+Apply application-specific input limits before buffering and bound concurrent
+synchronous crypto work by bytes and execution capacity. The crate's 64 MiB
+plaintext limit is a format ceiling, not an endpoint default. Retaining encoded
+input, decoded ciphertext, and plaintext can use roughly three payload-sized
+buffers. Prefer borrowed split storage when available. Bound deserialization and
+decompression after authentication as well.
 
 Operators must provision a nonempty keyring, retain old keys until no wrapper or recoverable backup references them, rewrap metadata before retirement, and preserve keys needed for backup recovery. Losing a referenced key makes the payload unavailable. Stable MAC keys are a separate lifecycle: changing one changes every derived identity, and importing a replacement cannot recover identities whose original input no longer exists. Historical format migration, identity message contracts, configuration update safety, retirement audits, deletion, and recovery orchestration belong to consuming systems.
 

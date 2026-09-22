@@ -50,8 +50,11 @@ impl Keyring {
     /// body. The caller preserves the descriptor and body. If the wrapper is
     /// already current, the authenticated original wrapper is returned exactly.
     /// A returned wrapper belongs only to the input descriptor; persistence must
-    /// compare-and-swap against that descriptor (or the complete input envelope)
-    /// and retry from a fresh read if the stored value changed concurrently.
+    /// compare-and-swap against the complete input envelope or a storage revision
+    /// covering every envelope change. Descriptor-only comparison cannot detect
+    /// another rewrap. Persistence must also fence obsolete key policies, either
+    /// with a checked policy generation or exclusive maintenance that excludes
+    /// stale writers. On conflict, reload both the record and active key policy.
     pub fn rewrap(&self, context: &Context, envelope: &Envelope) -> Result<WrappedKey, Error> {
         let mut random = SystemRandom;
         self.rewrap_with_random(context, envelope, &mut random)

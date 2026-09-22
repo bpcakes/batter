@@ -635,5 +635,25 @@ validate_detached_manifest "$unpacked_crate" "$portability_root/package-metadata
 cargo_msrv "$unpacked_crate" "$target_root/unpacked" test --locked
 cargo_msrv "$unpacked_crate" "$target_root/unpacked" test --test public_api --locked
 cargo_msrv "$unpacked_crate" "$target_root/unpacked" check --all-targets --locked
+
+# A separate manifest proves consumer resolution without this package's test or
+# workspace dependencies. Reuse public-API cases, but depend only on the artifact.
+consumer_root="$portability_root/consumer"
+mkdir -p "$consumer_root/tests" "$consumer_root/src"
+python3 - "$consumer_root" "$unpacked_crate" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+consumer, artifact = map(Path, sys.argv[1:])
+(consumer / "Cargo.toml").write_text(
+    '[package]\nname = "at-rest-artifact-consumer"\nversion = "0.0.0"\n'
+    'edition = "2024"\npublish = false\n[workspace]\n[dependencies]\n'
+    'batter-at-rest = { path = ' + json.dumps(str(artifact)) + ' }\n'
+)
+(consumer / "src/lib.rs").write_text("")
+PY
+cp "$unpacked_crate/tests/public_api.rs" "$consumer_root/tests/public_api.rs"
+cargo_msrv "$consumer_root" "$target_root/unpacked" test
 printf 'batter-at-rest portability: verified package and unpacked artifact tests passed\n'
-printf 'batter-at-rest portability: public consumer test passed in source and packaged artifacts\n'
+printf 'batter-at-rest portability: separate consumer passed against the unpacked artifact\n'
