@@ -2,8 +2,12 @@ use super::{ManagedRecord, ShutdownCause, TaskOutcome, TaskRecord};
 use crate::cleanup::CleanupReport;
 
 /// Complete process report, including teardown failures and unreaped work.
-/// Awaiting the driver does not by itself establish successful shutdown.
-/// Owned drivers return a [`super::SharedShutdownReport`]; binding or explicit dropping bypasses either lint.
+/// Awaiting a raw driver outcome does not by itself establish successful shutdown.
+/// Owned drivers expose checked completion for ordinary applications through
+/// [`super::RunningSupervisor::wait_checked`] and
+/// [`super::RunningSupervisor::shutdown_checked`]. Their raw report methods
+/// return a [`super::SharedShutdownReport`] on coordinator success; binding or
+/// explicitly dropping that raw report bypasses the `must_use` lint.
 /// Debug and Display are redacted: retained task and cleanup errors are reachable
 /// only through the public fields, never through formatting.
 ///

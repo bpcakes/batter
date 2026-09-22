@@ -2,7 +2,7 @@ use batter_core::lifecycle::ComponentExit;
 use batter_core::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
+    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, ShutdownFailure, Supervisor},
 };
 use std::{
     future::pending,
@@ -66,6 +66,10 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
     drop(observer);
     let retained = another_observer.wait().await.unwrap();
     assert!(std::ptr::eq(&*report, &*retained));
+    let checked = another_observer.wait_checked().await.unwrap();
+    assert!(std::ptr::eq(&*report, &**checked.report()));
+    let extracted = checked.into_report();
+    assert!(std::ptr::eq(&*report, &*extracted));
 }
 
 #[tokio::test(start_paused = true)]
@@ -119,6 +123,11 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
         .expect("the cloned observer must retain the coordinator failure")
         .unwrap_err();
     assert!(Arc::ptr_eq(&error, &retained));
+    let ShutdownFailure::Coordinator(checked) = another_observer.wait_checked().await.unwrap_err()
+    else {
+        panic!("a coordinator failure cannot become successful evidence")
+    };
+    assert!(Arc::ptr_eq(&error, &checked));
 }
 
 #[test]
@@ -151,6 +160,29 @@ fn observer_created_after_completion_retains_report_after_owners_and_runtime_dro
             .unwrap()
     });
     assert!(std::ptr::eq(&*report, &*retained));
+    let checked = runtime().block_on(observer.wait_checked()).unwrap();
+    assert!(std::ptr::eq(&*report, &**checked.report()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn unapproved_checked_completion_never_approves_readiness() {
+    let mut supervisor = Supervisor::new(budget());
+    supervisor
+        .register("worker", |startup| async move {
+            startup.shutdown().draining().await;
+            Ok(startup.abandon())
+        })
+        .unwrap();
+    let pending = supervisor.start_unapproved();
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    let observer = pending.observer();
+    let success = pending.shutdown_checked().await.unwrap();
+    assert!(success.report().is_success());
+    assert_eq!(pending.status().readiness(), Readiness::Stopped);
+    let later = pending.wait_checked().await.unwrap();
+    let observed = observer.wait_checked().await.unwrap();
+    assert!(std::ptr::eq(&**success.report(), &**later.report()));
+    assert!(std::ptr::eq(&**success.report(), &**observed.report()));
 }
 
 #[test]

@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add checked owned-process wait and shutdown methods that propagate unsuccessful
+  reports and coordinator failures through `?` while retaining successful report
+  evidence. Explicit raw-report methods coexist with unchanged legacy signatures.
+
 ## 0.0.1 — 2026-09-22
 
 - Prepare the first crates.io release of the eight Batter packages. All internal
