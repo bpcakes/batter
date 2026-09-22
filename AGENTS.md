@@ -5,7 +5,7 @@
 Build an operational foundation around native Rust/Tokio, not an Effect port,
 DI container, ORM, or application framework. Axum is an optional adapter.
 
-This workspace contains sixteen library packages, the Runledger TUI, and two SQLx example packages,
+This workspace contains seventeen library packages, the Runledger TUI, and two SQLx example packages,
 with failure-contract tests, doctests, and eight runnable demonstrations plus a
 read-only live-suite preflight.
 The original authoring environment had no Rust toolchain. Subsequent local
@@ -38,8 +38,9 @@ not broaden this repository's platform support.
 ## Verification
 
 The default toolchain is pinned to Rust 1.98.1. All packages retain Rust 1.94
-as their minimum; SQLx 0.9.0 requires it in the adapter and examples. No lower library
-minimum is claimed after extraction. Run `bash scripts/verify.sh` and
+as their minimum; SQLx 0.9.0 requires it in the adapter and examples. The
+standalone `batter-at-rest` boundary is also verified on exact Rust 1.94 by
+`scripts/check-batter-at-rest-portability.sh`. Run `bash scripts/verify.sh` and
 `RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`, then build and execute the HTTP
 smoke test described in `docs/testing.md`. Repair failures without relaxing
 semantic tests. Record verification outcomes in the owning Bead when the code or
@@ -113,6 +114,9 @@ cause has been removed.
 `crates/batter/src/lib.rs` is the public facade. It re-exports the single
 `batter-core` implementation and owns optional adapter namespaces plus the
 public foundation examples; it contains no duplicate runtime.
+`crates/batter-at-rest` owns synchronous envelope encryption and stable MAC keys.
+It has explicit standalone metadata and proprietary licensing; the facade may
+only re-export its types behind the opt-in `at-rest` feature.
 `crates/batter-core/src/lifecycle.rs` and `crates/batter-core/src/lifecycle/` own critical/finite process tasks, readiness
 acknowledgements, shutdown phases, and the separately driven completion report.
 `crates/batter-core/src/startup.rs` and `startup/` own initialization, failure cleanup
@@ -211,8 +215,9 @@ bracket helper that skips finalization when its outer future is cancelled.
 
 ## Dependency direction
 
-Applications -> batter facade or direct adapters -> batter-core -> native
-ecosystem libraries. Runlimit, Runledger, and postgres-test-harness must not
+Applications -> batter facade or direct packages; operational adapters ->
+batter-core -> native ecosystem libraries. `batter-at-rest` remains a leaf and
+must not depend on the facade or core. Runlimit, Runledger, and postgres-test-harness must not
 depend on the batter facade. Keep their own
 supervision, persistence, policy validation, and provisioning responsibilities.
 The core foundation must not depend on adapters, and the facade must not be

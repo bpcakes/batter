@@ -55,16 +55,19 @@ application:
 
 ```toml
 [dependencies]
-batter = { version = "0.1", features = ["axum", "sqlx"] }
+batter = { version = "0.1", features = ["at-rest", "axum", "sqlx"] }
 ```
 
-Use `batter::axum`, `batter::sqlx`, `batter::runledger`,
+Use `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
 `batter::runlimit`, and `batter::test_support` for the corresponding
 feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
 `runlimit-axum` forward the existing native adapter capabilities;
 `sqlx-test-support` additionally exposes `batter::sqlx::test_support` and
 generic test support. Direct adapter packages remain supported when an
-application needs their native package boundary. The complete feature table
+application needs their native package boundary. In particular,
+`batter-at-rest` supports direct runtime-free use as `batter_at_rest`; the
+facade feature re-exports the same types and is not required for encryption.
+The complete feature table
 and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
 
 ## Operation ownership and migration

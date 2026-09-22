@@ -1,0 +1,43 @@
+name: Batter at-rest crate portability
+
+on:
+  pull_request:
+    paths:
+      - "crates/batter-at-rest/**"
+      - "scripts/check-batter-at-rest-portability.sh"
+      - ".github/workflows/batter-at-rest-portability.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "crates/batter-at-rest/**"
+      - "scripts/check-batter-at-rest-portability.sh"
+      - ".github/workflows/batter-at-rest-portability.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: batter-at-rest-portability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detached-package:
+    name: Rust 1.94.0 detached source and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.94.0
+        run: rustup toolchain install 1.94.0 --profile minimal
+
+      - name: Run the repository portability gate
+        run: scripts/check-batter-at-rest-portability.sh
