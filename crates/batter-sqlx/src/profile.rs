@@ -15,8 +15,9 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 /// # async fn example(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
 /// use batter_sqlx::{PgSessionProfile, run_atomic_profiled};
 /// use std::time::Duration;
-/// let profile = PgSessionProfile::new("login", "serving", vec!["application".into()],
-///     Duration::from_secs(30), Duration::from_secs(5))?
+/// let profile = PgSessionProfile::with_timeouts("login", "serving", vec!["application".into()],
+///     Duration::from_secs(30), Duration::from_secs(5),
+///     Duration::from_secs(10), Duration::from_secs(60))?
 ///     .with_setting("app.tenant", "tenant-one")?;
 /// let value = run_atomic_profiled(pool, &profile, async |scope| {
 ///     scope.application(async |sql| {
@@ -33,6 +34,7 @@ pub struct PgSessionProfile {
     search_path: String,
     statement_timeout_ms: u32,
     lock_timeout_ms: u32,
+    transaction_timeouts_ms: Option<(u32, u32)>,
     settings: BTreeMap<String, String>,
 }
 
@@ -54,9 +56,55 @@ impl fmt::Debug for PgSessionProfile {
 }
 
 impl PgSessionProfile {
-    /// Declare login/effective roles, an ordered trusted schema path and timeouts.
-    /// A zero timeout explicitly disables that timeout. No policy is inferred
-    /// from SQLx hooks or the authenticated user's privileges.
+    /// Declare all four server timeouts, roles and an ordered trusted schema path.
+    /// Each timeout must be an exact number of milliseconds in `0..=i32::MAX`.
+    /// Zero explicitly disables that timeout, even over a nonzero startup default.
+    /// All four values are applied after reset and checked at scope boundaries.
+    /// See the type's example for the canonical construction path.
+    ///
+    /// `idle_in_transaction_session_timeout` bounds each idle interval inside a
+    /// transaction; `transaction_timeout` bounds the entire transaction. The
+    /// latter requires PostgreSQL 17 or later, including when set to zero. An
+    /// unsupported setting fails setup before application access. Native tests
+    /// use PostgreSQL 18. PostgreSQL ignores a statement or idle timeout when a
+    /// nonzero transaction timeout is shorter or equal; relative values are
+    /// application policy, not parent/child operation deadlines.
+    ///
+    /// Server termination does not cancel Rust work or release a held pool lease.
+    /// Use [`crate::run_atomic_profiled_in`] for a cooperative operation budget.
+    /// Arbitrary SQL can alter settings before revalidation; this is not a sandbox.
+    pub fn with_timeouts(
+        login_role: impl Into<String>,
+        effective_role: impl Into<String>,
+        schemas: Vec<String>,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+        idle_in_transaction_session_timeout: Duration,
+        transaction_timeout: Duration,
+    ) -> Result<Self, PgProfileError> {
+        let mut profile = Self::new(
+            login_role,
+            effective_role,
+            schemas,
+            statement_timeout,
+            lock_timeout,
+        )?;
+        profile.transaction_timeouts_ms = Some((
+            timeout_ms(idle_in_transaction_session_timeout)?,
+            timeout_ms(transaction_timeout)?,
+        ));
+        Ok(profile)
+    }
+
+    /// Compatibility constructor declaring only statement and lock timeouts.
+    /// Prefer [`Self::with_timeouts`] to declare and verify all four timeouts.
+    ///
+    /// This weaker path leaves both transaction timeouts at their reset defaults
+    /// and never verifies them. Startup connection options and role/database
+    /// defaults survive reset; later `SET` values and pool hooks are not retained.
+    /// It does not require PostgreSQL's `transaction_timeout` parameter to exist.
+    /// A zero statement or lock timeout explicitly disables that timeout. No
+    /// policy is inferred from SQLx hooks or the authenticated user's privileges.
     pub fn new(
         login_role: impl Into<String>,
         effective_role: impl Into<String>,
@@ -94,6 +142,7 @@ impl PgSessionProfile {
             search_path,
             statement_timeout_ms: timeout_ms(statement_timeout)?,
             lock_timeout_ms: timeout_ms(lock_timeout)?,
+            transaction_timeouts_ms: None,
             settings: BTreeMap::new(),
         })
     }
@@ -171,18 +220,9 @@ impl PgSessionProfile {
             .execute(&mut *connection)
             .await?;
         set(connection, "search_path", &self.search_path).await?;
-        set(
-            connection,
-            "statement_timeout",
-            &format!("{}ms", self.statement_timeout_ms),
-        )
-        .await?;
-        set(
-            connection,
-            "lock_timeout",
-            &format!("{}ms", self.lock_timeout_ms),
-        )
-        .await?;
+        for (key, value) in self.timeouts() {
+            set(connection, key, &format!("{value}ms")).await?;
+        }
         for (key, value) in [
             ("default_transaction_isolation", "read committed"),
             ("default_transaction_read_only", "off"),
@@ -210,10 +250,7 @@ impl PgSessionProfile {
                 return Err(mismatch());
             }
         }
-        for (key, expected) in [
-            ("statement_timeout", self.statement_timeout_ms),
-            ("lock_timeout", self.lock_timeout_ms),
-        ] {
+        for (key, expected) in self.timeouts() {
             let value: i64 = sqlx::query_scalar(
                 "SELECT setting::bigint FROM pg_catalog.pg_settings WHERE name = $1",
             )
@@ -245,6 +282,24 @@ impl PgSessionProfile {
             }
         }
         Ok(())
+    }
+
+    fn timeouts(&self) -> impl Iterator<Item = (&'static str, u32)> {
+        [
+            ("statement_timeout", self.statement_timeout_ms),
+            ("lock_timeout", self.lock_timeout_ms),
+        ]
+        .into_iter()
+        .chain(
+            self.transaction_timeouts_ms
+                .into_iter()
+                .flat_map(|(idle, total)| {
+                    [
+                        ("idle_in_transaction_session_timeout", idle),
+                        ("transaction_timeout", total),
+                    ]
+                }),
+        )
     }
 }
 

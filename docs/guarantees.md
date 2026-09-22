@@ -882,6 +882,15 @@ explicit login/effective roles, trusted schema path, timeouts and custom setting
 after reset, before beginning a transaction. Validation precedes callback access
 and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
 still lock authoritative objects before their first snapshot-bearing query.
+`PgSessionProfile::with_timeouts` requires all four server timeout selections,
+including idle-in-transaction and total-transaction limits. The adapter validates
+exact bounded milliseconds before I/O, applies explicit zero as disable, and
+revalidates both settings alongside the existing policy. Unsupported parameters
+fail setup. The compatibility `new` constructor leaves those two settings
+undeclared and preserves their reset defaults without checking them. Startup
+options survive `DISCARD ALL`; subsequent session `SET` values do not. Server
+timeout termination cannot release a held Rust lease or cancel arbitrary callback
+work; context-owned runners retain cooperative local deadline responsibility.
 Setting keys are ASCII-lowercased before validation and duplicate detection;
 values are preserved. Public profile reset/setup failures carry a `SqlxFailure`
 inside `sqlx::Error::Configuration`, so default formatting and SQLx's pool-hook

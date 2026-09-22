@@ -6,6 +6,31 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Declared transaction timeouts: reviewed 2026-09-22
+
+Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.
+
+- PostgreSQL 18 [RESET](https://www.postgresql.org/docs/18/sql-reset.html) and
+  [DISCARD](https://www.postgresql.org/docs/18/sql-discard.html) establish that
+  reset restores defaults, including startup options, rather than always zeroing
+  timeouts. Session `SET` values are removed. SQLx 0.9.0's local
+  `sqlx-postgres/src/options/mod.rs::options` and `connection/establish.rs` send
+  those options in the startup packet.
+- PostgreSQL 18 [client defaults](https://www.postgresql.org/docs/18/runtime-config-client.html)
+  specify millisecond units, zero as disable, idle-interval versus total-transaction
+  termination, precedence when total timeout is shorter or equal, and the prepared
+  transaction exclusion. These are server policies, not Rust callback deadlines.
+- The PostgreSQL 17 [release notes](https://www.postgresql.org/docs/17/release-17.html)
+  introduce `transaction_timeout`. Complete declarations require its existence
+  even for explicit zero; native setup errors reject unsupported parameters.
+  Compatibility construction does not query or set either undeclared GUC.
+
+The native cases distinguish startup/session values, profile enforcement and
+independently observed backend/lock release from a still-held local lease. This
+does not establish a hard wall-clock guarantee or permanent protection from SQL
+that changes settings between validation boundaries. PostgreSQL 16/17 runtime
+coverage and fresh-agent usability evaluation remain unexecuted.
+
 ## GitHub Actions scheduling and caching: reviewed 2026-09-22
 
 - GitHub's [workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)

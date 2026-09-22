@@ -7,6 +7,12 @@ mod commit;
 mod poison;
 #[path = "atomic_live/profile.rs"]
 mod profile;
+#[path = "atomic_live/profile_timeout_drift.rs"]
+mod profile_timeout_drift;
+#[path = "atomic_live/profile_timeout_expiry.rs"]
+mod profile_timeout_expiry;
+#[path = "atomic_live/profile_timeouts.rs"]
+mod profile_timeouts;
 #[path = "atomic_live/profiled_pool.rs"]
 mod profiled_pool;
 #[path = "atomic_live/runner.rs"]

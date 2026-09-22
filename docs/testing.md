@@ -1,5 +1,18 @@
 # Testing and failure-contract coverage
 
+Transaction timeout profiles (`batter-qhps`) have offline precision/range and
+override controls in `crates/batter-sqlx/tests/profile.rs`. The explicit live
+inventory adds six PostgreSQL 18 cases in `atomic_live/profile_timeouts.rs`,
+`profile_timeout_drift.rs` and `profile_timeout_expiry.rs`: startup defaults versus
+session settings, explicit zero, legacy compatibility, all pool hook paths,
+atomic/snapshot application and drift, retained poison and recovered inspection
+errors, and independently observed server termination/lock release. The expiry
+controls retain the Rust lease and assert that the local pool slot stays occupied.
+Total expiry spans multiple successful short statements; idle expiry waits for
+an independent backend observation. Existing setup-redaction cases use complete
+profiles. Older PostgreSQL versions and fresh-agent usability tasks are not
+executed by these cases.
+
 Atomic runner regression coverage (`batter-gzh`) lives in
 `crates/batter-sqlx/tests/atomic_live`: acknowledged output/rejection, retained
 uncertainty, caught inner cancellation, inherited session reset, completion

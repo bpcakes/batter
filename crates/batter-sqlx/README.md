@@ -54,10 +54,30 @@ Use `run_atomic_profiled(&pool, &profile, ...)` and
 `PgReadOnlySnapshot::inspect_profiled(&pool, &profile, ...)` when role, trusted
 schema path, server timeouts or custom tenant settings matter. `PgSessionProfile`
 declares login/effective roles and safely quoted trusted schemas, plus explicit
-statement/lock timeouts and bound custom settings. Setup is library-owned, runs
+timeouts and bound custom settings. Construct it with `PgSessionProfile::with_timeouts`
+to require statement, lock, idle-in-transaction and total-transaction timeouts.
+Every duration must be exact whole milliseconds in `0..=i32::MAX`; zero explicitly
+disables that timeout, including over nonzero inherited defaults. Setup is library-owned, runs
 after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
+The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
+declares only statement/lock timeouts and neither sets nor verifies transaction
+timeouts. Their PostgreSQL reset defaults, including connection startup options,
+remain in effect. `DISCARD ALL` removes later session `SET` customizations; it does
+not erase startup defaults. All three pool hooks remain library-owned.
+
+Complete profiles require PostgreSQL 17 or later because `transaction_timeout`
+was introduced in 17, even when the declared value is zero. Unsupported settings
+fail setup before application access; they are never silently skipped. Native
+verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
+interval, while transaction timeout bounds the whole transaction and terminates
+the session; prepared transactions are excluded. A nonzero transaction timeout
+shorter than or equal to statement/idle timeout takes precedence. Choosing these
+values is application policy. Server termination does not cancel a pending Rust
+callback or release a held local pool lease. Use `run_atomic_profiled_in` with an
+`OperationContext` for cooperative local deadlines; non-yielding work and commit
+ambiguity retain their existing limits. SQL can change settings between checks.
 Only include schemas whose object creators you trust. Application-specific
 provisioning and required grants remain downstream; no role/schema is created.
 Setting names are ASCII-lowercased before validation; case-variant duplicates

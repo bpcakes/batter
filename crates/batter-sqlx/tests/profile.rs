@@ -2,12 +2,14 @@ use batter_sqlx::{PgProfiledPool, PgSessionProfile};
 use std::time::Duration;
 
 fn profile(schemas: Vec<String>) -> Result<PgSessionProfile, batter_sqlx::PgProfileError> {
-    PgSessionProfile::new(
+    PgSessionProfile::with_timeouts(
         "login",
         "serving",
         schemas,
         Duration::from_secs(30),
         Duration::from_secs(1),
+        Duration::from_secs(10),
+        Duration::from_secs(60),
     )
 }
 
@@ -44,6 +46,10 @@ fn settings_cannot_override_owned_authority_or_transaction_parameters() {
         "search_path",
         "statement_timeout",
         "lock_timeout",
+        "idle_in_transaction_session_timeout",
+        "transaction_timeout",
+        "Idle_In_Transaction_Session_Timeout",
+        "TRANSACTION_TIMEOUT",
         "default_transaction_read_only",
         "default_transaction_isolation",
         "row_security",
@@ -91,6 +97,34 @@ fn timeouts_are_exact_bounded_milliseconds() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn complete_timeouts_validate_each_selection_before_io() {
+    for field in 0..4 {
+        for (value, valid) in [
+            (Duration::ZERO, true),
+            (Duration::from_millis(1), true),
+            (Duration::from_millis(i32::MAX as u64), true),
+            (Duration::from_millis(i32::MAX as u64 + 1), false),
+            (Duration::from_nanos(1), false),
+            (Duration::from_micros(1_001), false),
+        ] {
+            let mut timeouts = [Duration::ZERO; 4];
+            timeouts[field] = value;
+            let result = PgSessionProfile::with_timeouts(
+                "private-login",
+                "private-role",
+                vec!["private-schema".into()],
+                timeouts[0],
+                timeouts[1],
+                timeouts[2],
+                timeouts[3],
+            );
+            assert_eq!(result.is_ok(), valid, "field {field}, value {value:?}");
+            assert!(!format!("{result:?}").contains("private"));
+        }
+    }
 }
 
 #[test]

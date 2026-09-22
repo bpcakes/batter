@@ -255,6 +255,16 @@ downstream code receives only `PgScopedSql::executor()`. `PgReadOnlySnapshot`
 owns generic coherent read-only inspections. See the
 [transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
 
+For a declared session policy, use `PgSessionProfile::with_timeouts` and
+`PgProfiledPool`; select statement, lock, idle-in-transaction and total-transaction
+timeouts together. Zero explicitly disables the selected limit. Pool hooks and
+profiled atomic/snapshot checks apply and verify the same declaration, so no
+checkout callback is needed. The complete profile requires PostgreSQL's
+`transaction_timeout` (17+; native evidence uses 18). The existing `new`
+constructor preserves its weaker contract and inherited transaction defaults.
+Server limits do not replace the cooperative `OperationContext` budget used by
+`run_atomic_profiled_in`, and do not prove local lease release or commit outcome.
+
 `batter-sqlx` is independently selected. `PgLease::acquire` bounds acquisition
 under an existing OperationContext. Move the lease into the operation future and
 run its work through `lease.with_connection(async |session| ...)`: after `Ok`,
