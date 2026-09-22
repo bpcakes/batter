@@ -6,6 +6,22 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Atomic scope validation cost: reviewed 2026-09-22
+
+For `batter-hkgr`, checked the locked SQLx 0.9.0 source and PostgreSQL 18
+[RELEASE SAVEPOINT](https://www.postgresql.org/docs/18/sql-release-savepoint.html),
+[SET](https://www.postgresql.org/docs/18/sql-set.html), and
+[READ COMMITTED](https://www.postgresql.org/docs/18/transaction-iso.html)
+semantics. RELEASE merges nested subtransactions without ending the top-level
+transaction; modern PostgreSQL preserves SET LOCAL across release. This supports
+omitting the validation SELECT after successful RELEASE while retaining its
+acknowledgement. Schema existence and USAGE can change externally between scopes,
+so profiled opening validation remains even without intervening application SQL.
+The combined query uses bound declaration arrays, qualified catalog functions,
+ordered results and explicit missing-timeout rows. SQLx query events in the live
+regressions count statements within operation/completion futures; these counts
+exclude checkout/profile setup and do not claim measured latency improvements.
+
 ## Declared transaction timeouts: reviewed 2026-09-22
 
 Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.

@@ -49,6 +49,15 @@ entries are excluded on other Unix targets.
 Windows is unsupported and not planned; see [platform scope](adr/007-unix-platform-scope.md).
 Source presence and package-integrity checks are not type checking.
 
+The SQLx `atomic_live::validation` controls count native SQLx query events for
+first, repeated and post-recovery operations: four statements unprofiled, five
+profiled (both timeout constructors), one additional statement on SQL rejection,
+and two for final commit. `validation_drift` checks every declared setting,
+role/session-authorization changes and restored settings after savepoint recovery.
+Independent-session schema removal and USAGE revocation must prevent callback
+invocation. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
+ordinary workspace tests discover them but leave them ignored.
+
 ## Verification commands
 
 Outcome-aware attempt acceptance uses an explicit disposable PostgreSQL 18:
