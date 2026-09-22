@@ -183,7 +183,7 @@ async fn run() -> Result<(), BoxError> {
     let admission = supervisor.operation_admission();
     let mut starting = batter::startup::Startup::scoped(
         supervisor,
-        OperationContext::new(Duration::from_secs(15))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(15))?.into_context(),
         support::cleanup_budget(),
         move |scope| {
             Box::pin(async move {

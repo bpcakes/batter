@@ -523,7 +523,9 @@ mod tests {
         let bomb = PanicOnDrop;
         let startup = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(1)).unwrap(),
+            crate::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
             budget(),
             move |_scope| {
                 let _capture = bomb;
@@ -574,7 +576,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn preexisting_cancellation_skips_injected_installation() {
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = crate::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         context.cancel();
         let install_calls = Arc::new(AtomicUsize::new(0));
         let install_called = install_calls.clone();
@@ -607,7 +611,9 @@ mod tests {
         let handle = process.handle();
         let startup = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(1)).unwrap(),
+            crate::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
             budget(),
             move |_scope| {
                 Box::pin(async move {
@@ -649,7 +655,9 @@ mod tests {
         let handle = process.handle();
         let startup = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(1)).unwrap(),
+            crate::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
             budget(),
             move |_scope| {
                 Box::pin(async move {
@@ -696,7 +704,9 @@ mod tests {
         let handle = process.handle();
         let startup = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(1)).unwrap(),
+            crate::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
             budget(),
             move |_scope| Box::pin(PendingPolls(counted)),
         );

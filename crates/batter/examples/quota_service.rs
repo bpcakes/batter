@@ -118,7 +118,9 @@ async fn demonstrate_native_admission(
     hasher: &KeyHasher,
 ) {
     let checks = [Check::new(hasher.hash_for(policy, "owner-a"))];
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result = quota
         .run(&context, Checks::new(&checks).unwrap(), |_scope| async {
             Ok::<_, Infallible>(42)

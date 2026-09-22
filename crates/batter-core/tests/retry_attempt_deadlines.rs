@@ -85,7 +85,9 @@ async fn invalid_attempt_maximum_is_rejected_before_factory_work() {
 
 #[tokio::test(start_paused = true)]
 async fn first_attempt_cap_beats_ready_completion_and_leaves_total_time() {
-    let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let started = Instant::now();
     let factories = Arc::new(AtomicU32::new(0));
     let classifiers = Arc::new(AtomicU32::new(0));
@@ -132,7 +134,9 @@ async fn first_attempt_cap_beats_ready_completion_and_leaves_total_time() {
 
 #[tokio::test(start_paused = true)]
 async fn later_attempt_cap_starts_after_backoff_and_retains_previous_error() {
-    let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let started = Instant::now();
     let factories = Arc::new(AtomicU32::new(0));
     let classifiers = Arc::new(AtomicU32::new(0));
@@ -187,7 +191,9 @@ async fn later_attempt_cap_starts_after_backoff_and_retains_previous_error() {
 
 #[tokio::test(start_paused = true)]
 async fn shorter_total_deadline_is_not_relabelled_as_attempt_expiration() {
-    let context = OperationContext::new(Duration::from_millis(400)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(400))
+        .unwrap()
+        .into_context();
     let total_deadline = context.deadline();
     let result: Result<(), _> = retry::execute_with_options(
         &context,
@@ -216,7 +222,9 @@ async fn shorter_total_deadline_is_not_relabelled_as_attempt_expiration() {
 
 #[tokio::test(start_paused = true)]
 async fn tied_attempt_and_total_deadlines_report_total_expiration() {
-    let context = OperationContext::new(Duration::from_millis(500)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(500))
+        .unwrap()
+        .into_context();
     let total_deadline = context.deadline();
     let result: Result<(), _> = retry::execute_with_options(
         &context,
@@ -245,7 +253,9 @@ async fn tied_attempt_and_total_deadlines_report_total_expiration() {
 
 #[tokio::test(start_paused = true)]
 async fn options_without_attempt_cap_preserve_total_expiration() {
-    let context = OperationContext::new(Duration::from_millis(500)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(500))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute_with_options(
         &context,
         "read.default-options",
@@ -272,7 +282,9 @@ async fn options_without_attempt_cap_preserve_total_expiration() {
 
 #[tokio::test(start_paused = true)]
 async fn later_attempt_uses_only_total_time_remaining_after_backoff() {
-    let context = OperationContext::new(Duration::from_millis(500)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(500))
+        .unwrap()
+        .into_context();
     let total_deadline = context.deadline();
     let started = Instant::now();
     let result: Result<(), _> = retry::execute_with_options(
@@ -307,7 +319,9 @@ async fn later_attempt_uses_only_total_time_remaining_after_backoff() {
 
 #[tokio::test(start_paused = true)]
 async fn shortened_work_context_remains_the_total_retry_boundary() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(300))
         .unwrap();
@@ -348,7 +362,9 @@ async fn shortened_work_context_remains_the_total_retry_boundary() {
 
 #[tokio::test(start_paused = true)]
 async fn tighter_attempt_cap_inside_work_preserves_finalization_reserve() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(300))
         .unwrap();
@@ -390,7 +406,10 @@ async fn tighter_attempt_cap_inside_work_preserves_finalization_reserve() {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_wins_over_an_already_expired_total_deadline() {
-    let context = OperationContext::at(Instant::now());
+    let context = batter_core::operation::OperationOwner::at(
+        batter_core::operation::RootDeadline::at(Instant::now()),
+    )
+    .into_context();
     context.cancel();
     let factories = Arc::new(AtomicU32::new(0));
     let result: Result<(), _> = retry::execute_with_options(
@@ -423,7 +442,9 @@ async fn cancellation_wins_over_an_already_expired_total_deadline() {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_wins_at_the_attempt_deadline_and_stays_downward() {
-    let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let retry_policy = policy(2, Duration::from_millis(10));
     let mut execution = Box::pin(retry::execute_with_options(
         &context,
@@ -453,7 +474,9 @@ async fn cancellation_wins_at_the_attempt_deadline_and_stays_downward() {
         })
     ));
 
-    let local_context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let local_context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute_with_options(
         &local_context,
         "read.cancel-attempt-locally",
@@ -481,7 +504,9 @@ async fn cancellation_wins_at_the_attempt_deadline_and_stays_downward() {
 
 #[tokio::test(start_paused = true)]
 async fn local_cancellation_retains_but_does_not_classify_a_same_poll_error() {
-    let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let factories = Arc::new(AtomicU32::new(0));
     let classifiers = Arc::new(AtomicU32::new(0));
     let result: Result<(), _> = retry::execute_with_options(
@@ -525,7 +550,9 @@ async fn local_cancellation_retains_but_does_not_classify_a_same_poll_error() {
 
 #[tokio::test]
 async fn cancellation_in_backoff_retains_error_without_next_factory() {
-    let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let owned = context.clone();
     let backoff_started = Arc::new(tokio::sync::Notify::new());
     let factories = Arc::new(AtomicU32::new(0));
@@ -589,7 +616,9 @@ async fn attempt_expiration_destroys_future_and_cancels_its_scope() {
     let retained_scope = Arc::new(Mutex::new(None));
     let dropped = Arc::new(AtomicBool::new(false));
     let result = retry::execute_with_options(
-        &OperationContext::new(Duration::from_secs(10)).unwrap(),
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         "read.destroy",
         ReplaySafety::Idempotent,
         &policy(2, Duration::from_millis(10)),
@@ -629,7 +658,9 @@ async fn jitter_and_provider_floor_compose_with_attempt_options() {
     let mut deadlines = Vec::new();
     let mut scopes = Vec::new();
     let result = retry::execute_with_options(
-        &OperationContext::new(Duration::from_secs(10)).unwrap(),
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         "read.jitter-options",
         ReplaySafety::Deduplicated,
         &policy(2, Duration::from_millis(100)),
@@ -675,7 +706,9 @@ async fn attempt_panic_propagates_without_classification() {
             let classifiers = Arc::clone(&classifiers);
             async move {
                 retry::execute_with_options(
-                    &OperationContext::new(Duration::from_secs(10)).unwrap(),
+                    &batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+                        .unwrap()
+                        .into_context(),
                     "read.panic",
                     ReplaySafety::Idempotent,
                     &policy(2, Duration::from_millis(10)),

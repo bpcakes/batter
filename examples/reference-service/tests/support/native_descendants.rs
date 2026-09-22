@@ -62,7 +62,7 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "native",
-        OperationContext::new(Duration::from_secs(2))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context(),
         {
             runledger_runtime::Supervisor::builder(&native_pool, config())?
                 .with_catalog(catalog)

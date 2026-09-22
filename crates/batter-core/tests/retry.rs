@@ -27,7 +27,9 @@ fn policy(attempts: u32) -> RetryPolicy {
     .unwrap()
 }
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context()
 }
 
 #[test]
@@ -149,7 +151,9 @@ async fn provider_delay_is_a_lower_bound() {
 
 #[tokio::test(start_paused = true)]
 async fn too_long_provider_delay_does_not_get_shortened() {
-    let context = OperationContext::new(Duration::from_millis(50)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(50))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "budget",
@@ -303,7 +307,9 @@ async fn cancellation_in_backoff_retains_last_error() {
 
 #[tokio::test(start_paused = true)]
 async fn attempt_timeout_is_not_automatically_retried() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "timeout",
@@ -328,7 +334,9 @@ async fn attempt_timeout_is_not_automatically_retried() {
 
 #[tokio::test(start_paused = true)]
 async fn later_attempt_interruption_preserves_previous_failure() {
-    let context = OperationContext::new(Duration::from_millis(200)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(200))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "second-timeout",
@@ -486,7 +494,9 @@ async fn jitter_never_shortens_provider_delay_even_beyond_the_policy_cap() {
 
 #[tokio::test(start_paused = true)]
 async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(300))
         .unwrap();
@@ -536,7 +546,9 @@ async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
 
 #[tokio::test(start_paused = true)]
 async fn jitter_provider_wait_cannot_consume_finalization_reserve() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(500))
         .unwrap();

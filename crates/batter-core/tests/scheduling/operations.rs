@@ -16,9 +16,17 @@ use std::{
 use tokio::sync::{Barrier, oneshot};
 
 pub async fn hierarchy_and_drop(case: Case) {
-    let parent = OperationContext::new(Duration::from_secs(30)).unwrap();
-    let child = parent.child(Duration::from_secs(60)).unwrap();
-    let sibling = parent.child(Duration::from_secs(60)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
+        .unwrap()
+        .into_context();
+    let child = parent
+        .child(Duration::from_secs(60))
+        .unwrap()
+        .into_context();
+    let sibling = parent
+        .child(Duration::from_secs(60))
+        .unwrap()
+        .into_context();
     assert_eq!(child.deadline(), parent.deadline());
     child.cancel();
     assert_eq!(child.check(), Err(Interruption::Cancelled));
@@ -46,13 +54,15 @@ pub async fn hierarchy_and_drop(case: Case) {
 }
 
 pub async fn branch_priority(case: Case, cancel: bool, expire: bool) {
-    let parent = OperationContext::new(Duration::from_secs(30)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
+        .unwrap()
+        .into_context();
     let duration = if expire {
         Duration::from_millis(20)
     } else {
         Duration::from_secs(20)
     };
-    let context = parent.child(duration).unwrap();
+    let context = parent.child(duration).unwrap().into_context();
     let (scope_tx, scope_rx) = oneshot::channel();
     let (finish, finished) = oneshot::channel();
     let mut run = Box::pin(context.run("simultaneous-branches", |scope| async move {
@@ -87,9 +97,17 @@ pub async fn branch_priority(case: Case, cancel: bool, expire: bool) {
 }
 
 pub async fn completion_race(case: Case, delay: u64) {
-    let parent = OperationContext::new(Duration::from_secs(30)).unwrap();
-    let context = parent.child(Duration::from_secs(20)).unwrap();
-    let sibling = parent.child(Duration::from_secs(20)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
+        .unwrap()
+        .into_context();
+    let context = parent
+        .child(Duration::from_secs(20))
+        .unwrap()
+        .into_context();
+    let sibling = parent
+        .child(Duration::from_secs(20))
+        .unwrap()
+        .into_context();
     let run_context = context.clone();
     let barrier = Arc::new(Barrier::new(3));
     let completing = barrier.clone();
@@ -125,9 +143,11 @@ pub async fn completion_race(case: Case, delay: u64) {
 
 pub async fn bulkhead_preflight(case: Case, delay: u64) {
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
-    let fresh = OperationContext::new(Duration::from_secs(30)).unwrap();
+    let fresh = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
+        .unwrap()
+        .into_context();
     let permit = bulkhead.enter(&fresh, Admission::Reject).await.unwrap();
-    let context = fresh.child(Duration::from_secs(20)).unwrap();
+    let context = fresh.child(Duration::from_secs(20)).unwrap().into_context();
     let waiter_context = context.clone();
     let waiting_bulkhead = bulkhead.clone();
     let waiter = tokio::spawn(async move {

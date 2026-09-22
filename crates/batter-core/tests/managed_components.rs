@@ -220,7 +220,10 @@ async fn expired_registration_never_invokes_native_factory() {
     supervisor
         .register_managed(
             "native",
-            OperationContext::at(Instant::now()),
+            batter_core::operation::OperationOwner::at(batter_core::operation::RootDeadline::at(
+                Instant::now(),
+            ))
+            .into_context(),
             |_| -> Result<ManagedComponent<NativeReport>, BoxError> {
                 panic!("expired factory must remain inert")
             },
@@ -246,7 +249,9 @@ async fn startup_timeout_stops_native_and_still_retains_its_report() {
     supervisor
         .register_managed(
             "native",
-            OperationContext::new(Duration::from_millis(25)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_millis(25))
+                .unwrap()
+                .into_context(),
             |_| {
                 Ok(ManagedComponent::new(
                     pending(),

@@ -78,11 +78,16 @@ async fn one_capacity(pool: &PgPool, limit: usize) -> ProbeResult {
         cleanup,
     )?);
     let native_pool = pool.clone();
-    batter::runledger::register(&mut supervisor, "worker", OperationContext::new(second)?, {
-        runledger_runtime::Supervisor::builder(&native_pool, config)?
-            .with_catalog(catalog)
-            .prepare()?
-    })?;
+    batter::runledger::register(
+        &mut supervisor,
+        "worker",
+        batter::operation::OperationOwner::new(second)?.into_context(),
+        {
+            runledger_runtime::Supervisor::builder(&native_pool, config)?
+                .with_catalog(catalog)
+                .prepare()?
+        },
+    )?;
     let running = supervisor.start();
     let observed: Result<HashSet<Uuid>, BoxError> = async {
         running

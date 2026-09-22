@@ -38,7 +38,8 @@ async fn cleanup_ledger(ledger: &str) -> Result {
 async fn migration_preserves_native_history_and_retires_checksum_failure() -> Result {
     let mut fixture = Fixture::new().await?;
     let ledger = format!("batter_migration_{}", fixture.key);
-    let context = OperationContext::new(Duration::from_secs(30))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(30))?.into_context();
     let body = async {
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&fixture.pool)
@@ -88,7 +89,8 @@ async fn migration_preserves_native_history_and_retires_checksum_failure() -> Re
 async fn interrupted_migration_retires_without_waiting_for_server_lock() -> Result {
     let mut fixture = Fixture::new().await?;
     let ledger = format!("batter_migration_cancel_{}", fixture.key);
-    let context = OperationContext::new(Duration::from_secs(30))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(30))?.into_context();
     let body = async {
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&fixture.pool)

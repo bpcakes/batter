@@ -47,7 +47,9 @@ async fn filtered_operation_retains_first_parent_for_failure_deadline_and_drop()
             )
         });
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         let mut run = Box::pin(context.run("filtered.operation", |_| async move {
             let _ = rx.await;
             tracing::info!("application resumed");
@@ -136,7 +138,9 @@ async fn filtered_operation_retains_first_parent_for_failure_deadline_and_drop()
 #[tokio::test]
 async fn filtered_operation_without_initial_parent_does_not_adopt_drop_context() {
     let capture = Capture::new();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let mut run = Box::pin(context.run("unparented", |_| {
         std::future::pending::<Result<(), Fatal<io::Error>>>()
     }));

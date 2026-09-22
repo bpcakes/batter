@@ -10,7 +10,9 @@ async fn execute(
 ) -> (Value, bool) {
     let second = Duration::from_secs(1);
     let command = Command::new(
-        OperationContext::new(second * 10).unwrap(),
+        batter::operation::OperationOwner::new(second * 10)
+            .unwrap()
+            .into_context(),
         CleanupBudget::new(second, second, second).unwrap(),
         move |scope| {
             Box::pin(async move {

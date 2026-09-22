@@ -71,7 +71,9 @@ async fn protected_startup_supplies_each_socket_peer_to_admission_and_handler() 
     let (cleanup_tx, cleanup_rx) = oneshot::channel();
     let mut starting = Startup::scoped(
         supervisor,
-        OperationContext::new(WAIT).unwrap(),
+        batter_core::operation::OperationOwner::new(WAIT)
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {

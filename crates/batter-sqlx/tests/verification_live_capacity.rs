@@ -238,7 +238,7 @@ async fn verification_cancellation_releases_one_slot_capacity() -> Result {
             false,
             false,
         )?;
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&pool).await?;
         let task_pool = pool.clone();
         let task_context = context.clone();

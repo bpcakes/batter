@@ -5,7 +5,9 @@ use batter_core::{
 use std::time::Duration;
 
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context()
 }
 
 #[test]
@@ -33,7 +35,9 @@ async fn rejecting_admission_enforces_capacity_and_releases_on_drop() {
 async fn waiting_consumes_existing_deadline_without_leaking_a_permit() {
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let permit = bulkhead.enter(&context(), Admission::Reject).await.unwrap();
-    let short = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let short = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     assert!(matches!(
         bulkhead.enter(&short, Admission::Wait).await,
         Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded))

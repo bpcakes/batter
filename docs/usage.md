@@ -81,7 +81,7 @@ async fn read_from_provider() -> Result<u64, std::io::Error> {
 }
 
 async fn example() -> Result<u64, Box<dyn std::error::Error>> {
-    let context = OperationContext::new(Duration::from_secs(3))?;
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(3))?.into_context();
     let policy = RetryPolicy::new(
         3, Duration::from_millis(50), Duration::from_millis(400),
     )?;

@@ -41,7 +41,9 @@ pub fn allowed() -> BatchDecision {
     .unwrap()
 }
 pub fn context(ms: u64) -> OperationContext {
-    OperationContext::new(Duration::from_millis(ms)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_millis(ms))
+        .unwrap()
+        .into_context()
 }
 pub fn memory() -> runlimit_memory::MemoryStore {
     runlimit_memory::MemoryStore::new(

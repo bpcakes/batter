@@ -507,7 +507,10 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let Some(deadline) = Instant::now().checked_add(policy.budget) else {
         return policy.render_failure(HttpFailure::Internal, &parts);
     };
-    let Ok(context) = policy.admission.admit(deadline) else {
+    let Ok(context) = policy
+        .admission
+        .admit_root(batter_core::operation::RootDeadline::at(deadline))
+    else {
         return policy.render_failure(HttpFailure::Unavailable, &parts);
     };
     // One request-scoped capability owns both the policy and the original parts.

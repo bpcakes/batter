@@ -58,7 +58,7 @@ fn runtime_death_before_publication_cannot_report_completed_cleanup() {
 async fn final_poll_cancellation_keeps_returned_value_without_false_success() {
     let command = Command::new(context(), budget(), |scope| {
         Box::pin(async move {
-            scope.context().cancel();
+            scope.cancel_work();
             Ok::<_, Infallible>(42)
         })
     })

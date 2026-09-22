@@ -60,7 +60,7 @@ async fn interrupt(fixture: &mut Fixture, mode: Stop) -> Result {
     } else {
         Duration::from_secs(30)
     };
-    let context = OperationContext::new(budget)?;
+    let context = batter_core::operation::OperationOwner::new(budget)?.into_context();
     let (pid_tx, pid_rx) = oneshot::channel();
     let (stop_tx, stop_rx) = oneshot::channel();
     let mut task = tokio::spawn(blocked_operation(
@@ -249,7 +249,8 @@ async fn raw_transaction_cleanup(
 }
 
 async fn success(fixture: &mut Fixture) -> Result {
-    let context = OperationContext::new(Duration::from_secs(10))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     let lease = PgLease::acquire(&fixture.pool, &context).await?;
     let pid: i32 = lease
         .with_connection(async |session| {
@@ -304,7 +305,8 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&pool)
         .await?;
-    let context = OperationContext::new(Duration::from_secs(30))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(30))?.into_context();
     let body = std::panic::AssertUnwindSafe(async {
     support::bounded(
         sqlx::query(
@@ -566,7 +568,8 @@ async fn verification_uses_one_read_only_snapshot_and_preserves_ledger_policy() 
 }
 
 async fn native_failure(fixture: &mut Fixture) -> Result {
-    let context = OperationContext::new(Duration::from_secs(10))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     let lease = PgLease::acquire(&fixture.pool, &context).await?;
     let (pid, error) = lease
         .with_retiring_connection(async |session| {

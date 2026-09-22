@@ -112,7 +112,8 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let context = OperationContext::new(Duration::from_secs(30))
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(30))
+        .map(|owner| owner.into_context())
         .expect("constant verification budget is valid");
     // Lazy pool construction performs no connection work outside the operation.
     let pool = PgPoolOptions::new()

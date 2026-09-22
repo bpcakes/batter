@@ -96,7 +96,9 @@ fn startup_report_and_cleanup_tracing_hide_retained_secret_bearing_causes() {
                     Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
                 let mut starting = Startup::new(
                     supervisor,
-                    OperationContext::new(second).unwrap(),
+                    batter::operation::OperationOwner::new(second)
+                        .unwrap()
+                        .into_context(),
                     cleanup,
                     move |scope| {
                         Box::pin(async move {

@@ -20,7 +20,9 @@ async fn evidence_failures_retain_startup_cleanup_and_delivery_causes() {
             Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
         let mut starting = Startup::new(
             supervisor,
-            OperationContext::new(second).unwrap(),
+            batter::operation::OperationOwner::new(second)
+                .unwrap()
+                .into_context(),
             cleanup,
             move |scope| {
                 Box::pin(async move {

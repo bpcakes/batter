@@ -216,7 +216,7 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
     let supervisor = parts.supervisor;
     let lifecycle = supervisor.status();
     let admission = supervisor.operation_admission();
-    let context = OperationContext::new(STARTUP_ALLOWANCE)?;
+    let context = batter::operation::OperationOwner::new(STARTUP_ALLOWANCE)?.into_context();
     let native_startup = context.clone();
     let mut starting = Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
         Box::pin(async move {
@@ -311,7 +311,9 @@ fn register_health(
     let reader = HealthMonitor::new(policy, move || {
         let pool = pool.clone();
         async move {
-            let context = OperationContext::new(second).expect("static probe budget is valid");
+            let context = batter::operation::OperationOwner::new(second)
+                .map(|owner| owner.into_context())
+                .expect("static probe budget is valid");
             batter::sqlx::probe(&pool, &context).await
         }
     })
@@ -339,7 +341,9 @@ mod tests {
     type ProtectedReport = StartupFailure<InitializationError<InitializationFailure>>;
 
     fn context() -> OperationContext {
-        OperationContext::new(Duration::from_secs(5)).unwrap()
+        batter::operation::OperationOwner::new(Duration::from_secs(5))
+            .unwrap()
+            .into_context()
     }
 
     fn protected(error: &BoxError) -> &ProtectedReport {

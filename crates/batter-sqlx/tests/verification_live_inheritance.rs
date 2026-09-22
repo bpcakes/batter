@@ -10,7 +10,8 @@ async fn inspect(
     policy: &MigrationPolicy,
     combined: bool,
 ) -> Result<VerificationReport> {
-    let context = OperationContext::new(Duration::from_secs(10))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     Ok(if combined {
         let authority = AuthorityPolicy::default();
         verify(

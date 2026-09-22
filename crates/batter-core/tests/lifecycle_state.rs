@@ -37,19 +37,25 @@ fn operation_admission_returns_the_observed_lifecycle_state() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
 
     assert!(matches!(
-        admission.admit(deadline),
+        admission.admit_root(batter_core::operation::RootDeadline::at(deadline)),
         Err(Readiness::Starting)
     ));
     approval.approve();
-    let expired = admission.admit(tokio::time::Instant::now()).unwrap();
+    let expired = admission
+        .admit_root(batter_core::operation::RootDeadline::at(
+            tokio::time::Instant::now(),
+        ))
+        .unwrap();
     assert_eq!(
         expired.check(),
         Err(batter_core::operation::Interruption::DeadlineExceeded)
     );
-    let admitted = admission.admit(deadline).unwrap();
+    let admitted = admission
+        .admit_root(batter_core::operation::RootDeadline::at(deadline))
+        .unwrap();
     control.request();
     assert!(matches!(
-        admission.admit(deadline),
+        admission.admit_root(batter_core::operation::RootDeadline::at(deadline)),
         Err(Readiness::Draining)
     ));
     assert_eq!(admitted.check(), Ok(()), "drain is not forced cancellation");
@@ -66,7 +72,9 @@ async fn operation_admission_is_downward_only_and_closes_after_stop() {
     status.wait_ready().await.unwrap();
 
     let context = admission
-        .admit(tokio::time::Instant::now() + Duration::from_secs(1))
+        .admit_root(batter_core::operation::RootDeadline::at(
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        ))
         .unwrap();
     context.cancel();
     assert_eq!(
@@ -82,7 +90,9 @@ async fn operation_admission_is_downward_only_and_closes_after_stop() {
     assert!(running.shutdown().await.unwrap().is_success());
     assert_eq!(status.readiness(), Readiness::Stopped);
     assert!(matches!(
-        admission.admit(tokio::time::Instant::now() + Duration::from_secs(1)),
+        admission.admit_root(batter_core::operation::RootDeadline::at(
+            tokio::time::Instant::now() + Duration::from_secs(1)
+        )),
         Err(Readiness::Stopped)
     ));
 }
@@ -108,7 +118,9 @@ async fn operation_admission_racing_drain_has_only_linearized_outcomes() {
         let barrier = barrier.clone();
         tokio::task::spawn_blocking(move || {
             barrier.wait();
-            admission.admit(tokio::time::Instant::now() + Duration::from_secs(10))
+            admission.admit_root(batter_core::operation::RootDeadline::at(
+                tokio::time::Instant::now() + Duration::from_secs(10),
+            ))
         })
     };
     let requesting = tokio::task::spawn_blocking(move || {
@@ -250,7 +262,8 @@ async fn extracted_cleanup_completes_after_supervisor_signals_cancellation() {
         .on_cleanup("resource", move || async move {
             assert!(observed_shutdown.is_cancelled());
             // Teardown has its own context; process cancellation cannot skip it.
-            let cleanup = OperationContext::new(Duration::from_secs(1))?;
+            let cleanup =
+                batter_core::operation::OperationOwner::new(Duration::from_secs(1))?.into_context();
             cleanup
                 .run("resource-close", |_| async move {
                     tokio::task::yield_now().await;

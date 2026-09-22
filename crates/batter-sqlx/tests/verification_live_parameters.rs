@@ -98,7 +98,7 @@ async fn verification_rejects_oversized_parameter_acl_catalog() -> Result {
         // This case checks session behaviour, not the verdict.
         let _report = super::verify_policy(&pool, &policy(&names)?).await?;
         exec(&mut fixture.admin, format!("GRANT SET ON PARAMETER {first} TO {}", quote(&names.unrelated_creator))).await?;
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
         let result = verify(&pool, &context, &policy(&names)?).await;
         require(matches!(result, Err(OperationError::Failed(VerificationError::CatalogCapacity))),
             "oversized parameter ACL catalog produced a partial report instead of rejecting capacity")?;
@@ -133,7 +133,8 @@ async fn verification_rejects_oversized_parameter_name() -> Result {
                     ),
                 )
                 .await?;
-                let context = OperationContext::new(Duration::from_secs(10))?;
+                let context = batter_core::operation::OperationOwner::new(Duration::from_secs(10))?
+                    .into_context();
                 let result = verify(&pool, &context, &policy(&names)?).await;
                 require(
                     matches!(

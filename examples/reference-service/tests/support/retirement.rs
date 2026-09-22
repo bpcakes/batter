@@ -84,7 +84,7 @@ async fn retire(options: PgConnectOptions, identity: DatabaseIdentity) -> Result
     let command = retirement::prepare(
         options,
         identity,
-        OperationContext::new(SECOND * 10)?,
+        batter::operation::OperationOwner::new(SECOND * 10)?.into_context(),
         CleanupBudget::new(SECOND * 3, SECOND * 3, SECOND)?,
     )
     .start();

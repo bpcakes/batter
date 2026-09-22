@@ -94,7 +94,9 @@ impl Fixture {
 }
 
 fn context(ms: u64) -> OperationContext {
-    OperationContext::new(Duration::from_millis(ms)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_millis(ms))
+        .unwrap()
+        .into_context()
 }
 
 #[tokio::test]

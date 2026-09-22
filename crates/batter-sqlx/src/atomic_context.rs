@@ -111,7 +111,9 @@ mod tests {
     #[tokio::test]
     async fn acknowledged_output_and_native_error_survive_completion_poll_cancellation() {
         for outcome in [Ok(42), Err("commit uncertain")] {
-            let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+            let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context();
             let result = retain(&context, "test.atomic", async {
                 context.cancel();
                 outcome
@@ -128,7 +130,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn deadline_before_acknowledgement_remains_interrupted() {
-        let context = OperationContext::new(Duration::from_millis(10)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_millis(10))
+            .unwrap()
+            .into_context();
         let observed = AtomicUsize::new(0);
         let result = retain(&context, "test.atomic", async {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -150,7 +154,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn acknowledged_outcome_survives_deadline_crossed_in_the_completion_poll() {
         for outcome in [Ok(42), Err("unconfirmed commit")] {
-            let context = OperationContext::new(Duration::from_millis(10)).unwrap();
+            let context = batter_core::operation::OperationOwner::new(Duration::from_millis(10))
+                .unwrap()
+                .into_context();
             let result = retain(
                 &context,
                 "test.atomic",
@@ -189,7 +195,9 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://unused@127.0.0.1:1/unused")
             .unwrap();
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         let called = AtomicUsize::new(0);
         drop(run_atomic_in(&pool, &context, "test.atomic", async |_| {
             called.fetch_add(1, Ordering::SeqCst);
@@ -225,7 +233,9 @@ mod tests {
             sqlx::postgres::PgPoolOptions::new().min_connections(0),
         )
         .unwrap();
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         let called = AtomicUsize::new(0);
         drop(run_atomic_profiled_in(
             &database,

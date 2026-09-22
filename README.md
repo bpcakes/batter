@@ -105,7 +105,7 @@ async fn read_count() -> Result<u64, std::io::Error> {
 }
 
 async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    let request = OperationContext::new(Duration::from_secs(2))?;
+    let request = batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context();
     let count = request.run("accounts.count", |_scope| read_count()).await?;
     assert_eq!(count, 42);
     Ok(())

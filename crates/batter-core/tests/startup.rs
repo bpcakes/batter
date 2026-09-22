@@ -57,7 +57,9 @@ where
 {
     Startup::new(
         supervisor(),
-        OperationContext::new(Duration::from_secs(10)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         initialize,
     )
@@ -115,7 +117,9 @@ async fn rejected_reservation_after_prior_acquisition_preserves_registration_and
     let cleanup = closed.clone();
     let mut starting = Startup::new(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {
@@ -188,7 +192,9 @@ async fn owner_drop_during_initialization_drives_registered_cleanup_exactly_once
         });
     let starting = Startup::new(
         base,
-        OperationContext::new(Duration::from_secs(10)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_| {
             Box::pin(async move {
@@ -245,7 +251,9 @@ async fn never_started_and_already_cancelled_initializers_are_inert() {
         Box::pin(async { Ok(()) })
     }));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     context.cancel();
     let called = calls.clone();
     let mut starting = Startup::new(supervisor(), context, cleanup_budget(), move |_| {
@@ -267,7 +275,9 @@ async fn drain_at_initializer_completion_cannot_publish_ready() {
     let request = handle.clone();
     let mut starting = Startup::new(
         base,
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_| {
             Box::pin(async move {
@@ -350,7 +360,9 @@ async fn successful_future_destruction_panic_does_not_replace_a_concurrent_drain
     let future_handle = handle.clone();
     let mut starting = Startup::new(
         process,
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_scope| {
             Box::pin(SuccessfulDrainDropPanic {
@@ -525,7 +537,9 @@ async fn owner_drop_before_first_poll_skips_factory_and_drives_existing_cleanup(
     base.on_cleanup("resource", || async { Ok(()) }).unwrap();
     let starting = Startup::new(
         base,
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_| {
             count.fetch_add(1, Ordering::SeqCst);

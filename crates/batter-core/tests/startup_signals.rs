@@ -95,7 +95,9 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
         }
         let specification = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(1)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             move |_scope| {
                 called.fetch_add(1, Ordering::SeqCst);
@@ -143,7 +145,9 @@ async fn invalid_occupied_and_repeated_policies_skip_the_initializer_and_clean_u
 
 #[tokio::test]
 async fn repeated_policy_precedes_preexisting_cancellation() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     context.cancel();
     let calls = Arc::new(AtomicUsize::new(0));
     let called = calls.clone();
@@ -251,7 +255,9 @@ fn run_repeated_cleanup_child() {
         let started = cleanup_started.clone();
         let mut starting = Startup::scoped(
             supervisor(),
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             CleanupBudget::new(
                 REPEATED_CLEANUP_TOTAL,
                 Duration::from_secs(5),
@@ -316,7 +322,9 @@ fn run_held_child() {
         let handle = process.handle();
         let mut starting = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             |scope| {
                 Box::pin(async move {
@@ -345,7 +353,9 @@ fn run_waiter_child() {
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let mut starting = Startup::scoped(
             supervisor(),
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             move |scope| {
                 Box::pin(async move {
@@ -399,7 +409,9 @@ fn run_startup_child() {
             });
         let mut starting = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             |_scope| Box::pin(std::future::pending::<Result<(), RegistrationError>>()),
         )
@@ -426,14 +438,18 @@ fn run_reserved_name_child(managed: bool) {
             .register(|| async { Ok(()) });
         let mut starting = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             move |scope| {
                 Box::pin(async move {
                     if managed {
                         scope.registration().register_managed(
                             "signals",
-                            OperationContext::new(Duration::from_secs(1)).unwrap(),
+                            batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+                                .unwrap()
+                                .into_context(),
                             move |_shutdown| {
                                 called.fetch_add(1, Ordering::SeqCst);
                                 Ok(ManagedComponent::new(
@@ -476,7 +492,9 @@ fn run_running_child() {
         let cleaned = events.clone();
         let mut starting = Startup::scoped(
             supervisor(),
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             move |scope| {
                 Box::pin(async move {
@@ -518,7 +536,9 @@ fn run_unapproved_child() {
         let handle = process.handle();
         let mut starting = Startup::scoped(
             process,
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             |scope| {
                 Box::pin(async move {
@@ -554,7 +574,9 @@ fn run_owner_loss_child() {
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let starting = Startup::scoped(
             supervisor(),
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             move |scope| {
                 Box::pin(async move {
@@ -590,7 +612,9 @@ fn run_default_termination_child(configured: bool) {
     runtime().block_on(async {
         let specification = Startup::scoped(
             supervisor(),
-            OperationContext::new(Duration::from_secs(5)).unwrap(),
+            batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+                .unwrap()
+                .into_context(),
             cleanup_budget(),
             |_scope| Box::pin(std::future::pending::<Result<(), RegistrationError>>()),
         );

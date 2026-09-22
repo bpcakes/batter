@@ -280,7 +280,7 @@ async fn pending_delivery(pool: &PgPool, index: u128) -> Result<Uuid, batter::Bo
         .bind(owner.as_uuid())
         .execute(pool)
         .await?;
-    let context = OperationContext::new(SUBMISSION_LIMIT)?;
+    let context = batter::operation::OperationOwner::new(SUBMISSION_LIMIT)?.into_context();
     let submitted = crate::support::profiled::submit(
         pool,
         &context,

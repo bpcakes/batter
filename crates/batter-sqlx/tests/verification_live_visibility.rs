@@ -248,7 +248,10 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 let compiled = policy.clone().build()?;
                 let report = verify_authority(
                     &pool,
-                    &OperationContext::new(std::time::Duration::from_secs(5))?,
+                    &batter_core::operation::OperationOwner::new(std::time::Duration::from_secs(
+                        5,
+                    ))?
+                    .into_context(),
                     &compiled,
                 )
                 .await?;
@@ -275,7 +278,10 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 let compiled = policy.clone().build()?;
                 let report = verify_authority(
                     &pool,
-                    &OperationContext::new(std::time::Duration::from_secs(5))?,
+                    &batter_core::operation::OperationOwner::new(std::time::Duration::from_secs(
+                        5,
+                    ))?
+                    .into_context(),
                     &compiled,
                 )
                 .await?;
@@ -291,7 +297,10 @@ async fn verification_reserved_custom_parameter_requirement() -> Result {
                 let compiled = policy.build()?;
                 let report = verify_authority(
                     &pool,
-                    &OperationContext::new(std::time::Duration::from_secs(5))?,
+                    &batter_core::operation::OperationOwner::new(std::time::Duration::from_secs(
+                        5,
+                    ))?
+                    .into_context(),
                     &compiled,
                 )
                 .await?;

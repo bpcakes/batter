@@ -30,7 +30,9 @@ fn budget() -> CleanupBudget {
 }
 
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context()
 }
 
 async fn poll_once(future: impl Future) {
@@ -185,7 +187,11 @@ async fn finishing_work_cancels_its_children_before_cleanup_but_not_parent() {
     let parent = context();
     let command = Command::new(parent.clone(), budget(), |scope| {
         Box::pin(async move {
-            let child = scope.context().child(Duration::from_secs(3)).unwrap();
+            let child = scope
+                .context()
+                .child(Duration::from_secs(3))
+                .unwrap()
+                .into_context();
             scope
                 .reserve_cleanup("resource")?
                 .register(move || async move {

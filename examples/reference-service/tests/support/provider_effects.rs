@@ -618,7 +618,7 @@ async fn submit(pool: &PgPool, record: u128, key: &str, value: i64) -> Result<Su
         .bind(owner.as_uuid())
         .execute(pool)
         .await?;
-    let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
+    let context = batter::operation::OperationOwner::new(EXTERNAL_EFFECT_ALLOWANCE)?.into_context();
     let result = crate::support::profiled::submit(
         pool,
         &context,

@@ -37,7 +37,9 @@ impl DerefMut for ProcessWrapper {
     }
 }
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(3)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(3))
+        .unwrap()
+        .into_context()
 }
 
 fn config() -> JobsConfig {

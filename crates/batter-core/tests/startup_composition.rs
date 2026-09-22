@@ -21,7 +21,9 @@ fn budget() -> ShutdownBudget {
 async fn initialize(supervisor: Supervisor, capacity: Arc<Semaphore>) -> RunningSupervisor {
     let mut starting = Startup::new(
         supervisor,
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {

@@ -17,7 +17,7 @@
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let context = OperationContext::new(Duration::from_secs(2))?;
+//! let context = crate::operation::OperationOwner::new(Duration::from_secs(2))?.into_context();
 //! let value = context.run("example.read", |_scope| async {
 //!     Ok::<_, std::io::Error>(42)
 //! }).await?;

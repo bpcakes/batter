@@ -50,7 +50,7 @@ async fn run() -> Result<CommandOutcome<RetirementReport, RetirementError>, BoxE
     let command = retirement::prepare(
         prepared.into_connect_options(),
         expected,
-        OperationContext::new(second * 30)?,
+        batter::operation::OperationOwner::new(second * 30)?.into_context(),
         CleanupBudget::new(second * 3, second * 3, second)?,
     )
     .start();

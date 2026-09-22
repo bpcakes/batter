@@ -7,7 +7,9 @@ use batter::{
 type CommandReport = SharedCommandReport<Vec<u8>, CommandError>;
 
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(5)).unwrap()
+    batter::operation::OperationOwner::new(Duration::from_secs(5))
+        .unwrap()
+        .into_context()
 }
 
 fn assert_closed(report: &CommandReport) {

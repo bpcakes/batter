@@ -43,7 +43,8 @@ async fn main() -> Result<(), BoxError> {
         // Transfer the provider permit into owned work. A lost HTTP receipt must
         // not release capacity while the provider call is running.
         let bulkhead = Bulkhead::new(BulkheadCapacity::new(1)?);
-        let request = OperationContext::new(Duration::from_secs(1))?;
+        let request =
+            batter::operation::OperationOwner::new(Duration::from_secs(1))?.into_context();
         let permit = bulkhead.enter(&request, Admission::Reject).await?;
         let (finished, finished_rx) = oneshot::channel();
         let receipt = process.try_spawn("provider.refresh", move |_scope| async move {

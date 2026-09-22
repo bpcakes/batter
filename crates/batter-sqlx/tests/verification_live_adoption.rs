@@ -15,7 +15,7 @@ async fn inspect(
     let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
-        &OperationContext::new(Duration::from_secs(10))?,
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
         &policy,
     )
     .await?)

@@ -97,7 +97,7 @@ pub async fn queue_independent_initialization(pool: PgPool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "native",
-        OperationContext::new(Duration::from_secs(2))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context(),
         {
             let mut config = config();
             config.poll_interval = Duration::from_secs(31_536_000);
@@ -186,7 +186,7 @@ async fn held(pool: PgPool, drop_owner: bool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "native",
-        OperationContext::new(Duration::from_secs(2))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context(),
         {
             runledger_runtime::Supervisor::builder(&native_pool, config())?
                 .with_catalog(catalog)
@@ -241,7 +241,7 @@ pub async fn business_failure(pool: PgPool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "native",
-        OperationContext::new(Duration::from_secs(2))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context(),
         {
             runledger_runtime::Supervisor::builder(&native_pool, config())?
                 .with_catalog(catalog)

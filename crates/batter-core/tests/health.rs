@@ -101,7 +101,9 @@ async fn protected_registration_owns_readiness_sampling_and_reader_shutdown() {
     let (reader_tx, reader_rx) = oneshot::channel();
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context(),
         CleanupBudget::new(
             Duration::from_secs(1),
             Duration::from_secs(1),

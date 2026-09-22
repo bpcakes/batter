@@ -387,7 +387,9 @@ mod tests {
             Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap());
         let mut starting = Startup::new(
             supervisor,
-            OperationContext::new(second).unwrap(),
+            crate::operation::OperationOwner::new(second)
+                .unwrap()
+                .into_context(),
             cleanup,
             |scope| {
                 Box::pin(async move {

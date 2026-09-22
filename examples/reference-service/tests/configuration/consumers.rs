@@ -65,7 +65,9 @@ async fn bulkhead_and_process_capacities_change_independent_native_admission() {
         ])
         .unwrap();
         let bulkhead = root.bulkhead();
-        let context = OperationContext::new(Duration::from_secs(10)).unwrap();
+        let context = batter::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context();
         let mut held = Vec::new();
         for _ in 0..bulk_limit {
             held.push(bulkhead.enter(&context, Admission::Reject).await.unwrap());
@@ -157,7 +159,9 @@ pub(crate) async fn native_worker() {
     batter::runledger::register(
         &mut process,
         "worker",
-        OperationContext::new(Duration::from_secs(3)).unwrap(),
+        batter::operation::OperationOwner::new(Duration::from_secs(3))
+            .unwrap()
+            .into_context(),
         prepared,
     )
     .unwrap();

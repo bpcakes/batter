@@ -255,7 +255,9 @@ async fn drain_does_not_cancel_previously_admitted_contexts() {
     running.status().wait_ready().await.unwrap();
     let context = running
         .operation_admission()
-        .admit(tokio::time::Instant::now() + Duration::from_secs(1))
+        .admit_root(batter_core::operation::RootDeadline::at(
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        ))
         .unwrap();
     *admitted.lock().unwrap() = Some(context.clone());
     let report = running.shutdown().await.unwrap();

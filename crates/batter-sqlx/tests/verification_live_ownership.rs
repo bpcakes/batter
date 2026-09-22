@@ -88,7 +88,9 @@ async fn verification_occupied_pool_acquisition_preserves_caller_transaction() -
                 )))
                 .execute(&mut *caller)
                 .await?;
-                let context = OperationContext::new(Duration::from_millis(100))?;
+                let context =
+                    batter_core::operation::OperationOwner::new(Duration::from_millis(100))?
+                        .into_context();
                 let result = verify(&pool, &context, &policy(&names)?).await;
                 require(
                     matches!(

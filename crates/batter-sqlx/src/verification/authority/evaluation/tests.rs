@@ -72,7 +72,9 @@ fn large_snapshot() -> (
 #[tokio::test]
 async fn loaded_evaluation_yields_and_cancellation_wins_before_a_report() {
     let (snapshot, policy) = large_snapshot();
-    let context = OperationContext::new(Duration::from_secs(30)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(30))
+        .unwrap()
+        .into_context();
     let operation = context.run("test.evaluation", |_| {
         evaluate_snapshot(snapshot, &policy, Vec::new(), false)
     });
@@ -90,7 +92,9 @@ async fn loaded_evaluation_yields_and_cancellation_wins_before_a_report() {
 #[tokio::test(start_paused = true)]
 async fn loaded_evaluation_observes_deadline_after_its_first_poll() {
     let (snapshot, policy) = large_snapshot();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let operation = context.run("test.evaluation", |_| {
         evaluate_snapshot(snapshot, &policy, Vec::new(), false)
     });
