@@ -61,6 +61,46 @@ returning runners remain source compatible. See the policy runner rustdoc for a
 complete generic consumer example and `tests/atomic_live/policy.rs` for a concrete
 policy that retains each uncertain outcome.
 
+For a single native query, scopes expose `fetch_one`, `fetch_optional`, `fetch_all`
+and `execute`. Pass the SQLx query value directly:
+
+```rust,ignore
+let row = scope.fetch_one(sqlx::query!(
+    "SELECT $1::bigint AS \"value!\"", 42_i64
+)).await?;
+let value = scope.fetch_one(sqlx::query_scalar!(
+    "SELECT 42::bigint AS \"value!\""
+)).await?;
+```
+
+`PgNativeQuery` is sealed and accepts SQLx0.9 `Query`, `Map` and `QueryScalar`,
+including `query!`, `query_as!` and `query_scalar!` results. Macros retain SQLx's
+compile-time checking against live or offline metadata. Runtime constructors
+produce the same types and remain usable without gaining compile-time checking.
+Fetch helpers preserve row mapping and decode errors; `fetch_one` retains
+`RowNotFound`, `fetch_optional` returns `None`, and `fetch_all` collects a native
+in-memory vector. `execute` discards rows and mappers, including mapped/scalar
+queries, and returns `PgQueryResult`. Helpers retain the runner's selected
+recovery mode, statement counts, first loss cause and provisional-output rules.
+They exist on `PgAtomicScope`, `PgPolicyScope` and native Runledger's policy phases.
+There is one boxed dispatch future per helper call; SQL and output types are not
+erased. Existing closure APIs remain available for multi-query operations.
+
+For independent pooled queries, construct a `PgQueryHandle::within` with the pool,
+parent `OperationContext`, positive maximum duration, static operation label and
+one `Fn(OperationError<sqlx::Error>) -> E` mapper. All four helpers then return
+`Result<_, E>`. The handle owns one parent-clamped deadline across calls; it does
+not reset a timeout for each query. Construction and unpolled helper futures do
+not acquire a connection. Each call owns acquisition, query and the existing
+BEGIN/ROLLBACK pool-return handshake within that budget. Failed or interrupted
+work retires its lease. Observed native results survive cleanup failure or
+cancellation; interrupted cleanup retires the connection. No observed result
+means interruption, never proof of no effect or permission to retry. Pool-return
+cleanup resets transaction state, not arbitrary session settings or locks. Use
+atomic runners for multi-query transaction disposition. See `PgQueryHandle`
+rustdoc for a complete example; native macro cases live in
+`tests/atomic_live/{query_helpers,query_pool}.rs`.
+
 Each recoverable application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
 terminal failure or cancellation consumes the usable owner even when the body

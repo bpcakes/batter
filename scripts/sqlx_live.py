@@ -11,6 +11,11 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "pooled_query_helpers_preserve_macros_reuse_and_error_mapping",
+        "pooled_query_acquisition_and_blocked_query_cancellation_preserve_ownership",
+        "pooled_query_observed_output_survives_cleanup_cancellation",
+        "native_query_macros_preserve_scope_modes_and_statement_counts",
+        "native_query_helpers_preserve_mapper_errors_and_refuse_closed_work",
         "fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellation",
         "fail_fast_commit_and_cleanup_failures_remain_uncertain",
         "fail_fast_profile_checks_before_work_and_restores_rejected_changes",

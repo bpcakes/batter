@@ -113,23 +113,11 @@ async fn exercise_policy(fast: bool) {
         stage: None,
     };
     let work = async |mut scope: runledger_postgres::PgPolicyIntentScope<'_, (), Policy>| {
-        scope
-            .sql(async |sql| {
-                sqlx::query("INSERT INTO policy_audit VALUES (1)")
-                    .execute(sql.executor())
-                    .await?;
-                Ok(())
-            })
-            .await?;
+        check_intent_queries(&mut scope).await?;
         scope.record_required_job_enqueue_intent(&intent).await?;
         let mut queue = scope.queue();
         queue.enqueue_job(&request).await?;
-        queue
-            .sql(async |sql| {
-                sqlx::query("SELECT 1").execute(sql.executor()).await?;
-                Ok(())
-            })
-            .await?;
+        check_queue_queries(&mut queue).await?;
         Ok(())
     };
     fn require_send<T: Send>(future: T) -> T {
@@ -180,4 +168,60 @@ async fn exercise_policy(fast: bool) {
     assert_eq!(count, 0);
     profiled.pool().close().await;
     teardown_ephemeral_pool(pool, database).await;
+}
+
+async fn check_intent_queries(
+    scope: &mut runledger_postgres::PgPolicyIntentScope<'_, (), Policy>,
+) -> Result<(), ConsumerError> {
+    scope
+        .execute(sqlx::query("INSERT INTO policy_audit VALUES (1)"))
+        .await?;
+    assert_eq!(
+        scope
+            .fetch_one(sqlx::query_scalar::<_, i64>("SELECT 42::bigint"))
+            .await?,
+        42
+    );
+    assert!(
+        scope
+            .fetch_optional(sqlx::query_scalar::<_, i64>(
+                "SELECT 42::bigint WHERE false"
+            ))
+            .await?
+            .is_none()
+    );
+    assert_eq!(
+        scope
+            .fetch_all(sqlx::query_scalar::<_, i64>("SELECT 42::bigint"))
+            .await?,
+        vec![42]
+    );
+    Ok(())
+}
+
+async fn check_queue_queries(
+    scope: &mut runledger_postgres::PgPolicyQueueScope<'_, (), Policy>,
+) -> Result<(), ConsumerError> {
+    scope.execute(sqlx::query("SELECT 1")).await?;
+    assert_eq!(
+        scope
+            .fetch_one(sqlx::query_scalar::<_, i64>("SELECT 42::bigint"))
+            .await?,
+        42
+    );
+    assert!(
+        scope
+            .fetch_optional(sqlx::query_scalar::<_, i64>(
+                "SELECT 42::bigint WHERE false"
+            ))
+            .await?
+            .is_none()
+    );
+    assert_eq!(
+        scope
+            .fetch_all(sqlx::query_scalar::<_, i64>("SELECT 42::bigint"))
+            .await?,
+        vec![42]
+    );
+    Ok(())
 }

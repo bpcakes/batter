@@ -8,6 +8,9 @@ scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-onl
 ## Key entrypoints
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
+- `src/native_query.rs`, `src/pooled_query.rs`: sealed native query dispatch, fixed
+  error mapping and parent-clamped query/cleanup budgets; retain observed results
+  before pool-return cleanup without exposing the native owner.
 - `src/session.rs`: low-level opaque session execution; no public transaction-start authority.
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.

@@ -45,6 +45,8 @@ mod atomic_context;
 mod atomic_policy;
 mod atomic_runner;
 mod failure;
+mod native_query;
+mod pooled_query;
 mod profile;
 mod profiled_pool;
 mod session;
@@ -72,6 +74,8 @@ pub mod low_level {
     pub use crate::atomic::PgAtomicTransaction;
 }
 pub use failure::{FailureClass, SqlxFailure};
+pub use native_query::PgNativeQuery;
+pub use pooled_query::PgQueryHandle;
 pub use profile::{PgProfileError, PgSessionProfile};
 pub use profiled_pool::PgProfiledPool;
 use session::PoolReturnReady;
@@ -215,29 +219,23 @@ impl PgLease {
         mut self,
         work: impl AsyncFnOnce(&mut PgSession<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
-        let (outcome, pool_return) = {
-            let mut session = PgSession::new(self.connection_mut());
-            let outcome = work(&mut session).await;
-            let pool_return = if outcome.is_ok() {
-                session.prepare_pool_return().await
-            } else {
-                None
-            };
-            (outcome, pool_return)
-        };
-        match outcome {
-            Ok(value) => {
-                if let Some(ready) = pool_return {
-                    self.return_to_pool(ready);
-                }
-                // Otherwise dropping the lease retires a session with
-                // failed raw-state cleanup while
-                // preserving the application's successful value.
-                Ok(value)
+        let outcome = work(&mut PgSession::new(self.connection_mut())).await;
+        self.finish_query(outcome.is_ok()).await;
+        outcome
+    }
+
+    // Share the consuming disposition path with native query helpers. They retain
+    // the query result before this potentially cancellable cleanup begins.
+    async fn finish_query(mut self, success: bool) {
+        if success {
+            let ready = PgSession::new(self.connection_mut())
+                .prepare_pool_return()
+                .await;
+            if let Some(ready) = ready {
+                self.return_to_pool(ready);
             }
-            // Dropping the lease retires the connection.
-            Err(error) => Err(error),
         }
+        // Failed work/cleanup, or cancellation before proof, retires on drop.
     }
 
     /// Apply an application-selected native SQLx migration bundle on this lease.

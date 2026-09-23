@@ -99,6 +99,54 @@ impl<'a, T, P: PgFailurePolicy<T>> PgPolicyIntentScope<'a, T, P> {
         self.inner.sql(work).await
     }
 
+    /// Fetch one native SQLx row; absence is `sqlx::Error::RowNotFound`.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_one<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Q::Output, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_one(query).await
+    }
+
+    /// Fetch an optional native SQLx row.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_optional<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Option<Q::Output>, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_optional(query).await
+    }
+
+    /// Fetch all native SQLx rows into an in-memory vector.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_all<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Vec<Q::Output>, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_all(query).await
+    }
+
+    /// Execute and discard rows/mappers, returning native affected-row information.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn execute<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<sqlx::postgres::PgQueryResult, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.execute(query).await
+    }
+
     /// Recover this SQL operation with its own savepoint, even in a fail-fast
     /// workflow. A previous fail-fast rejection still refuses further work.
     pub async fn recoverable_sql<U>(
@@ -172,6 +220,54 @@ impl<T, P: PgFailurePolicy<T>> PgPolicyQueueScope<'_, T, P> {
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<U, P::Error>,
     ) -> Result<U, P::Error> {
         self.inner.sql(work).await
+    }
+
+    /// Fetch one native SQLx row; absence is `sqlx::Error::RowNotFound`.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_one<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Q::Output, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_one(query).await
+    }
+
+    /// Fetch an optional native SQLx row.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_optional<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Option<Q::Output>, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_optional(query).await
+    }
+
+    /// Fetch all native SQLx rows into an in-memory vector.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn fetch_all<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<Vec<Q::Output>, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.fetch_all(query).await
+    }
+
+    /// Execute and discard rows/mappers, returning native affected-row information.
+    /// Keeps the selected failure policy and phase ordering; output is provisional.
+    pub async fn execute<Q: batter_sqlx::PgNativeQuery>(
+        &mut self,
+        query: Q,
+    ) -> Result<sqlx::postgres::PgQueryResult, P::Error>
+    where
+        P::Error: From<sqlx::Error>,
+    {
+        self.inner.execute(query).await
     }
 
     /// Recover this SQL operation with its own savepoint, even in a fail-fast

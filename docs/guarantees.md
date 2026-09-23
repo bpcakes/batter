@@ -897,6 +897,27 @@ a closed transaction. Application savepoints can survive successful fast calls;
 arbitrary SQL and external effects remain outside rollback guarantees. Native
 Runledger preserves this behavior through its consuming phase transition.
 
+Native SQLx query helpers accept sealed `Query`, `Map` and `QueryScalar` values.
+They preserve SQLx macro checking and native fetch mapping, including missing-row
+and decode errors; runtime query constructors keep their native weaker checking.
+`execute` discards rows and mappers. Scope helpers use the existing runner-selected
+recovery mode and never release provisional outputs as committed values. The
+native intent-to-queue transition remains consuming. Their dispatch futures are
+boxed to preserve Send through lending callbacks on supported Rust compilers;
+query output and consumer error types remain concrete.
+
+`PgQueryHandle` owns one positive, parent-clamped total deadline and error mapper
+for independent pooled queries. Each query owns its acquired lease, with no public
+resource replacement or return authority. Acquisition/query/cleanup share the
+same budget across calls. Successful cleanup permits reuse; failed work, failed
+cleanup and interrupted cleanup retire that lease. The native query result is
+retained before asynchronous pool-return normalization and resolved before
+operation telemetry, so an observed result is not overwritten by cleanup
+cancellation. The mapper receives native acquisition/query errors or interruption
+when no result was observed. A native result does not prove transaction disposition
+for arbitrary SQL; no automatic replay, remote cancellation or arbitrary-session
+reset is claimed. Transaction workflows belong in atomic runners.
+
 Profile and atomic continuity validation share one statement. After successful
 recoverable work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
 RELEASE. Unprofiled opening checks are omitted while ownership excludes intervening

@@ -6,6 +6,28 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Native query adapters: reviewed 2026-09-22
+
+For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,
+`query_scalar.rs`, and native executor definitions, plus its
+[Map documentation](https://docs.rs/sqlx/0.9.0/sqlx/query/struct.Map.html) and
+[query macro contract](https://docs.rs/sqlx/0.9.0/sqlx/macro.query.html).
+Map fetches apply the mapper and preserve native errors. Map also implements
+Execute; executor-level execute discards rows without invoking that mapper.
+QueryScalar similarly retains scalar decoding for fetches. SQLx macros consume
+live database descriptions or generated offline metadata; forwarding their native
+values preserves that checking. Runtime constructors produce the same types, so
+macro origin cannot be enforced by a trait over those values.
+
+The initial opaque-future adapter failed concrete Send checks with Rust1.98.1's
+diagnostic referring to the compiler's
+[higher-ranked lifetime limitation](https://github.com/rust-lang/rust/issues/100013).
+Boxed Send dispatch futures compiled with those checks while keeping concrete
+query output/error types. No measured latency claim follows from statement counts
+or this representation choice. Native query output precedes PgLease's existing
+asynchronous idle-state handshake; retaining it before cleanup is a local result
+publication guarantee, not a transaction or external-effect proof.
+
 ## Fail-fast transaction recovery: reviewed 2026-09-22
 
 For `batter-wobk`, SQLx remains 0.9.0. PostgreSQL 18
