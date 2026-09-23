@@ -20,7 +20,7 @@ use sqlx::{postgres::PgConnectOptions, types::Uuid};
 /// use std::time::Duration;
 /// let second = Duration::from_secs(1);
 /// let observation = batter_example_reference_service::retirement::readback(
-///     options, expected, job, OperationContext::new(second * 5)?,
+///     options, expected, job, batter::operation::OperationOwner::new(second * 5)?.into_context(),
 ///     CleanupBudget::new(second, second, second)?).start();
 /// let report = check_command(observation.wait().await)?;
 /// // Inspect report.work; retain the original retirement report independently.

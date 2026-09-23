@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use batter_core::{
     cleanup::CleanupBudget,
-    lifecycle::{RunningSupervisor, ShutdownBudget, Supervisor},
-    operation::OperationContext,
+    lifecycle::{RunningSupervisor, ShutdownBudget, ShutdownHandle, Supervisor},
+    operation::{OperationContext, OperationOwner},
 };
 use batter_runlimit::quota::ConsumptionError;
 use runlimit_core::{
@@ -41,7 +41,9 @@ pub fn allowed() -> BatchDecision {
     .unwrap()
 }
 pub fn context(ms: u64) -> OperationContext {
-    OperationContext::new(Duration::from_millis(ms)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_millis(ms))
+        .unwrap()
+        .into_context()
 }
 pub fn memory() -> runlimit_memory::MemoryStore {
     runlimit_memory::MemoryStore::new(
@@ -67,8 +69,8 @@ pub enum Mode {
     Fail(ConsumptionStatus),
     Pending,
     Delay(Duration),
-    CancelThenAllow(OperationContext),
-    CancelSavedThenAllow(Arc<std::sync::Mutex<Option<OperationContext>>>),
+    CancelThenAllow(Arc<OperationOwner>),
+    RequestDrainThenAllow(ShutdownHandle),
 }
 
 #[derive(Clone)]
@@ -120,13 +122,8 @@ impl Limiter for Backend {
                 context.cancel();
                 Ok(allowed())
             }
-            Mode::CancelSavedThenAllow(saved) => {
-                saved
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .expect("authenticated context")
-                    .cancel();
+            Mode::RequestDrainThenAllow(control) => {
+                control.request();
                 Ok(allowed())
             }
         }

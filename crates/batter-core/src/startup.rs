@@ -58,8 +58,8 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 /// let second = Duration::from_secs(1);
 /// let cleanup = CleanupBudget::new(second, second, second)?;
 /// let supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-/// let context = OperationContext::new(second)?;
-/// let request_context = OperationContext::new(second)?;
+/// let context = batter_core::operation::OperationOwner::new(second)?.into_context();
+/// let request_context = batter_core::operation::OperationOwner::new(second)?.into_context();
 /// let capacity = Arc::new(Semaphore::new(1));
 /// let acquiring = capacity.clone();
 /// let (requests, mut inbox) = mpsc::channel::<(u32, oneshot::Sender<u32>)>(1);
@@ -160,7 +160,7 @@ impl<F> Startup<F> {
     /// })?;
     /// let mut starting = Startup::new(
     ///     supervisor,
-    ///     OperationContext::new(second)?,
+    ///     batter_core::operation::OperationOwner::new(second)?.into_context(),
     ///     cleanup,
     ///     |_| Box::pin(async { Ok::<_, std::io::Error>(()) }),
     /// )
@@ -229,7 +229,7 @@ impl Startup<()> {
     /// let second = Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-    /// let mut starting = Startup::scoped(process, OperationContext::new(second)?, cleanup,
+    /// let mut starting = Startup::scoped(process, batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup,
     ///     |scope| Box::pin(async move {
     ///         scope.reserve_cleanup("dependency")?.register(|| async { Ok(()) });
     ///         scope.registration().register("worker", |startup| async move {
@@ -296,7 +296,7 @@ impl<F> ScopedStartup<F> {
     /// let second = Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-    /// let startup = Startup::scoped(process, OperationContext::new(second)?, cleanup,
+    /// let startup = Startup::scoped(process, batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup,
     ///     |_scope| Box::pin(async { Ok::<_, batter_core::RegistrationError>(()) }))
     ///     .with_unix_signals("signals");
     /// // `startup.start()` installs both listeners before returning its owner.

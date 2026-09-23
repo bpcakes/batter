@@ -62,7 +62,7 @@ fn start(
             match work {
                 Work::Fail => return Err(CommandError::Work),
                 Work::Cancel => {
-                    scope.context().cancel();
+                    scope.cancel_work();
                     pending::<()>().await;
                 }
                 Work::Deadline => pending::<()>().await,
@@ -94,8 +94,9 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let context =
-        OperationContext::new(Duration::from_secs(1)).expect("constant command budget is valid");
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(1))
+        .map(|owner| owner.into_context())
+        .expect("constant command budget is valid");
     let command = start(context, work, fail_cleanup);
     let outcome = command.wait().await;
     // Default command diagnostics retain causes without formatting their contents.

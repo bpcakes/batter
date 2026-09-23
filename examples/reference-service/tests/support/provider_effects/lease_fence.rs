@@ -102,7 +102,8 @@ pub(super) async fn probe(
 async fn assert_terminal_projection(pool: &PgPool, delivery_id: Uuid) -> ProbeResult {
     crate::support::profiled::with(pool, async |database| {
         let service = DeliveryService::new(database.clone());
-        let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
+        let context =
+            batter::operation::OperationOwner::new(EXTERNAL_EFFECT_ALLOWANCE)?.into_context();
         let owner = OwnerId::new(Uuid::from_u128(OWNER))?;
         let by_id = service
             .get_by_id(&context, owner, delivery_id)

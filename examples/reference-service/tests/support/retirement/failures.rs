@@ -32,7 +32,7 @@ pub async fn lost_commit_acknowledgement(pool: PgPool) -> ProbeResult {
         options.clone(),
         identity,
         job,
-        OperationContext::new(SECOND * 5)?,
+        batter::operation::OperationOwner::new(SECOND * 5)?.into_context(),
         CleanupBudget::new(SECOND, SECOND, SECOND)?,
     )
     .start();
@@ -91,7 +91,7 @@ pub async fn commit_error_and_readback(pool: PgPool) -> ProbeResult {
         let mut blocked = checking.begin().await?;
         sqlx::query("LOCK job_queue IN ACCESS EXCLUSIVE MODE").execute(&mut *blocked).await?;
         let observation = retirement::readback(options.clone().application_name("retirement_readback_probe"), identity, job,
-            OperationContext::new(SECOND * 10)?, CleanupBudget::new(SECOND * 3, SECOND * 3, SECOND)?).start();
+            batter::operation::OperationOwner::new(SECOND * 10)?.into_context(), CleanupBudget::new(SECOND * 3, SECOND * 3, SECOND)?).start();
         let witnessed = tokio::time::timeout(SECOND * 5, async {
             loop {
                 let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='retirement_readback_probe' AND wait_event_type='Lock')")
@@ -111,7 +111,7 @@ pub async fn commit_error_and_readback(pool: PgPool) -> ProbeResult {
         let RetirementError::Cancellation(failure) = super::failure(&retained) else { panic!("primary survives readback cancellation") };
         let runledger_postgres::Error::CommitUnconfirmed(error) = &failure.native else { panic!("original remains concrete") };
         assert_eq!(error.sqlx_error().as_database_error().unwrap().message(), "private cancellation commit");
-        let observation = retirement::readback(options, identity, job, OperationContext::new(SECOND * 5)?,
+        let observation = retirement::readback(options, identity, job, batter::operation::OperationOwner::new(SECOND * 5)?.into_context(),
             CleanupBudget::new(SECOND, SECOND, SECOND)?).start();
         let actual = batter::command::check_command(observation.wait().await)?;
         assert_eq!(actual.work.as_ref().unwrap().as_deref(), Some("PENDING"));

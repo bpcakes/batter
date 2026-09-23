@@ -252,8 +252,8 @@ async fn verify_policy(
     pool: &sqlx::PgPool,
     policy: &VerificationPolicy,
 ) -> Result<batter_sqlx::verification::VerificationReport> {
-    let context =
-        batter_core::operation::OperationContext::new(std::time::Duration::from_secs(10))?;
+    let context = batter_core::operation::OperationOwner::new(std::time::Duration::from_secs(10))?
+        .into_context();
     let authority = policy.authority.clone().build()?;
     let plan = VerificationPlan::migrations(&policy.migration).with_authority(&authority)?;
     Ok(batter_sqlx::verification::verify(pool, &context, plan).await?)

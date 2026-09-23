@@ -46,7 +46,9 @@ pub fn supervisor() -> Supervisor {
 }
 
 pub fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context()
 }
 
 pub fn cleanup(supervisor: &mut Supervisor, prerequisite: Arc<AtomicBool>) -> Arc<AtomicBool> {

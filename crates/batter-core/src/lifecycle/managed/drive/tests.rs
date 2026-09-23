@@ -59,7 +59,7 @@ impl crate::lifecycle::ManagedSettlement for JoinedNative {
 
 #[tokio::test(start_paused = true)]
 async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
-    use crate::{cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext};
+    use crate::{cleanup::CleanupBudget, lifecycle::Supervisor};
     use tokio::sync::oneshot;
     let second = Duration::from_secs(1);
     let mut process = Supervisor::new(
@@ -82,7 +82,9 @@ async fn repeated_stop_panic_is_retained_before_pending_settlement_finishes() {
     process
         .register_managed(
             "native",
-            OperationContext::new(Duration::from_secs(10)).unwrap(),
+            crate::operation::OperationOwner::new(Duration::from_secs(10))
+                .unwrap()
+                .into_context(),
             move |_| {
                 let mut first_stop = Some(first_stop);
                 let mut repeated_stop = Some(repeated_stop);

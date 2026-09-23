@@ -35,7 +35,9 @@ fn cleanup_budget() -> CleanupBudget {
 }
 
 fn operation() -> OperationContext {
-    OperationContext::new(Duration::from_secs(8)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(8))
+        .unwrap()
+        .into_context()
 }
 
 fn options() -> PgPoolOptions {

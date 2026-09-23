@@ -72,11 +72,29 @@ facade feature re-exports the same types and is not required for encryption.
 The complete feature table
 and ownership rules are in the [integration contract](integrations.md#facade-feature-selection).
 
+## Operation ownership and migration
+
+Create an independent application-root operation with `OperationOwner::new`, or
+select an absolute `RootDeadline` and pass it to `OperationOwner::at`. Keep the
+owner when the application must cancel that operation; pass `owner.context()`
+to execution APIs. Derive a child owner with `context.child(budget)`, which
+clamps its deadline and inherits cancellation from the parent. A process entry
+point uses `OperationAdmission::admit_root(deadline)` and receives an owner
+linked to forced process cancellation.
+
+When migrating a former `OperationContext::new` or `OperationContext::at` call,
+decide whether it is an independent root or a child of an existing operation.
+Replace root construction with `OperationOwner`; derive children from the
+parent context. Replace `context.cancel()` with cancellation through retained
+owner authority. A callback receiving only `OperationContext` cannot cancel
+its shared scope. `into_context()` explicitly relinquishes that authority.
+Neither owner drop nor context drop joins detached work.
+
 ## Fresh futures and explicit replay
 
 ```rust
 use batter::{
-    operation::OperationContext,
+    operation::OperationOwner,
     retry::{self, ReplaySafety, RetryDecision, RetryOptions, RetryPolicy},
 };
 use std::time::Duration;
@@ -86,14 +104,14 @@ async fn read_from_provider() -> Result<u64, std::io::Error> {
 }
 
 async fn example() -> Result<u64, Box<dyn std::error::Error>> {
-    let context = OperationContext::new(Duration::from_secs(3))?;
+    let owner = OperationOwner::new(Duration::from_secs(3))?;
     let policy = RetryPolicy::new(
         3, Duration::from_millis(50), Duration::from_millis(400),
     )?;
     let options = RetryOptions::new()
         .with_attempt_maximum(Duration::from_millis(500))?;
     let result = retry::execute_with_options(
-        &context,
+        owner.context(),
         "provider.read",
         ReplaySafety::Idempotent,
         &policy,
@@ -113,6 +131,12 @@ milliseconds inside the unchanged three-second total context. A per-attempt
 deadline is terminal and typed separately from total deadline expiration; it is
 not sent to the classifier or retried. The callback's `attempt.context` carries
 that exact child deadline and downward cancellation.
+
+To let a controller cancel this retry sequence without cancelling its caller or
+sibling work, derive a child owner from the caller's context, pass that child's
+context to `retry::execute_with_options`, and retain the child owner. Cancelling
+the caller's owner also cancels its other descendants. `Attempt.context` does
+not grant the callback cancellation authority.
 
 This is not a classifier to copy onto arbitrary writes. For provider Retry-After,
 parse and validate the remote value in that provider's adapter, then return
@@ -472,7 +496,7 @@ An extracted stack may be closed after dropping the supervisor; that drop signal
 forced process cancellation first. Cleanup hooks must not use contexts created by
 `OperationAdmission` to cancel teardown. Await the resource's native close
 operation directly, or use
-an independent `OperationContext::new` for cleanup; the stack's `CleanupBudget`
+an independent `OperationOwner::new` for cleanup; the stack's `CleanupBudget`
 still applies. The [extracted-cleanup test](../crates/batter-core/tests/lifecycle_state.rs)
 demonstrates independent teardown after the owner is dropped.
 
