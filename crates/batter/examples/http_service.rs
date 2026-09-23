@@ -212,7 +212,7 @@ async fn run() -> Result<(), BoxError> {
     .with_unix_signals("signals")
     .start();
     let running = starting.wait().await?;
-    batter::lifecycle::check_shutdown(running.wait().await)?;
+    running.wait_checked().await?;
     Ok(())
 }
 

@@ -245,7 +245,7 @@ impl ProcessHandle {
     /// in the success value, for example `Ok(Err(denial))`.
     ///
     /// ```
-    /// use batter_core::lifecycle::{Fatal, ShutdownCause, Supervisor};
+    /// use batter_core::lifecycle::{Fatal, ShutdownCause, ShutdownFailure, Supervisor};
     /// # use batter_core::{BoxError, cleanup::CleanupBudget, lifecycle::ShutdownBudget};
     /// # use std::time::Duration;
     /// # #[tokio::main(flavor = "current_thread")]
@@ -264,7 +264,9 @@ impl ProcessHandle {
     ///     Err::<(), _>(Fatal(std::io::Error::other("refresh failed")))
     /// })?;
     /// assert!(receipt.wait().await.is_err());
-    /// let report = running.wait().await?;
+    /// let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+    ///     panic!("expected the failed finite task report")
+    /// };
     /// assert_eq!(report.cause, ShutdownCause::FiniteTaskExit("refresh"));
     /// # Ok(())
     /// # }

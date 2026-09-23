@@ -38,6 +38,7 @@ batter-runlimit = { workspace = true, optional = true }
 batter-test-support = { workspace = true, optional = true }
 
 [dev-dependencies]
+anyhow = "1.0"
 axum.workspace = true
 runlimit-core = { workspace = true }
 runlimit-memory = { workspace = true }
@@ -53,6 +54,7 @@ name = "worker"
 
 [[example]]
 name = "process_owned"
+test = true
 
 [[example]]
 name = "operation_budget"

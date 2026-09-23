@@ -17,6 +17,20 @@
 //! drivers retain registered cleanup independently of borrowed waiters. Direct
 //! `CleanupStack::close` driving remains caller-owned. See `docs/guarantees.md`.
 //!
+//! An owned service root awaits checked completion after startup handoff. The
+//! success witness retains the report; `?` propagates the original failed
+//! report or coordinator error through the application's error boundary.
+//!
+//! ```no_run
+//! #![deny(unused_must_use)]
+//! use batter::{BoxError, lifecycle::RunningSupervisor};
+//!
+//! async fn finish(running: &RunningSupervisor) -> Result<(), BoxError> {
+//!     running.wait_checked().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
 //! ```
 //! use batter::operation::OperationContext;
 //! use std::time::Duration;

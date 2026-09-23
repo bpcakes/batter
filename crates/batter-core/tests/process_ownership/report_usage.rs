@@ -5,7 +5,10 @@ use batter_core::lifecycle::Fatal;
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome, CleanupStack},
-    lifecycle::{RunningSupervisor, ShutdownReport, Supervisor, SupervisorObserver, TaskOutcome},
+    lifecycle::{
+        RunningSupervisor, ShutdownFailure, ShutdownReport, Supervisor, SupervisorObserver,
+        TaskOutcome,
+    },
 };
 use std::sync::Arc;
 use tokio::task::JoinError;
@@ -44,6 +47,20 @@ async fn ignored_after_question_mark(
     Ok(())
 }
 
+// The checked path returns a Result whose success witness may be discarded.
+// This must continue compiling under the exact lint that rejects raw disposal.
+#[allow(dead_code)]
+#[deny(unused_must_use)]
+async fn checked_question_mark(
+    running: RunningSupervisor,
+    observer: SupervisorObserver,
+) -> Result<(), ShutdownFailure> {
+    running.wait_checked().await?;
+    running.shutdown_checked().await?;
+    observer.wait_checked().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn shared_report_retains_task_and_cleanup_failures_across_owners() {
     let mut supervisor = super::finite_supervisor(1);
@@ -67,6 +84,11 @@ async fn shared_report_retains_task_and_cleanup_failures_across_owners() {
     let cloned = report.clone();
     assert!(std::ptr::eq(&*report, &*observed));
     assert!(std::ptr::eq(&*report, &*cloned));
+    let checked = running.wait_checked().await.unwrap_err();
+    let ShutdownFailure::Report(checked_report) = checked else {
+        panic!("failed report must remain a report failure")
+    };
+    assert!(std::ptr::eq(&*report, &*checked_report));
     drop((running, observer, report, observed));
 
     assert!(!cloned.is_success());
@@ -116,4 +138,64 @@ async fn shared_report_retains_task_and_cleanup_failures_across_owners() {
     assert_eq!(rendered.matches("cleanup: 1 unsuccessful").count(), 1);
     assert!(!rendered.contains("task-marker"));
     assert!(!rendered.contains("cleanup-marker"));
+}
+
+#[tokio::test]
+async fn checked_question_mark_retains_task_and_cleanup_causes() {
+    async fn finish(running: &RunningSupervisor) -> Result<(), ShutdownFailure> {
+        running.wait_checked().await?;
+        Ok(())
+    }
+
+    let mut supervisor = super::finite_supervisor(1);
+    supervisor
+        .on_cleanup("failed-cleanup", || async {
+            Err(std::io::Error::other("cleanup-marker").into())
+        })
+        .unwrap();
+    let process = supervisor.process_handle().unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    let receipt = process
+        .try_spawn("failed-work", |_| async {
+            Err::<(), _>(Fatal(std::io::Error::other("task-marker")))
+        })
+        .unwrap();
+    assert!(receipt.wait().await.is_err());
+
+    let failure = finish(&running).await.unwrap_err();
+    let boxed: BoxError = Box::new(failure.clone());
+    let retained = boxed.downcast_ref::<ShutdownFailure>().unwrap();
+    let ShutdownFailure::Report(report) = retained else {
+        panic!("checked completion must retain the report")
+    };
+    assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
+    assert_eq!(
+        report.tasks[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .to_string(),
+        "task-marker"
+    );
+    assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
+    assert_eq!(
+        report.cleanup.records[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .to_string(),
+        "cleanup-marker"
+    );
+    let repeat = running.shutdown_checked().await.unwrap_err();
+    let ShutdownFailure::Report(repeated) = repeat else {
+        panic!("repeat observation must retain the report")
+    };
+    assert!(std::ptr::eq(&**report, &*repeated));
 }
