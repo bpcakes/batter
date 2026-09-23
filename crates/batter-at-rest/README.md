@@ -49,9 +49,15 @@ and construction validate structure only; `open` authenticates the wrapper and
 body, while `rewrap` authenticates only the wrapper. Its `ContentDescriptor` is
 immutable across rewrap and contains the format version and payload nonce. Its
 `WrappedKey` contains the wrapping-key ID, wrapping nonce, and encrypted data key.
-`SealedPayload` combines an envelope with the ciphertext body; `SealedPayloadRef`
+`SealedPayload` combines an envelope with the ciphertext body. Its owned decoder
+copies the body after validating the complete encoding. For a stored composite,
+`BorrowedSealedPayload::decode(&encoded)` owns the decoded header and borrows the
+exact body slice from `encoded`; its `as_ref()` view opens through the same
+`Keyring::open` operation while `encoded` remains alive. `SealedPayloadRef` also
 lets a storage adapter decrypt borrowed split columns or an object body without
-concatenating them.
+concatenating them. All three decoding/construction paths validate structure,
+not authentication. The decoded header can allocate small fields, and `open`
+allocates the authenticated plaintext buffer.
 
 See [`docs/format-v1.md`](docs/format-v1.md) for normative bytes and limits.
 
@@ -129,7 +135,8 @@ Apply application-specific input limits before buffering and bound concurrent
 synchronous crypto work by bytes and execution capacity. The crate's 64 MiB
 plaintext limit is a format ceiling, not an endpoint default. Retaining encoded
 input, decoded ciphertext, and plaintext can use roughly three payload-sized
-buffers. Prefer borrowed split storage when available. Bound deserialization and
+buffers. Borrowed composite decoding avoids the decoded ciphertext-sized copy;
+borrowed split storage avoids concatenating the header and body. Bound deserialization and
 decompression after authentication as well.
 
 Operators must provision a nonempty keyring, retain old keys until no wrapper or recoverable backup references them, rewrap metadata before retirement, and preserve keys needed for backup recovery. Losing a referenced key makes the payload unavailable. Stable MAC keys are a separate lifecycle: changing one changes every derived identity, and importing a replacement cannot recover identities whose original input no longer exists. Historical format migration, identity message contracts, configuration update safety, retirement audits, deletion, and recovery orchestration belong to consuming systems.

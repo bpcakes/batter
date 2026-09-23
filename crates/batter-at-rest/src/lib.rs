@@ -10,7 +10,9 @@ mod mac;
 
 pub use context::Context;
 pub use error::Error;
-pub use format::{ContentDescriptor, Envelope, SealedPayload, SealedPayloadRef, WrappedKey};
+pub use format::{
+    BorrowedSealedPayload, ContentDescriptor, Envelope, SealedPayload, SealedPayloadRef, WrappedKey,
+};
 pub use key::{KeyId, Keyring, SecretKey};
 pub use mac::MacKey;
 

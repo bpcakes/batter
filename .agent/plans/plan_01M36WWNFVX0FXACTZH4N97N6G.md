@@ -1,0 +1,1 @@
+Implement batter-gsdx: borrowed canonical decode, shared parser, public/direct/facade consumer and lifetime tests, documentation, two-toolchain and portability verification.

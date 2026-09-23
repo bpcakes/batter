@@ -143,7 +143,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "fn main() {}",
     ]
     if "at-rest" in chosen:
-        lines.insert(1, "use batter::at_rest::{Context, Keyring, MacKey};")
+        lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
@@ -276,6 +276,8 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "use batter_at_rest::Keyring as DirectKeyring;",
             "fn at_rest_identity(_: DirectKeyring) {}",
             "const _: fn(Keyring) = at_rest_identity;",
+            "fn borrowed_identity(_: batter_at_rest::BorrowedSealedPayload<'_>) {}",
+            "const _: for<'a> fn(batter::at_rest::BorrowedSealedPayload<'a>) = borrowed_identity;",
         ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines += [
