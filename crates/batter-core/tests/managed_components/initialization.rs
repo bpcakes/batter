@@ -2,7 +2,7 @@ use crate::managed_support::*;
 use batter_core::{
     BoxError,
     lifecycle::{ManagedComponent, ManagedFailure, ManagedInitialization},
-    operation::{Interruption, OperationContext},
+    operation::{Interruption, OperationOwner},
 };
 use std::{
     future::{Future, pending, poll_fn},
@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-struct CancelOnDrop(OperationContext);
+struct CancelOnDrop(Arc<OperationOwner>);
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.0.cancel();
@@ -30,8 +30,9 @@ enum Completion {
 async fn completion_boundary(completion: Completion) {
     let mut process = supervisor();
     let closed = cleanup(&mut process, Arc::new(AtomicBool::new(true)));
-    let context = context();
-    let stopping = context.clone();
+    let owner = Arc::new(OperationOwner::new(Duration::from_secs(10)).unwrap());
+    let context = owner.context().clone();
+    let stopping = Arc::clone(&owner);
     let (stop, stopped) = oneshot::channel();
     let mut stop = Some(stop);
     process
@@ -50,7 +51,10 @@ async fn completion_boundary(completion: Completion) {
                         // returning Pending to the managed driver's select loop.
                         let mut advancing = Box::pin(tokio::time::advance(Duration::from_secs(11)));
                         let _ = advancing.as_mut().poll(cx);
-                        assert_eq!(stopping.check(), Err(Interruption::DeadlineExceeded));
+                        assert_eq!(
+                            stopping.context().check(),
+                            Err(Interruption::DeadlineExceeded)
+                        );
                     }
                     Completion::CancelInDrop => {}
                 }

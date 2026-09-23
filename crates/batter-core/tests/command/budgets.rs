@@ -4,18 +4,27 @@ use tokio::time::Instant;
 
 #[tokio::test(start_paused = true)]
 async fn expired_work_is_inert_and_total_reserve_is_validated_before_work() {
-    let command = Command::new(OperationContext::at(Instant::now()), budget(), |_| {
-        panic!("expired work factory must remain inert");
-        #[allow(unreachable_code)]
-        Box::pin(async { Ok::<_, Infallible>(()) })
-    })
+    let command = Command::new(
+        batter_core::operation::OperationOwner::at(batter_core::operation::RootDeadline::at(
+            Instant::now(),
+        ))
+        .into_context(),
+        budget(),
+        |_| {
+            panic!("expired work factory must remain inert");
+            #[allow(unreachable_code)]
+            Box::pin(async { Ok::<_, Infallible>(()) })
+        },
+    )
     .start();
     assert!(matches!(
         command.wait().await.unwrap().work,
         Err(CommandCause::Interrupted(Interruption::DeadlineExceeded))
     ));
     let result = Command::within(
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         budget(),
         |_| {
             panic!("invalid total must never run work");
@@ -30,7 +39,9 @@ async fn expired_work_is_inert_and_total_reserve_is_validated_before_work() {
 async fn expired_work_gets_a_separate_complete_cleanup_budget() {
     let started = Instant::now();
     let command = Command::new(
-        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context(),
         budget(),
         |scope| {
             Box::pin(async move {
@@ -58,7 +69,9 @@ async fn expired_work_gets_a_separate_complete_cleanup_budget() {
 
 #[tokio::test(start_paused = true)]
 async fn total_reserve_includes_cleanup_abort_observation_without_parent_cancellation() {
-    let total = OperationContext::new(Duration::from_secs(5)).unwrap();
+    let total = batter_core::operation::OperationOwner::new(Duration::from_secs(5))
+        .unwrap()
+        .into_context();
     let end = total.deadline();
     let command = Command::within(total.clone(), budget(), move |scope| {
         Box::pin(async move {
@@ -85,23 +98,28 @@ async fn total_reserve_includes_cleanup_abort_observation_without_parent_cancell
 #[tokio::test(start_paused = true)]
 async fn cleanup_timeout_keeps_work_value_and_skips_later_hooks_within_total() {
     let end = Instant::now() + Duration::from_secs(5);
-    let command = Command::within(OperationContext::at(end), budget(), |scope| {
-        Box::pin(async move {
-            scope
-                .reserve_cleanup("prerequisite")
-                .unwrap()
-                .register(|| async {
-                    panic!("cleanup work budget exhausted");
-                    #[allow(unreachable_code)]
-                    Ok(())
-                });
-            scope
-                .reserve_cleanup("dependent")
-                .unwrap()
-                .register(|| async { pending().await });
-            Ok::<_, Infallible>(42)
-        })
-    })
+    let command = Command::within(
+        batter_core::operation::OperationOwner::at(batter_core::operation::RootDeadline::at(end))
+            .into_context(),
+        budget(),
+        |scope| {
+            Box::pin(async move {
+                scope
+                    .reserve_cleanup("prerequisite")
+                    .unwrap()
+                    .register(|| async {
+                        panic!("cleanup work budget exhausted");
+                        #[allow(unreachable_code)]
+                        Ok(())
+                    });
+                scope
+                    .reserve_cleanup("dependent")
+                    .unwrap()
+                    .register(|| async { pending().await });
+                Ok::<_, Infallible>(42)
+            })
+        },
+    )
     .unwrap()
     .start();
     let report = command.wait().await.unwrap();

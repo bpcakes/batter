@@ -31,7 +31,7 @@ pub(super) async fn create_sqlx_ledger(connection: &mut sqlx::PgConnection, tabl
 }
 
 pub(super) fn context() -> Result<OperationContext> {
-    Ok(OperationContext::new(Duration::from_secs(10))?)
+    Ok(batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context())
 }
 
 async fn require_missing_select_is_native(

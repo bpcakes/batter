@@ -594,7 +594,9 @@ mod tests {
             payload: json!({"channel": "example"}),
         };
         let key = request.idempotency_key();
-        let operation = OperationContext::new(Duration::from_secs(2)).unwrap();
+        let operation = batter::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context();
         for _ in 0..2 {
             assert_eq!(
                 client
@@ -666,7 +668,9 @@ mod tests {
             record_generation: 24,
             payload: json!({"channel": "stalled-body"}),
         };
-        let operation = OperationContext::new(Duration::from_millis(100)).unwrap();
+        let operation = batter::operation::OperationOwner::new(Duration::from_millis(100))
+            .unwrap()
+            .into_context();
         let result = client
             .prepare_dispatch(&request.idempotency_key(), &request)
             .unwrap()
@@ -711,7 +715,9 @@ mod tests {
             .prepare_dispatch(&request.idempotency_key(), &request)
             .unwrap()
             .execute(
-                &OperationContext::new(Duration::from_secs(2)).unwrap(),
+                &batter::operation::OperationOwner::new(Duration::from_secs(2))
+                    .unwrap()
+                    .into_context(),
                 test_permit(),
             )
             .await;

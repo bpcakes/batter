@@ -39,7 +39,8 @@ async fn opaque_session_composes_intents_and_native_schema_verification() -> Res
     let body = tokio::spawn(async move {
         let pool = body_pool;
         let table = body_table;
-        let context = OperationContext::new(Duration::from_secs(30))?;
+        let context =
+            batter_core::operation::OperationOwner::new(Duration::from_secs(30))?.into_context();
         runledger_postgres::migrate_after_idempotency_cutover(&database).await?;
         let _snapshot = verify_schema(&database).await?;
         sqlx::query(sqlx::AssertSqlSafe(format!(

@@ -1,7 +1,7 @@
 //! Run the generic read-only PostgreSQL verifier against an externally
 //! provisioned database. The migration and grant policy stays application-owned.
 
-use batter::operation::{Interruption, OperationContext, OperationError};
+use batter::operation::{Interruption, OperationError};
 use batter::sqlx::verification::VerificationError;
 use batter::sqlx::verification::{
     CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, DiscoveryScope, ExactRoleManifest,
@@ -112,7 +112,8 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let context = OperationContext::new(Duration::from_secs(30))
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(30))
+        .map(|owner| owner.into_context())
         .expect("constant verification budget is valid");
     // Lazy pool construction performs no connection work outside the operation.
     let pool = PgPoolOptions::new()

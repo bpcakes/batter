@@ -94,7 +94,9 @@ impl Fixture {
 }
 
 fn context(ms: u64) -> OperationContext {
-    OperationContext::new(Duration::from_millis(ms)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_millis(ms))
+        .unwrap()
+        .into_context()
 }
 
 #[tokio::test]
@@ -323,15 +325,21 @@ async fn verification_and_transaction_share_one_parent_deadline() {
 #[ignore = "requires an explicit disposable PostgreSQL 18 DATABASE_URL"]
 async fn cancelled_verification_keeps_busy_lease_without_open_application_transaction() {
     let f = Fixture::new("cancel-verify", 2000).await;
-    let operation = context(1000);
+    let owner = std::sync::Arc::new(
+        batter_core::operation::OperationOwner::new(Duration::from_millis(1000)).unwrap(),
+    );
+    let operation = owner.context().clone();
     let result = f
         .runner
         .run(
             &operation,
             f.subject(),
-            |scope| async move {
-                scope.cancel();
-                std::future::pending::<Result<(), Infallible>>().await
+            move |_| {
+                let owner = std::sync::Arc::clone(&owner);
+                async move {
+                    owner.cancel();
+                    std::future::pending::<Result<(), Infallible>>().await
+                }
             },
             async |_, ()| {
                 panic!("cancelled verification must not invoke application transaction");
@@ -358,7 +366,7 @@ async fn cancelled_verification_keeps_busy_lease_without_open_application_transa
 #[tokio::test]
 #[ignore = "requires an explicit disposable PostgreSQL 18 DATABASE_URL"]
 async fn acknowledged_commit_survives_observer_cancellation_at_publication() {
-    struct CancelAfterCommit(OperationContext);
+    struct CancelAfterCommit(std::sync::Arc<batter_core::operation::OperationOwner>);
     impl AttemptObserver for CancelAfterCommit {
         fn observe(&self, event: AttemptObservation) {
             if matches!(event, AttemptObservation::Completed(_)) {
@@ -367,10 +375,13 @@ async fn acknowledged_commit_survives_observer_cancellation_at_publication() {
         }
     }
     let f = Fixture::new("commit-cancel", 2000).await;
-    let operation = context(1000);
+    let owner = std::sync::Arc::new(
+        batter_core::operation::OperationOwner::new(Duration::from_millis(1000)).unwrap(),
+    );
+    let operation = owner.context().clone();
     let runner = AttemptRunner::new(f.database.clone())
         .unwrap()
-        .with_observer(std::sync::Arc::new(CancelAfterCommit(operation.clone())));
+        .with_observer(std::sync::Arc::new(CancelAfterCommit(owner)));
     let fixture = &f;
     let output = operation
         .run("outer.request", |scope| async move {

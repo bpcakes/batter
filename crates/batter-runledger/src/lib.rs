@@ -128,7 +128,7 @@ pub fn register(
 ///     batter_runledger::register_in(
 ///         scope,
 ///         "worker",
-///         OperationContext::new(Duration::from_secs(1))?,
+///         batter_core::operation::OperationOwner::new(Duration::from_secs(1))?.into_context(),
 ///         native,
 ///     )?;
 ///     Ok(())

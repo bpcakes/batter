@@ -3,7 +3,6 @@ use crate::temp_dir;
 use batter::{
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget},
-    operation::OperationContext,
     settings::{RedactedError, SettingsError},
     startup::{StartingSupervisor, Startup, StartupCause, StartupError},
 };
@@ -45,7 +44,9 @@ fn start(
     let handle = supervisor.handle();
     let starting = Startup::new(
         supervisor,
-        OperationContext::new(Duration::from_secs(5)).unwrap(),
+        batter::operation::OperationOwner::new(Duration::from_secs(5))
+            .unwrap()
+            .into_context(),
         cleanup,
         move |scope| {
             Box::pin(async move {

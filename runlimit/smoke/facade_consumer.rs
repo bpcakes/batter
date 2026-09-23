@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The native store must satisfy the facade and direct adapter's exact trait identity.
     let quota: batter_runlimit::Quota<MemoryStore> =
         Quota::new(MemoryStore::new(MemoryStoreConfig::new(100)?));
-    let context = OperationContext::new(Duration::from_secs(10))?;
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     let invoked = Cell::new(0);
     let first = quota
         .run(&context, Checks::new(&checks)?, |_| {

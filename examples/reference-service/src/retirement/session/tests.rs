@@ -3,7 +3,6 @@ use crate::config::MaintenanceSettings;
 use batter::{
     cleanup::CleanupBudget,
     command::{Command, CommandCause},
-    operation::OperationContext,
     settings::SettingsSource,
 };
 use sqlx::{Connection, PgConnection, postgres::PgSslMode};
@@ -28,7 +27,7 @@ async fn maintenance_session_replacement_is_refused() -> Result<(), batter::BoxE
     let expected = DatabaseIdentity::new(system, u32::try_from(oid)?)?;
     let second = Duration::from_secs(1);
     let command = Command::new(
-        OperationContext::new(second * 10)?,
+        batter::operation::OperationOwner::new(second * 10)?.into_context(),
         CleanupBudget::new(second * 3, second * 3, second)?,
         move |scope| {
             Box::pin(async move {

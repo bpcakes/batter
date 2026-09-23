@@ -60,7 +60,9 @@ async fn truncated_body_is_uncertain_and_exchange_releases_capacity() {
         .prepare_dispatch(&request.idempotency_key(), &request)
         .unwrap()
         .execute(
-            &OperationContext::new(Duration::from_secs(2)).unwrap(),
+            &batter::operation::OperationOwner::new(Duration::from_secs(2))
+                .unwrap()
+                .into_context(),
             permit,
         )
         .await;
@@ -119,7 +121,9 @@ async fn native_transport_timeouts_keep_their_code_and_release_capacity() {
         let exchange = async {
             let result = prepared
                 .execute(
-                    &OperationContext::new(Duration::from_secs(3)).unwrap(),
+                    &batter::operation::OperationOwner::new(Duration::from_secs(3))
+                        .unwrap()
+                        .into_context(),
                     permit,
                 )
                 .await;
@@ -268,7 +272,9 @@ async fn connector_failure_is_known_not_dispatched() {
             .prepare_dispatch(&request.idempotency_key(), &request)
             .unwrap()
             .execute(
-                &OperationContext::new(Duration::from_secs(2)).unwrap(),
+                &batter::operation::OperationOwner::new(Duration::from_secs(2))
+                    .unwrap()
+                    .into_context(),
                 test_permit()
             )
             .await

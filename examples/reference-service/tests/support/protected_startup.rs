@@ -11,7 +11,6 @@ use batter::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget},
-    operation::OperationContext,
     settings::SettingsSource,
     startup::{
         InitializationError, StartingSupervisor, Startup, StartupCause, StartupError,
@@ -60,7 +59,9 @@ fn start() -> Held {
     let (publish, published) = oneshot::channel();
     let dependent_saw_open_pool = Arc::new(AtomicBool::new(false));
     let witness = dependent_saw_open_pool.clone();
-    let context = OperationContext::new(Duration::from_secs(8)).unwrap();
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(8))
+        .unwrap()
+        .into_context();
     let starting = Startup::scoped(supervisor, context, cleanup, move |scope| {
         Box::pin(async move {
             scope.stage("postgres.acquire")?;
