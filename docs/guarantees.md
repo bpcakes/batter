@@ -883,6 +883,13 @@ later calls cannot replace it or invoke new work. A dropped polled operation
 records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
 application rejections and terminal scope failures use separate types.
 Operations use private savepoints and XID continuity.
+Profile and atomic continuity validation share one statement. After successful
+work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
+RELEASE. Unprofiled opening checks are omitted while ownership excludes intervening
+SQL; profiled opening checks remain because schema existence/USAGE is external
+state. Recovery revalidates after savepoint rollback/release, and final commit or
+rollback always validates immediately before its command. No cached profile check
+is a permanent authority witness.
 Cancelling a polled inner operation consumes usable state, even if caught by the
 body. There is no await after acknowledged completion. Every completion retires
 the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
@@ -893,6 +900,15 @@ explicit login/effective roles, trusted schema path, timeouts and custom setting
 after reset, before beginning a transaction. Validation precedes callback access
 and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
 still lock authoritative objects before their first snapshot-bearing query.
+`PgSessionProfile::with_timeouts` requires all four server timeout selections,
+including idle-in-transaction and total-transaction limits. The adapter validates
+exact bounded milliseconds before I/O, applies explicit zero as disable, and
+revalidates both settings alongside the existing policy. Unsupported parameters
+fail setup. The compatibility `new` constructor leaves those two settings
+undeclared and preserves their reset defaults without checking them. Startup
+options survive `DISCARD ALL`; subsequent session `SET` values do not. Server
+timeout termination cannot release a held Rust lease or cancel arbitrary callback
+work; context-owned runners retain cooperative local deadline responsibility.
 Setting keys are ASCII-lowercased before validation and duplicate detection;
 values are preserved. Public profile reset/setup failures carry a `SqlxFailure`
 inside `sqlx::Error::Configuration`, so default formatting and SQLx's pool-hook

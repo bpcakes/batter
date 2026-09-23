@@ -13,7 +13,7 @@ The default feature set is empty. The available feature/module pairs are:
 
 | Feature | Namespace or capability |
 | --- | --- |
-| `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [proprietary dependency](../batter-at-rest/LICENSE) |
+| `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [MIT-licensed dependency](../batter-at-rest/LICENSE) |
 | `axum` | `batter::axum` |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
@@ -53,7 +53,5 @@ cargo run -p batter --example operation_budget
 cargo run -p batter --example finite_command
 ```
 
-Version 0.1.0; Rust 1.94 minimum; publishing disabled. MIT licensed.
-The optional `batter-at-rest` dependency is separately licensed under
-[`LicenseRef-CreditKit-Proprietary`](../batter-at-rest/LICENSE); the facade's MIT
-license does not grant rights to that dependency.
+Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed,
+including the optional `batter-at-rest` dependency.

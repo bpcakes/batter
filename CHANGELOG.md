@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+## 0.0.1 — 2026-09-22
+
+- Prepare the first crates.io release of the eight Batter packages. All internal
+  path dependencies carry registry versions, native Runledger is coordinated at
+  0.13.0, and native Runlimit is coordinated at 0.4.0. The two executable
+  example packages remain unpublished.
+
 - Add optional PostgreSQL `AttemptRunner`: native pre-authentication admission,
   bounded credential verification, transaction-fenced final decisions and atomic
   attempt/application completion. Durable rejections preserve failure audit;
@@ -79,7 +86,7 @@ contracts, capability facts and validation history.
 - Enforce that facade-owned runnable examples import the public `batter` path.
 
 - Soften public status language now that the library is in internal use: drop
-  MVP / not-production-validated framing while keeping unpublished-package,
+  not-production-validated framing while keeping unpublished-package,
   evidence-scope, and API-limit facts.
 
 - Add `batter_axum::browser` with validated HTTPS/loopback origins,

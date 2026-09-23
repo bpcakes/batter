@@ -4,7 +4,8 @@ Follow the root Batter guide and nearest package guide. These five packages own
 native durable jobs, persistence, supervision, test support and the operator TUI.
 They are members of the root Cargo workspace, not an independent nested workspace.
 They must not depend on the Batter facade. Preserve package names, native public
-contracts, strict package lint policy and disabled publishing.
+contracts, strict package lint policy, coordinated version 0.13.0, and
+publication restricted to crates.io.
 
 PostgreSQL 18 is the authoritative database baseline. Native database tests use
 `runledger-test-support` and Docker's `postgres:18` image by default. Record exact

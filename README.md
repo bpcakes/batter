@@ -45,7 +45,9 @@ and report the design concern before continuing dependent repairs.
 
 ## Status
 
-Version 0.1.0. Publishing is disabled; no registry name has been reserved.
+The Batter packages are version 0.0.1 publication candidates. Their manifests
+target crates.io, but the source tree alone does not claim that an upload or
+registry-name reservation has completed.
 Linux x86_64 and macOS arm64 have execution evidence on Rust 1.94.0 and 1.98.1.
 Hosted Linux verification and focused macOS jobs passed on both supported
 toolchains in [GitHub Actions run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
@@ -75,7 +77,8 @@ native packages are also local, imported from master
 `12e035dac504a1d348c2058ee7ade8e61f2e7974`. See [consumer configuration](docs/reference-compatibility.md#git-consumers)
 and native [Runledger](runledger/IMPORT.md) / [Runlimit](runlimit/IMPORT.md) provenance.
 Runledger remains optional for facade consumers and is absent from the default
-foundation graph. All packages remain unpublished.
+foundation graph. Releasable packages are prepared for crates.io; the two
+example packages remain unpublished.
 
 ```sh
 cargo run -p batter --features axum --example http_service
@@ -146,10 +149,11 @@ The eighth facade example, `verification`, requires an explicit migration
 manifest and authority policy; see the
 [SQLx verifier guide](crates/batter-sqlx/README.md#read-only-schema-and-authority-verification).
 
-## Use as a local dependency
+## Use before the registry release
 
-Git or path dependencies only. Every workspace package is `publish = false`. The toml
-below assumes this repository is checked out as `batter` beside the consumer:
+Until the coordinated registry release is visible, use one immutable Git revision
+or local paths. The TOML below assumes this repository is checked out as `batter`
+beside the consumer:
 
 ```toml
 [dependencies]
@@ -180,8 +184,8 @@ Adapter APIs are also available from their direct packages. The facade exposes
 `batter::test_support` through additive opt-in features; `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
 documented bridges. Each package declares its own version and Rust minimum.
-Foundation/adapters remain 0.1.0; native Runledger remains 0.12.0 and native
-Runlimit remains 0.3.0 (PostgreSQL 0.3.1). All retain Rust 1.94 as their minimum.
+The eight Batter packages are 0.0.1, native Runledger is 0.13.0, and native
+Runlimit is 0.4.0. All retain Rust 1.94 as their minimum.
 The standalone `batter-at-rest` leaf verifies that minimum independently. The
 default toolchain is 1.98.1. SQLx 0.9.0 sets that floor in the adapter and
 examples; extracting it does not establish a lower library minimum.
@@ -189,7 +193,7 @@ examples; extracting it does not establish a lower library minimum.
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
-| `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | Synchronous standalone envelope encryption and stable MAC keys; proprietary and not covered by the root MIT license. |
+| `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | MIT-licensed synchronous standalone envelope encryption and stable MAC keys. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, explicit low-level connection disposition, and opt-in fixtures. |
@@ -276,7 +280,6 @@ compiler, lint, and test failures without weakening the documented contracts.
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Registry publication remains a separate decision.
-The optional `batter-at-rest` package is an exception: it uses
-[`LicenseRef-CreditKit-Proprietary`](crates/batter-at-rest/LICENSE), including when
-selected through the MIT facade's `at-rest` feature.
+MIT; see [LICENSE](LICENSE). The standalone `batter-at-rest` package carries a
+crate-local copy of the same license so detached Cargo packages include it.
+Registry publication remains a separate decision.

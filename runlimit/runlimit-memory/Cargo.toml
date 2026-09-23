@@ -1,14 +1,14 @@
 [package]
 name = "runlimit-memory"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
-publish = false
+publish = ["crates-io"]
 description = "Hard-bounded in-memory fixed-window and GCRA rate limiting"
 documentation = "https://docs.rs/runlimit-memory"
 readme = "../README.md"
-repository = "https://github.com/bpcakes/runlimit"
+repository = "https://github.com/bpcakes/batter"
 keywords = ["rate-limit", "throttling", "security"]
 categories = ["web-programming"]
 

@@ -23,7 +23,7 @@
 
 ## Invariants
 
-- `Cargo.toml` must remain explicit and standalone: no workspace inheritance, `../` path, Batter/application dependency, database client, serializer, network client, or async runtime. Keep Rust 1.94, `publish = false`, `LicenseRef-CreditKit-Proprietary`, and the crate-local proprietary `LICENSE`; Batter's root MIT license does not apply.
+- `Cargo.toml` must remain explicit and standalone: no workspace inheritance, `../` path, Batter/application dependency, database client, serializer, network client, or async runtime. Keep version 0.0.1, Rust 1.94, publication restricted to crates.io, `license = "MIT"`, and the crate-local copy of Batter's MIT `LICENSE` so the detached package carries its license.
 - Version 1 is one fixed AES-256-GCM/HKDF-SHA256 suite. Do not add an algorithm flag, direct-encryption mode, compatibility shim, or second envelope path.
 - A caller cannot construct an absent or raw context. Row contexts bind owner, resource, and payload schema; tenant-token contexts bind tenant and payload schema without an invented row ID.
 - Payload AAD excludes physical storage location and wrapping-key ID. Wrapper AAD includes its key ID and the payload nonce. The two roles are domain-separated.

@@ -47,7 +47,7 @@ review Cargo.lock, run your dependency advisory/license checks, and evaluate
 all optional features on the actual target platform. CI actions are separate
 supply-chain dependencies that also require review.
 
-Publishing is disabled. No crates.io account, repository, deployment, or registry
-name was created/reserved for these packages. Before publication, establish an
+Release-package manifests target crates.io, but that does not establish that any
+upload or registry-name reservation completed. Before publication, establish an
 owner-controlled private vulnerability reporting channel rather than inventing
 a maintainer email address here.

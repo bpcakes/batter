@@ -1,11 +1,14 @@
 [package]
 name = "batter"
 description = "Cohesive facade for Batter's native operational toolkit"
-version = "0.1.0"
+version = "0.0.1"
 edition.workspace = true
 rust-version = "1.94"
 license.workspace = true
-publish = false
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/batter"
+publish = ["crates-io"]
 readme = "README.md"
 autoexamples = false
 
@@ -26,7 +29,7 @@ test-support = ["dep:batter-test-support"]
 sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
 [dependencies]
-batter-core = { path = "../batter-core", default-features = false }
+batter-core = { path = "../batter-core", version = "0.0.1", default-features = false }
 batter-at-rest = { workspace = true, optional = true }
 batter-axum = { workspace = true, optional = true }
 batter-sqlx = { workspace = true, optional = true }

@@ -40,5 +40,5 @@ No raw owner extraction or legacy bridge is supported.
 The native packages live under `runledger/` in the shared workspace. Run
 `scripts/check_runledger_workspace.py` to check actual Cargo source identity and
 ownership direction. No source pin, sibling checkout or foundation patch remains.
-Validate both feature branches together. Publication is not authorized by this
-cutover. Final acceptance includes root two-toolchain/live gates.
+Validate both feature branches together. Publication is governed by the active
+`batter-ddc` release task. Final acceptance includes root two-toolchain/live gates.

@@ -1,5 +1,18 @@
 # Testing and failure-contract coverage
 
+Transaction timeout profiles (`batter-qhps`) have offline precision/range and
+override controls in `crates/batter-sqlx/tests/profile.rs`. The explicit live
+inventory adds six PostgreSQL 18 cases in `atomic_live/profile_timeouts.rs`,
+`profile_timeout_drift.rs` and `profile_timeout_expiry.rs`: startup defaults versus
+session settings, explicit zero, legacy compatibility, all pool hook paths,
+atomic/snapshot application and drift, retained poison and recovered inspection
+errors, and independently observed server termination/lock release. The expiry
+controls retain the Rust lease and assert that the local pool slot stays occupied.
+Total expiry spans multiple successful short statements; idle expiry waits for
+an independent backend observation. Existing setup-redaction cases use complete
+profiles. Older PostgreSQL versions and fresh-agent usability tasks are not
+executed by these cases.
+
 Atomic runner regression coverage (`batter-gzh`) lives in
 `crates/batter-sqlx/tests/atomic_live`: acknowledged output/rejection, retained
 uncertainty, caught inner cancellation, inherited session reset, completion
@@ -35,6 +48,18 @@ controlled-clock regressions and Python subprocess ownership. Linux orphan-probe
 entries are excluded on other Unix targets.
 Windows is unsupported and not planned; see [platform scope](adr/007-unix-platform-scope.md).
 Source presence and package-integrity checks are not type checking.
+
+The SQLx `atomic_live::validation` controls count native SQLx query events for
+first, repeated and post-recovery operations: four statements unprofiled, five
+profiled (both timeout constructors), one additional statement on SQL rejection,
+and two for final commit. `validation_drift` checks every declared setting,
+role/session-authorization changes and restored settings after savepoint recovery.
+Independent-session schema removal and USAGE revocation must prevent callback
+invocation. A PostgreSQL 18 `EXPLAIN` of the exact production query, with
+sequential scans disabled, requires an indexed namespace-name condition; this
+detects both a cast on the catalog column and an `EXISTS` rewrite that scans the
+whole catalog. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
+ordinary workspace tests discover them but leave them ignored.
 
 ## Verification commands
 
@@ -2031,6 +2056,13 @@ CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 1.98.1. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
+
+The pool-budget regression polls admission and cleanup into a pending pool
+acquisition while holding the only connection. Each wait exceeds the entire
+operation budget before releasing the connection, so starting that deadline
+before acquisition must fail. The fresh two-second work budget leaves headroom
+for the retained 100 ms SQL triggers and commit; success still requires the
+exact quota and cleanup outcomes (`batter-qhps`).
 
 The GCRA replenishment regression drives the persisted database clock through
 0, 199, 200, 399 and 400 ms after exhausting a two-unit burst. It checks exact

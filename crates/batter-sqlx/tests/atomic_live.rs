@@ -7,6 +7,12 @@ mod commit;
 mod poison;
 #[path = "atomic_live/profile.rs"]
 mod profile;
+#[path = "atomic_live/profile_timeout_drift.rs"]
+mod profile_timeout_drift;
+#[path = "atomic_live/profile_timeout_expiry.rs"]
+mod profile_timeout_expiry;
+#[path = "atomic_live/profile_timeouts.rs"]
+mod profile_timeouts;
 #[path = "atomic_live/profiled_pool.rs"]
 mod profiled_pool;
 #[path = "atomic_live/runner.rs"]
@@ -18,6 +24,10 @@ mod snapshots;
 mod support;
 #[path = "atomic_live/transactions.rs"]
 mod transactions;
+#[path = "atomic_live/validation.rs"]
+mod validation;
+#[path = "atomic_live/validation_drift.rs"]
+mod validation_drift;
 
 use batter_sqlx::{PgScopedSql, low_level::PgAtomicTransaction};
 use support::{Fixture, Result};

@@ -49,8 +49,9 @@ The local graph is `batter-runledger -> runledger-postgres -> batter-sqlx ->
 batter-core`. All five native Runledger packages now live in this workspace,
 imported from master `46b5cd085d011e597de9552dfebbed4c19416453` (including merged
 PR #22). Cargo resolves local package paths; no cross-repository patch is needed.
-All packages remain unpublished. Native transaction and runtime ownership are
-unchanged; see [import provenance](../runledger/IMPORT.md).
+The native packages are prepared as coordinated version 0.13.0 with publication
+restricted to crates.io. Native transaction and runtime ownership are unchanged;
+see [import provenance](../runledger/IMPORT.md).
 
 The preceding owned-scope validation used PostgreSQL 18.6, both supported Rust toolchains,
 the 84-case SQLx suite, the reference inventory and adapter probe. The
@@ -73,7 +74,7 @@ runledger-runtime = { git = "https://github.com/bpcakes/batter", rev = "BATTER_R
 ```
 
 `scripts/check_runledger_workspace.py` checks actual Cargo metadata for local
-source identity, workspace membership, disabled publishing, dependency direction
+source identity, workspace membership, crates.io publication policy, dependency direction
 and canonical migration/cache copies. It does not require `.git` or a historical
 Batter ancestor and permits reviewing coordinated foundation changes in one PR.
 
@@ -81,7 +82,8 @@ Runlimit's five native packages also resolve from `runlimit/`, imported from
 master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. Direct native Git consumers must
 select the same Batter revision as the facade; do not mix former Runlimit Git
 sources with local native types. No dependency patch is required. Package versions,
-SQL migrations and lock/key protocols remain unchanged; see
+SQL migrations and lock/key protocols remain unchanged apart from the coordinated
+0.4.0 source release version; see
 [Runlimit provenance](../runlimit/IMPORT.md). `scripts/check_runlimit_workspace.py`
 checks local identities, native dependency direction and original SQL/license digests.
 

@@ -1,11 +1,13 @@
 //! Opt-in integration tests against a real `PostgreSQL` database.
 
 use std::{
+    future::{Future, poll_fn},
     process,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    task::Poll,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -810,34 +812,34 @@ async fn pool_wait_does_not_spend_admission_or_cleanup_operation_budget() {
     let subject = key(155);
     create_pool_budget_delay_triggers(&setup_pool, &schema).await;
 
+    let operation_budget = Duration::from_secs(2);
+    let pool_wait = operation_budget + Duration::from_millis(250);
     let config = PostgresConfig::new()
-        .with_pool_acquire_timeout(Duration::from_secs(1))
-        .expect("one-second pool budget is valid")
-        .with_operation_timeout(Duration::from_millis(250))
-        .expect("250-millisecond operation budget is valid");
+        .with_pool_acquire_timeout(Duration::from_secs(10))
+        .expect("ten-second pool budget is valid")
+        .with_operation_timeout(operation_budget)
+        .expect("two-second operation budget is valid");
     let limiter = PostgresLimiter::new(pool.clone()).with_config(config);
 
     let held_connection = pool
         .acquire()
         .await
         .expect("hold the only pool connection before admission");
-    let admission_barrier = Arc::new(Barrier::new(2));
-    let waiting_barrier = Arc::clone(&admission_barrier);
-    let waiting_limiter = limiter.clone();
-    let waiting_policy = policy.clone();
-    let admission = tokio::spawn(async move {
-        waiting_barrier.wait().await;
-        waiting_limiter
-            .check(&Check::new(subject.bind(&waiting_policy)))
+    let check = Check::new(subject.bind(&policy));
+    let mut admission = Box::pin(limiter.check(&check));
+    assert!(
+        poll_fn(|cx| Poll::Ready(admission.as_mut().poll(cx)))
             .await
-    });
-    admission_barrier.wait().await;
-    sleep(Duration::from_millis(200)).await;
+            .is_pending()
+    );
+    // Exceed the work budget only after polling into the pool wait. An early
+    // deadline must expire; a fresh one leaves headroom for delayed SQL and commit.
+    sleep(pool_wait).await;
     drop(held_connection);
 
-    let decision = admission
+    let decision = tokio::time::timeout(Duration::from_secs(10), admission)
         .await
-        .expect("admission task does not panic")
+        .expect("admission completes within the watchdog")
         .expect("admission receives a fresh operation budget after pool wait");
     assert!(decision.permits_request());
     assert_eq!(available(&decision), 0);
@@ -863,20 +865,18 @@ WHERE
         .acquire()
         .await
         .expect("hold the only pool connection before cleanup");
-    let cleanup_barrier = Arc::new(Barrier::new(2));
-    let waiting_barrier = Arc::clone(&cleanup_barrier);
-    let waiting_limiter = limiter.clone();
-    let cleanup = tokio::spawn(async move {
-        waiting_barrier.wait().await;
-        waiting_limiter.cleanup_expired(1).await
-    });
-    cleanup_barrier.wait().await;
-    sleep(Duration::from_millis(200)).await;
+    let mut cleanup = Box::pin(limiter.cleanup_expired(1));
+    assert!(
+        poll_fn(|cx| Poll::Ready(cleanup.as_mut().poll(cx)))
+            .await
+            .is_pending()
+    );
+    sleep(pool_wait).await;
     drop(held_connection);
 
-    let removed = cleanup
+    let removed = tokio::time::timeout(Duration::from_secs(10), cleanup)
         .await
-        .expect("cleanup task does not panic")
+        .expect("cleanup completes within the watchdog")
         .expect("cleanup receives a fresh operation budget after pool wait");
     assert_eq!(removed, 1);
     assert!(!counter_exists(&pool, &policy, subject).await);

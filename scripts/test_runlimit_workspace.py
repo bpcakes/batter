@@ -6,7 +6,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from check_runlimit_workspace import NATIVE, validate_assets, validate_graph
+from check_runlimit_workspace import (
+    EXPECTED_PUBLISH,
+    EXPECTED_VERSION,
+    NATIVE,
+    validate_assets,
+    validate_graph,
+)
 from package import eligible
 
 
@@ -14,7 +20,9 @@ class GraphTests(unittest.TestCase):
     def setUp(self):
         self.root = Path('/workspace').resolve()
         names = ['runlimit-' + s for s in NATIVE] + ['batter', 'batter-core', 'tokio', 'bridge']
-        self.metadata = dict(packages=[dict(name=n, id=n, source=None, publish=[],
+        self.metadata = dict(packages=[dict(name=n, id=n, source=None,
+                                           publish=EXPECTED_PUBLISH.copy(),
+                                           version=EXPECTED_VERSION,
                                            manifest_path=str(self.root / 'runlimit' / n / 'Cargo.toml'))
                                        for n in names], workspace_members=names,
                              resolve=dict(nodes=[dict(id=n, deps=[]) for n in names]))

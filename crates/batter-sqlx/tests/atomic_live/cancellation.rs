@@ -25,14 +25,27 @@ async fn unpolled_consuming_scopes_retire_the_owner() -> Result {
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL 18"]
 async fn cancelled_application_operation_and_snapshot_retire() -> Result {
-    for mode in 0..3 {
+    for mode in 0..6 {
         let mut fixture = fixture().await?;
         let pool = fixture.pool.clone();
         let key = fixture.key;
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
-            if mode == 2 {
-                let _ = PgReadOnlySnapshot::inspect(&pool, async |sql| {
+            let login = pool.connect_options().get_username().to_owned();
+            // This control observes cancellation while server work remains
+            // blocked, so no server clock may race that independent observation.
+            let profile = batter_sqlx::PgSessionProfile::with_timeouts(
+                &login,
+                &login,
+                vec!["public".into()],
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+                std::time::Duration::ZERO,
+            )
+            .unwrap();
+            if mode % 3 == 2 {
+                let work = async |sql: &mut batter_sqlx::PgReadOnlySql<'_>| {
                     let backend: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
                         .fetch_one(sql.executor())
                         .await?;
@@ -42,8 +55,12 @@ async fn cancelled_application_operation_and_snapshot_retire() -> Result {
                         .execute(sql.executor())
                         .await?;
                     Ok::<_, sqlx::Error>(())
-                })
-                .await;
+                };
+                if mode >= 3 {
+                    let _ = PgReadOnlySnapshot::inspect_profiled(&pool, &profile, work).await;
+                } else {
+                    let _ = PgReadOnlySnapshot::inspect(&pool, work).await;
+                }
                 return;
             }
             let work = async move |sql: &mut PgScopedSql<'_>| {
@@ -55,8 +72,14 @@ async fn cancelled_application_operation_and_snapshot_retire() -> Result {
                     .await?;
                 Ok::<_, sqlx::Error>(())
             };
-            let tx = PgAtomicTransaction::begin(&pool).await.unwrap();
-            if mode == 0 {
+            let tx = if mode >= 3 {
+                PgAtomicTransaction::begin_profiled(&pool, &profile)
+                    .await
+                    .unwrap()
+            } else {
+                PgAtomicTransaction::begin(&pool).await.unwrap()
+            };
+            if mode % 3 == 0 {
                 let _ = tx.application(work).await;
             } else {
                 let _ = tx.operation(work).await;

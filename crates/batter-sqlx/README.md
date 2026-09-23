@@ -1,7 +1,8 @@
 # batter-sqlx
 
-An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Rust 1.94
-minimum, Unix-only, unpublished. The foundation does not depend on this package.
+An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
+0.0.1, Rust 1.94 minimum, Unix-only, and targeting crates.io. The foundation
+does not depend on this package.
 
 ## Owned transactions and snapshots
 
@@ -53,10 +54,45 @@ Use `run_atomic_profiled(&pool, &profile, ...)` and
 `PgReadOnlySnapshot::inspect_profiled(&pool, &profile, ...)` when role, trusted
 schema path, server timeouts or custom tenant settings matter. `PgSessionProfile`
 declares login/effective roles and safely quoted trusted schemas, plus explicit
-statement/lock timeouts and bound custom settings. Setup is library-owned, runs
+timeouts and bound custom settings. Construct it with `PgSessionProfile::with_timeouts`
+to require statement, lock, idle-in-transaction and total-transaction timeouts.
+Every duration must be exact whole milliseconds in `0..=i32::MAX`; zero explicitly
+disables that timeout, including over nonzero inherited defaults. Setup is library-owned, runs
 after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
+
+Profile validation reads roles, path, every declared schema/timeout/setting and
+atomic continuity in one SQL statement. Successful atomic operations validate
+once after the body, then await RELEASE without another validation. Unprofiled
+operations omit the opening check because the opaque owner has run no arbitrary
+SQL since birth or its previous validation. Profiled operations retain an opening
+check: schema existence and USAGE can change from another session while idle.
+Each declared schema uses a name-index-eligible catalog lookup; missing or
+unusable schemas still fail validation.
+A successful one-query operation therefore executes four statements unprofiled
+or five profiled, excluding acquisition/setup and final transaction completion.
+Recovery still rolls back and releases the private savepoint before revalidation;
+commit and rollback still validate immediately before their completion command.
+These are statement counts, not latency or server-resource bounds.
+
+The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
+declares only statement/lock timeouts and neither sets nor verifies transaction
+timeouts. Their PostgreSQL reset defaults, including connection startup options,
+remain in effect. `DISCARD ALL` removes later session `SET` customizations; it does
+not erase startup defaults. All three pool hooks remain library-owned.
+
+Complete profiles require PostgreSQL 17 or later because `transaction_timeout`
+was introduced in 17, even when the declared value is zero. Unsupported settings
+fail setup before application access; they are never silently skipped. Native
+verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
+interval, while transaction timeout bounds the whole transaction and terminates
+the session; prepared transactions are excluded. A nonzero transaction timeout
+shorter than or equal to statement/idle timeout takes precedence. Choosing these
+values is application policy. Server termination does not cancel a pending Rust
+callback or release a held local pool lease. Use `run_atomic_profiled_in` with an
+`OperationContext` for cooperative local deadlines; non-yielding work and commit
+ambiguity retain their existing limits. SQL can change settings between checks.
 Only include schemas whose object creators you trust. Application-specific
 provisioning and required grants remain downstream; no role/schema is created.
 Setting names are ASCII-lowercased before validation; case-variant duplicates

@@ -11,6 +11,17 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "combined_validation_rejects_each_setting_and_recovers_local_changes",
+        "combined_validation_rejects_role_and_schema_privilege_drift",
+        "atomic_scope_statement_counts_include_recovery_and_completion",
+        "profiled_scope_checks_external_schema_loss_before_work",
+        "profiled_schema_lookup_remains_index_eligible",
+        "transaction_profiles_distinguish_startup_defaults_session_settings_and_zero",
+        "transaction_profiles_cover_pool_hooks_atomic_and_snapshot_work",
+        "transaction_timeout_drift_poison_retains_cause_and_retires",
+        "snapshot_timeout_drift_rejects_success_and_preserves_recovered_errors",
+        "declared_idle_timeout_releases_server_locks_but_not_held_lease",
+        "declared_transaction_timeout_bounds_multiple_short_statements",
         "owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy",
         "profile_setup_errors_redact_setting_and_role_values",
         "profile_after_connect_logging_redacts_setting_values",

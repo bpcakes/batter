@@ -4,8 +4,8 @@ set -euo pipefail
 readonly REQUIRED_RUST_TOOLCHAIN="1.94.0"
 readonly EXPECTED_RUST_VERSION="1.94"
 readonly EXPECTED_PACKAGE="batter-at-rest"
-readonly EXPECTED_VERSION="0.1.0"
-readonly EXPECTED_LICENSE="LicenseRef-CreditKit-Proprietary"
+readonly EXPECTED_VERSION="0.0.1"
+readonly EXPECTED_LICENSE="MIT"
 
 script_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
@@ -283,7 +283,7 @@ validate_detached_manifest() {
             and .packages[0].edition == "2024"
             and .packages[0].rust_version == $rust
             and .packages[0].license == $license
-            and .packages[0].publish == []
+            and .packages[0].publish == ["crates-io"]
             and all(
                 .packages[0].dependencies[];
                 .source != null
@@ -336,8 +336,8 @@ validate_detached_manifest() {
                     if .packages[0].license != $license then
                         "package.license: expected \($license | tojson), got \(.packages[0].license | tojson)"
                     else empty end,
-                    if .packages[0].publish != [] then
-                        "package.publish: expected [], got \(.packages[0].publish | tojson)"
+                    if .packages[0].publish != ["crates-io"] then
+                        "package.publish: expected [\"crates-io\"], got \(.packages[0].publish | tojson)"
                     else empty end
                 ] | .[]
             ' "$metadata_file" >&2

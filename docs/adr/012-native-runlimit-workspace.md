@@ -38,3 +38,14 @@ native and adapter boundaries without claiming stronger remote-effect guarantees
 Fresh-agent usability assessment remains proposed and unexecuted. Registry release,
 upstream repository archival and unrelated API-hardening work are outside this PR.
 See [provenance](../../runlimit/IMPORT.md).
+
+## Publication amendment
+
+On 2026-09-22, `batter-ddc` prepared all five native packages as coordinated
+version 0.4.0 crates restricted to crates.io and updated their repository metadata
+to this shared source repository. This semver-minor release signals the breaking
+pre-1.0 API changes recorded in the changelog. Internal path dependencies carry
+registry versions; native ownership, immutable migrations, algorithms, and the
+prohibition on Batter dependencies remain unchanged. Artifact validation and an
+explicit upload record are still required before claiming the release exists on
+the registry.

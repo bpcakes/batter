@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-22
+
 ### Changed
 
 - **Breaking:** `permits_request()` is the only boolean admission predicate.
@@ -319,7 +321,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/bpcakes/runlimit/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/bpcakes/batter/compare/runlimit-v0.4.0...HEAD
+[0.4.0]: https://github.com/bpcakes/batter/releases/tag/runlimit-v0.4.0
 [0.3.0]: https://github.com/bpcakes/runlimit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bpcakes/runlimit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bpcakes/runlimit/releases/tag/v0.1.0

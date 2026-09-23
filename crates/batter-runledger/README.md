@@ -45,8 +45,8 @@ earlier discoveries shorten active phase waits without replacing the first nativ
 cause. Native stop observation drains peers promptly. No caller-owned termination gate,
 independent driver, failure side channel or nested cleanup stack is needed.
 
-This unpublished Unix-only adapter consumes the native Runledger packages in
-this workspace. They were imported from master
+This version 0.0.1 Unix-only adapter targets crates.io and consumes the native
+Runledger 0.13.0 packages in this workspace. They were imported from master
 `46b5cd085d011e597de9552dfebbed4c19416453`, including PR #22. Local package paths
 select the same SQLx foundation as the facade without dependency patches or a
 sibling checkout. See [the compatibility manifest](../../docs/reference-compatibility.md#git-consumers).

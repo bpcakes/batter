@@ -6,6 +6,59 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Atomic scope validation cost: reviewed 2026-09-22
+
+For `batter-hkgr`, checked the locked SQLx 0.9.0 source and PostgreSQL 18
+[RELEASE SAVEPOINT](https://www.postgresql.org/docs/18/sql-release-savepoint.html),
+[SET](https://www.postgresql.org/docs/18/sql-set.html), and
+[READ COMMITTED](https://www.postgresql.org/docs/18/transaction-iso.html)
+semantics. RELEASE merges nested subtransactions without ending the top-level
+transaction; modern PostgreSQL preserves SET LOCAL across release. This supports
+omitting the validation SELECT after successful RELEASE while retaining its
+acknowledgement. Schema existence and USAGE can change externally between scopes,
+so profiled opening validation remains even without intervening application SQL.
+The combined query uses bound declaration arrays, qualified catalog functions,
+ordered results and explicit missing-timeout rows. SQLx query events in the live
+regressions count statements within operation/completion futures; these counts
+exclude checkout/profile setup and do not claim measured latency improvements.
+
+For the namespace lookup, PostgreSQL 18 declares
+[`pg_namespace_nspname_index` on `nspname` with `name_ops`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/include/catalog/pg_namespace.h),
+and its [B-tree operator-family rules](https://www.postgresql.org/docs/18/xindex.html#XINDEX-OPCLASS-OPFAMILY)
+allow supported cross-type comparisons. A local PostgreSQL 18.6
+[`EXPLAIN`](https://www.postgresql.org/docs/18/sql-explain.html) check showed that
+casting `nspname` to text leaves equality as a filter. Merely removing the cast
+from the former `EXISTS` query still allowed a hashed subplan that scanned the
+catalog. The scalar privilege lookup keeps `nspname = declared.name` as an index
+condition when sequential scans are disabled. PostgreSQL may still prefer a
+sequential scan for a small catalog; this is index eligibility, not a latency
+benchmark or a promise that every plan uses the index.
+
+## Declared transaction timeouts: reviewed 2026-09-22
+
+Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.
+
+- PostgreSQL 18 [RESET](https://www.postgresql.org/docs/18/sql-reset.html) and
+  [DISCARD](https://www.postgresql.org/docs/18/sql-discard.html) establish that
+  reset restores defaults, including startup options, rather than always zeroing
+  timeouts. Session `SET` values are removed. SQLx 0.9.0's local
+  `sqlx-postgres/src/options/mod.rs::options` and `connection/establish.rs` send
+  those options in the startup packet.
+- PostgreSQL 18 [client defaults](https://www.postgresql.org/docs/18/runtime-config-client.html)
+  specify millisecond units, zero as disable, idle-interval versus total-transaction
+  termination, precedence when total timeout is shorter or equal, and the prepared
+  transaction exclusion. These are server policies, not Rust callback deadlines.
+- The PostgreSQL 17 [release notes](https://www.postgresql.org/docs/17/release-17.html)
+  introduce `transaction_timeout`. Complete declarations require its existence
+  even for explicit zero; native setup errors reject unsupported parameters.
+  Compatibility construction does not query or set either undeclared GUC.
+
+The native cases distinguish startup/session values, profile enforcement and
+independently observed backend/lock release from a still-held local lease. This
+does not establish a hard wall-clock guarantee or permanent protection from SQL
+that changes settings between validation boundaries. PostgreSQL 16/17 runtime
+coverage and fresh-agent usability evaluation remain unexecuted.
+
 ## GitHub Actions scheduling and caching: reviewed 2026-09-22
 
 - GitHub's [workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)

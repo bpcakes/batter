@@ -104,10 +104,11 @@ replaces the other. See
 [ADR-006](adr/006-workspace-packages.md) and the
 [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
 
-Each package declares its version, Rust minimum, and publication policy. All
-currently retain version 0.1.0, Rust 1.94, and `publish = false`; a shared
-workspace does not imply a mandatory stack or synchronized releases. The root
-lockfile and verification matrix remain shared.
+Each package declares its version, Rust minimum, and publication policy. The
+eight Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
+Runlimit uses 0.4.0; all retain Rust 1.94 and restrict publication to crates.io.
+The two examples remain unpublished. A shared workspace does not imply a
+mandatory stack; the root lockfile and verification matrix remain shared.
 
 ## Three work lifetimes
 

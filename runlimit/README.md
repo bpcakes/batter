@@ -20,7 +20,7 @@ by authentication throttling consumers.
 
 These five native packages are members of Batter's root workspace, imported from
 master `12e035dac504a1d348c2058ee7ade8e61f2e7974`. The source versions remain
-0.3.0 (PostgreSQL 0.3.1); every package is unpublished in this workspace.
+coordinated at 0.4.0 and their manifests restrict publication to crates.io.
 Use one Batter revision for direct native packages and the optional facade.
 See [provenance](IMPORT.md) and the [workspace decision](../docs/adr/012-native-runlimit-workspace.md).
 
@@ -262,7 +262,7 @@ on a backend also enables it for `runlimit-core`:
 
 ```toml
 [dependencies]
-runlimit-memory = { version = "0.3.0", features = ["serde"] }
+runlimit-memory = { version = "0.4.0", features = ["serde"] }
 ```
 
 The feature serializes validated policy and scope identifiers as strings;

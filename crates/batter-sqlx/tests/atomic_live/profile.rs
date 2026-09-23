@@ -2,7 +2,10 @@ use super::{
     fixture,
     support::{Result, bounded, require},
 };
-use batter_sqlx::{PgSessionProfile, SqlxFailure};
+use batter_sqlx::{
+    PgAtomicError, PgReadOnlySnapshot, PgSessionProfile, PgSnapshotError, SqlxFailure,
+    run_atomic_profiled,
+};
 use sqlx::postgres::PgPoolOptions;
 use std::{
     sync::{
@@ -20,10 +23,12 @@ use tracing_subscriber::{Layer, layer::Context, prelude::*};
 const MARKER: &str = "profile-secret-marker-not-a-timezone";
 
 fn policy(login: &str, role: &str) -> Result<PgSessionProfile> {
-    Ok(PgSessionProfile::new(
+    Ok(PgSessionProfile::with_timeouts(
         login,
         role,
         vec!["public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
         Duration::ZERO,
         Duration::ZERO,
     )?)
@@ -77,6 +82,30 @@ async fn profile_setup_errors_redact_setting_and_role_values() -> Result {
                 std::error::Error::source(retained).is_some(),
                 "native error source lost",
             )?;
+            let previous: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&fixture.pool)
+                .await?;
+            let error = run_atomic_profiled(&fixture.pool, &profile, async |_| {
+                panic!("failed complete profile must not invoke atomic work");
+                #[allow(unreachable_code)]
+                Ok::<(), ()>(())
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(error, PgAtomicError::Begin(_)));
+            super::replacement(&fixture.pool, previous).await?;
+            let previous: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&fixture.pool)
+                .await?;
+            let error = PgReadOnlySnapshot::inspect_profiled(&fixture.pool, &profile, async |_| {
+                panic!("failed complete profile must not invoke inspection");
+                #[allow(unreachable_code)]
+                Ok::<(), ()>(())
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(error, PgSnapshotError::Transaction(_)));
+            super::replacement(&fixture.pool, previous).await?;
         }
         policy(&login, &login)?
             .reset_and_apply(&mut fixture.observer)
