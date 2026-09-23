@@ -61,6 +61,21 @@ disables that timeout, including over nonzero inherited defaults. Setup is libra
 after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
+
+Profile validation reads roles, path, every declared schema/timeout/setting and
+atomic continuity in one SQL statement. Successful atomic operations validate
+once after the body, then await RELEASE without another validation. Unprofiled
+operations omit the opening check because the opaque owner has run no arbitrary
+SQL since birth or its previous validation. Profiled operations retain an opening
+check: schema existence and USAGE can change from another session while idle.
+Each declared schema uses a name-index-eligible catalog lookup; missing or
+unusable schemas still fail validation.
+A successful one-query operation therefore executes four statements unprofiled
+or five profiled, excluding acquisition/setup and final transaction completion.
+Recovery still rolls back and releases the private savepoint before revalidation;
+commit and rollback still validate immediately before their completion command.
+These are statement counts, not latency or server-resource bounds.
+
 The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
 declares only statement/lock timeouts and neither sets nor verifies transaction
 timeouts. Their PostgreSQL reset defaults, including connection startup options,

@@ -24,6 +24,10 @@ mod snapshots;
 mod support;
 #[path = "atomic_live/transactions.rs"]
 mod transactions;
+#[path = "atomic_live/validation.rs"]
+mod validation;
+#[path = "atomic_live/validation_drift.rs"]
+mod validation_drift;
 
 use batter_sqlx::{PgScopedSql, low_level::PgAtomicTransaction};
 use support::{Fixture, Result};
