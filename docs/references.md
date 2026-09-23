@@ -61,6 +61,18 @@ ordered results and explicit missing-timeout rows. SQLx query events in the live
 regressions count statements within operation/completion futures; these counts
 exclude checkout/profile setup and do not claim measured latency improvements.
 
+For the namespace lookup, PostgreSQL 18 declares
+[`pg_namespace_nspname_index` on `nspname` with `name_ops`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/include/catalog/pg_namespace.h),
+and its [B-tree operator-family rules](https://www.postgresql.org/docs/18/xindex.html#XINDEX-OPCLASS-OPFAMILY)
+allow supported cross-type comparisons. A local PostgreSQL 18.6
+[`EXPLAIN`](https://www.postgresql.org/docs/18/sql-explain.html) check showed that
+casting `nspname` to text leaves equality as a filter. Merely removing the cast
+from the former `EXISTS` query still allowed a hashed subplan that scanned the
+catalog. The scalar privilege lookup keeps `nspname = declared.name` as an index
+condition when sequential scans are disabled. PostgreSQL may still prefer a
+sequential scan for a small catalog; this is index eligibility, not a latency
+benchmark or a promise that every plan uses the index.
+
 ## Declared transaction timeouts: reviewed 2026-09-22
 
 Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.
