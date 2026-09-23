@@ -736,12 +736,15 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Jig verification
 
-The repository pins Jig commit `10a3dc9ae63547b09a48b05a463495bce2101f37`
-with contract v9 for scoped target freshness. This revision follows the v0.3.0
-release; the binary still reports 0.3.0, so use `scripts/jig info` to inspect the
-source SHA and contract epoch. Use `scripts/jig update --recopy` to retain this
-revision. Plain `scripts/jig update` advances to the upstream default branch.
-Do not downgrade to the v0.3.0 tag while exhaustive input policies are configured.
+The repository pins Jig v0.5.0 at commit
+`a328c17910c40603327c73329e5158a42c37417d` with contract v8 for scoped
+target freshness. The earlier unreleased contract v9 epoch was migrated to v8;
+historical Jig state remains append-only, and new checks establish v8 evidence.
+The Rust check targets declare `source_state = "worktree"` because they read working
+files; tracker-only staging or commits can reuse their passing receipts.
+Use `scripts/jig info` to inspect the source SHA and contract epoch. Use
+`scripts/jig update --recopy` to retain this revision. Plain
+`scripts/jig update` advances to the upstream default branch.
 
 On a fresh checkout, run `scripts/jig doctor` before starting an MCP client.
 The first invocation builds the repository-local runtime using Cargo, Git,

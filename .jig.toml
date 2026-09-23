@@ -1,6 +1,6 @@
-# Contract v9 runtime, pinned for exhaustive target freshness.
+# Contract v8 runtime from Jig v0.5.0, pinned for exhaustive target freshness.
 # Use update --recopy to retain it; plain update advances the upstream branch.
-_commit = "10a3dc9ae63547b09a48b05a463495bce2101f37"
+_commit = "a328c17910c40603327c73329e5158a42c37417d"
 _src_path = "https://github.com/bpcakes/jig-sh.git"
 repo_name = "batter"
 default_branch = "master"
@@ -50,6 +50,7 @@ id = "inferred"
 root = "inferred"
 
 [[repository.actions]]
+source_state = "worktree"
 description = "Run Rust Clippy with repository policy."
 intent = "check"
 effects = ["read_only", "process"]
@@ -137,6 +138,7 @@ kind = "shell"
 command = "api_clippy_command"
 
 [repository.actions.provenance]
+source_state = "declared"
 inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
@@ -146,6 +148,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "worktree"
 description = "Check Rust formatting."
 intent = "check"
 effects = ["read_only", "process"]
@@ -232,6 +235,7 @@ kind = "shell"
 command = "api_fmt_command"
 
 [repository.actions.provenance]
+source_state = "declared"
 inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
@@ -241,6 +245,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "worktree"
 description = "Run Rust tests."
 intent = "check"
 effects = ["read_only", "process"]
@@ -331,6 +336,7 @@ kind = "shell"
 command = "api_test_command"
 
 [repository.actions.provenance]
+source_state = "declared"
 inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
@@ -340,6 +346,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "worktree"
 description = "Run Rust tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
@@ -430,6 +437,7 @@ kind = "shell"
 command = "api_test_locked_command"
 
 [repository.actions.provenance]
+source_state = "declared"
 inputs_policy = "declared"
 effects = "inherited"
 inputs = "overridden"
@@ -439,6 +447,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "git"
 description = "Prepare repository dependencies and local tooling."
 inputs_policy = "whole_repository"
 intent = "operate"
@@ -454,6 +463,7 @@ kind = "shell"
 command = "repo_bootstrap_command"
 
 [repository.actions.provenance]
+source_state = "inferred"
 inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
@@ -463,6 +473,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "git"
 description = "Prove that batter-at-rest is portable at its declared Rust 1.94 boundary."
 intent = "check"
 effects = ["read_only", "process", "external"]
@@ -484,6 +495,7 @@ kind = "shell"
 command = "repo_batter_at_rest_portability_command"
 
 [repository.actions.provenance]
+source_state = "inferred"
 effects = "declared"
 inputs = "declared"
 inputs_policy = "inferred"
@@ -492,6 +504,7 @@ runner = "declared"
 target = "declared"
 
 [[repository.actions]]
+source_state = "git"
 description = "Validate the checked-in Jig repository contract."
 inputs_policy = "whole_repository"
 intent = "check"
@@ -508,6 +521,7 @@ kind = "native"
 operation = "jig.contract_check"
 
 [repository.actions.provenance]
+source_state = "inferred"
 inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
@@ -517,6 +531,7 @@ runner = "overridden"
 target = "inherited"
 
 [[repository.actions]]
+source_state = "git"
 description = "Enforce repository-owned source file budgets."
 inputs_policy = "whole_repository"
 intent = "check"
@@ -539,6 +554,7 @@ max_total_bytes = 268435456
 missing_comparison = "block"
 
 [repository.actions.provenance]
+source_state = "inferred"
 inputs_policy = "inferred"
 effects = "inherited"
 inputs = "inherited"
