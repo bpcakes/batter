@@ -13,11 +13,54 @@ use tracing::Instrument;
 
 /// An owned driver's retained result, including a coordinator panic/abort.
 /// A JoinError does not establish that asynchronous cleanup completed.
-/// An Ok report must still be inspected for task and cleanup failures.
+/// An Ok report must still be inspected for task and cleanup failures. Prefer
+/// [`RunningSupervisor::wait_checked`] or
+/// [`RunningSupervisor::shutdown_checked`] for ordinary application completion.
 pub type DriverOutcome = Result<SharedShutdownReport, Arc<JoinError>>;
 
+/// Evidence that the published process report passed [`ShutdownReport::is_success`].
+///
+/// Only a checked completion can create this value. Its report is available for
+/// application diagnostics and policy checks without repeating classification.
+/// The report proves only the local process outcomes represented by
+/// [`ShutdownReport`], not termination of detached descendants or remote effects.
+///
+/// ```no_run
+/// #![deny(unused_must_use)]
+/// use batter_core::lifecycle::{RunningSupervisor, ShutdownFailure};
+/// async fn finish(running: &RunningSupervisor) -> Result<(), ShutdownFailure> {
+///     running.shutdown_checked().await?;
+///     Ok(())
+/// }
+/// ```
+///
+/// ```compile_fail,E0451
+/// use batter_core::lifecycle::ShutdownSuccess;
+/// fn forge() -> ShutdownSuccess {
+///     ShutdownSuccess { report: panic!("cannot create success evidence") }
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct ShutdownSuccess {
+    report: SharedShutdownReport,
+}
+
+impl ShutdownSuccess {
+    /// Borrow the successful report for application-owned summary or policy checks.
+    pub fn report(&self) -> &SharedShutdownReport {
+        &self.report
+    }
+
+    /// Retain the same shared report after consuming the success witness.
+    pub fn into_report(self) -> SharedShutdownReport {
+        self.report
+    }
+}
+
 /// An unsuccessful shutdown, retaining every task and cleanup outcome.
-/// Default diagnostics never print native task, cleanup or panic contents.
+/// Direct `Debug` and `Display` formatting omits native task, cleanup and panic
+/// contents. The retained source chain is not redacted: an error-chain renderer
+/// can print a coordinator `JoinError` panic payload.
 #[derive(Clone)]
 pub enum ShutdownFailure {
     /// The driver completed, but its report contains unsuccessful outcomes.
@@ -48,16 +91,21 @@ impl std::error::Error for ShutdownFailure {
     }
 }
 
-/// Interpret a driver outcome without discarding unsuccessful report contents.
+/// Interpret a legacy or explicitly raw driver outcome without discarding failure.
+/// Prefer the checked wait or shutdown methods for ordinary applications.
 ///
 /// ```no_run
 /// # async fn example(running: batter_core::lifecycle::RunningSupervisor) -> Result<(), batter_core::lifecycle::ShutdownFailure> {
-/// batter_core::lifecycle::check_shutdown(running.wait().await)
+/// batter_core::lifecycle::check_shutdown(running.wait_report().await)
 /// # }
 /// ```
 pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
+    classify_shutdown(outcome).map(|_| ())
+}
+
+fn classify_shutdown(outcome: DriverOutcome) -> Result<ShutdownSuccess, ShutdownFailure> {
     match outcome {
-        Ok(report) if report.is_success() => Ok(()),
+        Ok(report) if report.is_success() => Ok(ShutdownSuccess { report }),
         Ok(report) => Err(ShutdownFailure::Report(report)),
         Err(error) => Err(ShutdownFailure::Coordinator(error)),
     }
@@ -74,8 +122,11 @@ pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
 /// report's public fields for an application-selected trusted sink. Keep rich
 /// errors inside the application and choose output at an explicit
 /// [`std::process::ExitCode`] boundary, as in the PostgreSQL lifecycle example.
+/// Ordinary applications should use checked completion. This raw wrapper is
+/// for callers that deliberately classify reports themselves; the legacy
+/// owner and observer `wait`/`shutdown` methods still return it.
 ///
-/// `must_use` warns when this value is discarded as an expression, including
+/// `must_use` warns when this raw value is discarded as an expression, including
 /// after `?` or `unwrap()`. Binding or explicitly dropping it bypasses the lint;
 /// the compiler cannot prove that a caller inspected the outcomes.
 ///
@@ -86,7 +137,7 @@ pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
 ///
 /// // Internal propagation preserves the original failures for a trusted sink.
 /// async fn stop(running: RunningSupervisor) -> Result<(), BoxError> {
-///     let report = running.shutdown().await?;
+///     let report = running.shutdown_report().await?;
 ///     if !report.is_success() {
 ///         // Retain the complete report for an application-selected error sink.
 ///         return Err(Box::new(report));
@@ -115,7 +166,7 @@ pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
 /// #![deny(unused_must_use)]
 /// use batter_core::lifecycle::RunningSupervisor;
 /// async fn ignored(running: RunningSupervisor) {
-///     running.wait().await.unwrap();
+///     running.wait_report().await.unwrap();
 /// }
 /// ```
 ///
@@ -123,7 +174,7 @@ pub fn check_shutdown(outcome: DriverOutcome) -> Result<(), ShutdownFailure> {
 /// #![deny(unused_must_use)]
 /// use batter_core::{BoxError, lifecycle::RunningSupervisor};
 /// async fn ignored(running: RunningSupervisor) -> Result<(), BoxError> {
-///     running.wait().await?;
+///     running.wait_report().await?;
 ///     Ok(())
 /// }
 /// ```
@@ -163,7 +214,37 @@ pub struct SupervisorObserver {
 }
 
 impl SupervisorObserver {
-    /// Wait for the same retained result available to every observer. The Tokio
+    /// Wait for checked completion without owning or stopping the process.
+    /// Successful evidence retains the same report as every raw observer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the completion monitor is dropped before publication; see
+    /// [`Self::wait_report`].
+    pub async fn wait_checked(&self) -> Result<ShutdownSuccess, ShutdownFailure> {
+        classify_shutdown(self.wait_report().await)
+    }
+
+    /// Wait for the raw result when an application deliberately classifies it.
+    /// The Tokio runtime must remain alive to drive shutdown and the monitor.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the completion monitor is dropped before publishing an outcome,
+    /// such as when its owning runtime shuts down. Awaiting the observer on
+    /// another runtime cannot recover that outcome. An already published outcome
+    /// remains available after runtime shutdown.
+    pub async fn wait_report(&self) -> DriverOutcome {
+        // Only start constructs this channel. Its monitor owns the sender until
+        // publishing, independently of all owners and control handles.
+        wait_published(self.completion.clone())
+            .await
+            .expect("owned driver retains completion sender")
+    }
+
+    /// Legacy raw completion spelling. Use [`Self::wait_checked`] for ordinary
+    /// applications or [`Self::wait_report`] for deliberate raw observation.
+    /// The Tokio
     /// runtime must remain alive to drive shutdown and the completion monitor.
     ///
     /// # Panics
@@ -173,11 +254,7 @@ impl SupervisorObserver {
     /// another runtime cannot recover that outcome. An already published outcome
     /// remains available after runtime shutdown.
     pub async fn wait(&self) -> DriverOutcome {
-        // Only start constructs this channel. Its monitor owns the sender until
-        // publishing, independently of all owners and control handles.
-        wait_published(self.completion.clone())
-            .await
-            .expect("owned driver retains completion sender")
+        self.wait_report().await
     }
 }
 
@@ -204,7 +281,7 @@ impl SupervisorObserver {
 /// )?)
 /// .start_unapproved();
 /// let running = pending.approve_readiness();
-/// let _report = running.shutdown().await?;
+/// running.shutdown_checked().await?;
 /// # Ok(()) }
 /// ```
 ///
@@ -259,14 +336,64 @@ impl UnapprovedSupervisor {
         self.running.observer()
     }
 
-    /// Await completion without approving readiness or requesting shutdown.
-    pub async fn wait(&self) -> DriverOutcome {
-        self.running.wait().await
+    /// Await checked completion without approving readiness or requesting shutdown.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn wait_checked(&self) -> Result<ShutdownSuccess, ShutdownFailure> {
+        self.running.wait_checked().await
     }
 
-    /// Request shutdown and observe its retained report without approving readiness.
+    /// Request shutdown and classify completion without approving readiness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn shutdown_checked(&self) -> Result<ShutdownSuccess, ShutdownFailure> {
+        self.running.shutdown_checked().await
+    }
+
+    /// Await the raw report without approving readiness or requesting shutdown.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn wait_report(&self) -> DriverOutcome {
+        self.running.wait_report().await
+    }
+
+    /// Request shutdown and observe its raw result without approving readiness.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn shutdown_report(&self) -> DriverOutcome {
+        self.running.shutdown_report().await
+    }
+
+    /// Legacy raw completion spelling; prefer [`Self::wait_checked`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn wait(&self) -> DriverOutcome {
+        self.wait_report().await
+    }
+
+    /// Legacy raw completion spelling; prefer [`Self::shutdown_checked`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
     pub async fn shutdown(&self) -> DriverOutcome {
-        self.running.shutdown().await
+        self.shutdown_report().await
     }
 }
 
@@ -334,26 +461,68 @@ impl RunningSupervisor {
         self.observer.clone()
     }
 
-    /// Await completion without transferring ownership or cancellation authority.
+    /// Await checked completion without requesting shutdown or transferring ownership.
+    /// The returned error retains the original report or coordinator failure.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn wait_checked(&self) -> Result<ShutdownSuccess, ShutdownFailure> {
+        self.observer.wait_checked().await
+    }
+
+    /// Request shutdown and classify the retained completion. Cancelling this
+    /// waiter does not stop the separately owned shutdown/cleanup coordinator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn shutdown_checked(&self) -> Result<ShutdownSuccess, ShutdownFailure> {
+        self.owner.handle.request();
+        self.wait_checked().await
+    }
+
+    /// Await the raw report without transferring ownership or cancellation authority.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn wait_report(&self) -> DriverOutcome {
+        self.observer.wait_report().await
+    }
+
+    /// Request shutdown and observe its raw retained result.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the monitor is dropped before publication; see
+    /// [`SupervisorObserver::wait_report`].
+    pub async fn shutdown_report(&self) -> DriverOutcome {
+        self.owner.handle.request();
+        self.wait_report().await
+    }
+
+    /// Legacy raw completion spelling; prefer [`Self::wait_checked`].
     ///
     /// # Panics
     ///
     /// Panics if the monitor is dropped before publication; see
     /// [`SupervisorObserver::wait`].
     pub async fn wait(&self) -> DriverOutcome {
-        self.observer.wait().await
+        self.wait_report().await
     }
 
-    /// Request shutdown and observe its retained report. Cancelling this waiter
-    /// does not stop the separately owned shutdown/cleanup coordinator.
+    /// Legacy raw completion spelling; prefer [`Self::shutdown_checked`].
     ///
     /// # Panics
     ///
     /// Panics if the monitor is dropped before publication; see
     /// [`SupervisorObserver::wait`].
     pub async fn shutdown(&self) -> DriverOutcome {
-        self.owner.handle.request();
-        self.wait().await
+        self.shutdown_report().await
     }
 }
 

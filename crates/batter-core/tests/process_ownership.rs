@@ -581,15 +581,15 @@ async fn cancelling_shutdown_waiter_cannot_cancel_started_cleanup() {
         !handle.status().is_draining(),
         "one remaining driver owner keeps process running"
     );
-    let waiter = tokio::spawn(async move { other_owner.shutdown().await });
+    let waiter = tokio::spawn(async move { other_owner.shutdown_checked().await });
     cleanup_rx.await.unwrap();
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
     release_tx.send(()).unwrap();
-    let first_report = observer.wait().await.unwrap();
-    let second_report = observer.clone().wait().await.unwrap();
-    assert!(first_report.is_success());
-    assert!(std::ptr::eq(&*first_report, &*second_report));
+    let first = observer.wait_checked().await.unwrap();
+    let second = observer.clone().wait_checked().await.unwrap();
+    assert!(first.report().is_success());
+    assert!(std::ptr::eq(&**first.report(), &**second.report()));
     assert!(finalized.load(Ordering::SeqCst));
     assert_eq!(handle.status().readiness(), Readiness::Stopped);
 }

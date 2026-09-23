@@ -25,8 +25,8 @@ pub use capability::{
     ReadinessApproval, RunningComponent, ShutdownHandle, ShutdownSignal,
 };
 pub use driver::{
-    DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, SupervisorObserver,
-    UnapprovedSupervisor, check_shutdown,
+    DriverOutcome, RunningSupervisor, SharedShutdownReport, ShutdownFailure, ShutdownSuccess,
+    SupervisorObserver, UnapprovedSupervisor, check_shutdown,
 };
 pub use process::{
     Fatal, ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt, ProcessScope,

@@ -8,6 +8,9 @@ additive facade features.
 The implementation of the foundation lives in [`batter-core`](../batter-core).
 The facade only re-exports that implementation and owns the runnable foundation
 examples, so applications and adapters share one concrete set of types.
+Owned service roots await `wait_checked().await?` or request
+`shutdown_checked().await?`; successful completion retains its report, and
+unsuccessful completion keeps the original report or coordinator error.
 
 The default feature set is empty. The available feature/module pairs are:
 

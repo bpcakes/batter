@@ -3,12 +3,14 @@
 ## Canonical agent consumer path
 
 For services, start from the executable
-[`Startup` rustdoc](../crates/batter-core/src/startup.rs) or the
-[HTTP composition example](../crates/batter/examples/http_service.rs).
-These demonstrate owned initialization and transfer to a running driver;
-use `check_shutdown` on its awaited result and retain failures for trusted inspection. Compose
+[`Startup` rustdoc](../crates/batter-core/src/startup.rs). It demonstrates owned
+initialization, transfer to a running driver, and checked completion through
+`wait_checked` or `shutdown_checked`. Retain failures for trusted inspection. Compose
 native Rust/Tokio futures through these boundaries, use validated settings,
 and keep application errors concrete.
+For HTTP route and boundary composition, follow the
+[HTTP composition example](../crates/batter/examples/http_service.rs). Its
+process completion uses the same checked path after protected startup.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
@@ -224,19 +226,24 @@ Native initialization alone does not establish dependency health or
 application readiness, and native joins do not prove arbitrary detached work or
 remote sessions stopped.
 
-At service completion, use `batter::lifecycle::check_shutdown(running.wait().await)?`
-inside the application's `run` function. For an explicit stop, use
-`check_shutdown(running.shutdown().await)?`. Both borrowed waiters are cancel-safe;
+At service completion, use `running.wait_checked().await?` inside the
+application's `run` function. For an explicit stop, use
+`running.shutdown_checked().await?`. Both borrowed waiters are cancel-safe;
 the separately driven cleanup still requires the runtime to remain alive.
-`check_shutdown` checks the complete report and retains an unsuccessful report
-or coordinator error in `ShutdownFailure`, with redacted formatting. A successful
-wait alone is insufficient: it may return a report containing failures.
+Checked completion retains a successful report in `ShutdownSuccess`, or an
+unsuccessful report or coordinator error in `ShutdownFailure` with redacted
+direct formatting. The retained source chain is separate: `anyhow::Error`'s
+`Debug` and alternate `Display` render causes, so a coordinator `JoinError` can
+print its panic payload. `check_shutdown(running.wait_report().await)?` remains
+a compatibility recipe for callers deliberately using a raw report.
 
 Keep rich errors available for deliberate inspection at a trusted sink. Return
 `ExitCode` from `main` with application-selected sanitized output, as the HTTP
 example does. A `main` returning `Result<(), BoxError>` prints the error's
 **Debug** representation through Rust's `Termination` implementation. Changing
 Display does not sanitize Debug or arbitrary errors propagated through `?`.
+Likewise, `main` returning `anyhow::Result<()>` can print a retained native
+cause. Select summary fields explicitly for public or shared logs.
 
 ### Lower-level lifecycle and report access
 
@@ -247,18 +254,18 @@ path above. Direct `Supervisor::start()` approves readiness once; only
 stage. Direct `run_until()` does the same on its first poll;
 `run_until_unapproved()` returns a linear, movable `UnapprovedDriver`, allowing
 policy to poll before consuming `approve_readiness()` without separating the
-decision from its driver. The caller still owns acquisition-failure cleanup. Do not copy the
-example's count-only error conversion when original shutdown causes must be
-retained. Do not add a bare spawn
+decision from its driver. The caller still owns acquisition-failure cleanup.
+The example propagates the complete checked shutdown failure. Do not add a bare spawn
 inside a component to make borrowing convenient; use composed futures or an
 explicitly owned JoinSet and await its shutdown.
 
-An owned-driver `Ok` contains `SharedShutdownReport`. If inspecting it directly
-instead of using `check_shutdown`, check `is_success()` and retain every failure.
+An owned driver's raw `Ok` contains `SharedShutdownReport`. If inspecting it
+directly instead of using checked completion, check `is_success()` and retain
+every failure.
 The wrapper cheaply clones the same completed report, dereferences to
 `ShutdownReport`, and can be retained as an application error through `BoxError`.
-Its `must_use` warning catches a bare `running.wait().await?;` or
-`running.wait().await.unwrap();`, but cannot require inspection after binding
+Its `must_use` warning catches a bare `running.wait_report().await?;` or
+`running.wait_report().await.unwrap();`, but cannot require inspection after binding
 or explicit disposal.
 
 Migration from the earlier owned-driver API: replace explicit
@@ -277,7 +284,9 @@ concrete report source, so the summary appears once.
 
 The [process-owned example](../crates/batter/examples/process_owned.rs) configures a finite
 capacity, transfers a dependency permit into admitted work, drops its result
-receipt, and observes completion through shutdown. Rejection is immediate, not
+receipt, and observes checked completion after the last owner drops. If both body
+work and shutdown fail, its private application error retains each cause for
+deliberate inspection while direct formatting stays fixed. Rejection is immediate, not
 a new queue of waiters. Do not capture arbitrarily large request bodies merely
 because task count is bounded.
 

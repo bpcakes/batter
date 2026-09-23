@@ -216,12 +216,28 @@ Rate limiting, concurrency limiting, and retry accounting are separate policies.
 
 ## Process ownership and shutdown
 
-`run_until` returns a `#[must_use] ShutdownReport`. Owned-driver `wait`,
-`shutdown`, and observer `wait` return `Result<SharedShutdownReport, Arc<JoinError>>`.
-The shared wrapper is also `#[must_use]`, so discarding it after `?` or `unwrap()`
+`run_until` returns a `#[must_use] ShutdownReport`. Owned-driver
+`wait_checked` and `shutdown_checked`, and observer `wait_checked`, return
+`Result<ShutdownSuccess, ShutdownFailure>`. Success retains the immutable shared
+report for diagnostics or application policy. Failure retains the unsuccessful
+report or the coordinator's original `JoinError`; ordinary `?` propagates it.
+`ShutdownFailure` itself redacts direct `Debug` and `Display`, but its native
+`source()` is retained. `anyhow::Error` chain formatting can print a coordinator
+panic payload through that source; use application-selected summaries at a
+public exit or logging boundary.
+`wait_checked` does not request shutdown, approve readiness, or extend process
+ownership. Among the checked methods, `shutdown_checked` requests shutdown.
+Legacy `shutdown`, raw `shutdown_report`, and dropping the last owner also request
+shutdown. Cancelling a waiter leaves cleanup owned by the coordinator while its
+Tokio runtime remains alive.
+
+Legacy `wait`/`shutdown` signatures remain for source compatibility. Explicit
+`wait_report`/`shutdown_report` return the same raw
+`Result<SharedShutdownReport, Arc<JoinError>>` for deliberate classification.
+The shared wrapper is `#[must_use]`, so discarding it after `?` or `unwrap()`
 warns; coordinator completion alone does not establish successful shutdown.
-Inspect the report's task and cleanup outcomes. Cloning the shared wrapper
-retains the same report and errors; dereferencing borrows `ShutdownReport`.
+Cloning the shared wrapper retains the same report and errors; dereferencing
+borrows `ShutdownReport`.
 The wrapper displays `owned shutdown report`; its `Error::source()` exposes the
 concrete report and its summary. Chain-walking diagnostics therefore show the
 task/cleanup summary once, while allowing a concrete report downcast.
@@ -233,9 +249,11 @@ an explicit read. Propagating a report out of a `main` returning `Result`
 therefore prints a redacted summary; applications still select their exit
 output, as shown by the complete `ExitCode` example on `SharedShutdownReport`
 and the SQLx executable. Neither the foundation nor a report wrapper redacts an
-arbitrary domain error that an application formats itself.
-These lints are advisory: binding, explicit dropping, or allowing the lint can
-bypass the warning. They do not prove inspection or successful shutdown.
+arbitrary domain error that an application formats itself. Direct
+`ShutdownFailure` Debug/Display is redacted, but arbitrary error-source
+traversal and native panic-hook output have no such promise. Raw-report lints
+are advisory: binding, explicit dropping, or allowing the lint bypasses them.
+Even a checked `Result` can be deliberately discarded by application code.
 
 A finite receipt's
 `ProcessTaskError::Failed` shares its `Arc<E>` with the report while exposing
@@ -731,18 +749,20 @@ of the caller's waiter. The lower-level `OperationContext::run` and
 does not create an owned finalization driver. No remote database termination or
 rollback guarantee follows from either local completion report.
 
-For supervised services, `check_shutdown` accepts only a successful shutdown
-report; failures retain the complete report, including forced abort, skipped
-cleanup and unjoined work, or the original coordinator error. Its redacted
-formatting does not inspect those causes.
+For supervised services, the owned driver's `wait_checked` and
+`shutdown_checked` classify completion. Failures retain the complete report,
+including forced abort, skipped cleanup and unjoined work, or the original
+coordinator error. Their redacted formatting does not inspect those causes.
+`check_shutdown` remains available for callers deliberately handling a raw
+report.
 
 The reference root uses protected startup with `.with_unix_signals("signals")`,
 a `pool_in` close hook registered on its reserved `postgres.pool` slot, and managed
 native settlement. Library-owned listeners exist before the initializer runs and
 belong to the running driver after handoff. Even after generic shutdown succeeds,
 the application root requires its named `postgres.pool` cleanup record;
-`pool_in` registers the close hook, the cleanup stack writes its record, and the
-preceding generic shutdown check separately requires that hook to have succeeded.
+`pool_in` registers the close hook, the cleanup stack writes its record, and
+checked completion separately requires that hook to have succeeded.
 Cleanup registration rejects duplicate names, so if the otherwise successful
 report does not contain that record,
 `runtime::run` returns the public fixed-diagnostic

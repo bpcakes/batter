@@ -107,13 +107,13 @@ async fn shutdown_failure_path_retains_the_complete_report() {
         .unwrap();
 
     let running = supervisor.start();
-    let report = running
-        .wait()
-        .await
-        .expect("component failure must still publish a shutdown report");
+    let result: Result<(), BoxError> = async {
+        running.wait_checked().await?;
+        Ok(())
+    }
+    .await;
     let error =
-        process_result(check_shutdown(Ok(report)).map_err(|error| Box::new(error) as BoxError))
-            .expect_err("unsuccessful shutdown must reach the process boundary");
+        process_result(result).expect_err("unsuccessful shutdown must reach the process boundary");
     let failure = std::error::Error::source(&error)
         .expect("typed shutdown failure must remain the process source")
         .downcast_ref::<ShutdownFailure>()

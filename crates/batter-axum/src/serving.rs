@@ -18,6 +18,9 @@ use tokio::net::TcpListener;
 /// cleanup report without retaining running ownership.
 /// The task acknowledges startup when it runs, then serves until native drain.
 /// Application approval and a running supervisor are still required for readiness.
+/// After startup transfers the running owner, use
+/// [`batter_core::lifecycle::RunningSupervisor::wait_checked`] to propagate an
+/// unsuccessful process report; registration alone proves no clean shutdown.
 ///
 /// Axum internally spawns connection and graceful-signal tasks. A graceful return
 /// waits for native connections, but abortion/panic of the direct wrapper does
@@ -64,6 +67,13 @@ pub fn register_http(
 ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
 ///     let app = Router::new().route("/live", get(batter_axum::liveness));
 ///     register_http_in(scope, "http", listener, app)?;
+///     Ok(())
+/// }
+///
+/// async fn finish(running: &batter_core::lifecycle::RunningSupervisor)
+///     -> Result<(), batter_core::BoxError>
+/// {
+///     running.wait_checked().await?;
 ///     Ok(())
 /// }
 /// ```

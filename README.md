@@ -97,6 +97,10 @@ concurrency bound, and `/fail` uses the same application error envelope as
 middleware failures. SIGINT and SIGTERM trigger shutdown through native Unix
 signal listeners.
 
+The service awaits `running.wait_checked().await?` after startup handoff, so a
+failed task, incomplete cleanup, or coordinator error reaches its exit boundary.
+Successful completion retains a report for application policy and diagnostics.
+
 ### Bound an operation without erasing its application error
 
 ```rust

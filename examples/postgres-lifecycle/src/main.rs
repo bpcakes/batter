@@ -6,7 +6,7 @@ mod tests;
 
 use batter::{
     BoxError,
-    lifecycle::{Supervisor, check_shutdown},
+    lifecycle::Supervisor,
     startup::{ProtectedStartupScope, ScopedStartup, Startup, StartupFuture},
 };
 use sqlx::{
@@ -114,6 +114,6 @@ where
     if running.status().wait_ready().await.is_ok() {
         tracing::info!("PostgreSQL lifecycle ready");
     }
-    check_shutdown(running.wait().await)?;
+    running.wait_checked().await?;
     Ok(())
 }
