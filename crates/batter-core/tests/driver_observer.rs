@@ -2,14 +2,15 @@ use batter_core::lifecycle::ComponentExit;
 use batter_core::{
     BoxError,
     cleanup::CleanupBudget,
-    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
+    lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, ShutdownFailure, Supervisor},
 };
 use std::{
-    future::pending,
+    future::{Future, pending, poll_fn},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    task::Poll,
     time::Duration,
 };
 
@@ -66,6 +67,10 @@ async fn observer_survives_last_owner_drop_before_coordinator_first_poll() {
     drop(observer);
     let retained = another_observer.wait().await.unwrap();
     assert!(std::ptr::eq(&*report, &*retained));
+    let checked = another_observer.wait_checked().await.unwrap();
+    assert!(std::ptr::eq(&*report, &**checked.report()));
+    let extracted = checked.into_report();
+    assert!(std::ptr::eq(&*report, &*extracted));
 }
 
 #[tokio::test(start_paused = true)]
@@ -119,6 +124,11 @@ async fn coordinator_panic_is_retained_after_last_owner_drop_before_first_poll()
         .expect("the cloned observer must retain the coordinator failure")
         .unwrap_err();
     assert!(Arc::ptr_eq(&error, &retained));
+    let ShutdownFailure::Coordinator(checked) = another_observer.wait_checked().await.unwrap_err()
+    else {
+        panic!("a coordinator failure cannot become successful evidence")
+    };
+    assert!(Arc::ptr_eq(&error, &checked));
 }
 
 #[test]
@@ -151,6 +161,83 @@ fn observer_created_after_completion_retains_report_after_owners_and_runtime_dro
             .unwrap()
     });
     assert!(std::ptr::eq(&*report, &*retained));
+    let checked = runtime().block_on(observer.wait_checked()).unwrap();
+    assert!(std::ptr::eq(&*report, &**checked.report()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn checked_waits_leave_a_running_process_active() {
+    let mut supervisor = Supervisor::new(budget());
+    let drained = Arc::new(AtomicUsize::new(0));
+    let in_component = drained.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            let shutdown = startup.acknowledge_started();
+            shutdown.draining().await;
+            in_component.fetch_add(1, Ordering::SeqCst);
+            Ok(shutdown.stopped())
+        })
+        .unwrap();
+
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    assert_eq!(running.status().readiness(), Readiness::Ready);
+    let observer = running.observer();
+    let mut owner_wait = Box::pin(running.wait_checked());
+    let mut observer_wait = Box::pin(observer.wait_checked());
+    poll_fn(|cx| {
+        assert!(owner_wait.as_mut().poll(cx).is_pending());
+        assert!(observer_wait.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(running.status().readiness(), Readiness::Ready);
+    tokio::task::yield_now().await;
+    assert_eq!(drained.load(Ordering::SeqCst), 0);
+
+    running.handle().request();
+    let success = owner_wait.await.unwrap();
+    let observed = observer_wait.await.unwrap();
+    assert!(success.report().is_success());
+    assert!(std::ptr::eq(&**success.report(), &**observed.report()));
+    assert_eq!(drained.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn unapproved_checked_completion_never_approves_readiness() {
+    let mut supervisor = Supervisor::new(budget());
+    let drained = Arc::new(AtomicUsize::new(0));
+    let in_component = drained.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            startup.shutdown().draining().await;
+            in_component.fetch_add(1, Ordering::SeqCst);
+            Ok(startup.abandon())
+        })
+        .unwrap();
+    let pending = supervisor.start_unapproved();
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    let observer = pending.observer();
+    let mut owner_wait = Box::pin(pending.wait_checked());
+    let mut observer_wait = Box::pin(observer.wait_checked());
+    poll_fn(|cx| {
+        assert!(owner_wait.as_mut().poll(cx).is_pending());
+        assert!(observer_wait.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    tokio::task::yield_now().await;
+    assert_eq!(drained.load(Ordering::SeqCst), 0);
+
+    let success = pending.shutdown_checked().await.unwrap();
+    assert!(success.report().is_success());
+    assert_eq!(pending.status().readiness(), Readiness::Stopped);
+    let later = owner_wait.await.unwrap();
+    let observed = observer_wait.await.unwrap();
+    assert!(std::ptr::eq(&**success.report(), &**later.report()));
+    assert!(std::ptr::eq(&**success.report(), &**observed.report()));
+    assert_eq!(drained.load(Ordering::SeqCst), 1);
 }
 
 #[test]

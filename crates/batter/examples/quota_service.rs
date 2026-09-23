@@ -108,7 +108,7 @@ async fn main() {
         );
     }
     assert_eq!(statuses, [200, 429]);
-    batter::lifecycle::check_shutdown(running.shutdown().await).unwrap();
+    running.shutdown_checked().await.unwrap();
     println!("protected HTTP status sequence: {statuses:?}");
 }
 
