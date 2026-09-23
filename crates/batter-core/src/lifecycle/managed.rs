@@ -133,7 +133,7 @@ impl<R: ManagedSettlement> ManagedComponent<R> {
     /// })?;
     /// let running = supervisor.start();
     /// running.status().wait_ready().await.unwrap();
-    /// batter_core::lifecycle::check_shutdown(running.shutdown().await)?;
+    /// running.shutdown_checked().await?;
     /// # Ok(()) }
     /// ```
     pub fn new<I, N, S, F>(initialized: I, stopping: N, stop: S, settlement: F) -> Self

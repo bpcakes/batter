@@ -7,9 +7,9 @@
 use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome},
-    lifecycle::{ComponentExit, ShutdownBudget, Supervisor, TaskOutcome},
+    lifecycle::{ComponentExit, ShutdownBudget, ShutdownFailure, Supervisor, TaskOutcome},
 };
-use std::time::Duration;
+use std::{error::Error, time::Duration};
 
 fn budget() -> ShutdownBudget {
     let second = Duration::from_secs(1);
@@ -32,7 +32,8 @@ async fn shutdown_and_cleanup_reports_redact_error_contents_in_debug_and_display
         })
         .unwrap();
 
-    let report = supervisor.start().wait().await.unwrap();
+    let running = supervisor.start();
+    let report = running.wait_report().await.unwrap();
     assert!(!report.is_success());
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
     assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
@@ -45,6 +46,18 @@ async fn shutdown_and_cleanup_reports_redact_error_contents_in_debug_and_display
     assert!(
         formatted.contains("error: Some(\"retained\")"),
         "{formatted}"
+    );
+
+    let failure = running.wait_checked().await.unwrap_err();
+    let ShutdownFailure::Report(checked) = &failure else {
+        panic!("failed report must remain accessible")
+    };
+    assert!(std::ptr::eq(&*report, &**checked));
+    let wrapper = format!("{failure:?} {failure}");
+    assert!(!wrapper.contains("secret-marker"), "{wrapper}");
+    assert_eq!(
+        failure.source().unwrap().to_string(),
+        format!("{}", *report)
     );
 
     // Disclosure is a deliberate field read, never a formatting side effect.

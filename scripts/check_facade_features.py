@@ -357,6 +357,70 @@ def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
     execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")], case)
 
 
+def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
+                                known: set[tuple[str, str, str | None]], parent: Path) -> None:
+    """Execute the generic anyhow/BoxError lifecycle fixture as an external consumer."""
+    case = parent / "checked-completion"
+    (case / "src").mkdir(parents=True)
+    (case / "tests").mkdir()
+    dependencies = [
+        facade_dependency(()),
+        "batter-core = { path = " + json.dumps(str(ROOT / "crates/batter-core")) + " }",
+        'anyhow = "1.0"',
+        'tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time", "test-util", "sync"] }',
+    ]
+    (case / "Cargo.toml").write_text(manifest("facade-checked-consumer", dependencies))
+    (case / "Cargo.lock").write_bytes(root_lock)
+    (case / "src/main.rs").write_text("fn main() {}\n")
+    fixture = ROOT / "crates/batter/tests/checked_completion_consumer.rs"
+    (case / "tests/checked_completion.rs").write_text(fixture.read_text())
+    metadata = run_metadata(cargo, host, case)
+    check_graph(metadata, (), known)
+    test_output = execute(
+        cargo + ["test", "--locked", "--offline", "--test", "checked_completion",
+                 "--target-dir", str(case / "target")], case, timeout=900,
+    )
+    result = re.search(
+        r"(?m)^test result: ok\. (8) passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
+        test_output,
+    )
+    if not result:
+        raise RuntimeError("checked completion external consumer did not run all eight tests")
+
+    negatives = [
+        (
+            "private-success",
+            "use batter::lifecycle::{SharedShutdownReport, ShutdownSuccess};\n"
+            "fn forge(report: SharedShutdownReport) -> ShutdownSuccess {\n"
+            "    ShutdownSuccess { report }\n}\nfn main() {}\n",
+            ("error[E0451]", "field `report`"),
+        ),
+        (
+            "raw-discard",
+            "#![deny(unused_must_use)]\n"
+            "use batter::lifecycle::RunningSupervisor;\n"
+            "async fn discard(running: &RunningSupervisor) -> Result<(), std::sync::Arc<tokio::task::JoinError>> {\n"
+            "    running.wait_report().await?;\n    Ok(())\n}\nfn main() {}\n",
+            ("unused_must_use", "SharedShutdownReport"),
+        ),
+    ]
+    for label, source, expected in negatives:
+        (case / "src/main.rs").write_text(source)
+        outcome = run_parallel(
+            [cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")]],
+            timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
+        )[0]
+        diagnostics = (outcome.stdout + outcome.stderr).decode(errors="replace")
+        if (outcome.status != 101 or outcome.watchdog or outcome.overflow or outcome.errors
+                or not outcome.reaped or not outcome.output_eof
+                or any(token not in diagnostics for token in expected)):
+            render_outcomes([label], [outcome])
+            raise RuntimeError(f"checked completion {label} did not fail at the intended API")
+    if (ROOT / "Cargo.lock").read_bytes() != root_lock:
+        raise RuntimeError("repository Cargo.lock changed during checked completion consumer checks")
+    print(f"facade checked completion: {result.group(1)} external runtime tests and two negative controls passed", flush=True)
+
+
 def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     return [
         ((), "at-rest", "batter::at_rest"),
@@ -494,6 +558,7 @@ def main() -> int:
         selected = tuple(sorted(EXPECTED_FEATURES))
         run_identity_case(cargo, host, root_lock, parent, selected)
         print("facade identity all-features: compatibility passed", flush=True)
+        run_checked_completion_case(cargo, host, root_lock, known, parent)
     if (ROOT / "Cargo.lock").read_bytes() != root_lock:
         raise RuntimeError("repository Cargo.lock changed during facade feature checks")
     print("facade feature isolation, negative gating, and identity checks passed", flush=True)

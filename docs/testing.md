@@ -1,5 +1,19 @@
 # Testing and failure-contract coverage
 
+Checked owned-completion consumers run through
+`cargo test -p batter --test checked_completion_consumer --locked` and the
+temporary external package created by `scripts/check_facade_features.py`.
+Eight driven cases cover `anyhow` and `BoxError` propagation, process exit
+status, successful and failed count summaries from one checked observation,
+coordinator failure without a fabricated report, and worker readiness success,
+rejection, deadline and failed shutdown with awaited cleanup. The external
+package also rejects forged success evidence and raw-report disposal for the
+specific privacy and `unused_must_use` diagnostics. These generic controls do
+assert that direct `ShutdownFailure` formatting omits a coordinator panic marker
+while `anyhow` chain formatting can reveal it. They do
+not establish compatibility of a pinned downstream application graph; that
+requires a separate candidate rehearsal with Cargo metadata and locked tests.
+
 Transaction timeout profiles (`batter-qhps`) have offline precision/range and
 override controls in `crates/batter-sqlx/tests/profile.rs`. The explicit live
 inventory adds six PostgreSQL 18 cases in `atomic_live/profile_timeouts.rs`,

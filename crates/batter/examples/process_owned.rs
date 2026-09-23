@@ -5,7 +5,7 @@ mod support;
 use batter::{
     BoxError,
     admission::{Admission, Bulkhead, BulkheadCapacity},
-    lifecycle::{Fatal, ProcessCapacity, Supervisor},
+    lifecycle::{Fatal, ProcessCapacity, ShutdownFailure, ShutdownSuccess, Supervisor},
     operation::OperationContext,
 };
 use std::{convert::Infallible, time::Duration};
@@ -14,6 +14,47 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 enum Denial {
     Quota,
+}
+
+/// Both independent failures remain available for a trusted application sink.
+struct CompletionFailure {
+    body: Option<BoxError>,
+    shutdown: Option<ShutdownFailure>,
+}
+
+impl std::fmt::Display for CompletionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("example operation or shutdown failed")
+    }
+}
+
+impl std::fmt::Debug for CompletionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl std::error::Error for CompletionFailure {}
+
+fn complete(
+    body: Result<(), BoxError>,
+    shutdown: Result<ShutdownSuccess, ShutdownFailure>,
+) -> Result<ShutdownSuccess, BoxError> {
+    match (body, shutdown) {
+        (Ok(()), Ok(success)) => Ok(success),
+        (body, shutdown) => {
+            let failure = CompletionFailure {
+                body: body.err(),
+                shutdown: shutdown.err(),
+            };
+            tracing::warn!(
+                body_failed = failure.body.is_some(),
+                shutdown_failed = failure.shutdown.is_some(),
+                "example did not complete successfully"
+            );
+            Err(Box::new(failure))
+        }
+    }
 }
 
 #[tokio::main]
@@ -68,22 +109,65 @@ async fn main() -> Result<(), BoxError> {
     // final driver owner disappears. Last-owner drop requests graceful shutdown.
     let observer = running.observer();
     drop(running);
-    let shutdown = observer.wait().await;
-    match (submitted, shutdown) {
-        (Ok(finished_rx), Ok(report)) if report.is_success() => {
-            finished_rx.await?;
-            assert_eq!(report.completed_process_tasks, 2);
-            Ok(())
-        }
-        (body, shutdown) => {
-            // Both outcomes remain available here for an application-selected
-            // trusted sink. Do not automatically print raw causes via Debug.
-            tracing::warn!(
-                body_failed = body.is_err(),
-                shutdown_failed = !shutdown.as_ref().is_ok_and(|report| report.is_success()),
-                "example did not complete successfully"
-            );
-            Err(std::io::Error::other("example operation or shutdown failed").into())
-        }
+    let shutdown = observer.wait_checked().await;
+    let body = match submitted {
+        Ok(finished_rx) => finished_rx
+            .await
+            .map_err(|error| Box::new(error) as BoxError),
+        Err(error) => Err(error),
+    };
+    let success = complete(body, shutdown)?;
+    assert_eq!(success.report().completed_process_tasks, 2);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batter::cleanup::CleanupOutcome;
+
+    #[tokio::test]
+    async fn operation_and_shutdown_failures_remain_independently_inspectable() {
+        let mut supervisor = Supervisor::new(support::shutdown_budget());
+        supervisor
+            .register("component", |startup| async move {
+                let shutdown = startup.acknowledge_started();
+                shutdown.draining().await;
+                Ok(shutdown.stopped())
+            })
+            .unwrap();
+        supervisor
+            .on_cleanup("resource", || async {
+                Err(std::io::Error::other("cleanup-marker").into())
+            })
+            .unwrap();
+        let shutdown = supervisor.start().shutdown_checked().await;
+        let body = Err(std::io::Error::other("body-marker").into());
+        let error = complete(body, shutdown).unwrap_err();
+        let combined = error.downcast_ref::<CompletionFailure>().unwrap();
+        assert_eq!(
+            combined
+                .body
+                .as_ref()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .to_string(),
+            "body-marker"
+        );
+        let Some(ShutdownFailure::Report(report)) = &combined.shutdown else {
+            panic!("failed shutdown must retain its report")
+        };
+        assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
+        assert_eq!(
+            report.cleanup.records[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            "cleanup-marker"
+        );
+        assert!(!format!("{combined:?}").contains("body-marker"));
+        assert!(!format!("{combined:?}").contains("cleanup-marker"));
     }
 }

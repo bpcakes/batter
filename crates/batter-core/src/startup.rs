@@ -94,10 +94,10 @@ pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Sen
 ///     requests.send((21, reply)).await?;
 ///     Ok::<_, BoxError>(response.await?)
 /// }).await;
-/// let shutdown = running.shutdown().await;
+/// let shutdown = running.shutdown_checked().await;
 /// // Both outcomes remain available after teardown, including if the request failed.
 /// assert_eq!(response.ok(), Some(42));
-/// batter_core::lifecycle::check_shutdown(shutdown)?;
+/// shutdown?;
 /// assert_eq!(capacity.available_permits(), 1);
 /// # Ok(()) }
 /// ```
@@ -170,7 +170,7 @@ impl<F> Startup<F> {
     /// assert_eq!(pending.status().readiness(), Readiness::Starting);
     /// let running = pending.approve_readiness();
     /// running.status().wait_ready().await.unwrap();
-    /// assert!(running.shutdown().await?.is_success());
+    /// assert!(running.shutdown_checked().await?.report().is_success());
     /// # Ok(()) }
     /// ```
     #[must_use = "the returned startup specification contains the selected approval policy"]
@@ -241,7 +241,7 @@ impl Startup<()> {
     ///     })).start();
     /// let running = starting.wait().await?;
     /// running.status().wait_ready().await.unwrap();
-    /// batter_core::lifecycle::check_shutdown(running.shutdown().await)?;
+    /// running.shutdown_checked().await?;
     /// # Ok(()) }
     /// ```
     pub fn scoped<F, E>(

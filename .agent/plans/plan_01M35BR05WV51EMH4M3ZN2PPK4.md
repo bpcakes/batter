@@ -1,0 +1,1 @@
+Implement the additive checked owned-process API from batter-r62w D-01 to D-03 and D-06; retain legacy raw contracts, validate failure identity and cancellation, run two-toolchain and HTTP gates, then review.
