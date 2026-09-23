@@ -1,4 +1,6 @@
 //! Declarative session policy, not evidence about an arbitrary borrowed resource.
+mod validation;
+
 use sqlx::{Connection, PgConnection};
 use std::{collections::BTreeMap, fmt, time::Duration};
 
@@ -235,53 +237,6 @@ impl PgSessionProfile {
             set(connection, key, value).await?;
         }
         self.verify(connection).await
-    }
-
-    pub(crate) async fn verify(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-        let (login, role, path): (String, String, String) = sqlx::query_as("SELECT session_user::text, current_user::text, pg_catalog.current_setting('search_path')")
-            .fetch_one(&mut *connection).await?;
-        if login != self.login_role || role != self.effective_role || path != self.search_path {
-            return Err(mismatch());
-        }
-        for schema in &self.schemas {
-            let usable: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = $1 AND pg_catalog.has_schema_privilege(oid, 'USAGE'))")
-                .bind(schema).fetch_one(&mut *connection).await?;
-            if !usable {
-                return Err(mismatch());
-            }
-        }
-        for (key, expected) in self.timeouts() {
-            let value: i64 = sqlx::query_scalar(
-                "SELECT setting::bigint FROM pg_catalog.pg_settings WHERE name = $1",
-            )
-            .bind(key)
-            .fetch_one(&mut *connection)
-            .await?;
-            if value != i64::from(expected) {
-                return Err(mismatch());
-            }
-        }
-        for (key, value) in [
-            ("default_transaction_isolation", "read committed"),
-            ("default_transaction_read_only", "off"),
-            ("default_transaction_deferrable", "off"),
-            ("row_security", "on"),
-        ]
-        .into_iter()
-        .chain(
-            self.settings
-                .iter()
-                .map(|(key, value)| (key.as_str(), value.as_str())),
-        ) {
-            let observed: String = sqlx::query_scalar("SELECT pg_catalog.current_setting($1)")
-                .bind(key)
-                .fetch_one(&mut *connection)
-                .await?;
-            if observed != value {
-                return Err(mismatch());
-            }
-        }
-        Ok(())
     }
 
     fn timeouts(&self) -> impl Iterator<Item = (&'static str, u32)> {
