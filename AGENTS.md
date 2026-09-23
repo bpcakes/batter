@@ -250,7 +250,7 @@ like "safe" or "reliable". Test what those words would actually mean.
 
 ## Verification input ownership
 
-The independent Rust targets use Jig contract v9 exhaustive input scopes. Keep
+The independent Rust targets use Jig contract v8 exhaustive input scopes. Keep
 those scopes complete when adding fixtures, helpers, configuration or new source
 roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Keep formatting,
 contract and file-budget checks as required profile siblings, not test execution
