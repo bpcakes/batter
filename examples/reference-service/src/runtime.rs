@@ -10,7 +10,7 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy, HealthReader},
-    lifecycle::{DriverOutcome, ShutdownBudget, check_shutdown},
+    lifecycle::{ShutdownBudget, ShutdownSuccess},
     operation::{OperationContext, OperationError},
     registration::Registration,
     startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
@@ -141,7 +141,7 @@ fn startup_failure(error: StartupError<InitializationError<InitializationFailure
 /// An otherwise successful runtime shutdown that did not retain its required
 /// `postgres.pool` cleanup record.
 ///
-/// The generic shutdown report has already passed [`check_shutdown`], so every
+/// Checked completion has already classified the generic shutdown report, so every
 /// recorded task and cleanup outcome succeeded. This application-root failure
 /// separately enforces that its required pool finalizer actually participated.
 /// Formatting is fixed and does not inspect report contents; [`Self::report`]
@@ -266,14 +266,12 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
     .with_unix_signals("signals")
     .start();
     let pending = starting.wait().await.map_err(startup_failure)?;
-    check_application_shutdown(pending.wait().await)?;
+    check_application_shutdown(pending.wait_checked().await?)?;
     Ok(())
 }
 
-fn check_application_shutdown(outcome: DriverOutcome) -> Result<(), BoxError> {
-    let completed = outcome.as_ref().ok().cloned();
-    check_shutdown(outcome)?;
-    let report = completed.expect("a successful checked outcome has a report");
+fn check_application_shutdown(success: ShutdownSuccess) -> Result<(), BoxError> {
+    let report = success.into_report();
     let pool_recorded = report
         .cleanup
         .records
@@ -458,7 +456,7 @@ mod tests {
         assert_ne!(handle.status().readiness(), Readiness::Ready);
     }
 
-    async fn checked_outcome(cleanup: Option<&'static str>) -> DriverOutcome {
+    async fn checked_success(cleanup: Option<&'static str>) -> ShutdownSuccess {
         let mut supervisor = Supervisor::new(shutdown_budget());
         supervisor
             .register("component", |startup| async move {
@@ -470,14 +468,14 @@ mod tests {
         if let Some(name) = cleanup {
             supervisor.on_cleanup(name, || async { Ok(()) }).unwrap();
         }
-        supervisor.start().shutdown().await
+        supervisor.start().shutdown_checked().await.unwrap()
     }
 
     #[tokio::test]
     async fn running_success_requires_the_application_pool_cleanup_record() {
-        check_application_shutdown(checked_outcome(Some("postgres.pool")).await).unwrap();
+        check_application_shutdown(checked_success(Some("postgres.pool")).await).unwrap();
         for cleanup in [None, Some("different.resource")] {
-            let error = check_application_shutdown(checked_outcome(cleanup).await).unwrap_err();
+            let error = check_application_shutdown(checked_success(cleanup).await).unwrap_err();
             let failure = error
                 .downcast_ref::<RuntimePoolCleanupFailure>()
                 .expect("the application invariant has a public typed failure");
@@ -490,6 +488,43 @@ mod tests {
                 failure.report()
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn failed_required_cleanup_remains_a_generic_shutdown_failure() {
+        use batter::{cleanup::CleanupOutcome, lifecycle::ShutdownFailure};
+
+        let mut supervisor = Supervisor::new(shutdown_budget());
+        supervisor
+            .register("component", |startup| async move {
+                let shutdown = startup.shutdown().clone();
+                shutdown.draining().await;
+                Ok(startup.abandon())
+            })
+            .unwrap();
+        supervisor
+            .on_cleanup("postgres.pool", || async {
+                Err(std::io::Error::other("pool-close-marker").into())
+            })
+            .unwrap();
+        let running = supervisor.start();
+        let result: Result<(), BoxError> =
+            async { check_application_shutdown(running.shutdown_checked().await?) }.await;
+        let error = result.unwrap_err();
+        let ShutdownFailure::Report(report) = error.downcast_ref::<ShutdownFailure>().unwrap()
+        else {
+            panic!("failed cleanup must retain the shutdown report")
+        };
+        assert_eq!(report.cleanup.records[0].name, "postgres.pool");
+        assert_eq!(report.cleanup.records[0].outcome, CleanupOutcome::Failed);
+        assert_eq!(
+            report.cleanup.records[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            "pool-close-marker"
+        );
     }
 
     #[test]

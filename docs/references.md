@@ -45,6 +45,18 @@ original XID before whole rollback. Successful calls need no per-call savepoint.
 Native tests count two statements unprofiled or three profiled, excluding setup
 and completion, and retain uncertainty for replacement or missing-guard cases.
 
+## Checked completion error-chain rendering: reviewed 2026-09-23
+
+Owning Bead: `batter-r62w.2`; resolved `anyhow` 1.0.104 and Tokio 1.53.1.
+The pinned [anyhow formatter source](https://docs.rs/anyhow/1.0.104/src/anyhow/fmt.rs.html)
+walks error causes for `Debug` and alternate `Display`. The pinned
+[Tokio JoinError source](https://docs.rs/tokio/1.53.1/src/tokio/runtime/task/error.rs.html)
+includes a string panic payload in its `Display` output. Batter retains that
+native source in `ShutdownFailure::Coordinator`. Local controls check that direct
+wrapper formatting omits a private marker while `anyhow` chain formatting can
+include it. The application chooses any public diagnostic boundary; no global
+renderer or panic hook is installed by Batter.
+
 ## Atomic scope validation cost: reviewed 2026-09-22
 
 For `batter-hkgr`, checked the locked SQLx 0.9.0 source and PostgreSQL 18
