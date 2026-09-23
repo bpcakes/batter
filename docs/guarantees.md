@@ -899,8 +899,16 @@ policy mapping cannot restore a lost owner or turn an uncertain disposition into
 provisional output, rejection and native causes as applicable. Interpreting or
 discarding these values in consumer error mapping is application policy, not a
 remote-effect proof. The `_with_in` variants preserve completion before local
-budget resolution. Native Runledger keeps the same policy through its consuming
-intent-to-queue transition and named operations.
+budget resolution, including cancellation triggered inside a failure-policy
+callback: an observed mapped error remains `OperationError::Failed` with its
+retained evidence. Native Runledger keeps the same policy through its consuming
+intent-to-queue transition and named operations. Intent observation and queue
+enqueue methods convert native storage errors through the consumer's
+`From<runledger_postgres::Error>` implementation.
+`record_required_job_enqueue_intent` instead wraps storage errors in
+`RequiredIntentError::Storage` and uses the consumer's `From<RequiredIntentError>`
+implementation. These recoverable errors are returned only after successful
+savepoint recovery; catching them permits later SQL and acknowledged commit.
 
 Profile and atomic continuity validation share one statement. After successful
 work, validation precedes the acknowledged RELEASE; no redundant SELECT follows

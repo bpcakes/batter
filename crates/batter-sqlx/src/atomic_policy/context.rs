@@ -61,6 +61,85 @@ mod tests {
     use super::*;
     use crate::{PgScopeFailure, PgScopeLoss, PgTransactionError};
     use batter_core::operation::Interruption;
+    use std::time::Duration;
+
+    struct BeginFailure(PgTransactionError);
+    struct CancelOnBegin<'a>(&'a OperationContext);
+
+    impl PgFailurePolicy<()> for CancelOnBegin<'_> {
+        type Error = BeginFailure;
+
+        fn begin_failed(&self, cause: PgTransactionError) -> BeginFailure {
+            self.0.cancel();
+            BeginFailure(cause)
+        }
+        fn scope_lost(&self, _: PgScopeFailure<BeginFailure>) -> BeginFailure {
+            panic!("closed pool must prevent scope execution")
+        }
+        fn commit_unconfirmed(&self, _: (), _: PgTransactionError) -> BeginFailure {
+            panic!("closed pool must prevent commit")
+        }
+        fn rollback_unconfirmed(&self, _: BeginFailure, _: PgTransactionError) -> BeginFailure {
+            panic!("closed pool must prevent rollback")
+        }
+        fn scope_lost_after_body(
+            &self,
+            _: Result<(), BeginFailure>,
+            _: PgScopeLoss,
+        ) -> BeginFailure {
+            panic!("closed pool must prevent body execution")
+        }
+    }
+
+    #[tokio::test]
+    async fn mapped_begin_error_survives_completion_poll_cancellation() {
+        let profile = crate::PgSessionProfile::new(
+            "login",
+            "login",
+            vec!["public".into()],
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .unwrap();
+        let database = PgProfiledPool::connect_lazy(
+            "postgres://login@127.0.0.1:1/unused".parse().unwrap(),
+            profile,
+            sqlx::postgres::PgPoolOptions::new().min_connections(0),
+        )
+        .unwrap();
+        database.pool().close().await;
+
+        for profiled in [false, true] {
+            let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+            let policy = CancelOnBegin(&context);
+            let result = if profiled {
+                run_atomic_profiled_with_in(
+                    &database,
+                    &context,
+                    "policy.profiled",
+                    &policy,
+                    async |_| panic!("closed pool must prevent body invocation"),
+                )
+                .await
+            } else {
+                run_atomic_with_in(
+                    database.pool(),
+                    &context,
+                    "policy.unprofiled",
+                    &policy,
+                    async |_| panic!("closed pool must prevent body invocation"),
+                )
+                .await
+            };
+            assert_eq!(context.check(), Err(Interruption::Cancelled));
+            let Err(OperationError::Failed(BeginFailure(PgTransactionError::Query(cause)))) =
+                result
+            else {
+                panic!("mapped begin error replaced after cancellation; profiled={profiled}")
+            };
+            assert!(matches!(cause.native(), sqlx::Error::PoolClosed));
+        }
+    }
 
     struct NeverCalled;
     impl PgFailurePolicy<()> for NeverCalled {
