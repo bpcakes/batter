@@ -892,6 +892,13 @@ later calls cannot replace it or invoke new work. A dropped polled operation
 records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
 application rejections and terminal scope failures use separate types.
 Operations use private savepoints and XID continuity.
+Profile and atomic continuity validation share one statement. After successful
+work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
+RELEASE. Unprofiled opening checks are omitted while ownership excludes intervening
+SQL; profiled opening checks remain because schema existence/USAGE is external
+state. Recovery revalidates after savepoint rollback/release, and final commit or
+rollback always validates immediately before its command. No cached profile check
+is a permanent authority witness.
 Cancelling a polled inner operation consumes usable state, even if caught by the
 body. There is no await after acknowledged completion. Every completion retires
 the session; acquisition resets inherited state with ROLLBACK, SQLx cache clearing,
