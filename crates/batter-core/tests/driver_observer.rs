@@ -5,11 +5,12 @@ use batter_core::{
     lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, ShutdownFailure, Supervisor},
 };
 use std::{
-    future::pending,
+    future::{Future, pending, poll_fn},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    task::Poll,
     time::Duration,
 };
 
@@ -165,24 +166,78 @@ fn observer_created_after_completion_retains_report_after_owners_and_runtime_dro
 }
 
 #[tokio::test(start_paused = true)]
+async fn checked_waits_leave_a_running_process_active() {
+    let mut supervisor = Supervisor::new(budget());
+    let drained = Arc::new(AtomicUsize::new(0));
+    let in_component = drained.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            let shutdown = startup.acknowledge_started();
+            shutdown.draining().await;
+            in_component.fetch_add(1, Ordering::SeqCst);
+            Ok(shutdown.stopped())
+        })
+        .unwrap();
+
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    assert_eq!(running.status().readiness(), Readiness::Ready);
+    let observer = running.observer();
+    let mut owner_wait = Box::pin(running.wait_checked());
+    let mut observer_wait = Box::pin(observer.wait_checked());
+    poll_fn(|cx| {
+        assert!(owner_wait.as_mut().poll(cx).is_pending());
+        assert!(observer_wait.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(running.status().readiness(), Readiness::Ready);
+    tokio::task::yield_now().await;
+    assert_eq!(drained.load(Ordering::SeqCst), 0);
+
+    running.handle().request();
+    let success = owner_wait.await.unwrap();
+    let observed = observer_wait.await.unwrap();
+    assert!(success.report().is_success());
+    assert!(std::ptr::eq(&**success.report(), &**observed.report()));
+    assert_eq!(drained.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn unapproved_checked_completion_never_approves_readiness() {
     let mut supervisor = Supervisor::new(budget());
+    let drained = Arc::new(AtomicUsize::new(0));
+    let in_component = drained.clone();
     supervisor
-        .register("worker", |startup| async move {
+        .register("worker", move |startup| async move {
             startup.shutdown().draining().await;
+            in_component.fetch_add(1, Ordering::SeqCst);
             Ok(startup.abandon())
         })
         .unwrap();
     let pending = supervisor.start_unapproved();
     assert_eq!(pending.status().readiness(), Readiness::Starting);
     let observer = pending.observer();
+    let mut owner_wait = Box::pin(pending.wait_checked());
+    let mut observer_wait = Box::pin(observer.wait_checked());
+    poll_fn(|cx| {
+        assert!(owner_wait.as_mut().poll(cx).is_pending());
+        assert!(observer_wait.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(pending.status().readiness(), Readiness::Starting);
+    tokio::task::yield_now().await;
+    assert_eq!(drained.load(Ordering::SeqCst), 0);
+
     let success = pending.shutdown_checked().await.unwrap();
     assert!(success.report().is_success());
     assert_eq!(pending.status().readiness(), Readiness::Stopped);
-    let later = pending.wait_checked().await.unwrap();
-    let observed = observer.wait_checked().await.unwrap();
+    let later = owner_wait.await.unwrap();
+    let observed = observer_wait.await.unwrap();
     assert!(std::ptr::eq(&**success.report(), &**later.report()));
     assert!(std::ptr::eq(&**success.report(), &**observed.report()));
+    assert_eq!(drained.load(Ordering::SeqCst), 1);
 }
 
 #[test]
