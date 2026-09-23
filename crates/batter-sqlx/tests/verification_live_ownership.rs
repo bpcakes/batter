@@ -2,7 +2,7 @@ use super::support::{Result, require};
 use super::{
     AuthorityFixture, Names, VerificationPolicy, names_policy, quote, verify_combined as verify,
 };
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError};
 use batter_sqlx::verification::RolePolicy;
 use std::time::Duration;
 
@@ -88,7 +88,9 @@ async fn verification_occupied_pool_acquisition_preserves_caller_transaction() -
                 )))
                 .execute(&mut *caller)
                 .await?;
-                let context = OperationContext::new(Duration::from_millis(100))?;
+                let context =
+                    batter_core::operation::OperationOwner::new(Duration::from_millis(100))?
+                        .into_context();
                 let result = verify(&pool, &context, &policy(&names)?).await;
                 require(
                     matches!(

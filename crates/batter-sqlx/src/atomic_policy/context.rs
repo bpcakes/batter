@@ -60,11 +60,11 @@ pub async fn run_atomic_profiled_with_in<T, P: PgFailurePolicy<T>>(
 mod tests {
     use super::*;
     use crate::{PgScopeFailure, PgScopeLoss, PgTransactionError};
-    use batter_core::operation::Interruption;
+    use batter_core::operation::{Interruption, OperationOwner};
     use std::time::Duration;
 
     struct BeginFailure(PgTransactionError);
-    struct CancelOnBegin<'a>(&'a OperationContext);
+    struct CancelOnBegin<'a>(&'a OperationOwner);
 
     impl PgFailurePolicy<()> for CancelOnBegin<'_> {
         type Error = BeginFailure;
@@ -110,8 +110,9 @@ mod tests {
         database.pool().close().await;
 
         for profiled in [false, true] {
-            let context = OperationContext::new(Duration::from_secs(1)).unwrap();
-            let policy = CancelOnBegin(&context);
+            let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
+            let context = owner.context().clone();
+            let policy = CancelOnBegin(&owner);
             let result = if profiled {
                 run_atomic_profiled_with_in(
                     &database,
@@ -166,7 +167,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://unused@127.0.0.1:1/unused")
             .unwrap();
-        let context = OperationContext::new(std::time::Duration::from_secs(1)).unwrap();
+        let owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
         drop(run_atomic_with_in(
             &pool,
             &context,
@@ -176,7 +178,7 @@ mod tests {
                 panic!("unpolled body");
             },
         ));
-        context.cancel();
+        owner.cancel();
         let result = run_atomic_with_in(
             &pool,
             &context,

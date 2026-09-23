@@ -32,7 +32,7 @@ pub(super) async fn identity(
         if changed.rows_affected() != 1 {
             return Err("identity corruption did not update exactly one row".into());
         }
-        let context = OperationContext::new(EXTERNAL_EFFECT_ALLOWANCE)?;
+        let context = batter::operation::OperationOwner::new(EXTERNAL_EFFECT_ALLOWANCE)?.into_context();
         for result in [
             service
                 .get_by_id(&context, owner, submitted.delivery_id)

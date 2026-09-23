@@ -3,7 +3,7 @@ use super::{
     policy::{Failure, Policy},
     support::Result,
 };
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError, OperationOwner};
 use batter_sqlx::{
     PgAtomicUncertainty, PgFailurePolicy, PgPolicyScope, PgProfiledPool, PgScopeFailure,
     PgScopeLoss, PgSessionProfile, PgTransactionError, run_atomic_profiled_with_in,
@@ -11,7 +11,7 @@ use batter_sqlx::{
 };
 use std::time::Duration;
 
-struct CancelOnCommit<'a>(&'a OperationContext);
+struct CancelOnCommit<'a>(&'a OperationOwner);
 
 impl PgFailurePolicy<i64> for CancelOnCommit<'_> {
     type Error = Failure;
@@ -58,8 +58,9 @@ async fn policy_commit_uncertainty_survives_completion_poll_cancellation() -> Re
     )?;
     let body = async {
         for profiled in [false, true] {
-            let context = OperationContext::new(Duration::from_secs(5))?;
-            let policy = CancelOnCommit(&context);
+            let owner = OperationOwner::new(Duration::from_secs(5))?;
+            let context = owner.context().clone();
+            let policy = CancelOnCommit(&owner);
             let work = async |mut scope: PgPolicyScope<'_, i64, CancelOnCommit<'_>>| {
                 scope.sql(async |sql| {
                     sqlx::raw_sql("CREATE TEMP TABLE policy_context_deferred(id integer CONSTRAINT policy_context_unique UNIQUE DEFERRABLE INITIALLY DEFERRED); INSERT INTO policy_context_deferred VALUES (1),(1)")

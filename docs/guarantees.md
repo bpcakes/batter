@@ -69,7 +69,13 @@ are not live PostgreSQL or fresh-agent usability evidence.
 
 OperationContext uses a Tokio monotonic deadline. Children clamp their deadline
 to the parent and inherit cancellation in one direction. Clones of one context
-share its cancellation token; dropping the value alone does not cancel clones.
+share observation and execution capability, but cannot cancel their scope.
+`OperationOwner` retains explicit cancellation authority for an independent root
+or derived child; it is not cloneable. Dropping the owner or a context does not
+cancel outstanding context clones. `RootDeadline` selects an absolute independent
+root deadline and cannot establish a parent relationship. Process admission
+returns an owner tied to process cancellation; adapters may explicitly consume
+it into a context when they do not need request cancellation authority.
 `run` creates a child token and cancels it on return or drop. The original parent
 remains reusable until cancelled or expired.
 
@@ -155,10 +161,15 @@ The attempt future is dropped and its child context is cancelled; this does not
 join detached work or establish a remote effect's outcome.
 
 `Interrupted { reason: Cancelled, .. }` means cancellation was observed in the
-input lineage or the current attempt scope. A factory may cancel its public
-`Attempt.context`; that stops the retry sequence but does not cancel the input
-context. Retry reconciles that attempt token after the factory returns and before
-accepting a value or classifying an error, including a same-poll cancellation.
+input lineage or the current attempt scope. Retry callbacks receive
+`Attempt.context` for observation and execution, not cancellation authority.
+A controller can stop the sequence through a retained owner of its input context
+or an ancestor, which also cancels that owner's other descendants. To stop only
+one retry sequence while leaving its caller and siblings active, derive a
+dedicated child owner from the caller's context and execute the sequence through
+that child's context. Retry reconciles cancellation after the factory returns
+and before accepting a value or classifying an error, including a same-poll
+cancellation.
 An error returned in that poll is retained as `last_error` but is not classified
 or replayed; a returned value is discarded. The result does not by itself
 identify which scope originated the cancellation.
@@ -267,7 +278,7 @@ Forgotten application or component acknowledgement leaves Starting.
 does not expose application approval, readiness reads, waits, or raw operation
 cancellation tokens.
 `LifecycleStatus` can only read or wait for lifecycle state;
-`OperationAdmission` can only create an `OperationContext` after observing Ready;
+`OperationAdmission` can only create an `OperationOwner` after observing Ready;
 `ShutdownSignal` can only observe drain and forced cancellation. Axum request
 and readiness policies store those narrow projections, so they cannot request
 shutdown or approve readiness. A request racing drain may enter only if its
@@ -579,7 +590,7 @@ It invokes no component or finalizer factory and publishes no completion report;
 Stopped still means coordinator completion. Extracted cleanup must be explicitly
 awaited. The owner signals forced cancellation before the extracted stack runs.
 Finalizers must perform teardown independently of process operation cancellation,
-using the stack's cleanup budget and, if needed, a fresh `OperationContext::new`
+using the stack's cleanup budget and, if needed, a fresh `OperationOwner::new`
 rather than a context created by `OperationAdmission`. This also applies to normal
 shutdown, which cancels admitted process operations before closing resources. Unstarted
 supervisors, standalone shutdown handles and caller-owned `run_until` drivers

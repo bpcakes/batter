@@ -78,7 +78,7 @@ pub async fn probe(pool: PgPool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "worker",
-        batter::operation::OperationContext::new(second)?,
+        batter::operation::OperationOwner::new(second)?.into_context(),
         {
             runledger_runtime::Supervisor::builder(&native_pool, native_config)?
                 .with_catalog(catalog)

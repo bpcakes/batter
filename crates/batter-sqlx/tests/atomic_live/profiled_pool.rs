@@ -2,7 +2,6 @@ use super::{
     fixture,
     support::{Result, bounded},
 };
-use batter_core::operation::OperationContext;
 use batter_sqlx::{PgProfiledPool, PgSessionProfile, run_atomic_profiled_in};
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
@@ -39,7 +38,7 @@ async fn owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_poli
             .fetch_one(&mut *connection).await?;
         assert_eq!(observed, ("public".into(), "expected".into()));
         drop(connection);
-        let context = OperationContext::new(Duration::from_secs(5))?;
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(5))?.into_context();
         let observed = run_atomic_profiled_in(&database, &context, "test.profiled", async |scope| {
             scope.application(async |sql| {
                 sqlx::query_as::<_, (String, String, String)>(

@@ -1,5 +1,9 @@
 //! Total deadlines and cancellation without a universal application error.
 
+mod owner;
+
+pub use owner::{OperationOwner, RootDeadline};
+
 use std::{future::Future, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -36,8 +40,30 @@ pub enum OperationError<E> {
 
 /// A deadline and cancellation lineage, not a dependency container.
 ///
-/// Clones share a token. Children have independent cancellation and can never
-/// extend the deadline. Dropping this value alone does not cancel its clones.
+/// Clones share observation/execution capability, without cancellation authority.
+/// Owners create independent roots; children derive both deadline and cancellation
+/// from this context. Dropping a context alone does not cancel its clones.
+///
+/// ```compile_fail,E0624
+/// use batter_core::operation::OperationContext;
+/// fn cannot_cancel(context: OperationContext) { context.clone().cancel(); }
+/// ```
+///
+/// ```compile_fail,E0599
+/// use batter_core::operation::OperationContext;
+/// let unrelated = OperationContext::new(std::time::Duration::from_secs(1));
+/// ```
+///
+/// ```compile_fail,E0624
+/// use batter_core::operation::OperationContext;
+/// let unrelated = OperationContext::at(tokio::time::Instant::now());
+/// ```
+///
+/// ```compile_fail,E0624
+/// use batter_core::operation::OperationContext;
+/// let token = tokio_util::sync::CancellationToken::new();
+/// let unrelated = OperationContext::under(tokio::time::Instant::now(), &token);
+/// ```
 #[derive(Clone, Debug)]
 pub struct OperationContext {
     deadline: Instant,
@@ -54,13 +80,18 @@ pub struct OperationContext {
 /// The caller must explicitly await finalization after observing the work
 /// result. This value does not run cleanup on drop, own spawned descendants,
 /// shield parent cancellation, or guarantee scheduling within the reserve.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct OperationPhases {
     work: OperationContext,
     finalization: OperationContext,
 }
 
 impl OperationPhases {
+    /// Explicitly cancel the work phase, leaving its finalization sibling active.
+    pub fn cancel_work(&self) {
+        self.work.cancel();
+    }
+
     /// Shortened context for admission, attempts, backoff, and other work.
     pub fn work(&self) -> &OperationContext {
         &self.work
@@ -89,17 +120,8 @@ impl OperationContext {
         Self::under(self.deadline.min(requested), &self.cancellation)
     }
 
-    /// Create an independent operation with a positive total time budget.
-    pub fn new(budget: Duration) -> Result<Self, ConfigurationError> {
-        validation::positive(budget, "operation budget")?;
-        let deadline = Instant::now()
-            .checked_add(budget)
-            .ok_or(ConfigurationError::TooLarge("operation budget"))?;
-        Ok(Self::at(deadline))
-    }
-
     /// Create an independent context. A past deadline is valid and expired.
-    pub fn at(deadline: Instant) -> Self {
+    pub(crate) fn at(deadline: Instant) -> Self {
         Self {
             deadline,
             cancellation: CancellationToken::new(),
@@ -108,7 +130,7 @@ impl OperationContext {
 
     /// Inherit cancellation without giving this context authority over parent.
     /// This is useful for request contexts tied to process forced cancellation.
-    pub fn under(deadline: Instant, parent: &CancellationToken) -> Self {
+    pub(crate) fn under(deadline: Instant, parent: &CancellationToken) -> Self {
         Self {
             deadline,
             cancellation: parent.child_token(),
@@ -116,9 +138,11 @@ impl OperationContext {
     }
 
     /// Create a child whose deadline is no later than this context's deadline.
-    pub fn child(&self, maximum: Duration) -> Result<Self, ConfigurationError> {
+    pub fn child(&self, maximum: Duration) -> Result<OperationOwner, ConfigurationError> {
         validation::positive(maximum, "child budget")?;
-        Ok(self.scoped_child_with_maximum(maximum))
+        Ok(OperationOwner {
+            context: self.scoped_child_with_maximum(maximum),
+        })
     }
 
     /// Reserve a positive interval before this context's total deadline.
@@ -163,7 +187,7 @@ impl OperationContext {
     }
 
     /// Request cancellation for this context, its clones, and its children.
-    pub fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         self.cancellation.cancel();
     }
 
@@ -235,7 +259,7 @@ impl OperationContext {
     /// use std::time::Duration;
     ///
     /// # async fn example() {
-    /// let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    /// let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap().into_context();
     /// let retained = Arc::new(Mutex::new(None));
     /// let inside = retained.clone();
     /// let result = context
@@ -243,7 +267,7 @@ impl OperationContext {
     ///         "example.commit",
     ///         move |scope| async move {
     ///             *inside.lock().unwrap() = Some(Ok::<_, &'static str>(42));
-    ///             scope.cancel();
+    ///             // Retained evidence can resolve a later interruption.
     ///             std::future::pending::<Result<(), &'static str>>().await
     ///         },
     ///         move |boundary| match retained.lock().unwrap().take() {

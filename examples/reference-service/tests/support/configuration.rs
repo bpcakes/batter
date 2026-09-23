@@ -5,7 +5,6 @@ use batter::sqlx::test_support::ConnectionPlan;
 use batter::{
     cleanup::CleanupBudget,
     lifecycle::{ProcessCapacity, Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     settings::SettingsSource,
     startup::{Startup, StartupError},
 };
@@ -110,7 +109,7 @@ async fn observe_failed_startup(database_url: &str) -> ProbeResult {
     let (pool_tx, pool_rx) = tokio::sync::oneshot::channel();
     let mut starting = Startup::new(
         supervisor,
-        OperationContext::new(Duration::from_secs(10))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
         cleanup,
         move |scope| {
             Box::pin(async move {

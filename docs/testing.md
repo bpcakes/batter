@@ -82,8 +82,9 @@ causes, setup failure, and commit/rollback uncertainty. Native
 `runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
 across SQL, intent recording, queue operations and required-conflict rollback.
 The context unit suite cancels from policy mapping of a closed-pool begin error
-through both `_with_in` wrappers. `atomic_live::policy_context` does the same
-with a deferred commit failure, asserting the provisional output and native
+through both `_with_in` wrappers. Cancellation policies retain an `OperationOwner`;
+the wrappers receive only its `OperationContext`. `atomic_live::policy_context`
+does the same with a deferred commit failure, asserting the provisional output and native
 SQLSTATE/constraint survive as `OperationError::Failed`. The native policy test
 also covers intent observation and resource enqueue: real CHECK violations pass
 through `From<runledger_postgres::Error>`, retain their SQLx causes, and permit

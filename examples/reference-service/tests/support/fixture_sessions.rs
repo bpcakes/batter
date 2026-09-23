@@ -244,7 +244,8 @@ async fn detached_body(
                 .execute(&mut connection)
                 .await?;
         } else {
-            let context = batter::operation::OperationContext::new(Duration::from_secs(10))
+            let context = batter::operation::OperationOwner::new(Duration::from_secs(10))
+                .map(|owner| owner.into_context())
                 .expect("positive budget");
             let connection = batter::sqlx::PgLease::acquire(&pool, &context)
                 .await

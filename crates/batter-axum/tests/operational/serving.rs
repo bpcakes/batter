@@ -9,7 +9,6 @@ use batter_axum::{
 use batter_core::{
     cleanup::{CleanupBudget, SkipReason},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     startup::{Startup, StartupCause, StartupError, StartupOutcome},
 };
 use std::{
@@ -90,7 +89,9 @@ async fn owned_startup_serves_after_acknowledgement_then_drains_and_runs_cleanup
     assert_eq!(handle.status().readiness(), Readiness::Starting);
     let mut starting = Startup::scoped(
         supervisor,
-        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {
@@ -328,7 +329,9 @@ async fn startup_abandonment(register: RegisterHttp) {
     let (release_tx, release_rx) = oneshot::channel();
     let mut starting = Startup::new(
         base,
-        OperationContext::new(Duration::from_secs(10)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {

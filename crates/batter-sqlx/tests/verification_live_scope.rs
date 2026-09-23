@@ -1,6 +1,5 @@
 use super::support::{Result, bounded, combine, require};
 use super::{AuthorityFixture, exec, quote};
-use batter_core::operation::OperationContext;
 use batter_sqlx::verification::*;
 use sqlx::Connection;
 use std::time::Duration;
@@ -12,7 +11,7 @@ async fn inspect(
     let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
-        &OperationContext::new(Duration::from_secs(10))?,
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
         &policy,
     )
     .await?)
@@ -25,7 +24,12 @@ async fn inspect_combined(
 ) -> Result<VerificationReport> {
     let authority = draft.clone().build()?;
     let plan = VerificationPlan::migrations(migration).with_authority(&authority)?;
-    Ok(verify(pool, &OperationContext::new(Duration::from_secs(10))?, plan).await?)
+    Ok(verify(
+        pool,
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
+        plan,
+    )
+    .await?)
 }
 
 fn incomplete(report: &VerificationReport) -> Result {
@@ -74,7 +78,7 @@ async fn verification_temporary_namespace_requests_are_incomplete() -> Result {
             let discovery = AuthorityPolicyBuilder { discovery: DiscoveryScope::Schemas(vec![Identifier::new(selected)?]), ..AuthorityPolicyBuilder::default() };
             incomplete(&inspect(&pool, &discovery).await?)?;
             let migrations = MigrationPolicy::new(QualifiedName::new(selected, "absent_ledger")?, [])?;
-            incomplete(&verify_migrations(&pool, &OperationContext::new(Duration::from_secs(10))?, &migrations).await?)?;
+            incomplete(&verify_migrations(&pool, &batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(), &migrations).await?)?;
             incomplete(&inspect_combined(&pool, &migrations, &AuthorityPolicyBuilder::default()).await?)?;
         }
         // An authority request must be rejected before even a missing ordinary

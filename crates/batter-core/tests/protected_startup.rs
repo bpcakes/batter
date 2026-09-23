@@ -2,7 +2,6 @@ use batter_core::{
     BoxError,
     cleanup::{CleanupBudget, CleanupOutcome},
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     startup::{
         InitializationError, ProtectedStartupScope, Startup, StartupCause, StartupError,
         StartupFuture, StartupObserver,
@@ -60,7 +59,9 @@ async fn protected_channel_component_joins_before_reserved_resource_cleanup() {
     let (requests, mut inbox) = mpsc::channel::<(u32, oneshot::Sender<u32>)>(1);
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {
@@ -126,7 +127,9 @@ impl Drop for ReturnedThenPanics {
 async fn protected_application_error_survives_future_destruction_panic_and_cleanup() {
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         |scope| {
             scope
@@ -173,7 +176,9 @@ async fn protected_failure_retains_stage_lifo_cleanup_errors_and_observer_identi
     let captured = order.clone();
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {
@@ -231,7 +236,9 @@ async fn cancelling_a_protected_borrowed_waiter_leaves_initialization_owned() {
     let (release_tx, release_rx) = oneshot::channel();
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(2)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |scope| {
             Box::pin(async move {
@@ -276,7 +283,9 @@ async fn dropping_protected_owner_during_initialization_drives_cleanup_once() {
         });
     let starting = Startup::scoped(
         base,
-        OperationContext::new(Duration::from_secs(10)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_scope| {
             Box::pin(async move {
@@ -309,7 +318,9 @@ async fn dropping_protected_owner_before_first_poll_skips_factory_and_cleans_pri
         .register(|| async { Ok(()) });
     let starting = Startup::scoped(
         base,
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         move |_scope| {
             called.fetch_add(1, Ordering::SeqCst);
@@ -333,7 +344,9 @@ async fn dropping_protected_owner_before_first_poll_skips_factory_and_cleans_pri
 async fn protected_factory_panic_still_closes_registered_resources() {
     let mut starting = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         |scope| {
             scope
@@ -372,7 +385,9 @@ async fn protected_factory_panic_still_closes_registered_resources() {
 async fn protected_owner_and_observer_keep_the_stable_error_type() {
     let startup = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         |_scope| Box::pin(async { Err::<(), _>(Failure) }),
     );
@@ -407,7 +422,9 @@ fn protected_callback_type_can_borrow_the_scope() {
     }
     let specification = Startup::scoped(
         supervisor(),
-        OperationContext::new(Duration::from_secs(1)).unwrap(),
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
         cleanup_budget(),
         callback,
     );

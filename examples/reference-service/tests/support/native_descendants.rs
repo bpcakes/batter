@@ -2,7 +2,7 @@ use super::{
     ProbeResult,
     native_hosted::{config, enqueue, process, status},
 };
-use batter::{cleanup::SkipReason, operation::OperationContext};
+use batter::cleanup::SkipReason;
 use runledger_core::prelude::async_trait;
 use runledger_runtime::{JobLifecycleObserver, JobSucceededEvent};
 use sqlx::PgPool;
@@ -62,7 +62,7 @@ pub async fn callback_outlives_wrapper(pool: PgPool) -> ProbeResult {
     batter::runledger::register(
         &mut process,
         "native",
-        OperationContext::new(Duration::from_secs(2))?,
+        batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context(),
         {
             runledger_runtime::Supervisor::builder(&native_pool, config())?
                 .with_catalog(catalog)
