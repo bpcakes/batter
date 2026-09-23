@@ -1,5 +1,5 @@
 {
-  "contract_version": 9,
+  "contract_version": 8,
   "tool_namespace": "jig",
   "required_commands": [
     "api_clippy_command",
@@ -199,7 +199,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "declared"
       },
       "runner": {
         "command": "api_clippy_command",
@@ -208,7 +209,8 @@
       "target": {
         "action": "clippy",
         "component": "api"
-      }
+      },
+      "source_state": "worktree"
     },
     {
       "description": "Check Rust formatting.",
@@ -300,7 +302,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "declared"
       },
       "runner": {
         "command": "api_fmt_command",
@@ -309,7 +312,8 @@
       "target": {
         "action": "fmt",
         "component": "api"
-      }
+      },
+      "source_state": "worktree"
     },
     {
       "description": "Run Rust tests.",
@@ -405,7 +409,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "declared"
       },
       "runner": {
         "command": "api_test_command",
@@ -414,7 +419,8 @@
       "target": {
         "action": "test",
         "component": "api"
-      }
+      },
+      "source_state": "worktree"
     },
     {
       "description": "Run Rust tests using the locked dependency graph.",
@@ -510,7 +516,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "declared"
       },
       "runner": {
         "command": "api_test_locked_command",
@@ -519,7 +526,8 @@
       "target": {
         "action": "test-locked",
         "component": "api"
-      }
+      },
+      "source_state": "worktree"
     },
     {
       "description": "Prepare repository dependencies and local tooling.",
@@ -540,7 +548,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "inferred"
       },
       "runner": {
         "command": "repo_bootstrap_command",
@@ -549,7 +558,8 @@
       "target": {
         "action": "bootstrap",
         "component": "repo"
-      }
+      },
+      "source_state": "git"
     },
     {
       "description": "Prove that batter-at-rest is portable at its declared Rust 1.94 boundary.",
@@ -573,7 +583,8 @@
         "inputs_policy": "inferred",
         "intent": "declared",
         "runner": "declared",
-        "target": "declared"
+        "target": "declared",
+        "source_state": "inferred"
       },
       "runner": {
         "command": "repo_batter_at_rest_portability_command",
@@ -582,7 +593,8 @@
       "target": {
         "action": "batter-at-rest-portability",
         "component": "repo"
-      }
+      },
+      "source_state": "git"
     },
     {
       "description": "Validate the checked-in Jig repository contract.",
@@ -606,7 +618,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "overridden",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "inferred"
       },
       "runner": {
         "kind": "native",
@@ -615,7 +628,8 @@
       "target": {
         "action": "contract",
         "component": "repo"
-      }
+      },
+      "source_state": "git"
     },
     {
       "description": "Enforce repository-owned source file budgets.",
@@ -637,7 +651,8 @@
         "intent": "inherited",
         "legacy_aliases": "inherited",
         "runner": "inherited",
-        "target": "inherited"
+        "target": "inherited",
+        "source_state": "inferred"
       },
       "runner": {
         "configuration": {
@@ -652,7 +667,8 @@
       "target": {
         "action": "file-budget",
         "component": "repo"
-      }
+      },
+      "source_state": "git"
     }
   ],
   "profiles": [
