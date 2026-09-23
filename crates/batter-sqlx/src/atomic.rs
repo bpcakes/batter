@@ -152,7 +152,13 @@ impl PgAtomicTransaction {
         mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
     ) -> Result<(Self, Result<T, E>), PgScopeFailure<E>> {
-        self.validate().await?;
+        // No native connection escapes this owner, and every returning operation
+        // already validated session/transaction state. A profile also observes
+        // external schema existence/USAGE, which another session can change while
+        // this owner is idle; keep its opening check before invoking work.
+        if self.profile.is_some() {
+            self.validate().await?;
+        }
         let savepoint = ScopeSavepoint::begin(self.lease.connection_mut()).await?;
         let result = work(&mut PgScopedSql {
             connection: self.lease.connection_mut(),
@@ -161,8 +167,10 @@ impl PgAtomicTransaction {
         match result {
             Ok(value) => {
                 self.validate().await?;
+                // RELEASE merges subtransactions without changing the checked
+                // top-level XID, role or GUCs. Its acknowledgement still matters:
+                // failure or cancellation must not return a reusable owner.
                 savepoint.release(self.lease.connection_mut()).await?;
-                self.validate().await?;
                 Ok((self, Ok(value)))
             }
             Err(application) => {
@@ -205,16 +213,19 @@ impl PgAtomicTransaction {
     }
 
     async fn validate(&mut self) -> Result<(), PgTransactionError> {
-        if let Some(profile) = &self.profile {
-            profile.verify(self.lease.connection_mut()).await?;
-        }
-        let (xid, isolation, read_only): (Option<String>, String, String) = sqlx::query_as(
-            "SELECT pg_catalog.pg_current_xact_id_if_assigned()::text, \
+        let (xid, isolation, read_only) = if let Some(profile) = &self.profile {
+            profile
+                .verify_transaction(self.lease.connection_mut())
+                .await?
+        } else {
+            sqlx::query_as::<_, (Option<String>, String, String)>(
+                "SELECT pg_catalog.pg_current_xact_id_if_assigned()::text, \
              pg_catalog.current_setting('transaction_isolation'), \
              pg_catalog.current_setting('transaction_read_only')",
-        )
-        .fetch_one(self.lease.connection_mut())
-        .await?;
+            )
+            .fetch_one(self.lease.connection_mut())
+            .await?
+        };
         if xid.as_deref() != Some(self.xid.as_str()) {
             return Err(PgTransactionError::TransactionBoundaryLost);
         }
