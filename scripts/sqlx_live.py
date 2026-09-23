@@ -15,6 +15,7 @@ TARGETS = {
         "combined_validation_rejects_role_and_schema_privilege_drift",
         "atomic_scope_statement_counts_include_recovery_and_completion",
         "profiled_scope_checks_external_schema_loss_before_work",
+        "profiled_schema_lookup_remains_index_eligible",
         "transaction_profiles_distinguish_startup_defaults_session_settings_and_zero",
         "transaction_profiles_cover_pool_hooks_atomic_and_snapshot_work",
         "transaction_timeout_drift_poison_retains_cause_and_retires",

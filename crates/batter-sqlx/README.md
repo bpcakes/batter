@@ -68,6 +68,8 @@ once after the body, then await RELEASE without another validation. Unprofiled
 operations omit the opening check because the opaque owner has run no arbitrary
 SQL since birth or its previous validation. Profiled operations retain an opening
 check: schema existence and USAGE can change from another session while idle.
+Each declared schema uses a name-index-eligible catalog lookup; missing or
+unusable schemas still fail validation.
 A successful one-query operation therefore executes four statements unprofiled
 or five profiled, excluding acquisition/setup and final transaction completion.
 Recovery still rolls back and releases the private savepoint before revalidation;

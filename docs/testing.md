@@ -55,7 +55,10 @@ profiled (both timeout constructors), one additional statement on SQL rejection,
 and two for final commit. `validation_drift` checks every declared setting,
 role/session-authorization changes and restored settings after savepoint recovery.
 Independent-session schema removal and USAGE revocation must prevent callback
-invocation. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
+invocation. A PostgreSQL 18 `EXPLAIN` of the exact production query, with
+sequential scans disabled, requires an indexed namespace-name condition; this
+detects both a cast on the catalog column and an `EXISTS` rewrite that scans the
+whole catalog. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
 ordinary workspace tests discover them but leave them ignored.
 
 ## Verification commands
