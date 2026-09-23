@@ -5,6 +5,10 @@
 //! registration and driver startup. Native local-loop acknowledgement controls component readiness;
 //! dependency health and explicit application approval remain separate. No durable
 //! startup control job, termination gate or application report channel is required.
+//! After startup transfers the running owner, await
+//! [`batter_core::lifecycle::RunningSupervisor::wait_checked`] for the complete
+//! managed settlement and process cleanup classification. A native settlement
+//! cannot by itself prove remote effects or arbitrary detached work stopped.
 
 #![forbid(unsafe_code)]
 

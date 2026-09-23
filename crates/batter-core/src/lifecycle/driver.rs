@@ -58,7 +58,9 @@ impl ShutdownSuccess {
 }
 
 /// An unsuccessful shutdown, retaining every task and cleanup outcome.
-/// Default diagnostics never print native task, cleanup or panic contents.
+/// Direct `Debug` and `Display` formatting omits native task, cleanup and panic
+/// contents. The retained source chain is not redacted: an error-chain renderer
+/// can print a coordinator `JoinError` panic payload.
 #[derive(Clone)]
 pub enum ShutdownFailure {
     /// The driver completed, but its report contains unsuccessful outcomes.

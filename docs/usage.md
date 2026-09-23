@@ -10,8 +10,7 @@ native Rust/Tokio futures through these boundaries, use validated settings,
 and keep application errors concrete.
 For HTTP route and boundary composition, follow the
 [HTTP composition example](../crates/batter/examples/http_service.rs). Its
-process completion still uses the raw `check_shutdown` compatibility recipe;
-use the checked methods shown in `Startup` for new service roots.
+process completion uses the same checked path after protected startup.
 Repeated instructions that a consumer must manually rebuild these protocols
 indicate integration debt and should prompt a design review.
 
@@ -209,14 +208,18 @@ application's `run` function. For an explicit stop, use
 the separately driven cleanup still requires the runtime to remain alive.
 Checked completion retains a successful report in `ShutdownSuccess`, or an
 unsuccessful report or coordinator error in `ShutdownFailure` with redacted
-direct formatting. `check_shutdown(running.wait_report().await)?` remains a
-compatibility recipe for callers deliberately using a raw report.
+direct formatting. The retained source chain is separate: `anyhow::Error`'s
+`Debug` and alternate `Display` render causes, so a coordinator `JoinError` can
+print its panic payload. `check_shutdown(running.wait_report().await)?` remains
+a compatibility recipe for callers deliberately using a raw report.
 
 Keep rich errors available for deliberate inspection at a trusted sink. Return
 `ExitCode` from `main` with application-selected sanitized output, as the HTTP
 example does. A `main` returning `Result<(), BoxError>` prints the error's
 **Debug** representation through Rust's `Termination` implementation. Changing
 Display does not sanitize Debug or arbitrary errors propagated through `?`.
+Likewise, `main` returning `anyhow::Result<()>` can print a retained native
+cause. Select summary fields explicitly for public or shared logs.
 
 ### Lower-level lifecycle and report access
 
@@ -227,9 +230,8 @@ path above. Direct `Supervisor::start()` approves readiness once; only
 stage. Direct `run_until()` does the same on its first poll;
 `run_until_unapproved()` returns a linear, movable `UnapprovedDriver`, allowing
 policy to poll before consuming `approve_readiness()` without separating the
-decision from its driver. The caller still owns acquisition-failure cleanup. Do not copy the
-example's count-only error conversion when original shutdown causes must be
-retained. Do not add a bare spawn
+decision from its driver. The caller still owns acquisition-failure cleanup.
+The example propagates the complete checked shutdown failure. Do not add a bare spawn
 inside a component to make borrowing convenient; use composed futures or an
 explicitly owned JoinSet and await its shutdown.
 
@@ -258,7 +260,9 @@ concrete report source, so the summary appears once.
 
 The [process-owned example](../crates/batter/examples/process_owned.rs) configures a finite
 capacity, transfers a dependency permit into admitted work, drops its result
-receipt, and observes completion through shutdown. Rejection is immediate, not
+receipt, and observes checked completion after the last owner drops. If both body
+work and shutdown fail, its private application error retains each cause for
+deliberate inspection while direct formatting stays fixed. Rejection is immediate, not
 a new queue of waiters. Do not capture arbitrarily large request bodies merely
 because task count is bounded.
 

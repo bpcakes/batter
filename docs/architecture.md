@@ -252,10 +252,10 @@ concrete inner failure. This keeps early startup errors inspectable without
 printing their contents through `Result` termination. An unsuccessful owned
 driver report must likewise remain an owned `ShutdownReport`; rebuilding an
 `io::Error` from its `Display` text discards task and cleanup errors.
-`check_shutdown` returns a redacted `ShutdownFailure` retaining the original
-unsuccessful report or coordinator JoinError. The service examples still use
-this compatibility classifier; new owned-driver consumers use `wait_checked`
-or `shutdown_checked` to classify completion at the library boundary.
+`check_shutdown` remains a compatibility classifier for deliberately raw
+reports. The service examples use `wait_checked` or `shutdown_checked` to
+classify completion at the library boundary and retain the original unsuccessful
+report or coordinator JoinError.
 
 ## Dependency observation
 

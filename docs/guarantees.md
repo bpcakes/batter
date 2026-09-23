@@ -210,6 +210,10 @@ Rate limiting, concurrency limiting, and retry accounting are separate policies.
 `Result<ShutdownSuccess, ShutdownFailure>`. Success retains the immutable shared
 report for diagnostics or application policy. Failure retains the unsuccessful
 report or the coordinator's original `JoinError`; ordinary `?` propagates it.
+`ShutdownFailure` itself redacts direct `Debug` and `Display`, but its native
+`source()` is retained. `anyhow::Error` chain formatting can print a coordinator
+panic payload through that source; use application-selected summaries at a
+public exit or logging boundary.
 `wait_checked` does not request shutdown, approve readiness, or extend process
 ownership. Among the checked methods, `shutdown_checked` requests shutdown.
 Legacy `shutdown`, raw `shutdown_report`, and dropping the last owner also request
@@ -746,8 +750,8 @@ a `pool_in` close hook registered on its reserved `postgres.pool` slot, and mana
 native settlement. Library-owned listeners exist before the initializer runs and
 belong to the running driver after handoff. Even after generic shutdown succeeds,
 the application root requires its named `postgres.pool` cleanup record;
-`pool_in` registers the close hook, the cleanup stack writes its record, and the
-preceding generic shutdown check separately requires that hook to have succeeded.
+`pool_in` registers the close hook, the cleanup stack writes its record, and
+checked completion separately requires that hook to have succeeded.
 Cleanup registration rejects duplicate names, so if the otherwise successful
 report does not contain that record,
 `runtime::run` returns the public fixed-diagnostic

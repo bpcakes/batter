@@ -322,7 +322,8 @@ its `CommandScope` slot and native `after_connect` guard to `pool_in` unchanged.
 `register_signals` remain lower-level compatibility helpers. Pool sizing,
 probe and cleanup budgets remain application choices. Its fixed process diagnostic retains concrete early
 errors, the startup cleanup report, or the complete failed shutdown report in its
-source chain. No database abstraction or generic transaction retry is introduced.
+source chain after `wait_checked().await?`. No database abstraction or generic
+transaction retry is introduced.
 The example uses SQLx 0.9.0, which requires Rust 1.94 or newer. Compiling the
 example does not establish pool closure.
 
