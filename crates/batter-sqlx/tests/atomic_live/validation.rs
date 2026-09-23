@@ -35,6 +35,42 @@ pub(super) async fn counted<T>(expected: usize, future: impl Future<Output = T>)
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn profiled_schema_lookup_remains_index_eligible() -> Result {
+    let mut fixture = fixture().await?;
+    let body = async {
+        // A small test catalog may favor a sequential scan even for an indexed
+        // predicate. Disabling that plan exposes whether this query can use the
+        // namespace-name index at all.
+        sqlx::raw_sql("SET enable_seqscan = off")
+            .execute(&mut fixture.observer)
+            .await?;
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN (VERBOSE, COSTS OFF) {}",
+            include_str!("../../src/profile/validation.sql")
+        )))
+        .bind(vec!["public"])
+        .bind(Vec::<String>::new())
+        .bind(Vec::<String>::new())
+        .fetch_all(&mut fixture.observer)
+        .await?;
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("Index Scan using pg_namespace_nspname_index")),
+            "{plan:#?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("Index Cond: (n.nspname = declared.name)")),
+            "{plan:#?}"
+        );
+        Ok(())
+    }
+    .await;
+    fixture.finish(body).await
+}
+
+#[tokio::test]
+#[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn atomic_scope_statement_counts_include_recovery_and_completion() -> Result {
     let fixture = fixture().await?;
     let body = async {
