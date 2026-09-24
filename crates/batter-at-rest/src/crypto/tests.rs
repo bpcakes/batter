@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::BorrowedSealedPayload;
 
 const FIXTURE: &str = include_str!("../../tests/fixtures/envelope-v1.txt");
 
@@ -619,6 +620,16 @@ fn deterministic_envelope_matches_the_independent_node_fixture() {
     assert_eq!(
         keyring
             .open(&context, stored_composite.as_ref())
+            .unwrap()
+            .as_slice(),
+        fixture["plaintext"]
+    );
+    let borrowed_composite = BorrowedSealedPayload::decode(&fixture["sealed_payload"]).unwrap();
+    assert_eq!(borrowed_composite.envelope(), stored_composite.envelope());
+    assert_eq!(borrowed_composite.ciphertext(), fixture["body"]);
+    assert_eq!(
+        keyring
+            .open(&context, borrowed_composite.as_ref())
             .unwrap()
             .as_slice(),
         fixture["plaintext"]

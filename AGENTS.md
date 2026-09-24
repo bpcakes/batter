@@ -38,12 +38,20 @@ not broaden this repository's platform support.
 
 ## Verification
 
-The default toolchain is pinned to Rust 1.98.1. All packages retain Rust 1.94
-as their minimum; SQLx 0.9.0 requires it in the adapter and examples. The
-standalone `batter-at-rest` boundary is also verified on exact Rust 1.94 by
-`scripts/check-batter-at-rest-portability.sh`. Run `bash scripts/verify.sh` and
-`RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh`, then build and execute the HTTP
-smoke test described in `docs/testing.md`. Repair failures without relaxing
+Local development uses the current stable release pinned in `rust-toolchain.toml`
+(Rust 1.98.1). Upgrade that pin deliberately, together with the pinned CI entries.
+All packages retain Rust 1.94 as their minimum; SQLx 0.9.0 requires it in the
+adapter and examples. Run `bash scripts/verify.sh --plan-id <id>` with the default
+toolchain for planned work, or `bash scripts/verify.sh` for a fresh verification.
+Both use Jig's complete `verify` profile, including rustdoc and all HTTP smoke
+profiles; the plan form reuses fresh target receipts. Do not repeat the matrix
+with a separate script/Jig invocation after it passes.
+Routine Rust 1.94.0 verification belongs only in CI, including the standalone
+`batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`. Do not
+install or run the MSRV locally unless explicitly asked to reproduce an MSRV
+failure. CI tests the pinned release and exact MSRV; a weekly run checks floating
+`stable`. This policy supersedes older two-toolchain instructions in task plans.
+Repair failures without relaxing
 semantic tests. Record verification outcomes in the owning Bead when the code or
 dependency graph changes.
 
@@ -339,9 +347,11 @@ optional SQLx adapter and example packages.
   Reuse also requires unchanged test commands/configuration, toolchain, relevant
   environment and prerequisites, with no later unresolved failure. Jig freshness
   alone does not prove external environment or toolchain identity. Rerun when
-  these conditions cannot be established. The separate two-toolchain verification,
-  rustdoc and HTTP smoke requirements still apply; a plain `verify.sh` execution
-  does not automatically create Jig evidence.
+  these conditions cannot be established. The complete `verify` profile also
+  requires `api:docs` and `api:http-smoke`; an `api:test` receipt alone does not
+  satisfy those targets. `verify.sh` delegates to Jig and creates receipts; use
+  `--plan-id <id>` to attach them to planned work and reuse fresh results.
+  Local verification uses only the pinned toolchain; MSRV verification belongs in CI.
 
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 

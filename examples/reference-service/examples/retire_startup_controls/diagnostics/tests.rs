@@ -1,5 +1,5 @@
 use super::*;
-use batter::{cleanup::CleanupBudget, command::Command, operation::OperationContext};
+use batter::{cleanup::CleanupBudget, command::Command};
 use batter_example_reference_service::retirement::CancellationFailure;
 use sqlx::types::Uuid;
 use std::time::Duration;
@@ -10,7 +10,9 @@ async fn execute(
 ) -> (Value, bool) {
     let second = Duration::from_secs(1);
     let command = Command::new(
-        OperationContext::new(second * 10).unwrap(),
+        batter::operation::OperationOwner::new(second * 10)
+            .unwrap()
+            .into_context(),
         CleanupBudget::new(second, second, second).unwrap(),
         move |scope| {
             Box::pin(async move {

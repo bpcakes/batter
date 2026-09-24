@@ -343,7 +343,7 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(matrix, "run_parallel", execute), \
                 mock.patch.object(matrix, "render_outcomes"):
             self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [4, 3, 4, 3, 1, 4, 3])
+        self.assertEqual([len(batch) for batch in batches], [4, 4, 4, 3, 1, 4, 3])
         self.assertTrue(all(1 <= len(batch) <= 4 for batch in batches))
         self.assertEqual(batches[0][1], matrix.FACADE_CHECK)
         self.assertEqual(batches[0][2], matrix.RUNNER_TESTS)
@@ -351,6 +351,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(batches[1][0], matrix.REFERENCE_RUNNER_TESTS)
         self.assertEqual(batches[1][1], matrix.SQLX_RUNNER_TESTS)
         self.assertEqual(batches[1][2], matrix.FACADE_FEATURES)
+        self.assertEqual(batches[1][3], matrix.FACADE_CACHE_CONTROLS)
         self.assertEqual(batches[2], [matrix.RUNLEDGER_GRAPH, matrix.RUNLEDGER_CONTROLS, matrix.RUNLEDGER_CONSUMER, matrix.RUNLEDGER_TOOL_CONTROLS])
         self.assertIn("--no-default-features", batches[0][0])
         self.assertIn("test_parallel_process.py", batches[0][2])
@@ -373,7 +374,7 @@ class MatrixTests(unittest.TestCase):
     def test_failure_of_any_prerequisite_or_runtime_pass_stops_later_batches(self):
         success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
         failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
-        batch_sizes = [4, 3, 4, 3, 1, 4, 3]
+        batch_sizes = [4, 4, 4, 3, 1, 4, 3]
         for failing_batch, size in enumerate(batch_sizes):
             for failing_command in range(size):
                 results = [[success] * earlier for earlier in batch_sizes[:failing_batch]]

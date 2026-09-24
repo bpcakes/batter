@@ -3,6 +3,14 @@ members = ["crates/batter", "crates/batter-at-rest", "crates/batter-core", "crat
 default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
+# Keep the full 64 MiB encryption boundary test practical without optimizing
+# unrelated workspace tests. Level 2 avoids sharing unoptimized generic code
+# from dependencies; assertions and integer overflow checks remain enabled.
+[profile.test.package.batter-at-rest]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
 [workspace.package]
 edition = "2024"
 license = "MIT"

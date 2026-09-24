@@ -1,8 +1,5 @@
 //! Offline maintenance command. Deployment revocation remains external.
-use batter::{
-    BoxError, cleanup::CleanupBudget, command::CommandOutcome, operation::OperationContext,
-    settings::SettingsSource,
-};
+use batter::{BoxError, cleanup::CleanupBudget, command::CommandOutcome, settings::SettingsSource};
 use batter_example_reference_service::{
     config::MaintenanceSettings,
     retirement::{self, DatabaseIdentity, RetirementError, RetirementReport},
@@ -50,7 +47,7 @@ async fn run() -> Result<CommandOutcome<RetirementReport, RetirementError>, BoxE
     let command = retirement::prepare(
         prepared.into_connect_options(),
         expected,
-        OperationContext::new(second * 30)?,
+        batter::operation::OperationOwner::new(second * 30)?.into_context(),
         CleanupBudget::new(second * 3, second * 3, second)?,
     )
     .start();

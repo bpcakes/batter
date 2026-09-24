@@ -19,7 +19,7 @@
 //!     ScopeId::new("identifier")?, period(1)?, period(60)?, period(300)?, period(30)?)?;
 //! let hasher = KeyHasher::new([7; 32])?; // Example only; inject the application's key.
 //! let subject = hasher.hash_attempt_for(&policy, "normalized-identifier");
-//! let context = OperationContext::new(Duration::from_secs(2))?;
+//! let context = batter_core::operation::OperationOwner::new(Duration::from_secs(2))?.into_context();
 //! let runner = AttemptRunner::new(database)?;
 //! let result = runner.run(&context, subject,
 //!     |_scope| async { Ok::<_, Infallible>(true) }, // Bounded credential verification.

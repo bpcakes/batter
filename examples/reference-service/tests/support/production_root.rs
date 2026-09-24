@@ -5,7 +5,7 @@ use super::{
     startup_process::{self, ExecutableChild, Signal},
 };
 use crate::support::profiled::initialize_schema;
-use batter::{BoxError, operation::OperationContext};
+use batter::BoxError;
 use batter_example_reference_service::delivery::{OwnerId, SubmitDelivery};
 use serde_json::Value;
 use sqlx::{Connection, PgConnection, PgPool, types::Uuid};
@@ -280,7 +280,7 @@ async fn pending_delivery(pool: &PgPool, index: u128) -> Result<Uuid, batter::Bo
         .bind(owner.as_uuid())
         .execute(pool)
         .await?;
-    let context = OperationContext::new(SUBMISSION_LIMIT)?;
+    let context = batter::operation::OperationOwner::new(SUBMISSION_LIMIT)?.into_context();
     let submitted = crate::support::profiled::submit(
         pool,
         &context,

@@ -6,7 +6,7 @@ mod test_dispatch;
 
 use batter_core::lifecycle::Fatal;
 use batter_core::{
-    operation::{Interruption, OperationContext},
+    operation::Interruption,
     retry::{
         self, ReplaySafety, RetryError, RetryExecutionError, RetryOptions, RetryPolicy, StopReason,
     },
@@ -41,7 +41,9 @@ async fn outcome_is_recorded_without_logging_application_error_text() {
         .without_time()
         .with_max_level(tracing::Level::INFO)
         .finish();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = context
         .run("telemetry.failure", |_| async {
             Err(std::io::Error::other("secret-that-must-not-be-logged"))
@@ -69,7 +71,8 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
         .with_max_level(tracing::Level::INFO)
         .finish();
     async {
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context();
         assert_eq!(
             context
                 .run("telemetry.success", |_| async { Ok::<_, io::Error>(42) })
@@ -77,7 +80,7 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
                 .unwrap(),
             42
         );
-        context.cancel();
+        owner.cancel();
         assert!(
             context
                 .run("telemetry.cancelled", |_| async { Ok::<_, io::Error>(()) })
@@ -85,12 +88,17 @@ async fn ordinary_info_subscriber_observes_success_interruption_and_drop_without
                 .is_err()
         );
         assert!(
-            OperationContext::at(tokio::time::Instant::now())
-                .run("telemetry.expired", |_| async { Ok::<_, io::Error>(()) })
-                .await
-                .is_err()
+            batter_core::operation::OperationOwner::at(batter_core::operation::RootDeadline::at(
+                tokio::time::Instant::now()
+            ))
+            .into_context()
+            .run("telemetry.expired", |_| async { Ok::<_, io::Error>(()) })
+            .await
+            .is_err()
         );
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         let run = context.run("telemetry.dropped", |_| {
             std::future::pending::<Result<(), Fatal<io::Error>>>()
         });
@@ -129,7 +137,8 @@ async fn resolved_result_is_classified_before_operation_telemetry_finishes() {
         .finish();
 
     async {
-        let rejected = OperationContext::new(Duration::from_secs(1))
+        let rejected = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .map(|owner| owner.into_context())
             .unwrap()
             .run_resolved(
                 "telemetry.resolved-failure",
@@ -145,13 +154,14 @@ async fn resolved_result_is_classified_before_operation_telemetry_finishes() {
 
         let retained = Arc::new(Mutex::new(None));
         let inside = retained.clone();
-        let committed = OperationContext::new(Duration::from_secs(1))
-            .unwrap()
+        let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let context = owner.context().clone();
+        let committed = context
             .run_resolved(
                 "telemetry.resolved-success",
-                move |scope| async move {
+                move |_| async move {
                     *inside.lock().unwrap() = Some(42);
-                    scope.cancel();
+                    owner.cancel();
                     std::future::pending::<Result<(), io::Error>>().await
                 },
                 move |boundary| match retained.lock().unwrap().take() {
@@ -194,7 +204,9 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
 
     async {
         let failed: Result<(), _> = retry::execute(
-            &OperationContext::new(Duration::from_secs(2)).unwrap(),
+            &batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+                .unwrap()
+                .into_context(),
             "telemetry.retry-failed",
             ReplaySafety::Never,
             &policy,
@@ -211,7 +223,11 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
             })
         ));
 
-        let input = OperationContext::new(Duration::from_secs(2)).unwrap();
+        let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+            .unwrap()
+            .into_context();
+        let owner = Arc::new(parent.child(Duration::from_secs(2)).unwrap());
+        let input = owner.context().clone();
         let cancelled: Result<(), _> = retry::execute_with_options(
             &input,
             "telemetry.retry-cancelled",
@@ -220,9 +236,12 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
             RetryOptions::new()
                 .with_attempt_maximum(Duration::from_secs(1))
                 .unwrap(),
-            |attempt| async move {
-                attempt.context.cancel();
-                Err("secret-cancelled-error")
+            move |_| {
+                let owner = Arc::clone(&owner);
+                async move {
+                    owner.cancel();
+                    Err("secret-cancelled-error")
+                }
             },
             |_| panic!("cancelled attempt must not classify"),
         )
@@ -235,10 +254,12 @@ async fn retry_attempt_telemetry_matches_failure_cancellation_and_success() {
                 last_error: Some("secret-cancelled-error"),
             })
         ));
-        assert!(input.check().is_ok());
+        assert!(parent.check().is_ok());
 
         let succeeded = retry::execute_with_options(
-            &OperationContext::new(Duration::from_secs(2)).unwrap(),
+            &batter_core::operation::OperationOwner::new(Duration::from_secs(2))
+                .unwrap()
+                .into_context(),
             "telemetry.retry-succeeded",
             ReplaySafety::Idempotent,
             &policy,

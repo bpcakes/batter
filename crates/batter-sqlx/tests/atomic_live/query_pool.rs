@@ -1,5 +1,5 @@
 use super::{fixture, support::Result};
-use batter_core::operation::{Interruption, OperationContext, OperationError};
+use batter_core::operation::{Interruption, OperationError, OperationOwner};
 use batter_sqlx::PgQueryHandle;
 use sqlx::Row;
 use std::{
@@ -16,7 +16,8 @@ fn send<T: Send>(value: T) -> T {
 async fn pooled_query_helpers_preserve_macros_reuse_and_error_mapping() -> Result {
     let fixture = fixture().await?;
     let body = async {
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let owner = OperationOwner::new(Duration::from_secs(10))?;
+        let context = owner.context().clone();
         let mapped = AtomicUsize::new(0);
         let queries = PgQueryHandle::within(
             &fixture.pool,
@@ -163,7 +164,8 @@ async fn pooled_query_acquisition_and_blocked_query_cancellation_preserve_owners
     let mut fixture = fixture().await?;
     let pool = fixture.pool.clone();
     let body = async {
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let owner = OperationOwner::new(Duration::from_secs(10))?;
+        let context = owner.context().clone();
         let queries = PgQueryHandle::within(
             &pool,
             &context,
@@ -175,7 +177,7 @@ async fn pooled_query_acquisition_and_blocked_query_cancellation_preserve_owners
         let mut waiting =
             Box::pin(queries.fetch_one(sqlx::query_scalar::<_, i64>("SELECT 42::bigint")));
         assert!(futures_util::poll!(&mut waiting).is_pending());
-        context.cancel();
+        owner.cancel();
         assert!(matches!(
             waiting.await,
             Err(OperationError::Interrupted(Interruption::Cancelled))
@@ -187,7 +189,8 @@ async fn pooled_query_acquisition_and_blocked_query_cancellation_preserve_owners
             42
         );
         drop(held);
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let owner = OperationOwner::new(Duration::from_secs(10))?;
+        let context = owner.context().clone();
         let queries = PgQueryHandle::within(
             &pool,
             &context,
@@ -205,7 +208,7 @@ async fn pooled_query_acquisition_and_blocked_query_cancellation_preserve_owners
             result = &mut blocked => panic!("query did not block: {result:?}"),
             result = fixture.blocked(previous) => result?,
         }
-        context.cancel();
+        owner.cancel();
         assert!(matches!(
             blocked.await,
             Err(OperationError::Interrupted(Interruption::Cancelled))
@@ -222,7 +225,8 @@ async fn pooled_query_acquisition_and_blocked_query_cancellation_preserve_owners
 async fn pooled_query_observed_output_survives_cleanup_cancellation() -> Result {
     let fixture = fixture().await?;
     let body = async {
-        let context = OperationContext::new(Duration::from_secs(10))?;
+        let owner = OperationOwner::new(Duration::from_secs(10))?;
+        let context = owner.context().clone();
         let mapped = AtomicUsize::new(0);
         let queries = PgQueryHandle::within(
             &fixture.pool,
@@ -239,7 +243,7 @@ async fn pooled_query_observed_output_survives_cleanup_cancellation() -> Result 
                 |row: sqlx::postgres::PgRow| {
                     // SQLx has observed the native result. Its mapper cancels before
                     // the lease's asynchronous BEGIN/ROLLBACK return handshake.
-                    context.cancel();
+                    owner.cancel();
                     row.get::<i64, _>("value")
                 },
             ))

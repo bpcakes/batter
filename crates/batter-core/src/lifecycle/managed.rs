@@ -117,7 +117,7 @@ impl<R: ManagedSettlement> ManagedComponent<R> {
     /// let second = Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second)?;
     /// let mut supervisor = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
-    /// supervisor.register_managed("native", OperationContext::new(second)?, |_| {
+    /// supervisor.register_managed("native", batter_core::operation::OperationOwner::new(second)?.into_context(), |_| {
     ///     let (ack, initialized) = tokio::sync::oneshot::channel();
     ///     let (stop, stopping) = tokio::sync::oneshot::channel();
     ///     let mut stop = Some(stop);

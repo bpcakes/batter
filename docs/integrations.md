@@ -46,6 +46,12 @@ The facade feature proof runs in temporary external workspaces because the
 workspace's all-feature build unifies optional dependencies. The bounded
 runner checks every declared feature, the representative unions, graph
 optionality, focused disabled imports, and one direct/facade identity fixture.
+Each consumer still resolves its own manifest and lockfile. Compiled artifacts
+persist in a compiler-specific `facade-features` subdirectory of Cargo's resolved
+target directory; sharing that cache does not share dependency resolution or
+accept a previous command's result. Disabled imports and rejected completion
+patterns must produce their expected diagnostics on every run, including with
+a warm cache.
 The direct Runlimit runner separately retains its eight native combinations.
 
 ## Axum: implemented, with a deliberately small boundary

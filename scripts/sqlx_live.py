@@ -31,6 +31,7 @@ TARGETS = {
         "policy_recovery_loss_keeps_rejection_and_native_cause",
         "policy_completion_uncertainty_keeps_output_and_rejection",
         "policy_begin_failure_does_not_invoke_body",
+        "policy_commit_uncertainty_survives_completion_poll_cancellation",
 
         "combined_validation_rejects_each_setting_and_recovers_local_changes",
         "combined_validation_rejects_role_and_schema_privilege_drift",

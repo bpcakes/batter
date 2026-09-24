@@ -54,7 +54,7 @@ where
     ) -> Result<Self, ConfigurationError> {
         Ok(Self {
             pool,
-            context: parent.child(maximum)?,
+            context: parent.child(maximum)?.into_context(),
             operation,
             map_error,
         })
@@ -118,7 +118,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use batter_core::operation::Interruption;
+    use batter_core::operation::{Interruption, OperationOwner};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test(start_paused = true)]
@@ -127,7 +127,8 @@ mod tests {
             let pool = sqlx::postgres::PgPoolOptions::new()
                 .connect_lazy("postgres://unused@127.0.0.1:1/unused")
                 .unwrap();
-            let parent = OperationContext::new(Duration::from_secs(parent_seconds)).unwrap();
+            let parent_owner = OperationOwner::new(Duration::from_secs(parent_seconds)).unwrap();
+            let parent = parent_owner.context().clone();
             let mapped = AtomicUsize::new(0);
             let queries = PgQueryHandle::within(
                 &pool,
@@ -167,7 +168,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://unused@127.0.0.1:1/unused")
             .unwrap();
-        let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let parent_owner = OperationOwner::new(Duration::from_secs(1)).unwrap();
+        let parent = parent_owner.context().clone();
         assert!(
             PgQueryHandle::within(
                 &pool,
@@ -178,7 +180,7 @@ mod tests {
             )
             .is_err()
         );
-        parent.cancel();
+        parent_owner.cancel();
         let queries = PgQueryHandle::within(
             &pool,
             &parent,

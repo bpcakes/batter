@@ -122,6 +122,23 @@ pub async fn run_atomic_with<T, P: PgFailurePolicy<T>>(
 
 /// Profiled counterpart of [`run_atomic_with`]. Setup and revalidation use the
 /// declared profile, with the same guarantees as [`run_atomic_profiled`].
+///
+/// ```no_run
+/// async fn append<P: batter_sqlx::PgFailurePolicy<i64>>(
+///     pool: &sqlx::PgPool,
+///     profile: &batter_sqlx::PgSessionProfile,
+///     policy: &P,
+/// ) -> Result<i64, P::Error>
+/// where P::Error: From<sqlx::Error> {
+///     batter_sqlx::run_atomic_profiled_with(pool, profile, policy, async |mut scope| {
+///         scope.sql(async |sql| {
+///             sqlx::query_scalar::<_, i64>(
+///                 "INSERT INTO audit_events DEFAULT VALUES RETURNING id"
+///             ).fetch_one(sql.executor()).await.map_err(Into::into)
+///         }).await
+///     }).await
+/// }
+/// ```
 pub async fn run_atomic_profiled_with<T, P: PgFailurePolicy<T>>(
     pool: &PgPool,
     profile: &PgSessionProfile,

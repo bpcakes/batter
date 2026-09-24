@@ -1,6 +1,6 @@
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead},
-    operation::{Interruption, OperationContext},
+    operation::{Interruption, OperationContext, OperationOwner},
     retry::{self, ReplaySafety, RetryDecision, RetryError, RetryPolicy, StopReason},
 };
 use batter_test_support::Script;
@@ -27,7 +27,11 @@ fn policy(attempts: u32) -> RetryPolicy {
     .unwrap()
 }
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    owner().into_context()
+}
+
+fn owner() -> OperationOwner {
+    OperationOwner::new(Duration::from_secs(10)).unwrap()
 }
 
 #[test]
@@ -149,7 +153,9 @@ async fn provider_delay_is_a_lower_bound() {
 
 #[tokio::test(start_paused = true)]
 async fn too_long_provider_delay_does_not_get_shortened() {
-    let context = OperationContext::new(Duration::from_millis(50)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(50))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "budget",
@@ -172,11 +178,12 @@ async fn too_long_provider_delay_does_not_get_shortened() {
 
 #[tokio::test(start_paused = true)]
 async fn cancelled_before_first_attempt_starts_nothing() {
-    let context = context();
-    context.cancel();
+    let owner = owner();
+    owner.cancel();
+    let context = owner.context();
     let calls = Arc::new(AtomicU32::new(0));
     let result: Result<(), _> = retry::execute(
-        &context,
+        context,
         "preflight",
         ReplaySafety::Idempotent,
         &policy(3),
@@ -199,16 +206,21 @@ async fn cancelled_before_first_attempt_starts_nothing() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn same_poll_attempt_cancellation_discards_legacy_success() {
-    let context = context();
+async fn same_poll_owned_child_cancellation_discards_legacy_success() {
+    let parent = context();
+    let owner = Arc::new(parent.child(Duration::from_secs(10)).unwrap());
+    let context = owner.context().clone();
     let result: Result<(), RetryError<&'static str>> = retry::execute(
         &context,
         "read.cancel-before-return",
         ReplaySafety::Idempotent,
         &policy(2),
-        |attempt| async move {
-            attempt.context.cancel();
-            Ok(())
+        move |_| {
+            let owner = Arc::clone(&owner);
+            async move {
+                owner.cancel();
+                Ok(())
+            }
         },
         |_| panic!("a successful attempt has no error to classify"),
     )
@@ -222,13 +234,14 @@ async fn same_poll_attempt_cancellation_discards_legacy_success() {
             last_error: None,
         })
     ));
-    assert!(context.check().is_ok());
+    assert!(parent.check().is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn same_poll_input_cancellation_retains_legacy_error_without_classifying() {
-    let context = context();
-    let cancellation = context.clone();
+    let owner = Arc::new(owner());
+    let context = owner.context().clone();
+    let cancellation = Arc::clone(&owner);
     let classifiers = Arc::new(AtomicU32::new(0));
     let result: Result<(), RetryError<&'static str>> = retry::execute(
         &context,
@@ -266,7 +279,8 @@ async fn same_poll_input_cancellation_retains_legacy_error_without_classifying()
 
 #[tokio::test]
 async fn cancellation_in_backoff_retains_last_error() {
-    let context = context();
+    let owner = owner();
+    let context = owner.context().clone();
     let owned = context.clone();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
@@ -289,7 +303,7 @@ async fn cancellation_in_backoff_retains_last_error() {
         .await
     });
     receiver.await.unwrap();
-    context.cancel();
+    owner.cancel();
     let result = task.await.unwrap();
     assert!(matches!(
         result,
@@ -303,7 +317,9 @@ async fn cancellation_in_backoff_retains_last_error() {
 
 #[tokio::test(start_paused = true)]
 async fn attempt_timeout_is_not_automatically_retried() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "timeout",
@@ -328,7 +344,9 @@ async fn attempt_timeout_is_not_automatically_retried() {
 
 #[tokio::test(start_paused = true)]
 async fn later_attempt_interruption_preserves_previous_failure() {
-    let context = OperationContext::new(Duration::from_millis(200)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_millis(200))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = retry::execute(
         &context,
         "second-timeout",
@@ -486,7 +504,9 @@ async fn jitter_never_shortens_provider_delay_even_beyond_the_policy_cap() {
 
 #[tokio::test(start_paused = true)]
 async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(300))
         .unwrap();
@@ -536,7 +556,9 @@ async fn retry_and_admission_share_work_budget_and_preserve_finalization() {
 
 #[tokio::test(start_paused = true)]
 async fn jitter_provider_wait_cannot_consume_finalization_reserve() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let phases = parent
         .reserve_finalization(Duration::from_millis(500))
         .unwrap();

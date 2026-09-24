@@ -1,6 +1,5 @@
 use super::state::{PendingComponentStart, Shared};
 use std::sync::Arc;
-use tokio::time::Instant;
 
 /// Process admission state, not an automatic dependency-health assessment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,10 +191,10 @@ impl LifecycleStatus {
 /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
 /// approval.approve();
 /// let admission = control.operation_admission();
-/// let context = admission
-///     .admit(Instant::now() + Duration::from_secs(1))
+/// let owner = admission
+///     .admit_root(batter_core::operation::RootDeadline::at(Instant::now() + Duration::from_secs(1)))
 ///     .expect("application approval admits the operation");
-/// assert!(context.check().is_ok());
+/// assert!(owner.context().check().is_ok());
 /// ```
 ///
 /// ```compile_fail,E0599
@@ -227,18 +226,18 @@ impl OperationAdmission {
     /// Admit one operation only while the process is Ready.
     ///
     /// A past deadline is accepted and will fail at the operation boundary, as
-    /// with [`crate::operation::OperationContext::at`]. The returned error is the
+    /// with [`crate::operation::RootDeadline::at`]. The returned error is the
     /// observed non-ready lifecycle state and carries no application cause.
-    pub fn admit(
+    pub fn admit_root(
         &self,
-        deadline: Instant,
-    ) -> Result<crate::operation::OperationContext, Readiness> {
+        deadline: crate::operation::RootDeadline,
+    ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
         if readiness != Readiness::Ready {
             return Err(readiness);
         }
         let parent = self.shared.operation_token();
-        Ok(crate::operation::OperationContext::under(deadline, &parent))
+        Ok(crate::operation::OperationOwner::under(deadline, &parent))
     }
 }
 

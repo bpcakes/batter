@@ -1,7 +1,7 @@
 use super::*;
 use batter_core::{
     command::{Command, CommandCause},
-    operation::{Interruption, OperationContext},
+    operation::Interruption,
 };
 
 #[tokio::test(flavor = "current_thread")]
@@ -13,7 +13,9 @@ async fn command_owner_loss_preserves_dispatch_through_work_and_cleanup_destruct
     let (started, starting) = oneshot::channel();
     let command = driver.within("command.owner", || {
         Command::new(
-            OperationContext::new(second).unwrap(),
+            batter_core::operation::OperationOwner::new(second)
+                .unwrap()
+                .into_context(),
             CleanupBudget::new(second, second, second).unwrap(),
             |scope| {
                 Box::pin(async move {

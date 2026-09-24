@@ -3,7 +3,7 @@ use super::{
     policy::{Failure, Policy},
     support::Result,
 };
-use batter_core::operation::{OperationContext, OperationError};
+use batter_core::operation::{OperationError, OperationOwner};
 use batter_sqlx::{
     PgPolicyScope, PgProfiledPool, PgSessionProfile, run_atomic_fail_fast_with_in,
     run_atomic_profiled_fail_fast_with_in,
@@ -31,7 +31,8 @@ async fn fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellat
         )?;
         for profiled in [false, true] {
             for completed in [false, true] {
-                let context = OperationContext::new(Duration::from_secs(10))?;
+                let owner = OperationOwner::new(Duration::from_secs(10))?;
+                let context = owner.context().clone();
                 let work = async |mut scope: PgPolicyScope<'_, i64, Policy>| {
                     let error = scope
                         .sql(async |sql| {
@@ -41,7 +42,7 @@ async fn fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellat
                         .await
                         .unwrap_err();
                     assert!(matches!(error, Failure::Sql(sqlx::Error::Database(_))));
-                    context.cancel();
+                    owner.cancel();
                     if completed {
                         // A returned original error wins over fallback rollback evidence.
                         Err(error)

@@ -44,14 +44,15 @@ RUNLIMIT_DEFAULT = ["cargo", "test", "-p", "runlimit-core", "-p", "runlimit-memo
 RUNLIMIT_RELEASE = ["cargo", "test", "-p", "runlimit-memory", "--release", "--locked",
                     "corrupt_quota_state_fails_closed_in_release_builds"]
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
+FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
 
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     for labels, commands in [(["core-library", "facade-library", "runner-controls", "smoke-controls"],
                               [CORE_CHECK, FACADE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
-                             (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls"],
-                              [REFERENCE_RUNNER_TESTS, SQLX_RUNNER_TESTS, FACADE_FEATURES]),
+                             (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls", "facade-cache-controls"],
+                              [REFERENCE_RUNNER_TESTS, SQLX_RUNNER_TESTS, FACADE_FEATURES, FACADE_CACHE_CONTROLS]),
                              (["runledger-workspace", "runledger-graph-controls", "runledger-consumer", "runledger-tool-controls"],
                               [RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS, RUNLEDGER_CONSUMER, RUNLEDGER_TOOL_CONTROLS]),
                              (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),

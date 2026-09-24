@@ -1,5 +1,7 @@
 use super::*;
-use std::{pin::Pin, task::Context};
+use std::{pin::Pin, sync::Mutex, task::Context};
+
+type CommandOwner = Arc<Mutex<Option<batter_core::command::RunningCommand<u32, &'static str>>>>;
 
 #[derive(Clone, Copy)]
 enum Interrupt {
@@ -8,9 +10,9 @@ enum Interrupt {
 }
 
 impl Interrupt {
-    fn apply(self, context: &OperationContext, cx: &mut Context<'_>) {
+    fn apply(self, context: &OperationContext, owner: &CommandOwner, cx: &mut Context<'_>) {
         match self {
-            Self::Cancel => context.cancel(),
+            Self::Cancel => owner.lock().unwrap().as_ref().unwrap().cancel(),
             Self::Expire => {
                 let mut advancing = Box::pin(tokio::time::advance(Duration::from_secs(11)));
                 let _ = advancing.as_mut().poll(cx);
@@ -29,6 +31,7 @@ impl Interrupt {
 
 struct Completing {
     context: OperationContext,
+    owner: CommandOwner,
     interrupt: Interrupt,
     during_poll: bool,
     fail: bool,
@@ -39,7 +42,7 @@ impl Future for Completing {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.during_poll {
-            self.interrupt.apply(&self.context, cx);
+            self.interrupt.apply(&self.context, &self.owner, cx);
         }
         Poll::Ready(if self.fail {
             Err("original failure")
@@ -54,6 +57,7 @@ impl Drop for Completing {
         if !self.during_poll {
             self.interrupt.apply(
                 &self.context,
+                &self.owner,
                 &mut Context::from_waker(std::task::Waker::noop()),
             );
         }
@@ -65,6 +69,8 @@ async fn completion_boundary(interrupt: Interrupt, during_poll: bool) {
         let closed = Arc::new(AtomicBool::new(false));
         let closing = closed.clone();
         let parent = context();
+        let owner: CommandOwner = Arc::new(Mutex::new(None));
+        let work_owner = Arc::clone(&owner);
         let command = Command::new(parent.clone(), budget(), move |scope| {
             scope
                 .reserve_cleanup("resource")
@@ -75,13 +81,16 @@ async fn completion_boundary(interrupt: Interrupt, during_poll: bool) {
                 });
             Box::pin(Completing {
                 context: scope.context().clone(),
+                owner: work_owner,
                 interrupt,
                 during_poll,
                 fail,
             })
         })
         .start();
-        let report = command.wait().await.unwrap();
+        let observer = command.observer();
+        *owner.lock().unwrap() = Some(command);
+        let report = observer.wait().await.unwrap();
         assert_eq!(
             report.interruption_after_work,
             during_poll.then(|| interrupt.reason())

@@ -2,7 +2,6 @@ use batter_core::{
     BoxError, RegistrationError,
     cleanup::CleanupBudget,
     lifecycle::{ManagedComponent, ManagedSettlement, ShutdownBudget, Supervisor},
-    operation::OperationContext,
     registration::RegistrationTarget,
 };
 use std::{
@@ -83,7 +82,11 @@ fn invalid_and_duplicate_managed_registration_release_inert_captures() {
     let invoked = Arc::new(AtomicUsize::new(0));
     let dropped = Arc::new(AtomicUsize::new(0));
     let mut supervisor = supervisor();
-    let context = || OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = || {
+        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context()
+    };
     supervisor
         .registration()
         .register_managed("native", context(), |_| {

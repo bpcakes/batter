@@ -1,6 +1,6 @@
 use batter_core::{
     lifecycle::{ShutdownBudget, Supervisor},
-    operation::{Interruption, OperationContext, OperationError},
+    operation::{Interruption, OperationError},
 };
 use batter_sqlx::verification::{
     AuthorityPolicyBuilder, DiscoveryScope, ExactRoleManifest, Identifier, MigrationExpectation,
@@ -45,10 +45,11 @@ fn lazy_pool() -> sqlx::PgPool {
 #[tokio::test]
 async fn inert_and_interrupted_calls_do_not_acquire() {
     let pool = lazy_pool();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+    let context = owner.context().clone();
     drop(PgLease::acquire(&pool, &context));
     drop(probe(&pool, &context));
-    context.cancel();
+    owner.cancel();
     assert!(matches!(
         PgLease::acquire(&pool, &context).await,
         Err(OperationError::Interrupted(Interruption::Cancelled))
@@ -58,7 +59,10 @@ async fn inert_and_interrupted_calls_do_not_acquire() {
         Err(OperationError::Interrupted(Interruption::Cancelled))
     ));
     assert_eq!(pool.size(), 0);
-    let expired = OperationContext::at(tokio::time::Instant::now());
+    let expired = batter_core::operation::OperationOwner::at(
+        batter_core::operation::RootDeadline::at(tokio::time::Instant::now()),
+    )
+    .into_context();
     assert!(matches!(
         probe(&pool, &expired).await,
         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
@@ -83,8 +87,9 @@ async fn interrupted_valid_plans_do_not_acquire() {
     .unwrap()
     .compile()
     .unwrap();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
-    context.cancel();
+    let owner = batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
+    owner.cancel();
+    let context = owner.context().clone();
     assert!(matches!(
         verify_sqlx_migrations(&pool, &context, &ledger).await,
         Err(OperationError::Interrupted(Interruption::Cancelled))
@@ -125,7 +130,9 @@ fn invalid_policy_drafts_fail_before_an_executable_value_exists() {
 async fn closed_pool_failure_is_native_and_distinct_from_interruption() {
     let pool = lazy_pool();
     pool.close().await;
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let Err(OperationError::Failed(error)) = probe(&pool, &context).await else {
         panic!("expected native failure")
     };

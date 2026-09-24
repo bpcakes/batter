@@ -1,6 +1,5 @@
 use super::support::{Result, require};
 use super::{AuthorityFixture, exec, quote};
-use batter_core::operation::OperationContext;
 use batter_sqlx::verification::{
     AllowedPrivilege, AuthorityPolicyBuilder, DatabasePolicy, DiscoveryScope, FindingKind,
     Identifier, ObjectPrivilege, ParameterName, ParameterPolicy, PublicGrant, PublicObject,
@@ -15,7 +14,7 @@ pub(super) async fn inspect(
     let policy = draft.clone().build()?;
     Ok(verify_authority(
         pool,
-        &OperationContext::new(Duration::from_secs(10))?,
+        &batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context(),
         &policy,
     )
     .await?)

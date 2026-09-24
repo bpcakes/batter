@@ -143,7 +143,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "fn main() {}",
     ]
     if "at-rest" in chosen:
-        lines.insert(1, "use batter::at_rest::{Context, Keyring, MacKey};")
+        lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
     if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
@@ -214,7 +214,7 @@ def check_graph(metadata: dict, selected: tuple[str, ...], known: set[tuple[str,
 
 
 def run_positive_case(cargo: list[str], host: str, root_lock: bytes,
-                      known: set[tuple[str, str, str | None]], parent: Path,
+                      known: set[tuple[str, str, str | None]], parent: Path, target: Path,
                       selected: tuple[str, ...]) -> None:
     label = "-".join(selected) or "default"
     case = parent / f"consumer-{label}"
@@ -224,7 +224,7 @@ def run_positive_case(cargo: list[str], host: str, root_lock: bytes,
     (case / "src/main.rs").write_text(facade_source(selected))
     metadata = run_metadata(cargo, host, case)
     check_graph(metadata, selected, known)
-    execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")], case)
+    execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(target)], case)
     if (ROOT / "Cargo.lock").read_bytes() != root_lock:
         raise RuntimeError("repository Cargo.lock changed during facade consumer checks")
 
@@ -276,6 +276,8 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "use batter_at_rest::Keyring as DirectKeyring;",
             "fn at_rest_identity(_: DirectKeyring) {}",
             "const _: fn(Keyring) = at_rest_identity;",
+            "fn borrowed_identity(_: batter_at_rest::BorrowedSealedPayload<'_>) {}",
+            "const _: for<'a> fn(batter::at_rest::BorrowedSealedPayload<'a>) = borrowed_identity;",
         ]
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines += [
@@ -341,7 +343,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Path,
+def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Path, target: Path,
                       selected: tuple[str, ...]) -> None:
     label = "-".join(selected) or "default"
     case = parent / f"identity-{label}"
@@ -354,11 +356,11 @@ def run_identity_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
         packages = [package for package in metadata["packages"] if package["name"] == name]
         if len(packages) != 1:
             raise RuntimeError(f"identity consumer resolved multiple {name} foundations")
-    execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")], case)
+    execute(cargo + ["check", "--locked", "--offline", "--target-dir", str(target)], case)
 
 
 def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
-                                known: set[tuple[str, str, str | None]], parent: Path) -> None:
+                                known: set[tuple[str, str, str | None]], parent: Path, target: Path) -> None:
     """Execute the generic anyhow/BoxError lifecycle fixture as an external consumer."""
     case = parent / "checked-completion"
     (case / "src").mkdir(parents=True)
@@ -378,7 +380,7 @@ def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
     check_graph(metadata, (), known)
     test_output = execute(
         cargo + ["test", "--locked", "--offline", "--test", "checked_completion",
-                 "--target-dir", str(case / "target")], case, timeout=900,
+                 "--target-dir", str(target)], case, timeout=900,
     )
     result = re.search(
         r"(?m)^test result: ok\. (8) passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
@@ -407,7 +409,7 @@ def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
     for label, source, expected in negatives:
         (case / "src/main.rs").write_text(source)
         outcome = run_parallel(
-            [cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")]],
+            [cargo + ["check", "--locked", "--offline", "--target-dir", str(target)]],
             timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
         )[0]
         diagnostics = (outcome.stdout + outcome.stderr).decode(errors="replace")
@@ -435,7 +437,7 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     ]
 
 
-def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Path,
+def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Path, target: Path,
                       selected: tuple[str, ...], disabled: str, symbol: str) -> None:
     label = "-".join(selected) or "default"
     case = parent / f"negative-{label}-{disabled}"
@@ -450,7 +452,7 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
             f"{selected}: disabled {disabled} activated batter-runlimit/axum"
         )
     outcome = run_parallel(
-        [cargo + ["check", "--locked", "--offline", "--target-dir", str(case / "target")]],
+        [cargo + ["check", "--locked", "--offline", "--target-dir", str(target)]],
         timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
     )[0]
     diagnostics = (outcome.stdout + outcome.stderr).decode(errors="replace")
@@ -526,6 +528,13 @@ def check_facade_example_imports(roots: tuple[str, ...]) -> None:
         )
 
 
+def consumer_target(metadata: dict, rustc_info: str) -> Path:
+    # Cargo resolves target-directory environment/configuration relative to ROOT.
+    # Keep artifacts across disposable consumers and separate compiler identities.
+    compiler = hashlib.sha256(rustc_info.encode()).hexdigest()[:16]
+    return Path(metadata["target_directory"]) / "facade-features" / compiler
+
+
 def main() -> int:
     requested_toolchain = os.environ.get("RUSTUP_TOOLCHAIN")
     toolchain = requested_toolchain or execute(["rustup", "show", "active-toolchain"], ROOT).split()[0]
@@ -536,6 +545,7 @@ def main() -> int:
         cargo + ["metadata", "--format-version", "1", "--filter-platform", host,
                  "--all-features", "--locked"], ROOT
     ))
+    target = consumer_target(baseline, rustc_info)
     declared_features(baseline)
     internal_roots = internal_batter_crate_roots(baseline)
     check_facade_import_detector(internal_roots)
@@ -544,21 +554,21 @@ def main() -> int:
     root_lock = (ROOT / "Cargo.lock").read_bytes()
     print(
         f"facade feature consumers: toolchain={toolchain} host={host} "
-        f"cargo-lock-sha256={hashlib.sha256(root_lock).hexdigest()}",
+        f"cargo-lock-sha256={hashlib.sha256(root_lock).hexdigest()} target={target}",
         flush=True,
     )
     with tempfile.TemporaryDirectory(prefix="batter-facade-features-") as directory:
         parent = Path(directory)
         for selected in feature_cases():
-            run_positive_case(cargo, host, root_lock, known, parent, selected)
+            run_positive_case(cargo, host, root_lock, known, parent, target, selected)
             print(f"facade features {','.join(selected) or 'none'}: graph and compilation passed", flush=True)
         for selected, disabled, symbol in negative_cases():
-            run_negative_case(cargo, host, root_lock, parent, selected, disabled, symbol)
+            run_negative_case(cargo, host, root_lock, parent, target, selected, disabled, symbol)
             print(f"facade negative {','.join(selected) or 'none'}: {symbol} gated as expected", flush=True)
         selected = tuple(sorted(EXPECTED_FEATURES))
-        run_identity_case(cargo, host, root_lock, parent, selected)
+        run_identity_case(cargo, host, root_lock, parent, target, selected)
         print("facade identity all-features: compatibility passed", flush=True)
-        run_checked_completion_case(cargo, host, root_lock, known, parent)
+        run_checked_completion_case(cargo, host, root_lock, known, parent, target)
     if (ROOT / "Cargo.lock").read_bytes() != root_lock:
         raise RuntimeError("repository Cargo.lock changed during facade feature checks")
     print("facade feature isolation, negative gating, and identity checks passed", flush=True)

@@ -81,8 +81,32 @@ acknowledged rejection, caught terminal failure, abandoned work, paired recovery
 causes, setup failure, and commit/rollback uncertainty. Native
 `runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
 across SQL, intent recording, queue operations and required-conflict rollback.
-The policy delivery inventory included 42 atomic tests (105 total); execution
-on macOS arm64 passed all 105 cases on Rust 1.98.1 and 1.94.0 with PostgreSQL
+The context unit suite cancels from policy mapping of a closed-pool begin error
+through both `_with_in` wrappers. Cancellation policies retain an `OperationOwner`;
+the wrappers receive only its `OperationContext`. `atomic_live::policy_context`
+does the same with a deferred commit failure, asserting the provisional output and native
+SQLSTATE/constraint survive as `OperationError::Failed`. The native policy test
+also covers intent observation and resource enqueue: real CHECK violations pass
+through `From<runledger_postgres::Error>`, retain their SQLx causes, and permit
+subsequent application writes and named operations to commit after recovery.
+Two later native policy cases use real PostgreSQL failures: required-intent
+storage conversion retains `RequiredIntentError::Storage` and allows a later
+write after savepoint recovery; termination of the transaction backend before a
+named required-intent call produces a terminal scope error, retains the same
+cause in `ScopeLost`, and does not commit an earlier provisional write.
+Focused runs of the two later native cases are recorded in `batter-rpgk`.
+The `batter-runledger` crate-level doctest implements all five failure-policy
+handlers using only adapter imports, covering the direct consumer export surface
+including `PgTransactionError`.
+The earlier `batter-rpgk` snapshot had an exact SQLx live inventory of 44 atomic
+tests (107 total). On that earlier snapshot, all 107 passed on both Rust 1.98.1
+and 1.94.0 on macOS arm64 with PostgreSQL 18.6, along with both full
+verification scripts and five HTTP smoke modes per toolchain. Its final Jig
+test rerun passed; initial suite failures and their unchanged reruns are
+recorded in the owning Bead.
+
+The original `batter-a0qb` evidence records 105 passing cases on macOS arm64
+with Rust 1.98.1 and 1.94.0 and PostgreSQL
 18.6. Both full verification scripts and five HTTP smokes per toolchain passed;
 required Jig gates passed. The first minimum-toolchain workspace run encountered
 a Docker port-resolution failure in the existing `job_read_scope` fixture. That
@@ -276,7 +300,8 @@ does not establish indefinite survival. See the [versioned source rationale](ref
 The existing matrix includes `--workspace --all-features --all-targets`; no new
 runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inputs
 cover both the new fixtures and reused control modules, so source changes stale
-the test receipt. All five HTTP executable smoke profiles remain separate.
+the test receipt. All five HTTP executable smoke profiles run in the independent
+`api:http-smoke` target of the complete verification profile.
 
 The startup rustdocs are executable: the legacy example acquires a native capacity permit, starts
 a channel service, waits for acknowledged readiness, handles a request, and
@@ -433,8 +458,19 @@ the existing scheduling, shutdown-cause, HTTP composition and dispatch suites.
 
 ```sh
 bash scripts/verify.sh --bootstrap  # Initial formatter + dependency lock + checks.
-bash scripts/verify.sh             # Subsequent locked checks.
+bash scripts/verify.sh             # Fresh complete Jig verification with receipts.
+bash scripts/verify.sh --plan-id <id>  # Same required profile, reusing fresh plan evidence.
 ```
+
+Choose one of the non-bootstrap commands above. Both delegate to Jig; the profile
+builds the HTTP example and runs all five process smoke modes, checks rustdoc,
+and retains both workspace/all-feature and native Runlimit/default-feature Clippy.
+There is no separate full-matrix or HTTP rerun after a successful profile.
+
+Run local verification once with the current release pinned in
+`rust-toolchain.toml` (1.98.1). Exact Rust 1.94.0 verification is CI-only unless
+explicitly requested to reproduce an MSRV failure. Upgrade the local pin and
+pinned CI entries together; a weekly CI run checks floating `stable`.
 
 Python 3.9 or newer is required by the scheduling subprocess tests, including plain
 `cargo test`; the verification script checks that prerequisite before running Rust.
@@ -447,7 +483,8 @@ the gate; this semantic test is mandatory and does not silently skip when IPv6
 is unavailable. The example readiness tests run automatically
 under `--all-targets`; they are not ignored and contact only test-owned listeners
 on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
-HTTP process smoke commands remain a separate required step.
+HTTP process smokes are a required `api:http-smoke` sibling in the complete Jig profile.
+The standalone commands below remain useful for focused troubleshooting.
 
 HTTP text assertions check completion fields after the completion message; span
 fields cannot satisfy the event-field oracle. `scripts/test_smoke_http.py` includes
@@ -477,7 +514,7 @@ and producer/worker tests through Docker. The explicit live runner below still
 provides separate Batter adapter/reference compatibility evidence. A Cargo.lock generated by
 the actual resolver must be committed after the first successful run.
 
-`scripts/check-batter-at-rest-portability.sh` separately selects exact Rust
+CI's `scripts/check-batter-at-rest-portability.sh` separately selects exact Rust
 1.94.0, copies only the tracked `crates/batter-at-rest` candidate into a neutral
 temporary root, rejects workspace/path/config leakage, runs detached tests and
 the independent Node.js fixed-vector generator, runs all-target checks, creates
@@ -488,15 +525,24 @@ fails when standalone metadata or dependency-source boundaries regress.
 
 At-rest decoder tests exercise every truncation and every single-byte replacement
 of a composite sample, requiring canonical re-encoding after successful decode.
-The decoder validates trailing data before copying the body. These are bounded
-regressions, not an exhaustive fuzzing or measured allocation claim. Crypto tests
+Borrowed and owned decoders share structural parsing, with explicit expected-error
+cases for nested lengths, version, key ID, body bounds and trailing bytes. Format
+tests pad a valid encoded envelope beyond the header limit, so removing the size
+guard changes the asserted error; the body test supplies an actual byte beyond
+the maximum. Public consumer and independent Node fixture cases open both views
+and check that the borrowed body points at the exact encoded subslice. Rustdoc
+rejects retaining the borrowed payload after its encoding or its decrypt view
+after the decoded header owner, with a compiling scoped counterpart. Parsing validates trailing
+data before owned decode copies the body. These are bounded regressions and
+pointer/lifetime evidence, not exhaustive fuzzing or a measured allocation claim. Crypto tests
 cover failure at each seal randomness request, changed-key rewrap randomness
 failure, and successful wrapper rotation with a corrupt body that still fails open.
 Facade consumer graphs reject the leaf's `test-support` feature and check the
 AES/GCM dependency family; shared hashes used by other adapters are not treated as
 exclusive evidence of at-rest feature selection.
 
-CI targets MSRV 1.94.0, the pinned 1.98.1 toolchain, and stable. CI requires the
+Regular CI targets MSRV 1.94.0 and the pinned 1.98.1 toolchain. The weekly
+Linux verification job targets floating `stable`. CI requires the
 checked-in lockfile and uses the strict verification path; missing lockfiles fail
 before cache metadata resolution. [Run 35580602864](https://github.com/bpcakes/batter/actions/runs/35580602864)
 passed the Linux verification matrix and the focused macOS jobs for commit
@@ -509,10 +555,16 @@ hosted PostgreSQL validation.
 
 The Rust workflow runs on pull requests, pushes to `master`, merge groups and
 manual dispatch. Feature-branch pushes use their PR run instead of starting a
-second complete matrix; branches without a PR can use manual dispatch.
-Superseded runs for the same PR/ref are cancelled. All seven matrix jobs remain:
-three Linux verification jobs, two focused macOS jobs, and two native Runlimit
-PostgreSQL jobs. Existing test, lint, documentation and HTTP smoke commands remain
+second complete matrix; branches without a PR can use manual dispatch. Linux
+verification calls the same complete Jig profile, so its former standalone HTTP
+step is removed. The focused macOS job retains its explicit smoke step.
+Superseded runs for the same PR/ref are cancelled. Regular CI runs six matrix jobs:
+two Linux verification jobs, two focused macOS jobs, and two native Runlimit
+PostgreSQL jobs. Mondays at 04:23 UTC, the scheduled run executes only the Linux
+verification job with `stable`, including all five HTTP smoke profiles. Its
+concurrency group is separate from regular CI. Scheduled execution starts after
+the workflow reaches the default branch; no hosted result for this change is
+claimed. Existing test, lint, documentation and HTTP smoke commands remain
 required, with no cache-hit condition bypassing them. Job timeouts are 45 minutes
 for full Linux verification, 30 for macOS and 15 for native Runlimit PostgreSQL.
 
@@ -719,7 +771,6 @@ Their [API manifest](reference-compatibility.md) states the exact scope and pins
 
 ```sh
 cargo check -p batter-example-reference-service --all-targets --all-features --locked
-RUSTUP_TOOLCHAIN=1.94.0 cargo check -p batter-example-reference-service --all-targets --all-features --locked
 POSTGRES_TEST_ADMIN_URL='postgres://postgres:fixture@127.0.0.1:5432/postgres?sslmode=disable' \
 POSTGRES_TEST_OBSERVER_URL='postgres://postgres:fixture@127.0.0.1:5433/postgres?sslmode=disable' \
   bash scripts/test_reference_live.sh
@@ -806,6 +857,26 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Jig verification
 
+Facade consumer checks reuse artifacts under
+`<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory
+comes from root Cargo metadata, honoring `CARGO_TARGET_DIR` and Cargo configuration;
+the digest covers `rustc -vV`, including its version and host. Temporary manifests,
+source files and reconciled lockfiles remain independent. Every graph check,
+positive compilation, expected negative diagnostic and external runtime test
+still executes. `scripts/test_facade_features.py` exercises an enabled at-rest
+consumer followed by disabled imports against the same cache, and requires the
+negative-test oracle to reject a deliberately enabled import. Its final disabled
+import also guards against the preceding successful consumer masking rejection.
+
+The workspace test profile optimizes only `batter-at-rest` at level 2, with debug
+assertions and integer overflow checks explicitly enabled. This retains the full
+64 MiB seal/open boundary test and every existing test selection. Level 2 avoids
+the unoptimized shared generic instantiations that limited the measured level-1
+package override. Other packages retain their existing profiles, including the
+native release-mode regression. Detached at-rest package checks retain Cargo's
+default profile because the override belongs to this workspace, not the leaf
+manifest. See [Cargo profile semantics](references.md#cargo-test-artifacts-and-profiles-2026-09-24).
+
 The repository pins Jig v0.5.0 at commit
 `a328c17910c40603327c73329e5158a42c37417d` with contract v8 for scoped
 target freshness. The earlier unreleased contract v9 epoch was migrated to v8;
@@ -827,8 +898,10 @@ file-budget gates. Both test aliases and `verify.sh` use `python3
 scripts/test_matrix.py`. It checks minimal core compilation, the process-runner
 regressions and SQLx smoke controls first, then overlaps the core and workspace runtime test commands,
 then runs doctests if both passed. Both dependency feature configurations remain
-covered. The verification script additionally checks rustdoc; its two-toolchain
-matrix and HTTP smoke remain required.
+covered. `verify.sh` delegates to this profile rather than invoking the matrix
+again. The independent `api:docs` and `api:http-smoke` targets require rustdoc with
+warnings denied and all five process profiles against the Cargo-reported build
+artifact. Local verification uses the pinned toolchain once; CI owns the MSRV matrix.
 
 For final backend verification, a fresh passing `api:test` receipt from the current
 plan's gate/profile run also satisfies the final-test requirement. Inspect
@@ -836,13 +909,17 @@ plan's gate/profile run also satisfies the final-test requirement. Inspect
 before deciding to run `scripts/jig check test` again. Reuse requires unchanged
 check inputs, command/configuration, toolchain and relevant environment/prerequisites,
 and no later unresolved failure. Toolchain and external-state identity are not
-established by Jig's fingerprint alone. A plain `verify.sh` invocation does not
-produce a Jig receipt, and this rule does not replace either supported-toolchain
-check, rustdoc or HTTP smokes.
+established by Jig's fingerprint alone. `bash scripts/verify.sh --plan-id <id>`
+uses `work check` to reuse those receipts and execute missing or stale required
+targets. Without a plan ID, `verify.sh` uses `jig check --profile verify` for a fresh
+run with receipts and a policy comparison against `origin/master` (which CI
+fetches). The complete profile, rather than `api:test` alone, includes
+rustdoc and HTTP smokes. CI's MSRV verification remains separate.
 
-The `verify` profile requires independent Clippy, formatting, tests, contract and
-file-budget targets. Keep these as siblings; `depends_on` is for actual execution
-prerequisites. The Rust targets declare `inputs_policy = "exhaustive"`: workspace
+The `verify` profile requires independent Clippy, formatting, tests, rustdoc, HTTP
+smoke, contract and file-budget targets. Keep these as siblings; `depends_on` is for actual execution
+prerequisites. The Rust targets, including the rustdoc and HTTP smoke siblings, declare
+`inputs_policy = "exhaustive"`: workspace
 manifests and lockfiles, toolchain/Cargo/lint configuration, package source,
 examples, tests, benches and migrations, and shared test sources. Test targets
 also cover the Python helpers and shell entrypoints under `scripts/`. When a
@@ -894,8 +971,8 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The matrix currently executes four batches with command counts `[4, 1, 3, 1]`.
-Runner controls inject a failure at every one of those nine command positions and
+The matrix executes seven batches with command counts `[4, 4, 4, 3, 1, 4, 3]`.
+Runner controls inject a failure at every one of those 23 command positions and
 require that no later batch starts; surplus mocked outcomes cannot stand in for an
 unexecuted runtime or doctest batch.
 
@@ -1944,8 +2021,9 @@ requests, with no durable control job before or after either shutdown. A normal
 child exit additionally requires the checked shutdown report to contain exactly
 one successful cleanup-stack `postgres.pool` record for the close hook registered
 by the application pool's `pool_in` call.
-Full workspace/two-toolchain and fresh agent/review acceptance remain separate
-requirements. Owning Bead `batter-lp2.4` records what actually executed for this
+Full workspace and fresh agent/review acceptance remain separate requirements;
+local checks use the pinned compiler and CI owns MSRV verification.
+Owning Bead `batter-lp2.4` records what actually executed for this
 scope.
 
 ### Protected startup consumer process cases
@@ -2158,8 +2236,8 @@ supplies a public fixture key, needs no database or consumer patches, and checks
 execution markers only after successful process exit. Both fixtures are Jig inputs.
 
 The source workspace's active compiler is passed explicitly to Cargo; an explicit
-`RUSTUP_TOOLCHAIN` takes precedence. Run the check with `RUSTUP_TOOLCHAIN=1.94.0`
-for the minimum compiler. The root lock remains unchanged; the temporary lock may
+`RUSTUP_TOOLCHAIN` takes precedence. CI selects `RUSTUP_TOOLCHAIN=1.94.0`
+for the minimum compiler; local checks use the pinned default. The root lock remains unchanged; the temporary lock may
 only prune unused packages. `python3 -m unittest discover -s scripts -p
 test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
 failure controls. Both commands are part of the bounded root test matrix. The same

@@ -34,10 +34,9 @@
 
 ## Common commands
 
-- Install Python 3.11 or newer, Node.js, and `jq`, then install the gate toolchain once with `rustup toolchain install 1.94.0 --profile minimal`; Rustup's minimal profile includes Cargo.
-- `scripts/check-batter-at-rest-portability.sh` from the Batter checkout; this is the complete isolated Rust 1.94.0 detached-source, verified-package, unpacked-artifact, and public-consumer gate.
+- Local checks use the repository's pinned toolchain. CI installs Python 3.11 or newer, Node.js, `jq`, and exact Rust 1.94.0 for `scripts/check-batter-at-rest-portability.sh`, the complete detached-source, verified-package, unpacked-artifact, and public-consumer gate. Run that MSRV gate locally only when explicitly asked to reproduce a CI failure.
 - `cargo test -p batter-at-rest`
 - `cargo check -p batter-at-rest --all-targets`
 - `cargo clippy -p batter-at-rest --all-targets --locked -- -D warnings`
 - `node crates/batter-at-rest/tests/fixtures/generate-envelope-v1.mjs --check`
-- From a detached copy of this directory: `cargo +1.94.0 test`, `cargo +1.94.0 check --all-targets`, and `cargo +1.94.0 package --allow-dirty`.
+- For local detached checks, explicitly select the repository's pinned compiler; the detached copy does not inherit its toolchain file. CI's portability script selects exact Rust 1.94.0.

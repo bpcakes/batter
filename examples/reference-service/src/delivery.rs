@@ -19,7 +19,7 @@
 //! # async fn submit(pool: runledger_postgres::RunledgerDatabase) -> Result<(), Box<dyn std::error::Error>> {
 //! let owner = OwnerId::new(Uuid::from_u128(1))?;
 //! let record_id = Uuid::from_u128(2);
-//! let context = OperationContext::new(Duration::from_secs(2))?;
+//! let context = batter::operation::OperationOwner::new(Duration::from_secs(2))?.into_context();
 //! let service = DeliveryService::new(pool);
 //! let accepted = service.submit(&context, owner, record_id, SubmitDelivery {
 //!     expected_generation: 3,

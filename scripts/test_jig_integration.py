@@ -35,7 +35,8 @@ class JigIntegrationTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.repo = Path(temporary.name)
         for name in [".jig.toml", ".agent/jig-contract.json", ".gitattributes", ".mcp.json",
-                     "scripts/jig", "scripts/install-jig.sh", "scripts/check_file_budget.sh"]:
+                     "scripts/jig", "scripts/install-jig.sh", "scripts/check_file_budget.sh",
+                     "scripts/verify.sh"]:
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, path)
@@ -121,7 +122,7 @@ class JigIntegrationTests(unittest.TestCase):
         )
         config = self.repo / ".jig.toml"
         text = config.read_text()
-        for label in ["clippy", "fmt", "test", "test_locked"]:
+        for label in ["clippy", "fmt", "test", "test_locked", "docs", "http_smoke"]:
             text = re.sub(rf'^api_{label}_command = .*$',
                           lambda _, label=label: f'api_{label}_command = '
                           + json.dumps(f"python3 scripts/fixture_check.py {label}"),
@@ -135,6 +136,7 @@ class JigIntegrationTests(unittest.TestCase):
             "test-support/temp_dir.rs": "// shared test fixture\n",
             ".beads/issues.jsonl": '{"status":"open"}\n',
             "README.md": "Example documentation\n",
+            "Cargo.lock": "# Fixture lockfile\n",
             "scripts/example_helper.py": "# example helper\n",
         }.items():
             path = self.repo / name
@@ -175,12 +177,41 @@ class JigIntegrationTests(unittest.TestCase):
                 else:
                     self.commit("tracker closeout")
                 current = self.freshness_check(plan)
-                for action in ["clippy", "fmt", "test"]:
-                    self.assertEqual(self.execution_count(action), 1)
+                for action in ["clippy", "fmt", "test", "docs", "http-smoke"]:
+                    self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
                     self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
                     self.assertEqual(current[action]["disposition"], "reused")
                 self.assertNotEqual(current["file-budget"]["receipt_id"],
                                     original["file-budget"]["receipt_id"])
+
+    def test_verify_without_plan_executes_the_complete_profile(self):
+        self.prepare_freshness()
+        result = subprocess.run(
+            ["bash", "scripts/verify.sh"], cwd=self.repo,
+            env=dict(self.env, JIG_DEV_BIN=str(self.runtime)),
+            text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for action in ["clippy", "fmt", "test", "docs", "http_smoke"]:
+            self.assertEqual(self.execution_count(action), 1)
+
+    def test_verify_wrapper_reuses_complete_profile_and_fails_on_smoke_error(self):
+        plan = self.prepare_freshness()
+        env = dict(self.env, JIG_DEV_BIN=str(self.runtime))
+        command = ["bash", "scripts/verify.sh", "--plan-id", plan]
+        for _ in range(2):
+            result = subprocess.run(command, cwd=self.repo, env=env,
+                                    text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for action in ["clippy", "fmt", "test", "docs", "http_smoke"]:
+            self.assertEqual(self.execution_count(action), 1)
+        runner = self.repo / "scripts/fixture_check.py"
+        runner.write_text(runner.read_text() +
+                          "if sys.argv[1] == 'http_smoke': sys.exit(9)\n")
+        result = subprocess.run(command, cwd=self.repo, env=env,
+                                text=True, capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("http-smoke", result.stdout + result.stderr)
 
     def test_relevant_source_and_helpers_invalidate_test_pass(self):
         plan = self.prepare_freshness()
@@ -205,8 +236,8 @@ class JigIntegrationTests(unittest.TestCase):
         (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
         self.jig("check", "repo:file-budget", "--plan-id", plan)
         current = self.freshness_check(plan)
-        for action in ["clippy", "fmt", "test"]:
-            self.assertEqual(self.execution_count(action), 1)
+        for action in ["clippy", "fmt", "test", "docs", "http-smoke"]:
+            self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
             self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
 
     def test_restored_runtime_cache_runs_without_cargo(self):

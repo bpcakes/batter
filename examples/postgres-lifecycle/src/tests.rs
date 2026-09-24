@@ -10,7 +10,9 @@ async fn complete_startup(
 ) -> Result<(), BoxError> {
     let startup = Startup::scoped(
         supervisor,
-        OperationContext::new(Duration::from_secs(15)).unwrap(),
+        batter::operation::OperationOwner::new(Duration::from_secs(15))
+            .unwrap()
+            .into_context(),
         support::cleanup_budget(),
         move |_| Box::pin(async move { process_result(result) }),
     );
@@ -25,7 +27,9 @@ where
 {
     let startup = Startup::scoped(
         supervisor,
-        OperationContext::new(Duration::from_secs(15)).unwrap(),
+        batter::operation::OperationOwner::new(Duration::from_secs(15))
+            .unwrap()
+            .into_context(),
         support::cleanup_budget(),
         initialize,
     );

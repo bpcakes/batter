@@ -567,6 +567,204 @@ legacy_aliases = "inherited"
 runner = "inherited"
 target = "inherited"
 
+[[repository.actions]]
+source_state = "worktree"
+description = "Build workspace rustdoc with warnings denied."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "crates/batter-at-rest/README.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "runledger/*/Cargo.toml",
+    "runledger/*/build.rs",
+    "runledger/*/src/**",
+    "runledger/*/tests/**",
+    "runledger/*/examples/**",
+    "runledger/*/benches/**",
+    "runledger/*/migrations/**",
+    "runledger/*/.sqlx/**",
+    "runledger/migrations/**",
+    "runledger/.sqlx/**",
+    "runledger/README.md",
+    "runledger/clippy.toml",
+    "runledger/rustfmt.toml",
+    "runlimit/smoke/**",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/clippy.toml",
+    "runlimit/rustfmt.toml",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "docs"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_docs_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "inherited"
+inputs = "overridden"
+intent = "inherited"
+runner = "overridden"
+target = "inherited"
+
+[[repository.actions]]
+source_state = "worktree"
+description = "Build the HTTP example and run all five process smoke profiles."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "crates/batter-at-rest/README.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "runledger/*/Cargo.toml",
+    "runledger/*/build.rs",
+    "runledger/*/src/**",
+    "runledger/*/tests/**",
+    "runledger/*/examples/**",
+    "runledger/*/benches/**",
+    "runledger/*/migrations/**",
+    "runledger/*/.sqlx/**",
+    "runledger/migrations/**",
+    "runledger/.sqlx/**",
+    "runledger/README.md",
+    "runledger/clippy.toml",
+    "runledger/rustfmt.toml",
+    "runlimit/smoke/**",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/clippy.toml",
+    "runlimit/rustfmt.toml",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "http-smoke"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_http_smoke_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "inherited"
+inputs = "overridden"
+intent = "inherited"
+runner = "overridden"
+target = "inherited"
+
 # These checks are independent requirements. Keep policy checks out of
 # api:test dependencies so refreshing policy evidence does not rerun Rust tests.
 [[repository.profiles]]
@@ -593,6 +791,14 @@ action = "contract"
 component = "repo"
 action = "file-budget"
 
+[[repository.profiles.targets]]
+component = "api"
+action = "docs"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "http-smoke"
+
 [repository.profiles.provenance]
 id = "inferred"
 targets = "inherited"
@@ -603,7 +809,9 @@ scope_id = "01M1ZXBGBDQFCZ1JJ032N3T028"
 allow_global = false
 
 [commands]
-api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files"
+api_http_smoke_command = "python3 scripts/check_http_smokes.py"
+api_docs_command = "RUSTDOCFLAGS=\"${RUSTDOCFLAGS:-} -D warnings\" cargo doc --workspace --all-features --no-deps --locked"
+api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files && cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimit-http -p runlimit-axum --all-targets --locked -- -D warnings"
 api_fmt_command = "cargo fmt --all -- --check"
 api_test_command = "python3 scripts/test_matrix.py"
 api_test_locked_command = "python3 scripts/test_matrix.py"

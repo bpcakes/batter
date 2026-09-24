@@ -324,8 +324,8 @@ pub struct Attempt {
     /// One-based attempt number.
     pub number: u32,
     /// Cannot extend the original deadline. Cancelled when this attempt ends.
-    /// Cancelling this scope stops the retry sequence but does not cancel the
-    /// input execution context.
+    /// The callback observes cancellation here; it cannot request cancellation
+    /// through this context. A controller must retain owner authority separately.
     pub context: OperationContext,
 }
 
@@ -338,6 +338,44 @@ pub struct Attempt {
 /// [`RetryError::Interrupted`], even when the factory returned `Ok` in the same
 /// poll. The callback must not block or create detached work. Choose ONE retry
 /// owner across service/client/job layers.
+///
+/// A dedicated child owner lets a controller stop this sequence without
+/// cancelling its caller or sibling operations. The `Attempt` argument supplies
+/// only an observation and execution context; the closure explicitly retains
+/// the child owner:
+///
+/// ```
+/// use batter_core::{
+///     operation::{Interruption, OperationOwner},
+///     retry::{self, ReplaySafety, RetryDecision, RetryError, RetryPolicy},
+/// };
+/// use std::time::Duration;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let caller = OperationOwner::new(Duration::from_secs(5))?;
+/// let retry_owner = caller.context().child(Duration::from_secs(2))?;
+/// let sibling = caller.context().child(Duration::from_secs(2))?;
+/// let policy = RetryPolicy::new(1, Duration::from_millis(1), Duration::from_millis(1))?;
+/// let result = retry::execute(
+///     retry_owner.context(),
+///     "provider.read",
+///     ReplaySafety::Idempotent,
+///     &policy,
+///     |_| {
+///         retry_owner.cancel();
+///         async { Ok::<u8, std::io::Error>(7) }
+///     },
+///     |_| RetryDecision::Stop,
+/// ).await;
+/// assert!(matches!(result, Err(RetryError::Interrupted {
+///     reason: Interruption::Cancelled, ..
+/// })));
+/// assert!(caller.context().check().is_ok());
+/// assert!(sibling.context().check().is_ok());
+/// # Ok(())
+/// # }
+/// ```
 pub async fn execute<T, E, F, Fut, C>(
     context: &OperationContext,
     operation: &'static str,
@@ -369,9 +407,8 @@ where
 /// terminal and returns [`RetryExecutionError::AttemptDeadlineExceeded`]; it is
 /// not classified or retried. Cancellation observed in the input lineage or
 /// current [`Attempt`] scope and expiration of the original total deadline
-/// remain distinct [`RetryExecutionError::Interrupted`] outcomes. Explicitly
-/// cancelling [`Attempt::context`] stops the sequence without cancelling the
-/// input `context`.
+/// remain distinct [`RetryExecutionError::Interrupted`] outcomes. A caller that
+/// must stop the sequence retains ownership of the input context or its parent.
 ///
 /// Attempt interruption drops the owned future and cancels its child scope. It
 /// does not establish a remote effect's outcome or join detached work.
