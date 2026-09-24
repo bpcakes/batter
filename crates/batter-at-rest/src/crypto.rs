@@ -44,10 +44,71 @@ impl Keyring {
         )
     }
 
-    /// Authenticates the wrapped data key and returns current-key replacement metadata.
+    /// Authenticates the input wrapper and returns its descriptor paired with a
+    /// current-key replacement wrapper.
+    ///
+    /// This metadata-only operation does not read or authenticate a ciphertext
+    /// body. Persist the returned complete header with the original body using
+    /// a compare-and-swap against the complete input envelope or a revision
+    /// covering every header change. The storage owner must also fence obsolete
+    /// key policies and enforce the per-derived-key wrapper-encryption budget.
+    /// A decoded or reconstructed [`Envelope`] is only structurally validated;
+    /// this method does not turn the type into a general body-authentication proof.
+    ///
+    /// If the wrapper already uses the current key, it is authenticated first
+    /// and the exact original envelope is returned without requesting randomness.
+    ///
+    /// ```
+    /// use batter_at_rest::{Context, Envelope, KeyId, Keyring, SealedPayloadRef, SecretKey};
+    ///
+    /// let old_id = KeyId::new("old")?;
+    /// let new_id = KeyId::new("new")?;
+    /// let old = Keyring::new(old_id.clone(),
+    ///     [(old_id.clone(), SecretKey::from_bytes([7; 32]))])?;
+    /// let rotating = Keyring::new(new_id.clone(), [
+    ///     (old_id, SecretKey::from_bytes([7; 32])),
+    ///     (new_id, SecretKey::from_bytes([9; 32])),
+    /// ])?;
+    /// let context = Context::for_row("example", "record", b"owner", b"item", "bytes-v1")?;
+    /// let original = old.seal(&context, b"payload")?;
+    /// let replacement = rotating.rewrap_envelope(&context, original.envelope())?;
+    /// let persisted_header = replacement.encode();
+    /// let stored = Envelope::decode(&persisted_header)?;
+    /// let stored_view = SealedPayloadRef::new(&stored, original.ciphertext())?;
+    /// assert_eq!(rotating.open(&context, stored_view)?.as_slice(), b"payload");
+    /// # Ok::<(), batter_at_rest::Error>(())
+    /// ```
+    ///
+    /// The complete result cannot be passed directly to the low-level wrapper
+    /// composer for a different envelope:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_at_rest::{Context, KeyId, Keyring, SecretKey};
+    /// let id = KeyId::new("current")?;
+    /// let keyring = Keyring::new(id.clone(), [(id, SecretKey::from_bytes([7; 32]))])?;
+    /// let context = Context::for_row("example", "record", b"owner", b"item", "bytes-v1")?;
+    /// let first = keyring.seal(&context, b"first")?;
+    /// let second = keyring.seal(&context, b"second")?;
+    /// let replacement = keyring.rewrap_envelope(&context, first.envelope())?;
+    /// let _wrong = second.envelope().with_wrapped_key(replacement);
+    /// # Ok::<(), batter_at_rest::Error>(())
+    /// ```
+    pub fn rewrap_envelope(
+        &self,
+        context: &Context,
+        envelope: &Envelope,
+    ) -> Result<Envelope, Error> {
+        let mut random = SystemRandom;
+        self.rewrap_envelope_with_random(context, envelope, &mut random)
+    }
+
+    /// Low-level compatibility: authenticate a wrapper and return only its
+    /// current-key replacement metadata.
     ///
     /// This operation deliberately does not inspect or attest to any ciphertext
-    /// body. The caller preserves the descriptor and body. If the wrapper is
+    /// body. The caller must preserve and reattach the exact input descriptor and
+    /// body. Prefer [`Keyring::rewrap_envelope`] when persisting a complete header.
+    /// If the wrapper is
     /// already current, the authenticated original wrapper is returned exactly.
     /// A returned wrapper belongs only to the input descriptor; persistence must
     /// compare-and-swap against the complete input envelope or a storage revision
@@ -58,6 +119,16 @@ impl Keyring {
     pub fn rewrap(&self, context: &Context, envelope: &Envelope) -> Result<WrappedKey, Error> {
         let mut random = SystemRandom;
         self.rewrap_with_random(context, envelope, &mut random)
+    }
+
+    fn rewrap_envelope_with_random<R: RandomSource>(
+        &self,
+        context: &Context,
+        envelope: &Envelope,
+        random: &mut R,
+    ) -> Result<Envelope, Error> {
+        let wrapped_key = self.rewrap_with_random(context, envelope, random)?;
+        Ok(envelope.with_wrapped_key(wrapped_key))
     }
 
     fn seal_with_random<R: RandomSource>(

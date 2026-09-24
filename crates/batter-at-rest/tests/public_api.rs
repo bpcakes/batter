@@ -1,6 +1,6 @@
 use batter_at_rest::{
-    BorrowedSealedPayload, Context, Envelope, Error, KeyId, Keyring, MacKey, SealedPayload,
-    SealedPayloadRef, SecretKey, TAG_BYTES,
+    BorrowedSealedPayload, ContentDescriptor, Context, Envelope, Error, KeyId, Keyring, MacKey,
+    SealedPayload, SealedPayloadRef, SecretKey, TAG_BYTES, WrappedKey,
 };
 
 const FIXTURE: &str = include_str!("fixtures/envelope-v1.txt");
@@ -17,6 +17,26 @@ fn fixture_bytes(name: &str) -> Vec<u8> {
         .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
         .collect()
+}
+
+fn assert_split_rotation_opens(
+    keyring: &Keyring,
+    context: &Context,
+    descriptor_bytes: &[u8],
+    envelope: &Envelope,
+    body: &[u8],
+) -> Result<(), Error> {
+    let descriptor = ContentDescriptor::decode(descriptor_bytes)?;
+    let wrapper = WrappedKey::decode_for(&descriptor, &envelope.wrapped_key().encode())?;
+    let reconstructed = Envelope::from_parts(descriptor, wrapper);
+    assert_eq!(reconstructed, *envelope);
+    assert_eq!(
+        keyring
+            .open(context, SealedPayloadRef::new(&reconstructed, body)?)?
+            .as_slice(),
+        b"portable secret"
+    );
+    Ok(())
 }
 
 #[test]
@@ -84,16 +104,18 @@ fn independent_consumer_can_persist_open_rewrap_and_verify_stable_macs() -> Resu
             (new_key_id.clone(), SecretKey::from_bytes([19_u8; 32])),
         ],
     )?;
-    let replacement_wrapper = rotation_keyring.rewrap(&context, stored.envelope())?;
-    assert_eq!(replacement_wrapper.key_id(), &new_key_id);
-
-    let rotated_envelope = stored.envelope().with_wrapped_key(replacement_wrapper);
+    let rotated_envelope = rotation_keyring.rewrap_envelope(&context, stored.envelope())?;
+    assert_eq!(rotated_envelope.wrapped_key().key_id(), &new_key_id);
     assert_eq!(
         rotated_envelope.content_descriptor().encode(),
         descriptor_before
     );
-    let rotated = SealedPayload::from_parts(rotated_envelope, body_before.clone())?;
+    let persisted_header = rotated_envelope.encode();
+    let rotated = SealedPayload::decode(
+        &SealedPayload::from_parts(rotated_envelope, body_before.clone())?.encode(),
+    )?;
     assert_eq!(rotated.ciphertext(), body_before);
+    assert_eq!(rotated.envelope().encode(), persisted_header);
     let new_only_keyring = Keyring::new(
         new_key_id.clone(),
         [(new_key_id, SecretKey::from_bytes([19_u8; 32]))],
@@ -108,6 +130,14 @@ fn independent_consumer_can_persist_open_rewrap_and_verify_stable_macs() -> Resu
         old_only_keyring.open(&context, rotated.as_ref()).err(),
         Some(Error::KeyUnavailable)
     );
+
+    assert_split_rotation_opens(
+        &new_only_keyring,
+        &context,
+        &descriptor_before,
+        rotated.envelope(),
+        &body_before,
+    )?;
 
     assert_eq!(identity_mac.sign(identity), stable_tag);
     identity_mac.verify(identity, &stable_tag)?;
