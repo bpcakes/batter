@@ -3,13 +3,18 @@
   "tool_namespace": "jig",
   "required_commands": [
     "api_clippy_command",
+    "api_consumers_command",
     "api_docs_command",
+    "api_doctest_command",
     "api_fmt_command",
     "api_http_smoke_command",
+    "api_no_default_features_command",
+    "api_runlimit_command",
     "api_test_command",
     "api_test_locked_command",
     "repo_batter_at_rest_portability_command",
-    "repo_bootstrap_command"
+    "repo_bootstrap_command",
+    "repo_script_tests_command"
   ],
   "tools": [
     {
@@ -44,13 +49,13 @@
     },
     {
       "command": "api_test_command",
-      "description": "Run Rust tests.",
+      "description": "Run all-feature Rust workspace tests.",
       "kind": "command",
       "name": "jig.test"
     },
     {
       "command": "api_test_locked_command",
-      "description": "Run Rust tests using the locked dependency graph.",
+      "description": "Run all-feature Rust workspace tests using the locked dependency graph.",
       "kind": "command",
       "name": "jig.test_locked"
     }
@@ -318,7 +323,7 @@
       "source_state": "worktree"
     },
     {
-      "description": "Run Rust tests.",
+      "description": "Run all-feature Rust workspace tests.",
       "effects": [
         "read_only",
         "process"
@@ -425,7 +430,7 @@
       "source_state": "worktree"
     },
     {
-      "description": "Run Rust tests using the locked dependency graph.",
+      "description": "Run all-feature Rust workspace tests using the locked dependency graph.",
       "effects": [
         "read_only",
         "process"
@@ -875,6 +880,397 @@
         "runner": "overridden",
         "target": "inherited"
       }
+    },
+    {
+      "source_state": "worktree",
+      "description": "Check and test batter-core and the facade without default features.",
+      "intent": "check",
+      "effects": [
+        "read_only",
+        "process"
+      ],
+      "inputs_policy": "exhaustive",
+      "inputs": [
+        "crates/batter-at-rest/README.md",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        ".rustfmt.toml",
+        "clippy.toml",
+        ".clippy.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "crates/*/Cargo.toml",
+        "crates/*/Cargo.lock",
+        "crates/*/build.rs",
+        "crates/*/rust-toolchain",
+        "crates/*/rust-toolchain.toml",
+        "crates/*/rustfmt.toml",
+        "crates/*/.rustfmt.toml",
+        "crates/*/clippy.toml",
+        "crates/*/.clippy.toml",
+        "crates/*/.cargo/config",
+        "crates/*/.cargo/config.toml",
+        "crates/*/src/**",
+        "crates/*/tests/**",
+        "crates/*/examples/**",
+        "crates/*/benches/**",
+        "crates/*/migrations/**",
+        "examples/*/Cargo.toml",
+        "examples/*/Cargo.lock",
+        "examples/*/build.rs",
+        "examples/*/rust-toolchain",
+        "examples/*/rust-toolchain.toml",
+        "examples/*/rustfmt.toml",
+        "examples/*/.rustfmt.toml",
+        "examples/*/clippy.toml",
+        "examples/*/.clippy.toml",
+        "examples/*/.cargo/config",
+        "examples/*/.cargo/config.toml",
+        "examples/*/src/**",
+        "examples/*/tests/**",
+        "examples/*/examples/**",
+        "examples/*/benches/**",
+        "examples/*/migrations/**",
+        "runledger/*/Cargo.toml",
+        "runledger/*/build.rs",
+        "runledger/*/src/**",
+        "runledger/*/tests/**",
+        "runledger/*/examples/**",
+        "runledger/*/benches/**",
+        "runledger/*/migrations/**",
+        "crates/*/.sqlx/**",
+        "runledger/*/.sqlx/**",
+        "runledger/migrations/**",
+        "runledger/.sqlx/**",
+        "runledger/README.md",
+        "runledger/clippy.toml",
+        "runledger/rustfmt.toml",
+        "runlimit/smoke/**",
+        "runlimit/*/Cargo.toml",
+        "runlimit/*/build.rs",
+        "runlimit/*/src/**",
+        "runlimit/*/tests/**",
+        "runlimit/*/examples/**",
+        "runlimit/*/benches/**",
+        "runlimit/*/*migrations/**",
+        "runlimit/clippy.toml",
+        "runlimit/rustfmt.toml",
+        "runlimit/upstream-assets.json",
+        "runlimit/LICENSE-MIT",
+        "runlimit/LICENSE-APACHE",
+        "test-support/*.rs",
+        "test-support/process/**",
+        "scripts/*.py",
+        "scripts/*.sh"
+      ],
+      "target": {
+        "component": "api",
+        "action": "no-default-features"
+      },
+      "runner": {
+        "kind": "shell",
+        "command": "api_no_default_features_command"
+      },
+      "provenance": {
+        "source_state": "declared",
+        "inputs_policy": "declared",
+        "effects": "declared",
+        "inputs": "declared",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      }
+    },
+    {
+      "source_state": "worktree",
+      "description": "Run all-feature workspace doctests.",
+      "intent": "check",
+      "effects": [
+        "read_only",
+        "process"
+      ],
+      "inputs_policy": "exhaustive",
+      "inputs": [
+        "crates/batter-at-rest/README.md",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        ".rustfmt.toml",
+        "clippy.toml",
+        ".clippy.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "crates/*/Cargo.toml",
+        "crates/*/Cargo.lock",
+        "crates/*/build.rs",
+        "crates/*/rust-toolchain",
+        "crates/*/rust-toolchain.toml",
+        "crates/*/rustfmt.toml",
+        "crates/*/.rustfmt.toml",
+        "crates/*/clippy.toml",
+        "crates/*/.clippy.toml",
+        "crates/*/.cargo/config",
+        "crates/*/.cargo/config.toml",
+        "crates/*/src/**",
+        "crates/*/tests/**",
+        "crates/*/examples/**",
+        "crates/*/benches/**",
+        "crates/*/migrations/**",
+        "examples/*/Cargo.toml",
+        "examples/*/Cargo.lock",
+        "examples/*/build.rs",
+        "examples/*/rust-toolchain",
+        "examples/*/rust-toolchain.toml",
+        "examples/*/rustfmt.toml",
+        "examples/*/.rustfmt.toml",
+        "examples/*/clippy.toml",
+        "examples/*/.clippy.toml",
+        "examples/*/.cargo/config",
+        "examples/*/.cargo/config.toml",
+        "examples/*/src/**",
+        "examples/*/tests/**",
+        "examples/*/examples/**",
+        "examples/*/benches/**",
+        "examples/*/migrations/**",
+        "runledger/*/Cargo.toml",
+        "runledger/*/build.rs",
+        "runledger/*/src/**",
+        "runledger/*/tests/**",
+        "runledger/*/examples/**",
+        "runledger/*/benches/**",
+        "runledger/*/migrations/**",
+        "crates/*/.sqlx/**",
+        "runledger/*/.sqlx/**",
+        "runledger/migrations/**",
+        "runledger/.sqlx/**",
+        "runledger/README.md",
+        "runledger/clippy.toml",
+        "runledger/rustfmt.toml",
+        "runlimit/smoke/**",
+        "runlimit/*/Cargo.toml",
+        "runlimit/*/build.rs",
+        "runlimit/*/src/**",
+        "runlimit/*/tests/**",
+        "runlimit/*/examples/**",
+        "runlimit/*/benches/**",
+        "runlimit/*/*migrations/**",
+        "runlimit/clippy.toml",
+        "runlimit/rustfmt.toml",
+        "runlimit/upstream-assets.json",
+        "runlimit/LICENSE-MIT",
+        "runlimit/LICENSE-APACHE",
+        "test-support/*.rs",
+        "test-support/process/**",
+        "scripts/*.py",
+        "scripts/*.sh"
+      ],
+      "target": {
+        "component": "api",
+        "action": "doctest"
+      },
+      "runner": {
+        "kind": "shell",
+        "command": "api_doctest_command"
+      },
+      "provenance": {
+        "source_state": "declared",
+        "inputs_policy": "declared",
+        "effects": "declared",
+        "inputs": "declared",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      }
+    },
+    {
+      "source_state": "worktree",
+      "description": "Build and run standalone consumer, feature-isolation and imported-workspace checks.",
+      "intent": "check",
+      "effects": [
+        "read_only",
+        "process"
+      ],
+      "inputs_policy": "exhaustive",
+      "inputs": [
+        "crates/batter-at-rest/README.md",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        "rustfmt.toml",
+        ".rustfmt.toml",
+        "clippy.toml",
+        ".clippy.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "crates/*/Cargo.toml",
+        "crates/*/Cargo.lock",
+        "crates/*/build.rs",
+        "crates/*/rust-toolchain",
+        "crates/*/rust-toolchain.toml",
+        "crates/*/rustfmt.toml",
+        "crates/*/.rustfmt.toml",
+        "crates/*/clippy.toml",
+        "crates/*/.clippy.toml",
+        "crates/*/.cargo/config",
+        "crates/*/.cargo/config.toml",
+        "crates/*/src/**",
+        "crates/*/tests/**",
+        "crates/*/examples/**",
+        "crates/*/benches/**",
+        "crates/*/migrations/**",
+        "examples/*/Cargo.toml",
+        "examples/*/Cargo.lock",
+        "examples/*/build.rs",
+        "examples/*/rust-toolchain",
+        "examples/*/rust-toolchain.toml",
+        "examples/*/rustfmt.toml",
+        "examples/*/.rustfmt.toml",
+        "examples/*/clippy.toml",
+        "examples/*/.clippy.toml",
+        "examples/*/.cargo/config",
+        "examples/*/.cargo/config.toml",
+        "examples/*/src/**",
+        "examples/*/tests/**",
+        "examples/*/examples/**",
+        "examples/*/benches/**",
+        "examples/*/migrations/**",
+        "runledger/*/Cargo.toml",
+        "runledger/*/build.rs",
+        "runledger/*/src/**",
+        "runledger/*/tests/**",
+        "runledger/*/examples/**",
+        "runledger/*/benches/**",
+        "runledger/*/migrations/**",
+        "crates/*/.sqlx/**",
+        "runledger/*/.sqlx/**",
+        "runledger/migrations/**",
+        "runledger/.sqlx/**",
+        "runledger/README.md",
+        "runledger/clippy.toml",
+        "runledger/rustfmt.toml",
+        "runlimit/smoke/**",
+        "runlimit/*/Cargo.toml",
+        "runlimit/*/build.rs",
+        "runlimit/*/src/**",
+        "runlimit/*/tests/**",
+        "runlimit/*/examples/**",
+        "runlimit/*/benches/**",
+        "runlimit/*/*migrations/**",
+        "runlimit/clippy.toml",
+        "runlimit/rustfmt.toml",
+        "runlimit/upstream-assets.json",
+        "runlimit/LICENSE-MIT",
+        "runlimit/LICENSE-APACHE",
+        "test-support/*.rs",
+        "test-support/process/**",
+        "scripts/*.py",
+        "scripts/*.sh"
+      ],
+      "target": {
+        "component": "api",
+        "action": "consumers"
+      },
+      "runner": {
+        "kind": "shell",
+        "command": "api_consumers_command"
+      },
+      "provenance": {
+        "source_state": "declared",
+        "inputs_policy": "declared",
+        "effects": "declared",
+        "inputs": "declared",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      }
+    },
+    {
+      "source_state": "worktree",
+      "description": "Run native Runlimit default-feature and release tests and its graph check.",
+      "intent": "check",
+      "effects": [
+        "read_only",
+        "process"
+      ],
+      "inputs_policy": "exhaustive",
+      "inputs": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "crates/*/Cargo.toml",
+        "examples/*/Cargo.toml",
+        "runledger/*/Cargo.toml",
+        "runlimit/*/Cargo.toml",
+        "runlimit/*/build.rs",
+        "runlimit/*/src/**",
+        "runlimit/*/tests/**",
+        "runlimit/*/examples/**",
+        "runlimit/*/benches/**",
+        "runlimit/*/*migrations/**",
+        "runlimit/upstream-assets.json",
+        "runlimit/LICENSE-MIT",
+        "runlimit/LICENSE-APACHE",
+        "scripts/*.py",
+        "scripts/*.sh"
+      ],
+      "target": {
+        "component": "api",
+        "action": "runlimit"
+      },
+      "runner": {
+        "kind": "shell",
+        "command": "api_runlimit_command"
+      },
+      "provenance": {
+        "source_state": "declared",
+        "inputs_policy": "declared",
+        "effects": "declared",
+        "inputs": "declared",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      }
+    },
+    {
+      "source_state": "worktree",
+      "description": "Run Python controls whose inputs stay within scripts/.",
+      "intent": "check",
+      "effects": [
+        "read_only",
+        "process"
+      ],
+      "inputs_policy": "exhaustive",
+      "inputs": [
+        ".jig.toml",
+        "scripts/*.py",
+        "scripts/*.sh"
+      ],
+      "target": {
+        "component": "repo",
+        "action": "script-tests"
+      },
+      "runner": {
+        "kind": "shell",
+        "command": "repo_script_tests_command"
+      },
+      "provenance": {
+        "source_state": "declared",
+        "inputs_policy": "declared",
+        "effects": "declared",
+        "inputs": "declared",
+        "intent": "declared",
+        "runner": "declared",
+        "target": "declared"
+      }
     }
   ],
   "profiles": [
@@ -897,6 +1293,26 @@
         {
           "action": "test",
           "component": "api"
+        },
+        {
+          "component": "api",
+          "action": "no-default-features"
+        },
+        {
+          "component": "api",
+          "action": "doctest"
+        },
+        {
+          "component": "api",
+          "action": "consumers"
+        },
+        {
+          "component": "api",
+          "action": "runlimit"
+        },
+        {
+          "component": "repo",
+          "action": "script-tests"
         },
         {
           "action": "contract",

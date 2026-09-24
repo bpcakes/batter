@@ -248,7 +248,7 @@ target = "inherited"
 
 [[repository.actions]]
 source_state = "worktree"
-description = "Run Rust tests."
+description = "Run all-feature Rust workspace tests."
 intent = "check"
 effects = ["read_only", "process"]
 inputs_policy = "exhaustive"
@@ -350,7 +350,7 @@ target = "inherited"
 
 [[repository.actions]]
 source_state = "worktree"
-description = "Run Rust tests using the locked dependency graph."
+description = "Run all-feature Rust workspace tests using the locked dependency graph."
 intent = "check"
 effects = ["read_only", "process"]
 inputs_policy = "exhaustive"
@@ -765,6 +765,382 @@ intent = "inherited"
 runner = "overridden"
 target = "inherited"
 
+[[repository.actions]]
+source_state = "worktree"
+description = "Check and test batter-core and the facade without default features."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "crates/batter-at-rest/README.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "runledger/*/Cargo.toml",
+    "runledger/*/build.rs",
+    "runledger/*/src/**",
+    "runledger/*/tests/**",
+    "runledger/*/examples/**",
+    "runledger/*/benches/**",
+    "runledger/*/migrations/**",
+    "crates/*/.sqlx/**",
+    "runledger/*/.sqlx/**",
+    "runledger/migrations/**",
+    "runledger/.sqlx/**",
+    "runledger/README.md",
+    "runledger/clippy.toml",
+    "runledger/rustfmt.toml",
+    "runlimit/smoke/**",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/clippy.toml",
+    "runlimit/rustfmt.toml",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "no-default-features"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_no_default_features_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "declared"
+inputs = "declared"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
+[[repository.actions]]
+source_state = "worktree"
+description = "Run all-feature workspace doctests."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "crates/batter-at-rest/README.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "runledger/*/Cargo.toml",
+    "runledger/*/build.rs",
+    "runledger/*/src/**",
+    "runledger/*/tests/**",
+    "runledger/*/examples/**",
+    "runledger/*/benches/**",
+    "runledger/*/migrations/**",
+    "crates/*/.sqlx/**",
+    "runledger/*/.sqlx/**",
+    "runledger/migrations/**",
+    "runledger/.sqlx/**",
+    "runledger/README.md",
+    "runledger/clippy.toml",
+    "runledger/rustfmt.toml",
+    "runlimit/smoke/**",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/clippy.toml",
+    "runlimit/rustfmt.toml",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "doctest"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_doctest_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "declared"
+inputs = "declared"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
+[[repository.actions]]
+source_state = "worktree"
+description = "Build and run standalone consumer, feature-isolation and imported-workspace checks."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "crates/batter-at-rest/README.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "crates/*/Cargo.lock",
+    "crates/*/build.rs",
+    "crates/*/rust-toolchain",
+    "crates/*/rust-toolchain.toml",
+    "crates/*/rustfmt.toml",
+    "crates/*/.rustfmt.toml",
+    "crates/*/clippy.toml",
+    "crates/*/.clippy.toml",
+    "crates/*/.cargo/config",
+    "crates/*/.cargo/config.toml",
+    "crates/*/src/**",
+    "crates/*/tests/**",
+    "crates/*/examples/**",
+    "crates/*/benches/**",
+    "crates/*/migrations/**",
+    "examples/*/Cargo.toml",
+    "examples/*/Cargo.lock",
+    "examples/*/build.rs",
+    "examples/*/rust-toolchain",
+    "examples/*/rust-toolchain.toml",
+    "examples/*/rustfmt.toml",
+    "examples/*/.rustfmt.toml",
+    "examples/*/clippy.toml",
+    "examples/*/.clippy.toml",
+    "examples/*/.cargo/config",
+    "examples/*/.cargo/config.toml",
+    "examples/*/src/**",
+    "examples/*/tests/**",
+    "examples/*/examples/**",
+    "examples/*/benches/**",
+    "examples/*/migrations/**",
+    "runledger/*/Cargo.toml",
+    "runledger/*/build.rs",
+    "runledger/*/src/**",
+    "runledger/*/tests/**",
+    "runledger/*/examples/**",
+    "runledger/*/benches/**",
+    "runledger/*/migrations/**",
+    "crates/*/.sqlx/**",
+    "runledger/*/.sqlx/**",
+    "runledger/migrations/**",
+    "runledger/.sqlx/**",
+    "runledger/README.md",
+    "runledger/clippy.toml",
+    "runledger/rustfmt.toml",
+    "runlimit/smoke/**",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/clippy.toml",
+    "runlimit/rustfmt.toml",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "test-support/*.rs",
+    "test-support/process/**",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "consumers"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_consumers_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "declared"
+inputs = "declared"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
+[[repository.actions]]
+source_state = "worktree"
+description = "Run native Runlimit default-feature and release tests and its graph check."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "crates/*/Cargo.toml",
+    "examples/*/Cargo.toml",
+    "runledger/*/Cargo.toml",
+    "runlimit/*/Cargo.toml",
+    "runlimit/*/build.rs",
+    "runlimit/*/src/**",
+    "runlimit/*/tests/**",
+    "runlimit/*/examples/**",
+    "runlimit/*/benches/**",
+    "runlimit/*/*migrations/**",
+    "runlimit/upstream-assets.json",
+    "runlimit/LICENSE-MIT",
+    "runlimit/LICENSE-APACHE",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "api"
+action = "runlimit"
+
+[repository.actions.runner]
+kind = "shell"
+command = "api_runlimit_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "declared"
+inputs = "declared"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
+[[repository.actions]]
+source_state = "worktree"
+description = "Run Python controls whose inputs stay within scripts/."
+intent = "check"
+effects = ["read_only", "process"]
+inputs_policy = "exhaustive"
+inputs = [
+    ".jig.toml",
+    "scripts/*.py",
+    "scripts/*.sh",
+]
+
+[repository.actions.target]
+component = "repo"
+action = "script-tests"
+
+[repository.actions.runner]
+kind = "shell"
+command = "repo_script_tests_command"
+
+[repository.actions.provenance]
+source_state = "declared"
+inputs_policy = "declared"
+effects = "declared"
+inputs = "declared"
+intent = "declared"
+runner = "declared"
+target = "declared"
+
 # These checks are independent requirements. Keep policy checks out of
 # api:test dependencies so refreshing policy evidence does not rerun Rust tests.
 [[repository.profiles]]
@@ -782,6 +1158,26 @@ action = "fmt"
 [[repository.profiles.targets]]
 component = "api"
 action = "test"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "no-default-features"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "doctest"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "consumers"
+
+[[repository.profiles.targets]]
+component = "api"
+action = "runlimit"
+
+[[repository.profiles.targets]]
+component = "repo"
+action = "script-tests"
 
 [[repository.profiles.targets]]
 component = "repo"
@@ -813,8 +1209,13 @@ api_http_smoke_command = "python3 scripts/check_http_smokes.py"
 api_docs_command = "RUSTDOCFLAGS=\"${RUSTDOCFLAGS:-} -D warnings\" cargo doc --workspace --all-features --no-deps --locked"
 api_clippy_command = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files && cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimit-http -p runlimit-axum --all-targets --locked -- -D warnings"
 api_fmt_command = "cargo fmt --all -- --check"
-api_test_command = "python3 scripts/test_matrix.py"
-api_test_locked_command = "python3 scripts/test_matrix.py"
+api_test_command = "python3 scripts/test_matrix.py workspace"
+api_test_locked_command = "python3 scripts/test_matrix.py workspace"
+api_no_default_features_command = "python3 scripts/test_matrix.py no-default-features"
+api_doctest_command = "python3 scripts/test_matrix.py doctests"
+api_consumers_command = "python3 scripts/test_matrix.py consumers"
+api_runlimit_command = "python3 scripts/test_matrix.py runlimit"
+repo_script_tests_command = "python3 scripts/test_matrix.py scripts"
 repo_batter_at_rest_portability_command = "scripts/check-batter-at-rest-portability.sh"
 repo_bootstrap_command = "cargo fetch --locked"
 
@@ -834,6 +1235,12 @@ prompt_file = ".agent/tasks/daily-bug-scan.md"
 codex_home = "codex"
 sandbox = "workspace-write"
 checkout = "repo"
+
+# No gated check reads the root Beads store. Excluding it from working-file
+# freshness and from the worktree invariant around each parallel batch keeps
+# tracker writes from failing an in-flight check.
+[work]
+receipt_metadata = ["beads"]
 
 [[work.gates]]
 id = "verify"
