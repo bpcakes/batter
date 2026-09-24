@@ -95,6 +95,9 @@ write after savepoint recovery; termination of the transaction backend before a
 named required-intent call produces a terminal scope error, retains the same
 cause in `ScopeLost`, and does not commit an earlier provisional write.
 Focused runs of the two later native cases are recorded in `batter-rpgk`.
+The `batter-runledger` crate-level doctest implements all five failure-policy
+handlers using only adapter imports, covering the direct consumer export surface
+including `PgTransactionError`.
 The earlier `batter-rpgk` snapshot had an exact SQLx live inventory of 44 atomic
 tests (107 total). On that earlier snapshot, all 107 passed on both Rust 1.98.1
 and 1.94.0 on macOS arm64 with PostgreSQL 18.6, along with both full

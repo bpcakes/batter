@@ -39,6 +39,12 @@ cause; abandoned operations are classified separately. `PgScopeFailure` cannot
 contain an ordinary application rejection.
 Every completion retires the session, and acquisition resets inherited state.
 
+`run_atomic_with` binds SQL and named operations to a concrete consumer error
+through `PgFailurePolicy`. All types required by its five handlers, including
+`PgTransactionError`, are reexported here; the crate-level rustdoc implements a
+policy using only adapter imports. These are the original native types: the
+reexports do not add constructors or relax transaction ownership and poisoning.
+
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;
 earlier discoveries shorten active phase waits without replacing the first native
