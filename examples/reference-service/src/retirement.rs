@@ -38,7 +38,7 @@ use sqlx::postgres::PgConnectOptions;
 /// let second = Duration::from_secs(1);
 /// // Supply identity from the deployment's known target, not an unchecked URL.
 /// let expected = DatabaseIdentity::new(123, 456)?;
-/// let command = prepare(options, expected, OperationContext::new(second * 30)?,
+/// let command = prepare(options, expected, batter::operation::OperationOwner::new(second * 30)?.into_context(),
 ///     CleanupBudget::new(second * 3, second * 3, second)?) .start();
 /// let report = check_command(command.wait().await)?;
 /// assert!(report.work.is_ok());

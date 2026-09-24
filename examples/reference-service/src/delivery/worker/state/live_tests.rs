@@ -280,7 +280,9 @@ async fn claimed(pool: &PgPool) -> Result<(JobContext, DeliveryJobPayload), BoxE
     let command = with_profiled(pool, async |database| {
         DeliveryService::new(database.clone())
             .submit(
-                &OperationContext::new(Duration::from_secs(5)).expect("static budget"),
+                &batter::operation::OperationOwner::new(Duration::from_secs(5))
+                    .map(|owner| owner.into_context())
+                    .expect("static budget"),
                 owner,
                 record,
                 SubmitDelivery {

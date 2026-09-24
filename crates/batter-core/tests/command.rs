@@ -30,7 +30,9 @@ fn budget() -> CleanupBudget {
 }
 
 fn context() -> OperationContext {
-    OperationContext::new(Duration::from_secs(10)).unwrap()
+    batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context()
 }
 
 async fn poll_once(future: impl Future) {
@@ -152,7 +154,9 @@ async fn owner_drop_cancels_work_downward_and_finishes_lifo_resources() {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_during_cleanup_does_not_interrupt_its_independent_budget() {
-    let parent = context();
+    let parent_owner =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let parent = parent_owner.context().clone();
     let (entered, entering) = oneshot::channel();
     let (finish, finishing) = oneshot::channel();
     let command = Command::new(parent.clone(), budget(), |scope| {
@@ -170,7 +174,7 @@ async fn cancellation_during_cleanup_does_not_interrupt_its_independent_budget()
     .start();
     entering.await.unwrap();
     command.cancel();
-    parent.cancel();
+    parent_owner.cancel();
     finish.send(()).unwrap();
     let report = command.wait().await.unwrap();
     assert!(report.is_success(), "{report:?}");
@@ -185,7 +189,11 @@ async fn finishing_work_cancels_its_children_before_cleanup_but_not_parent() {
     let parent = context();
     let command = Command::new(parent.clone(), budget(), |scope| {
         Box::pin(async move {
-            let child = scope.context().child(Duration::from_secs(3)).unwrap();
+            let child = scope
+                .context()
+                .child(Duration::from_secs(3))
+                .unwrap()
+                .into_context();
             scope
                 .reserve_cleanup("resource")?
                 .register(move || async move {

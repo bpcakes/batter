@@ -3,7 +3,6 @@ use batter::{
     BoxError,
     cleanup::CleanupBudget,
     command::{CommandCause, SharedCommandReport},
-    operation::OperationContext,
 };
 use batter_example_reference_service::retirement::{
     self, DatabaseIdentity, RetirementError, RetirementReport,
@@ -84,7 +83,7 @@ async fn retire(options: PgConnectOptions, identity: DatabaseIdentity) -> Result
     let command = retirement::prepare(
         options,
         identity,
-        OperationContext::new(SECOND * 10)?,
+        batter::operation::OperationOwner::new(SECOND * 10)?.into_context(),
         CleanupBudget::new(SECOND * 3, SECOND * 3, SECOND)?,
     )
     .start();

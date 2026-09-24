@@ -26,16 +26,20 @@ async fn assert_admission_interruption(response: Response, code: &str) {
 }
 
 #[tokio::test]
-async fn nested_check_cancellation_uses_admission_renderer_and_original_id() {
+async fn nested_check_process_cancellation_uses_admission_renderer_and_original_id() {
     let running = running().await;
+    let control = running.handle();
     let capture = Capture::new("info");
     let hasher = KeyHasher::new([9; 32]).unwrap();
     let client = HttpQuota::new(
         Quota::new(memory()),
         vec![policy("owner", 1)],
-        |input: AuthInput| async move {
-            input.context.cancel();
-            Ok::<_, AuthError>(Principal("owner-a"))
+        move |_input: AuthInput| {
+            let control = control.clone();
+            async move {
+                control.request();
+                std::future::pending::<Result<Principal, AuthError>>().await
+            }
         },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
             hasher
@@ -56,22 +60,15 @@ async fn nested_check_cancellation_uses_admission_renderer_and_original_id() {
 }
 
 #[tokio::test]
-async fn cancellation_after_native_grant_keeps_consumption_and_uses_admission_renderer() {
+async fn process_cancellation_after_native_grant_keeps_consumption_and_uses_admission_renderer() {
     let running = running().await;
+    let control = running.handle();
     let capture = Capture::new("info");
-    let saved = Arc::new(Mutex::new(None));
-    let saved_for_auth = saved.clone();
     let hasher = KeyHasher::new([9; 32]).unwrap();
     let client = HttpQuota::new(
-        Quota::new(Backend::new(Mode::CancelSavedThenAllow(saved))),
+        Quota::new(Backend::new(Mode::RequestDrainThenAllow(control))),
         vec![policy("owner", 1)],
-        move |input: AuthInput| {
-            let saved = saved_for_auth.clone();
-            async move {
-                *saved.lock().unwrap() = Some(input.context);
-                Ok::<_, AuthError>(Principal("owner-a"))
-            }
-        },
+        |_input: AuthInput| async { Ok::<_, AuthError>(Principal("owner-a")) },
         move |principal: &Principal, _peer: DirectPeer, policy: &FixedWindowPolicy| {
             hasher
                 .hash_for(policy, principal.0)
@@ -79,7 +76,15 @@ async fn cancellation_after_native_grant_keeps_consumption_and_uses_admission_re
         },
     )
     .unwrap()
-    .prepare(request_policy(&running, 1000), routes())
+    .prepare(
+        request_policy(&running, 5000),
+        Router::new().route(
+            "/work",
+            post(|_principal: Authenticated<Principal>| async {
+                std::future::pending::<&'static str>().await
+            }),
+        ),
+    )
     .in_process();
     let response = capture
         .run(client.request(request("/work", "Bearer secret-a"), peer()))

@@ -40,7 +40,7 @@ pub type CommandFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + S
 /// let cleanup = CleanupBudget::new(second, second, second)?;
 /// let resource = Arc::new(tokio::sync::Semaphore::new(1));
 /// let acquiring = resource.clone();
-/// let command = Command::new(OperationContext::new(second)?, cleanup, move |scope| {
+/// let command = Command::new(batter_core::operation::OperationOwner::new(second)?.into_context(), cleanup, move |scope| {
 ///     Box::pin(async move {
 ///         let slot = scope.reserve_cleanup("capacity")?;
 ///         let permit = acquiring.acquire_owned().await.expect("capacity stays open");
@@ -89,7 +89,7 @@ impl<F> Command<F> {
     /// # use std::time::Duration;
     /// let second = Duration::from_secs(1);
     /// let cleanup = CleanupBudget::new(second, second, second).unwrap();
-    /// let total = OperationContext::new(Duration::from_secs(5)).unwrap();
+    /// let total = batter_core::operation::OperationOwner::new(Duration::from_secs(5)).unwrap().into_context();
     /// let command = Command::within(total, cleanup, |_| Box::pin(async {
     ///     Ok::<_, std::convert::Infallible>(())
     /// })).unwrap();
@@ -135,6 +135,11 @@ pub struct CommandScope {
 }
 
 impl CommandScope {
+    /// Request cancellation of this command's work, independently of cleanup.
+    pub fn cancel_work(&self) {
+        self.context.cancel();
+    }
+
     /// Absolute work deadline and downward cancellation for child operations.
     /// These tokens must not be captured by cleanup hooks: work completion cancels
     /// them before independently driven finalization.

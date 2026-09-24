@@ -743,7 +743,8 @@ fn quota_facts_reach_the_single_outer_event_in_both_wrapper_orders() {
                             .expect("quota wrapper installed the sole writer")
                             .start()
                             .finish(QuotaTerminalFacts::Allowed);
-                        OperationContext::new(Duration::from_secs(1))
+                        batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+                            .map(|owner| owner.into_context())
                             .unwrap()
                             .run("nested.quota", |_| async {
                                 tracing::info!(request_id = %id, "nested quota identity");

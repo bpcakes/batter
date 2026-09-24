@@ -23,7 +23,7 @@
 //! let hasher = KeyHasher::new([7; 32])?; // Test key; production loads its own secret.
 //! let checks = [Check::new(hasher.hash_for(&policy, "owner-a"))];
 //! let quota = Quota::new(MemoryStore::new(MemoryStoreConfig::new(100)?));
-//! let context = OperationContext::new(Duration::from_secs(1))?;
+//! let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))?.into_context();
 //! let result = quota.run(&context, Checks::new(&checks)?, |_| async {
 //!     Ok::<_, Infallible>(42)
 //! }).await;

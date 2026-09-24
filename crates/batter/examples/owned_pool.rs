@@ -3,10 +3,7 @@
 
 use batter::sqlx::{SqlxFailure, pool_in, probe};
 use batter::{
-    RegistrationError,
-    cleanup::CleanupBudget,
-    command::Command,
-    operation::{OperationContext, OperationError},
+    RegistrationError, cleanup::CleanupBudget, command::Command, operation::OperationError,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::{error::Error, fmt, process::ExitCode, str::FromStr, time::Duration};
@@ -68,8 +65,9 @@ async fn main() -> ExitCode {
     };
 
     let second = Duration::from_secs(1);
-    let context =
-        OperationContext::new(Duration::from_secs(5)).expect("constant operation budget is valid");
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(5))
+        .map(|owner| owner.into_context())
+        .expect("constant operation budget is valid");
     let cleanup =
         CleanupBudget::new(second, second, second).expect("constant cleanup budget is valid");
     let command = Command::new(context, cleanup, move |scope| {

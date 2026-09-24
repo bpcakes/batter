@@ -377,6 +377,7 @@ fn command_context(context: &OperationContext) -> Result<OperationContext, Inter
     }
     context
         .child(work)
+        .map(|owner| owner.into_context())
         .map_err(|_| Interruption::DeadlineExceeded)
 }
 

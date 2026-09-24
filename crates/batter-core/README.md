@@ -26,7 +26,7 @@ use batter_core::operation::OperationContext;
 use std::time::Duration;
 
 async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    let context = OperationContext::new(Duration::from_secs(2))?;
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(2))?.into_context();
     let count = context.run("example.read", |_| async {
         Ok::<_, std::io::Error>(42)
     }).await?;

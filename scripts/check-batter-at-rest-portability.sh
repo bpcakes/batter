@@ -639,7 +639,7 @@ cargo_msrv "$unpacked_crate" "$target_root/unpacked" check --all-targets --locke
 # A separate manifest proves consumer resolution without this package's test or
 # workspace dependencies. Reuse public-API cases, but depend only on the artifact.
 consumer_root="$portability_root/consumer"
-mkdir -p "$consumer_root/tests" "$consumer_root/src"
+mkdir -p "$consumer_root/tests/fixtures" "$consumer_root/src"
 python3 - "$consumer_root" "$unpacked_crate" <<'PY'
 import json
 from pathlib import Path
@@ -654,6 +654,7 @@ consumer, artifact = map(Path, sys.argv[1:])
 (consumer / "src/lib.rs").write_text("")
 PY
 cp "$unpacked_crate/tests/public_api.rs" "$consumer_root/tests/public_api.rs"
+cp "$unpacked_crate/tests/fixtures/envelope-v1.txt" "$consumer_root/tests/fixtures/envelope-v1.txt"
 cargo_msrv "$consumer_root" "$target_root/unpacked" test
 printf 'batter-at-rest portability: verified package and unpacked artifact tests passed\n'
 printf 'batter-at-rest portability: separate consumer passed against the unpacked artifact\n'

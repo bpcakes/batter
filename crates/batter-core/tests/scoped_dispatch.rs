@@ -2,7 +2,7 @@
 mod test_dispatch;
 
 use batter_core::lifecycle::Fatal;
-use batter_core::{operation::OperationContext, telemetry::with_current_dispatch};
+use batter_core::telemetry::with_current_dispatch;
 use std::{
     cell::Cell,
     future::Future,
@@ -165,7 +165,8 @@ fn aborted_operation_drops_work_and_observation_in_its_scoped_dispatch() {
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(
             async move {
-                OperationContext::new(Duration::from_secs(60))
+                batter_core::operation::OperationOwner::new(Duration::from_secs(60))
+                    .map(|owner| owner.into_context())
                     .unwrap()
                     .run("operation.abort", |_| async move {
                         let _resource = DropTrace("operation.resource");
@@ -196,7 +197,9 @@ fn aborted_operation_drops_work_and_observation_in_its_scoped_dispatch() {
 
 #[tokio::test]
 async fn operation_still_accepts_borrowed_non_send_work() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let mut value = String::from("borrowed");
     let count = Rc::new(Cell::new(0));
     let result = context

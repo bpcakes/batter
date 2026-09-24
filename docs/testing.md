@@ -81,15 +81,40 @@ acknowledged rejection, caught terminal failure, abandoned work, paired recovery
 causes, setup failure, and commit/rollback uncertainty. Native
 `runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
 across SQL, intent recording, queue operations and required-conflict rollback.
-The policy delivery inventory included 42 atomic tests (105 total); execution
-on macOS arm64 passed all 105 cases on Rust 1.98.1 and 1.94.0 with PostgreSQL
+The context unit suite cancels from policy mapping of a closed-pool begin error
+through both `_with_in` wrappers. Cancellation policies retain an `OperationOwner`;
+the wrappers receive only its `OperationContext`. `atomic_live::policy_context`
+does the same with a deferred commit failure, asserting the provisional output and native
+SQLSTATE/constraint survive as `OperationError::Failed`. The native policy test
+also covers intent observation and resource enqueue: real CHECK violations pass
+through `From<runledger_postgres::Error>`, retain their SQLx causes, and permit
+subsequent application writes and named operations to commit after recovery.
+Two later native policy cases use real PostgreSQL failures: required-intent
+storage conversion retains `RequiredIntentError::Storage` and allows a later
+write after savepoint recovery; termination of the transaction backend before a
+named required-intent call produces a terminal scope error, retains the same
+cause in `ScopeLost`, and does not commit an earlier provisional write.
+Focused runs of the two later native cases are recorded in `batter-rpgk`.
+The `batter-runledger` crate-level doctest implements all five failure-policy
+handlers using only adapter imports, covering the direct consumer export surface
+including `PgTransactionError`.
+The earlier `batter-rpgk` snapshot had an exact SQLx live inventory of 44 atomic
+tests (107 total). On that earlier snapshot, all 107 passed on both Rust 1.98.1
+and 1.94.0 on macOS arm64 with PostgreSQL 18.6, along with both full
+verification scripts and five HTTP smoke modes per toolchain. Its final Jig
+test rerun passed; initial suite failures and their unchanged reruns are
+recorded in the owning Bead.
+
+The original `batter-a0qb` evidence records 105 passing cases on macOS arm64
+with Rust 1.98.1 and 1.94.0 and PostgreSQL
 18.6. Both full verification scripts and five HTTP smokes per toolchain passed;
 required Jig gates passed. The first minimum-toolchain workspace run encountered
 a Docker port-resolution failure in the existing `job_read_scope` fixture. That
 target and the full rerun passed unchanged. See `batter-a0qb`.
 
 Fail-fast controls in `atomic_live::{fail_fast,fail_fast_context,fail_fast_loss,fail_fast_profile}`
-add eight cases (50 atomic, 113 total live): exact two/three statement counts,
+added eight cases to the original delivery (50 atomic, 113 total live): exact
+two/three statement counts,
 explicit recovery, prior-write rollback before error return, caught rejection
 refusal, transaction replacement, abandoned work, uncertain commit/cleanup and
 profile drift, and retained rollback after caught-error cancellation. The native policy consumer runs in both recovery modes. On macOS arm64, both full verification scripts, all 113 live cases against
@@ -102,7 +127,14 @@ test; its unchanged focused rerun and full suite rerun passed. The initial cause
 was not reproduced or established beyond the retained cleanup diagnostic. See
 `batter-wobk`. The exact live runner serializes tracing-counter
 cases; a parallel focused invocation produced a counter-only failure and the
-unchanged serial run passed.
+unchanged serial run passed. The merge with the reviewed failure-policy base
+retains its two additional cases, bringing the exact runner inventory to 52 atomic
+and 115 total live tests. The fail-fast cancellation control now cancels through
+`OperationOwner` while the runner receives only its `OperationContext`. Merge
+verification on macOS arm64 passed both full Rust 1.98.1/1.94.0 scripts, all 115
+live PostgreSQL 18.6 cases and five HTTP smokes per toolchain. Required Jig gates
+passed on the unchanged rerun; the initial invalidated run and its unestablished
+workspace-test failure are recorded in `batter-wobk`.
 
 ## Verification commands
 
@@ -461,8 +493,16 @@ fails when standalone metadata or dependency-source boundaries regress.
 
 At-rest decoder tests exercise every truncation and every single-byte replacement
 of a composite sample, requiring canonical re-encoding after successful decode.
-The decoder validates trailing data before copying the body. These are bounded
-regressions, not an exhaustive fuzzing or measured allocation claim. Crypto tests
+Borrowed and owned decoders share structural parsing, with explicit expected-error
+cases for nested lengths, version, key ID, body bounds and trailing bytes. Format
+tests pad a valid encoded envelope beyond the header limit, so removing the size
+guard changes the asserted error; the body test supplies an actual byte beyond
+the maximum. Public consumer and independent Node fixture cases open both views
+and check that the borrowed body points at the exact encoded subslice. Rustdoc
+rejects retaining the borrowed payload after its encoding or its decrypt view
+after the decoded header owner, with a compiling scoped counterpart. Parsing validates trailing
+data before owned decode copies the body. These are bounded regressions and
+pointer/lifetime evidence, not exhaustive fuzzing or a measured allocation claim. Crypto tests
 cover failure at each seal randomness request, changed-key rewrap randomness
 failure, and successful wrapper rotation with a corrupt body that still fails open.
 Facade consumer graphs reject the leaf's `test-support` feature and check the

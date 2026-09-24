@@ -1,6 +1,5 @@
 use super::support::{Result, bounded, require};
 use super::{AuthorityFixture, exec, quote};
-use batter_core::operation::OperationContext;
 use batter_sqlx::verification::*;
 use sqlx::Connection;
 use std::time::Duration;
@@ -10,7 +9,8 @@ async fn inspect(
     policy: &MigrationPolicy,
     combined: bool,
 ) -> Result<VerificationReport> {
-    let context = OperationContext::new(Duration::from_secs(10))?;
+    let context =
+        batter_core::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
     Ok(if combined {
         let authority = AuthorityPolicy::default();
         verify(

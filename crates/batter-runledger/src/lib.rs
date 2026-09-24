@@ -9,6 +9,41 @@
 //! [`batter_core::lifecycle::RunningSupervisor::wait_checked`] for the complete
 //! managed settlement and process cleanup classification. A native settlement
 //! cannot by itself prove remote effects or arbitrary detached work stopped.
+//!
+//! Direct adapter consumers can implement [`PgFailurePolicy`] using only this
+//! crate's exports, retaining the concrete causes and provisional outcomes:
+//!
+//! ```
+//! use batter_runledger::{PgFailurePolicy, PgScopeFailure, PgScopeLoss, PgTransactionError};
+//!
+//! enum Failure {
+//!     Begin(PgTransactionError),
+//!     Scope(Box<PgScopeFailure<Failure>>),
+//!     Commit(u64, PgTransactionError),
+//!     Rollback(Box<Failure>, PgTransactionError),
+//!     Lost(Result<u64, Box<Failure>>, PgScopeLoss),
+//! }
+//! struct Policy;
+//! impl PgFailurePolicy<u64> for Policy {
+//!     type Error = Failure;
+//!     fn begin_failed(&self, cause: PgTransactionError) -> Failure {
+//!         Failure::Begin(cause)
+//!     }
+//!     fn scope_lost(&self, failure: PgScopeFailure<Failure>) -> Failure {
+//!         Failure::Scope(Box::new(failure))
+//!     }
+//!     fn commit_unconfirmed(&self, output: u64, cause: PgTransactionError) -> Failure {
+//!         Failure::Commit(output, cause)
+//!     }
+//!     fn rollback_unconfirmed(&self, rejection: Failure, cause: PgTransactionError) -> Failure {
+//!         Failure::Rollback(Box::new(rejection), cause)
+//!     }
+//!     fn scope_lost_after_body(&self, result: Result<u64, Failure>, cause: PgScopeLoss) -> Failure {
+//!         Failure::Lost(result.map_err(Box::new), cause)
+//!     }
+//! }
+//! # let _ = Policy;
+//! ```
 
 #![forbid(unsafe_code)]
 
@@ -31,8 +66,8 @@ use std::{
 pub use runledger_postgres::{
     AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty,
     PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
-    PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgSessionProfile, RequiredIntentError,
-    RunledgerDatabase, SchemaCompatibilitySnapshot,
+    PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgSessionProfile, PgTransactionError,
+    RequiredIntentError, RunledgerDatabase, SchemaCompatibilitySnapshot,
     ensure_schema_compatible_after_idempotency_cutover as verify_schema, run_atomic,
     run_atomic_fail_fast_with, run_atomic_with,
 };
@@ -130,7 +165,7 @@ pub fn register(
 ///     batter_runledger::register_in(
 ///         scope,
 ///         "worker",
-///         OperationContext::new(Duration::from_secs(1))?,
+///         batter_core::operation::OperationOwner::new(Duration::from_secs(1))?.into_context(),
 ///         native,
 ///     )?;
 ///     Ok(())

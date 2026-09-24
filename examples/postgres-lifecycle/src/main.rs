@@ -7,7 +7,6 @@ mod tests;
 use batter::{
     BoxError,
     lifecycle::Supervisor,
-    operation::OperationContext,
     startup::{ProtectedStartupScope, ScopedStartup, Startup, StartupFuture},
 };
 use sqlx::{
@@ -56,7 +55,7 @@ async fn run() -> Result<(), BoxError> {
     let database_url = std::env::var("DATABASE_URL")?;
     let supervisor = Supervisor::new(support::shutdown_budget());
     // The root owns the complete startup allowance; the probe derives a child.
-    let context = OperationContext::new(Duration::from_secs(15))?;
+    let context = batter::operation::OperationOwner::new(Duration::from_secs(15))?.into_context();
     let probe_parent = context.clone();
     let startup = Startup::scoped(
         supervisor,
@@ -71,7 +70,7 @@ async fn run() -> Result<(), BoxError> {
                     let pool = database_pool(scope, connection)?;
                     scope.stage("postgres.probe")?;
                     // The pool is lazy: this bounded probe establishes connectivity.
-                    let probe = probe_parent.child(Duration::from_secs(5))?;
+                    let probe = probe_parent.child(Duration::from_secs(5))?.into_context();
                     batter::sqlx::probe(&pool, &probe).await?;
                     scope
                         .registration()

@@ -62,12 +62,14 @@ impl JobExecutionHandler for DeliveryWorker {
     ) -> Result<JobCompletion, JobFailure> {
         let payload = decode_payload(execution, value)?;
         let budget = execution.remaining_work_budget(FINAL_STATE_RESERVE);
-        let operation = OperationContext::new(budget).map_err(|_| {
-            JobFailure::timeout(
-                "delivery.operation_budget_exhausted",
-                "No provider work budget remained.",
-            )
-        })?;
+        let operation = batter::operation::OperationOwner::new(budget)
+            .map(|owner| owner.into_context())
+            .map_err(|_| {
+                JobFailure::timeout(
+                    "delivery.operation_budget_exhausted",
+                    "No provider work budget remained.",
+                )
+            })?;
 
         self.execute_retained(execution, &operation, &payload).await
     }

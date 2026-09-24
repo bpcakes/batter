@@ -1,6 +1,6 @@
 use batter_core::{
     ConfigurationError,
-    operation::{Interruption, OperationContext, OperationError},
+    operation::{Interruption, OperationError},
 };
 use std::{
     future::pending,
@@ -21,31 +21,44 @@ impl Drop for Dropped {
 
 #[test]
 fn zero_budget_is_invalid() {
-    assert!(OperationContext::new(Duration::ZERO).is_err());
-    assert!(OperationContext::new(Duration::MAX).is_err());
+    assert!(
+        batter_core::operation::OperationOwner::new(Duration::ZERO)
+            .map(|owner| owner.into_context())
+            .is_err()
+    );
+    assert!(
+        batter_core::operation::OperationOwner::new(Duration::MAX)
+            .map(|owner| owner.into_context())
+            .is_err()
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn child_cannot_extend_deadline() {
-    let parent = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let child = parent.child(Duration::from_secs(20)).unwrap();
-    assert_eq!(parent.deadline(), child.deadline());
+    assert_eq!(parent.deadline(), child.context().deadline());
     child.cancel();
-    assert_eq!(child.check(), Err(Interruption::Cancelled));
+    assert_eq!(child.context().check(), Err(Interruption::Cancelled));
     assert!(parent.check().is_ok());
 }
 
 #[tokio::test(start_paused = true)]
 async fn parent_cancellation_propagates_to_child() {
-    let parent = OperationContext::new(Duration::from_secs(10)).unwrap();
-    let child = parent.child(Duration::from_secs(1)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let child = parent.context().child(Duration::from_secs(1)).unwrap();
     parent.cancel();
-    assert_eq!(child.check(), Err(Interruption::Cancelled));
+    assert_eq!(child.context().check(), Err(Interruption::Cancelled));
 }
 
 #[tokio::test(start_paused = true)]
 async fn expired_context_does_not_invoke_factory() {
-    let context = OperationContext::at(Instant::now());
+    let context = batter_core::operation::OperationOwner::at(
+        batter_core::operation::RootDeadline::at(Instant::now()),
+    )
+    .into_context();
     let result = context
         .run("expired", |_| {
             panic!("factory must not be invoked");
@@ -63,9 +76,12 @@ async fn expired_context_does_not_invoke_factory() {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_wins_when_deadline_is_also_expired() {
-    let context = OperationContext::at(Instant::now());
-    context.cancel();
-    let result = context
+    let owner = batter_core::operation::OperationOwner::at(
+        batter_core::operation::RootDeadline::at(Instant::now()),
+    );
+    owner.cancel();
+    let result = owner
+        .context()
         .run("cancelled", |_| async { Ok::<_, std::io::Error>(()) })
         .await;
     assert!(matches!(
@@ -76,7 +92,9 @@ async fn cancellation_wins_when_deadline_is_also_expired() {
 
 #[tokio::test(start_paused = true)]
 async fn success_cancels_scope_but_not_parent() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let escaped = context
         .run(
             "success",
@@ -90,7 +108,9 @@ async fn success_cancels_scope_but_not_parent() {
 
 #[tokio::test(start_paused = true)]
 async fn original_application_error_survives() {
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result: Result<(), _> = context
         .run("failure", |_| async {
             Err(std::io::Error::new(
@@ -111,7 +131,9 @@ async fn original_application_error_survives() {
 async fn timeout_drops_the_owned_future() {
     let dropped = Arc::new(AtomicBool::new(false));
     let flag = dropped.clone();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     let result = context
         .run("timeout", |_| async move {
             let _guard = Dropped(flag);
@@ -127,7 +149,9 @@ async fn timeout_drops_the_owned_future() {
 
 #[tokio::test]
 async fn dropping_run_notifies_its_child_scope() {
-    let context = OperationContext::new(Duration::from_secs(60)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(60))
+        .unwrap()
+        .into_context();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         context
@@ -146,7 +170,9 @@ async fn dropping_run_notifies_its_child_scope() {
 #[tokio::test(start_paused = true)]
 async fn borrowed_application_futures_are_supported() {
     let mut values = Vec::new();
-    let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+        .unwrap()
+        .into_context();
     context
         .run("borrowed", |_| async {
             values.push(42);
@@ -160,7 +186,9 @@ async fn borrowed_application_futures_are_supported() {
 #[tokio::test]
 async fn panic_is_not_converted_to_expected_failure() {
     let task = tokio::spawn(async {
-        let context = OperationContext::new(Duration::from_secs(1)).unwrap();
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context();
         context
             .run("panic", |_| async {
                 panic!("programming defect");
@@ -174,7 +202,9 @@ async fn panic_is_not_converted_to_expected_failure() {
 
 #[tokio::test(start_paused = true)]
 async fn work_exhaustion_leaves_time_to_await_real_finalization() {
-    let parent = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let phases = parent.reserve_finalization(Duration::from_secs(3)).unwrap();
     let deadline = parent.deadline();
     assert_eq!(phases.work().deadline(), deadline - Duration::from_secs(3));
@@ -183,6 +213,7 @@ async fn work_exhaustion_leaves_time_to_await_real_finalization() {
         phases
             .work()
             .child(Duration::from_secs(30))
+            .map(|owner| owner.into_context())
             .unwrap()
             .deadline(),
         phases.work().deadline()
@@ -225,7 +256,9 @@ async fn work_exhaustion_leaves_time_to_await_real_finalization() {
 
 #[tokio::test(start_paused = true)]
 async fn finalization_uses_original_deadline_and_cannot_reset_its_allowance() {
-    let parent = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     let phases = parent.reserve_finalization(Duration::from_secs(3)).unwrap();
     tokio::time::advance(Duration::from_secs(8)).await;
     assert_eq!(phases.finalization().remaining(), Duration::from_secs(2));
@@ -245,19 +278,24 @@ async fn finalization_uses_original_deadline_and_cannot_reset_its_allowance() {
 
 #[tokio::test(start_paused = true)]
 async fn work_cancellation_preserves_finalization_but_parent_cancellation_does_not() {
-    let parent = OperationContext::new(Duration::from_secs(10)).unwrap();
-    let phases = parent.reserve_finalization(Duration::from_secs(3)).unwrap();
-    phases.work().cancel();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let phases = parent
+        .context()
+        .reserve_finalization(Duration::from_secs(3))
+        .unwrap();
+    phases.cancel_work();
     assert_eq!(phases.work().check(), Err(Interruption::Cancelled));
     assert!(phases.finalization().check().is_ok());
-    assert!(parent.check().is_ok());
+    assert!(parent.context().check().is_ok());
     parent.cancel();
     assert_eq!(phases.finalization().check(), Err(Interruption::Cancelled));
 }
 
 #[tokio::test(start_paused = true)]
 async fn reserve_must_leave_positive_work_time_at_allocation() {
-    let parent = OperationContext::new(Duration::from_secs(10)).unwrap();
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
     assert!(parent.reserve_finalization(Duration::ZERO).is_err());
     assert!(parent.reserve_finalization(Duration::MAX).is_err());
     assert!(matches!(
