@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT value AS \"value!\" FROM generate_series(1::bigint, 3) AS value ORDER BY value",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "value!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "fafd0020fd924f6e496e35bda86fbcd15f241bd80deae9048ce9584430645512"
+}

@@ -8,6 +8,9 @@ scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-onl
 ## Key entrypoints
 
 - `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
+- `src/native_query.rs`, `src/pooled_query.rs`: sealed native query dispatch, fixed
+  error mapping and parent-clamped query/cleanup budgets; retain observed results
+  before pool-return cleanup without exposing the native owner.
 - `src/session.rs`: low-level opaque session execution; no public transaction-start authority.
 - `src/atomic.rs`, `src/atomic/`: owned READ COMMITTED scopes, XID continuity,
   savepoint recovery and terminal completion evidence.
@@ -58,9 +61,14 @@ after reset and before BEGIN, and revalidate after arbitrary SQL; profiles are
 policy, not permanent authority evidence. The pool-return contract describes only low-level
 PgLease session work. Snapshot errors require the original guard before clean
 rollback classification; read-only inspectors have a distinct capability.
-Atomic scopes consume their owner and release their parent savepoint (including
+Recoverable atomic scopes consume their owner and release their parent savepoint (including
 all nested application savepoints) before returning usable state. Inner operation
 errors may return the owner only after rollback and continuity revalidation.
+Fail-fast runners keep one birth guard and omit per-operation savepoints on
+successful calls. A rejection acknowledges whole rollback before returning;
+caught rejections cannot regain SQL or commit authority. Explicit recoverable_sql
+retains operation recovery. Application savepoints may persist between fast calls.
+Boundary/transport loss and abandonment remain uncertain, never known rollback.
 Commit validates immediately before COMMIT; no await follows its acknowledgement.
 Never equate retirement, commit cancellation or an unconfirmed commit with rollback.
 Public lease closures never receive a native connection or transaction and the

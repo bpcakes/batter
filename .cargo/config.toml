@@ -1,6 +1,6 @@
 [resolver]
 incompatible-rust-versions = "fallback"
 
-# Runledger checked SQL uses its committed per-package PostgreSQL 18 metadata.
+# Workspace checked SQL uses committed per-package PostgreSQL 18 metadata.
 [env]
 SQLX_OFFLINE = "true"
