@@ -75,6 +75,43 @@ detects both a cast on the catalog column and an `EXISTS` rewrite that scans the
 whole catalog. These cases run through the exact `scripts/test_sqlx_live.sh` inventory;
 ordinary workspace tests discover them but leave them ignored.
 
+Policy-based atomic runners are covered by `atomic_live::policy` and
+`atomic_live::policy_cancellation`: fixed native `?` inference, recovered errors,
+acknowledged rejection, caught terminal failure, abandoned work, paired recovery
+causes, setup failure, and commit/rollback uncertainty. Native
+`runledger-postgres/tests/atomic_runner/policy.rs` exercises one consumer error
+across SQL, intent recording, queue operations and required-conflict rollback.
+The context unit suite cancels from policy mapping of a closed-pool begin error
+through both `_with_in` wrappers. Cancellation policies retain an `OperationOwner`;
+the wrappers receive only its `OperationContext`. `atomic_live::policy_context`
+does the same with a deferred commit failure, asserting the provisional output and native
+SQLSTATE/constraint survive as `OperationError::Failed`. The native policy test
+also covers intent observation and resource enqueue: real CHECK violations pass
+through `From<runledger_postgres::Error>`, retain their SQLx causes, and permit
+subsequent application writes and named operations to commit after recovery.
+Two later native policy cases use real PostgreSQL failures: required-intent
+storage conversion retains `RequiredIntentError::Storage` and allows a later
+write after savepoint recovery; termination of the transaction backend before a
+named required-intent call produces a terminal scope error, retains the same
+cause in `ScopeLost`, and does not commit an earlier provisional write.
+Focused runs of the two later native cases are recorded in `batter-rpgk`.
+The `batter-runledger` crate-level doctest implements all five failure-policy
+handlers using only adapter imports, covering the direct consumer export surface
+including `PgTransactionError`.
+The earlier `batter-rpgk` snapshot had an exact SQLx live inventory of 44 atomic
+tests (107 total). On that earlier snapshot, all 107 passed on both Rust 1.98.1
+and 1.94.0 on macOS arm64 with PostgreSQL 18.6, along with both full
+verification scripts and five HTTP smoke modes per toolchain. Its final Jig
+test rerun passed; initial suite failures and their unchanged reruns are
+recorded in the owning Bead.
+
+The original `batter-a0qb` evidence records 105 passing cases on macOS arm64
+with Rust 1.98.1 and 1.94.0 and PostgreSQL
+18.6. Both full verification scripts and five HTTP smokes per toolchain passed;
+required Jig gates passed. The first minimum-toolchain workspace run encountered
+a Docker port-resolution failure in the existing `job_read_scope` fixture. That
+target and the full rerun passed unchanged. See `batter-a0qb`.
+
 ## Verification commands
 
 Outcome-aware attempt acceptance uses an explicit disposable PostgreSQL 18:

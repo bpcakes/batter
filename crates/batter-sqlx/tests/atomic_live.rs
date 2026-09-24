@@ -5,6 +5,12 @@ mod cancellation;
 mod commit;
 #[path = "atomic_live/poison.rs"]
 mod poison;
+#[path = "atomic_live/policy.rs"]
+mod policy;
+#[path = "atomic_live/policy_cancellation.rs"]
+mod policy_cancellation;
+#[path = "atomic_live/policy_context.rs"]
+mod policy_context;
 #[path = "atomic_live/profile.rs"]
 mod profile;
 #[path = "atomic_live/profile_timeout_drift.rs"]
