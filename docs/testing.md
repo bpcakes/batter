@@ -535,11 +535,28 @@ rejects retaining the borrowed payload after its encoding or its decrypt view
 after the decoded header owner, with a compiling scoped counterpart. Parsing validates trailing
 data before owned decode copies the body. These are bounded regressions and
 pointer/lifetime evidence, not exhaustive fuzzing or a measured allocation claim. Crypto tests
-cover failure at each seal randomness request, changed-key rewrap randomness
-failure, and successful wrapper rotation with a corrupt body that still fails open.
+cover failure at each seal randomness request, exact authenticated same-key
+`rewrap_envelope` without randomness, fresh changed-key nonce consumption,
+changed-key randomness failure without a replacement, and both rotation paths
+with a corrupt body that still fails open. A cross-descriptor wrapper extracted
+from a canonical rotation fails authentication after deliberate low-level
+reconstruction. Public package and opt-in facade consumers exercise the complete
+header result; a runnable rustdoc example and a compile-fail counterpart pin the
+canonical type shape. These local tests do not prove storage compare-and-swap,
+policy fencing, or durable encryption budgets.
 Facade consumer graphs reject the leaf's `test-support` feature and check the
 AES/GCM dependency family; shared hashes used by other adapters are not treated as
 exclusive evidence of at-rest feature selection.
+
+For `batter-t2uq`, the final source tree passed the direct at-rest package and
+opt-in facade tests, strict at-rest Clippy, and the independent fixed-vector
+generator on Linux x86_64. The exact Rust 1.94 detached source, verified package,
+unpacked artifact, and external consumer gate passed. Both full `verify.sh`
+toolchains (1.98.1 and 1.94.0), five rebuilt HTTP process smoke profiles, 12 HTTP
+example tests, and the process and operation examples passed locally. Jig plan
+`plan_01M37SZH8ZP2Q6C2K8V7D3E7BE` passed `api:test`, `api:fmt`, `api:clippy`,
+`repo:contract`, and `repo:file-budget` after the test-module split. These are
+local results; hosted checks are reported separately by CI.
 
 Regular CI targets MSRV 1.94.0 and the pinned 1.98.1 toolchain. The weekly
 Linux verification job targets floating `stable`. CI requires the
