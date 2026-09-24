@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -305,19 +306,25 @@ class ShardTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
+    failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
+
+    def run_part(self, part, execute):
+        with mock.patch.object(sys, "argv", ["test_matrix.py", part]), \
+                mock.patch.object(matrix, "run_parallel", execute), \
+                mock.patch.object(matrix, "render_outcomes"):
+            return matrix.main()
+
     def test_matrix_scale_overflow_renders_context_and_final_failure(self):
         command = python("import sys; sys.stdout.buffer.write(b'BUILD_START\\n' + "
                          "b'x' * (9 * 1024 * 1024) + b'\\nFINAL_TEST_FAILURE\\n'); "
                          "sys.stdout.flush(); sys.stderr.write('failure details\\n'); "
                          "raise SystemExit(7)")
         stdout, stderr = io.StringIO(), io.StringIO()
-        with mock.patch.object(sys, "argv", ["test_matrix.py"]), \
+        with mock.patch.object(sys, "argv", ["test_matrix.py", "no-default-features"]), \
                 mock.patch.object(matrix, "CORE_CHECK", command), \
-                mock.patch.object(matrix, "FACADE_CHECK", python("print('facade completed')")), \
-                mock.patch.object(matrix, "RUNNER_TESTS", python("print('peer completed')")), \
-                mock.patch.object(matrix, "SMOKE_TESTS", python("print('smoke peer completed')")), \
-                mock.patch.object(matrix, "REFERENCE_RUNNER_TESTS", python("print('reference controls completed')")), \
-                mock.patch.object(matrix, "SQLX_RUNNER_TESTS", python("print('sqlx controls completed')")), \
+                mock.patch.object(matrix, "FACADE_CHECK", python("print('peer completed')")), \
+                mock.patch.object(matrix, "CORE_TESTS", python("print('tests peer completed')")), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             self.assertEqual(matrix.main(), 1)
         rendered = stdout.getvalue()
@@ -325,69 +332,93 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("FINAL_TEST_FAILURE\n", rendered)
         self.assertIn("failure details\n", rendered)
         self.assertIn("peer completed\n", rendered)
-        self.assertIn("smoke peer completed\n", rendered)
+        self.assertIn("tests peer completed\n", rendered)
         self.assertIn(parallel.Capture.OMITTED.decode(), rendered)
         self.assertIn('"overflow": true', stderr.getvalue())
         self.assertIn('"status": 7', stderr.getvalue())
         self.assertLess(len(rendered), 8 * 1024 * 1024 + 1024)
 
-    def test_runtime_passes_share_a_batch_between_check_and_doctests(self):
-        success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
-        batches = []
+    def test_parts_partition_every_command_into_bounded_batches(self):
+        batches = {}
+        for part in matrix.parts():
+            recorded = batches.setdefault(part, [])
 
-        def execute(commands, **kwargs):
-            batches.append(commands)
-            return [success] * len(commands)
+            def execute(commands, recorded=recorded, **kwargs):
+                recorded.append(commands)
+                return [self.success] * len(commands)
 
-        with mock.patch.object(sys, "argv", ["test_matrix.py"]), \
-                mock.patch.object(matrix, "run_parallel", execute), \
-                mock.patch.object(matrix, "render_outcomes"):
-            self.assertEqual(matrix.main(), 0)
-        self.assertEqual([len(batch) for batch in batches], [4, 4, 4, 3, 1, 4, 3])
-        self.assertTrue(all(1 <= len(batch) <= 4 for batch in batches))
-        self.assertEqual(batches[0][1], matrix.FACADE_CHECK)
-        self.assertEqual(batches[0][2], matrix.RUNNER_TESTS)
-        self.assertEqual(batches[0][3], matrix.SMOKE_TESTS)
-        self.assertEqual(batches[1][0], matrix.REFERENCE_RUNNER_TESTS)
-        self.assertEqual(batches[1][1], matrix.SQLX_RUNNER_TESTS)
-        self.assertEqual(batches[1][2], matrix.FACADE_FEATURES)
-        self.assertEqual(batches[1][3], matrix.FACADE_CACHE_CONTROLS)
-        self.assertEqual(batches[2], [matrix.RUNLEDGER_GRAPH, matrix.RUNLEDGER_CONTROLS, matrix.RUNLEDGER_CONSUMER, matrix.RUNLEDGER_TOOL_CONTROLS])
-        self.assertIn("--no-default-features", batches[0][0])
-        self.assertIn("test_parallel_process.py", batches[0][2])
-        self.assertIn("scripts/test_smoke_postgres.py", batches[0][3])
-        self.assertIn("--no-default-features", batches[3][0])
-        self.assertIn("--all-targets", batches[3][1])
-        self.assertIn("--workspace", batches[3][1])
-        self.assertEqual(batches[3][2][0], "env")
-        self.assertIn("PGDATA=/unused-configuration-fixture", batches[3][2])
-        self.assertIn("PGPASSWORD=parent-secret-marker", batches[3][2])
-        self.assertIn("configuration", batches[3][2])
-        self.assertIn("--locked", batches[3][2])
-        self.assertIn("--doc", batches[4][0])
-        self.assertEqual(batches[5], [matrix.RUNLIMIT_FEATURES, matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT])
-        self.assertEqual(batches[6], [matrix.RUNLIMIT_RELEASE, matrix.RUNLIMIT_CONSUMER, matrix.RUNLIMIT_CONSUMER_CONTROLS])
-        self.assertIn("scripts/check_runlimit_features.py", batches[5][0])
-        self.assertTrue(all("--locked" in command for batch in batches for command in batch
-                            if command[0] == "cargo"))
+            self.assertEqual(self.run_part(part, execute), 0)
+        self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
+                         {"workspace": [3], "no-default-features": [3], "doctests": [1],
+                          "consumers": [4, 4], "runlimit": [3], "scripts": [4, 1]})
+        commands = [command for recorded in batches.values() for batch in recorded for command in batch]
+        self.assertCountEqual(commands, [
+            matrix.CORE_CHECK, matrix.FACADE_CHECK, matrix.CORE_TESTS, matrix.WORKSPACE_TESTS,
+            matrix.HOSTILE_CONFIGURATION, matrix.DOC_TESTS, matrix.RUNNER_TESTS, matrix.SMOKE_TESTS,
+            matrix.REFERENCE_RUNNER_TESTS, matrix.SQLX_RUNNER_TESTS, matrix.RUNLIMIT_FEATURES,
+            matrix.RUNLEDGER_GRAPH, matrix.RUNLEDGER_CONTROLS, matrix.RUNLEDGER_CONSUMER,
+            matrix.RUNLEDGER_TOOL_CONTROLS, matrix.RUNLIMIT_CONSUMER, matrix.RUNLIMIT_CONSUMER_CONTROLS,
+            matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT,
+            matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
+        ])
+        self.assertEqual(len(commands), 23)
+        workspace, = batches["workspace"]
+        self.assertIn("--all-targets", workspace[0])
+        self.assertIn("--workspace", workspace[0])
+        self.assertEqual(workspace[1][0], "env")
+        self.assertIn("PGDATA=/unused-configuration-fixture", workspace[1])
+        self.assertIn("PGPASSWORD=parent-secret-marker", workspace[1])
+        self.assertIn("configuration", workspace[1])
+        self.assertIn("--locked", workspace[1])
+        self.assertTrue(all("--no-default-features" in command
+                            for command in batches["no-default-features"][0]))
+        self.assertIn("--doc", batches["doctests"][0][0])
+        self.assertIn("test_parallel_process.py", batches["scripts"][0][0])
+        self.assertIn("scripts/test_smoke_postgres.py", batches["scripts"][0][1])
+        self.assertTrue(all("runlimit" in " ".join(command) for command in batches["runlimit"][0]))
+        self.assertTrue(all("--locked" in command for command in commands if command[0] == "cargo"))
 
-    def test_failure_of_any_prerequisite_or_runtime_pass_stops_later_batches(self):
-        success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
-        failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
-        batch_sizes = [4, 4, 4, 3, 1, 4, 3]
-        for failing_batch, size in enumerate(batch_sizes):
-            for failing_command in range(size):
-                results = [[success] * earlier for earlier in batch_sizes[:failing_batch]]
-                failed = [success] * size
-                failed[failing_command] = failure
-                results.append(failed)
-                with self.subTest(batch=failing_batch, command=failing_command), \
-                    mock.patch.object(sys, "argv", ["test_matrix.py"]), \
-                    mock.patch.object(matrix, "run_parallel",
-                                      side_effect=results) as execute, \
-                    mock.patch.object(matrix, "render_outcomes"):
-                    self.assertEqual(matrix.main(), 1)
-                    self.assertEqual(execute.call_count, failing_batch + 1)
+    def test_failure_stops_later_batches_of_its_part(self):
+        for part, planned in matrix.parts().items():
+            sizes = [len(commands) for _, commands in planned]
+            for failing_batch, size in enumerate(sizes):
+                for failing_command in range(size):
+                    results = [[self.success] * earlier for earlier in sizes[:failing_batch]]
+                    failed = [self.success] * size
+                    failed[failing_command] = self.failure
+                    results.append(failed)
+                    execute = mock.Mock(side_effect=results)
+                    with self.subTest(part=part, batch=failing_batch, command=failing_command):
+                        self.assertEqual(self.run_part(part, execute), 1)
+                        self.assertEqual(execute.call_count, failing_batch + 1)
+
+    def test_a_known_part_is_required(self):
+        for argv in (["test_matrix.py"], ["test_matrix.py", "all"]):
+            execute = mock.Mock()
+            with self.subTest(argv=argv), mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(matrix, "run_parallel", execute), \
+                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                matrix.main()
+            self.assertEqual(raised.exception.code, 2)
+            execute.assert_not_called()
+
+    def test_verify_profile_runs_every_part_exactly_once(self):
+        root = Path(__file__).resolve().parent.parent
+        contract = json.loads((root / ".agent/jig-contract.json").read_text())
+        verify, = [profile for profile in contract["profiles"] if profile["id"] == "verify"]
+        runners = {(action["target"]["component"], action["target"]["action"]): action["runner"].get("command")
+                   for action in contract["actions"]}
+        commands = dict(re.findall(r'(?m)^([a-z][a-z0-9_]*_command) = "([^"\\]*)"$',
+                                   (root / ".jig.toml").read_text()))
+        invoked = {}
+        for target in verify["targets"]:
+            key = (target["component"], target["action"])
+            selected = re.fullmatch(r"python3 scripts/test_matrix\.py (\S+)",
+                                    commands.get(runners.get(key), ""))
+            if selected:
+                invoked.setdefault(selected.group(1), []).append(key)
+        self.assertEqual(sorted(invoked), sorted(matrix.parts()))
+        self.assertTrue(all(len(targets) == 1 for targets in invoked.values()), invoked)
 
 
 class MutationCopyTests(unittest.TestCase):

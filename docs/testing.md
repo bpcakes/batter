@@ -204,7 +204,7 @@ service and confirms wrong auth and selector closure signatures fail at
 subsets in a disposable consumer workspace with the current toolchain. It checks
 normal dependency reachability, refuses external source/version drift from the
 repository lock, and requires the specific disabled-HTTP import error without
-`axum`. This runner is part of `test_matrix.py`, including Jig's test action.
+`axum`. This runner is part of the `consumers` matrix part, Jig's `api:consumers`.
 It reads the declared feature inventory from Cargo metadata and fails if a
 feature is added without a graph-membership expectation. A runner control
 injects an additional declared feature and requires that failure. Protected
@@ -910,28 +910,44 @@ Bash, and Python 3. The runtime profile disables Jig's optional dev proxy.
 MCP startup requires an already installed runtime.
 
 `scripts/jig doctor` checks harness readiness; `scripts/jig check` runs the
-configured Clippy, formatting, locked core/all-feature/doctest, contract, and
-file-budget gates. Both test aliases and `verify.sh` use `python3
-scripts/test_matrix.py`. It checks minimal core compilation, the process-runner
-regressions and SQLx smoke controls first, then overlaps the core and workspace runtime test commands,
-then runs doctests if both passed. Both dependency feature configurations remain
-covered. `verify.sh` delegates to this profile rather than invoking the matrix
+configured `verify` profile. Its tests are six sibling targets, each running one
+part of `python3 scripts/test_matrix.py <part>` with its own receipt:
+
+- `api:test` (`workspace`): all-feature workspace tests, the configuration test
+  under a hostile parent environment, and the reference runner controls, which
+  read Cargo metadata.
+- `api:no-default-features`: minimal core and facade compilation and the core
+  tests without default features.
+- `api:doctest` (`doctests`): all-feature workspace doctests.
+- `api:consumers`: facade feature isolation and its cache controls, the Git-free
+  Runledger and Runlimit consumers, isolated Runlimit feature consumers, and the
+  Runledger graph check with the controls that read the native tree.
+- `api:runlimit`: native Runlimit default-feature and release tests and its graph
+  and asset check.
+- `repo:script-tests` (`scripts`): Python controls confined to `scripts/`.
+
+Jig runs the parts with the other `verify` targets, at most eight at a time, and
+`work check` reruns only a failed or stale part. The parts still share CPU and
+Cargo's build-directory lock, so the sequential test binaries in `api:test` remain
+the critical path. Both dependency feature configurations remain
+covered. `scripts/jig check test` and `check test-locked` run only the workspace
+part. `verify.sh` delegates to this profile rather than invoking the matrix
 again. The independent `api:docs` and `api:http-smoke` targets require rustdoc with
 warnings denied and all five process profiles against the Cargo-reported build
 artifact. Local verification uses the pinned toolchain once; CI owns the MSRV matrix.
 
-For final backend verification, a fresh passing `api:test` receipt from the current
-plan's gate/profile run also satisfies the final-test requirement. Inspect
+For final backend verification, fresh passing receipts for every test target from
+the current plan's gate/profile run also satisfy the final-test requirement. Inspect
 `scripts/jig work evidence --plan-id <id>` and `scripts/jig work gates --plan-id <id>`
-before deciding to run `scripts/jig check test` again. Reuse requires unchanged
+before deciding to rerun a test target. Reuse requires unchanged
 check inputs, command/configuration, toolchain and relevant environment/prerequisites,
 and no later unresolved failure. Toolchain and external-state identity are not
 established by Jig's fingerprint alone. `bash scripts/verify.sh --plan-id <id>`
 uses `work check` to reuse those receipts and execute missing or stale required
 targets. Without a plan ID, `verify.sh` uses `jig check --profile verify` for a fresh
 run with receipts and a policy comparison against `origin/master` (which CI
-fetches). The complete profile, rather than `api:test` alone, includes
-rustdoc and HTTP smokes. CI's MSRV verification remains separate.
+fetches). The complete profile, rather than any single test target, includes
+every test part, rustdoc and HTTP smokes. CI's MSRV verification remains separate.
 
 The `verify` profile requires independent Clippy, formatting, tests, rustdoc, HTTP
 smoke, contract and file-budget targets. Keep these as siblings; `depends_on` is for actual execution
@@ -939,7 +955,12 @@ prerequisites. The Rust targets, including the rustdoc and HTTP smoke siblings, 
 `inputs_policy = "exhaustive"`: workspace
 manifests and lockfiles, toolchain/Cargo/lint configuration, package source,
 examples, tests, benches and migrations, and shared test sources. Test targets
-also cover the Python helpers and shell entrypoints under `scripts/`. When a
+also cover the Python helpers and shell entrypoints under `scripts/`.
+`api:runlimit` narrows this to the root Cargo configuration, every package
+manifest, and Runlimit sources, migrations and assets, because no Runlimit package
+depends on a Batter package. `repo:script-tests` reads only `scripts/` and
+`.jig.toml`; a Python control that reads repository files belongs in the part
+whose scope covers those files. When a
 check starts consuming another path, update both `.jig.toml` and the resolved
 `.agent/jig-contract.json` inputs. Use scoped prefixes rather than `**/*.rs`:
 exhaustive globs must not intersect ignored build or cache directories.
@@ -994,10 +1015,12 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The matrix executes seven batches with command counts `[4, 4, 4, 3, 1, 4, 3]`.
-Runner controls inject a failure at every one of those 23 command positions and
-require that no later batch starts; surplus mocked outcomes cannot stand in for an
-unexecuted runtime or doctest batch.
+The six parts hold the same 23 commands in batches of at most four: `consumers`
+and `scripts` use two batches, and the others use one. Runner controls require
+that the parts partition all 23 commands exactly once and that each part is the
+command of exactly one `verify` target. They inject a failure at every command
+position and require that no later batch of that part starts; surplus mocked
+outcomes cannot stand in for an unexecuted batch.
 
 Jig's database tooling is disabled because SQLx currently appears only in an
 example package. There are no migration or prepared-query metadata gates.
@@ -1041,7 +1064,10 @@ expensive commands with execution counters, and check tracker/documentation reus
 across dirty, staged and committed states. Uncommitted tracker edits must keep the
 policy receipts, while a tracker commit refreshes them. A fixture command writes
 `.beads/` during a running check: the check must pass with the receipt-metadata
-declaration and fail its whole batch without it. Source, shared fixtures, migrations and
+declaration and fail its whole batch without it. A crates-only edit must not rerun
+`api:runlimit` or `repo:script-tests`, a Runlimit edit must rerun `api:runlimit`,
+and a failed part must be the only part executed by the next check once it passes.
+Source, shared fixtures, migrations and
 new or changed Python helpers must invalidate test evidence; a targeted native
 file-budget refresh must preserve the original Rust receipts.
 The Python tests use the standard library and do not run or provision PostgreSQL.
@@ -1871,8 +1897,8 @@ Other controls interrupt the parent during readiness and reject a complete line
 whose marker is followed by extra fields. Controls require reaping and output EOF; captured direct-child PIDs
 also require `waitpid` to report no remaining child. Synthetic cleanup text
 tests the smoke's acceptance protocol, not SQLx pool closure. These controls
-run through `scripts/verify.sh` and Jig's test actions; their Python inputs are
-part of the Jig receipt digest. macOS CI includes the portable
+run through `scripts/verify.sh` and Jig's `repo:script-tests`; their Python inputs
+are part of the Jig receipt digest. macOS CI includes the portable
 example exits, report tests/doctests, and smoke controls; live checks remain a
 separate externally provisioned invocation.
 

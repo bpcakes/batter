@@ -52,6 +52,7 @@ cargo test -p batter-example-postgres-lifecycle --test diagnostics --locked
 python3 scripts/test_smoke_postgres.py -v
 cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 scripts/jig check test
+scripts/jig check repo:script-tests
 ```
 
 Select the live checks with `cargo test -p batter-example-postgres-lifecycle
