@@ -459,8 +459,16 @@ fails when standalone metadata or dependency-source boundaries regress.
 
 At-rest decoder tests exercise every truncation and every single-byte replacement
 of a composite sample, requiring canonical re-encoding after successful decode.
-The decoder validates trailing data before copying the body. These are bounded
-regressions, not an exhaustive fuzzing or measured allocation claim. Crypto tests
+Borrowed and owned decoders share structural parsing, with explicit expected-error
+cases for nested lengths, version, key ID, body bounds and trailing bytes. Format
+tests pad a valid encoded envelope beyond the header limit, so removing the size
+guard changes the asserted error; the body test supplies an actual byte beyond
+the maximum. Public consumer and independent Node fixture cases open both views
+and check that the borrowed body points at the exact encoded subslice. Rustdoc
+rejects retaining the borrowed payload after its encoding or its decrypt view
+after the decoded header owner, with a compiling scoped counterpart. Parsing validates trailing
+data before owned decode copies the body. These are bounded regressions and
+pointer/lifetime evidence, not exhaustive fuzzing or a measured allocation claim. Crypto tests
 cover failure at each seal randomness request, changed-key rewrap randomness
 failure, and successful wrapper rotation with a corrupt body that still fails open.
 Facade consumer graphs reject the leaf's `test-support` feature and check the

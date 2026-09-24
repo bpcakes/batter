@@ -269,14 +269,11 @@ impl SealedPayload {
 
     /// Decodes one exact canonical composite payload.
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        let mut decoder = Decoder::new(bytes);
-        decoder.magic(SEALED_MAGIC)?;
-        let envelope = Envelope::decode(decoder.length_prefixed_u16()?)?;
-        let body_length = usize::try_from(decoder.u32()?).map_err(|_| Error::MalformedEncoding)?;
-        validate_body_length(body_length)?;
-        let ciphertext = decoder.take(body_length)?;
-        decoder.finish()?;
-        Self::from_parts(envelope, ciphertext.to_vec())
+        let borrowed = BorrowedSealedPayload::decode(bytes)?;
+        Ok(Self {
+            envelope: borrowed.envelope,
+            ciphertext: borrowed.ciphertext.to_vec(),
+        })
     }
 
     /// Encodes the envelope and body into one canonical portable value.
@@ -319,6 +316,128 @@ impl fmt::Debug for SealedPayload {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SealedPayload")
+            .field("envelope", &self.envelope)
+            .field("ciphertext", &"<redacted>")
+            .field("ciphertext_len", &self.ciphertext.len())
+            .finish()
+    }
+}
+
+/// A decoded composite with an owned header and a ciphertext slice borrowed
+/// directly from the canonical encoding. Decoding validates structure only;
+/// [`crate::Keyring::open`] authenticates the header, body, and supplied context.
+///
+/// The encoded buffer must remain alive while this value is used. Parsing may
+/// allocate for header fields, and opening allocates a plaintext buffer, but
+/// decoding does not copy the ciphertext body.
+///
+/// ```
+/// use batter_at_rest::{BorrowedSealedPayload, Context, KeyId, Keyring, SecretKey};
+/// # fn example() -> Result<(), batter_at_rest::Error> {
+/// let key_id = KeyId::new("primary-2026")?;
+/// let keyring = Keyring::new(
+///     key_id.clone(),
+///     [(key_id, SecretKey::from_bytes([7_u8; 32]))],
+/// )?;
+/// let context = Context::for_row(
+///     "example", "private-record", b"owner", b"record", "record-v1",
+/// )?;
+/// let encoded = keyring.seal(&context, b"payload")?.encode();
+/// let decoded = BorrowedSealedPayload::decode(&encoded)?;
+/// let plaintext = keyring.open(&context, decoded.as_ref())?;
+/// assert_eq!(plaintext.as_slice(), b"payload");
+/// # Ok(())
+/// # }
+/// # example().unwrap();
+/// ```
+///
+/// The view cannot outlive the encoded buffer:
+///
+/// ```compile_fail
+/// use batter_at_rest::{BorrowedSealedPayload, Error};
+/// fn invalid() -> Result<(), Error> {
+///     let encoded = vec![0_u8; 32];
+///     let decoded = BorrowedSealedPayload::decode(&encoded)?;
+///     drop(encoded);
+///     let _ = decoded.ciphertext();
+///     Ok(())
+/// }
+/// ```
+///
+/// A view returned by `as_ref` also cannot outlive the decoded header owner:
+///
+/// ```compile_fail
+/// use batter_at_rest::{BorrowedSealedPayload, Error};
+/// fn invalid() -> Result<(), Error> {
+///     let encoded = vec![0_u8; 32];
+///     let decoded = BorrowedSealedPayload::decode(&encoded)?;
+///     let view = decoded.as_ref();
+///     drop(decoded);
+///     let _ = view.envelope();
+///     Ok(())
+/// }
+/// ```
+///
+/// A scoped view compiles because both owners remain alive through its use:
+///
+/// ```
+/// use batter_at_rest::{BorrowedSealedPayload, Error};
+/// fn scoped(encoded: &[u8]) -> Result<(), Error> {
+///     let decoded = BorrowedSealedPayload::decode(encoded)?;
+///     let view = decoded.as_ref();
+///     let _ = (view.envelope(), view.ciphertext());
+///     Ok(())
+/// }
+/// # let _ = scoped;
+/// ```
+pub struct BorrowedSealedPayload<'a> {
+    envelope: Envelope,
+    ciphertext: &'a [u8],
+}
+
+impl<'a> BorrowedSealedPayload<'a> {
+    /// Decodes one exact canonical composite and borrows its ciphertext body.
+    /// No key or context is needed, so successful decoding does not authenticate it.
+    pub fn decode(bytes: &'a [u8]) -> Result<Self, Error> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.magic(SEALED_MAGIC)?;
+        let envelope = Envelope::decode(decoder.length_prefixed_u16()?)?;
+        let body_length = usize::try_from(decoder.u32()?).map_err(|_| Error::MalformedEncoding)?;
+        validate_body_length(body_length)?;
+        let ciphertext = decoder.take(body_length)?;
+        decoder.finish()?;
+        Ok(Self {
+            envelope,
+            ciphertext,
+        })
+    }
+
+    /// Returns the structurally validated but unauthenticated envelope header.
+    #[must_use]
+    pub fn envelope(&self) -> &Envelope {
+        &self.envelope
+    }
+
+    /// Returns the borrowed ciphertext body, including its unverified tag.
+    #[must_use]
+    pub fn ciphertext(&self) -> &[u8] {
+        self.ciphertext
+    }
+
+    /// Borrows the decoded header and body for [`crate::Keyring::open`].
+    #[must_use]
+    pub fn as_ref(&self) -> SealedPayloadRef<'_> {
+        SealedPayloadRef {
+            envelope: &self.envelope,
+            ciphertext: self.ciphertext,
+        }
+    }
+}
+
+impl fmt::Debug for BorrowedSealedPayload<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BorrowedSealedPayload")
             .field("envelope", &self.envelope)
             .field("ciphertext", &"<redacted>")
             .field("ciphertext_len", &self.ciphertext.len())
