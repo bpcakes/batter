@@ -262,9 +262,12 @@ The independent Rust targets use Jig contract v8 exhaustive input scopes. Keep
 those scopes complete when adding fixtures, helpers, configuration or new source
 roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Keep formatting,
 contract and file-budget checks as required profile siblings, not test execution
-dependencies. Tracker-only edits preserve Rust receipts; a final
-`scripts/jig work check --plan-id <id>` may refresh the inexpensive whole-repository
-policy checks while reusing Rust passes. Use native `scripts/jig check
+dependencies. Tracker-only edits preserve Rust receipts. `.jig.toml` declares the
+root `.beads/` store as receipt metadata, so tracker writes cannot fail an in-flight
+check and uncommitted tracker edits keep every receipt. Committing moves HEAD, so a
+final `scripts/jig work check --plan-id <id>` may refresh the inexpensive Git-bound
+policy checks while reusing Rust passes. The declaration asserts that no gated check
+reads `.beads/`; remove it before adding one that does. Use native `scripts/jig check
 repo:file-budget --plan-id <id>` for a targeted refresh, without overriding the
 plan comparison. If inspection reports `collection_limit`, repeat `work evidence`
 or `work gates` with `--freshness-timeout-ms 30000`; this reads existing evidence

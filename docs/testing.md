@@ -945,12 +945,18 @@ check starts consuming another path, update both `.jig.toml` and the resolved
 exhaustive globs must not intersect ignored build or cache directories.
 
 Root tracker exports and root documentation are outside the Rust targets' input
-scopes. Closing a Bead does not invalidate their receipts. Contract and file-budget
-retain conservative whole-repository scope; after tracker closeout, run
-`scripts/jig work check --plan-id <id>` to refresh these inexpensive policy checks
-and reuse the original Rust passes. Configuration changes intentionally invalidate
-previous evidence. A file-budget policy edit also invalidates that native target.
-This is per-target freshness, not a global exclusion of tracker data.
+scopes. Closing a Bead does not invalidate their receipts. The
+`[work] receipt_metadata = ["beads"]` declaration also excludes the root `.beads/`
+store from whole-repository freshness and from the worktree invariant that Jig
+checks around each parallel batch. A tracker write during a check therefore no longer fails every
+target in that batch, and uncommitted tracker edits keep the contract and
+file-budget receipts. Those two policy checks still bind HEAD: after committing a
+tracker closeout, run `scripts/jig work check --plan-id <id>` to refresh them and
+reuse the original Rust passes. The declaration asserts that no gated check reads
+`.beads/`; remove it before adding one that does. Configuration changes
+intentionally invalidate previous evidence. A file-budget policy edit also
+invalidates that native target. See
+[Jig receipt metadata](references.md#jig-receipt-metadata-2026-09-24).
 
 If inspection reports `unknown` with reason `collection_limit`, increase its
 read-only budget before deciding that checks need execution:
@@ -1032,7 +1038,10 @@ verify budget enforcement and missing-base behavior, exercise a restored runtime
 with Cargo blocked, check actual Git merges, and inspect generated ZIP contents.
 Freshness controls retain the real target scopes and native policy checks, replace
 expensive commands with execution counters, and check tracker/documentation reuse
-across dirty, staged and committed states. Source, shared fixtures, migrations and
+across dirty, staged and committed states. Uncommitted tracker edits must keep the
+policy receipts, while a tracker commit refreshes them. A fixture command writes
+`.beads/` during a running check: the check must pass with the receipt-metadata
+declaration and fail its whole batch without it. Source, shared fixtures, migrations and
 new or changed Python helpers must invalidate test evidence; a targeted native
 file-budget refresh must preserve the original Rust receipts.
 The Python tests use the standard library and do not run or provision PostgreSQL.

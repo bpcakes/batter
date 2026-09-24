@@ -240,6 +240,54 @@ class JigIntegrationTests(unittest.TestCase):
             self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
             self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
 
+    def test_uncommitted_tracker_edits_preserve_policy_receipts(self):
+        plan = self.prepare_freshness()
+        original = self.freshness_check(plan)
+        (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
+        for state in ["dirty", "staged"]:
+            with self.subTest(state=state):
+                if state == "staged":
+                    self.git("add", ".beads")
+                current = self.freshness_check(plan)
+                for action, entry in original.items():
+                    self.assertEqual(current[action]["receipt_id"], entry["receipt_id"])
+        # A commit moves HEAD, which the Git-authority policy checks still bind.
+        self.commit("tracker closeout")
+        current = self.freshness_check(plan)
+        for action in ["contract", "file-budget"]:
+            self.assertNotEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+        for action in ["clippy", "fmt", "test", "docs", "http-smoke"]:
+            self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+
+    def check_with_tracker_write(self, *, declared):
+        if not declared:
+            config = self.repo / ".jig.toml"
+            text = config.read_text()
+            self.assertIn('receipt_metadata = ["beads"]\n', text)
+            config.write_text(text.replace('receipt_metadata = ["beads"]\n', ""))
+        plan = self.prepare_freshness()
+        runner = self.repo / "scripts/fixture_check.py"
+        runner.write_text(runner.read_text() + (
+            "if sys.argv[1] == 'test':\n"
+            "    with Path('.beads/issues.jsonl').open('a') as tracker:\n"
+            "        tracker.write('{\"status\":\"in_progress\"}\\n')\n"
+        ))
+        return subprocess.run([str(self.runtime), "--json", "work", "check", "--plan-id", plan],
+                              cwd=self.repo, env=self.env, text=True, capture_output=True,
+                              timeout=60)
+
+    def test_tracker_writes_during_a_check_do_not_fail_it(self):
+        result = self.check_with_tracker_write(declared=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"], result.stdout)
+
+    def test_undeclared_tracker_writes_fail_the_running_batch(self):
+        result = self.check_with_tracker_write(declared=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("api:test (failure)", result.stdout)
+        receipts = (self.repo / ".agent/state/receipts.jsonl").read_text()
+        self.assertIn("worktree fingerprint changed", receipts)
+
     def test_restored_runtime_cache_runs_without_cargo(self):
         cache = self.runtime.parent.parent
         contract = json.loads((self.repo / ".agent/jig-contract.json").read_text())

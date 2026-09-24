@@ -1750,6 +1750,23 @@ describes key matching, branch scope, and eviction; a configured cache does not
 guarantee a hit. This repository caches `.git/jig-tools/*-runtime` only and
 continues to run Jig's normal source/profile compatibility checks after restore.
 
+## Jig receipt metadata: 2026-09-24
+
+The pinned Jig revision's
+[public contract](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/docs/public-contract.md)
+defines `work.receipt_metadata = ["beads"]` as an ownership declaration that no
+gated command consumes the root `.beads/` store. It excludes that store from
+dirty, staged and committed freshness projections. The
+[worktree pathspecs](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/git_receipts/metadata.rs)
+apply the same exclusion to the execution fingerprint that
+[parallel read-only batches](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/runtime/run_execution/source_epoch.rs)
+compare before and after execution. Without it, any tracker write during a batch
+fails every target in that batch. Git-state targets still hash HEAD in their
+[source identity](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/repository/freshness/source.rs),
+so a tracker commit refreshes the contract and file-budget checks. Here the
+file-budget policy governs only Rust sources, and no configured check reads
+`.beads/`.
+
 
 ## Integration readiness source inspection: 2026-09-09
 

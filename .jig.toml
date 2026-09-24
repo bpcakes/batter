@@ -835,6 +835,12 @@ codex_home = "codex"
 sandbox = "workspace-write"
 checkout = "repo"
 
+# No gated check reads the root Beads store. Excluding it from working-file
+# freshness and from the worktree invariant around each parallel batch keeps
+# tracker writes from failing an in-flight check.
+[work]
+receipt_metadata = ["beads"]
+
 [[work.gates]]
 id = "verify"
 kind = "evidence"
