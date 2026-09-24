@@ -1,4 +1,5 @@
 mod error;
+pub(crate) mod fast;
 pub(crate) mod scope;
 
 pub use error::{CommitUnconfirmed, PgScopeError, PgScopeFailure, PgScopeLoss, PgTransactionError};

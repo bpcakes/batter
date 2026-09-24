@@ -75,6 +75,15 @@ pub(crate) async fn retain<T, E>(
     operation: &'static str,
     work: impl Future<Output = Result<T, E>>,
 ) -> Result<T, OperationError<E>> {
+    retain_with_fallback(context, operation, work, || None).await
+}
+
+pub(crate) async fn retain_with_fallback<T, E>(
+    context: &OperationContext,
+    operation: &'static str,
+    work: impl Future<Output = Result<T, E>>,
+    fallback: impl FnOnce() -> Option<Result<T, E>>,
+) -> Result<T, OperationError<E>> {
     let retained = Mutex::new(None);
     let slot = &retained;
     context
@@ -87,12 +96,15 @@ pub(crate) async fn retain<T, E>(
             },
             |boundary| match retained.lock().expect("private atomic outcome slot").take() {
                 Some(result) => result.map_err(OperationError::Failed),
-                None => match boundary {
-                    Err(OperationError::Interrupted(reason)) => {
-                        Err(OperationError::Interrupted(reason))
-                    }
-                    Err(OperationError::Failed(never)) => match never {},
-                    Ok(()) => unreachable!("completed atomic future must retain its result"),
+                None => match fallback() {
+                    Some(result) => result.map_err(OperationError::Failed),
+                    None => match boundary {
+                        Err(OperationError::Interrupted(reason)) => {
+                            Err(OperationError::Interrupted(reason))
+                        }
+                        Err(OperationError::Failed(never)) => match never {},
+                        Ok(()) => unreachable!("completed atomic future must retain its result"),
+                    },
                 },
             },
         )

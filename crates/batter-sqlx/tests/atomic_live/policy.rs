@@ -12,6 +12,12 @@ pub(super) enum Failure {
     Scope(Box<PgScopeFailure<Self>>),
     Completion(Box<PgAtomicUncertainty<i64, Self>>),
     Rejected(&'static str),
+    RolledBack(batter_sqlx::PgScopeRolledBack),
+}
+impl From<batter_sqlx::PgScopeRolledBack> for Failure {
+    fn from(value: batter_sqlx::PgScopeRolledBack) -> Self {
+        Self::RolledBack(value)
+    }
 }
 impl From<sqlx::Error> for Failure {
     fn from(value: sqlx::Error) -> Self {
