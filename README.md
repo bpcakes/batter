@@ -275,8 +275,17 @@ verification, and change rules; [status](docs/status.md) and
 
 ```sh
 bash scripts/verify.sh
-RUSTUP_TOOLCHAIN=1.94.0 bash scripts/verify.sh
+# For planned work, reuse passing checks and attach receipts to the plan:
+bash scripts/verify.sh --plan-id <id>
 ```
+
+Both forms use Jig's complete verification profile: tests, both Clippy feature
+configurations, formatting, rustdoc, five built HTTP smokes and repository policy.
+Choose one form; a successful profile does not need a second full test run.
+
+Local verification uses the pinned current release once. CI verifies both that
+release and exact Rust 1.94.0; a weekly CI run checks floating `stable`. Update
+`rust-toolchain.toml` and the pinned CI entries together when adopting a new release.
 
 Checks preserve `Cargo.lock`. Use `bash scripts/verify.sh --bootstrap` only when
 formatting sources and generating a missing lockfile is intended. Repair

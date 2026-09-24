@@ -105,8 +105,8 @@ Run `python3 scripts/check_runlimit_consumer.py` from the repository root to exe
 the original `smoke/native_consumer.rs` and the facade quota consumer from a
 Git-free source copy. The standalone consumer needs no dependency patches or
 database; it uses a public fixture key. It preserves the selected toolchain and
-locked external versions. Prefix with `RUSTUP_TOOLCHAIN=1.94.0` to check the minimum
-compiler. Root verification also runs this check.
+locked external versions. Root verification also runs this check with the pinned
+compiler locally; CI selects `RUSTUP_TOOLCHAIN=1.94.0` for the minimum compiler.
 
 ## Decision model
 
