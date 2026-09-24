@@ -19,6 +19,10 @@ validate Batter's source or prove any of its tests pass.
   crates, whereas levels 2 and 3 avoid that sharing. The at-rest test override
   uses level 2 with debug assertions and overflow checks explicitly enabled;
   the detached leaf manifest retains its existing default profile.
+- Cargo's [artifact message reference](https://doc.rust-lang.org/cargo/reference/external-tools.html#artifact-messages)
+  documents `--message-format=json` and the `compiler-artifact.executable` path,
+  including fresh cached artifacts. The HTTP gate consumes that path instead of
+  assuming the default target directory. Rechecked 2026-09-24.
 
 ## CI toolchain schedule, 2026-09-24
 

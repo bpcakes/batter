@@ -257,7 +257,8 @@ does not establish indefinite survival. See the [versioned source rationale](ref
 The existing matrix includes `--workspace --all-features --all-targets`; no new
 runner command is required. Jig's existing `**/*.rs`, manifest and lockfile inputs
 cover both the new fixtures and reused control modules, so source changes stale
-the test receipt. All five HTTP executable smoke profiles remain separate.
+the test receipt. All five HTTP executable smoke profiles run in the independent
+`api:http-smoke` target of the complete verification profile.
 
 The startup rustdocs are executable: the legacy example acquires a native capacity permit, starts
 a channel service, waits for acknowledged readiness, handles a request, and
@@ -868,7 +869,8 @@ and no later unresolved failure. Toolchain and external-state identity are not
 established by Jig's fingerprint alone. `bash scripts/verify.sh --plan-id <id>`
 uses `work check` to reuse those receipts and execute missing or stale required
 targets. Without a plan ID, `verify.sh` uses `jig check --profile verify` for a fresh
-run with receipts. The complete profile, rather than `api:test` alone, includes
+run with receipts and a policy comparison against `origin/master` (which CI
+fetches). The complete profile, rather than `api:test` alone, includes
 rustdoc and HTTP smokes. CI's MSRV verification remains separate.
 
 The `verify` profile requires independent Clippy, formatting, tests, rustdoc, HTTP

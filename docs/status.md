@@ -4,7 +4,11 @@
 with optional `--plan-id` receipt reuse. The required profile now covers rustdoc,
 all five HTTP process profiles and both Clippy feature configurations alongside
 the existing test matrix and policy checks. Linux CI uses that same entry point
-without a second HTTP step. Validation is in progress; hosted CI is unverified.
+without a second HTTP step. The complete seven-target profile passes locally on
+Rust 1.98.1 after incorporating current upstream changes. Thirteen Jig integration
+checks and three HTTP-runner controls pass, including receipt reuse, fail-closed
+smoke execution and a fresh checkout without a local `master` branch. Hosted CI
+is unverified at authoring time.
 
 2026-09-24 verification policy (`batter-mszu`): routine local verification uses
 the pinned Rust 1.98.1 release once. Exact Rust 1.94.0 verification, including
