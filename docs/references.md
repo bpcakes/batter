@@ -6,6 +6,29 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Cargo test artifacts and profiles, 2026-09-24
+
+- Cargo 1.94.0 and 1.98.1 are the repository's validation toolchains. The
+  [Cargo build-cache reference](https://doc.rust-lang.org/cargo/reference/build-cache.html)
+  documents target directory selection through environment, configuration and
+  command-line flags. The facade runner reads Cargo metadata's resolved directory
+  and passes an absolute compiler-specific child directory to every consumer.
+- The [profile override reference](https://doc.rust-lang.org/cargo/reference/profiles.html#overrides)
+  scopes settings to a package in the workspace root manifest. Its generic-code
+  discussion explains why levels 0 and 1 can reuse instantiations from other
+  crates, whereas levels 2 and 3 avoid that sharing. The at-rest test override
+  uses level 2 with debug assertions and overflow checks explicitly enabled;
+  the detached leaf manifest retains its existing default profile.
+
+## CI toolchain schedule, 2026-09-24
+
+GitHub's [schedule event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+defines UTC cron schedules on the default branch. Its
+[expression reference](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#fromjson)
+documents `fromJSON` for matrix values and `&&`/`||` conditional selection.
+The Rust workflow selects floating `stable` for the weekly schedule and the
+pinned release plus MSRV for other events; non-verification jobs skip the schedule.
+
 ## Checked completion error-chain rendering: reviewed 2026-09-23
 
 Owning Bead: `batter-r62w.2`; resolved `anyhow` 1.0.104 and Tokio 1.53.1.

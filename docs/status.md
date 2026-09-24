@@ -1,5 +1,32 @@
 # Implementation status
 
+2026-09-24 unified verification (`batter-prsb`): `verify.sh` delegates to Jig,
+with optional `--plan-id` receipt reuse. The required profile now covers rustdoc,
+all five HTTP process profiles and both Clippy feature configurations alongside
+the existing test matrix and policy checks. Linux CI uses that same entry point
+without a second HTTP step. Validation is in progress; hosted CI is unverified.
+
+2026-09-24 verification policy (`batter-mszu`): routine local verification uses
+the pinned Rust 1.98.1 release once. Exact Rust 1.94.0 verification, including
+detached at-rest portability, belongs in CI. Regular CI retains the pinned
+release and MSRV; floating `stable` moves to weekly Linux verification and HTTP
+smokes. Toolchain upgrades update the pin and CI entries together. Historical
+two-toolchain results below remain evidence of executed checks, not local policy.
+The revised hosted schedule has not yet executed.
+
+2026-09-24 verification performance (`batter-ik1w`): facade consumers retain
+independent manifests and diagnostics while reusing Cargo artifacts in a
+compiler-specific target subdirectory. A real cached-consumer control checks
+feature rejection and rejects a falsely successful negative test. The workspace
+optimizes only at-rest tests, preserving debug assertions, overflow checks and
+the full 64 MiB boundary input. Linux verification passes on Rust 1.98.1 and
+1.94.0, including 2,191 workspace tests, 313 doctests, Clippy and rustdoc on each;
+257 workspace tests remain intentionally ignored. All five HTTP smoke profiles
+pass on each toolchain, and Jig's required gates pass with a fresh `api:test`
+receipt. Focused Linux measurements: facade warm run 8.917 s; all 45 at-rest
+tests 2.26 s of test execution. macOS performance remains unverified.
+See [Jig verification](testing.md#jig-verification).
+
 2026-09-22 GCRA CI regression (`batter-jtnk`): the native PostgreSQL replenishment
 test now uses explicit persisted-clock boundaries, retaining checks for exact
 retry delays, continuous refill and no period-boundary burst. A separate test
