@@ -3,6 +3,7 @@ use runledger_postgres::{
     PgAtomicUncertainty, PgFailurePolicy, PgScopeFailure, PgScopeLoss, PgTransactionError,
     RequiredIntentError, run_atomic_with,
 };
+use std::sync::Arc;
 
 #[derive(Debug)]
 enum ConsumerError {
@@ -172,6 +173,157 @@ fn assert_native_check_failure(error: ConsumerError, constraint: &str) {
     let native = source.as_database_error().expect("native database error");
     assert_eq!(native.code().as_deref(), Some("23514"));
     assert_eq!(native.constraint(), Some(constraint));
+}
+
+fn assert_required_check_failure(error: ConsumerError, constraint: &str) {
+    let ConsumerError::Required(RequiredIntentError::Storage(
+        runledger_postgres::Error::QueryError(error),
+    )) = error
+    else {
+        panic!("required intent storage error must retain its distinct conversion")
+    };
+    assert_eq!(error.sqlstate(), Some("23514"));
+    assert_eq!(error.constraint(), Some(constraint));
+    let source = error.source_arc().expect("retained SQLx cause");
+    let native = source.as_database_error().expect("native database error");
+    assert_eq!(native.code().as_deref(), Some("23514"));
+    assert_eq!(native.constraint(), Some(constraint));
+}
+
+#[tokio::test]
+async fn required_intent_storage_failure_recovers_before_later_sql() {
+    let (pool, database) = setup_ephemeral_pool("atomic_required_storage", 4).await;
+    let profiled = support::profiled_database(&pool).await;
+    sqlx::raw_sql(
+        "CREATE TABLE policy_required_audit (id integer);
+         ALTER TABLE job_enqueue_intents ADD CONSTRAINT policy_required_rejected
+             CHECK (idempotency_key <> 'rejected-required')",
+    )
+    .execute(&pool)
+    .await
+    .expect("create required-intent failure control");
+    let payload = serde_json::json!({"request": 1});
+    let rejected = JobEnqueueIntent::new(
+        JobType::new("test.atomic.required"),
+        &payload,
+        "rejected-required",
+    );
+    let accepted = JobEnqueueIntent::new(
+        JobType::new("test.atomic.required"),
+        &payload,
+        "accepted-required",
+    );
+
+    run_atomic_with(&profiled, &Policy, async |mut scope| {
+        let error = scope
+            .record_required_job_enqueue_intent(&rejected)
+            .await
+            .expect_err("constraint must reject required intent");
+        assert_required_check_failure(error, "policy_required_rejected");
+        scope
+            .sql(async |sql| {
+                sqlx::query("INSERT INTO policy_required_audit VALUES (1)")
+                    .execute(sql.executor())
+                    .await?;
+                Ok(())
+            })
+            .await?;
+        scope.record_required_job_enqueue_intent(&accepted).await?;
+        Ok(())
+    })
+    .await
+    .expect("recovered required-intent error permits acknowledged commit");
+
+    let audit: Vec<i32> = sqlx::query_scalar("SELECT id FROM policy_required_audit")
+        .fetch_all(&pool)
+        .await
+        .expect("read committed audit");
+    assert_eq!(audit, [1]);
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT idempotency_key FROM job_enqueue_intents ORDER BY idempotency_key",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read committed intents");
+    assert_eq!(keys, ["accepted-required"]);
+    profiled.pool().close().await;
+    teardown_ephemeral_pool(pool, database).await;
+}
+
+#[tokio::test]
+async fn named_required_intent_observes_terminal_scope_loss() {
+    let (pool, database) = setup_ephemeral_pool("atomic_named_loss", 4).await;
+    let profiled = support::profiled_database(&pool).await;
+    sqlx::query("CREATE TABLE policy_loss_audit (id integer)")
+        .execute(&pool)
+        .await
+        .expect("create rollback evidence table");
+    let payload = serde_json::json!({"request": 1});
+    let intent = JobEnqueueIntent::new(
+        JobType::new("test.atomic.named.loss"),
+        &payload,
+        "named-loss",
+    );
+    let mut observed = None;
+    let result = run_atomic_with(&profiled, &Policy, async |mut scope| {
+        let backend: i32 = scope
+            .sql(async |sql| {
+                sqlx::query("INSERT INTO policy_loss_audit VALUES (1)")
+                    .execute(sql.executor())
+                    .await?;
+                sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(sql.executor())
+                    .await
+                    .map_err(Into::into)
+            })
+            .await?;
+        let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(backend)
+            .fetch_one(&pool)
+            .await
+            .expect("terminate transaction backend from separate connection");
+        assert!(terminated);
+        let error = scope
+            .record_required_job_enqueue_intent(&intent)
+            .await
+            .expect_err("named operation must observe terminal loss");
+        let ConsumerError::Scope(failure) = error else {
+            panic!("named operation must map loss through policy")
+        };
+        let cause = match *failure {
+            PgScopeFailure::Transaction(cause)
+            | PgScopeFailure::Recovery {
+                recovery: cause, ..
+            } => cause,
+            PgScopeFailure::OperationAbandoned => {
+                panic!("completed named call cannot be an abandoned operation")
+            }
+        };
+        observed = Some(cause);
+        Ok(())
+    })
+    .await;
+    let Err(ConsumerError::Completion(outcome)) = result else {
+        panic!("caught named-operation loss cannot commit")
+    };
+    let PgAtomicUncertainty::ScopeLost {
+        result: Ok(()),
+        cause: PgScopeLoss::Transaction(cause),
+    } = *outcome
+    else {
+        panic!("outer result must retain terminal loss and provisional output")
+    };
+    assert!(Arc::ptr_eq(
+        &cause,
+        observed.as_ref().expect("inner loss cause")
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM policy_loss_audit")
+        .fetch_one(&pool)
+        .await
+        .expect("read rolled-back audit count");
+    assert_eq!(count, 0);
+    profiled.pool().close().await;
+    teardown_ephemeral_pool(pool, database).await;
 }
 
 #[tokio::test]

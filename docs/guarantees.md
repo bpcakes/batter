@@ -909,10 +909,12 @@ policy mapping cannot restore a lost owner or turn an uncertain disposition into
 `Ok(T)`. All five failure-policy methods are required, and receive concrete
 provisional output, rejection and native causes as applicable. Interpreting or
 discarding these values in consumer error mapping is application policy, not a
-remote-effect proof. The `_with_in` variants preserve completion before local
-budget resolution, including cancellation triggered inside a failure-policy
-callback: an observed mapped error remains `OperationError::Failed` with its
-retained evidence. Native Runledger keeps the same policy through its consuming
+remote-effect proof. The `_with_in` variants preserve an observed completion
+before local budget resolution. Cancellation triggered by a completion-mapping
+callback retains its mapped error as `OperationError::Failed` with the observed
+evidence. The `scope_lost` callback runs inside the body; if it cancels the
+operation before rollback is acknowledged, the operation can instead return
+`OperationError::Interrupted`. Native Runledger keeps the same policy through its consuming
 intent-to-queue transition and named operations. Intent observation and queue
 enqueue methods convert native storage errors through the consumer's
 `From<runledger_postgres::Error>` implementation.

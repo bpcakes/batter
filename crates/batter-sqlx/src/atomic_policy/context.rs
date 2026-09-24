@@ -41,6 +41,25 @@ pub async fn run_atomic_with_in<T, P: PgFailurePolicy<T>>(
 /// Policy-bound profiled work within one operation budget. The immutable pool
 /// profile establishes authority; completion retention matches
 /// [`run_atomic_with_in`] and [`crate::run_atomic_profiled_in`].
+///
+/// ```no_run
+/// async fn append<P: batter_sqlx::PgFailurePolicy<i64>>(
+///     database: &batter_sqlx::PgProfiledPool,
+///     context: &batter_core::operation::OperationContext,
+///     policy: &P,
+/// ) -> Result<i64, batter_core::operation::OperationError<P::Error>>
+/// where P::Error: From<sqlx::Error> {
+///     batter_sqlx::run_atomic_profiled_with_in(
+///         database, context, "audit.append", policy, async |mut scope| {
+///             scope.sql(async |sql| {
+///                 sqlx::query_scalar::<_, i64>(
+///                     "INSERT INTO audit_events DEFAULT VALUES RETURNING id"
+///                 ).fetch_one(sql.executor()).await.map_err(Into::into)
+///             }).await
+///         },
+///     ).await
+/// }
+/// ```
 pub async fn run_atomic_profiled_with_in<T, P: PgFailurePolicy<T>>(
     database: &PgProfiledPool,
     context: &OperationContext,

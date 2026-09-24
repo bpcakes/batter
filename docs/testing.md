@@ -89,11 +89,18 @@ SQLSTATE/constraint survive as `OperationError::Failed`. The native policy test
 also covers intent observation and resource enqueue: real CHECK violations pass
 through `From<runledger_postgres::Error>`, retain their SQLx causes, and permit
 subsequent application writes and named operations to commit after recovery.
-These follow-ups belong to `batter-rpgk`; the exact live inventory now includes
-44 atomic tests (107 total). All 107 passed on both Rust 1.98.1 and 1.94.0 on
-macOS arm64 with PostgreSQL 18.6, along with both full verification scripts and
-five HTTP smoke modes per toolchain. The final Jig test rerun passed; initial
-suite failures and their unchanged reruns are recorded in the owning Bead.
+Two later native policy cases use real PostgreSQL failures: required-intent
+storage conversion retains `RequiredIntentError::Storage` and allows a later
+write after savepoint recovery; termination of the transaction backend before a
+named required-intent call produces a terminal scope error, retains the same
+cause in `ScopeLost`, and does not commit an earlier provisional write.
+Focused runs of the two later native cases are recorded in `batter-rpgk`.
+The earlier `batter-rpgk` snapshot had an exact SQLx live inventory of 44 atomic
+tests (107 total). On that earlier snapshot, all 107 passed on both Rust 1.98.1
+and 1.94.0 on macOS arm64 with PostgreSQL 18.6, along with both full
+verification scripts and five HTTP smoke modes per toolchain. Its final Jig
+test rerun passed; initial suite failures and their unchanged reruns are
+recorded in the owning Bead.
 
 The original `batter-a0qb` evidence records 105 passing cases on macOS arm64
 with Rust 1.98.1 and 1.94.0 and PostgreSQL
