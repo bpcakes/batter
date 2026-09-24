@@ -30,6 +30,38 @@ assert_eq!(plaintext.as_slice(), b"sensitive bytes");
 # Ok::<(), batter_at_rest::Error>(())
 ```
 
+Rotate a stored header with `rewrap_envelope`. The returned `Envelope` already
+contains the original content descriptor paired with the new wrapper; store its
+encoded bytes as one replacement header while leaving the body untouched:
+
+```rust
+use batter_at_rest::{Context, Envelope, KeyId, Keyring, SealedPayloadRef, SecretKey};
+
+let old_id = KeyId::new("old")?;
+let new_id = KeyId::new("new")?;
+let old = Keyring::new(old_id.clone(),
+    [(old_id.clone(), SecretKey::from_bytes([7; 32]))])?;
+let rotating = Keyring::new(new_id.clone(), [
+    (old_id, SecretKey::from_bytes([7; 32])),
+    (new_id, SecretKey::from_bytes([9; 32])),
+])?;
+let context = Context::for_row("example", "record", b"owner", b"item", "bytes-v1")?;
+let original = old.seal(&context, b"payload")?;
+let replacement = rotating.rewrap_envelope(&context, original.envelope())?;
+let stored_header = replacement.encode();
+let decoded_header = Envelope::decode(&stored_header)?;
+let stored_view = SealedPayloadRef::new(&decoded_header, original.ciphertext())?;
+assert_eq!(rotating.open(&context, stored_view)?.as_slice(), b"payload");
+# Ok::<(), batter_at_rest::Error>(())
+```
+
+Replace an existing `rewrap` plus `with_wrapped_key` pair with this one call.
+Existing wrapper-only and split-storage APIs remain for compatibility and
+explicit reconstruction. Old and new callers use the same version 1 bytes, so
+rollback needs no data conversion. Storage must compare-and-swap the complete
+old header or a revision covering every header change, and must fence stale key
+policy; the returned value does not prove those remote effects.
+
 Stable keyed identities use final key material explicitly. Imported bytes are
 never silently derived again, and segmented input is authenticated as exact
 concatenation so the consuming application remains responsible for canonical
@@ -46,7 +78,8 @@ key.verify_segments([b"purpose".as_slice(), b"message".as_slice()], &tag)?;
 
 The encoded `Envelope` contains metadata covered by authentication tags. Decoding
 and construction validate structure only; `open` authenticates the wrapper and
-body, while `rewrap` authenticates only the wrapper. Its `ContentDescriptor` is
+body, while `rewrap_envelope` and the wrapper-only `rewrap` authenticate only
+the input wrapper. Its `ContentDescriptor` is
 immutable across rewrap and contains the format version and payload nonce. Its
 `WrappedKey` contains the wrapping-key ID, wrapping nonce, and encrypted data key.
 `SealedPayload` combines an envelope with the ciphertext body. Its owned decoder

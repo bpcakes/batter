@@ -102,7 +102,13 @@ impl WrappedKey {
         }
     }
 
-    /// Decodes one exact canonical wrapper for the supplied descriptor version.
+    /// Low-level reconstruction: decodes one exact canonical wrapper for the
+    /// supplied descriptor version.
+    ///
+    /// This checks structure, not whether the wrapper belongs to that descriptor.
+    /// Prefer [`crate::Keyring::rewrap_envelope`] for ordinary key rotation;
+    /// split-storage readers must keep the decoded descriptor, wrapper, and body
+    /// from the same authoritative record before authenticating them with `open`.
     pub fn decode_for(descriptor: &ContentDescriptor, bytes: &[u8]) -> Result<Self, Error> {
         if descriptor.format_version != FORMAT_VERSION {
             return Err(Error::UnsupportedVersion);
@@ -177,7 +183,12 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    /// Combines independently validated descriptor and wrapper parts.
+    /// Low-level reconstruction: combines independently validated parts.
+    ///
+    /// This does not authenticate their pairing. Prefer
+    /// [`crate::Keyring::rewrap_envelope`] when rotating a complete header;
+    /// split-storage callers must retain the original descriptor and wrapper
+    /// association and authenticate before using the resulting envelope.
     #[must_use]
     pub fn from_parts(descriptor: ContentDescriptor, wrapped_key: WrappedKey) -> Self {
         Self {
@@ -229,7 +240,12 @@ impl Envelope {
         &self.wrapped_key
     }
 
-    /// Returns a new header with the same descriptor and replacement wrapped key.
+    /// Low-level compatibility: returns a header with this descriptor and the
+    /// supplied replacement wrapper.
+    ///
+    /// The wrapper may belong to another descriptor; the mismatch is rejected
+    /// only when authentication runs. Prefer
+    /// [`crate::Keyring::rewrap_envelope`] for ordinary key rotation.
     #[must_use]
     pub fn with_wrapped_key(&self, wrapped_key: WrappedKey) -> Self {
         Self {
