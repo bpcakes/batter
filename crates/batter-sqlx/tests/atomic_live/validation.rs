@@ -22,7 +22,7 @@ impl<S: Subscriber> Layer<S> for Statements {
     }
 }
 
-async fn counted<T>(expected: usize, future: impl Future<Output = T>) -> T {
+pub(super) async fn counted<T>(expected: usize, future: impl Future<Output = T>) -> T {
     let statements = Statements::default();
     let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(statements.clone()));
     let future = tracing::dispatcher::with_default(&dispatch, || {

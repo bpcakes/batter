@@ -58,7 +58,9 @@ pub use atomic::{
 };
 pub use atomic_context::{run_atomic_in, run_atomic_profiled_in};
 pub use atomic_policy::{
-    PgFailurePolicy, PgPolicyScope, run_atomic_profiled_with, run_atomic_profiled_with_in,
+    PgFailurePolicy, PgPolicyScope, PgScopeRolledBack, run_atomic_fail_fast_with,
+    run_atomic_fail_fast_with_in, run_atomic_profiled_fail_fast_with,
+    run_atomic_profiled_fail_fast_with_in, run_atomic_profiled_with, run_atomic_profiled_with_in,
     run_atomic_with, run_atomic_with_in,
 };
 pub use atomic_runner::{

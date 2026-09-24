@@ -902,7 +902,7 @@ Caught terminal failures poison the scope with their first shared native cause;
 later calls cannot replace it or invoke new work. A dropped polled operation
 records `OperationAbandoned`, not a fabricated boundary-loss error. Ordinary
 application rejections and terminal scope failures use separate types.
-Operations use private savepoints and XID continuity.
+Recoverable operations use private savepoints and XID continuity.
 The policy-based `run_atomic_with` / `run_atomic_profiled_with` entry points
 fix the consumer error type before entering SQL. They use the same owned runner;
 policy mapping cannot restore a lost owner or turn an uncertain disposition into
@@ -923,8 +923,23 @@ enqueue methods convert native storage errors through the consumer's
 implementation. These recoverable errors are returned only after successful
 savepoint recovery; catching them permits later SQL and acknowledged commit.
 
+`run_atomic_fail_fast_with` and its profiled/budgeted variants use one private
+guard at transaction birth, with no savepoint around each successful operation.
+The body and validation cost two statements for a one-query unprofiled call,
+three when profiled, excluding setup and completion. Ordinary rejection rolls
+back the guard, validates the original transaction, and acknowledges whole
+rollback before returning the original error. Missing guards, replaced transactions,
+validation/transport failures and abandonment retain uncertainty. A consumer
+must implement `From<PgScopeRolledBack>`: catching a rejection cannot authorize
+later SQL or turn the closed transaction into successful completion. This marker
+retains rollback evidence, not a clone of a deliberately discarded application
+error. `recoverable_sql` explicitly selects operation recovery but cannot reopen
+a closed transaction. Application savepoints can survive successful fast calls;
+arbitrary SQL and external effects remain outside rollback guarantees. Native
+Runledger preserves this behavior through its consuming phase transition.
+
 Profile and atomic continuity validation share one statement. After successful
-work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
+recoverable work, validation precedes the acknowledged RELEASE; no redundant SELECT follows
 RELEASE. Unprofiled opening checks are omitted while ownership excludes intervening
 SQL; profiled opening checks remain because schema existence/USAGE is external
 state. Recovery revalidates after savepoint rollback/release, and final commit or

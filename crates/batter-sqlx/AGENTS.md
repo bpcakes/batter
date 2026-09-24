@@ -58,9 +58,14 @@ after reset and before BEGIN, and revalidate after arbitrary SQL; profiles are
 policy, not permanent authority evidence. The pool-return contract describes only low-level
 PgLease session work. Snapshot errors require the original guard before clean
 rollback classification; read-only inspectors have a distinct capability.
-Atomic scopes consume their owner and release their parent savepoint (including
+Recoverable atomic scopes consume their owner and release their parent savepoint (including
 all nested application savepoints) before returning usable state. Inner operation
 errors may return the owner only after rollback and continuity revalidation.
+Fail-fast runners keep one birth guard and omit per-operation savepoints on
+successful calls. A rejection acknowledges whole rollback before returning;
+caught rejections cannot regain SQL or commit authority. Explicit recoverable_sql
+retains operation recovery. Application savepoints may persist between fast calls.
+Boundary/transport loss and abandonment remain uncertain, never known rollback.
 Commit validates immediately before COMMIT; no await follows its acknowledgement.
 Never equate retirement, commit cancellation or an unconfirmed commit with rollback.
 Public lease closures never receive a native connection or transaction and the

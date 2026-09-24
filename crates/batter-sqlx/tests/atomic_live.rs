@@ -3,6 +3,14 @@
 mod cancellation;
 #[path = "atomic_live/commit.rs"]
 mod commit;
+#[path = "atomic_live/fail_fast.rs"]
+mod fail_fast;
+#[path = "atomic_live/fail_fast_context.rs"]
+mod fail_fast_context;
+#[path = "atomic_live/fail_fast_loss.rs"]
+mod fail_fast_loss;
+#[path = "atomic_live/fail_fast_profile.rs"]
+mod fail_fast_profile;
 #[path = "atomic_live/poison.rs"]
 mod poison;
 #[path = "atomic_live/policy.rs"]

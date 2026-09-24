@@ -63,42 +63,9 @@ async fn run_owned<T, E>(
     owner: PgAtomicTransaction,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, PgAtomicError<T, E>> {
-    let mut scope = PgAtomicScope {
-        state: ScopeState::Live(owner),
-    };
+    let mut scope = PgAtomicScope::new(owner);
     let result = work(&mut scope).await;
-    let owner = match scope.state {
-        ScopeState::Live(owner) => owner,
-        ScopeState::InFlight => {
-            return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
-                result,
-                cause: PgScopeLoss::OperationAbandoned,
-            }));
-        }
-        ScopeState::Poisoned(cause) => {
-            return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
-                result,
-                cause,
-            }));
-        }
-    };
-    match result {
-        Ok(output) => match owner.commit().await {
-            Ok(_) => Ok(output),
-            Err(cause) => Err(PgAtomicError::Uncertain(
-                PgAtomicUncertainty::CommitUnconfirmed {
-                    output,
-                    cause: cause.into_cause(),
-                },
-            )),
-        },
-        Err(rejection) => match owner.rollback().await {
-            Ok(_) => Err(PgAtomicError::Rejected(rejection)),
-            Err(cause) => Err(PgAtomicError::Uncertain(
-                PgAtomicUncertainty::RollbackUnconfirmed { rejection, cause },
-            )),
-        },
-    }
+    scope.finish(result).await
 }
 
 /// SQL operations available only inside [`run_atomic`]. No completion or owner
@@ -115,6 +82,70 @@ enum ScopeState {
 }
 
 impl PgAtomicScope {
+    pub(crate) fn new(owner: PgAtomicTransaction) -> Self {
+        Self {
+            state: ScopeState::Live(owner),
+        }
+    }
+
+    pub(crate) async fn finish<T, E>(self, result: Result<T, E>) -> Result<T, PgAtomicError<T, E>> {
+        let owner = match self.state {
+            ScopeState::Live(owner) => owner,
+            ScopeState::InFlight => {
+                return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
+                    result,
+                    cause: PgScopeLoss::OperationAbandoned,
+                }));
+            }
+            ScopeState::Poisoned(cause) => {
+                return Err(PgAtomicError::Uncertain(PgAtomicUncertainty::ScopeLost {
+                    result,
+                    cause,
+                }));
+            }
+        };
+        match result {
+            Ok(output) => match owner.commit().await {
+                Ok(_) => Ok(output),
+                Err(cause) => Err(PgAtomicError::Uncertain(
+                    PgAtomicUncertainty::CommitUnconfirmed {
+                        output,
+                        cause: cause.into_cause(),
+                    },
+                )),
+            },
+            Err(rejection) => match owner.rollback().await {
+                Ok(_) => Err(PgAtomicError::Rejected(rejection)),
+                Err(cause) => Err(PgAtomicError::Uncertain(
+                    PgAtomicUncertainty::RollbackUnconfirmed { rejection, cause },
+                )),
+            },
+        }
+    }
+
+    pub(crate) fn take_owner(&mut self) -> Result<PgAtomicTransaction, PgScopeLoss> {
+        match std::mem::replace(&mut self.state, ScopeState::InFlight) {
+            ScopeState::Live(owner) => Ok(owner),
+            state => {
+                let cause = match state {
+                    ScopeState::InFlight => PgScopeLoss::OperationAbandoned,
+                    ScopeState::Poisoned(cause) => cause,
+                    ScopeState::Live(_) => unreachable!(),
+                };
+                self.poison(cause.clone());
+                Err(cause)
+            }
+        }
+    }
+
+    pub(crate) fn restore(&mut self, owner: PgAtomicTransaction) {
+        self.state = ScopeState::Live(owner);
+    }
+
+    pub(crate) fn poison(&mut self, cause: PgScopeLoss) {
+        self.state = ScopeState::Poisoned(cause);
+    }
+
     /// Execute inside a private savepoint. A normal application error rolls back
     /// that operation; a cleanup failure retains both causes and poisons the scope.
     /// Values are provisional inside the callback, not durable results yet.
@@ -122,25 +153,16 @@ impl PgAtomicScope {
         &mut self,
         work: impl AsyncFnOnce(&mut PgScopedSql<'_>) -> Result<T, E>,
     ) -> Result<T, PgScopeError<E>> {
-        let owner = match std::mem::replace(&mut self.state, ScopeState::InFlight) {
-            ScopeState::Live(owner) => owner,
-            state => {
-                let cause = match state {
-                    ScopeState::InFlight => PgScopeLoss::OperationAbandoned,
-                    ScopeState::Poisoned(cause) => cause,
-                    ScopeState::Live(_) => unreachable!(),
-                };
-                self.state = ScopeState::Poisoned(cause.clone());
-                return Err(PgScopeError::Terminal(cause.into()));
-            }
-        };
+        let owner = self
+            .take_owner()
+            .map_err(|cause| PgScopeError::Terminal(cause.into()))?;
         match owner.operation(work).await {
             Ok((owner, result)) => {
-                self.state = ScopeState::Live(owner);
+                self.restore(owner);
                 result.map_err(PgScopeError::Application)
             }
             Err(failure) => {
-                self.state = ScopeState::Poisoned(failure.loss());
+                self.poison(failure.loss());
                 Err(PgScopeError::Terminal(failure))
             }
         }

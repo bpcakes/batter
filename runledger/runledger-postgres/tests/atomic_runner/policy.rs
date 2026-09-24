@@ -1,18 +1,24 @@
 use super::*;
 use runledger_postgres::{
-    PgAtomicUncertainty, PgFailurePolicy, PgScopeFailure, PgScopeLoss, PgTransactionError,
-    RequiredIntentError, run_atomic_with,
+    PgAtomicUncertainty, PgFailurePolicy, PgScopeFailure, PgScopeLoss, PgScopeRolledBack,
+    PgTransactionError, RequiredIntentError, run_atomic_fail_fast_with, run_atomic_with,
 };
 use std::sync::Arc;
 
 #[derive(Debug)]
 enum ConsumerError {
     Sql(sqlx::Error),
+    RolledBack(PgScopeRolledBack),
     Native(runledger_postgres::Error),
     Required(RequiredIntentError),
     Begin(PgTransactionError),
     Scope(Box<PgScopeFailure<Self>>),
     Completion(Box<PgAtomicUncertainty<(), Self>>),
+}
+impl From<PgScopeRolledBack> for ConsumerError {
+    fn from(value: PgScopeRolledBack) -> Self {
+        Self::RolledBack(value)
+    }
 }
 impl From<sqlx::Error> for ConsumerError {
     fn from(error: sqlx::Error) -> Self {
@@ -69,6 +75,7 @@ impl ConsumerError {
     fn retained_cause(&self) -> &dyn std::fmt::Debug {
         match self {
             Self::Sql(cause) => cause,
+            Self::RolledBack(cause) => cause,
             Self::Native(cause) => cause,
             Self::Required(cause) => cause,
             Self::Begin(cause) => cause,
@@ -80,6 +87,12 @@ impl ConsumerError {
 
 #[tokio::test]
 async fn one_policy_covers_sql_intent_queue_and_required_rejection() {
+    for fast in [false, true] {
+        exercise_policy(fast).await;
+    }
+}
+
+async fn exercise_policy(fast: bool) {
     let (pool, database) = setup_ephemeral_pool("atomic_policy", 4).await;
     let profiled = support::profiled_database(&pool).await;
     support::register_test_job_definition(&pool, "test.atomic.policy").await;
@@ -100,7 +113,7 @@ async fn one_policy_covers_sql_intent_queue_and_required_rejection() {
         idempotency_key: Some("policy-key"),
         stage: None,
     };
-    let workflow = run_atomic_with(&profiled, &Policy, async |mut scope| {
+    let work = async |mut scope: runledger_postgres::PgPolicyIntentScope<'_, (), Policy>| {
         scope
             .sql(async |sql| {
                 sqlx::query("INSERT INTO policy_audit VALUES (1)")
@@ -119,13 +132,16 @@ async fn one_policy_covers_sql_intent_queue_and_required_rejection() {
             })
             .await?;
         Ok(())
-    });
+    };
     fn require_send<T: Send>(future: T) -> T {
         future
     }
-    require_send(workflow)
-        .await
-        .unwrap_or_else(|error| panic!("policy workflow failed: {:?}", error.retained_cause()));
+    let result = if fast {
+        require_send(run_atomic_fail_fast_with(&profiled, &Policy, work)).await
+    } else {
+        require_send(run_atomic_with(&profiled, &Policy, work)).await
+    };
+    result.unwrap_or_else(|error| panic!("policy workflow failed: {:?}", error.retained_cause()));
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM job_queue WHERE idempotency_key = 'policy-key'")
             .fetch_one(&pool)
@@ -137,7 +153,7 @@ async fn one_policy_covers_sql_intent_queue_and_required_rejection() {
     // or type annotation at any question-mark in the transaction body.
     sqlx::query("UPDATE job_enqueue_intents SET status = 'CONFLICTED', promotion_attempts = 1, last_attempted_at = now(), conflicted_at = now(), last_error_code = 'fixture_conflict', last_error_message = 'persisted conflict fixture' WHERE idempotency_key = 'policy-key'")
         .execute(&pool).await.expect("seed persisted conflict");
-    let result = run_atomic_with(&profiled, &Policy, async |mut scope| {
+    let work = async |mut scope: runledger_postgres::PgPolicyIntentScope<'_, (), Policy>| {
         scope
             .sql(async |sql| {
                 sqlx::query("INSERT INTO policy_audit VALUES (2)")
@@ -148,8 +164,12 @@ async fn one_policy_covers_sql_intent_queue_and_required_rejection() {
             .await?;
         scope.record_required_job_enqueue_intent(&intent).await?;
         Ok(())
-    })
-    .await;
+    };
+    let result = if fast {
+        run_atomic_fail_fast_with(&profiled, &Policy, work).await
+    } else {
+        run_atomic_with(&profiled, &Policy, work).await
+    };
     assert!(matches!(
         result,
         Err(ConsumerError::Required(RequiredIntentError::Conflict(_)))

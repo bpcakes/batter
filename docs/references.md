@@ -6,6 +6,23 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Fail-fast transaction recovery: reviewed 2026-09-22
+
+For `batter-wobk`, SQLx remains 0.9.0. PostgreSQL 18
+[ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html)
+allows recovery from failed SQL; [RELEASE SAVEPOINT](https://www.postgresql.org/docs/18/sql-release-savepoint.html)
+removes the named and later savepoints. The
+[transaction status functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
+report the supplied transaction's status, not the history of work on a connection.
+Executed PostgreSQL 18.6 counterexamples showed that an original aborted XID can
+coexist with a committed replacement transaction and a later failed transaction.
+Our inference is that checking original status after bare ROLLBACK cannot preserve
+the existing transaction-boundary-loss contract. The fast runner therefore retains
+one private birth guard, recovers through it on rejection, and validates the
+original XID before whole rollback. Successful calls need no per-call savepoint.
+Native tests count two statements unprofiled or three profiled, excluding setup
+and completion, and retain uncertainty for replacement or missing-guard cases.
+
 ## Checked completion error-chain rendering: reviewed 2026-09-23
 
 Owning Bead: `batter-r62w.2`; resolved `anyhow` 1.0.104 and Tokio 1.53.1.

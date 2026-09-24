@@ -11,6 +11,15 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
     "atomic_live": {
+        "fail_fast_rollback_acknowledgement_survives_caught_error_then_cancellation",
+        "fail_fast_commit_and_cleanup_failures_remain_uncertain",
+        "fail_fast_profile_checks_before_work_and_restores_rejected_changes",
+        "fail_fast_replaced_transactions_never_become_known_rejections",
+        "fail_fast_caught_validation_loss_keeps_first_cause",
+        "fail_fast_abandoned_operation_never_claims_rollback",
+
+        "fail_fast_scopes_have_no_per_operation_savepoint",
+        "fail_fast_rejection_rolls_back_prior_writes_and_refuses_caught_success",
         "policy_abandoned_operation_cannot_be_caught_into_success",
         "policy_infers_errors_and_preserves_recovery_and_rejection",
         "policy_caught_loss_cannot_run_more_work_or_commit",
