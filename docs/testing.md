@@ -2165,6 +2165,16 @@ CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
 
+The installation-validation cases in `runlimit-postgres --test postgres` cover
+both migration-history modes, read-only state preservation, schema and grant
+drift, snapshot role/search-path behavior, deadlines and cancelled connection
+disposition. The repair cases cover an extra generated column that breaks a
+quota write, application-schema functions that shadow checked built-ins, and a
+schema-local `count(*)` aggregate that cleanup must bypass without changing the
+session search path.
+They require a disposable database; ordinary tests compile but ignore these
+cases. The local upstream port is tracked by `batter-wloc`.
+
 The pool-budget regression polls admission and cleanup into a pending pool
 acquisition while holding the only connection. Each wait exceeds the entire
 operation budget before releasing the connection, so starting that deadline

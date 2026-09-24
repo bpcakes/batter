@@ -1,0 +1,1 @@
+Owning Bead batter-wloc. Port upstream local commits cd409c6 and a4fd584 into runlimit-postgres, retain later workspace regressions, update native docs/status, run required Rust checks and disposable PostgreSQL tests. Do not commit or publish.

@@ -50,6 +50,23 @@ async fn run_cleanup_transaction_inner(
         CleanupPhase::ConfiguringTimeouts,
     )
     .await?;
+    // The imported cleanup SQL has unqualified count(*) calls. Put pg_catalog
+    // first for this transaction so they resolve to the inspected built-in,
+    // while preserving the caller's relation search path after it.
+    let search_path: String = maintenance_before_commit(
+        deadline,
+        CleanupPhase::DeletingExpiredWindows,
+        sqlx::query_scalar("SHOW search_path").fetch_one(&mut *transaction),
+    )
+    .await?;
+    maintenance_before_commit(
+        deadline,
+        CleanupPhase::DeletingExpiredWindows,
+        sqlx::query("SELECT pg_catalog.set_config('search_path', $1, true)")
+            .bind(format!("pg_catalog, {search_path}"))
+            .execute(&mut *transaction),
+    )
+    .await?;
     let result = maintenance_before_commit(
         deadline,
         CleanupPhase::DeletingExpiredWindows,

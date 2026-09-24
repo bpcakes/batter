@@ -33,6 +33,33 @@ documents `fromJSON` for matrix values and `&&`/`||` conditional selection.
 The Rust workflow selects floating `stable` for the weekly schedule and the
 pinned release plus MSRV for other events; non-verification jobs skip the schedule.
 
+## Native Runlimit installation inspection: reviewed 2026-09-24
+
+Owning Bead: `batter-wloc`; local source commits `cd409c6` and `a4fd584`,
+SQLx 0.9.0 and PostgreSQL 18.6. PostgreSQL's
+[read-only transaction setting](https://www.postgresql.org/docs/18/sql-set-transaction.html)
+restricts writes during catalog inspection. Its
+[privilege inquiry functions](https://www.postgresql.org/docs/18/functions-info.html)
+check effective table, column, schema, and function access, while the same
+[catalog information functions](https://www.postgresql.org/docs/18/functions-info.html)
+reconstruct constraint and generated-expression definitions. The port compares
+those observations with the unchanged published migration SQL. Live tests on a
+disposable PostgreSQL 18.6 instance exercise the contract; no later-schema or
+future-availability guarantee follows from one read-only snapshot.
+
+The repair rechecked PostgreSQL 18's
+[generated-column contract](https://www.postgresql.org/docs/18/ddl-generated-columns.html):
+stored columns compute on insert or update, so an extra nullable generated
+column can still reject a quota write. Its
+[schema search-path rules](https://www.postgresql.org/docs/18/ddl-schemas.html)
+allow an application function to shadow a built-in when `pg_catalog` is
+explicitly placed later in the path. Fixed-window admission and timeout setup
+now qualify their checked built-ins. The imported cleanup query retains two
+unqualified `count(*)` calls. Its owner prepends `pg_catalog` to the
+[transaction-local search path](https://www.postgresql.org/docs/18/functions-admin.html)
+before execution, then PostgreSQL restores the original setting at transaction
+end. A live schema-local aggregate regression checks resolution and restoration.
+
 ## Checked completion error-chain rendering: reviewed 2026-09-23
 
 Owning Bead: `batter-r62w.2`; resolved `anyhow` 1.0.104 and Tokio 1.53.1.
