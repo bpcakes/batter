@@ -305,6 +305,18 @@ class ShardTests(unittest.TestCase):
 
 
 class MatrixTests(unittest.TestCase):
+    def setUp(self):
+        prerequisite = mock.patch.object(matrix, "nextest_ready", return_value=True)
+        self.nextest_ready = prerequisite.start()
+        self.addCleanup(prerequisite.stop)
+
+    def test_nextest_prerequisite_failure_prevents_all_batches(self):
+        self.nextest_ready.return_value = False
+        with mock.patch.object(sys, "argv", ["test_matrix.py"]), \
+                mock.patch.object(matrix, "run_parallel") as execute:
+            self.assertEqual(matrix.main(), 1)
+        execute.assert_not_called()
+
     def test_matrix_scale_overflow_renders_context_and_final_failure(self):
         command = python("import sys; sys.stdout.buffer.write(b'BUILD_START\\n' + "
                          "b'x' * (9 * 1024 * 1024) + b'\\nFINAL_TEST_FAILURE\\n'); "

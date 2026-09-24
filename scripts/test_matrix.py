@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import subprocess
 import sys
 
 from parallel_process import render_outcomes, run_parallel
@@ -11,7 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
 FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
 RUNTIME_TESTS = [
-    ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"],
+    ["cargo", "nextest", "run", "--profile", "gate", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"],
+    # Native Runledger fixtures share one PostgreSQL container per binary.
+    # Keep the full workspace feature graph and process-local fixture ownership.
     ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"],
     # A clean developer shell must not hide ambient-state dependencies in tests.
     ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -47,8 +50,21 @@ FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
 
+def nextest_ready():
+    try:
+        subprocess.run(["cargo", "nextest", "show-config", "version"], cwd=ROOT,
+                       check=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        print("Nextest prerequisite failed. Install with: "
+              "cargo install cargo-nextest --locked --version 0.9.130", file=sys.stderr)
+        return False
+    return True
+
+
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
+    if not nextest_ready():
+        return 1
     for labels, commands in [(["core-library", "facade-library", "runner-controls", "smoke-controls"],
                               [CORE_CHECK, FACADE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
                              (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls", "facade-cache-controls"],

@@ -220,10 +220,11 @@ class JigIntegrationTests(unittest.TestCase):
             "crates/batter-at-rest/README.md",
             "crates/example/src/lib.rs", "crates/example/tests/fixture.txt",
             "examples/example/migrations/001.sql", "test-support/temp_dir.rs",
-            "scripts/example_helper.py", "scripts/new_helper.py",
+            "scripts/example_helper.py", "scripts/new_helper.py", ".config/nextest.toml",
         ], start=2):
             with self.subTest(path=name):
                 path = self.repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text((path.read_text() if path.exists() else "") + "\n")
                 current = self.freshness_check(plan)
                 self.assertEqual(self.execution_count("test"), count)

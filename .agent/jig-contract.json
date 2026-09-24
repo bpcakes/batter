@@ -322,6 +322,7 @@
         "process"
       ],
       "inputs": [
+        ".config/nextest.toml",
         "crates/batter-at-rest/README.md",
         "Cargo.toml",
         "Cargo.lock",
