@@ -2263,10 +2263,13 @@ Runledger PostgreSQL 18 tests are separate.
 The installation-validation cases in `runlimit-postgres --test postgres` cover
 both migration-history modes, read-only state preservation, schema and grant
 drift, snapshot role/search-path behavior, deadlines and cancelled connection
-disposition. The repair cases cover an extra generated column that breaks a
-quota write, application-schema functions that shadow checked built-ins, and a
-schema-local `count(*)` aggregate that cleanup must bypass without changing the
-session search path.
+disposition. The repair cases cover extra generated/default/domain/identity
+columns, expression and partial indexes that may execute on quota writes,
+application-schema functions that shadow checked built-ins, and a schema-local
+`count(*)` aggregate that cleanup must bypass without changing the session search
+path. The default and expression-index cases reproduce a failing admission after
+the corresponding schema drift; plain nullable columns and indexes remain
+supported.
 They require a disposable database; ordinary tests compile but ignore these
 cases. The local upstream port is tracked by `batter-wloc`.
 

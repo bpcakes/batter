@@ -715,11 +715,12 @@ with the same role and search path, and revalidate after administrative changes.
 It does not prove future database availability or writability, scan counters,
 reconcile ledger counts against them, or validate application policies. Tables
 using row-level security, inheritance, additional behavioral constraints or
-unique indexes, additional user triggers, or rewrite rules are unsupported.
+unique, expression, or partial indexes, additional user triggers, or rewrite
+rules are unsupported.
 Table storage tuning such as fillfactor and autovacuum settings remains
-operator-controlled. Extra generated columns are rejected because PostgreSQL
-computes them on writes and their expressions can make admission fail. Ordinary
-nullable extra columns remain allowed.
+operator-controlled. Extra generated, defaulted, identity, and domain columns
+are rejected because their write-time behavior can make admission fail. Ordinary
+nullable extra columns without defaults remain allowed.
 
 Periodically call `cleanup_expired(maximum_rows)` to bound maintenance work;
 expired rows do not affect correctness before cleanup. The cleanup query

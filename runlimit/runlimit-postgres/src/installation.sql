@@ -109,17 +109,25 @@ issues(object, requirement) AS (
         AND NOT EXISTS (SELECT FROM columns e WHERE e.table_name = t.name AND e.name = a.attname)
 
     UNION ALL
+    SELECT t.name || '.' || a.attname, 'no additional defaults, identity columns, or domains'
+    FROM tables t JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid
+    JOIN pg_catalog.pg_type type ON type.oid = a.atttypid
+    WHERE a.attnum > 0 AND NOT a.attisdropped
+        AND (a.atthasdef OR a.attidentity <> '' OR type.typtype = 'd')
+        AND NOT EXISTS (SELECT FROM columns e WHERE e.table_name = t.name AND e.name = a.attname)
+
+    UNION ALL
     SELECT 'runlimit_fixed_windows.capacity_shard', 'published stored XOR shard expression'
     WHERE NOT EXISTS (
         SELECT FROM tables t
         JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attname = 'capacity_shard'
         JOIN pg_catalog.pg_attrdef d ON d.adrelid = t.oid AND d.adnum = a.attnum
         WHERE t.name = 'runlimit_fixed_windows'
-          AND pg_catalog.pg_get_expr(d.adbin, d.adrelid) =
+          AND pg_catalog.replace(pg_catalog.pg_get_expr(d.adbin, d.adrelid), 'pg_catalog.', '') =
               '((get_byte(config_fingerprint, 0) # get_byte(subject_key, 0)))::smallint'
-          -- Built-in functions and operators have no pg_depend entries, while
-          -- identically named schema-local replacements do. The expression text
-          -- alone is search-path-sensitive, so reject replacement dependencies.
+          -- Deparsing qualifies built-ins when schema-local names shadow them.
+          -- Built-ins have no pg_depend entries; reject replacement dependencies
+          -- before accepting the normalized published expression.
           AND NOT EXISTS (
               SELECT FROM pg_catalog.pg_depend dependency
               WHERE dependency.classid = 'pg_catalog.pg_attrdef'::pg_catalog.regclass
@@ -138,7 +146,7 @@ issues(object, requirement) AS (
     WHERE c.oid IS NULL OR NOT c.convalidated OR c.condeferrable
         -- conenforced was introduced in PostgreSQL 18.
         OR NOT COALESCE((pg_catalog.to_jsonb(c)->>'conenforced')::boolean, true)
-        OR pg_catalog.pg_get_constraintdef(c.oid) <> e.definition
+        OR pg_catalog.replace(pg_catalog.pg_get_constraintdef(c.oid), 'pg_catalog.', '') <> e.definition
         -- Match the immutable built-in expression, not a same-named function
         -- resolved from an application schema in the current search path.
         OR EXISTS (
@@ -168,11 +176,12 @@ issues(object, requirement) AS (
     )
 
     UNION ALL
-    SELECT t.name || '.' || idx.relname, 'no additional unique indexes restricting admission'
+    SELECT t.name || '.' || idx.relname, 'no additional unique indexes, expression indexes, or partial indexes'
     FROM tables t
     JOIN pg_catalog.pg_index i ON i.indrelid = t.oid
     JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
-    WHERE i.indisunique AND NOT i.indisprimary
+    WHERE (i.indisunique AND NOT i.indisprimary)
+        OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
 
     UNION ALL
     SELECT 'runlimit_fixed_windows_expiry_idx', 'valid nonpartial ascending btree index on window_expires_at'

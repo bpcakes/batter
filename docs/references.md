@@ -4085,3 +4085,20 @@ MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
 release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
 tests against PostgreSQL 16. The import preserves those native source contracts;
 [provenance](../runlimit/IMPORT.md) records adapted workspace administration.
+
+## Native Runlimit installation review, 2026-09-25
+
+Rechecked PostgreSQL 18 catalog and write semantics against the documented
+interface and a disposable PostgreSQL 18.6 server. [INSERT](https://www.postgresql.org/docs/18/sql-insert.html)
+fills omitted columns from declared defaults; [default expressions](https://www.postgresql.org/docs/18/ddl-default.html)
+execute when the row is inserted. [Expression indexes](https://www.postgresql.org/docs/18/indexes-expressional.html)
+compute their expression on inserts and non-HOT updates. The [column catalog](https://www.postgresql.org/docs/18/catalog-pg-attribute.html)
+distinguishes defaults, generated columns and identity columns, while [domain
+constraints](https://www.postgresql.org/docs/18/sql-createdomain.html) can add
+write-time checks even when the table column itself is nullable. The live tests
+reproduced a denied sequence default and a division-by-zero expression index
+after otherwise valid installation checks. A separate live case confirmed that
+unchanged published built-in expressions deparse with `pg_catalog` qualifiers
+when same-named functions precede `pg_catalog` on the search path; this is
+observed PostgreSQL 18.6 behavior, not an inference that all server versions
+render identically.

@@ -89,8 +89,9 @@ impl PostgresLimiter {
     /// Configure every pool connection with the same role and search path.
     /// Success describes the inspected snapshot; later DDL, grants, role changes,
     /// or different session configuration can invalidate it. RLS, additional
-    /// user triggers/rules/behavioral constraints or unique indexes, and modified
-    /// published function bodies are unsupported. Application-managed migrations
+    /// user triggers/rules/behavioral constraints, write-time extra columns or
+    /// expression/partial/unique indexes, and modified published function bodies
+    /// are unsupported. Application-managed migrations
     /// may renumber the published SQL but must preserve its object names and definitions.
     ///
     /// # Errors
