@@ -7,7 +7,10 @@ use tokio::time::{Instant, timeout, timeout_at};
 use crate::{
     BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL, CAPACITY_SHARD_COUNT, ConnectionCancellationGuard,
     HARD_MAX_ROWS_PER_SHARD, MIGRATOR, PostgresLimiter,
-    protocol::{SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, remaining_server_timeout_settings},
+    protocol::{
+        SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, pin_catalog_search_path,
+        remaining_server_timeout_settings,
+    },
 };
 
 const CATALOG_SQL: &str = include_str!("installation.sql");
@@ -88,10 +91,13 @@ impl PostgresLimiter {
     ///
     /// Configure every pool connection with the same role and search path.
     /// Success describes the inspected snapshot; later DDL, grants, role changes,
-    /// or different session configuration can invalidate it. RLS, additional
-    /// user triggers/rules/behavioral constraints, write-time extra columns or
-    /// expression/partial/unique indexes, and modified published function bodies
-    /// are unsupported. Application-managed migrations
+    /// or different session configuration can invalidate it. RLS, inbound foreign
+    /// keys, additional user triggers/rules/behavioral constraints, write-time
+    /// extra columns or expression/partial/unique indexes, and modified published
+    /// function bodies are unsupported. Publications of updates or deletes require
+    /// default replica identity, no row filter, and all primary-key columns.
+    /// Inspection resolves built-ins through a transaction-local catalog-first
+    /// search path, leaving the session path unchanged. Application-managed migrations
     /// may renumber the published SQL but must preserve its object names and definitions.
     ///
     /// # Errors
@@ -124,6 +130,7 @@ impl PostgresLimiter {
                 .bind(lock)
                 .execute(&mut *transaction)
                 .await?;
+            pin_catalog_search_path(&mut transaction).await?;
             let result = inspect(&mut transaction, history).await;
             transaction.rollback().await?;
             guarded.reuse();

@@ -4102,3 +4102,18 @@ unchanged published built-in expressions deparse with `pg_catalog` qualifiers
 when same-named functions precede `pg_catalog` on the search path; this is
 observed PostgreSQL 18.6 behavior, not an inference that all server versions
 render identically.
+
+The [search-path rules](https://www.postgresql.org/docs/18/runtime-config-client.html)
+place an explicitly listed application schema before `pg_catalog` for function
+and operator lookup. The [operator-resolution rules](https://www.postgresql.org/docs/18/typeconv-oper.html)
+select the earliest exact match, so a schema-local `+(bigint,bigint)` can change
+quota arithmetic; a live PostgreSQL 18.6 case reproduced this and verified
+transaction-local catalog-first resolution. [Foreign-key actions](https://www.postgresql.org/docs/18/ddl-constraints.html)
+can reject deletes of referenced rows or cascade them to another table; a live
+case reproduced cleanup failure from an inbound key. [Publication rules](https://www.postgresql.org/docs/18/sql-createpublication.html)
+require a usable replica identity and identity-covered row filters and column
+lists for published updates or deletes. The
+[`pg_publication_tables` view](https://www.postgresql.org/docs/18/view-pg-publication-tables.html)
+expands direct, schema-wide, and all-table publications. Live PostgreSQL 18.6
+cases reproduced write failures from `REPLICA IDENTITY NOTHING`, a non-identity
+row filter, and a column list that omits the primary key.

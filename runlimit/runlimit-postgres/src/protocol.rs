@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use runlimit_core::CounterKey;
 use sha2::{Digest, Sha256};
-use sqlx::Error;
+use sqlx::{Acquire, Error};
 use tokio::time::Instant;
 
 const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
@@ -25,6 +25,34 @@ SELECT
     pg_catalog.set_config('statement_timeout', $1, true),
     pg_catalog.set_config('lock_timeout', $2, true)
 ";
+
+// Keep the caller's relation path while resolving built-in functions and
+// operators before same-named objects in application schemas. SET LOCAL is
+// undone automatically at transaction end, including rollback.
+const PIN_CATALOG_SEARCH_PATH_SQL: &str = r"
+SELECT pg_catalog.set_config(
+    'search_path',
+    pg_catalog.concat('pg_catalog, ', pg_catalog.current_setting('search_path')),
+    true
+)
+";
+
+pub(crate) async fn pin_catalog_search_path(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), Error> {
+    sqlx::query(PIN_CATALOG_SEARCH_PATH_SQL)
+        .execute(&mut **transaction)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn begin_pinned_transaction(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, Error> {
+    let mut transaction = connection.begin().await?;
+    pin_catalog_search_path(&mut transaction).await?;
+    Ok(transaction)
+}
 
 pub(crate) const BATCH_ADVISORY_LOCK_SQL: &str = r"
 WITH RECURSIVE acquired(position, locked) AS (

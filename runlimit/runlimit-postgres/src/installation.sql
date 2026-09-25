@@ -176,12 +176,34 @@ issues(object, requirement) AS (
     )
 
     UNION ALL
+    SELECT t.name || '.' || c.conname, 'no external foreign keys referencing Runlimit tables'
+    FROM tables t JOIN pg_catalog.pg_constraint c ON c.confrelid = t.oid
+    WHERE c.contype = 'f'
+        AND NOT EXISTS (SELECT FROM tables source WHERE source.oid = c.conrelid)
+
+    UNION ALL
     SELECT t.name || '.' || idx.relname, 'no additional unique indexes, expression indexes, or partial indexes'
     FROM tables t
     JOIN pg_catalog.pg_index i ON i.indrelid = t.oid
     JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
     WHERE (i.indisunique AND NOT i.indisprimary)
         OR i.indexprs IS NOT NULL OR i.indpred IS NOT NULL
+
+    UNION ALL
+    SELECT t.name || '.' || publication.pubname,
+        'published UPDATE/DELETE requires default replica identity, no row filter, and primary-key columns'
+    FROM tables t
+    JOIN pg_catalog.pg_class relation ON relation.oid = t.oid
+    JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+    JOIN pg_catalog.pg_publication_tables published
+        ON published.schemaname = namespace.nspname AND published.tablename = t.name
+    JOIN pg_catalog.pg_publication publication ON publication.pubname = published.pubname
+    WHERE (publication.pubupdate OR publication.pubdelete)
+        AND (relation.relreplident <> 'd' OR published.rowfilter IS NOT NULL
+            OR (t.name = 'runlimit_fixed_windows'
+                AND NOT published.attnames @> ARRAY['config_fingerprint', 'subject_key']::name[])
+            OR (t.name = 'runlimit_capacity_shards'
+                AND NOT published.attnames @> ARRAY['capacity_shard']::name[]))
 
     UNION ALL
     SELECT 'runlimit_fixed_windows_expiry_idx', 'valid nonpartial ascending btree index on window_expires_at'
@@ -296,6 +318,8 @@ issues(object, requirement) AS (
     FROM (VALUES
         ('pg_catalog.pg_advisory_xact_lock(bigint)'),
         ('pg_catalog.set_config(text,text,boolean)'),
+        ('pg_catalog.concat("any")'),
+        ('pg_catalog.current_setting(text)'),
         ('pg_catalog.clock_timestamp()'),
         ('pg_catalog.get_byte(bytea,integer)'),
         ('pg_catalog.octet_length(text)'),

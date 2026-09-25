@@ -232,6 +232,16 @@ const SCHEMA_DRIFT_CASES: &[(&str, &str, &str)] = &[
         "partial indexes",
     ),
     (
+        "CREATE TABLE dependent_windows (config_fingerprint bytea, subject_key bytea, FOREIGN KEY (config_fingerprint, subject_key) REFERENCES runlimit_fixed_windows)",
+        "runlimit_fixed_windows.dependent_windows_config_fingerprint_subject_key_fkey",
+        "external foreign keys",
+    ),
+    (
+        "CREATE TABLE dependent_shards (capacity_shard smallint REFERENCES runlimit_capacity_shards)",
+        "runlimit_capacity_shards.dependent_shards_capacity_shard_fkey",
+        "external foreign keys",
+    ),
+    (
         "ALTER TABLE runlimit_fixed_windows DROP CONSTRAINT runlimit_fixed_windows_capacity_shard_fkey",
         "runlimit_fixed_windows.runlimit_fixed_windows_capacity_shard_fkey",
         "FOREIGN KEY",
@@ -282,6 +292,8 @@ async fn installation_detects_schema_drift_even_with_valid_migration_history() {
     }
 }
 
+#[path = "installation/dependencies.rs"]
+mod dependencies;
 #[path = "installation/expressions.rs"]
 mod expressions;
 

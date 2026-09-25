@@ -4,7 +4,7 @@ use runlimit_core::{
     Allowance, BatchDecision, Capacity, Check, Decision, Denial, QuotaDenial, QuotaMode,
 };
 use sqlx::{
-    Acquire, PgPool, Postgres, Row, Transaction,
+    PgPool, Postgres, Row, Transaction,
     pool::PoolConnection,
     postgres::{PgArguments, PgQueryResult, PgRow, types::PgInterval},
     query::Query,
@@ -17,7 +17,8 @@ use crate::{
     protocol::{
         BATCH_ADVISORY_LOCK_SQL, BATCH_CAPACITY_LOCK_SQL, BATCH_PREFLIGHT_SQL, BATCH_ROW_LOCK_SQL,
         BATCH_UPSERT_SQL, CAPACITY_SHARD_COUNT, SET_LOCAL_TIMEOUTS_SQL, advisory_lock_id,
-        capacity_shard, is_server_timeout, remaining_server_timeout_settings,
+        begin_pinned_transaction, capacity_shard, is_server_timeout,
+        remaining_server_timeout_settings,
     },
 };
 
@@ -260,9 +261,8 @@ pub(crate) async fn run_check_transaction<D>(
     }
 }
 
-/// Keeps every SQL phase on the same remaining operation budget. `PostgreSQL`
-/// timeouts are per statement/lock, so a value set once at BEGIN is stale after
-/// an earlier phase waits. No query method exposes the underlying transaction.
+/// Keeps each SQL phase within the remaining budget. Server timeouts are
+/// refreshed after waits; callers cannot access the underlying transaction.
 pub(crate) struct CheckTransaction<'c> {
     inner: Transaction<'c, Postgres>,
     deadline: Instant,
@@ -276,7 +276,7 @@ impl<'c> CheckTransaction<'c> {
         let inner = check_before_commit(
             deadline,
             CheckPhase::BeginningTransaction,
-            connection.begin(),
+            begin_pinned_transaction(connection),
         )
         .await?;
         Ok(Self { inner, deadline })

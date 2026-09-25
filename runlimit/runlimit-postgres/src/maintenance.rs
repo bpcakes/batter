@@ -6,7 +6,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use crate::{
     CleanupPhase, ConnectionOutcome, MaintenanceError,
     protocol::{
-        CLEANUP_SQL, SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, remaining_server_timeout_settings,
+        CLEANUP_SQL, SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, pin_catalog_search_path,
+        remaining_server_timeout_settings,
     },
 };
 
@@ -50,21 +51,11 @@ async fn run_cleanup_transaction_inner(
         CleanupPhase::ConfiguringTimeouts,
     )
     .await?;
-    // The imported cleanup SQL has unqualified count(*) calls. Put pg_catalog
-    // first for this transaction so they resolve to the inspected built-in,
-    // while preserving the caller's relation search path after it.
-    let search_path: String = maintenance_before_commit(
-        deadline,
-        CleanupPhase::DeletingExpiredWindows,
-        sqlx::query_scalar("SHOW search_path").fetch_one(&mut *transaction),
-    )
-    .await?;
+    // The imported cleanup SQL has unqualified built-ins and operators.
     maintenance_before_commit(
         deadline,
         CleanupPhase::DeletingExpiredWindows,
-        sqlx::query("SELECT pg_catalog.set_config('search_path', $1, true)")
-            .bind(format!("pg_catalog, {search_path}"))
-            .execute(&mut *transaction),
+        pin_catalog_search_path(&mut transaction),
     )
     .await?;
     let result = maintenance_before_commit(

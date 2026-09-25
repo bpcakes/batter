@@ -2265,10 +2265,13 @@ both migration-history modes, read-only state preservation, schema and grant
 drift, snapshot role/search-path behavior, deadlines and cancelled connection
 disposition. The repair cases cover extra generated/default/domain/identity
 columns, expression and partial indexes that may execute on quota writes,
-application-schema functions that shadow checked built-ins, and a schema-local
-`count(*)` aggregate that cleanup must bypass without changing the session search
-path. The default and expression-index cases reproduce a failing admission after
-the corresponding schema drift; plain nullable columns and indexes remain
+application-schema functions and operators that shadow checked built-ins, and
+a schema-local `count(*)` aggregate. Transaction-local catalog-first resolution
+leaves the session search path unchanged. Inbound foreign keys and incompatible
+publication identity, row filter, and column list settings have live validation
+cases. The default, expression-index, foreign-key, publication, and operator
+cases reproduce quota-write or cleanup failures from the corresponding drift;
+plain nullable columns, plain indexes, and compatible publications remain
 supported.
 They require a disposable database; ordinary tests compile but ignore these
 cases. The local upstream port is tracked by `batter-wloc`.

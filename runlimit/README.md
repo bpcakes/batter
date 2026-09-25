@@ -692,11 +692,10 @@ The ledger UPDATE grant allows row locking; runtime callers do not update ledger
 counts directly. The capacity trigger functions must retain their published
 security-definer settings and an owner with schema usage, ledger SELECT, and
 UPDATE on `row_count`. PostgreSQL's normal public execution grants on built-in
-functions must also permit Runlimit's queries. Fixed-window admission and
-timeout setup qualify their checked built-ins with `pg_catalog`, including when
-the application schema precedes it in an explicit search path. Cleanup puts
-`pg_catalog` first for its transaction so the immutable imported query's
-`count(*)` calls resolve to the checked aggregate. The original session path
+functions must also permit Runlimit's queries. Validation, fixed-window
+admission, and cleanup put `pg_catalog` first for each transaction. This keeps
+the caller's relation path while resolving built-in functions and operators
+ahead of same-named objects in application schemas. The original session path
 returns at transaction end. Inherited and
 broader grants are accepted. Validation checks required access, not whether
 the role has excessive privileges; role creation and grant changes remain
@@ -717,6 +716,12 @@ reconcile ledger counts against them, or validate application policies. Tables
 using row-level security, inheritance, additional behavioral constraints or
 unique, expression, or partial indexes, additional user triggers, or rewrite
 rules are unsupported.
+Foreign keys from other tables into either Runlimit table are rejected: they
+can block cleanup or cascade into application rows. Publications that publish
+updates or deletes must use default replica identity, no row filter, and a
+column list that contains the table's primary key; compatible publications and
+insert-only publications remain supported. These settings are checked in the
+same catalog snapshot as the tables.
 Table storage tuning such as fillfactor and autovacuum settings remains
 operator-controlled. Extra generated, defaulted, identity, and domain columns
 are rejected because their write-time behavior can make admission fail. Ordinary

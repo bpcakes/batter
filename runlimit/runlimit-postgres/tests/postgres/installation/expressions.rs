@@ -181,3 +181,50 @@ async fn installation_and_admission_use_qualified_builtins() {
     assert!(limiter.check(&check).await.unwrap().permits_request());
     fixture.teardown().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL"]
+async fn admission_ignores_application_operator_overload_and_restores_search_path() {
+    let fixture = installed().await;
+    sqlx::raw_sql(
+        "CREATE FUNCTION shadow_add(bigint, bigint) RETURNS bigint \
+         LANGUAGE sql IMMUTABLE AS 'SELECT $1'; \
+         CREATE OPERATOR + (LEFTARG = bigint, RIGHTARG = bigint, FUNCTION = shadow_add)",
+    )
+    .execute(&fixture.primary_pool)
+    .await
+    .unwrap();
+    let shadowed: i64 = sqlx::query_scalar("SELECT 1::bigint + 1::bigint")
+        .fetch_one(&fixture.primary_pool)
+        .await
+        .unwrap();
+    assert_eq!(shadowed, 1, "fixture must shadow bigint addition");
+
+    let limiter = PostgresLimiter::new(fixture.primary_pool.clone());
+    limiter
+        .validate_installation(MigrationHistory::Bundled)
+        .await
+        .unwrap();
+    let policy = FixedWindowPolicy::new(
+        PolicyId::new("operator").unwrap(),
+        ScopeId::new("test").unwrap(),
+        2,
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    let check = Check::new(SubjectKey::from_digest([85; 32]).bind(&policy));
+    assert!(limiter.check(&check).await.unwrap().permits_request());
+    assert!(limiter.check(&check).await.unwrap().permits_request());
+    assert!(!limiter.check(&check).await.unwrap().permits_request());
+    let stored: i64 = sqlx::query_scalar("SELECT used FROM runlimit_fixed_windows")
+        .fetch_one(&fixture.primary_pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 2);
+    let path: String = sqlx::query_scalar("SHOW search_path")
+        .fetch_one(&fixture.primary_pool)
+        .await
+        .unwrap();
+    assert!(path.starts_with(&fixture.schema));
+    fixture.teardown().await;
+}
