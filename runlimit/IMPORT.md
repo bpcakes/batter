@@ -30,5 +30,11 @@ historical upstream records. This unpublished workspace does not run registry
 release or upstream repository archival. README developer paths and agent guidance
 are adapted to the shared root; the changelog is retained as historical evidence.
 
+Local upstream commits `cd409c6` and `a4fd584` were subsequently adopted as
+read-only PostgreSQL installation validation in `runlimit-postgres`. The port
+adds inspection source, SQL, and live tests, plus public documentation; it does
+not replace the imported migration files or the later workspace pool-budget test.
+The original import digest inventory remains the baseline for immutable assets.
+
 [ADR-012](../docs/adr/012-native-runlimit-workspace.md) preserves native ownership.
 Execution results belong to the owning Beads and root status/testing pages.

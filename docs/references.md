@@ -72,6 +72,33 @@ documents `fromJSON` for matrix values and `&&`/`||` conditional selection.
 The Rust workflow selects floating `stable` for the weekly schedule and the
 pinned release plus MSRV for other events; non-verification jobs skip the schedule.
 
+## Native Runlimit installation inspection: reviewed 2026-09-24
+
+Owning Bead: `batter-wloc`; local source commits `cd409c6` and `a4fd584`,
+SQLx 0.9.0 and PostgreSQL 18.6. PostgreSQL's
+[read-only transaction setting](https://www.postgresql.org/docs/18/sql-set-transaction.html)
+restricts writes during catalog inspection. Its
+[privilege inquiry functions](https://www.postgresql.org/docs/18/functions-info.html)
+check effective table, column, schema, and function access, while the same
+[catalog information functions](https://www.postgresql.org/docs/18/functions-info.html)
+reconstruct constraint and generated-expression definitions. The port compares
+those observations with the unchanged published migration SQL. Live tests on a
+disposable PostgreSQL 18.6 instance exercise the contract; no later-schema or
+future-availability guarantee follows from one read-only snapshot.
+
+The repair rechecked PostgreSQL 18's
+[generated-column contract](https://www.postgresql.org/docs/18/ddl-generated-columns.html):
+stored columns compute on insert or update, so an extra nullable generated
+column can still reject a quota write. Its
+[schema search-path rules](https://www.postgresql.org/docs/18/ddl-schemas.html)
+allow an application function to shadow a built-in when `pg_catalog` is
+explicitly placed later in the path. Fixed-window admission and timeout setup
+now qualify their checked built-ins. The imported cleanup query retains two
+unqualified `count(*)` calls. Its owner prepends `pg_catalog` to the
+[transaction-local search path](https://www.postgresql.org/docs/18/functions-admin.html)
+before execution, then PostgreSQL restores the original setting at transaction
+end. A live schema-local aggregate regression checks resolution and restoration.
+
 ## Checked completion error-chain rendering: reviewed 2026-09-23
 
 Owning Bead: `batter-r62w.2`; resolved `anyhow` 1.0.104 and Tokio 1.53.1.
@@ -4058,3 +4085,35 @@ MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
 release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
 tests against PostgreSQL 16. The import preserves those native source contracts;
 [provenance](../runlimit/IMPORT.md) records adapted workspace administration.
+
+## Native Runlimit installation review, 2026-09-25
+
+Rechecked PostgreSQL 18 catalog and write semantics against the documented
+interface and a disposable PostgreSQL 18.6 server. [INSERT](https://www.postgresql.org/docs/18/sql-insert.html)
+fills omitted columns from declared defaults; [default expressions](https://www.postgresql.org/docs/18/ddl-default.html)
+execute when the row is inserted. [Expression indexes](https://www.postgresql.org/docs/18/indexes-expressional.html)
+compute their expression on inserts and non-HOT updates. The [column catalog](https://www.postgresql.org/docs/18/catalog-pg-attribute.html)
+distinguishes defaults, generated columns and identity columns, while [domain
+constraints](https://www.postgresql.org/docs/18/sql-createdomain.html) can add
+write-time checks even when the table column itself is nullable. The live tests
+reproduced a denied sequence default and a division-by-zero expression index
+after otherwise valid installation checks. A separate live case confirmed that
+unchanged published built-in expressions deparse with `pg_catalog` qualifiers
+when same-named functions precede `pg_catalog` on the search path; this is
+observed PostgreSQL 18.6 behavior, not an inference that all server versions
+render identically.
+
+The [search-path rules](https://www.postgresql.org/docs/18/runtime-config-client.html)
+place an explicitly listed application schema before `pg_catalog` for function
+and operator lookup. The [operator-resolution rules](https://www.postgresql.org/docs/18/typeconv-oper.html)
+select the earliest exact match, so a schema-local `+(bigint,bigint)` can change
+quota arithmetic; a live PostgreSQL 18.6 case reproduced this and verified
+transaction-local catalog-first resolution. [Foreign-key actions](https://www.postgresql.org/docs/18/ddl-constraints.html)
+can reject deletes of referenced rows or cascade them to another table; a live
+case reproduced cleanup failure from an inbound key. [Publication rules](https://www.postgresql.org/docs/18/sql-createpublication.html)
+require a usable replica identity and identity-covered row filters and column
+lists for published updates or deletes. The
+[`pg_publication_tables` view](https://www.postgresql.org/docs/18/view-pg-publication-tables.html)
+expands direct, schema-wide, and all-table publications. Live PostgreSQL 18.6
+cases reproduced write failures from `REPLICA IDENTITY NOTHING`, a non-identity
+row filter, and a column list that omits the primary key.

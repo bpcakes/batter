@@ -7,6 +7,25 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add read-only `PostgresLimiter::validate_installation` with bundled or
+  application-managed migration history modes. Both validate installed schema
+  objects, capacity triggers and ledger slots, and effective runtime privileges;
+  bundled mode additionally verifies published migration checksums. Validation
+  reports structured installation issues and respects backend timeouts without
+  applying migrations or consuming quota.
+
+### Fixed
+
+- Reject additional generated columns during installation inspection because
+  their write-time expressions can break quota admission.
+- Qualify fixed-window admission and timeout-setup built-ins to match the
+  functions whose privileges installation inspection checks, even when
+  application schemas precede `pg_catalog` in the search path.
+- Run expired-window cleanup with `pg_catalog` first in its transaction-local
+  search path so the immutable imported query uses the checked `count(*)`.
+
 ## [0.4.0] - 2026-09-22
 
 ### Changed

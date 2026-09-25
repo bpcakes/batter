@@ -650,6 +650,83 @@ statements are available as `CREATE_RUNLIMIT_FIXED_WINDOWS_SQL`,
 `BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL` so hosts can vendor them without
 reaching into crate source files.
 
+Runtime processes can validate an installation without migration privileges:
+
+```rust,no_run
+use runlimit_postgres::{MigrationHistory, PostgresLimiter};
+
+# async fn example(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+let limiter = PostgresLimiter::new(pool);
+limiter.validate_installation(MigrationHistory::Bundled).await?;
+# Ok(())
+# }
+```
+
+`Bundled` verifies Runlimit's published migration versions, successful status,
+and checksums in `_sqlx_migrations`; unrelated versions are ignored. Use
+`MigrationHistory::ApplicationManaged` when your application vendors the
+unchanged SQL under its own versions or migration ledger. That mode does not
+read `_sqlx_migrations`. Both modes inspect the actual installed objects,
+including column types, constraints, the expiry index, generated capacity shard,
+enabled triggers, published trigger function bodies and settings, and all 256
+capacity-ledger slots. A correct migration history alone does not hide schema
+drift. Object names and definitions must match the published SQL; renamed or
+custom trigger implementations are not supported.
+
+Call validation using the pool and effective role that will perform admission
+and cleanup. The required grants for an installation in `public`, with an
+application-created role named `runlimit_runtime`, are:
+
+```sql
+GRANT USAGE ON SCHEMA public TO runlimit_runtime;
+GRANT SELECT, INSERT, DELETE ON public.runlimit_fixed_windows TO runlimit_runtime;
+GRANT UPDATE (policy_id, scope_id, window_started_at, window_expires_at, used)
+    ON public.runlimit_fixed_windows TO runlimit_runtime;
+GRANT SELECT ON public.runlimit_capacity_shards TO runlimit_runtime;
+GRANT UPDATE (capacity_shard) ON public.runlimit_capacity_shards TO runlimit_runtime;
+-- Needed only for MigrationHistory::Bundled:
+GRANT SELECT ON public._sqlx_migrations TO runlimit_runtime;
+```
+
+The ledger UPDATE grant allows row locking; runtime callers do not update ledger
+counts directly. The capacity trigger functions must retain their published
+security-definer settings and an owner with schema usage, ledger SELECT, and
+UPDATE on `row_count`. PostgreSQL's normal public execution grants on built-in
+functions must also permit Runlimit's queries. Validation, fixed-window
+admission, and cleanup put `pg_catalog` first for each transaction. This keeps
+the caller's relation path while resolving built-in functions and operators
+ahead of same-named objects in application schemas. The original session path
+returns at transaction end. Inherited and
+broader grants are accepted. Validation checks required access, not whether
+the role has excessive privileges; role creation and grant changes remain
+application-owned.
+
+`InstallationError::Incompatible { issues }` lists object names and unmet
+requirements through `InstallationIssue::object()` and `requirement()`.
+Database failures and acquisition/operation timeouts are separate errors. All
+outcomes are read-only and safe to retry. Validation uses a read-only,
+repeatable-read transaction under the limiter's configured budgets; unfinished
+connections are discarded on cancellation. It performs no counter writes,
+cleanup, DDL, advisory locking, or migration-history updates.
+
+Validation describes one connection's snapshot. Configure every pool connection
+with the same role and search path, and revalidate after administrative changes.
+It does not prove future database availability or writability, scan counters,
+reconcile ledger counts against them, or validate application policies. Tables
+using row-level security, inheritance, additional behavioral constraints or
+unique, expression, or partial indexes, additional user triggers, or rewrite
+rules are unsupported.
+Foreign keys from other tables into either Runlimit table are rejected: they
+can block cleanup or cascade into application rows. Publications that publish
+updates or deletes must use default replica identity, no row filter, and a
+column list that contains the table's primary key; compatible publications and
+insert-only publications remain supported. These settings are checked in the
+same catalog snapshot as the tables.
+Table storage tuning such as fillfactor and autovacuum settings remains
+operator-controlled. Extra generated, defaulted, identity, and domain columns
+are rejected because their write-time behavior can make admission fail. Ordinary
+nullable extra columns without defaults remain allowed.
+
 Periodically call `cleanup_expired(maximum_rows)` to bound maintenance work;
 expired rows do not affect correctness before cleanup. The cleanup query
 materializes one PostgreSQL clock sample so the expiry predicate remains an

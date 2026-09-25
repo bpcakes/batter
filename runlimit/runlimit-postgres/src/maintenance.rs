@@ -6,7 +6,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use crate::{
     CleanupPhase, ConnectionOutcome, MaintenanceError,
     protocol::{
-        CLEANUP_SQL, SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, remaining_server_timeout_settings,
+        CLEANUP_SQL, SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, pin_catalog_search_path,
+        remaining_server_timeout_settings,
     },
 };
 
@@ -48,6 +49,13 @@ async fn run_cleanup_transaction_inner(
         &mut transaction,
         deadline,
         CleanupPhase::ConfiguringTimeouts,
+    )
+    .await?;
+    // The imported cleanup SQL has unqualified built-ins and operators.
+    maintenance_before_commit(
+        deadline,
+        CleanupPhase::DeletingExpiredWindows,
+        pin_catalog_search_path(&mut transaction),
     )
     .await?;
     let result = maintenance_before_commit(

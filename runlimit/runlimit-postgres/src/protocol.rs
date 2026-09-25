@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use runlimit_core::CounterKey;
 use sha2::{Digest, Sha256};
-use sqlx::Error;
+use sqlx::{Acquire, Error};
 use tokio::time::Instant;
 
 const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
@@ -22,33 +22,61 @@ pub const HARD_MAX_ROWS_PER_SHARD: u32 = 65_536;
 
 pub(crate) const SET_LOCAL_TIMEOUTS_SQL: &str = r"
 SELECT
-    set_config('statement_timeout', $1, true),
-    set_config('lock_timeout', $2, true)
+    pg_catalog.set_config('statement_timeout', $1, true),
+    pg_catalog.set_config('lock_timeout', $2, true)
 ";
+
+// Keep the caller's relation path while resolving built-in functions and
+// operators before same-named objects in application schemas. SET LOCAL is
+// undone automatically at transaction end, including rollback.
+const PIN_CATALOG_SEARCH_PATH_SQL: &str = r"
+SELECT pg_catalog.set_config(
+    'search_path',
+    pg_catalog.concat('pg_catalog, ', pg_catalog.current_setting('search_path')),
+    true
+)
+";
+
+pub(crate) async fn pin_catalog_search_path(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), Error> {
+    sqlx::query(PIN_CATALOG_SEARCH_PATH_SQL)
+        .execute(&mut **transaction)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn begin_pinned_transaction(
+    connection: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, Error> {
+    let mut transaction = connection.begin().await?;
+    pin_catalog_search_path(&mut transaction).await?;
+    Ok(transaction)
+}
 
 pub(crate) const BATCH_ADVISORY_LOCK_SQL: &str = r"
 WITH RECURSIVE acquired(position, locked) AS (
-    SELECT 1, pg_advisory_xact_lock($1[1])
-    WHERE cardinality($1::BIGINT[]) > 0
+    SELECT 1, pg_catalog.pg_advisory_xact_lock($1[1])
+    WHERE pg_catalog.cardinality($1::BIGINT[]) > 0
 
     UNION ALL
 
     SELECT
         acquired.position + 1,
-        pg_advisory_xact_lock($1[acquired.position + 1])
+        pg_catalog.pg_advisory_xact_lock($1[acquired.position + 1])
     FROM acquired
-    WHERE acquired.position < cardinality($1::BIGINT[])
+    WHERE acquired.position < pg_catalog.cardinality($1::BIGINT[])
 )
-SELECT count(*)
+SELECT pg_catalog.count(*)
 FROM acquired
 ";
 
 pub(crate) const BATCH_ROW_LOCK_SQL: &str = r"
 WITH input_keys AS (
     SELECT *
-    FROM unnest(
-        $1::BYTEA[],
-        $2::BYTEA[]
+    FROM ROWS FROM (
+        pg_catalog.unnest($1::BYTEA[]),
+        pg_catalog.unnest($2::BYTEA[])
     ) WITH ORDINALITY AS keys(
         config_fingerprint,
         subject_key,
@@ -57,7 +85,7 @@ WITH input_keys AS (
 ),
 lock_order AS (
     SELECT *
-    FROM unnest($3::BIGINT[])
+    FROM pg_catalog.unnest($3::BIGINT[])
         WITH ORDINALITY AS positions(input_position, lock_position)
 ),
 ordered_keys AS (
@@ -82,10 +110,10 @@ FOR UPDATE OF windows
 pub(crate) const BATCH_CAPACITY_LOCK_SQL: &str = r"
 WITH input_keys AS (
     SELECT *
-    FROM unnest(
-        $1::BYTEA[],
-        $2::BYTEA[],
-        $3::SMALLINT[]
+    FROM ROWS FROM (
+        pg_catalog.unnest($1::BYTEA[]),
+        pg_catalog.unnest($2::BYTEA[]),
+        pg_catalog.unnest($3::SMALLINT[])
     ) WITH ORDINALITY AS keys(
         config_fingerprint,
         subject_key,
@@ -118,7 +146,7 @@ locked_shards AS MATERIALIZED (
     FOR UPDATE OF capacity
 ),
 lock_barrier AS MATERIALIZED (
-    SELECT count(*) AS locked_count
+    SELECT pg_catalog.count(*) AS locked_count
     FROM locked_shards
 )
 SELECT
@@ -135,11 +163,11 @@ ORDER BY missing_keys.input_position
 pub(crate) const BATCH_PREFLIGHT_SQL: &str = r"
 WITH input AS (
     SELECT *
-    FROM unnest(
-        $1::BYTEA[],
-        $2::BYTEA[],
-        $3::BIGINT[],
-        $4::BIGINT[]
+    FROM ROWS FROM (
+        pg_catalog.unnest($1::BYTEA[]),
+        pg_catalog.unnest($2::BYTEA[]),
+        pg_catalog.unnest($3::BIGINT[]),
+        pg_catalog.unnest($4::BIGINT[])
     ) WITH ORDINALITY AS checks(
         config_fingerprint,
         subject_key,
@@ -178,14 +206,14 @@ LEFT JOIN first_denial ON TRUE
 pub(crate) const BATCH_UPSERT_SQL: &str = r"
 WITH input AS (
     SELECT *
-    FROM unnest(
-        $1::TEXT[],
-        $2::TEXT[],
-        $3::BYTEA[],
-        $4::BYTEA[],
-        $5::INTERVAL[],
-        $6::BIGINT[],
-        $7::BIGINT[]
+    FROM ROWS FROM (
+        pg_catalog.unnest($1::TEXT[]),
+        pg_catalog.unnest($2::TEXT[]),
+        pg_catalog.unnest($3::BYTEA[]),
+        pg_catalog.unnest($4::BYTEA[]),
+        pg_catalog.unnest($5::INTERVAL[]),
+        pg_catalog.unnest($6::BIGINT[]),
+        pg_catalog.unnest($7::BIGINT[])
     ) WITH ORDINALITY AS checks(
         policy_id,
         scope_id,
@@ -252,7 +280,7 @@ upserted AS (
 response AS (
     SELECT pg_catalog.clock_timestamp() AS response_now
     FROM upserted
-    HAVING count(*) >= 0
+    HAVING pg_catalog.count(*) >= 0
 )
 SELECT
     input.input_position - 1 AS input_index,

@@ -127,6 +127,24 @@ process cancellation. These are explicit ownership limits, not claims of async
 drop or remote effect rollback. Fresh-agent usability evaluation is proposed
 and unexecuted.
 
+### Native installation validation assessment (`batter-wloc`)
+
+`MigrationHistory` requires an explicit choice between bundled checksums and
+application-managed history. `InstallationError` separates incompatible local
+schema/grant observations from database and timeout failures; callers cannot
+receive a success value carrying unresolved issues. Both modes run the same
+schema and effective-grant inspection, so choosing application-managed history
+does not bypass those requirements. The canonical `validate_installation` call
+owns transaction setup, timeout, rollback, and connection disposal.
+
+Calling validation before migrations returns an incompatibility rather than a
+false success. A service can still choose not to call it, or its remote schema,
+role or search path may change after success. A Rust capability cannot prove
+those external facts for the later admission and cleanup connections; the API
+documents the snapshot boundary and requires a uniform pool configuration.
+Fresh agent implementation and modification evaluations for this port are
+proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

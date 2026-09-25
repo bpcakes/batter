@@ -10,8 +10,9 @@ cannot depend on Batter or introduce its facade into native consumption.
 ## Key entrypoints
 `runlimit-core` owns validated policies/decisions and opaque subject derivation;
 `runlimit-memory` owns bounded process-local stores; `runlimit-postgres` owns
-transactions, migration families and bounded cleanup; `runlimit-http` owns response
-metadata; `runlimit-axum` owns the explicitly caller-controlled native layer.
+transactions, migration families, read-only installation inspection and bounded
+cleanup; `runlimit-http` owns response metadata; `runlimit-axum` owns the
+explicitly caller-controlled native layer.
 
 ## Edit here for X
 Native algorithms and persistence belong here. Operational factory execution and
@@ -124,6 +125,11 @@ forward migrations instead. Source-copy consumer work is tracked by batter-isdr.
 - PostgreSQL 0.2 storage is hard-bounded per persistent capacity shard. Keep
   the shard derivation and database ceiling stable, schedule expired-row
   cleanup to reclaim slots, and monitor shard skew and table growth.
+- PostgreSQL installation validation is a read-only snapshot of one connection's
+  resolved schema and effective role. Bundled mode checks the published migration
+  checksums; application-managed mode does not read the host ledger. Both retain
+  schema, capacity-protocol, ledger-slot and privilege checks. Validation cannot
+  promise that a later connection or administrative change preserves those facts.
 
 
 ## Common commands
