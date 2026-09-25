@@ -560,7 +560,6 @@ impl Supervisor {
         } else {
             self.cleanup.close(self.budget.cleanup).await
         };
-        self.coordinator.shared.stop_driver();
         let report = ShutdownReport {
             cause,
             tasks: summary.records,
@@ -571,8 +570,11 @@ impl Supervisor {
             unjoined: summary.unjoined,
             cleanup,
         };
+        // Record before Stopped is published: an application root may flush
+        // its exporter as soon as it observes the stopped state.
         #[cfg(feature = "metrics")]
         crate::telemetry::metrics::shutdown(cause, report.is_success(), drain_started.elapsed());
+        self.coordinator.shared.stop_driver();
         report
     }
 

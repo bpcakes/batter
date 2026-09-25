@@ -120,13 +120,19 @@ inside it. It does not capture or enter the current span, drive a dropped future
 to completion, or supervise work.
 
 The opt-in `metrics` feature records each finished operation, retry attempt,
-admission decision, observed task exit, cleanup hook and shutdown exactly once
-into the application's `metrics` recorder, after the result is known and outside
-admission locks. Labels come only from closed foundation vocabularies or a
-fixed-capacity, write-once table of operation/task names; names outside the
-lowercase `[a-z][a-z0-9._]*` vocabulary or beyond capacity record `_invalid` or
-`_overflow` and increment a separate coalescing counter, without logging. The
-catalog therefore has at most `MAX_SERIES` series regardless of traffic. Batter
+whole retry execution, bulkhead or process admission decision, observed task
+exit, cleanup hook and shutdown exactly once into the application's `metrics`
+recorder, after the result is known and outside admission locks. Dropped
+operations, retry executions, admission waits and abandoned cleanup hooks
+record `dropped`. Foundation-owned waits (admission, backoff) are not counted
+as operations. Shutdown is recorded before `Stopped` is published. Labels come
+only from closed foundation vocabularies or a fixed-capacity, write-once table
+of operation/task names using the component-registration vocabulary; other
+names or names beyond capacity record `<invalid>` or `<overflow>` and increment
+a separate coalescing counter, without logging. The vocabulary rejects URLs,
+e-mail addresses and error text, but not identifiers embedded in otherwise valid
+names; leaked names can occupy slots first-come, never evicted. The catalog
+therefore has at most `MAX_SERIES` series regardless of traffic. Batter
 owns no metric buffer, queue, flush, retry or database write, so a slow,
 unavailable or saturated collector cannot change returned results or admission
 decisions. Durations come from monotonic `Duration` values and are finite and

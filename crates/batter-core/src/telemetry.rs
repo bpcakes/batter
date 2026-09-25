@@ -75,9 +75,21 @@ impl Outcome {
     }
 }
 
+/// Which metric family, if any, a finished operation boundary belongs to.
+#[derive(Clone, Copy)]
+pub(crate) enum Boundary {
+    /// An application operation.
+    Operation,
+    /// One retry attempt; the retry execution records its own terminal result.
+    RetryAttempt,
+    /// A foundation-owned wait (admission, backoff) whose owning boundary
+    /// records the decision; it is traced but emits no operation metrics.
+    Internal,
+}
+
 pub(crate) struct Observation {
     operation: &'static str,
-    attempt: bool,
+    boundary: Boundary,
     span: Span,
     context: Span,
     started: Instant,
@@ -85,8 +97,7 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
-    /// `attempt` separates retry attempts from whole operations in metrics.
-    pub(crate) fn new(operation: &'static str, attempt: bool) -> Self {
+    pub(crate) fn new(operation: &'static str, boundary: Boundary) -> Self {
         let span = tracing::info_span!(
             target: "batter",
             "batter.operation",
@@ -99,7 +110,7 @@ impl Observation {
         let context = span.clone().or_current();
         Self {
             operation,
-            attempt,
+            boundary,
             span,
             context,
             started: Instant::now(),
@@ -120,9 +131,9 @@ impl Drop for Observation {
     fn drop(&mut self) {
         let elapsed = self.started.elapsed();
         #[cfg(feature = "metrics")]
-        metrics::operation(self.attempt, self.operation, self.outcome, elapsed);
+        metrics::operation(self.boundary, self.operation, self.outcome, elapsed);
         #[cfg(not(feature = "metrics"))]
-        let _ = (self.operation, self.attempt);
+        let _ = (self.operation, self.boundary);
         let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
         self.span.record("outcome", self.outcome.as_str());
         self.span.record("elapsed_ms", elapsed_ms);

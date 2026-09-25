@@ -423,6 +423,8 @@ struct PendingCleanupObservation {
 impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
+            #[cfg(feature = "metrics")]
+            crate::telemetry::metrics::cleanup_dropped(1);
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
         }
     }
@@ -431,6 +433,8 @@ impl Drop for PendingCleanupObservation {
 impl Drop for CleanupStack {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
+            #[cfg(feature = "metrics")]
+            crate::telemetry::metrics::cleanup_dropped(self.hooks.len());
             tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");
         }
     }

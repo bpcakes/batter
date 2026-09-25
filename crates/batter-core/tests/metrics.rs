@@ -3,6 +3,8 @@
 
 #[path = "metrics/capture.rs"]
 mod capture;
+#[path = "metrics/terminal.rs"]
+mod terminal;
 
 use batter_core::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
@@ -15,18 +17,19 @@ use batter_core::{
 use capture::Capture;
 use std::{convert::Infallible, time::Duration};
 
-fn owner() -> OperationOwner {
+pub(crate) fn owner() -> OperationOwner {
     OperationOwner::new(Duration::from_secs(5)).unwrap()
 }
 
+/// The shared registration vocabulary, or a documented placeholder.
 fn name_ok(value: &str) -> bool {
     value == INVALID_NAME
         || value == OVERFLOW_NAME
-        || (value.len() <= MAX_NAME_LEN
-            && value.starts_with(|c: char| c.is_ascii_lowercase())
+        || (!value.is_empty()
+            && value.len() <= MAX_NAME_LEN
             && value
                 .bytes()
-                .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_')))
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
 }
 
 /// Sorted label keys of each metric and whether their values are documented.
@@ -35,6 +38,10 @@ fn documented(name: &str, values: &[&str]) -> Option<(&'static [&'static str], b
         (OPERATION_COMPLETIONS | OPERATION_DURATION | RETRY_ATTEMPTS, [operation, outcome]) => (
             &["operation", "outcome"],
             name_ok(operation) && OUTCOMES.contains(outcome),
+        ),
+        (RETRY_EXECUTIONS, [operation, result]) => (
+            &["operation", "result"],
+            name_ok(operation) && RETRY_RESULTS.contains(result),
         ),
         (ADMISSION_DECISIONS, [admission, decision]) => (
             &["admission", "decision"],
@@ -59,7 +66,7 @@ fn documented(name: &str, values: &[&str]) -> Option<(&'static [&'static str], b
 }
 
 /// Every emitted label belongs to its documented closed domain or name table.
-fn assert_catalog(capture: &Capture) {
+pub(crate) fn assert_catalog(capture: &Capture) {
     for (name, labels) in capture.series() {
         let keys: Vec<&str> = labels.iter().map(|(k, _)| k.as_str()).collect();
         let values: Vec<&str> = labels.iter().map(|(_, v)| v.as_str()).collect();
@@ -153,7 +160,7 @@ async fn raw_identifiers_urls_and_errors_never_become_labels() {
     let context = owner().into_context();
     let raw: [&'static str; 4] = [
         "https://example.test/items/7?token=abc",
-        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "/items/7",
         "user@example.test",
         "connection refused: peer reset",
     ];
@@ -213,9 +220,15 @@ async fn retry_attempts_are_counted_separately_from_operations() {
     assert_eq!(attempt("failed"), 1.0);
     assert_eq!(attempt("succeeded"), 1.0);
     assert_eq!(
-        capture.count(OPERATION_COMPLETIONS, &[("operation", "provider.read")]),
-        0.0
+        capture.count(
+            RETRY_EXECUTIONS,
+            &[("operation", "provider.read"), ("result", "succeeded")]
+        ),
+        1.0
     );
+    // Neither attempts nor foundation-owned backoff waits are operations.
+    assert_eq!(capture.samples(OPERATION_COMPLETIONS), []);
+    assert_eq!(capture.samples(OPERATION_DURATION), []);
     assert_catalog(&capture);
 }
 
@@ -258,6 +271,8 @@ async fn rejection_storm_under_a_saturated_recorder_keeps_decisions_and_bounds()
     assert_eq!(decision(&complete, "admitted"), 1.0);
     assert_eq!(decision(&complete, "overloaded"), STORM as f64);
     assert_eq!(decision(&complete, "closed"), 1.0);
+    // The waiting admission is not also recorded as an operation.
+    assert_eq!(complete.samples(OPERATION_COMPLETIONS), []);
     // Rejection by the recorder is neither retried nor reported to Batter:
     // both recorders received exactly one registration per decision.
     assert_eq!(complete.registrations(), saturated.registrations());
@@ -294,7 +309,7 @@ async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
         Supervisor::with_process_capacity(shutdown_budget(), ProcessCapacity::new(1).unwrap());
     let process = supervisor.process_handle().unwrap();
     supervisor
-        .register("service.component", |startup| async move {
+        .register("service-component", |startup| async move {
             let shutdown = startup.acknowledge_started();
             shutdown.draining().await;
             Ok(shutdown.stopped())
@@ -346,7 +361,7 @@ async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
     assert_eq!(
         exits(&[
             ("kind", "component"),
-            ("task", "service.component"),
+            ("task", "service-component"),
             ("outcome", "stopped")
         ]),
         1.0

@@ -16,8 +16,9 @@ one-time application setup; `set_default_local_recorder` scopes a recorder to
 the current thread, which the tests use with current-thread runtimes. Counter and
 histogram handles are infallible: a recorder cannot return a recording error to
 the caller, so dropping or coalescing is recorder policy. The crate declares
-Rust 1.71.1, below this repository's 1.94 minimum, and its only normal
-dependency is `rapidhash`. Metric names follow
+Rust 1.71.1, below this repository's 1.94 minimum. Its normal dependencies
+are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
+`portable-atomic` with its `fallback` feature. Metric names follow
 [Prometheus naming practice](https://prometheus.io/docs/practices/naming/)
 (`_total` counters, base-unit `_seconds`) and its
 [cardinality guidance](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels).

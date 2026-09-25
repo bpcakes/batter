@@ -576,7 +576,7 @@ where
     let attempt_deadline_is_tighter = attempt_context.deadline() < settings.context.deadline();
     // Count inside the factory, not before run's cancellation preflight.
     match attempt_context
-        .run_with_outcome(
+        .run_retry_attempt(
             settings.operation,
             |scope| {
                 *attempts += 1;
@@ -621,6 +621,27 @@ where
 }
 
 async fn execute_with_delay<T, E, F, Fut, C, D>(
+    settings: ExecutionSettings<'_>,
+    delay_for: D,
+    factory: F,
+    classify: C,
+) -> Result<T, RetryExecutionError<E>>
+where
+    F: FnMut(Attempt) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    C: FnMut(&E) -> RetryDecision,
+    D: FnMut(Duration) -> Duration,
+{
+    // One terminal result per execution, including `dropped`.
+    #[cfg(feature = "metrics")]
+    let mut terminal = crate::telemetry::metrics::Terminal::retry(settings.operation);
+    let result = execute_attempts(settings, delay_for, factory, classify).await;
+    #[cfg(feature = "metrics")]
+    terminal.finish_retry(&result);
+    result
+}
+
+async fn execute_attempts<T, E, F, Fut, C, D>(
     settings: ExecutionSettings<'_>,
     mut delay_for: D,
     mut factory: F,
@@ -707,7 +728,7 @@ where
         tracing::debug!(target: "batter", attempt = attempts, delay_ms = delay.as_secs_f64() * 1_000.0, "retry scheduled");
         match settings
             .context
-            .run("batter.retry.backoff", |_| async {
+            .run_internal("batter.retry.backoff", |_| async {
                 tokio::time::sleep(delay).await;
                 Ok::<(), Infallible>(())
             })

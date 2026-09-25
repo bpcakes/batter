@@ -432,6 +432,7 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     return [
         ((), "at-rest", "batter::at_rest"),
         ((), "axum", "batter::axum"),
+        ((), "metrics", "batter::telemetry::metrics"),
         ((), "sqlx", "batter::sqlx"),
         ((), "runledger", "batter::runledger"),
         ((), "runlimit", "batter::runlimit"),

@@ -99,9 +99,13 @@ impl Bulkhead {
         context: &OperationContext,
         admission: Admission,
     ) -> Result<OwnedSemaphorePermit, AdmissionError> {
+        // Record exactly one decision, including `dropped` when a waiting
+        // caller abandons this future before admission completes.
+        #[cfg(feature = "metrics")]
+        let mut decision = crate::telemetry::metrics::Terminal::bulkhead();
         let result = self.admit(context, admission).await;
         #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::bulkhead(&result);
+        decision.finish_bulkhead(&result);
         result
     }
 
@@ -119,7 +123,7 @@ impl Bulkhead {
             }),
             Admission::Wait => {
                 match context
-                    .run("batter.admission", |_| async move {
+                    .run_internal("batter.admission", |_| async move {
                         semaphore.acquire_owned().await
                     })
                     .await
