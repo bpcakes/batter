@@ -1,1 +1,0 @@
-Implements batter-r62w.2 using the epic decisions D-04 through D-06 and V1-V5/C1-C4 acceptance in the owning Bead. Migrate canonical examples and reference roots, add generic failure controls, perform source-provenance-pinned disposable downstream rehearsals, run required verification, and record exact evidence in the Bead.

@@ -2571,7 +2571,7 @@ predicate; a notification alone never proves the required event occurred.
 
 Planning evidence for `batter-5pm`, inspected against worktree baseline
 `0e47f7dbd5d0c04d878d290c5d8c9181d1162b18`. This section records native
-semantics used by the [implementation plan](../.agent/plans/batter-5pm.md);
+semantics used by the [implementation plan](https://github.com/bpcakes/batter/blob/7878d245ad998f1b752bfdaff5577c8656a00450/.agent/plans/batter-5pm.md);
 it is not execution evidence for the planned settings API.
 
 [dotenvy 0.15.7 source reading](https://docs.rs/dotenvy/0.15.7/src/dotenvy/lib.rs.html)

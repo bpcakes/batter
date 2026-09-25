@@ -1,1 +1,0 @@
-Keep Unix signal selection at the PostgreSQL executable root, prove reusable unit startup leaves default signal disposition intact, correct stale consumer guidance, record validation, and prepare the authorized commit.

@@ -1,3 +1,0 @@
-Track stable for local development, remove routine local MSRV requirements, and preserve exact Rust 1.94.0 checks in CI. Update active guidance and inspect workflow/contract wiring; preserve historical executed evidence.
-
-User revised the initial stable-channel preference: retain the explicit current-release pin (1.98.1), verify MSRV only in CI, and move floating stable coverage to a weekly CI run. This supersedes the original plan body. Update active guides; preserve historical execution evidence.

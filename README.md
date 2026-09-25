@@ -275,13 +275,11 @@ verification, and change rules; [status](docs/status.md) and
 
 ```sh
 bash scripts/verify.sh
-# For planned work, reuse passing checks and attach receipts to the plan:
-bash scripts/verify.sh --plan-id <id>
 ```
 
-Both forms use Jig's complete verification profile: tests, both Clippy feature
-configurations, formatting, rustdoc, five built HTTP smokes and repository policy.
-Choose one form; a successful profile does not need a second full test run.
+The script directly runs tests, both Clippy feature configurations, formatting,
+rustdoc, five built HTTP smokes and the file-budget check. Verification creates
+no Jig plans, receipts or gates. A successful run needs no second full test run.
 
 Local verification uses the pinned current release once. CI verifies both that
 release and exact Rust 1.94.0; a weekly CI run checks floating `stable`. Update

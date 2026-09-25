@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Run from the checkout root, using GitHub event metadata supplied by CI.
+# Check local changes or the exact GitHub event comparison without receipts.
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
-case "${JIG_EVENT_NAME:?JIG_EVENT_NAME is required}" in
+case "${JIG_EVENT_NAME:-local}" in
   pull_request)
-    scripts/jig check repo:file-budget \
-      --comparison-exact-tree "${JIG_PULL_REQUEST_BASE:?pull request base is required}" \
-      --comparison-provenance explicit
+    scripts/jig file-budget check \
+      --exact-tree "${JIG_PULL_REQUEST_BASE:?pull request base is required}" \
+      --provenance explicit
     ;;
   push)
-    scripts/jig check repo:file-budget \
-      --comparison-exact-tree "${JIG_PUSH_BEFORE:?push before is required}" \
-      --comparison-provenance push_before
+    scripts/jig file-budget check \
+      --exact-tree "${JIG_PUSH_BEFORE:?push before is required}" \
+      --provenance push_before
     ;;
   merge_group)
-    scripts/jig check repo:file-budget \
-      --comparison-exact-tree "${JIG_MERGE_GROUP_BASE:?merge group base is required}" \
-      --comparison-provenance explicit
+    scripts/jig file-budget check \
+      --exact-tree "${JIG_MERGE_GROUP_BASE:?merge group base is required}" \
+      --provenance explicit
     ;;
-  workflow_dispatch)
-    scripts/jig check repo:file-budget --comparison-base origin/master
+  local|workflow_dispatch)
+    scripts/jig file-budget check --base origin/master
     ;;
   *)
     printf 'Unsupported CI event: %s\n' "$JIG_EVENT_NAME" >&2

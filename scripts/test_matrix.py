@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one part of the locked verification matrix; each part is one Jig target."""
+"""Run one part of the locked verification matrix."""
 
 import argparse
 from pathlib import Path
@@ -48,10 +48,8 @@ FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"
 def parts():
     """Map each part to ordered batches; a failed batch stops only its own part.
 
-    Jig runs the parts concurrently with one receipt each, so their exhaustive
-    input scopes must cover every file their commands read. Python controls that
-    read repository files belong to the part whose scope covers those files;
-    `scripts` holds only controls confined to `scripts/`.
+    verify.sh invokes each part directly. Each batch uses the bounded process
+    runner so sibling outcomes are retained before the part returns.
     """
     return {
         "workspace": [(["workspace-tests", "configuration-hostile-environment", "reference-runner-controls"],

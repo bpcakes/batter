@@ -17,8 +17,8 @@ that flag cannot distinguish consumers. Do not resolve a suite's assets using
 the consuming package's environment from a shared module.
 
 The workspace-relative location remains stable when foundation tests move to a
-different same-depth crate. Cargo fmt follows the HTTP module paths; Cargo/Jig
-workspace tests compile both consumers, and Jig's `**/*.rs` inputs include these
+different same-depth crate. Cargo fmt follows the HTTP module paths; Cargo
+workspace tests compile both consumers, including these
 sources. The foundation controls continue to test the same included implementation.
 
 `events.rs` owns synchronous event storage and returns owned snapshots. It exposes
