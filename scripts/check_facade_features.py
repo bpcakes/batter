@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
     "at-rest",
     "axum",
+    "metrics",
     "sqlx",
     "runledger",
     "runlimit",
@@ -89,6 +90,7 @@ def feature_cases() -> list[tuple[str, ...]]:
         (),
         ("at-rest",),
         ("axum",),
+        ("metrics",),
         ("sqlx",),
         ("runledger",),
         ("runlimit",),
@@ -120,6 +122,7 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "polyval": at_rest,
         "ctr": at_rest,
         "batter-axum": axum,
+        "metrics": "metrics" in chosen,
         "batter-sqlx": batter_sqlx,
         "batter-runledger": "runledger" in chosen,
         "batter-runlimit": runlimit,
@@ -142,6 +145,8 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "use batter::operation::OperationContext;",
         "fn main() {}",
     ]
+    if "metrics" in chosen:
+        lines.insert(1, "use batter::telemetry::metrics::{MAX_SERIES, describe};")
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:

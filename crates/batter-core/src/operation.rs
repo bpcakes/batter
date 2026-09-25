@@ -234,6 +234,7 @@ impl OperationContext {
             factory,
             |result| result,
             operation_outcome,
+            false,
         ))
         .await
     }
@@ -295,11 +296,12 @@ impl OperationContext {
             factory,
             resolve,
             operation_outcome,
+            false,
         ))
         .await
     }
 
-    /// Run with an outcome mapper owned by a composite foundation boundary.
+    /// Run one retry attempt with an outcome mapper owned by the retry boundary.
     pub(crate) async fn run_with_outcome<T, E, F, Fut>(
         &self,
         operation: &'static str,
@@ -312,8 +314,14 @@ impl OperationContext {
     {
         // Capture on first poll, as with ordinary async instrumentation. The
         // inner future owns the factory, work, and observation during drop too.
-        crate::scoped_dispatch::scope(self.run_inner(operation, factory, |result| result, outcome))
-            .await
+        crate::scoped_dispatch::scope(self.run_inner(
+            operation,
+            factory,
+            |result| result,
+            outcome,
+            true,
+        ))
+        .await
     }
 
     async fn run_inner<T, E, U, R, F, Fut, Resolve>(
@@ -322,13 +330,14 @@ impl OperationContext {
         factory: F,
         resolve: Resolve,
         outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+        attempt: bool,
     ) -> Result<U, OperationError<R>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        let mut observation = Observation::new(operation);
+        let mut observation = Observation::new(operation, attempt);
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();

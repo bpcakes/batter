@@ -522,6 +522,8 @@ impl Supervisor {
         let cancel = drain + self.budget.cancel;
         let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
+        #[cfg(feature = "metrics")]
+        let drain_started = tokio::time::Instant::now();
         tasks
             .collect_until(&mut self.queued, &self.coordinator, drain)
             .await;
@@ -559,7 +561,7 @@ impl Supervisor {
             self.cleanup.close(self.budget.cleanup).await
         };
         self.coordinator.shared.stop_driver();
-        ShutdownReport {
+        let report = ShutdownReport {
             cause,
             tasks: summary.records,
             managed: managed_records,
@@ -568,7 +570,10 @@ impl Supervisor {
             abort_requested,
             unjoined: summary.unjoined,
             cleanup,
-        }
+        };
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::shutdown(cause, report.is_success(), drain_started.elapsed());
+        report
     }
 
     async fn wait_for_shutdown<F>(&mut self, shutdown: F, tasks: &mut TaskSet) -> ShutdownCause

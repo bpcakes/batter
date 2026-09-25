@@ -99,6 +99,17 @@ impl Bulkhead {
         context: &OperationContext,
         admission: Admission,
     ) -> Result<OwnedSemaphorePermit, AdmissionError> {
+        let result = self.admit(context, admission).await;
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::bulkhead(&result);
+        result
+    }
+
+    async fn admit(
+        &self,
+        context: &OperationContext,
+        admission: Admission,
+    ) -> Result<OwnedSemaphorePermit, AdmissionError> {
         context.check()?;
         let semaphore = self.semaphore.clone();
         match admission {

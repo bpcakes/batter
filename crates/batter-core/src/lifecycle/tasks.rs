@@ -122,6 +122,10 @@ impl TaskSet {
             .expect("every owned task has metadata");
         if finite && outcome == TaskOutcome::Stopped {
             outcome = TaskOutcome::Completed;
+        }
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::task(finite, name, outcome);
+        if outcome == TaskOutcome::Completed {
             self.completed = self.completed.saturating_add(1);
             tracing::debug!(target: "batter", task = name, ?outcome, "process task exit observed");
             return None;

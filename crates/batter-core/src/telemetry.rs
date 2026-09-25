@@ -8,6 +8,9 @@ use std::future::Future;
 use tokio::time::Instant;
 use tracing::Span;
 
+#[cfg(feature = "metrics")]
+pub mod metrics;
+
 /// Retain the current tracing subscriber while polling and destroying a future.
 ///
 /// The subscriber is captured when this function is called, even if the returned
@@ -73,6 +76,8 @@ impl Outcome {
 }
 
 pub(crate) struct Observation {
+    operation: &'static str,
+    attempt: bool,
     span: Span,
     context: Span,
     started: Instant,
@@ -80,7 +85,8 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
-    pub(crate) fn new(operation: &'static str) -> Self {
+    /// `attempt` separates retry attempts from whole operations in metrics.
+    pub(crate) fn new(operation: &'static str, attempt: bool) -> Self {
         let span = tracing::info_span!(
             target: "batter",
             "batter.operation",
@@ -92,6 +98,8 @@ impl Observation {
         // enabled. Capture once; a later poll/drop must not adopt another parent.
         let context = span.clone().or_current();
         Self {
+            operation,
+            attempt,
             span,
             context,
             started: Instant::now(),
@@ -110,7 +118,12 @@ impl Observation {
 
 impl Drop for Observation {
     fn drop(&mut self) {
-        let elapsed_ms = self.started.elapsed().as_secs_f64() * 1_000.0;
+        let elapsed = self.started.elapsed();
+        #[cfg(feature = "metrics")]
+        metrics::operation(self.attempt, self.operation, self.outcome, elapsed);
+        #[cfg(not(feature = "metrics"))]
+        let _ = (self.operation, self.attempt);
+        let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
         self.span.record("outcome", self.outcome.as_str());
         self.span.record("elapsed_ms", elapsed_ms);
         if matches!(self.outcome, Outcome::Succeeded | Outcome::Cancelled) {

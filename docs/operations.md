@@ -85,8 +85,12 @@ Scoped subscribers remain attached through future destruction as well as polling
 including task abort. No extra application-side cancellation wrapper is needed.
 Each skipped finalizer produces one warning, including the first hook skipped
 when the shared work budget is exhausted.
-No metrics backend, OpenTelemetry propagation, or exporter shutdown adapter is
-included. Implement those as explicit optional integrations.
+The opt-in `metrics` feature records bounded foundation outcome metrics through
+the `metrics` facade; see `batter::telemetry::metrics` for names, units, label
+domains and the series bound. Install one recorder/exporter in the binary and
+choose one that aggregates rather than queueing raw samples. Batter holds no
+metric buffer, so exporter flush and shutdown ordering belong to the application
+root. No OpenTelemetry propagation or exporter shutdown adapter is included.
 
 Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a

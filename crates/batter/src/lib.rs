@@ -5,8 +5,8 @@
 //! adapter namespaces without changing native ownership.
 //!
 //! The default feature set is empty. Enable only the namespaces an application
-//! uses: `at-rest`, `axum`, `sqlx`, `runledger`, `runlimit`, `test-support`, or
-//! the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
+//! uses: `at-rest`, `axum`, `metrics`, `sqlx`, `runledger`, `runlimit`,
+//! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
 //! `runlimit-axum`, and `sqlx-test-support`.
 //!
 //! # Important limits

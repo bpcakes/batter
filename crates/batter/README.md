@@ -18,6 +18,7 @@ The default feature set is empty. The available feature/module pairs are:
 | --- | --- |
 | `at-rest` | `batter::at_rest`, preserving direct `batter_at_rest` type identity; [MIT-licensed dependency](../batter-at-rest/LICENSE) |
 | `axum` | `batter::axum` |
+| `metrics` | `batter::telemetry::metrics`: bounded foundation outcome metrics through the `metrics` facade; no recorder or exporter is installed |
 | `sqlx` | `batter::sqlx` |
 | `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
 | `runlimit` | `batter::runlimit` |

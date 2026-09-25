@@ -297,6 +297,26 @@ impl ProcessHandle {
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
+        // Recorder code is arbitrary: observe only after the admission lock
+        // and any rejected captures have been released.
+        let result = self.admit(name, factory, ancestor);
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::process(&result);
+        result
+    }
+
+    fn admit<F, Fut, T, E>(
+        &self,
+        name: &'static str,
+        factory: F,
+        ancestor: Option<&Arc<AtomicBool>>,
+    ) -> Result<ProcessReceipt<T, E>, ProcessAdmissionError>
+    where
+        F: FnOnce(ProcessScope) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, Fatal<E>>> + Send + 'static,
+        T: Send + 'static,
+        E: Error + Send + Sync + 'static,
+    {
         validation::name(name)?;
         // Capture causality even if the task span is filtered out. Creating a
         // span or looking up its fallback parent may invoke subscriber code,

@@ -119,6 +119,22 @@ destruction. It returns a future and adds no task, heap allocation, or `Send` /
 inside it. It does not capture or enter the current span, drive a dropped future
 to completion, or supervise work.
 
+The opt-in `metrics` feature records each finished operation, retry attempt,
+admission decision, observed task exit, cleanup hook and shutdown exactly once
+into the application's `metrics` recorder, after the result is known and outside
+admission locks. Labels come only from closed foundation vocabularies or a
+fixed-capacity, write-once table of operation/task names; names outside the
+lowercase `[a-z][a-z0-9._]*` vocabulary or beyond capacity record `_invalid` or
+`_overflow` and increment a separate coalescing counter, without logging. The
+catalog therefore has at most `MAX_SERIES` series regardless of traffic. Batter
+owns no metric buffer, queue, flush, retry or database write, so a slow,
+unavailable or saturated collector cannot change returned results or admission
+decisions. Durations come from monotonic `Duration` values and are finite and
+nonnegative. Recorder code runs synchronously, including in destructors; a
+blocking, panicking or unboundedly buffering recorder, runtime death and
+non-yielding destructors are outside this guarantee, as for tracing subscribers.
+These metrics are best-effort diagnostics, not authoritative audit records.
+
 `reserve_finalization` divides an existing context into sibling work/finalization
 contexts. Work ends at the original deadline minus the positive reserve;
 finalization keeps the original deadline. Cancelling/finishing work does not

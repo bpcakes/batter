@@ -19,6 +19,7 @@ workspace = true
 default = []
 at-rest = ["dep:batter-at-rest"]
 axum = ["dep:batter-axum"]
+metrics = ["batter-core/metrics"]
 sqlx = ["dep:batter-sqlx"]
 runledger = ["dep:batter-runledger", "sqlx"]
 runlimit = ["dep:batter-runlimit"]

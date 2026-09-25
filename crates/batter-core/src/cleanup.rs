@@ -99,6 +99,8 @@ impl std::fmt::Debug for CleanupRecord {
 
 impl CleanupRecord {
     fn log_observation(&self) {
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::cleanup(Some(self.outcome));
         if self.outcome == CleanupOutcome::Succeeded {
             tracing::info!(target: "batter", cleanup = self.name, outcome = ?self.outcome, "cleanup observed");
         } else {
@@ -274,6 +276,8 @@ impl CleanupStack {
     fn skip_remaining(&mut self, report: &mut CleanupReport, reason: SkipReason) {
         while let Some(hook) = self.hooks.pop() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
+            #[cfg(feature = "metrics")]
+            crate::telemetry::metrics::cleanup(None);
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
                 reason,
