@@ -32,9 +32,12 @@ pub enum RegistrationError {
     Duplicate(&'static str),
 }
 
+/// Longest registered component, task or metric name in bytes.
+pub(crate) const NAME_MAX_LEN: usize = 96;
+
 pub(crate) fn name(value: &'static str) -> Result<(), RegistrationError> {
     if value.is_empty()
-        || value.len() > 96
+        || value.len() > NAME_MAX_LEN
         || !value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))

@@ -12,7 +12,7 @@ use std::{collections::BTreeSet, convert::Infallible, time::Duration};
 async fn distinct_names_beyond_capacity_coalesce_without_eviction() {
     const NAMES: usize = NAME_CAPACITY * 3;
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let context = OperationOwner::new(Duration::from_secs(5))
         .unwrap()
         .into_context();

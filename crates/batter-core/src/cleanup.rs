@@ -100,7 +100,10 @@ impl std::fmt::Debug for CleanupRecord {
 impl CleanupRecord {
     fn log_observation(&self) {
         #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::cleanup(Some(self.outcome));
+        crate::telemetry::metrics::cleanup(
+            crate::telemetry::metrics::CleanupHook::Observed(self.outcome),
+            1,
+        );
         if self.outcome == CleanupOutcome::Succeeded {
             tracing::info!(target: "batter", cleanup = self.name, outcome = ?self.outcome, "cleanup observed");
         } else {
@@ -277,7 +280,7 @@ impl CleanupStack {
         while let Some(hook) = self.hooks.pop() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
             #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup(None);
+            crate::telemetry::metrics::cleanup(crate::telemetry::metrics::CleanupHook::Skipped, 1);
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
                 reason,
@@ -424,7 +427,7 @@ impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
             #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup_dropped(1);
+            crate::telemetry::metrics::cleanup(crate::telemetry::metrics::CleanupHook::Dropped, 1);
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
         }
     }
@@ -434,7 +437,10 @@ impl Drop for CleanupStack {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
             #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup_dropped(self.hooks.len());
+            crate::telemetry::metrics::cleanup(
+                crate::telemetry::metrics::CleanupHook::Dropped,
+                self.hooks.len(),
+            );
             tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");
         }
     }

@@ -634,10 +634,10 @@ where
 {
     // One terminal result per execution, including `dropped`.
     #[cfg(feature = "metrics")]
-    let mut terminal = crate::telemetry::metrics::Terminal::retry(settings.operation);
+    let mut terminal = crate::telemetry::metrics::RetryTerminal::new(settings.operation);
     let result = execute_attempts(settings, delay_for, factory, classify).await;
     #[cfg(feature = "metrics")]
-    terminal.finish_retry(&result);
+    terminal.finish(&result);
     result
 }
 

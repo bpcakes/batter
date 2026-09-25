@@ -45,7 +45,12 @@ fn documented(name: &str, values: &[&str]) -> Option<(&'static [&'static str], b
         ),
         (ADMISSION_DECISIONS, [admission, decision]) => (
             &["admission", "decision"],
-            ADMISSION_LABELS.contains(&(*admission, *decision)),
+            match *admission {
+                "bulkhead" => BULKHEAD_DECISIONS.contains(decision),
+                "process" => PROCESS_DECISIONS.contains(decision),
+                "root" => ROOT_DECISIONS.contains(decision),
+                _ => false,
+            },
         ),
         (TASK_EXITS, [kind, outcome, task]) => (
             &["kind", "outcome", "task"],
@@ -88,7 +93,7 @@ pub(crate) fn assert_catalog(capture: &Capture) {
 #[tokio::test(start_paused = true)]
 async fn each_operation_outcome_records_one_completion_and_duration() {
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let context = owner().into_context();
 
     let ok = context
@@ -156,7 +161,7 @@ async fn each_operation_outcome_records_one_completion_and_duration() {
 #[tokio::test]
 async fn raw_identifiers_urls_and_errors_never_become_labels() {
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let context = owner().into_context();
     let raw: [&'static str; 4] = [
         "https://example.test/items/7?token=abc",
@@ -192,7 +197,7 @@ async fn raw_identifiers_urls_and_errors_never_become_labels() {
 #[tokio::test]
 async fn retry_attempts_are_counted_separately_from_operations() {
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let owner = owner();
     let policy = RetryPolicy::new(3, Duration::from_millis(1), Duration::from_millis(1)).unwrap();
     let result = retry::execute(
@@ -233,7 +238,7 @@ async fn retry_attempts_are_counted_separately_from_operations() {
 }
 
 async fn bulkhead_storm(capture: &Capture, storm: usize) -> Vec<String> {
-    let _recorder = metrics::set_default_local_recorder(capture);
+    let _recorder = facade::set_default_local_recorder(capture);
     let context = owner().into_context();
     let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
     let held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
@@ -289,7 +294,7 @@ async fn rejection_storm_under_a_saturated_recorder_keeps_decisions_and_bounds()
     assert_catalog(&complete);
 }
 
-fn shutdown_budget() -> ShutdownBudget {
+pub(crate) fn shutdown_budget() -> ShutdownBudget {
     let second = Duration::from_secs(1);
     ShutdownBudget::new(
         second,
@@ -304,7 +309,7 @@ fn shutdown_budget() -> ShutdownBudget {
 async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
     const STORM: usize = 1_000;
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let mut supervisor =
         Supervisor::with_process_capacity(shutdown_budget(), ProcessCapacity::new(1).unwrap());
     let process = supervisor.process_handle().unwrap();
@@ -382,7 +387,7 @@ async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
 #[tokio::test]
 async fn skipped_cleanup_and_failed_shutdown_are_distinct_outcomes() {
     let capture = Capture::unbounded();
-    let _recorder = metrics::set_default_local_recorder(&capture);
+    let _recorder = facade::set_default_local_recorder(&capture);
     let mut supervisor = Supervisor::new(shutdown_budget());
     supervisor
         .register("service.component", |_startup| async move {

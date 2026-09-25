@@ -119,13 +119,18 @@ destruction. It returns a future and adds no task, heap allocation, or `Send` /
 inside it. It does not capture or enter the current span, drive a dropped future
 to completion, or supervise work.
 
-The opt-in `metrics` feature records each finished operation, retry attempt,
-whole retry execution, bulkhead or process admission decision, observed task
-exit, cleanup hook and shutdown exactly once into the application's `metrics`
-recorder, after the result is known and outside admission locks. Dropped
-operations, retry executions, admission waits and abandoned cleanup hooks
-record `dropped`. Foundation-owned waits (admission, backoff) are not counted
-as operations. Shutdown is recorded before `Stopped` is published. Labels come
+The opt-in `metrics` feature records each polled operation, started retry
+attempt, whole retry execution, bulkhead, process or root lifecycle admission
+decision, observed task exit, cleanup hook and supervisor shutdown exactly once
+into the application's `metrics` 0.24 recorder (re-exported as
+`telemetry::metrics::facade`; a recorder on another major version receives
+nothing), after the result is known and outside admission locks. Polled but
+dropped operations, retry executions and admission waits, and abandoned cleanup
+hooks, record `dropped`; a future dropped before its first poll records nothing.
+Foundation-owned waits (admission, backoff) are not counted as operations,
+while adapter boundaries such as `http.response_construction` are. Shutdown is
+recorded before `Stopped` is published; a startup that fails before its running
+driver records only its cleanup hooks. Labels come
 only from closed foundation vocabularies or a fixed-capacity, write-once table
 of operation/task names using the component-registration vocabulary; other
 names or names beyond capacity record `<invalid>` or `<overflow>` and increment

@@ -233,6 +233,8 @@ impl OperationAdmission {
         deadline: crate::operation::RootDeadline,
     ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::root(readiness);
         if readiness != Readiness::Ready {
             return Err(readiness);
         }

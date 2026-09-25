@@ -88,7 +88,9 @@ pub(crate) enum Boundary {
 }
 
 pub(crate) struct Observation {
+    #[cfg(feature = "metrics")]
     operation: &'static str,
+    #[cfg(feature = "metrics")]
     boundary: Boundary,
     span: Span,
     context: Span,
@@ -97,6 +99,7 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
+    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
     pub(crate) fn new(operation: &'static str, boundary: Boundary) -> Self {
         let span = tracing::info_span!(
             target: "batter",
@@ -109,7 +112,9 @@ impl Observation {
         // enabled. Capture once; a later poll/drop must not adopt another parent.
         let context = span.clone().or_current();
         Self {
+            #[cfg(feature = "metrics")]
             operation,
+            #[cfg(feature = "metrics")]
             boundary,
             span,
             context,
@@ -132,8 +137,6 @@ impl Drop for Observation {
         let elapsed = self.started.elapsed();
         #[cfg(feature = "metrics")]
         metrics::operation(self.boundary, self.operation, self.outcome, elapsed);
-        #[cfg(not(feature = "metrics"))]
-        let _ = (self.operation, self.boundary);
         let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
         self.span.record("outcome", self.outcome.as_str());
         self.span.record("elapsed_ms", elapsed_ms);

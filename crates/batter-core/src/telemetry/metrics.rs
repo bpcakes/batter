@@ -1,9 +1,15 @@
 //! Optional bounded-cardinality metrics through the [`metrics`] facade.
 //!
 //! Enable the `metrics` feature to record foundation outcomes into whichever
-//! [`metrics::Recorder`] the application root installs. Batter never installs a
-//! recorder, exporter or global subscriber. Without a recorder, the facade's
-//! no-op recorder discards every observation.
+//! recorder the application root installs. Batter never installs a recorder,
+//! exporter or global subscriber. Without a recorder, the facade's no-op
+//! recorder discards every observation.
+//!
+//! Batter records through `metrics` 0.24, re-exported as [`facade`]. A recorder
+//! or exporter built on another major version of `metrics` is a different
+//! crate instance and silently receives nothing. Install it through
+//! [`facade::set_global_recorder`] or choose an exporter that depends on the
+//! same major version.
 //!
 //! # Catalog
 //!
@@ -20,34 +26,41 @@
 //! | [`SHUTDOWN_DURATION`] | histogram | seconds | `result` |
 //! | [`LABELS_COALESCED`] | counter | count | `domain`, `reason` |
 //!
-//! Each finished boundary increments its counter by exactly one, including a
-//! boundary whose future is dropped (`dropped`). A whole retry execution is one
-//! [`RETRY_EXECUTIONS`] result; its attempts are [`RETRY_ATTEMPTS`], and neither
-//! counts as an operation. Foundation-owned waits (bulkhead waiting, retry
-//! backoff) are recorded only by their owning decision, not as operations.
+//! Each boundary that has been polled increments its counter by exactly one
+//! when it finishes, including `dropped` when its future is destroyed first.
+//! A future dropped before its first poll does no work and records nothing. A
+//! whole retry execution is one [`RETRY_EXECUTIONS`] result; each attempt whose
+//! factory started is one [`RETRY_ATTEMPTS`] outcome, and neither counts as an
+//! operation. Foundation-owned waits (bulkhead waiting, retry backoff) are
+//! recorded only by their owning decision. Adapter boundaries are ordinary
+//! operations, for example `http.response_construction` for each admitted
+//! Axum request, and their names share the operation table. Shutdown is
+//! recorded before the supervisor publishes `Stopped`. A startup that fails
+//! before its running driver records its cleanup hooks, not a shutdown.
 //! Histograms receive one sample per finished boundary. Aggregation, buckets,
 //! temporality and export are the recorder's policy.
 //!
 //! # Label domains
 //!
-//! Every label value is either a closed foundation vocabulary (see
-//! [`OUTCOMES`], [`RETRY_RESULTS`], [`ADMISSION_LABELS`], [`TASK_KINDS`], [`TASK_OUTCOMES`],
-//! [`CLEANUP_OUTCOMES`], [`SHUTDOWN_CAUSES`], [`SHUTDOWN_RESULTS`],
-//! [`COALESCE_REASONS`]) or a developer-supplied operation/task name admitted
-//! through a fixed-capacity table. Names use the same vocabulary as component
-//! registration: 1 to [`MAX_NAME_LEN`] ASCII alphanumeric, `.`, `_` or `-`
-//! bytes. Other names record [`INVALID_NAME`]; valid names beyond
+//! Every label value is either a closed foundation vocabulary ([`OUTCOMES`],
+//! [`RETRY_RESULTS`], [`ADMISSIONS`] with [`BULKHEAD_DECISIONS`],
+//! [`PROCESS_DECISIONS`] and [`ROOT_DECISIONS`], [`TASK_KINDS`],
+//! [`TASK_OUTCOMES`], [`CLEANUP_OUTCOMES`], [`SHUTDOWN_CAUSES`],
+//! [`SHUTDOWN_RESULTS`], [`COALESCE_REASONS`]) or an operation/task name
+//! admitted through a fixed-capacity table. Names use the component
+//! registration vocabulary: 1 to [`MAX_NAME_LEN`] ASCII alphanumeric, `.`, `_`
+//! or `-` bytes. Other names record [`INVALID_NAME`]; valid names beyond
 //! [`NAME_CAPACITY`] distinct values per domain record [`OVERFLOW_NAME`].
 //! Coalescing is reported through [`LABELS_COALESCED`], never by logging.
 //!
 //! The vocabulary structurally rejects URLs, paths, queries, e-mail addresses
 //! and error text, but it cannot recognize an identifier embedded in an
 //! otherwise valid name such as `order.12345`. Pass developer-controlled
-//! constants. A leaked runtime name occupies at most one slot; slots are
-//! first-come and never evicted, so leaked names admitted early can force
-//! later constants into [`OVERFLOW_NAME`] for the life of the process, while the
-//! series count stays bounded. Cleanup names are not emitted, and shutdown
-//! causes omit their component names.
+//! constants. Each distinct name occupies one slot; slots are first-come and
+//! never evicted, so names admitted early (including adapter names or leaked
+//! runtime names) can force later names into [`OVERFLOW_NAME`] for the life of
+//! the process, while the series count stays bounded. Cleanup names are not
+//! emitted, and shutdown causes omit their component names.
 //!
 //! Therefore the number of distinct series Batter can create is at most
 //! [`MAX_SERIES`], independent of traffic. Batter retains
@@ -78,8 +91,10 @@
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // The application root installs a recorder once, for example an exporter's
-//! // `install()` method, and may then publish the catalog descriptions.
+//! // The application root installs a recorder once, for example through
+//! // `batter_core::telemetry::metrics::facade::set_global_recorder` or an
+//! // exporter on the same `metrics` major version, then may publish the
+//! // catalog descriptions.
 //! batter_core::telemetry::metrics::describe();
 //! let context = OperationOwner::new(Duration::from_secs(1))?.into_context();
 //! context
@@ -89,32 +104,41 @@
 //! # }
 //! ```
 
+mod names;
+mod vocabulary;
+
+pub use ::metrics as facade;
+pub use vocabulary::{
+    BULKHEAD_DECISIONS, CLEANUP_OUTCOMES, OUTCOMES, PROCESS_DECISIONS, RETRY_RESULTS,
+    ROOT_DECISIONS, SHUTDOWN_CAUSES, SHUTDOWN_RESULTS, TASK_KINDS, TASK_OUTCOMES,
+};
+
 use super::{Boundary, Outcome};
 use crate::{
     admission::AdmissionError,
     cleanup::CleanupOutcome,
-    lifecycle::{ProcessAdmissionError, ShutdownCause, TaskOutcome},
-    operation::Interruption,
-    retry::{RetryExecutionError, StopReason},
+    lifecycle::{ProcessAdmissionError, Readiness, ShutdownCause, TaskOutcome},
+    retry::RetryExecutionError,
 };
 use metrics::{Unit, counter, describe_counter, describe_histogram, histogram};
-use std::{sync::OnceLock, time::Duration};
+use names::{OPERATION_NAMES, TASK_NAMES};
+use std::time::Duration;
 
 /// Completed operation boundaries, including dropped ones.
 pub const OPERATION_COMPLETIONS: &str = "batter_operation_completions_total";
 /// Elapsed time of each operation boundary in seconds.
 pub const OPERATION_DURATION: &str = "batter_operation_duration_seconds";
-/// Completed retry attempts; attempts do not also count as operations.
+/// Finished retry attempts whose factory started; not counted as operations.
 pub const RETRY_ATTEMPTS: &str = "batter_retry_attempts_total";
 /// Terminal results of whole retry executions.
 pub const RETRY_EXECUTIONS: &str = "batter_retry_executions_total";
-/// Bulkhead and process admission decisions.
+/// Bulkhead, process and root lifecycle admission decisions.
 pub const ADMISSION_DECISIONS: &str = "batter_admission_decisions_total";
 /// Observed direct task exits, including successful finite completion.
 pub const TASK_EXITS: &str = "batter_task_exits_total";
-/// Cleanup hook outcomes, including skipped hooks.
+/// Cleanup hook outcomes, including skipped and abandoned hooks.
 pub const CLEANUP_HOOKS: &str = "batter_cleanup_hooks_total";
-/// Completed supervisor shutdowns.
+/// Completed supervisor drives.
 pub const SHUTDOWNS: &str = "batter_shutdowns_total";
 /// Time from drain start to the final shutdown report in seconds.
 pub const SHUTDOWN_DURATION: &str = "batter_shutdown_duration_seconds";
@@ -123,82 +147,16 @@ pub const LABELS_COALESCED: &str = "batter_metric_labels_coalesced_total";
 
 /// Distinct admitted names per domain (operations and tasks).
 pub const NAME_CAPACITY: usize = 64;
-/// Longest admitted operation or task name in bytes.
-pub const MAX_NAME_LEN: usize = 96;
+/// Longest admitted operation or task name in bytes, shared with registration.
+pub const MAX_NAME_LEN: usize = crate::validation::NAME_MAX_LEN;
 /// Label value recorded for a name outside the vocabulary. Its `<` and `>`
 /// bytes are outside that vocabulary, so it cannot collide with a real name.
 pub const INVALID_NAME: &str = "<invalid>";
 /// Label value recorded once a name table is full; also collision-free.
 pub const OVERFLOW_NAME: &str = "<overflow>";
 
-/// Values of the `outcome` label on operation and attempt metrics.
-pub const OUTCOMES: [&str; 5] = [
-    "succeeded",
-    "failed",
-    "cancelled",
-    "deadline_exceeded",
-    "dropped",
-];
-/// Values of the `result` label on [`RETRY_EXECUTIONS`].
-pub const RETRY_RESULTS: [&str; 9] = [
-    "succeeded",
-    "not_retryable",
-    "replay_forbidden",
-    "attempts_exhausted",
-    "insufficient_budget",
-    "cancelled",
-    "deadline_exceeded",
-    "attempt_deadline_exceeded",
-    "dropped",
-];
-/// `(admission, decision)` pairs on [`ADMISSION_DECISIONS`]. A bulkhead
-/// `dropped` decision is a waiting `enter` future dropped before a decision.
-pub const ADMISSION_LABELS: [(&str, &str); 12] = [
-    ("bulkhead", "admitted"),
-    ("bulkhead", "overloaded"),
-    ("bulkhead", "closed"),
-    ("bulkhead", "cancelled"),
-    ("bulkhead", "deadline_exceeded"),
-    ("bulkhead", "dropped"),
-    ("process", "admitted"),
-    ("process", "not_running"),
-    ("process", "not_ready"),
-    ("process", "closed"),
-    ("process", "full"),
-    ("process", "invalid_name"),
-];
-/// Values of the `kind` label on [`TASK_EXITS`].
-pub const TASK_KINDS: [&str; 2] = ["component", "process"];
-/// Values of the `outcome` label on [`TASK_EXITS`].
-pub const TASK_OUTCOMES: [&str; 6] = [
-    "completed",
-    "stopped",
-    "unexpected_exit",
-    "failed",
-    "panicked",
-    "aborted",
-];
-/// Values of the `outcome` label on [`CLEANUP_HOOKS`]. `dropped` counts hooks
-/// abandoned by dropping an unclosed stack or an in-flight close driver.
-pub const CLEANUP_OUTCOMES: [&str; 8] = [
-    "succeeded",
-    "failed",
-    "panicked",
-    "cancelled",
-    "timed_out",
-    "unjoined",
-    "skipped",
-    "dropped",
-];
-/// Values of the `cause` label on [`SHUTDOWNS`].
-pub const SHUTDOWN_CAUSES: [&str; 4] = [
-    "requested",
-    "component_exit",
-    "finite_task_exit",
-    "empty_supervisor",
-];
-/// Values of the `result` label on shutdown metrics.
-pub const SHUTDOWN_RESULTS: [&str; 2] = ["success", "failure"];
+/// Values of the `admission` label on [`ADMISSION_DECISIONS`].
+pub const ADMISSIONS: [&str; 3] = ["bulkhead", "process", "root"];
 /// `(domain, reason)` values on [`LABELS_COALESCED`].
 pub const COALESCE_REASONS: [(&str, &str); 4] = [
     ("operation", "invalid"),
@@ -212,7 +170,9 @@ const NAME_VALUES: usize = NAME_CAPACITY + 2;
 /// Upper bound on distinct series across the whole catalog.
 pub const MAX_SERIES: usize = NAME_VALUES * OUTCOMES.len() * 3
     + NAME_VALUES * RETRY_RESULTS.len()
-    + ADMISSION_LABELS.len()
+    + BULKHEAD_DECISIONS.len()
+    + PROCESS_DECISIONS.len()
+    + ROOT_DECISIONS.len()
     + TASK_KINDS.len() * NAME_VALUES * TASK_OUTCOMES.len()
     + CLEANUP_OUTCOMES.len()
     + SHUTDOWN_CAUSES.len() * SHUTDOWN_RESULTS.len()
@@ -237,7 +197,7 @@ pub fn describe() {
     describe_counter!(
         RETRY_ATTEMPTS,
         Unit::Count,
-        "Completed Batter retry attempts by outcome"
+        "Finished Batter retry attempts by outcome"
     );
     describe_counter!(
         RETRY_EXECUTIONS,
@@ -264,66 +224,6 @@ pub fn describe() {
     );
 }
 
-struct NameTable {
-    domain: &'static str,
-    slots: [OnceLock<&'static str>; NAME_CAPACITY],
-}
-
-impl NameTable {
-    const fn new(domain: &'static str) -> Self {
-        Self {
-            domain,
-            slots: [const { OnceLock::new() }; NAME_CAPACITY],
-        }
-    }
-
-    /// Return a bounded label for `name`, admitting it when a slot is free.
-    ///
-    /// Slots are write-once, filled in order and lock-free to read, so the
-    /// first empty slot ends the lookup. Validation runs only before admitting.
-    /// Concurrent admission of one name may occupy two slots; the distinct
-    /// label values stay bounded.
-    fn label(&self, name: &'static str) -> &'static str {
-        let mut first_empty = self.slots.len();
-        for (index, slot) in self.slots.iter().enumerate() {
-            match slot.get() {
-                Some(existing) if std::ptr::eq(*existing, name) || *existing == name => {
-                    return existing;
-                }
-                Some(_) => {}
-                None => {
-                    first_empty = index;
-                    break;
-                }
-            }
-        }
-        if crate::validation::name(name).is_err() {
-            self.coalesced("invalid");
-            return INVALID_NAME;
-        }
-        for slot in &self.slots[first_empty..] {
-            match slot.set(name) {
-                Ok(()) => return name,
-                Err(_) if slot.get() == Some(&name) => return name,
-                Err(_) => {}
-            }
-        }
-        self.coalesced("capacity");
-        OVERFLOW_NAME
-    }
-
-    fn coalesced(&self, reason: &'static str) {
-        counter!(LABELS_COALESCED, "domain" => self.domain, "reason" => reason).increment(1);
-    }
-}
-
-static OPERATION_NAMES: NameTable = NameTable::new("operation");
-static TASK_NAMES: NameTable = NameTable::new("task");
-
-fn seconds(elapsed: Duration) -> f64 {
-    elapsed.as_secs_f64()
-}
-
 pub(crate) fn operation(
     boundary: Boundary,
     name: &'static str,
@@ -336,94 +236,69 @@ pub(crate) fn operation(
         Boundary::Internal => return,
     };
     let operation = OPERATION_NAMES.label(name);
-    let outcome = outcome.as_str();
+    let outcome = vocabulary::outcome(outcome);
     counter!(metric, "operation" => operation, "outcome" => outcome).increment(1);
     if matches!(boundary, Boundary::Operation) {
         histogram!(OPERATION_DURATION, "operation" => operation, "outcome" => outcome)
-            .record(seconds(elapsed));
+            .record(elapsed.as_secs_f64());
     }
 }
 
-/// Records one terminal result when finished, or `dropped` when destroyed first.
-pub(crate) struct Terminal {
-    kind: TerminalKind,
+/// Records one retry execution result, or `dropped` when destroyed first.
+pub(crate) struct RetryTerminal {
+    operation: &'static str,
     result: &'static str,
 }
 
-enum TerminalKind {
-    Retry(&'static str),
-    Bulkhead,
-}
-
-impl Terminal {
-    pub(crate) fn retry(operation: &'static str) -> Self {
+impl RetryTerminal {
+    pub(crate) fn new(operation: &'static str) -> Self {
         Self {
-            kind: TerminalKind::Retry(operation),
-            result: "dropped",
+            operation,
+            result: vocabulary::retry::<()>(None),
         }
     }
 
-    pub(crate) fn bulkhead() -> Self {
-        Self {
-            kind: TerminalKind::Bulkhead,
-            result: "dropped",
-        }
-    }
-
-    pub(crate) fn finish_retry<T, E>(&mut self, result: &Result<T, RetryExecutionError<E>>) {
-        self.result = match result {
-            Ok(_) => "succeeded",
-            Err(RetryExecutionError::Stopped { reason, .. }) => match reason {
-                StopReason::NotRetryable => "not_retryable",
-                StopReason::ReplayForbidden => "replay_forbidden",
-                StopReason::AttemptsExhausted => "attempts_exhausted",
-                StopReason::InsufficientBudget => "insufficient_budget",
-            },
-            Err(RetryExecutionError::Interrupted { reason, .. }) => interruption(*reason),
-            Err(RetryExecutionError::AttemptDeadlineExceeded { .. }) => "attempt_deadline_exceeded",
-        };
-    }
-
-    pub(crate) fn finish_bulkhead<T>(&mut self, result: &Result<T, AdmissionError>) {
-        self.result = match result {
-            Ok(_) => "admitted",
-            Err(AdmissionError::Overloaded) => "overloaded",
-            Err(AdmissionError::Closed) => "closed",
-            Err(AdmissionError::Interrupted(reason)) => interruption(*reason),
-        };
+    pub(crate) fn finish<T, E>(&mut self, result: &Result<T, RetryExecutionError<E>>) {
+        self.result = vocabulary::retry(Some(result.as_ref().map(|_| ())));
     }
 }
 
-impl Drop for Terminal {
+impl Drop for RetryTerminal {
     fn drop(&mut self) {
-        match self.kind {
-            TerminalKind::Retry(name) => {
-                let operation = OPERATION_NAMES.label(name);
-                counter!(RETRY_EXECUTIONS, "operation" => operation, "result" => self.result)
-                    .increment(1);
-            }
-            TerminalKind::Bulkhead => admission("bulkhead", self.result),
-        }
+        let operation = OPERATION_NAMES.label(self.operation);
+        counter!(RETRY_EXECUTIONS, "operation" => operation, "result" => self.result).increment(1);
     }
 }
 
-fn interruption(reason: Interruption) -> &'static str {
-    match reason {
-        Interruption::Cancelled => "cancelled",
-        Interruption::DeadlineExceeded => "deadline_exceeded",
+/// Records one bulkhead decision, or `dropped` when destroyed first.
+pub(crate) struct BulkheadTerminal {
+    decision: &'static str,
+}
+
+impl BulkheadTerminal {
+    pub(crate) fn new() -> Self {
+        Self {
+            decision: vocabulary::bulkhead(None),
+        }
+    }
+
+    pub(crate) fn finish<T>(&mut self, result: &Result<T, AdmissionError>) {
+        self.decision = vocabulary::bulkhead(Some(result.as_ref().map(|_| ())));
+    }
+}
+
+impl Drop for BulkheadTerminal {
+    fn drop(&mut self) {
+        admission("bulkhead", self.decision);
     }
 }
 
 pub(crate) fn process<T>(result: &Result<T, ProcessAdmissionError>) {
-    let decision = match result {
-        Ok(_) => "admitted",
-        Err(ProcessAdmissionError::NotRunning) => "not_running",
-        Err(ProcessAdmissionError::NotReady) => "not_ready",
-        Err(ProcessAdmissionError::Closed) => "closed",
-        Err(ProcessAdmissionError::Full) => "full",
-        Err(ProcessAdmissionError::InvalidName(_)) => "invalid_name",
-    };
-    admission("process", decision);
+    admission("process", vocabulary::process(result.as_ref().map(|_| ())));
+}
+
+pub(crate) fn root(observed: Readiness) {
+    admission("root", vocabulary::root(observed));
 }
 
 fn admission(admission: &'static str, decision: &'static str) {
@@ -431,47 +306,28 @@ fn admission(admission: &'static str, decision: &'static str) {
 }
 
 pub(crate) fn task(finite: bool, name: &'static str, outcome: TaskOutcome) {
-    let kind = if finite { "process" } else { "component" };
-    let outcome = match outcome {
-        TaskOutcome::Completed => "completed",
-        TaskOutcome::Stopped => "stopped",
-        TaskOutcome::UnexpectedExit => "unexpected_exit",
-        TaskOutcome::Failed => "failed",
-        TaskOutcome::Panicked => "panicked",
-        TaskOutcome::Aborted => "aborted",
-    };
+    let kind = vocabulary::task_kind(finite);
+    let outcome = vocabulary::task_outcome(outcome);
     let task = TASK_NAMES.label(name);
     counter!(TASK_EXITS, "kind" => kind, "task" => task, "outcome" => outcome).increment(1);
 }
 
-pub(crate) fn cleanup(outcome: Option<CleanupOutcome>) {
-    let outcome = match outcome {
-        Some(CleanupOutcome::Succeeded) => "succeeded",
-        Some(CleanupOutcome::Failed) => "failed",
-        Some(CleanupOutcome::Panicked) => "panicked",
-        Some(CleanupOutcome::Cancelled) => "cancelled",
-        Some(CleanupOutcome::TimedOut) => "timed_out",
-        Some(CleanupOutcome::Unjoined) => "unjoined",
-        None => "skipped",
-    };
-    counter!(CLEANUP_HOOKS, "outcome" => outcome).increment(1);
+/// How a registered cleanup hook ended.
+pub(crate) enum CleanupHook {
+    Observed(CleanupOutcome),
+    Skipped,
+    Dropped,
 }
 
-/// Count hooks abandoned without an observed or skipped outcome.
-pub(crate) fn cleanup_dropped(hooks: usize) {
-    counter!(CLEANUP_HOOKS, "outcome" => "dropped").increment(hooks as u64);
+pub(crate) fn cleanup(hook: CleanupHook, hooks: usize) {
+    counter!(CLEANUP_HOOKS, "outcome" => vocabulary::cleanup(hook)).increment(hooks as u64);
 }
 
 pub(crate) fn shutdown(cause: ShutdownCause, success: bool, elapsed: Duration) {
-    let cause = match cause {
-        ShutdownCause::Requested => "requested",
-        ShutdownCause::ComponentExit(_) => "component_exit",
-        ShutdownCause::FiniteTaskExit(_) => "finite_task_exit",
-        ShutdownCause::EmptySupervisor => "empty_supervisor",
-    };
-    let result = if success { "success" } else { "failure" };
+    let cause = vocabulary::shutdown_cause(cause);
+    let result = vocabulary::shutdown_result(success);
     counter!(SHUTDOWNS, "cause" => cause, "result" => result).increment(1);
-    histogram!(SHUTDOWN_DURATION, "result" => result).record(seconds(elapsed));
+    histogram!(SHUTDOWN_DURATION, "result" => result).record(elapsed.as_secs_f64());
 }
 
 #[cfg(test)]

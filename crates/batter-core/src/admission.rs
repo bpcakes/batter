@@ -102,10 +102,10 @@ impl Bulkhead {
         // Record exactly one decision, including `dropped` when a waiting
         // caller abandons this future before admission completes.
         #[cfg(feature = "metrics")]
-        let mut decision = crate::telemetry::metrics::Terminal::bulkhead();
+        let mut decision = crate::telemetry::metrics::BulkheadTerminal::new();
         let result = self.admit(context, admission).await;
         #[cfg(feature = "metrics")]
-        decision.finish_bulkhead(&result);
+        decision.finish(&result);
         result
     }
 

@@ -357,6 +357,13 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
+        // A retry attempt rejected by this preflight never starts its factory,
+        // so it is not a finished attempt; keep only its trace.
+        let preflight = self.check();
+        let boundary = match (boundary, preflight) {
+            (Boundary::RetryAttempt, Err(_)) => Boundary::Internal,
+            (boundary, _) => boundary,
+        };
         let mut observation = Observation::new(operation, boundary);
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
@@ -364,7 +371,7 @@ impl OperationContext {
         let _cancel_on_exit = cancellation.clone().drop_guard();
         let result = async move {
             let boundary = async {
-                self.check()?;
+                preflight?;
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
