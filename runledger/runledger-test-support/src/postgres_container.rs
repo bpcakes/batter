@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt, core::ContainerPort, runners::AsyncRunner,
+    ContainerAsync, GenericImage, ImageExt,
+    core::{ContainerPort, Mount},
+    runners::AsyncRunner,
 };
 
 use crate::container_lifecycle::{
@@ -90,6 +92,10 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
         .with_env_var("POSTGRES_USER", POSTGRES_USER)
         .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
         .with_env_var("POSTGRES_DB", POSTGRES_DB)
+        // These per-process clusters are disposable. Keep PostgreSQL's normal
+        // WAL/fsync settings while avoiding disk I/O for every test database.
+        // PostgreSQL 18 stores PGDATA below this version-independent parent.
+        .with_mount(Mount::tmpfs_mount("/var/lib/postgresql").with_size_bytes(2 * 1024 * 1024 * 1024))
         .with_label(PROCESS_OWNER_LABEL, process_owner_label_value());
     let container = image.start().await.expect("start postgres container");
     let process_container = ProcessContainer::new(container).await;

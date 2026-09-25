@@ -233,11 +233,25 @@ class JigIntegrationTests(unittest.TestCase):
         ], start=2):
             with self.subTest(path=name):
                 path = self.repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text((path.read_text() if path.exists() else "") + "\n")
                 current = self.freshness_check(plan)
                 self.assertEqual(self.execution_count("test"), count)
                 self.assertNotEqual(current["test"]["receipt_id"], previous["test"]["receipt_id"])
                 previous = current
+
+    def test_nextest_config_invalidates_only_core_test_part(self):
+        plan = self.prepare_freshness()
+        previous = self.freshness_check(plan)
+        path = self.repo / ".config/nextest.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[profile.gate]\ntest-threads = 16\n")
+        current = self.freshness_check(plan)
+        self.assertEqual(self.execution_count("no_default_features"), 2)
+        self.assertNotEqual(current["no-default-features"]["receipt_id"],
+                            previous["no-default-features"]["receipt_id"])
+        self.assertEqual(self.execution_count("test"), 1)
+        self.assertEqual(current["test"]["receipt_id"], previous["test"]["receipt_id"])
 
     def test_narrow_parts_ignore_edits_outside_their_scope(self):
         plan = self.prepare_freshness()

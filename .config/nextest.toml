@@ -1,0 +1,8 @@
+nextest-version = { required = "0.9.130" }
+
+[profile.gate]
+# Sixteen workers capture almost all the measured gain on the 64-CPU host,
+# without multiplying process-heavy fixtures by the host's full CPU count.
+test-threads = 16
+retries = 0
+fail-fast = false

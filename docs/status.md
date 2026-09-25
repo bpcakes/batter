@@ -1,5 +1,17 @@
 # Implementation status
 
+2026-09-24 second verification performance round (`batter-r5yi`): native
+PostgreSQL fixtures use bounded 2 GiB tmpfs storage, with live mount/settings
+assertions and the existing process-death cleanup tests. The separate minimal
+core pass uses nextest 0.9.130 with 16 workers and no retries; the full workspace
+Cargo feature graph and doctests are preserved. The complete seven-target Jig
+profile passes locally on Rust 1.98.1 in 366.74 s, including the 2,197 runnable
+workspace tests (264 intentionally ignored), rustdoc, strict Clippy and all five
+HTTP smoke profiles. All 13 Jig regressions and 24 subprocess/matrix controls
+pass. CI pins a prebuilt nextest installer and release. macOS performance and
+hosted verification of this round remain unverified. See the
+[measurements and fixture contract](testing.md#verification-commands).
+
 2026-09-24 unified verification (`batter-prsb`): `verify.sh` delegates to Jig,
 with optional `--plan-id` receipt reuse. The required profile now covers rustdoc,
 all five HTTP process profiles and both Clippy feature configurations alongside

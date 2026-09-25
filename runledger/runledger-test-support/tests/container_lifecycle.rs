@@ -118,6 +118,22 @@ fn lifecycle_probe_child() {
                 .fetch_one(&pool)
                 .await
                 .expect("read PostgreSQL server_version_num");
+        let settings = sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT current_setting('data_directory'), current_setting('fsync'),
+                    current_setting('synchronous_commit'), current_setting('full_page_writes')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read PostgreSQL storage settings");
+        assert!(settings.0.starts_with("/var/lib/postgresql/"));
+        assert_eq!(
+            (
+                settings.1.as_str(),
+                settings.2.as_str(),
+                settings.3.as_str()
+            ),
+            ("on", "on", "on")
+        );
 
         // Write directly to the inherited pipe. `println!` can remain in
         // libtest's capture buffer until this long-lived helper test exits.
@@ -239,6 +255,18 @@ impl ProbeProcess {
             state.trim(),
             format!("{}\ttrue", self.expected_image),
             "lifecycle probe container must use the configured PostgreSQL image and be running"
+        );
+        let storage = docker_output([
+            "container",
+            "inspect",
+            "--format",
+            "{{range .HostConfig.Mounts}}{{if eq .Target \"/var/lib/postgresql\"}}{{.Type}} {{.TmpfsOptions.SizeBytes}}{{end}}{{end}}",
+            &container_id,
+        ]);
+        assert_eq!(
+            storage.trim(),
+            "tmpfs 2147483648",
+            "disposable database storage must be bounded"
         );
         container_id
     }

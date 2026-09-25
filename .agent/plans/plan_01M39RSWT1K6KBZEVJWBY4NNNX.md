@@ -1,0 +1,1 @@
+Benchmark remaining PostgreSQL overhead and nextest scheduling; preserve full feature graphs, test inventory, Docker lifecycle coverage and MSRV CI. Implement measured gains and validate through the complete Jig profile.

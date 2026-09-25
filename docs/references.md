@@ -4058,3 +4058,27 @@ MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
 release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
 tests against PostgreSQL 16. The import preserves those native source contracts;
 [provenance](../runlimit/IMPORT.md) records adapted workspace administration.
+
+## Test runner and disposable PostgreSQL storage, 2026-09-24
+
+- Nextest's [process-per-test design](https://nexte.st/docs/design/why-process-per-test/)
+  explains why static fixtures and semaphores are not shared across its test
+  processes. The repository uses it for the separate core pass; Cargo retains
+  the complete workspace pass and doctests.
+- The inspected [0.9.130 manifest](https://github.com/nextest-rs/nextest/blob/cargo-nextest-0.9.130/Cargo.toml)
+  declares Rust 1.91 for building nextest, below this workspace's MSRV. The
+  [minimum-version configuration](https://nexte.st/docs/configuration/minimum-versions/)
+  rejects older runners before execution.
+- Docker's [tmpfs documentation](https://docs.docker.com/engine/storage/tmpfs/)
+  describes the memory-backed mount, explicit byte limit and loss of data on
+  container stop. It operates in the Linux Docker daemon, including a macOS VM;
+  this change has only Linux execution evidence.
+- The official [PostgreSQL image documentation](https://github.com/docker-library/docs/blob/master/postgres/README.md)
+  places PostgreSQL 18's versioned data directory under `/var/lib/postgresql`.
+  The installed testcontainers 0.28.0 `core/mounts.rs` provides
+  `Mount::tmpfs_mount(...).with_size_bytes(...)`; the live Docker probe checks
+  the actual mount, database settings and data path.
+- Nextest's [prebuilt installation guide](https://nexte.st/docs/installation/pre-built-binaries/)
+  recommends `taiki-e/install-action` for GitHub Actions. CI pins the inspected
+  [installer revision](https://github.com/taiki-e/install-action/tree/9983c65e42da123ff25d1f78505eb6de315aa172)
+  and nextest release, retains checksum verification and disables fallback builds.

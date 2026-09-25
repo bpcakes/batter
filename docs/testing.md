@@ -472,6 +472,38 @@ Run local verification once with the current release pinned in
 explicitly requested to reproduce an MSRV failure. Upgrade the local pin and
 pinned CI entries together; a weekly CI run checks floating `stable`.
 
+The test matrix requires cargo-nextest 0.9.130 or newer. Install the verified
+release with `cargo install cargo-nextest --locked --version 0.9.130`; Linux CI
+downloads that exact release with a pinned, checksum-verifying installer,
+avoiding an extra tool compilation. The no-default-feature target checks the
+prerequisite before launching its batch. Its core pass uses nextest's `gate` profile:
+16 workers, no retries, and all selected tests run even after a failure. Doctests
+remain on Cargo. The full all-feature workspace pass also retains Cargo because
+native Runledger tests share a PostgreSQL server and connection budget within
+each test binary. Nextest's per-test processes would defeat that sharing.
+
+Native disposable PostgreSQL containers now put `/var/lib/postgresql` on a
+2 GiB tmpfs mount. Each test still creates its own database and executes its
+migrations; server ownership and the process-death reaper are unchanged.
+PostgreSQL's fsync, synchronous commit and full-page writes remain enabled.
+Lifecycle probes check those settings, the data path, the mount limit and cleanup
+after normal and forced process exit. External administrative URLs are unchanged;
+they do not get this storage optimization. The separate delayed-startup probe
+retains ordinary storage. Tmpfs is ephemeral across container stops and uses
+memory in the Docker Linux host/VM; these tests do not establish disk durability.
+
+On the 64-CPU Linux development host with Rust 1.98.1, the same 372 core tests
+took 29.06 s with Cargo and 13.59 s with nextest (16 workers). Against PostgreSQL
+18.6, identical prebuilt binaries on ordinary storage versus tmpfs took 7.17/3.60 s
+for migrations, 17.96/7.27 s for enqueue intents, and 15.22/2.49 s for catalog
+tests. These are single-run measurements on a shared development host, excluding
+compilation for the database samples; macOS performance remains unverified.
+The complete seven-target Jig profile subsequently passed in 366.74 s, with
+350.30 s spent in the test matrix. The preceding round's complete profile took
+812.94 s; these end-to-end observations include different rebuild costs and
+shared-host activity, so they are not a controlled estimate of storage speedup.
+See [primary sources](references.md#test-runner-and-disposable-postgresql-storage-2026-09-24).
+
 Python 3.9 or newer is required by the scheduling subprocess tests, including plain
 `cargo test`; the verification script checks that prerequisite before running Rust.
 Workspace tests also require permission to create Unix subprocesses and bind and
@@ -940,7 +972,8 @@ For final backend verification, fresh passing receipts for every test target fro
 the current plan's gate/profile run also satisfy the final-test requirement. Inspect
 `scripts/jig work evidence --plan-id <id>` and `scripts/jig work gates --plan-id <id>`
 before deciding to rerun a test target. Reuse requires unchanged
-check inputs, command/configuration, toolchain and relevant environment/prerequisites,
+check inputs, command/configuration, toolchain, nextest version for the core
+pass, and relevant environment/prerequisites,
 and no later unresolved failure. Toolchain and external-state identity are not
 established by Jig's fingerprint alone. `bash scripts/verify.sh --plan-id <id>`
 uses `work check` to reuse those receipts and execute missing or stale required
@@ -956,6 +989,7 @@ prerequisites. The Rust targets, including the rustdoc and HTTP smoke siblings, 
 manifests and lockfiles, toolchain/Cargo/lint configuration, package source,
 examples, tests, benches and migrations, and shared test sources. Test targets
 also cover the Python helpers and shell entrypoints under `scripts/`.
+`api:no-default-features` also covers `.config/nextest.toml`.
 `api:runlimit` narrows this to the root Cargo configuration, every package
 manifest, and Runlimit sources, migrations and assets, because no Runlimit package
 depends on a Batter package. `repo:script-tests` reads only `scripts/` and

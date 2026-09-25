@@ -3,6 +3,7 @@
 
 import argparse
 from pathlib import Path
+import subprocess
 import sys
 
 from parallel_process import render_outcomes, run_parallel
@@ -10,7 +11,8 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
 FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
-CORE_TESTS = ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"]
+CORE_TESTS = ["cargo", "nextest", "run", "--profile", "gate", "-p", "batter-core",
+              "--no-default-features", "--lib", "--tests", "--locked"]
 WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
 # A clean developer shell must not hide ambient-state dependencies in tests.
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
@@ -45,6 +47,17 @@ FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
 
+def nextest_ready():
+    try:
+        subprocess.run(["cargo", "nextest", "show-config", "version"], cwd=ROOT,
+                       check=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        print("Nextest prerequisite failed. Install with: "
+              "cargo install cargo-nextest --locked --version 0.9.130", file=sys.stderr)
+        return False
+    return True
+
+
 def parts():
     """Map each part to ordered batches; a failed batch stops only its own part.
 
@@ -77,6 +90,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("part", choices=sorted(parts()))
     selected = parser.parse_args().part
+    if selected == "no-default-features" and not nextest_ready():
+        return 1
     for labels, commands in parts()[selected]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)
         outcomes = run_parallel(commands, timeout=1500, output_limit=8 * 1024 * 1024,

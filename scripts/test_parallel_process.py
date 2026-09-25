@@ -309,6 +309,23 @@ class MatrixTests(unittest.TestCase):
     success = ProcessOutcome(0, b"", b"", 0, False, False, True, True, ())
     failure = ProcessOutcome(7, b"failure", b"", 0, False, False, True, True, ())
 
+    def setUp(self):
+        prerequisite = mock.patch.object(matrix, "nextest_ready", return_value=True)
+        self.nextest_ready = prerequisite.start()
+        self.addCleanup(prerequisite.stop)
+
+    def test_nextest_prerequisite_failure_prevents_core_batch(self):
+        self.nextest_ready.return_value = False
+        with mock.patch.object(sys, "argv", ["test_matrix.py", "no-default-features"]), \
+                mock.patch.object(matrix, "run_parallel") as execute:
+            self.assertEqual(matrix.main(), 1)
+        execute.assert_not_called()
+
+    def test_other_parts_do_not_require_nextest(self):
+        self.nextest_ready.return_value = False
+        self.assertEqual(self.run_part("workspace", lambda commands, **kwargs: [self.success] * len(commands)), 0)
+        self.nextest_ready.assert_not_called()
+
     def run_part(self, part, execute):
         with mock.patch.object(sys, "argv", ["test_matrix.py", part]), \
                 mock.patch.object(matrix, "run_parallel", execute), \
