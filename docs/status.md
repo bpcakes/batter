@@ -1,5 +1,21 @@
 # Implementation status
 
+2026-09-25 verification simplification (`batter-zrnx`): direct `scripts/verify.sh` commands replace
+Jig plans, receipts and gates. The unchanged file-budget policy uses Jig’s
+standalone checker in local verification and CI. Tracked work state and plans
+are removed; historical evidence below describes earlier trees. Current
+script controls pass (131 tests with one opt-in live check skipped), followed by
+seven passing file-budget regressions including inherited-debt growth. The
+change-based budget check, shell syntax checks, workflow YAML parsing and static
+package/link checks pass. The complete direct `bash scripts/verify.sh` run passes on Linux with Rust
+1.98.1, including all six test parts, both Clippy configurations, rustdoc and
+all five HTTP smoke profiles. Hosted CI and macOS execution remain unverified
+for this change. The `batter-f3ky` import failure came from comment ID 339
+being reused by `batter-t2uq`. Exporting the canonical database preserved all
+195 existing issues and 324 comments with distinct IDs; fresh isolated imports
+passed. Beads now reports healthy sync, and `batter-zrnx` records delivery and
+verification.
+
 2026-09-24 unified verification (`batter-prsb`): `verify.sh` delegates to Jig,
 with optional `--plan-id` receipt reuse. The required profile now covers rustdoc,
 all five HTTP process profiles and both Clippy feature configurations alongside
@@ -29,7 +45,7 @@ the full 64 MiB boundary input. Linux verification passes on Rust 1.98.1 and
 pass on each toolchain, and Jig's required gates pass with a fresh `api:test`
 receipt. Focused Linux measurements: facade warm run 8.917 s; all 45 at-rest
 tests 2.26 s of test execution. macOS performance remains unverified.
-See [Jig verification](testing.md#jig-verification).
+See [verification](testing.md#verification).
 
 2026-09-22 GCRA CI regression (`batter-jtnk`): the native PostgreSQL replenishment
 test now uses explicit persisted-clock boundaries, retaining checks for exact
@@ -219,7 +235,7 @@ exercise the later documentation, package-description, or rustdoc refresh.
 | Managed native components and stop budgets | Implemented; Linux acceptance executed | Managed registration retains native settlement outside the direct waiter and freezes cleanup evidence. The optional adapter accepts only owned native preparation. Earlier native/parent clocks shorten active phases without replacing the first native cause. Repeated stop-control failures are published while native settlement remains pending. Public managed contracts, library clock controls, adapter inertness and compile-fail controls pass. Both supported toolchains passed the live inventory; the context-free consumer passed five initial and two modification oracles on its first compilations. Review closure remains owned by `batter-gi4`. |
 | Workspace package boundaries | Implemented; release preparation in progress | Virtual root with eight crates.io-targeted Batter 0.0.1 libraries: the source-compatible `batter` facade, standalone MIT-licensed `batter-at-rest` leaf, single-implementation `batter-core`, Axum, SQLx, Runledger, Runlimit, and generic test support, plus two unpublished executable example packages. Native Runledger is coordinated at 0.13.0 and native Runlimit at 0.4.0. Every internal path dependency carries its registry version. Adapters depend on `batter-core` and never the facade; the Runlimit optional Axum edge remains. The facade defaults to the core only and exposes explicit feature-gated namespaces. All eight facade-owned runnable demonstrations, the PostgreSQL lifecycle consumer and the reference consumer compile through the documented feature paths; direct adapter integration and lifetime suites remain in their owning packages. Historical consumer evidence predates these release manifests; artifact and registry-consumer validation belongs to `batter-ddc`. PostgreSQL harness stays external and is selected by the opt-in SQLx test-support feature and reference tests. [ADR-006](adr/006-workspace-packages.md). |
 | Browser credential transport primitives | Implemented; current macOS two-toolchain validation | `batter_axum::browser` provides canonical trusted origins, duplicate-aware opaque named-cookie reads, fixed host-only set/removal with same-name response rejection, exact-origin mutation checks, custom markers automatically paired with strict same-origin Fetch Metadata, typed sanitized rejection, and private-response headers. It owns no account/session/authentication/authorization/CORS/CSRF-token or application wire model. The redesigned 33-case public integration target and 23 positive plus five compile-fail adapter doctests pass. |
-| Jig harness | Locally validated | Official v0.3.0 installation, MCP, five configured targets, and guide checks; CI comparison, cache reuse, plan merging, and archive regression tests. Local test aliases share the concurrent core/workspace matrix, isolated scheduling-control shards, and fresh final test evidence can satisfy backend completion without a duplicate run. Overflow diagnostics retain bounded initial output and both stream tails; scheduling watchdog elapsed assertions consume process-owner observations rather than Rust wrapper wall time. Isolated mutation subjects include the control runner dependencies. Hosted cache reuse remains unverified. Use `update --recopy` to retain the selected release. |
+| File-budget checker | Preserved; verification workflow simplified | Jig is restricted to standalone file-budget diagnostics with the existing policy. Rust verification runs directly; no plans, receipts, gates or MCP registration. |
 | Clippy complexity and length limits | Enabled | All workspace packages inherit warning-level lints; thresholds 20 / 100, enforced by `-D warnings`. |
 | Platform scope | Unix-only | Linux and macOS remain in scope. Windows is unsupported and not planned; no Windows CI or non-Unix implementation fallbacks. Linux x86_64 and macOS arm64 have full verification and HTTP smoke evidence; focused hosted macOS jobs pass on both supported toolchains. Other Unix targets remain unverified. [ADR-007](adr/007-unix-platform-scope.md). |
 | Internal ownership boundaries | Implemented | Private lifecycle task collection records joins before returning causes and releases ownership through a conservative summary; command, startup and process observers share one private retained-publication wait mechanism while keeping distinct public outcomes and runtime-loss diagnostics; managed native observation remains separate. The shared opaque panic payload now lives at the crate root for command, startup and managed lifecycle reports, while the original startup path remains a compatible re-export. Private HTTP observation composes independently of admission. [Completion tests](../crates/batter-core/src/completion.rs), [task tests](../crates/batter-core/src/lifecycle/tasks/tests.rs), [observation tests](../crates/batter-axum/src/observation/tests.rs). |

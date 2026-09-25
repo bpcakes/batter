@@ -5,19 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 bootstrap=false
-plan_id=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bootstrap) bootstrap=true; shift ;;
-    --plan-id)
-      if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
-        printf '%s\n' '--plan-id requires a plan ID' >&2
-        exit 2
-      fi
-      plan_id=$2
-      shift 2
-      ;;
-    *) printf 'Usage: %s [--bootstrap] [--plan-id ID]\n' "$0" >&2; exit 2 ;;
+    *) printf 'Usage: %s [--bootstrap]\n' "$0" >&2; exit 2 ;;
   esac
 done
 for tool in cargo rustc rustfmt python3; do
@@ -41,7 +32,12 @@ if [[ ! -f Cargo.lock ]]; then
   exit 2
 fi
 printf 'Workspace tests require loopback TCP sockets and Unix subprocess permissions.\n'
-if [[ -n "$plan_id" ]]; then
-  exec scripts/jig work check --plan-id "$plan_id"
-fi
-exec scripts/jig check --profile verify --comparison-base origin/master
+cargo fmt --all -- --check
+bash scripts/check_file_budget.sh
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files
+cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimit-http -p runlimit-axum --all-targets --locked -- -D warnings
+for part in workspace no-default-features doctests consumers runlimit scripts; do
+  python3 scripts/test_matrix.py "$part"
+done
+RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc --workspace --all-features --no-deps --locked
+python3 scripts/check_http_smokes.py

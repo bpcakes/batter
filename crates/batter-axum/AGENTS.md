@@ -136,5 +136,5 @@ Run from the workspace root:
 cargo test -p batter-axum --locked
 cargo build -p batter --features axum --example http_service --locked
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service
-scripts/jig check test
+python3 scripts/test_matrix.py workspace
 ```

@@ -1,1 +1,0 @@
-Implement batter-6ye: replace repeated parameter-name scans during catalog assembly and missing-object checks with set/map indexes; add an independent near-capacity scale/work regression; update owned contract, status, validation evidence, and Bead; run focused, supported-toolchain, smoke, and Jig verification required by repository policy.

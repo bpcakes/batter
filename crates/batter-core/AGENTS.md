@@ -108,6 +108,6 @@ Run from the workspace root:
 cargo test -p batter-core --locked
 cargo test -p batter-core --doc --locked
 cargo clippy -p batter-core --all-targets --locked -- -D warnings
-scripts/jig check test
-scripts/jig check api:no-default-features
+python3 scripts/test_matrix.py workspace
+python3 scripts/test_matrix.py no-default-features
 ```

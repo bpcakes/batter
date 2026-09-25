@@ -104,7 +104,7 @@ Run `cargo test -p batter-sqlx --features test-support --locked` for offline con
 `bash scripts/test_sqlx_live.sh` with `DATABASE_URL` plus a known-good password
 endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` for the ignored live cases. The explicit
 invocation must fail when prerequisites are missing. Also run the root
-pinned-toolchain verification, HTTP smoke profiles and required Jig gates locally;
+complete pinned-toolchain verification, including HTTP smoke profiles, locally;
 MSRV verification belongs in CI.
 
 ## Optional fixture support

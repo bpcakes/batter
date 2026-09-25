@@ -134,7 +134,7 @@ Run from the repository root:
 
 ```sh
 bash scripts/verify.sh
-scripts/jig check api:runlimit
+python3 scripts/test_matrix.py runlimit
 python3 scripts/check_runlimit_workspace.py
 RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
 ```

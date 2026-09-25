@@ -41,11 +41,10 @@ not broaden this repository's platform support.
 Local development uses the current stable release pinned in `rust-toolchain.toml`
 (Rust 1.98.1). Upgrade that pin deliberately, together with the pinned CI entries.
 All packages retain Rust 1.94 as their minimum; SQLx 0.9.0 requires it in the
-adapter and examples. Run `bash scripts/verify.sh --plan-id <id>` with the default
-toolchain for planned work, or `bash scripts/verify.sh` for a fresh verification.
-Both use Jig's complete `verify` profile, including rustdoc and all HTTP smoke
-profiles; the plan form reuses fresh target receipts. Do not repeat the matrix
-with a separate script/Jig invocation after it passes.
+adapter and examples. Run `bash scripts/verify.sh` with the default toolchain.
+It directly runs formatting, file budgets, both Clippy configurations, all six
+test-matrix parts, rustdoc and all HTTP smoke profiles. It does not create plans,
+receipts or gates. Do not repeat the matrix after it passes.
 Routine Rust 1.94.0 verification belongs only in CI, including the standalone
 `batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`. Do not
 install or run the MSRV locally unless explicitly asked to reproduce an MSRV
@@ -245,8 +244,8 @@ Do not use application-specific project names or project-shaped labels.
 
 Update the relevant contract, failure-path test, implemented-status row, and owning Bead.
 Beads owns delivery scope, acceptance, priority, status and dependencies; do not
-reintroduce Markdown backlog lists. Task-local ExecPlans document execution for
-their owning Bead, and completed plans are historical evidence.
+reintroduce Markdown backlog lists. Historical execution plans remain in Git
+history; new work does not require a Jig plan.
 New public APIs need rustdoc and an example. New claims need executable tests
 or an explicit unverified label. Record external semantics against primary
 sources in `docs/references.md`; re-check the actual upstream version before
@@ -256,26 +255,17 @@ Do not hide body streaming, transaction commit ambiguity, non-yielding tasks,
 unbounded semaphore waiters, or default panic-hook output behind generic words
 like "safe" or "reliable". Test what those words would actually mean.
 
-## Verification input ownership
+## Verification ownership
 
-The independent Rust targets use Jig contract v8 exhaustive input scopes. Keep
-those scopes complete when adding fixtures, helpers, configuration or new source
-roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Tests run as six
-sibling targets, one per `scripts/test_matrix.py` part. `api:runlimit` reads only
-Cargo configuration, package manifests and `runlimit/`; `repo:script-tests` reads
-only `scripts/`, so keep any Python control that reads repository files in a part
-whose scope covers those files. Keep formatting,
-contract and file-budget checks as required profile siblings, not test execution
-dependencies. Tracker-only edits preserve Rust receipts. `.jig.toml` declares the
-root `.beads/` store as receipt metadata, so tracker writes cannot fail an in-flight
-check and uncommitted tracker edits keep every receipt. Committing moves HEAD, so a
-final `scripts/jig work check --plan-id <id>` may refresh the inexpensive Git-bound
-policy checks while reusing Rust passes. The declaration asserts that no gated check
-reads `.beads/`; remove it before adding one that does. Use native `scripts/jig check
-repo:file-budget --plan-id <id>` for a targeted refresh, without overriding the
-plan comparison. If inspection reports `collection_limit`, repeat `work evidence`
-or `work gates` with `--freshness-timeout-ms 30000`; this reads existing evidence
-without executing checks. See [Jig verification](docs/testing.md#jig-verification).
+`scripts/verify.sh` owns the complete local verification command sequence.
+`scripts/test_matrix.py` owns the six test parts and their bounded subprocesses.
+Keep these commands complete when adding fixtures, helpers or source roots.
+Jig is retained only for its standalone file-budget checker; use
+`bash scripts/check_file_budget.sh` for local changes against `origin/master`, or
+`scripts/jig file-budget check --strict-inventory` for all governed files.
+Keep `.jig/file-budget.toml` limits and imported-file ceilings intact.
+There are no Jig plans, receipts, gates or MCP registration. Record actual
+verification outcomes in the owning Bead. See [verification](docs/testing.md#verification).
 
 ## Finding the next task
 
@@ -288,21 +278,14 @@ The [backlog navigation page](docs/roadmap.md) explains tracker/export access.
 Publication and deployment require a separate user decision; completing a Bead
 does not grant that permission.
 
-<!-- BEGIN JIG MANAGED BLOCK -->
-This repository uses the shared `jig.sh` workflow. Keep repo-local business rules and ownership guidance in backend-level guides; keep generic agent workflow and repo policy here.
+Keep repo-local business rules and ownership guidance in backend-level guides;
+keep generic agent workflow and repo policy here.
 
 ## Start Here
 
 - Use this file for repo-wide defaults.
 - Open [agent-map.md](./agent-map.md) before backend work.
 - Read the nearest backend-level `AGENTS.md` before changing a package or crate when one exists.
-- Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
-- Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
-- On a fresh machine, run `scripts/jig doctor`; follow its next step, including `scripts/jig agent bootstrap` when Jig Codex skills are missing.
-- For substantial work, use `scripts/jig work start`, `scripts/jig work check`, `scripts/jig work evidence`, `scripts/jig work gates`, and `scripts/jig work finish` to keep plans, receipts, and required gates connected.
-- A plan captures an exact Git baseline. Default `work check` runs required gates whose configured path policy applies and records explicit not-applicable evidence for the rest; use `--gate <id>` only when deliberately force-running one gate.
-- `jig-contract` validates Jig harness wiring, not the application's API contract.
-- Treat `.agent/state/*.jsonl` as append-only repo memory.
 
 ## Compatibility And Cutovers
 
@@ -321,48 +304,21 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 - Keep transaction boundaries explicit and deterministic.
 
-## Frontend Defaults
-
-No web apps or development proxy are configured in `.jig.toml`.
-
-Jig database tooling is disabled: database provisioning remains external to the
-optional SQLx adapter and example packages.
-
 ## Preferred Commands
 
-- `scripts/jig bootstrap`
-- `scripts/jig doctor`
-
-- `scripts/jig check test`
-- `scripts/jig check fmt`
-
-- `scripts/jig check clippy`
-
-- `scripts/jig work status`
-- `scripts/jig work evidence`
-
-- `scripts/jig check contract`
+- `bash scripts/verify.sh`
+- `python3 scripts/test_matrix.py <part>` for a focused test part
+- `cargo fmt --all -- --check`
+- `bash scripts/check_file_budget.sh`
 
 ## Done Means
 
-- Run the relevant local verification for the area you changed.
-- For backend changes, require successful final receipts for every test target
-  (`api:test`, `api:no-default-features`, `api:doctest`, `api:consumers`,
-  `api:runlimit` and `repo:script-tests`) from `scripts/jig work check` or the
-  `verify` profile; `scripts/jig check test` runs only the workspace tests.
-  Inspect `scripts/jig work evidence` and `scripts/jig work gates` first. Fresh
-  passing receipts for the current plan and check inputs satisfy this requirement;
-  do not automatically rerun tests after a profile that already passed them.
-  Reuse also requires unchanged test commands/configuration, toolchain, relevant
-  environment and prerequisites, with no later unresolved failure. Jig freshness
-  alone does not prove external environment or toolchain identity. Rerun when
-  these conditions cannot be established. The complete `verify` profile also
-  requires `api:docs` and `api:http-smoke`; test receipts alone do not satisfy
-  those targets. `verify.sh` delegates to Jig and creates receipts; use
-  `--plan-id <id>` to attach them to planned work and reuse fresh results.
-  Local verification uses only the pinned toolchain; MSRV verification belongs in CI.
-
-- Review the generated diff for stale docs, policy drift, or missing dependent updates.
+- Run the relevant local verification for the area changed. Backend changes
+  require the complete `scripts/verify.sh` run on the pinned toolchain.
+- Do not repeat a successful run unless later changes, failures, or changed
+  toolchain/environment/prerequisites invalidate its results. MSRV belongs in CI.
+- Review the diff for stale docs, policy drift, or missing dependent updates.
+- Record verification outcomes and limitations in the owning Bead.
 
 ## Backend Guide Conventions
 
@@ -373,7 +329,6 @@ When a backend package or crate has an `AGENTS.md`, use these sections:
 - `## Edit here for X`
 - `## Invariants`
 - `## Common commands`
-<!-- END JIG MANAGED BLOCK -->
 
 <!-- bv-agent-instructions-v5 -->
 

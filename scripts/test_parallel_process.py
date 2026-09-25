@@ -402,23 +402,12 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             execute.assert_not_called()
 
-    def test_verify_profile_runs_every_part_exactly_once(self):
+    def test_verification_runs_every_part_exactly_once(self):
         root = Path(__file__).resolve().parent.parent
-        contract = json.loads((root / ".agent/jig-contract.json").read_text())
-        verify, = [profile for profile in contract["profiles"] if profile["id"] == "verify"]
-        runners = {(action["target"]["component"], action["target"]["action"]): action["runner"].get("command")
-                   for action in contract["actions"]}
-        commands = dict(re.findall(r'(?m)^([a-z][a-z0-9_]*_command) = "([^"\\]*)"$',
-                                   (root / ".jig.toml").read_text()))
-        invoked = {}
-        for target in verify["targets"]:
-            key = (target["component"], target["action"])
-            selected = re.fullmatch(r"python3 scripts/test_matrix\.py (\S+)",
-                                    commands.get(runners.get(key), ""))
-            if selected:
-                invoked.setdefault(selected.group(1), []).append(key)
-        self.assertEqual(sorted(invoked), sorted(matrix.parts()))
-        self.assertTrue(all(len(targets) == 1 for targets in invoked.values()), invoked)
+        script = (root / "scripts/verify.sh").read_text()
+        selected, = re.findall(r"for part in ([^;]+); do", script)
+        self.assertCountEqual(selected.split(), matrix.parts())
+        self.assertIn('python3 scripts/test_matrix.py "$part"', script)
 
 
 class MutationCopyTests(unittest.TestCase):

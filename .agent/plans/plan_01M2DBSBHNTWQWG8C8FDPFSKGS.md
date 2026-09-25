@@ -1,1 +1,0 @@
-Owning Bead: batter-7r3.5. User-authorized root-cause repair, required verification, all-reviewer review, then conditional commit. Execution details in .agent/plans/batter-7r3.5-root-repair.md.
