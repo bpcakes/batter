@@ -6,6 +6,45 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Native query adapters: reviewed 2026-09-22
+
+For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,
+`query_scalar.rs`, and native executor definitions, plus its
+[Map documentation](https://docs.rs/sqlx/0.9.0/sqlx/query/struct.Map.html) and
+[query macro contract](https://docs.rs/sqlx/0.9.0/sqlx/macro.query.html).
+Map fetches apply the mapper and preserve native errors. Map also implements
+Execute; executor-level execute discards rows without invoking that mapper.
+QueryScalar similarly retains scalar decoding for fetches. SQLx macros consume
+live database descriptions or generated offline metadata; forwarding their native
+values preserves that checking. Runtime constructors produce the same types, so
+macro origin cannot be enforced by a trait over those values.
+
+The initial opaque-future adapter failed concrete Send checks with Rust1.98.1's
+diagnostic referring to the compiler's
+[higher-ranked lifetime limitation](https://github.com/rust-lang/rust/issues/100013).
+Boxed Send dispatch futures compiled with those checks while keeping concrete
+query output/error types. No measured latency claim follows from statement counts
+or this representation choice. Native query output precedes PgLease's existing
+asynchronous idle-state handshake; retaining it before cleanup is a local result
+publication guarantee, not a transaction or external-effect proof.
+
+## Fail-fast transaction recovery: reviewed 2026-09-22
+
+For `batter-wobk`, SQLx remains 0.9.0. PostgreSQL 18
+[ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html)
+allows recovery from failed SQL; [RELEASE SAVEPOINT](https://www.postgresql.org/docs/18/sql-release-savepoint.html)
+removes the named and later savepoints. The
+[transaction status functions](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT)
+report the supplied transaction's status, not the history of work on a connection.
+Executed PostgreSQL 18.6 counterexamples showed that an original aborted XID can
+coexist with a committed replacement transaction and a later failed transaction.
+Our inference is that checking original status after bare ROLLBACK cannot preserve
+the existing transaction-boundary-loss contract. The fast runner therefore retains
+one private birth guard, recovers through it on rejection, and validates the
+original XID before whole rollback. Successful calls need no per-call savepoint.
+Native tests count two statements unprofiled or three profiled, excluding setup
+and completion, and retain uncertainty for replacement or missing-guard cases.
+
 ## Cargo test artifacts and profiles, 2026-09-24
 
 - Cargo 1.94.0 and 1.98.1 are the repository's validation toolchains. The
@@ -1737,6 +1776,23 @@ remote before adding it. GitHub's
 describes key matching, branch scope, and eviction; a configured cache does not
 guarantee a hit. This repository caches `.git/jig-tools/*-runtime` only and
 continues to run Jig's normal source/profile compatibility checks after restore.
+
+## Jig receipt metadata: 2026-09-24
+
+The pinned Jig revision's
+[public contract](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/docs/public-contract.md)
+defines `work.receipt_metadata = ["beads"]` as an ownership declaration that no
+gated command consumes the root `.beads/` store. It excludes that store from
+dirty, staged and committed freshness projections. The
+[worktree pathspecs](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/git_receipts/metadata.rs)
+apply the same exclusion to the execution fingerprint that
+[parallel read-only batches](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/runtime/run_execution/source_epoch.rs)
+compare before and after execution. Without it, any tracker write during a batch
+fails every target in that batch. Git-state targets still hash HEAD in their
+[source identity](https://github.com/bpcakes/jig-sh/blob/a328c17910c40603327c73329e5158a42c37417d/crates/jig/src/repository/freshness/source.rs),
+so a tracker commit refreshes the contract and file-budget checks. Here the
+file-budget policy governs only Rust sources, and no configured check reads
+`.beads/`.
 
 
 ## Integration readiness source inspection: 2026-09-09

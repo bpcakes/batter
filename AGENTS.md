@@ -260,11 +260,18 @@ like "safe" or "reliable". Test what those words would actually mean.
 
 The independent Rust targets use Jig contract v8 exhaustive input scopes. Keep
 those scopes complete when adding fixtures, helpers, configuration or new source
-roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Keep formatting,
+roots; edit `.jig.toml` and `.agent/jig-contract.json` together. Tests run as six
+sibling targets, one per `scripts/test_matrix.py` part. `api:runlimit` reads only
+Cargo configuration, package manifests and `runlimit/`; `repo:script-tests` reads
+only `scripts/`, so keep any Python control that reads repository files in a part
+whose scope covers those files. Keep formatting,
 contract and file-budget checks as required profile siblings, not test execution
-dependencies. Tracker-only edits preserve Rust receipts; a final
-`scripts/jig work check --plan-id <id>` may refresh the inexpensive whole-repository
-policy checks while reusing Rust passes. Use native `scripts/jig check
+dependencies. Tracker-only edits preserve Rust receipts. `.jig.toml` declares the
+root `.beads/` store as receipt metadata, so tracker writes cannot fail an in-flight
+check and uncommitted tracker edits keep every receipt. Committing moves HEAD, so a
+final `scripts/jig work check --plan-id <id>` may refresh the inexpensive Git-bound
+policy checks while reusing Rust passes. The declaration asserts that no gated check
+reads `.beads/`; remove it before adding one that does. Use native `scripts/jig check
 repo:file-budget --plan-id <id>` for a targeted refresh, without overriding the
 plan comparison. If inspection reports `collection_limit`, repeat `work evidence`
 or `work gates` with `--freshness-timeout-ms 30000`; this reads existing evidence
@@ -339,17 +346,19 @@ optional SQLx adapter and example packages.
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, require a successful final `api:test` receipt from
-  `scripts/jig work check`, the `verify` profile, or `scripts/jig check test`.
-  Inspect `scripts/jig work evidence` and `scripts/jig work gates` first. A fresh
-  passing receipt for the current plan and check inputs satisfies this requirement;
+- For backend changes, require successful final receipts for every test target
+  (`api:test`, `api:no-default-features`, `api:doctest`, `api:consumers`,
+  `api:runlimit` and `repo:script-tests`) from `scripts/jig work check` or the
+  `verify` profile; `scripts/jig check test` runs only the workspace tests.
+  Inspect `scripts/jig work evidence` and `scripts/jig work gates` first. Fresh
+  passing receipts for the current plan and check inputs satisfy this requirement;
   do not automatically rerun tests after a profile that already passed them.
   Reuse also requires unchanged test commands/configuration, toolchain, relevant
   environment and prerequisites, with no later unresolved failure. Jig freshness
   alone does not prove external environment or toolchain identity. Rerun when
   these conditions cannot be established. The complete `verify` profile also
-  requires `api:docs` and `api:http-smoke`; an `api:test` receipt alone does not
-  satisfy those targets. `verify.sh` delegates to Jig and creates receipts; use
+  requires `api:docs` and `api:http-smoke`; test receipts alone do not satisfy
+  those targets. `verify.sh` delegates to Jig and creates receipts; use
   `--plan-id <id>` to attach them to planned work and reuse fresh results.
   Local verification uses only the pinned toolchain; MSRV verification belongs in CI.
 

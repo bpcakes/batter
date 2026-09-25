@@ -85,9 +85,14 @@ Payload AAD is ASCII magic `ATRA`, `role:u8 = 1`, `format_version:u8 = 1`, and t
 
 Wrapping AAD is ASCII magic `ATRA`, `role:u8 = 2`, `format_version:u8 = 1`, the wrapping-key ID as `length:u16 || bytes`, the 12-byte payload nonce as `length:u16 || bytes`, and the complete context as `length:u16 || bytes`. Its distinct role prevents a valid body/tag from being interpreted as a wrapped key or vice versa.
 
-Seal generates a random data key, payload nonce, and wrapping nonce. Open authenticates the wrapper before authenticating the body and returns plaintext only after both succeed. Rewrap authenticates the wrapper and context, then encrypts the same data key under the current wrapping key with a fresh wrapping nonce. It returns only `WrappedKey` metadata and deliberately does not inspect or attest to an unread body. If the stored wrapping-key ID already is current, rewrap still authenticates it and returns the exact existing wrapper.
+Seal generates a random data key, payload nonce, and wrapping nonce. Open authenticates the wrapper before authenticating the body and returns plaintext only after both succeed. Rewrap authenticates the wrapper and context, then encrypts the same data key under the current wrapping key with a fresh wrapping nonce. The preferred `Keyring::rewrap_envelope` returns a complete `Envelope` containing the exact input descriptor and its replacement wrapper. It does not take, read, copy, authenticate, or rewrite a body. If the stored wrapping-key ID already is current, it still authenticates the wrapper and returns the byte-identical input envelope without requesting randomness. The older `Keyring::rewrap` returns only `WrappedKey` metadata for compatibility with explicit split-storage assembly.
 
 A replacement wrapper is valid only with the exact descriptor supplied to rewrap.
+`WrappedKey::decode_for`, `Envelope::from_parts`, and `with_wrapped_key` are
+lower-level reconstruction paths: they validate structure but do not prove
+descriptor/wrapper pairing. The preferred rotation method returns that pair
+together. An `Envelope` decoded or reconstructed by any path remains only a
+structurally validated header, not an authenticated-body marker.
 A storage adapter must compare-and-swap against the complete old envelope or a
 storage revision covering every envelope change, including rewrap. Descriptor-only
 comparison detects a reseal but misses competing rotations that preserve the

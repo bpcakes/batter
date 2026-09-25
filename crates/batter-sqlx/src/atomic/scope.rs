@@ -19,11 +19,21 @@ use sqlx::{Connection, Executor, PgConnection, Postgres};
 ///     &mut **sql
 /// }
 /// ```
+/// The native helper dispatch remains crate-private:
+/// ```compile_fail,E0624
+/// fn extract<'a>(sql: &'a mut batter_sqlx::PgScopedSql<'_>) -> &'a mut sqlx::PgConnection {
+///     sql.native_connection()
+/// }
+/// ```
 pub struct PgScopedSql<'a> {
     pub(crate) connection: &'a mut PgConnection,
 }
 
 impl PgScopedSql<'_> {
+    pub(crate) fn native_connection(&mut self) -> &mut PgConnection {
+        self.connection
+    }
+
     /// Borrow the same retained physical connection for a native SQLx query.
     pub fn executor(&mut self) -> impl Executor<'_, Database = Postgres> {
         &mut *self.connection

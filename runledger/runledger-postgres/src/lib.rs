@@ -459,7 +459,7 @@ pub mod prelude {
         PgSessionProfile, QueryError, QueryErrorCategory, QueryErrorKind, RequiredIntentError,
         RunledgerDatabase, SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic,
         WorkflowJobLinkTriggerProblem, ensure_schema_compatible_after_idempotency_cutover,
-        migrate_after_idempotency_cutover, run_atomic, run_atomic_with,
+        migrate_after_idempotency_cutover, run_atomic, run_atomic_fail_fast_with, run_atomic_with,
     };
 }
 
@@ -475,8 +475,8 @@ mod atomic;
 pub use atomic::{
     AcceptedIntentOutcome, AcceptedIntentState, IntentConflict, PgAtomicError, PgAtomicUncertainty,
     PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
-    PgScopeError, PgScopeFailure, PgScopeLoss, PgScopedSql, PgTransactionError,
-    RequiredIntentError, run_atomic, run_atomic_with,
+    PgScopeError, PgScopeFailure, PgScopeLoss, PgScopeRolledBack, PgScopedSql, PgTransactionError,
+    RequiredIntentError, run_atomic, run_atomic_fail_fast_with, run_atomic_with,
 };
 pub use migrations::SchemaCompatibilitySnapshot;
 

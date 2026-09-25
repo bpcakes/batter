@@ -83,6 +83,28 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### At-rest rewrap pairing assessment (`batter-t2uq`)
+
+The earlier wrapper-only rotation returned a `WrappedKey` that the caller had to
+attach to the input descriptor. Attaching it to another descriptor compiled and
+failed authentication only when used. The canonical
+`Keyring::rewrap_envelope` now authenticates once and returns the complete
+`Envelope` with the input descriptor, so ordinary rotation has no separate
+attachment step. A complete result cannot be passed directly as a `WrappedKey`
+to another envelope's composer. The old wrapper-only signature and split-part
+constructors remain for compatibility; their rustdoc marks them as lower-level
+paths, and extraction can still reintroduce the mismatch. Cross-descriptor
+authentication tests cover that deliberate escape hatch.
+
+This local shape proves only the pairing returned by that call. Decoded and
+reconstructed envelopes share the same type and may be unauthenticated; the
+method does not read the body. Storage must retain header/body association,
+compare-and-swap a complete prior header or covering revision, fence current
+key policy, and enforce durable wrapper-encryption budgets. These remote and
+application-owned effects cannot be proved by the returned Rust value. Fresh
+agent implementation and modification evaluations remain proposed and
+unexecuted for this API.
+
 ### Operation authority assessment (`batter-tc9w.1`)
 
 A cloneable context previously let a consumer cancel the shared operation or

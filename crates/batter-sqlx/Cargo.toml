@@ -34,7 +34,7 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["registry"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
-sqlx = { workspace = true, features = ["tls-rustls-ring"] }
+sqlx = { workspace = true, features = ["tls-rustls-ring", "macros"] }
 batter-test-support.workspace = true
 
 [[test]]

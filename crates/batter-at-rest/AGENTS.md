@@ -27,7 +27,7 @@
 - Version 1 is one fixed AES-256-GCM/HKDF-SHA256 suite. Do not add an algorithm flag, direct-encryption mode, compatibility shim, or second envelope path.
 - A caller cannot construct an absent or raw context. Row contexts bind owner, resource, and payload schema; tenant-token contexts bind tenant and payload schema without an invented row ID.
 - Payload AAD excludes physical storage location and wrapping-key ID. Wrapper AAD includes its key ID and the payload nonce. The two roles are domain-separated.
-- Rewrap authenticates the wrapped data key and context, preserves the content descriptor and body, returns only replacement wrapper metadata, and does not claim unread body integrity.
+- Preferred `rewrap_envelope` authenticates the wrapped data key and context, then returns the input descriptor already paired with the replacement wrapper. It never takes or inspects the body and does not claim unread body integrity. Same-key success returns the exact input header without randomness; changed-key success uses a fresh wrapping nonce. The wrapper-only `rewrap` and split-part composers are explicitly lower-level compatibility paths.
 - No raw data key or master-key accessor exists. Keyring clones share immutable secret storage. Directly owned key/plaintext buffers are zeroized where their lifecycle is clear.
 - Imported MAC bytes are final key material and never receive an implicit KDF or prefix. MAC-key clones share immutable secret storage; identity encodings and rotation policy stay with callers.
 - Public errors and `Debug` implementations must not disclose key bytes, plaintext, context identifiers, or source payloads.

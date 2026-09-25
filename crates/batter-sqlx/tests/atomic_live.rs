@@ -3,6 +3,14 @@
 mod cancellation;
 #[path = "atomic_live/commit.rs"]
 mod commit;
+#[path = "atomic_live/fail_fast.rs"]
+mod fail_fast;
+#[path = "atomic_live/fail_fast_context.rs"]
+mod fail_fast_context;
+#[path = "atomic_live/fail_fast_loss.rs"]
+mod fail_fast_loss;
+#[path = "atomic_live/fail_fast_profile.rs"]
+mod fail_fast_profile;
 #[path = "atomic_live/poison.rs"]
 mod poison;
 #[path = "atomic_live/policy.rs"]
@@ -21,6 +29,10 @@ mod profile_timeout_expiry;
 mod profile_timeouts;
 #[path = "atomic_live/profiled_pool.rs"]
 mod profiled_pool;
+#[path = "atomic_live/query_helpers.rs"]
+mod query_helpers;
+#[path = "atomic_live/query_pool.rs"]
+mod query_pool;
 #[path = "atomic_live/runner.rs"]
 mod runner;
 #[path = "atomic_live/session_state.rs"]

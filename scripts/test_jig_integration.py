@@ -14,6 +14,13 @@ import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# The freshness fixture replaces these configured commands with execution
+# counters; VERIFIED_TARGETS are the counted working-file targets of `verify`.
+COUNTED_COMMANDS = ["api_clippy", "api_fmt", "api_test", "api_test_locked", "api_docs",
+                    "api_http_smoke", "api_no_default_features", "api_doctest",
+                    "api_consumers", "api_runlimit", "repo_script_tests"]
+VERIFIED_TARGETS = ["clippy", "fmt", "test", "no-default-features", "doctest", "consumers",
+                    "runlimit", "script-tests", "docs", "http-smoke"]
 
 
 class JigIntegrationTests(unittest.TestCase):
@@ -122,11 +129,13 @@ class JigIntegrationTests(unittest.TestCase):
         )
         config = self.repo / ".jig.toml"
         text = config.read_text()
-        for label in ["clippy", "fmt", "test", "test_locked", "docs", "http_smoke"]:
-            text = re.sub(rf'^api_{label}_command = .*$',
-                          lambda _, label=label: f'api_{label}_command = '
-                          + json.dumps(f"python3 scripts/fixture_check.py {label}"),
-                          text, flags=re.MULTILINE)
+        for name in COUNTED_COMMANDS:
+            label = name.split("_", 1)[1]
+            text, replaced = re.subn(rf'^{name}_command = .*$',
+                                     lambda _, name=name, label=label: f'{name}_command = '
+                                     + json.dumps(f"python3 scripts/fixture_check.py {label}"),
+                                     text, flags=re.MULTILINE)
+            self.assertEqual(replaced, 1, name)
         config.write_text(text)
         for name, content in {
             "crates/example/src/lib.rs": "pub fn example() {}\n",
@@ -177,7 +186,7 @@ class JigIntegrationTests(unittest.TestCase):
                 else:
                     self.commit("tracker closeout")
                 current = self.freshness_check(plan)
-                for action in ["clippy", "fmt", "test", "docs", "http-smoke"]:
+                for action in VERIFIED_TARGETS:
                     self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
                     self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
                     self.assertEqual(current[action]["disposition"], "reused")
@@ -192,8 +201,8 @@ class JigIntegrationTests(unittest.TestCase):
             text=True, capture_output=True, timeout=60,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for action in ["clippy", "fmt", "test", "docs", "http_smoke"]:
-            self.assertEqual(self.execution_count(action), 1)
+        for action in VERIFIED_TARGETS:
+            self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
 
     def test_verify_wrapper_reuses_complete_profile_and_fails_on_smoke_error(self):
         plan = self.prepare_freshness()
@@ -203,8 +212,8 @@ class JigIntegrationTests(unittest.TestCase):
             result = subprocess.run(command, cwd=self.repo, env=env,
                                     text=True, capture_output=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for action in ["clippy", "fmt", "test", "docs", "http_smoke"]:
-            self.assertEqual(self.execution_count(action), 1)
+        for action in VERIFIED_TARGETS:
+            self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
         runner = self.repo / "scripts/fixture_check.py"
         runner.write_text(runner.read_text() +
                           "if sys.argv[1] == 'http_smoke': sys.exit(9)\n")
@@ -230,15 +239,99 @@ class JigIntegrationTests(unittest.TestCase):
                 self.assertNotEqual(current["test"]["receipt_id"], previous["test"]["receipt_id"])
                 previous = current
 
+    def test_narrow_parts_ignore_edits_outside_their_scope(self):
+        plan = self.prepare_freshness()
+        self.freshness_check(plan)
+        expected = {"test": 1, "runlimit": 1, "script_tests": 1}
+        for name, reruns in [("crates/example/src/lib.rs", {"test"}),
+                             ("runlimit/runlimit-core/src/lib.rs", {"test", "runlimit"}),
+                             ("scripts/example_helper.py", {"test", "runlimit", "script_tests"})]:
+            with self.subTest(path=name):
+                path = self.repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text((path.read_text() if path.exists() else "") + "\n")
+                self.freshness_check(plan)
+                for label in expected:
+                    expected[label] += label in reruns
+                    self.assertEqual(self.execution_count(label), expected[label], label)
+
+    def test_failed_part_reruns_alone(self):
+        plan = self.prepare_freshness()
+        runner = self.repo / "scripts/fixture_check.py"
+        # The marker lives under .agent/, outside every source identity.
+        runner.write_text(runner.read_text() +
+                          "if sys.argv[1] == 'consumers' and Path('.agent/fail-part').exists():\n"
+                          "    sys.exit(9)\n")
+        marker = self.repo / ".agent/fail-part"
+        marker.touch()
+        result = subprocess.run([str(self.runtime), "--json", "work", "check", "--plan-id", plan],
+                                cwd=self.repo, env=self.env, text=True, capture_output=True,
+                                timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("api:consumers (failure)", result.stdout)
+        marker.unlink()
+        self.freshness_check(plan)
+        for action in VERIFIED_TARGETS:
+            self.assertEqual(self.execution_count(action.replace("-", "_")),
+                             2 if action == "consumers" else 1, action)
+
     def test_native_policy_refresh_does_not_execute_rust_targets(self):
         plan = self.prepare_freshness()
         original = self.freshness_check(plan)
         (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
         self.jig("check", "repo:file-budget", "--plan-id", plan)
         current = self.freshness_check(plan)
-        for action in ["clippy", "fmt", "test", "docs", "http-smoke"]:
+        for action in VERIFIED_TARGETS:
             self.assertEqual(self.execution_count(action.replace("-", "_")), 1)
             self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+
+    def test_uncommitted_tracker_edits_preserve_policy_receipts(self):
+        plan = self.prepare_freshness()
+        original = self.freshness_check(plan)
+        (self.repo / ".beads/issues.jsonl").write_text('{"status":"closed"}\n')
+        for state in ["dirty", "staged"]:
+            with self.subTest(state=state):
+                if state == "staged":
+                    self.git("add", ".beads")
+                current = self.freshness_check(plan)
+                for action, entry in original.items():
+                    self.assertEqual(current[action]["receipt_id"], entry["receipt_id"])
+        # A commit moves HEAD, which the Git-authority policy checks still bind.
+        self.commit("tracker closeout")
+        current = self.freshness_check(plan)
+        for action in ["contract", "file-budget"]:
+            self.assertNotEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+        for action in VERIFIED_TARGETS:
+            self.assertEqual(current[action]["receipt_id"], original[action]["receipt_id"])
+
+    def check_with_tracker_write(self, *, declared):
+        if not declared:
+            config = self.repo / ".jig.toml"
+            text = config.read_text()
+            self.assertIn('receipt_metadata = ["beads"]\n', text)
+            config.write_text(text.replace('receipt_metadata = ["beads"]\n', ""))
+        plan = self.prepare_freshness()
+        runner = self.repo / "scripts/fixture_check.py"
+        runner.write_text(runner.read_text() + (
+            "if sys.argv[1] == 'test':\n"
+            "    with Path('.beads/issues.jsonl').open('a') as tracker:\n"
+            "        tracker.write('{\"status\":\"in_progress\"}\\n')\n"
+        ))
+        return subprocess.run([str(self.runtime), "--json", "work", "check", "--plan-id", plan],
+                              cwd=self.repo, env=self.env, text=True, capture_output=True,
+                              timeout=60)
+
+    def test_tracker_writes_during_a_check_do_not_fail_it(self):
+        result = self.check_with_tracker_write(declared=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"], result.stdout)
+
+    def test_undeclared_tracker_writes_fail_the_running_batch(self):
+        result = self.check_with_tracker_write(declared=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("api:test (failure)", result.stdout)
+        receipts = (self.repo / ".agent/state/receipts.jsonl").read_text()
+        self.assertIn("worktree fingerprint changed", receipts)
 
     def test_restored_runtime_cache_runs_without_cargo(self):
         cache = self.runtime.parent.parent

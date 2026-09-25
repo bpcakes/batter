@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the locked core/workspace test matrix with concurrent runtime passes."""
+"""Run one part of the locked verification matrix; each part is one Jig target."""
 
 import argparse
 from pathlib import Path
@@ -10,14 +10,12 @@ from parallel_process import render_outcomes, run_parallel
 ROOT = Path(__file__).resolve().parent.parent
 CORE_CHECK = ["cargo", "check", "-p", "batter-core", "--lib", "--no-default-features", "--locked"]
 FACADE_CHECK = ["cargo", "check", "-p", "batter", "--lib", "--no-default-features", "--locked"]
-RUNTIME_TESTS = [
-    ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"],
-    ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"],
-    # A clean developer shell must not hide ambient-state dependencies in tests.
-    ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
-     "PGPASSWORD=parent-secret-marker", "cargo", "test", "-p",
-     "batter-example-reference-service", "--test", "configuration", "--locked"],
-]
+CORE_TESTS = ["cargo", "test", "-p", "batter-core", "--no-default-features", "--lib", "--tests", "--locked"]
+WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targets", "--locked"]
+# A clean developer shell must not hide ambient-state dependencies in tests.
+HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
+                         "PGPASSWORD=parent-secret-marker", "cargo", "test", "-p",
+                         "batter-example-reference-service", "--test", "configuration", "--locked"]
 DOC_TESTS = ["cargo", "test", "--workspace", "--all-features", "--doc", "--locked"]
 RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                 "-p", "test_parallel_process.py", "-v"]
@@ -47,20 +45,39 @@ FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
 
+def parts():
+    """Map each part to ordered batches; a failed batch stops only its own part.
+
+    Jig runs the parts concurrently with one receipt each, so their exhaustive
+    input scopes must cover every file their commands read. Python controls that
+    read repository files belong to the part whose scope covers those files;
+    `scripts` holds only controls confined to `scripts/`.
+    """
+    return {
+        "workspace": [(["workspace-tests", "configuration-hostile-environment", "reference-runner-controls"],
+                       [WORKSPACE_TESTS, HOSTILE_CONFIGURATION, REFERENCE_RUNNER_TESTS])],
+        "no-default-features": [(["core-library", "facade-library", "core-tests"],
+                                 [CORE_CHECK, FACADE_CHECK, CORE_TESTS])],
+        "doctests": [(["doctests"], [DOC_TESTS])],
+        # Consumer builds use private target directories. Two batches bound the
+        # concurrent builds and keep the shared facade cache users apart.
+        "consumers": [(["facade-feature-controls", "runledger-consumer", "runledger-workspace", "runledger-graph-controls"],
+                       [FACADE_FEATURES, RUNLEDGER_CONSUMER, RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS]),
+                      (["facade-cache-controls", "runlimit-consumer", "runlimit-isolated-features", "runledger-tool-controls"],
+                       [FACADE_CACHE_CONTROLS, RUNLIMIT_CONSUMER, RUNLIMIT_FEATURES, RUNLEDGER_TOOL_CONTROLS])],
+        "runlimit": [(["runlimit-default", "runlimit-release", "runlimit-workspace"],
+                      [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
+        "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
+                     [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
+                    (["runlimit-consumer-controls"], [RUNLIMIT_CONSUMER_CONTROLS])],
+    }
+
+
 def main():
-    argparse.ArgumentParser(description=__doc__).parse_args()
-    for labels, commands in [(["core-library", "facade-library", "runner-controls", "smoke-controls"],
-                              [CORE_CHECK, FACADE_CHECK, RUNNER_TESTS, SMOKE_TESTS]),
-                             (["reference-runner-controls", "sqlx-runner-controls", "facade-feature-controls", "facade-cache-controls"],
-                              [REFERENCE_RUNNER_TESTS, SQLX_RUNNER_TESTS, FACADE_FEATURES, FACADE_CACHE_CONTROLS]),
-                             (["runledger-workspace", "runledger-graph-controls", "runledger-consumer", "runledger-tool-controls"],
-                              [RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS, RUNLEDGER_CONSUMER, RUNLEDGER_TOOL_CONTROLS]),
-                             (["core-tests", "workspace-tests", "configuration-hostile-environment"], RUNTIME_TESTS),
-                             (["doctests"], [DOC_TESTS]),
-                             (["runlimit-isolated-features", "runlimit-workspace", "runlimit-controls", "runlimit-default"],
-                              [RUNLIMIT_FEATURES, RUNLIMIT_GRAPH, RUNLIMIT_CONTROLS, RUNLIMIT_DEFAULT]),
-                             (["runlimit-release", "runlimit-consumer", "runlimit-consumer-controls"],
-                              [RUNLIMIT_RELEASE, RUNLIMIT_CONSUMER, RUNLIMIT_CONSUMER_CONTROLS])]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("part", choices=sorted(parts()))
+    selected = parser.parse_args().part
+    for labels, commands in parts()[selected]:
         print(f"Running {', '.join(labels)}", file=sys.stderr, flush=True)
         outcomes = run_parallel(commands, timeout=1500, output_limit=8 * 1024 * 1024,
                                 cwd=ROOT, retain_tail=True)

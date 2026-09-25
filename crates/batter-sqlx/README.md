@@ -61,12 +61,72 @@ returning runners remain source compatible. See the policy runner rustdoc for a
 complete generic consumer example and `tests/atomic_live/policy.rs` for a concrete
 policy that retains each uncertain outcome.
 
-Each application operation owns a private savepoint and validates the original
+For a single native query, scopes expose `fetch_one`, `fetch_optional`, `fetch_all`
+and `execute`. Pass the SQLx query value directly:
+
+```rust,ignore
+let row = scope.fetch_one(sqlx::query!(
+    "SELECT $1::bigint AS \"value!\"", 42_i64
+)).await?;
+let value = scope.fetch_one(sqlx::query_scalar!(
+    "SELECT 42::bigint AS \"value!\""
+)).await?;
+```
+
+`PgNativeQuery` is sealed and accepts SQLx0.9 `Query`, `Map` and `QueryScalar`,
+including `query!`, `query_as!` and `query_scalar!` results. Macros retain SQLx's
+compile-time checking against live or offline metadata. Runtime constructors
+produce the same types and remain usable without gaining compile-time checking.
+Fetch helpers preserve row mapping and decode errors; `fetch_one` retains
+`RowNotFound`, `fetch_optional` returns `None`, and `fetch_all` collects a native
+in-memory vector. `execute` discards rows and mappers, including mapped/scalar
+queries, and returns `PgQueryResult`. Helpers retain the runner's selected
+recovery mode, statement counts, first loss cause and provisional-output rules.
+They exist on `PgAtomicScope`, `PgPolicyScope` and native Runledger's policy phases.
+There is one boxed dispatch future per helper call; SQL and output types are not
+erased. Existing closure APIs remain available for multi-query operations.
+
+For independent pooled queries, construct a `PgQueryHandle::within` with the pool,
+parent `OperationContext`, positive maximum duration, static operation label and
+one `Fn(OperationError<sqlx::Error>) -> E` mapper. All four helpers then return
+`Result<_, E>`. The handle owns one parent-clamped deadline across calls; it does
+not reset a timeout for each query. Construction and unpolled helper futures do
+not acquire a connection. Each call owns acquisition, query and the existing
+BEGIN/ROLLBACK pool-return handshake within that budget. Failed or interrupted
+work retires its lease. Observed native results survive cleanup failure or
+cancellation; interrupted cleanup retires the connection. No observed result
+means interruption, never proof of no effect or permission to retry. Pool-return
+cleanup resets transaction state, not arbitrary session settings or locks. Use
+atomic runners for multi-query transaction disposition. See `PgQueryHandle`
+rustdoc for a complete example; native macro cases live in
+`tests/atomic_live/{query_helpers,query_pool}.rs`.
+
+Each recoverable application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
 terminal failure or cancellation consumes the usable owner even when the body
 catches the error or abandons an inner future. There is no await after completion
 acknowledgement. Arbitrary SQL and captured external side effects are not a sandbox:
 explicit COMMIT can have irreversible effects, but cannot yield canonical success.
+
+For whole-transaction rejection, select `run_atomic_fail_fast_with` (or its
+profiled and budgeted variants). Successful `scope.sql` calls run the body and one
+validation: two statements for a one-query unprofiled call, three when profiled.
+There is one private guard at transaction setup, with no savepoint per successful
+call. An ordinary SQL/application error rolls back all prior transaction writes
+before returning the original error. Failed recovery, changed transaction identity,
+transport loss and abandoned work remain uncertain outcomes handled by the policy.
+The guard permits recovery from PostgreSQL's failed-transaction state before
+checking original transaction identity; a bare ROLLBACK cannot prove that identity.
+
+The fast runner requires `Error: From<PgScopeRolledBack>`. If the callback catches
+a rejection, later SQL is refused and an outer `Ok` becomes this known-rollback
+error. The evidence is unforgeable; the original error already belongs to the
+callback and need not implement Clone. `scope.recoverable_sql(...)` explicitly
+selects a per-operation savepoint when recovery is wanted. It cannot revive a
+closed transaction. Application-created savepoints may persist between successful
+fast calls; recoverable calls still release nested savepoints with their private
+parent. Native Runledger's `run_atomic_fail_fast_with` applies the same behavior
+to SQL and named intent/queue operations without changing their phase ordering.
 
 Every atomic and snapshot completion retires its physical connection, including
 acknowledged commit/rollback. Acquisition executes ROLLBACK, clears SQLx's statement
@@ -86,7 +146,7 @@ scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
 
 Profile validation reads roles, path, every declared schema/timeout/setting and
-atomic continuity in one SQL statement. Successful atomic operations validate
+atomic continuity in one SQL statement. Successful recoverable operations validate
 once after the body, then await RELEASE without another validation. Unprofiled
 operations omit the opening check because the opaque owner has run no arbitrary
 SQL since birth or its previous validation. Profiled operations retain an opening

@@ -8,6 +8,23 @@ fn foundation_paths_remain_available_with_any_facade_feature_set() {
     let _: Option<batter_core::operation::OperationContext> = None;
 }
 
+#[cfg(feature = "at-rest")]
+#[test]
+fn at_rest_facade_rotates_a_complete_direct_package_envelope() -> Result<(), batter::at_rest::Error>
+{
+    use batter::at_rest::{Context, KeyId, Keyring, SecretKey};
+
+    let id = KeyId::new("current")?;
+    let keyring = Keyring::new(id.clone(), [(id, SecretKey::from_bytes([7; 32]))])?;
+    let context = Context::for_row("example", "record", b"owner", b"item", "bytes-v1")?;
+    let sealed = keyring.seal(&context, b"payload")?;
+    let replacement: batter_at_rest::Envelope =
+        keyring.rewrap_envelope(&context, sealed.envelope())?;
+
+    assert_eq!(replacement, *sealed.envelope());
+    Ok(())
+}
+
 #[cfg(feature = "axum")]
 #[test]
 fn axum_namespace_reexports_the_direct_adapter_types() {
