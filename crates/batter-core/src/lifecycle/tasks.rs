@@ -112,9 +112,9 @@ impl TaskSet {
         requested
     }
 
-    // None means a successful finite completion or expected critical stop.
+    // A `None` cause means a successful finite completion or expected critical stop.
     // Actual failures are retained and initiate shutdown before drain.
-    fn record(&mut self, result: TaskResult) -> Option<ShutdownCause> {
+    fn record(&mut self, result: TaskResult) -> RecordedExit {
         let (id, mut outcome, error) = classify_task_result(result);
         let TaskMetadata { name, finite, .. } = self
             .names
@@ -123,12 +123,16 @@ impl TaskSet {
         if finite && outcome == TaskOutcome::Stopped {
             outcome = TaskOutcome::Completed;
         }
-        #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::task(finite, name, outcome);
+        let exit = |cause| RecordedExit {
+            cause,
+            name,
+            finite,
+            outcome,
+        };
         if outcome == TaskOutcome::Completed {
             self.completed = self.completed.saturating_add(1);
             tracing::debug!(target: "batter", task = name, ?outcome, "process task exit observed");
-            return None;
+            return exit(None);
         }
         let record = TaskRecord {
             name,
@@ -137,13 +141,13 @@ impl TaskSet {
         };
         record.log_observation();
         self.records.push(record);
-        if outcome == TaskOutcome::Stopped {
+        exit(if outcome == TaskOutcome::Stopped {
             None
         } else if finite {
             Some(ShutdownCause::FiniteTaskExit(name))
         } else {
             Some(ShutdownCause::ComponentExit(name))
-        }
+        })
     }
 
     fn record_exit(
@@ -151,11 +155,14 @@ impl TaskSet {
         result: TaskResult,
         coordinator: &LifecycleCoordinator,
     ) -> Option<ShutdownCause> {
-        let cause = self.record(result);
-        if cause.is_some() {
+        let exit = self.record(result);
+        if exit.cause.is_some() {
             coordinator.shared.fail_task();
         }
-        cause
+        // Recorder code runs only after a failure has closed admission.
+        #[cfg(feature = "metrics")]
+        crate::telemetry::metrics::task(exit.finite, exit.name, exit.outcome);
+        exit.cause
     }
 
     pub(super) fn collect_ready(&mut self, coordinator: &LifecycleCoordinator) {
@@ -255,4 +262,13 @@ fn classify_task_result(result: TaskResult) -> (Id, TaskOutcome, Option<BoxError
             (error.id(), outcome, Some(Box::new(error) as BoxError))
         }
     }
+}
+
+/// One observed direct-task exit and the shutdown cause it selects, if any.
+#[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+struct RecordedExit {
+    cause: Option<ShutdownCause>,
+    name: &'static str,
+    finite: bool,
+    outcome: TaskOutcome,
 }

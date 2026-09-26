@@ -103,38 +103,34 @@ impl Bulkhead {
         // caller abandons this future before admission completes.
         #[cfg(feature = "metrics")]
         let mut decision = crate::telemetry::metrics::BulkheadTerminal::new();
-        let result = self.admit(context, admission).await;
+        let result = match context.check() {
+            Err(reason) => Err(AdmissionError::Interrupted(reason)),
+            Ok(()) => {
+                let semaphore = self.semaphore.clone();
+                match admission {
+                    Admission::Reject => {
+                        semaphore.try_acquire_owned().map_err(|error| match error {
+                            TryAcquireError::NoPermits => AdmissionError::Overloaded,
+                            TryAcquireError::Closed => AdmissionError::Closed,
+                        })
+                    }
+                    Admission::Wait => match context
+                        .run_internal("batter.admission", |_| async move {
+                            semaphore.acquire_owned().await
+                        })
+                        .await
+                    {
+                        Ok(permit) => Ok(permit),
+                        Err(OperationError::Failed(_)) => Err(AdmissionError::Closed),
+                        Err(OperationError::Interrupted(reason)) => {
+                            Err(AdmissionError::Interrupted(reason))
+                        }
+                    },
+                }
+            }
+        };
         #[cfg(feature = "metrics")]
         decision.finish(&result);
         result
-    }
-
-    async fn admit(
-        &self,
-        context: &OperationContext,
-        admission: Admission,
-    ) -> Result<OwnedSemaphorePermit, AdmissionError> {
-        context.check()?;
-        let semaphore = self.semaphore.clone();
-        match admission {
-            Admission::Reject => semaphore.try_acquire_owned().map_err(|error| match error {
-                TryAcquireError::NoPermits => AdmissionError::Overloaded,
-                TryAcquireError::Closed => AdmissionError::Closed,
-            }),
-            Admission::Wait => {
-                match context
-                    .run_internal("batter.admission", |_| async move {
-                        semaphore.acquire_owned().await
-                    })
-                    .await
-                {
-                    Ok(permit) => Ok(permit),
-                    Err(OperationError::Failed(_)) => Err(AdmissionError::Closed),
-                    Err(OperationError::Interrupted(reason)) => {
-                        Err(AdmissionError::Interrupted(reason))
-                    }
-                }
-            }
-        }
     }
 }

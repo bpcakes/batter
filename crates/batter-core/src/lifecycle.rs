@@ -503,6 +503,10 @@ impl Supervisor {
     where
         F: Future<Output = ()>,
     {
+        // Armed before any work so an abandoned or unwinding driver still
+        // records exactly one shutdown.
+        #[cfg(feature = "metrics")]
+        let mut terminal = crate::telemetry::metrics::ShutdownTerminal::new();
         self.coordinator.shared.start_driver();
         let mut tasks = TaskSet::default();
         let mut managed = Vec::new();
@@ -523,7 +527,7 @@ impl Supervisor {
         let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
         #[cfg(feature = "metrics")]
-        let drain_started = tokio::time::Instant::now();
+        terminal.draining(cause);
         tasks
             .collect_until(&mut self.queued, &self.coordinator, drain)
             .await;
@@ -573,7 +577,7 @@ impl Supervisor {
         // Record before Stopped is published: an application root may flush
         // its exporter as soon as it observes the stopped state.
         #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::shutdown(cause, report.is_success(), drain_started.elapsed());
+        terminal.finish(report.is_success());
         self.coordinator.shared.stop_driver();
         report
     }

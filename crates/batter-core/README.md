@@ -55,10 +55,19 @@ Keep observations and nested spans inside that future; it does not capture or
 enter the current span. The helper does not spawn
 work, add `Send` or `'static` bounds, or make cancellation run asynchronous cleanup.
 
+The opt-in `metrics` feature records bounded-cardinality outcome metrics for
+operations, retries, admission, task exits, cleanup and shutdown through the
+`metrics` 0.24 facade, re-exported as `batter_core::telemetry::metrics::facade`.
+Install the recorder or exporter at the application root on that same major
+version; a recorder built on another `metrics` version receives nothing. Label
+values come from closed vocabularies and fixed name tables, and Batter owns no
+metric buffer, queue, retry or flush. See `telemetry::metrics` for the catalog.
+
 From the workspace root:
 
 ```sh
 cargo test -p batter-core --locked
+cargo test -p batter-core --features metrics --locked
 cargo test -p batter-core --doc --locked
 ```
 

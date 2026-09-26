@@ -125,8 +125,11 @@ decision, observed task exit, cleanup hook and supervisor shutdown exactly once
 into the application's `metrics` 0.24 recorder (re-exported as
 `telemetry::metrics::facade`; a recorder on another major version receives
 nothing), after the result is known and outside admission locks. Polled but
-dropped operations, retry executions and admission waits, and abandoned cleanup
-hooks, record `dropped`; a future dropped before its first poll records nothing.
+dropped operations, retry executions, admission waits and supervisor drives
+record `dropped`, or `panicked` when destroyed during unwinding; an unclosed
+cleanup stack records its hooks as `dropped`; other futures dropped before
+their first poll record nothing. A retry attempt counts only once its factory
+is invoked.
 Foundation-owned waits (admission, backoff) are not counted as operations,
 while adapter boundaries such as `http.response_construction` are. Shutdown is
 recorded before `Stopped` is published; a startup that fails before its running

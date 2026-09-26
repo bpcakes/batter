@@ -1,67 +1,69 @@
-//! Closed label vocabularies, each defined once.
-//!
-//! Every domain is one exhaustive match whose published value list is
-//! generated from the same arms, so a new enum variant cannot compile until it
-//! has a label, and that label is then part of the documented domain.
+//! Closed label vocabularies, each defined once with `closed_domain!`.
 
-use super::CleanupHook;
+use super::{AdmissionKind, CleanupHook, Coalesce, NameDomain, ShutdownEnd};
 use crate::{
     admission::AdmissionError,
     cleanup::CleanupOutcome,
     lifecycle::{ProcessAdmissionError, Readiness, ShutdownCause, TaskOutcome},
     operation::Interruption,
     retry::{RetryExecutionError, StopReason},
-    telemetry::Outcome,
+    telemetry::{OUTCOME_LABELS, Outcome, outcome_label},
 };
 
-macro_rules! closed_domain {
-    (
-        $(#[$doc:meta])*
-        $values:ident, fn $label:ident $(<$generic:ident>)? ($value:ident: $input:ty) {
-            $($pattern:pat => $text:literal,)+
-        }
-    ) => {
-        $(#[$doc])*
-        pub const $values: &[&str] = &[$($text),+];
+/// Metric-only outcome for an operation destroyed while its thread unwinds.
+const PANICKED: &str = "panicked";
 
-        pub(super) fn $label $(<$generic>)? ($value: $input) -> &'static str {
-            match $value {
-                $($pattern => $text,)+
-            }
-        }
-    };
-}
+const OUTCOME_VALUES: usize = OUTCOME_LABELS.len() + 1;
 
-closed_domain! {
-    /// Values of the `outcome` label on operation and attempt metrics.
-    OUTCOMES, fn outcome(value: Outcome) {
-        Outcome::Succeeded => "succeeded",
-        Outcome::Failed => "failed",
-        Outcome::Cancelled => "cancelled",
-        Outcome::DeadlineExceeded => "deadline_exceeded",
-        Outcome::Dropped => "dropped",
+/// Values of the `outcome` label on operation and attempt metrics: the
+/// tracing outcome spellings plus `panicked`, which distinguishes a boundary
+/// destroyed during unwinding from one abandoned by its caller.
+pub const OUTCOMES: [&str; OUTCOME_VALUES] = {
+    let mut values = [PANICKED; OUTCOME_VALUES];
+    let mut index = 0;
+    while index < OUTCOME_LABELS.len() {
+        values[index] = OUTCOME_LABELS[index];
+        index += 1;
+    }
+    values
+};
+
+pub(super) const fn outcome(value: Outcome, unwinding: bool) -> &'static str {
+    match (value, unwinding) {
+        (Outcome::Dropped, true) => PANICKED,
+        (value, _) => outcome_label(value),
     }
 }
 
 closed_domain! {
     /// Values of the `result` label on [`super::RETRY_EXECUTIONS`].
-    RETRY_RESULTS, fn retry<E>(value: Option<Result<(), &RetryExecutionError<E>>>) {
-        Some(Ok(())) => "succeeded",
-        Some(Err(RetryExecutionError::Stopped { reason: StopReason::NotRetryable, .. })) => "not_retryable",
-        Some(Err(RetryExecutionError::Stopped { reason: StopReason::ReplayForbidden, .. })) => "replay_forbidden",
-        Some(Err(RetryExecutionError::Stopped { reason: StopReason::AttemptsExhausted, .. })) => "attempts_exhausted",
-        Some(Err(RetryExecutionError::Stopped { reason: StopReason::InsufficientBudget, .. })) => "insufficient_budget",
-        Some(Err(RetryExecutionError::Interrupted { reason: Interruption::Cancelled, .. })) => "cancelled",
-        Some(Err(RetryExecutionError::Interrupted { reason: Interruption::DeadlineExceeded, .. })) => "deadline_exceeded",
-        Some(Err(RetryExecutionError::AttemptDeadlineExceeded { .. })) => "attempt_deadline_exceeded",
-        None => "dropped",
+    pub RETRY_RESULTS, fn retry<E>(value: (Option<Result<(), &RetryExecutionError<E>>>, bool)) {
+        (Some(Ok(())), _) => "succeeded",
+        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::NotRetryable, .. })), _) => "not_retryable",
+        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::ReplayForbidden, .. })), _) => "replay_forbidden",
+        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::AttemptsExhausted, .. })), _) => "attempts_exhausted",
+        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::InsufficientBudget, .. })), _) => "insufficient_budget",
+        (Some(Err(RetryExecutionError::Interrupted { reason: Interruption::Cancelled, .. })), _) => "cancelled",
+        (Some(Err(RetryExecutionError::Interrupted { reason: Interruption::DeadlineExceeded, .. })), _) => "deadline_exceeded",
+        (Some(Err(RetryExecutionError::AttemptDeadlineExceeded { .. })), _) => "attempt_deadline_exceeded",
+        (None, false) => "dropped",
+        (None, true) => "panicked",
+    }
+}
+
+closed_domain! {
+    /// Values of the `admission` label on [`super::ADMISSION_DECISIONS`].
+    pub ADMISSIONS, fn admission_kind(value: AdmissionKind) {
+        AdmissionKind::Bulkhead => "bulkhead",
+        AdmissionKind::Process => "process",
+        AdmissionKind::Root => "root",
     }
 }
 
 closed_domain! {
     /// `decision` values for `admission="bulkhead"`. `dropped` is a polled
     /// `enter` future destroyed before its decision.
-    BULKHEAD_DECISIONS, fn bulkhead(value: Option<Result<(), &AdmissionError>>) {
+    pub BULKHEAD_DECISIONS, fn bulkhead(value: Option<Result<(), &AdmissionError>>) {
         Some(Ok(())) => "admitted",
         Some(Err(AdmissionError::Overloaded)) => "overloaded",
         Some(Err(AdmissionError::Closed)) => "closed",
@@ -73,7 +75,7 @@ closed_domain! {
 
 closed_domain! {
     /// `decision` values for `admission="process"`.
-    PROCESS_DECISIONS, fn process(value: Result<(), &ProcessAdmissionError>) {
+    pub PROCESS_DECISIONS, fn process(value: Result<(), &ProcessAdmissionError>) {
         Ok(()) => "admitted",
         Err(ProcessAdmissionError::NotRunning) => "not_running",
         Err(ProcessAdmissionError::NotReady) => "not_ready",
@@ -87,7 +89,7 @@ closed_domain! {
     /// `decision` values for `admission="root"`, the lifecycle gate of
     /// [`crate::lifecycle::OperationAdmission::admit_root`]: the observed
     /// readiness, which admits only when ready.
-    ROOT_DECISIONS, fn root(value: Readiness) {
+    pub ROOT_DECISIONS, fn root(value: Readiness) {
         Readiness::Ready => "admitted",
         Readiness::Starting => "starting",
         Readiness::Draining => "draining",
@@ -97,7 +99,7 @@ closed_domain! {
 
 closed_domain! {
     /// Values of the `kind` label on [`super::TASK_EXITS`].
-    TASK_KINDS, fn task_kind(finite: bool) {
+    pub TASK_KINDS, fn task_kind(finite: bool) {
         false => "component",
         true => "process",
     }
@@ -105,7 +107,7 @@ closed_domain! {
 
 closed_domain! {
     /// Values of the `outcome` label on [`super::TASK_EXITS`].
-    TASK_OUTCOMES, fn task_outcome(value: TaskOutcome) {
+    pub TASK_OUTCOMES, fn task_outcome(value: TaskOutcome) {
         TaskOutcome::Completed => "completed",
         TaskOutcome::Stopped => "stopped",
         TaskOutcome::UnexpectedExit => "unexpected_exit",
@@ -117,9 +119,9 @@ closed_domain! {
 
 closed_domain! {
     /// Values of the `outcome` label on [`super::CLEANUP_HOOKS`]. `dropped`
-    /// counts hooks abandoned by dropping an unclosed stack or an in-flight
-    /// close driver.
-    CLEANUP_OUTCOMES, fn cleanup(value: CleanupHook) {
+    /// counts registered hooks that never ran because their stack or in-flight
+    /// close driver was destroyed.
+    pub CLEANUP_OUTCOMES, fn cleanup(value: CleanupHook) {
         CleanupHook::Observed(CleanupOutcome::Succeeded) => "succeeded",
         CleanupHook::Observed(CleanupOutcome::Failed) => "failed",
         CleanupHook::Observed(CleanupOutcome::Panicked) => "panicked",
@@ -132,19 +134,41 @@ closed_domain! {
 }
 
 closed_domain! {
-    /// Values of the `cause` label on [`super::SHUTDOWNS`].
-    SHUTDOWN_CAUSES, fn shutdown_cause(value: ShutdownCause) {
-        ShutdownCause::Requested => "requested",
-        ShutdownCause::ComponentExit(_) => "component_exit",
-        ShutdownCause::FiniteTaskExit(_) => "finite_task_exit",
-        ShutdownCause::EmptySupervisor => "empty_supervisor",
+    /// Values of the `cause` label on [`super::SHUTDOWNS`]. `none` is a driver
+    /// destroyed before it selected a shutdown cause.
+    pub SHUTDOWN_CAUSES, fn shutdown_cause(value: Option<ShutdownCause>) {
+        Some(ShutdownCause::Requested) => "requested",
+        Some(ShutdownCause::ComponentExit(_)) => "component_exit",
+        Some(ShutdownCause::FiniteTaskExit(_)) => "finite_task_exit",
+        Some(ShutdownCause::EmptySupervisor) => "empty_supervisor",
+        None => "none",
     }
 }
 
 closed_domain! {
-    /// Values of the `result` label on shutdown metrics.
-    SHUTDOWN_RESULTS, fn shutdown_result(success: bool) {
-        true => "success",
-        false => "failure",
+    /// Values of the `result` label on shutdown metrics: a completed report's
+    /// success, or a driver destroyed (`dropped`) or unwound (`panicked`)
+    /// before its report.
+    pub SHUTDOWN_RESULTS, fn shutdown_result(value: ShutdownEnd) {
+        ShutdownEnd::Success => "success",
+        ShutdownEnd::Failure => "failure",
+        ShutdownEnd::Dropped => "dropped",
+        ShutdownEnd::Panicked => "panicked",
+    }
+}
+
+closed_domain! {
+    /// Values of the `domain` label on [`super::LABELS_COALESCED`].
+    pub COALESCE_DOMAINS, fn name_domain(value: NameDomain) {
+        NameDomain::Operation => "operation",
+        NameDomain::Task => "task",
+    }
+}
+
+closed_domain! {
+    /// Values of the `reason` label on [`super::LABELS_COALESCED`].
+    pub COALESCE_REASONS, fn coalesce_reason(value: Coalesce) {
+        Coalesce::Invalid => "invalid",
+        Coalesce::Capacity => "capacity",
     }
 }

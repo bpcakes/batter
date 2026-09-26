@@ -622,27 +622,6 @@ where
 
 async fn execute_with_delay<T, E, F, Fut, C, D>(
     settings: ExecutionSettings<'_>,
-    delay_for: D,
-    factory: F,
-    classify: C,
-) -> Result<T, RetryExecutionError<E>>
-where
-    F: FnMut(Attempt) -> Fut,
-    Fut: Future<Output = Result<T, E>>,
-    C: FnMut(&E) -> RetryDecision,
-    D: FnMut(Duration) -> Duration,
-{
-    // One terminal result per execution, including `dropped`.
-    #[cfg(feature = "metrics")]
-    let mut terminal = crate::telemetry::metrics::RetryTerminal::new(settings.operation);
-    let result = execute_attempts(settings, delay_for, factory, classify).await;
-    #[cfg(feature = "metrics")]
-    terminal.finish(&result);
-    result
-}
-
-async fn execute_attempts<T, E, F, Fut, C, D>(
-    settings: ExecutionSettings<'_>,
     mut delay_for: D,
     mut factory: F,
     mut classify: C,
@@ -653,20 +632,23 @@ where
     C: FnMut(&E) -> RetryDecision,
     D: FnMut(Duration) -> Duration,
 {
+    // One terminal result per execution, including `dropped`/`panicked`.
+    #[cfg(feature = "metrics")]
+    let mut terminal = crate::telemetry::metrics::RetryTerminal::new(settings.operation);
     let mut attempts = 0;
     let mut last_error = None;
-    loop {
+    let result = loop {
         if let Err(reason) = settings.context.check() {
-            return Err(RetryExecutionError::Interrupted {
+            break Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error,
             });
         }
         let error = match run_attempt(&settings, &mut attempts, &mut factory).await {
-            Ok(value) => return Ok(value),
+            Ok(value) => break Ok(value),
             Err(AttemptFailure::DeadlineExceeded) => {
-                return Err(RetryExecutionError::AttemptDeadlineExceeded {
+                break Err(RetryExecutionError::AttemptDeadlineExceeded {
                     attempts,
                     last_error,
                 });
@@ -675,7 +657,7 @@ where
                 reason,
                 returned_error,
             }) => {
-                return Err(RetryExecutionError::Interrupted {
+                break Err(RetryExecutionError::Interrupted {
                     attempts,
                     reason,
                     last_error: returned_error.or(last_error),
@@ -684,7 +666,7 @@ where
             Err(AttemptFailure::Application(error)) => error,
         };
         if settings.safety == ReplaySafety::Never {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::ReplayForbidden,
                 error,
@@ -692,21 +674,21 @@ where
         }
         let decision = classify(&error);
         if decision == RetryDecision::Stop {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::NotRetryable,
                 error,
             });
         }
         if attempts >= settings.policy.max_attempts {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::AttemptsExhausted,
                 error,
             });
         }
         if let Err(reason) = settings.context.check() {
-            return Err(RetryExecutionError::Interrupted {
+            break Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error: Some(error),
@@ -718,7 +700,7 @@ where
             _ => backoff,
         };
         if delay >= settings.context.remaining() {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::InsufficientBudget,
                 error,
@@ -736,7 +718,7 @@ where
         {
             Ok(()) => {}
             Err(OperationError::Interrupted(reason)) => {
-                return Err(RetryExecutionError::Interrupted {
+                break Err(RetryExecutionError::Interrupted {
                     attempts,
                     reason,
                     last_error,
@@ -744,5 +726,8 @@ where
             }
             Err(OperationError::Failed(never)) => match never {},
         }
-    }
+    };
+    #[cfg(feature = "metrics")]
+    terminal.finish(&result);
+    result
 }

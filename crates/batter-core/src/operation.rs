@@ -227,36 +227,33 @@ impl OperationContext {
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        // Keep the ordinary boundary direct: routing it through the composite
-        // boundary adds another generic async state machine to every caller.
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             |result| result,
             operation_outcome,
             Boundary::Operation,
-        ))
+        )
         .await
     }
 
     /// Run a foundation-owned wait whose caller records its own decision.
-    pub(crate) async fn run_internal<T, E, F, Fut>(
+    pub(crate) fn run_internal<T, E, F, Fut>(
         &self,
         operation: &'static str,
         factory: F,
-    ) -> Result<T, OperationError<E>>
+    ) -> impl Future<Output = Result<T, OperationError<E>>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             |result| result,
             operation_outcome,
             Boundary::Internal,
-        ))
-        .await
+        )
     }
 
     /// Resolve retained application evidence before recording the operation outcome.
@@ -311,37 +308,56 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             resolve,
             operation_outcome,
             Boundary::Operation,
-        ))
+        )
         .await
     }
 
     /// Run one retry attempt with an outcome mapper owned by the retry boundary.
-    pub(crate) async fn run_retry_attempt<T, E, F, Fut>(
+    pub(crate) fn run_retry_attempt<T, E, F, Fut>(
         &self,
         operation: &'static str,
         factory: F,
         outcome: fn(&Result<T, OperationError<E>>) -> Outcome,
-    ) -> Result<T, OperationError<E>>
+    ) -> impl Future<Output = Result<T, OperationError<E>>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        // Capture on first poll, as with ordinary async instrumentation. The
-        // inner future owns the factory, work, and observation during drop too.
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             |result| result,
             outcome,
             Boundary::RetryAttempt,
-        ))
-        .await
+        )
+    }
+
+    /// The one observed boundary behind every `run` variant. Dispatch is
+    /// captured on first poll, as with ordinary async instrumentation, and the
+    /// returned future owns the factory, work and observation during drop too.
+    /// It is a plain function so wrappers add no extra async state machine.
+    fn observed<T, E, U, R, F, Fut, Resolve>(
+        &self,
+        operation: &'static str,
+        factory: F,
+        resolve: Resolve,
+        outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+        boundary: Boundary,
+    ) -> impl Future<Output = Result<U, OperationError<R>>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
+    {
+        crate::scoped_dispatch::scope(
+            self.run_inner(operation, factory, resolve, outcome, boundary),
+        )
     }
 
     async fn run_inner<T, E, U, R, F, Fut, Resolve>(
@@ -357,21 +373,15 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        // A retry attempt rejected by this preflight never starts its factory,
-        // so it is not a finished attempt; keep only its trace.
-        let preflight = self.check();
-        let boundary = match (boundary, preflight) {
-            (Boundary::RetryAttempt, Err(_)) => Boundary::Internal,
-            (boundary, _) => boundary,
-        };
         let mut observation = Observation::new(operation, boundary);
+        let observed = &observation;
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();
         let _cancel_on_exit = cancellation.clone().drop_guard();
         let result = async move {
             let boundary = async {
-                preflight?;
+                self.check()?;
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
@@ -380,7 +390,12 @@ impl OperationContext {
                     _ = tokio::time::sleep_until(self.deadline) => {
                         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
                     }
-                    result = async move { factory(scope).await } => {
+                    // Runs only when this branch is first polled, so an
+                    // interruption that wins the race leaves the factory unused.
+                    result = async move {
+                        observed.factory_invoked();
+                        factory(scope).await
+                    } => {
                         result.map_err(OperationError::Failed)
                     }
                 }

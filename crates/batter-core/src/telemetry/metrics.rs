@@ -27,16 +27,25 @@
 //! | [`LABELS_COALESCED`] | counter | count | `domain`, `reason` |
 //!
 //! Each boundary that has been polled increments its counter by exactly one
-//! when it finishes, including `dropped` when its future is destroyed first.
-//! A future dropped before its first poll does no work and records nothing. A
-//! whole retry execution is one [`RETRY_EXECUTIONS`] result; each attempt whose
-//! factory started is one [`RETRY_ATTEMPTS`] outcome, and neither counts as an
-//! operation. Foundation-owned waits (bulkhead waiting, retry backoff) are
+//! when it finishes, including `dropped` when its future is destroyed first and
+//! `panicked` when it is destroyed while its thread unwinds. An operation,
+//! retry, admission or supervisor-drive future dropped before its first poll
+//! does no work and records nothing. Registered cleanup hooks are different:
+//! a `CleanupStack` destroyed without closing, including one moved into a
+//! never-polled `close` future, records each hook as `dropped`, matching its
+//! existing abandonment warning. A whole retry execution is one
+//! [`RETRY_EXECUTIONS`] result. An attempt counts in [`RETRY_ATTEMPTS`] only
+//! once the boundary invokes its factory, so an interruption that wins the
+//! race first is not an attempt; neither counts as an operation. Foundation-owned waits (bulkhead waiting, retry backoff) are
 //! recorded only by their owning decision. Adapter boundaries are ordinary
 //! operations, for example `http.response_construction` for each admitted
-//! Axum request, and their names share the operation table. Shutdown is
-//! recorded before the supervisor publishes `Stopped`. A startup that fails
-//! before its running driver records its cleanup hooks, not a shutdown.
+//! Axum request, and their names share the operation table. A polled
+//! supervisor drive records one shutdown: its report's result before it
+//! publishes `Stopped`, or `dropped`/`panicked` (with cause `none` before a
+//! cause was selected) when the driver is destroyed first. A startup that fails
+//! before its running driver records its cleanup hooks, not a shutdown. Task
+//! exits are recorded after a failure closes admission, and root admission
+//! after the admission decision is complete.
 //! Histograms receive one sample per finished boundary. Aggregation, buckets,
 //! temporality and export are the recorder's policy.
 //!
@@ -109,8 +118,9 @@ mod vocabulary;
 
 pub use ::metrics as facade;
 pub use vocabulary::{
-    BULKHEAD_DECISIONS, CLEANUP_OUTCOMES, OUTCOMES, PROCESS_DECISIONS, RETRY_RESULTS,
-    ROOT_DECISIONS, SHUTDOWN_CAUSES, SHUTDOWN_RESULTS, TASK_KINDS, TASK_OUTCOMES,
+    ADMISSIONS, BULKHEAD_DECISIONS, CLEANUP_OUTCOMES, COALESCE_DOMAINS, COALESCE_REASONS, OUTCOMES,
+    PROCESS_DECISIONS, RETRY_RESULTS, ROOT_DECISIONS, SHUTDOWN_CAUSES, SHUTDOWN_RESULTS,
+    TASK_KINDS, TASK_OUTCOMES,
 };
 
 use super::{Boundary, Outcome};
@@ -123,6 +133,7 @@ use crate::{
 use metrics::{Unit, counter, describe_counter, describe_histogram, histogram};
 use names::{OPERATION_NAMES, TASK_NAMES};
 use std::time::Duration;
+use tokio::time::Instant;
 
 /// Completed operation boundaries, including dropped ones.
 pub const OPERATION_COMPLETIONS: &str = "batter_operation_completions_total";
@@ -155,16 +166,6 @@ pub const INVALID_NAME: &str = "<invalid>";
 /// Label value recorded once a name table is full; also collision-free.
 pub const OVERFLOW_NAME: &str = "<overflow>";
 
-/// Values of the `admission` label on [`ADMISSION_DECISIONS`].
-pub const ADMISSIONS: [&str; 3] = ["bulkhead", "process", "root"];
-/// `(domain, reason)` values on [`LABELS_COALESCED`].
-pub const COALESCE_REASONS: [(&str, &str); 4] = [
-    ("operation", "invalid"),
-    ("operation", "capacity"),
-    ("task", "invalid"),
-    ("task", "capacity"),
-];
-
 const NAME_VALUES: usize = NAME_CAPACITY + 2;
 
 /// Upper bound on distinct series across the whole catalog.
@@ -177,7 +178,38 @@ pub const MAX_SERIES: usize = NAME_VALUES * OUTCOMES.len() * 3
     + CLEANUP_OUTCOMES.len()
     + SHUTDOWN_CAUSES.len() * SHUTDOWN_RESULTS.len()
     + SHUTDOWN_RESULTS.len()
-    + COALESCE_REASONS.len();
+    + COALESCE_DOMAINS.len() * COALESCE_REASONS.len();
+
+/// Which admission gate made a decision.
+#[derive(Clone, Copy)]
+pub(crate) enum AdmissionKind {
+    Bulkhead,
+    Process,
+    Root,
+}
+
+/// Which name table coalesced a label.
+#[derive(Clone, Copy)]
+pub(crate) enum NameDomain {
+    Operation,
+    Task,
+}
+
+/// Why a name was replaced by a placeholder.
+#[derive(Clone, Copy)]
+pub(crate) enum Coalesce {
+    Invalid,
+    Capacity,
+}
+
+/// How a supervisor drive ended.
+#[derive(Clone, Copy)]
+pub(crate) enum ShutdownEnd {
+    Success,
+    Failure,
+    Dropped,
+    Panicked,
+}
 
 /// Publish names, units and descriptions to the current recorder.
 ///
@@ -226,17 +258,18 @@ pub fn describe() {
 
 pub(crate) fn operation(
     boundary: Boundary,
+    factory_invoked: bool,
     name: &'static str,
     outcome: Outcome,
     elapsed: Duration,
 ) {
     let metric = match boundary {
         Boundary::Operation => OPERATION_COMPLETIONS,
-        Boundary::RetryAttempt => RETRY_ATTEMPTS,
-        Boundary::Internal => return,
+        Boundary::RetryAttempt if factory_invoked => RETRY_ATTEMPTS,
+        Boundary::RetryAttempt | Boundary::Internal => return,
     };
     let operation = OPERATION_NAMES.label(name);
-    let outcome = vocabulary::outcome(outcome);
+    let outcome = vocabulary::outcome(outcome, std::thread::panicking());
     counter!(metric, "operation" => operation, "outcome" => outcome).increment(1);
     if matches!(boundary, Boundary::Operation) {
         histogram!(OPERATION_DURATION, "operation" => operation, "outcome" => outcome)
@@ -244,29 +277,36 @@ pub(crate) fn operation(
     }
 }
 
-/// Records one retry execution result, or `dropped` when destroyed first.
+/// Records one retry execution result, or `dropped`/`panicked` when
+/// destroyed before a result.
 pub(crate) struct RetryTerminal {
     operation: &'static str,
-    result: &'static str,
+    result: Option<&'static str>,
 }
 
 impl RetryTerminal {
     pub(crate) fn new(operation: &'static str) -> Self {
         Self {
             operation,
-            result: vocabulary::retry::<()>(None),
+            result: None,
         }
     }
 
     pub(crate) fn finish<T, E>(&mut self, result: &Result<T, RetryExecutionError<E>>) {
-        self.result = vocabulary::retry(Some(result.as_ref().map(|_| ())));
+        self.result = Some(vocabulary::retry((
+            Some(result.as_ref().map(|_| ())),
+            false,
+        )));
     }
 }
 
 impl Drop for RetryTerminal {
     fn drop(&mut self) {
+        let result = self
+            .result
+            .unwrap_or_else(|| vocabulary::retry::<()>((None, std::thread::panicking())));
         let operation = OPERATION_NAMES.label(self.operation);
-        counter!(RETRY_EXECUTIONS, "operation" => operation, "result" => self.result).increment(1);
+        counter!(RETRY_EXECUTIONS, "operation" => operation, "result" => result).increment(1);
     }
 }
 
@@ -289,19 +329,21 @@ impl BulkheadTerminal {
 
 impl Drop for BulkheadTerminal {
     fn drop(&mut self) {
-        admission("bulkhead", self.decision);
+        admission(AdmissionKind::Bulkhead, self.decision);
     }
 }
 
 pub(crate) fn process<T>(result: &Result<T, ProcessAdmissionError>) {
-    admission("process", vocabulary::process(result.as_ref().map(|_| ())));
+    let decision = vocabulary::process(result.as_ref().map(|_| ()));
+    admission(AdmissionKind::Process, decision);
 }
 
 pub(crate) fn root(observed: Readiness) {
-    admission("root", vocabulary::root(observed));
+    admission(AdmissionKind::Root, vocabulary::root(observed));
 }
 
-fn admission(admission: &'static str, decision: &'static str) {
+fn admission(kind: AdmissionKind, decision: &'static str) {
+    let admission = vocabulary::admission_kind(kind);
     counter!(ADMISSION_DECISIONS, "admission" => admission, "decision" => decision).increment(1);
 }
 
@@ -323,11 +365,61 @@ pub(crate) fn cleanup(hook: CleanupHook, hooks: usize) {
     counter!(CLEANUP_HOOKS, "outcome" => vocabulary::cleanup(hook)).increment(hooks as u64);
 }
 
-pub(crate) fn shutdown(cause: ShutdownCause, success: bool, elapsed: Duration) {
-    let cause = vocabulary::shutdown_cause(cause);
-    let result = vocabulary::shutdown_result(success);
-    counter!(SHUTDOWNS, "cause" => cause, "result" => result).increment(1);
-    histogram!(SHUTDOWN_DURATION, "result" => result).record(elapsed.as_secs_f64());
+/// Armed from the start of a supervisor drive; records exactly one shutdown,
+/// including `dropped`/`panicked` when the driver is destroyed first.
+pub(crate) struct ShutdownTerminal {
+    cause: Option<ShutdownCause>,
+    drain_started: Option<Instant>,
+    armed: bool,
+}
+
+impl ShutdownTerminal {
+    pub(crate) fn new() -> Self {
+        Self {
+            cause: None,
+            drain_started: None,
+            armed: true,
+        }
+    }
+
+    pub(crate) fn draining(&mut self, cause: ShutdownCause) {
+        self.cause = Some(cause);
+        self.drain_started = Some(Instant::now());
+    }
+
+    /// Record the completed report's result now; call before `Stopped` is
+    /// published so an application root cannot flush before this sample.
+    pub(crate) fn finish(mut self, success: bool) {
+        self.record(if success {
+            ShutdownEnd::Success
+        } else {
+            ShutdownEnd::Failure
+        });
+    }
+
+    fn record(&mut self, end: ShutdownEnd) {
+        self.armed = false;
+        let cause = vocabulary::shutdown_cause(self.cause);
+        let result = vocabulary::shutdown_result(end);
+        counter!(SHUTDOWNS, "cause" => cause, "result" => result).increment(1);
+        // Duration is defined from drain start; an earlier abandonment has none.
+        if let Some(started) = self.drain_started {
+            histogram!(SHUTDOWN_DURATION, "result" => result)
+                .record(started.elapsed().as_secs_f64());
+        }
+    }
+}
+
+impl Drop for ShutdownTerminal {
+    fn drop(&mut self) {
+        if self.armed {
+            self.record(if std::thread::panicking() {
+                ShutdownEnd::Panicked
+            } else {
+                ShutdownEnd::Dropped
+            });
+        }
+    }
 }
 
 #[cfg(test)]

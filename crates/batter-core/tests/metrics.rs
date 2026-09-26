@@ -64,7 +64,7 @@ fn documented(name: &str, values: &[&str]) -> Option<(&'static [&'static str], b
         (SHUTDOWN_DURATION, [result]) => (&["result"], SHUTDOWN_RESULTS.contains(result)),
         (LABELS_COALESCED, [domain, reason]) => (
             &["domain", "reason"],
-            COALESCE_REASONS.contains(&(*domain, *reason)),
+            COALESCE_DOMAINS.contains(domain) && COALESCE_REASONS.contains(reason),
         ),
         _ => return None,
     })
@@ -140,7 +140,11 @@ async fn each_operation_outcome_records_one_completion_and_duration() {
     .await;
     assert!(dropped.is_err());
 
-    for outcome in OUTCOMES {
+    // `panicked` is covered separately; every other outcome occurred once.
+    for outcome in OUTCOMES
+        .into_iter()
+        .filter(|outcome| *outcome != "panicked")
+    {
         let labels = [("operation", "example.read"), ("outcome", outcome)];
         assert_eq!(
             capture.count(OPERATION_COMPLETIONS, &labels),

@@ -170,3 +170,93 @@ async fn root_lifecycle_admission_records_each_observed_state() {
     assert_eq!(root("stopped"), 1.0);
     assert_catalog(&capture);
 }
+
+#[tokio::test]
+async fn unwinding_boundaries_record_panicked_instead_of_dropped() {
+    let capture = Capture::unbounded();
+    let _recorder = facade::set_default_local_recorder(&capture);
+    let context = owner().into_context();
+    let operation = tokio::spawn({
+        let context = context.clone();
+        async move {
+            context
+                .run("example.read", |_| async {
+                    panic!("operation defect");
+                    #[allow(unreachable_code)]
+                    Ok::<(), &str>(())
+                })
+                .await
+        }
+    });
+    assert!(operation.await.unwrap_err().is_panic());
+    let retry = tokio::spawn(async move {
+        let policy =
+            RetryPolicy::new(2, Duration::from_millis(1), Duration::from_millis(1)).unwrap();
+        retry::execute(
+            &context,
+            "provider.write",
+            ReplaySafety::Idempotent,
+            &policy,
+            |_| async {
+                panic!("attempt defect");
+                #[allow(unreachable_code)]
+                Ok::<(), &str>(())
+            },
+            |_| RetryDecision::Retry,
+        )
+        .await
+    });
+    assert!(retry.await.unwrap_err().is_panic());
+
+    let operation = [("operation", "example.read"), ("outcome", "panicked")];
+    assert_eq!(capture.count(OPERATION_COMPLETIONS, &operation), 1.0);
+    let attempt = [("operation", "provider.write"), ("outcome", "panicked")];
+    assert_eq!(capture.count(RETRY_ATTEMPTS, &attempt), 1.0);
+    let execution = [("operation", "provider.write"), ("result", "panicked")];
+    assert_eq!(capture.count(RETRY_EXECUTIONS, &execution), 1.0);
+    assert_eq!(
+        capture.count(OPERATION_COMPLETIONS, &[("outcome", "dropped")]),
+        0.0
+    );
+    assert_catalog(&capture);
+}
+
+fn stubborn_supervisor() -> Supervisor {
+    let mut supervisor = Supervisor::new(super::shutdown_budget());
+    supervisor
+        .register("service.component", |startup| async move {
+            let _shutdown = startup.acknowledge_started();
+            // Ignores drain so the driver stays inside its drain phase.
+            std::future::pending::<()>().await;
+            unreachable!()
+        })
+        .unwrap();
+    supervisor
+}
+
+#[tokio::test]
+async fn abandoned_shutdown_drivers_record_exactly_one_dropped_shutdown() {
+    let capture = Capture::unbounded();
+    let _recorder = facade::set_default_local_recorder(&capture);
+
+    let running = stubborn_supervisor().run_until(std::future::pending());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), running)
+            .await
+            .is_err()
+    );
+    let draining = stubborn_supervisor().run_until(std::future::ready(()));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), draining)
+            .await
+            .is_err()
+    );
+
+    let shutdowns = |cause| capture.count(SHUTDOWNS, &[("cause", cause), ("result", "dropped")]);
+    assert_eq!(shutdowns("none"), 1.0);
+    assert_eq!(shutdowns("requested"), 1.0);
+    assert_eq!(capture.samples(SHUTDOWNS).len(), 2);
+    // Only the driver abandoned after drain started has a drain duration.
+    assert_eq!(capture.samples(SHUTDOWN_DURATION).len(), 1);
+    assert_catalog(&capture);
+}

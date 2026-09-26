@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 #[test]
 fn registration_vocabulary_is_shared_and_rejects_urls_and_error_text() {
-    static TABLE: NameTable = NameTable::new("vocabulary");
+    static TABLE: NameTable = NameTable::new(NameDomain::Operation);
     for name in ["example.read", "http-server", "Refresh", "x9_y.z"] {
         assert_eq!(TABLE.label(name), name);
     }
@@ -32,7 +32,7 @@ fn registration_vocabulary_is_shared_and_rejects_urls_and_error_text() {
 
 #[test]
 fn full_table_coalesces_without_eviction() {
-    static TABLE: NameTable = NameTable::new("test");
+    static TABLE: NameTable = NameTable::new(NameDomain::Task);
     let names: Vec<&'static str> = (0..NAME_CAPACITY + 8)
         .map(|index| &*String::leak(format!("name.n{index}")))
         .collect();
@@ -51,8 +51,9 @@ fn full_table_coalesces_without_eviction() {
 #[test]
 fn closed_domains_are_distinct_and_outside_the_name_vocabulary_placeholders() {
     for domain in [
-        OUTCOMES,
+        &OUTCOMES[..],
         RETRY_RESULTS,
+        ADMISSIONS,
         BULKHEAD_DECISIONS,
         PROCESS_DECISIONS,
         ROOT_DECISIONS,
@@ -61,6 +62,8 @@ fn closed_domains_are_distinct_and_outside_the_name_vocabulary_placeholders() {
         CLEANUP_OUTCOMES,
         SHUTDOWN_CAUSES,
         SHUTDOWN_RESULTS,
+        COALESCE_DOMAINS,
+        COALESCE_REASONS,
     ] {
         let mut sorted = domain.to_vec();
         sorted.sort_unstable();
@@ -74,8 +77,11 @@ fn closed_domains_are_distinct_and_outside_the_name_vocabulary_placeholders() {
         Outcome::DeadlineExceeded,
         Outcome::Dropped,
     ] {
-        assert_eq!(vocabulary::outcome(outcome), outcome.as_str());
+        assert_eq!(vocabulary::outcome(outcome, false), outcome.as_str());
+        assert!(OUTCOMES.contains(&vocabulary::outcome(outcome, true)));
     }
+    assert_eq!(vocabulary::outcome(Outcome::Dropped, true), "panicked");
+    assert_eq!(vocabulary::outcome(Outcome::Failed, true), "failed");
 }
 
 /// Retains histogram values and the name of every registered metric.
