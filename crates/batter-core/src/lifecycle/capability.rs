@@ -240,8 +240,7 @@ impl OperationAdmission {
             Err(readiness)
         };
         // Recorder code runs only after the admission decision is complete.
-        #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::root(readiness);
+        crate::telemetry::record::root(readiness);
         admitted
     }
 }

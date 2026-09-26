@@ -68,7 +68,9 @@ impl TaskSet {
         );
     }
 
-    pub(super) fn spawn_process(&mut self, task: process::QueuedProcess) {
+    pub(super) fn spawn_process(&mut self, mut task: process::QueuedProcess) {
+        // Record the admission before this task can run, and so before its exit.
+        task.decision.record();
         let name = task.name;
         // The future already carries the submitting operation's span and
         // subscriber, independent of the coordinator's tracing context.
@@ -160,8 +162,7 @@ impl TaskSet {
             coordinator.shared.fail_task();
         }
         // Recorder code runs only after a failure has closed admission.
-        #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::task(exit.finite, exit.name, exit.outcome);
+        crate::telemetry::record::task(exit.finite, exit.name, exit.outcome);
         exit.cause
     }
 
@@ -265,7 +266,6 @@ fn classify_task_result(result: TaskResult) -> (Id, TaskOutcome, Option<BoxError
 }
 
 /// One observed direct-task exit and the shutdown cause it selects, if any.
-#[cfg_attr(not(feature = "metrics"), allow(dead_code))]
 struct RecordedExit {
     cause: Option<ShutdownCause>,
     name: &'static str,

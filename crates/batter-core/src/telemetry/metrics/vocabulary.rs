@@ -1,6 +1,6 @@
 //! Closed label vocabularies, each defined once with `closed_domain!`.
 
-use super::{AdmissionKind, CleanupHook, Coalesce, NameDomain, ShutdownEnd};
+use super::{AdmissionKind, CleanupHook, Coalesce, End, NameDomain};
 use crate::{
     admission::AdmissionError,
     cleanup::CleanupOutcome,
@@ -37,17 +37,17 @@ pub(super) const fn outcome(value: Outcome, unwinding: bool) -> &'static str {
 
 closed_domain! {
     /// Values of the `result` label on [`super::RETRY_EXECUTIONS`].
-    pub RETRY_RESULTS, fn retry<E>(value: (Option<Result<(), &RetryExecutionError<E>>>, bool)) {
-        (Some(Ok(())), _) => "succeeded",
-        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::NotRetryable, .. })), _) => "not_retryable",
-        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::ReplayForbidden, .. })), _) => "replay_forbidden",
-        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::AttemptsExhausted, .. })), _) => "attempts_exhausted",
-        (Some(Err(RetryExecutionError::Stopped { reason: StopReason::InsufficientBudget, .. })), _) => "insufficient_budget",
-        (Some(Err(RetryExecutionError::Interrupted { reason: Interruption::Cancelled, .. })), _) => "cancelled",
-        (Some(Err(RetryExecutionError::Interrupted { reason: Interruption::DeadlineExceeded, .. })), _) => "deadline_exceeded",
-        (Some(Err(RetryExecutionError::AttemptDeadlineExceeded { .. })), _) => "attempt_deadline_exceeded",
-        (None, false) => "dropped",
-        (None, true) => "panicked",
+    pub RETRY_RESULTS, fn retry<E>(value: End<Result<(), &RetryExecutionError<E>>>) {
+        End::Finished(Ok(())) => "succeeded",
+        End::Finished(Err(RetryExecutionError::Stopped { reason: StopReason::NotRetryable, .. })) => "not_retryable",
+        End::Finished(Err(RetryExecutionError::Stopped { reason: StopReason::ReplayForbidden, .. })) => "replay_forbidden",
+        End::Finished(Err(RetryExecutionError::Stopped { reason: StopReason::AttemptsExhausted, .. })) => "attempts_exhausted",
+        End::Finished(Err(RetryExecutionError::Stopped { reason: StopReason::InsufficientBudget, .. })) => "insufficient_budget",
+        End::Finished(Err(RetryExecutionError::Interrupted { reason: Interruption::Cancelled, .. })) => "cancelled",
+        End::Finished(Err(RetryExecutionError::Interrupted { reason: Interruption::DeadlineExceeded, .. })) => "deadline_exceeded",
+        End::Finished(Err(RetryExecutionError::AttemptDeadlineExceeded { .. })) => "attempt_deadline_exceeded",
+        End::Dropped => "dropped",
+        End::Panicked => "panicked",
     }
 }
 
@@ -61,15 +61,16 @@ closed_domain! {
 }
 
 closed_domain! {
-    /// `decision` values for `admission="bulkhead"`. `dropped` is a polled
-    /// `enter` future destroyed before its decision.
-    pub BULKHEAD_DECISIONS, fn bulkhead(value: Option<Result<(), &AdmissionError>>) {
-        Some(Ok(())) => "admitted",
-        Some(Err(AdmissionError::Overloaded)) => "overloaded",
-        Some(Err(AdmissionError::Closed)) => "closed",
-        Some(Err(AdmissionError::Interrupted(Interruption::Cancelled))) => "cancelled",
-        Some(Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded))) => "deadline_exceeded",
-        None => "dropped",
+    /// `decision` values for `admission="bulkhead"`. `dropped` and `panicked`
+    /// are polled `enter` futures destroyed before their decision.
+    pub BULKHEAD_DECISIONS, fn bulkhead(value: End<Result<(), &AdmissionError>>) {
+        End::Finished(Ok(())) => "admitted",
+        End::Finished(Err(AdmissionError::Overloaded)) => "overloaded",
+        End::Finished(Err(AdmissionError::Closed)) => "closed",
+        End::Finished(Err(AdmissionError::Interrupted(Interruption::Cancelled))) => "cancelled",
+        End::Finished(Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded))) => "deadline_exceeded",
+        End::Dropped => "dropped",
+        End::Panicked => "panicked",
     }
 }
 
@@ -149,11 +150,11 @@ closed_domain! {
     /// Values of the `result` label on shutdown metrics: a completed report's
     /// success, or a driver destroyed (`dropped`) or unwound (`panicked`)
     /// before its report.
-    pub SHUTDOWN_RESULTS, fn shutdown_result(value: ShutdownEnd) {
-        ShutdownEnd::Success => "success",
-        ShutdownEnd::Failure => "failure",
-        ShutdownEnd::Dropped => "dropped",
-        ShutdownEnd::Panicked => "panicked",
+    pub SHUTDOWN_RESULTS, fn shutdown_result(value: End<bool>) {
+        End::Finished(true) => "success",
+        End::Finished(false) => "failure",
+        End::Dropped => "dropped",
+        End::Panicked => "panicked",
     }
 }
 

@@ -31,6 +31,7 @@ macro_rules! closed_domain {
 
 #[cfg(feature = "metrics")]
 pub mod metrics;
+pub(crate) mod record;
 
 /// Retain the current tracing subscriber while polling and destroying a future.
 ///
@@ -164,7 +165,7 @@ impl Observation {
 
     /// Record that the boundary is about to invoke its factory. Call this in
     /// the branch that invokes it, not from a preflight check.
-    pub(crate) fn factory_invoked(&self) {
+    pub(crate) fn mark_factory_invoked(&self) {
         // Shared by reference into a `Send` future, so this must be `Sync`.
         #[cfg(feature = "metrics")]
         self.factory_invoked

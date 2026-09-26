@@ -68,6 +68,18 @@ impl Capture {
             .sum()
     }
 
+    /// Position of the first accepted sample of `name` with every label, in
+    /// recording order across all metrics.
+    pub fn first(&self, name: &str, labels: &[(&str, &str)]) -> Option<usize> {
+        let store = self.store.lock().unwrap();
+        store.samples.iter().position(|sample| {
+            sample.name == name
+                && labels
+                    .iter()
+                    .all(|(k, v)| sample.labels.iter().any(|(sk, sv)| sk == k && sv == v))
+        })
+    }
+
     /// Distinct `(name, labels)` series the recorder was asked to register.
     pub fn series(&self) -> BTreeSet<(String, Vec<(String, String)>)> {
         let store = self.store.lock().unwrap();

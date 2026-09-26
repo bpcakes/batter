@@ -101,8 +101,7 @@ impl Bulkhead {
     ) -> Result<OwnedSemaphorePermit, AdmissionError> {
         // Record exactly one decision, including `dropped` when a waiting
         // caller abandons this future before admission completes.
-        #[cfg(feature = "metrics")]
-        let mut decision = crate::telemetry::metrics::BulkheadTerminal::new();
+        let mut decision = crate::telemetry::record::BulkheadTerminal::new();
         let result = match context.check() {
             Err(reason) => Err(AdmissionError::Interrupted(reason)),
             Ok(()) => {
@@ -129,7 +128,6 @@ impl Bulkhead {
                 }
             }
         };
-        #[cfg(feature = "metrics")]
         decision.finish(&result);
         result
     }

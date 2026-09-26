@@ -99,9 +99,8 @@ impl std::fmt::Debug for CleanupRecord {
 
 impl CleanupRecord {
     fn log_observation(&self) {
-        #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::cleanup(
-            crate::telemetry::metrics::CleanupHook::Observed(self.outcome),
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Observed(self.outcome),
             1,
         );
         if self.outcome == CleanupOutcome::Succeeded {
@@ -277,10 +276,10 @@ impl CleanupStack {
     }
 
     fn skip_remaining(&mut self, report: &mut CleanupReport, reason: SkipReason) {
+        let skipped = self.hooks.len();
+        crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Skipped, skipped);
         while let Some(hook) = self.hooks.pop() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
-            #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup(crate::telemetry::metrics::CleanupHook::Skipped, 1);
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
                 reason,
@@ -426,8 +425,7 @@ struct PendingCleanupObservation {
 impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
-            #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup(crate::telemetry::metrics::CleanupHook::Dropped, 1);
+            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Dropped, 1);
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
         }
     }
@@ -436,9 +434,8 @@ impl Drop for PendingCleanupObservation {
 impl Drop for CleanupStack {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
-            #[cfg(feature = "metrics")]
-            crate::telemetry::metrics::cleanup(
-                crate::telemetry::metrics::CleanupHook::Dropped,
+            crate::telemetry::record::cleanup(
+                crate::telemetry::record::CleanupHook::Dropped,
                 self.hooks.len(),
             );
             tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");

@@ -393,7 +393,7 @@ impl OperationContext {
                     // Runs only when this branch is first polled, so an
                     // interruption that wins the race leaves the factory unused.
                     result = async move {
-                        observed.factory_invoked();
+                        observed.mark_factory_invoked();
                         factory(scope).await
                     } => {
                         result.map_err(OperationError::Failed)

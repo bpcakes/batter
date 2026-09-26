@@ -633,8 +633,7 @@ where
     D: FnMut(Duration) -> Duration,
 {
     // One terminal result per execution, including `dropped`/`panicked`.
-    #[cfg(feature = "metrics")]
-    let mut terminal = crate::telemetry::metrics::RetryTerminal::new(settings.operation);
+    let mut terminal = crate::telemetry::record::RetryTerminal::new(settings.operation);
     let mut attempts = 0;
     let mut last_error = None;
     let result = loop {
@@ -727,7 +726,6 @@ where
             Err(OperationError::Failed(never)) => match never {},
         }
     };
-    #[cfg(feature = "metrics")]
     terminal.finish(&result);
     result
 }

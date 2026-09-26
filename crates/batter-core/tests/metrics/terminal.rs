@@ -256,7 +256,51 @@ async fn abandoned_shutdown_drivers_record_exactly_one_dropped_shutdown() {
     assert_eq!(shutdowns("none"), 1.0);
     assert_eq!(shutdowns("requested"), 1.0);
     assert_eq!(capture.samples(SHUTDOWNS).len(), 2);
-    // Only the driver abandoned after drain started has a drain duration.
-    assert_eq!(capture.samples(SHUTDOWN_DURATION).len(), 1);
+    // Abandoned drivers produce no report, so they record no duration.
+    assert_eq!(capture.samples(SHUTDOWN_DURATION), []);
     assert_catalog(&capture);
+}
+
+#[tokio::test]
+async fn admission_wait_destroyed_while_unwinding_records_panicked() {
+    let capture = Capture::unbounded();
+    let _recorder = facade::set_default_local_recorder(&capture);
+    let bulkhead = Bulkhead::new(BulkheadCapacity::new(1).unwrap());
+    let context = owner().into_context();
+    let _held = bulkhead.enter(&context, Admission::Reject).await.unwrap();
+    let waiting = tokio::spawn({
+        let bulkhead = bulkhead.clone();
+        async move {
+            let wait = bulkhead.enter(&context, Admission::Wait);
+            tokio::pin!(wait);
+            // Poll the wait once, then unwind while it is still owned.
+            assert!(futures_poll_once(wait.as_mut()).await.is_none());
+            panic!("sibling defect");
+        }
+    });
+    assert!(waiting.await.unwrap_err().is_panic());
+    let decision = |decision| {
+        capture.count(
+            ADMISSION_DECISIONS,
+            &[("admission", "bulkhead"), ("decision", decision)],
+        )
+    };
+    assert_eq!(decision("panicked"), 1.0);
+    assert_eq!(decision("dropped"), 0.0);
+    assert_catalog(&capture);
+}
+
+/// Poll `future` exactly once, returning its output if it was ready.
+async fn futures_poll_once<F: std::future::Future>(
+    future: std::pin::Pin<&mut F>,
+) -> Option<F::Output> {
+    let mut future = Some(future);
+    std::future::poll_fn(|context| {
+        let polled = future.take().unwrap().poll(context);
+        std::task::Poll::Ready(match polled {
+            std::task::Poll::Ready(output) => Some(output),
+            std::task::Poll::Pending => None,
+        })
+    })
+    .await
 }

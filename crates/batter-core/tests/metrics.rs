@@ -384,6 +384,19 @@ async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
         1.0
     );
     assert_eq!(capture.samples(SHUTDOWN_DURATION).len(), 1);
+    // A process admission is recorded before its task's exit, and both before
+    // the shutdown that an application root may use as its flush signal.
+    let admitted = capture
+        .first(
+            ADMISSION_DECISIONS,
+            &[("admission", "process"), ("decision", "admitted")],
+        )
+        .unwrap();
+    let exited = capture
+        .first(TASK_EXITS, &[("task", "job.run"), ("outcome", "completed")])
+        .unwrap();
+    let shutdown = capture.first(SHUTDOWNS, &[]).unwrap();
+    assert!(admitted < exited && exited < shutdown);
     assert!(capture.series().len() <= catalog::MAX_SERIES);
     assert_catalog(&capture);
 }

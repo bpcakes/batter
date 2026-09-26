@@ -218,6 +218,9 @@ impl ProcessScope {
 pub(super) struct QueuedProcess {
     pub name: &'static str,
     pub future: Pin<Box<dyn Future<Output = TaskExit> + Send + 'static>>,
+    /// The committed admission, recorded when the coordinator takes
+    /// ownership of this entry and therefore before its task can exit.
+    pub decision: crate::telemetry::record::AdmittedDecision,
 }
 
 impl ProcessHandle {
@@ -297,11 +300,13 @@ impl ProcessHandle {
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
-        // Recorder code is arbitrary: observe only after the admission lock
-        // and any rejected captures have been released.
+        // Recorder code is arbitrary: observe rejections only after the
+        // admission lock and any rejected captures have been released.
+        // Accepted decisions travel with the queued entry.
         let result = self.admit(name, factory, ancestor);
-        #[cfg(feature = "metrics")]
-        crate::telemetry::metrics::process(&result);
+        if let Err(error) = &result {
+            crate::telemetry::record::process_rejected(error);
+        }
         result
     }
 
@@ -370,15 +375,26 @@ impl ProcessHandle {
             .instrument(span),
             subscriber,
         ));
-        if let Err(error) = self.sender.try_send(QueuedProcess { name, future }) {
+        let queued = QueuedProcess {
+            name,
+            future,
+            decision: crate::telemetry::record::AdmittedDecision::new(),
+        };
+        if let Err(error) = self.sender.try_send(queued) {
             // Rejected work owns arbitrary application captures. Their native
             // destructors may request shutdown, so never drop them under our
             // admission lock.
             drop(admission);
-            return Err(match error {
-                mpsc::error::TrySendError::Full(_) => ProcessAdmissionError::Full,
-                mpsc::error::TrySendError::Closed(_) => ProcessAdmissionError::Closed,
-            });
+            let (rejected, error) = match error {
+                mpsc::error::TrySendError::Full(queued) => (queued, ProcessAdmissionError::Full),
+                mpsc::error::TrySendError::Closed(queued) => {
+                    (queued, ProcessAdmissionError::Closed)
+                }
+            };
+            // The rejection is recorded by the caller; this entry was never admitted.
+            let mut rejected = rejected;
+            rejected.decision.discard();
+            return Err(error);
         }
         admission.admit_finite();
         drop(admission);

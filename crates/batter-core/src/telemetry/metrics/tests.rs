@@ -11,10 +11,10 @@ use std::sync::{Arc, Mutex};
 fn registration_vocabulary_is_shared_and_rejects_urls_and_error_text() {
     static TABLE: NameTable = NameTable::new(NameDomain::Operation);
     for name in ["example.read", "http-server", "Refresh", "x9_y.z"] {
-        assert_eq!(TABLE.label(name), name);
+        assert_eq!(TABLE.label(name).text, name);
     }
     let longest: &'static str = String::leak("a".repeat(MAX_NAME_LEN));
-    assert_eq!(TABLE.label(longest), longest);
+    assert_eq!(TABLE.label(longest).text, longest);
     let too_long: &'static str = String::leak("a".repeat(MAX_NAME_LEN + 1));
     for name in [
         "",
@@ -26,7 +26,7 @@ fn registration_vocabulary_is_shared_and_rejects_urls_and_error_text() {
         INVALID_NAME,
         OVERFLOW_NAME,
     ] {
-        assert_eq!(TABLE.label(name), INVALID_NAME, "{name}");
+        assert_eq!(TABLE.label(name).text, INVALID_NAME, "{name}");
     }
 }
 
@@ -37,15 +37,18 @@ fn full_table_coalesces_without_eviction() {
         .map(|index| &*String::leak(format!("name.n{index}")))
         .collect();
     for name in &names[..NAME_CAPACITY] {
-        assert_eq!(TABLE.label(name), *name);
+        assert_eq!(TABLE.label(name).text, *name);
     }
     for name in &names[NAME_CAPACITY..] {
-        assert_eq!(TABLE.label(name), OVERFLOW_NAME);
+        assert_eq!(TABLE.label(name).text, OVERFLOW_NAME);
     }
     // A distinct copy of an admitted name reuses its slot.
     let copy: &'static str = String::leak(names[0].to_owned());
-    assert_eq!(TABLE.label(copy), names[0]);
-    assert_eq!(TABLE.label("Not Valid"), INVALID_NAME);
+    assert_eq!(TABLE.label(copy).text, names[0]);
+    assert_eq!(TABLE.label("Not Valid").text, INVALID_NAME);
+    // Placeholders use the two series indices after the admitted slots.
+    assert_eq!(TABLE.label("Not Valid").index, NAME_CAPACITY);
+    assert_eq!(TABLE.label("name.late").index, NAME_CAPACITY + 1);
 }
 
 #[test]
@@ -153,4 +156,17 @@ async fn attempt_rejected_before_its_factory_is_not_a_finished_attempt() {
     assert!(result.is_err());
     assert!(!started);
     assert_eq!(*samples.registered.lock().unwrap(), Vec::<String>::new());
+}
+
+#[test]
+fn series_keys_are_built_once_and_reused() {
+    let labels = [("admission", "root"), ("decision", "admitted")];
+    let first: *const metrics::Key = keys_probe(labels);
+    let again: *const metrics::Key = keys_probe(labels);
+    assert!(std::ptr::eq(first, again));
+}
+
+fn keys_probe(labels: [(&'static str, &'static str); 2]) -> &'static metrics::Key {
+    static PROBE: keys::KeyCache<1> = keys::KeyCache::new(ADMISSION_DECISIONS);
+    PROBE.key(0, labels)
 }

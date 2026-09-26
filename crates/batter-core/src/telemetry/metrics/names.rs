@@ -1,23 +1,42 @@
 //! Fixed-capacity, write-once, hashed tables of operation and task names.
 
-use super::{
-    Coalesce, INVALID_NAME, LABELS_COALESCED, NAME_CAPACITY, NameDomain, OVERFLOW_NAME, vocabulary,
+use super::{Coalesce, INVALID_NAME, NAME_CAPACITY, NameDomain, OVERFLOW_NAME, coalesced};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
-use metrics::counter;
-use std::sync::OnceLock;
+
+/// A bounded name label and its series index: an admitted slot, or one of the
+/// two placeholders after the slots.
+#[derive(Clone, Copy)]
+pub(super) struct NameLabel {
+    pub(super) index: usize,
+    pub(super) text: &'static str,
+}
+
+const INVALID: NameLabel = NameLabel {
+    index: NAME_CAPACITY,
+    text: INVALID_NAME,
+};
+const OVERFLOW: NameLabel = NameLabel {
+    index: NAME_CAPACITY + 1,
+    text: OVERFLOW_NAME,
+};
 
 pub(super) struct NameTable {
     domain: NameDomain,
     slots: [OnceLock<&'static str>; NAME_CAPACITY],
+    /// Each admitted name's hash, published after its slot; zero until then.
+    hashes: [AtomicU64; NAME_CAPACITY],
 }
 
-/// FNV-1a over the name bytes; stable and allocation-free.
-fn home_slot(name: &str) -> usize {
+/// FNV-1a over the name bytes, forced nonzero so zero means "unpublished".
+fn hash(name: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in name.bytes() {
         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
-    (hash % NAME_CAPACITY as u64) as usize
+    hash.max(1)
 }
 
 impl NameTable {
@@ -25,6 +44,7 @@ impl NameTable {
         Self {
             domain,
             slots: [const { OnceLock::new() }; NAME_CAPACITY],
+            hashes: [const { AtomicU64::new(0) }; NAME_CAPACITY],
         }
     }
 
@@ -32,44 +52,60 @@ impl NameTable {
     ///
     /// Each name probes linearly from its hashed home slot. Slots are
     /// write-once and never evicted, so an empty slot in a name's probe
-    /// sequence proves that the name was never admitted beyond it. A known
-    /// name is usually found at its home slot; validation runs only before an
-    /// admission attempt. A writer that loses a race for a slot returns that
-    /// slot's name when it is the same name, so each distinct name occupies
-    /// exactly one slot.
-    pub(super) fn label(&self, name: &'static str) -> &'static str {
-        let home = home_slot(name);
-        let probes = (0..NAME_CAPACITY).map(|offset| &self.slots[(home + offset) % NAME_CAPACITY]);
-        let mut validated = false;
-        for slot in probes {
+    /// sequence proves that the name was never admitted beyond it. Occupied
+    /// slots are skipped by comparing published hashes; strings are compared
+    /// only on a hash match. A known name is usually found at its home slot;
+    /// the worst case, an absent name in a full table, is one pass of integer
+    /// comparisons followed by one validation. A writer that loses a race for
+    /// a slot returns that slot's name when it is the same name, so each
+    /// distinct name occupies exactly one slot.
+    pub(super) fn label(&self, name: &'static str) -> NameLabel {
+        let hashed = hash(name);
+        let home = (hashed % NAME_CAPACITY as u64) as usize;
+        let mut valid = None;
+        for offset in 0..NAME_CAPACITY {
+            let index = (home + offset) % NAME_CAPACITY;
+            let slot = &self.slots[index];
             if let Some(existing) = slot.get() {
-                if std::ptr::eq(*existing, name) || *existing == name {
-                    return existing;
+                if Self::same(
+                    self.hashes[index].load(Ordering::Acquire),
+                    hashed,
+                    existing,
+                    name,
+                ) {
+                    return NameLabel {
+                        index,
+                        text: existing,
+                    };
                 }
                 continue;
             }
-            if !validated {
-                if crate::validation::name(name).is_err() {
-                    return self.coalesced(Coalesce::Invalid, INVALID_NAME);
-                }
-                validated = true;
+            if !*valid.get_or_insert_with(|| crate::validation::name(name).is_ok()) {
+                return self.coalesce(Coalesce::Invalid, INVALID);
             }
             match slot.set(name) {
-                Ok(()) => return name,
-                Err(_) if slot.get() == Some(&name) => return name,
+                Ok(()) => {
+                    self.hashes[index].store(hashed, Ordering::Release);
+                    return NameLabel { index, text: name };
+                }
+                Err(_) if slot.get() == Some(&name) => return NameLabel { index, text: name },
                 Err(_) => {}
             }
         }
-        if !validated && crate::validation::name(name).is_err() {
-            return self.coalesced(Coalesce::Invalid, INVALID_NAME);
+        if !valid.unwrap_or_else(|| crate::validation::name(name).is_ok()) {
+            return self.coalesce(Coalesce::Invalid, INVALID);
         }
-        self.coalesced(Coalesce::Capacity, OVERFLOW_NAME)
+        self.coalesce(Coalesce::Capacity, OVERFLOW)
     }
 
-    fn coalesced(&self, reason: Coalesce, label: &'static str) -> &'static str {
-        let domain = vocabulary::name_domain(self.domain);
-        let reason = vocabulary::coalesce_reason(reason);
-        counter!(LABELS_COALESCED, "domain" => domain, "reason" => reason).increment(1);
+    /// An unpublished hash (zero) falls back to comparing the strings.
+    fn same(published: u64, hashed: u64, existing: &str, name: &str) -> bool {
+        (published == 0 || published == hashed)
+            && (std::ptr::eq(existing, name) || existing == name)
+    }
+
+    fn coalesce(&self, reason: Coalesce, label: NameLabel) -> NameLabel {
+        coalesced(self.domain, reason);
         label
     }
 }
