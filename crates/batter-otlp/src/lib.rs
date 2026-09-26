@@ -1,26 +1,40 @@
-//! Opt-in OTLP/HTTP metrics export owned by the reference application root.
+//! Opt-in OTLP/HTTP metrics export through Batter-owned service completion.
+//!
+//! Pass the inert exporter returned by [`prepare`] to
+//! [`batter_core::service::start`] with protected startup. Batter installs the
+//! recorder and owns periodic export through service cleanup and finalization.
+//! The application supplies endpoint, identity and timing policy explicitly;
+//! there are no public paired install, flush or close calls to coordinate.
 //!
 //! Upstream owns aggregation and wire encoding: `metrics-exporter-otel` bridges
 //! the foundation recorder calls into the OpenTelemetry SDK, a shared
 //! `ManualReader` produces cumulative snapshots and the OTLP exporter encodes
-//! them. This module owns only timing, limits, response classification and
+//! them. This adapter owns timing, limits, response classification and
 //! lifecycle. One serial owner collects and exports; there is no background SDK
 //! thread, `PeriodicReader`, command channel, request queue or retry loop.
 //! `ManualReader::force_flush` and provider shutdown are not network flushes;
 //! the final flush is an explicit collect-and-export attempt whose outcome is
-//! retained before the exporter and provider are closed exactly once.
+//! retained before the exporter and provider are closed exactly once on normal
+//! finalization. Panics, non-yielding SDK calls and runtime death do not carry
+//! that closure guarantee.
 
+mod config;
+pub mod diagnostics;
+#[path = "pipeline/guard.rs"]
 mod guard;
+pub use config::Schedule;
+#[path = "pipeline/transport.rs"]
 mod transport;
 
 #[cfg(test)]
+#[path = "pipeline/tests.rs"]
 mod tests;
 
 use crate::diagnostics::{
     Closure, DiagnosticClosure, ExportFailure, ExportHistory, ExportOutcome, ExportReport,
     FinalCoverage,
 };
-use batter::{settings::SettingsError, telemetry::metrics::facade::KeyName};
+use batter_core::{settings::SettingsError, telemetry::metrics::facade::KeyName};
 use guard::{CatalogRecorder, GuardState};
 use metrics_exporter_otel::OpenTelemetryRecorder;
 use opentelemetry::{InstrumentationScope, KeyValue, metrics::MeterProvider as _};
@@ -46,28 +60,9 @@ pub(crate) const HISTOGRAM_BOUNDS: [f64; 12] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
 ];
 /// Instrumentation scope and the only resource attribute value.
+#[cfg(test)]
 const SERVICE_NAME: &str = "batter-example-reference-service";
-const ENDPOINT: &str = "BATTER_METRICS_OTLP_ENDPOINT";
-
-/// Fixed export timing.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Schedule {
-    /// Delay between periodic attempts. Missed ticks are coalesced.
-    pub(crate) interval: Duration,
-    /// Deadline for one periodic collection and export attempt.
-    pub(crate) attempt: Duration,
-    /// Separate allowance for the final collection, export and closure. Service
-    /// drain and cleanup budgets are never spent on collector I/O.
-    pub(crate) final_allowance: Duration,
-}
-
-impl Schedule {
-    pub(crate) const FIXED: Self = Self {
-        interval: Duration::from_secs(10),
-        attempt: Duration::from_secs(3),
-        final_allowance: Duration::from_secs(5),
-    };
-}
+const ENDPOINT: &str = "metrics.endpoint";
 
 /// Shares one manual reader between the provider and the export owner.
 #[derive(Debug, Clone)]
@@ -127,7 +122,7 @@ fn closure(result: OTelSdkResult) -> Closure {
 /// Upstream builders read `OTEL_*` headers, endpoints, timeouts and compression
 /// from the live process environment. The application must not mutate the
 /// environment during preparation; this check neither reads nor echoes values.
-pub(crate) fn reject_ambient_environment() -> Result<(), SettingsError> {
+pub fn reject_ambient_environment() -> Result<(), SettingsError> {
     if std::env::vars_os().any(|(key, _)| key.as_encoded_bytes().starts_with(b"OTEL_")) {
         return Err(SettingsError::new(
             "environment",
@@ -138,14 +133,42 @@ pub(crate) fn reject_ambient_environment() -> Result<(), SettingsError> {
 }
 
 /// Inert, prepared export pipeline. Nothing is installed, spawned or connected.
-pub(crate) struct Prepared {
+#[must_use = "transfer the prepared exporter into batter_core::service::start"]
+pub struct Prepared {
     recorder: CatalogRecorder<OpenTelemetryRecorder>,
     resources: Resources,
     schedule: Schedule,
 }
 
-/// Build the native pipeline for a validated loopback collector endpoint.
-pub(crate) fn prepare(endpoint: &str, schedule: Schedule) -> Result<Prepared, SettingsError> {
+/// Prepare an inert OTLP/HTTP pipeline with explicit identity and timing.
+/// Endpoint validation accepts HTTP(S) at `/v1/metrics` without credentials,
+/// query or fragment. Applications may impose a narrower deployment policy.
+/// Ambient `OTEL_*` is rejected because native builders merge that configuration.
+/// Installation is process-global and cannot be reset or reloaded. Another
+/// recorder causes a retained installation rejection and closes only this pipeline.
+///
+/// ```no_run
+/// use batter_otlp::{prepare, Schedule};
+/// use batter_core::{service, startup::ScopedStartup, startup::{ProtectedStartupScope, StartupFuture}};
+/// use std::time::Duration;
+/// async fn launch<F>(startup: ScopedStartup<F>) -> Result<(), batter_core::settings::SettingsError>
+/// where F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, std::io::Error> + Send + 'static {
+///     let schedule = Schedule::new(Duration::from_secs(10), Duration::from_secs(3), Duration::from_secs(5))?;
+///     let exporter = prepare("http://127.0.0.1:4318/v1/metrics", "example-service", schedule)?;
+///     let owner = service::start(startup, exporter);
+///     let completion = owner.wait().await;
+///     let _service_result = completion.service();
+///     let _export_result = completion.diagnostics();
+///     Ok(())
+/// }
+/// ```
+pub fn prepare(
+    endpoint: &str,
+    service_name: &str,
+    schedule: Schedule,
+) -> Result<Prepared, SettingsError> {
+    let endpoint = config::endpoint(endpoint)?;
+    config::identity(service_name)?;
     reject_ambient_environment()?;
     let slot = Arc::new(AttemptSlot::default());
     let client = BoundedClient::new(slot.clone()).map_err(|error| {
@@ -155,7 +178,7 @@ pub(crate) fn prepare(endpoint: &str, schedule: Schedule) -> Result<Prepared, Se
         .with_temporality(Temporality::Cumulative)
         .with_http()
         .with_http_client(client)
-        .with_endpoint(endpoint)
+        .with_endpoint(endpoint.as_str())
         .with_protocol(Protocol::HttpBinary)
         .with_timeout(schedule.attempt)
         .build()
@@ -168,14 +191,14 @@ pub(crate) fn prepare(endpoint: &str, schedule: Schedule) -> Result<Prepared, Se
             .build(),
     );
     let resource = Resource::builder_empty()
-        .with_attributes([KeyValue::new("service.name", SERVICE_NAME)])
+        .with_attributes([KeyValue::new("service.name", service_name.to_owned())])
         .build();
     let provider = SdkMeterProvider::builder()
         .with_resource(resource)
         .with_reader(SharedReader(reader.clone()))
         .build();
     let bridge = OpenTelemetryRecorder::new(
-        provider.meter_with_scope(InstrumentationScope::builder(SERVICE_NAME).build()),
+        provider.meter_with_scope(InstrumentationScope::builder(service_name.to_owned()).build()),
     );
     for name in guard::HISTOGRAMS {
         bridge.set_histogram_bounds(&KeyName::from_const_str(name), HISTOGRAM_BOUNDS.to_vec());
@@ -195,7 +218,7 @@ pub(crate) fn prepare(endpoint: &str, schedule: Schedule) -> Result<Prepared, Se
 }
 
 /// Result of the one process-wide installation attempt.
-pub(crate) enum Installation {
+enum Installation {
     Installed(Box<Session>),
     /// Another recorder was already installed; resources were closed.
     Rejected(DiagnosticClosure),
@@ -205,8 +228,8 @@ impl Prepared {
     /// Install through Batter's canonical path, which publishes the catalog
     /// descriptions after the recorder exists. Installation is process-global,
     /// happens once and cannot be reset or reloaded.
-    pub(crate) fn install(self) -> Installation {
-        match batter::telemetry::metrics::install(self.recorder) {
+    fn install_pipeline(self) -> Installation {
+        match batter_core::telemetry::metrics::install(self.recorder) {
             Ok(()) => {
                 Installation::Installed(Box::new(Session::new(self.resources, self.schedule)))
             }
@@ -224,7 +247,7 @@ impl Prepared {
 }
 
 /// The single serial export owner after installation.
-pub(crate) struct Session {
+struct Session {
     resources: Resources,
     schedule: Schedule,
     snapshot: ResourceMetrics,
@@ -261,7 +284,7 @@ impl Session {
     /// collected. Nothing inside `service` can begin finalization, so readiness,
     /// drain and cleanup hooks cannot flush early. `coverage` classifies the
     /// retained service output before the final export.
-    pub(crate) async fn around<T>(
+    async fn around<T>(
         self,
         service: impl Future<Output = T>,
         coverage: impl FnOnce(&T) -> FinalCoverage,
@@ -279,6 +302,12 @@ impl Session {
         (output, report)
     }
 
+    async fn run(self, completion: batter_core::service::DiagnosticCompletion) -> ExportReport {
+        self.around(completion.wait(), |witness| witness.coverage())
+            .await
+            .1
+    }
+
     /// Export periodically until `stop`; an in-flight attempt always settles
     /// under its own deadline before this returns.
     async fn periodic(mut self, mut stop: watch::Receiver<bool>) -> Self {
@@ -294,9 +323,19 @@ impl Session {
             self.history.record(outcome);
             let now = Instant::now();
             next += interval;
-            while next <= now {
-                next += interval;
-                self.history.coalesced_intervals += 1;
+            if next <= now {
+                let elapsed = now.duration_since(next).as_nanos();
+                let missed = elapsed / interval.as_nanos() + 1;
+                self.history.coalesced_intervals = self
+                    .history
+                    .coalesced_intervals
+                    .saturating_add(u64::try_from(missed).unwrap_or(u64::MAX));
+                let remainder = elapsed % interval.as_nanos();
+                let remainder = Duration::new(
+                    (remainder / 1_000_000_000) as u64,
+                    (remainder % 1_000_000_000) as u32,
+                );
+                next = now + (interval - remainder);
             }
         }
     }
@@ -343,6 +382,28 @@ impl Record for ExportHistory {
                 self.failed += 1;
                 self.first_failure.get_or_insert(failure);
                 self.last_failure = Some(failure);
+            }
+        }
+    }
+}
+
+impl batter_core::service::Diagnostics for Prepared {
+    type Report = diagnostics::MetricsExport;
+
+    fn install(
+        self,
+        completion: batter_core::service::DiagnosticCompletion,
+    ) -> impl Future<Output = Self::Report> + Send + 'static {
+        let installed = self.install_pipeline();
+        async move {
+            match installed {
+                Installation::Installed(session) => {
+                    diagnostics::MetricsExport::Exported(session.run(completion).await)
+                }
+                Installation::Rejected(closure) => {
+                    let _ = completion.wait().await;
+                    diagnostics::MetricsExport::InstallationRejected { closure }
+                }
             }
         }
     }

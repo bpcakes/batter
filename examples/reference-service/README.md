@@ -327,6 +327,13 @@ live waiter loss from actual runtime destruction and native lease Drop.
 
 ## Opt-in metrics export
 
+This application selects the optional `batter-otlp` adapter through
+`batter::service::start`. Core owns startup, shutdown and diagnostic completion;
+this root owns the settings schema, literal-loopback policy and exit code.
+`ServiceCompletion::foundation()` exposes native service reports and retained
+diagnostic panic details. Diagnostic task panics cannot replace a known service
+result. Installation remains explicit and process-global.
+
 Build with `--features metrics-export` and set `BATTER_METRICS_OTLP_ENDPOINT` to
 export the bounded foundation catalog (operations including
 `http.response_construction` and `provider.dispatch`, admission decisions, task
@@ -356,7 +363,7 @@ foundation catalog with its exact label shapes and vocabularies and at most
 before the `metrics-exporter-otel` registry, SDK callbacks or metadata allocate.
 Rejections are counted, never logged.
 
-One application-owned serial loop collects cumulative snapshots from a shared
+One adapter-owned serial loop collects cumulative snapshots from a shared
 SDK `ManualReader` every ten seconds and exports each under a three-second
 deadline. There is no `PeriodicReader`, background SDK thread, request queue or
 retry; missed ticks are coalesced and counted, and a collector outage keeps
@@ -373,9 +380,10 @@ Finalization is owned by the orchestration, not by readiness, drain or cleanup
 hooks. After protected startup failure cleanup, or complete driver settlement
 including the shutdown metric recorded after `Stopped`, scheduling stops, any
 in-flight periodic attempt settles under its own deadline, and one separate
-five-second allowance covers the final snapshot, its export and exactly-once
-exporter/provider closure. Service drain and cleanup budgets never wait on the
-collector. A report with unjoined tasks, uncertain native settlement or skipped
+five-second allowance bounds the final export's yielding I/O. Exporter/provider
+closure follows once on normal completion; synchronous SDK collection and closure
+cannot be preempted by that async deadline. Service drain and cleanup budgets never
+wait on the collector. A report with unjoined tasks, uncertain native settlement or skipped
 or unjoined cleanup marks `FinalCoverage::Incomplete`. The combined
 `ServiceCompletion` keeps the original service result and report beside the
 `MetricsExport` diagnostics; the executable's exit code and stderr follow the

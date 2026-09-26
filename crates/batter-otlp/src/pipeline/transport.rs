@@ -106,7 +106,7 @@ impl AttemptSlot {
 #[error("bounded metrics transport did not acknowledge the request")]
 struct Unacknowledged;
 
-/// The OpenTelemetry HTTP client used by the reference exporter.
+/// The OpenTelemetry HTTP client used by the protected OTLP adapter.
 pub(crate) struct BoundedClient {
     client: reqwest::Client,
     slot: Arc<AttemptSlot>,
@@ -121,10 +121,7 @@ impl fmt::Debug for BoundedClient {
 impl BoundedClient {
     /// Build an inert client: no redirects, no proxy discovery, no connection.
     pub(crate) fn new(slot: Arc<AttemptSlot>) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .no_proxy()
-            .build()?;
+        let client = client_builder().build()?;
         Ok(Self { client, slot })
     }
 
@@ -164,6 +161,14 @@ impl BoundedClient {
         }
         classify_response(&body)
     }
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .redirect(Policy::none())
+        .no_proxy()
+        // Consumer feature unification can enable HTTP/2 protocol retries.
+        .retry(reqwest::retry::never())
 }
 
 /// Decode the OTLP response. Only a decoded response without rejected points is
@@ -224,3 +229,7 @@ impl HttpClient for BoundedClient {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/http2.rs"]
+mod http2;

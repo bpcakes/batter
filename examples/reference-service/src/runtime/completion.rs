@@ -1,9 +1,11 @@
 //! Owned serving orchestration and its combined, retained completion.
 
 use crate::diagnostics::MetricsExport;
-use batter::{BoxError, lifecycle::ShutdownHandle};
+use batter::{
+    BoxError,
+    service::{DiagnosticOutcome, ServiceOutcome},
+};
 use std::{error::Error, fmt, process::ExitCode, sync::Arc};
-use tokio::sync::watch;
 
 /// The original service failure, retained unchanged beside diagnostics.
 ///
@@ -41,7 +43,7 @@ impl Error for ServiceFailure {
 
 /// The orchestration task terminated before publishing its own completion.
 /// The retained join error is available through the error source.
-pub struct OrchestrationFailure(tokio::task::JoinError);
+pub struct OrchestrationFailure(Arc<tokio::task::JoinError>);
 
 impl fmt::Display for OrchestrationFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,13 +59,14 @@ impl fmt::Debug for OrchestrationFailure {
 
 impl Error for OrchestrationFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.0)
+        Some(self.0.as_ref())
     }
 }
 
 struct Completed {
     service: Result<(), ServiceFailure>,
     metrics: MetricsExport,
+    native: NativeCompletion,
 }
 
 /// The retained result of one serving run: the original service result and
@@ -96,18 +99,33 @@ struct Completed {
 pub struct ServiceCompletion(Arc<Completed>);
 
 impl ServiceCompletion {
-    pub(super) fn new(service: Result<(), BoxError>, metrics: MetricsExport) -> Self {
+    fn from_native(native: NativeCompletion) -> Self {
+        let service = match native.service() {
+            ServiceOutcome::StartupFailed(error) => Err(super::startup_failure(error.clone())),
+            ServiceOutcome::Shutdown(Ok(success)) => {
+                super::check_application_shutdown(success.clone())
+            }
+            ServiceOutcome::Shutdown(Err(error)) => Err(Box::new(error.clone()) as BoxError),
+            ServiceOutcome::Coordinator(error) => {
+                Err(Box::new(OrchestrationFailure(error.clone())) as BoxError)
+            }
+        };
+        let metrics = match native.diagnostics() {
+            DiagnosticOutcome::Completed(report) => report.clone(),
+            DiagnosticOutcome::InstallationPanicked(_) | DiagnosticOutcome::TaskFailed(_) => {
+                MetricsExport::Abandoned
+            }
+        };
         Self(Arc::new(Completed {
             service: service.map_err(ServiceFailure),
             metrics,
+            native,
         }))
     }
 
-    fn abandoned(error: tokio::task::JoinError) -> Self {
-        Self::new(
-            Err(Box::new(OrchestrationFailure(error))),
-            MetricsExport::Abandoned,
-        )
+    /// Original library completion, including retained diagnostic panic details.
+    pub fn foundation(&self) -> &NativeCompletion {
+        &self.0.native
     }
 
     /// The original service result, unchanged by diagnostics.
@@ -152,115 +170,53 @@ impl fmt::Debug for ServiceCompletion {
     }
 }
 
-type Publication = watch::Receiver<Option<ServiceCompletion>>;
+/// Native completion retained before application exit policy is applied.
+pub type NativeCompletion =
+    batter::service::ServiceCompletion<super::InitializationFailure, MetricsExport>;
+type NativeOwner = batter::service::ServiceOwner<super::InitializationFailure, MetricsExport>;
+type NativeObserver = batter::service::ServiceObserver<super::InitializationFailure, MetricsExport>;
 
-async fn published(mut completion: Publication) -> ServiceCompletion {
-    let observed = completion
-        .wait_for(Option::is_some)
-        .await
-        .expect("serving monitor retains publication")
-        .clone();
-    observed.expect("wait_for returned a published completion")
-}
-
-/// Sole owner of one started serving orchestration.
-///
-/// Dropping the owner requests ordinary service drain; the orchestration keeps
-/// running on the live runtime through cleanup, the final metrics export and
-/// diagnostic closure. Cancelling [`Self::wait`] changes no ownership and
-/// requests nothing. Take an [`Self::observer`] before dropping the owner to
-/// inspect the retained completion later. No runtime-death guarantee exists.
-///
-/// ```compile_fail,E0599
-/// use batter_example_reference_service::runtime::ServiceOwner;
-/// fn cannot_duplicate(owner: ServiceOwner) {
-///     let duplicate = owner.clone();
-/// }
-/// ```
-///
-/// Discarding the started owner requests drain immediately:
-///
-/// ```compile_fail
-/// #![deny(unused_must_use)]
-/// use batter_example_reference_service::{config::PreparedServing, runtime};
-/// fn discarded(prepared: PreparedServing) {
-///     runtime::start(prepared);
-/// }
-/// ```
-#[must_use = "retain the service owner; dropping it requests drain"]
-pub struct ServiceOwner {
-    handle: ShutdownHandle,
-    completion: Publication,
-}
+/// Application owner backed by Batter's protected service lifecycle.
+/// Drop requests drain; the runtime must remain alive through diagnostic closure.
+#[must_use = "retain the owner; dropping it requests drain"]
+pub struct ServiceOwner(NativeOwner);
 
 impl ServiceOwner {
-    pub(super) fn spawn<F>(handle: ShutdownHandle, orchestration: F) -> Self
-    where
-        F: Future<Output = ServiceCompletion> + Send + 'static,
-    {
-        let (publish, completion) = watch::channel(None);
-        let orchestration = tokio::spawn(orchestration);
-        // The monitor owns publication independently of every owner and waiter,
-        // including an orchestration panic.
-        tokio::spawn(async move {
-            let completion = orchestration
-                .await
-                .unwrap_or_else(ServiceCompletion::abandoned);
-            publish.send_replace(Some(completion));
-        });
-        Self { handle, completion }
+    pub(super) fn new(owner: NativeOwner) -> Self {
+        Self(owner)
     }
-
-    /// Clone a completion observer without prolonging service ownership.
+    /// Observe completion without retaining service ownership.
     pub fn observer(&self) -> ServiceObserver {
-        ServiceObserver {
-            completion: self.completion.clone(),
-        }
+        ServiceObserver(self.0.observer())
     }
-
-    /// Await the retained completion. Cancelling this waiter requests nothing;
-    /// repeated waits return the same retained value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the runtime destroys the monitor before publication.
+    /// Await service and diagnostics. Cancelling this waiter requests nothing.
+    /// Panics if runtime destruction prevents publication.
     pub async fn wait(&self) -> ServiceCompletion {
-        published(self.completion.clone()).await
-    }
-}
-
-impl Drop for ServiceOwner {
-    fn drop(&mut self) {
-        self.handle.request();
+        ServiceCompletion::from_native(self.0.wait().await)
     }
 }
 
 impl fmt::Debug for ServiceOwner {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ServiceOwner")
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ServiceOwner")
     }
 }
 
-/// Cloneable observation of one serving run, independent of its owner.
+/// Read-only completion observer backed by Batter.
 #[derive(Clone)]
-pub struct ServiceObserver {
-    completion: Publication,
-}
+pub struct ServiceObserver(NativeObserver);
 
 impl ServiceObserver {
-    /// Await the retained completion without owning or stopping the service.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the runtime destroys the monitor before publication.
+    /// Await completion without owning the service. Panics if runtime destruction
+    /// prevents publication. Repeated waits preserve the native report identity.
     pub async fn wait(&self) -> ServiceCompletion {
-        published(self.completion.clone()).await
+        ServiceCompletion::from_native(self.0.wait().await)
     }
 }
 
 impl fmt::Debug for ServiceObserver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ServiceObserver")
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ServiceObserver")
     }
 }
 

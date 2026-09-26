@@ -1845,12 +1845,15 @@ narrower opaque `PreparedHttp`. These local types cannot prove remote database
 authentication or availability.
 
 With the opt-in `metrics-export` feature and an explicit loopback collector, the
-reference orchestration installs one guarded recorder before startup and owns the
-only flush. The guard rejects names, label shapes and keys outside the foundation
+reference selects `batter-otlp` through `batter::service::start`, which owns
+installation before protected startup and releases the final flush. The guard rejects names, label shapes and keys outside the foundation
 catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
 exports manual-reader snapshots under fixed deadlines and payload/response
-ceilings, with no queue or retry. The final snapshot is collected only after the
-service result is retained (startup-failure cleanup, or complete driver
+ceilings, with no queue or retry. The adapter explicitly disables native HTTP protocol
+retries even when consumer dependencies enable HTTP/2. Service startup rejects
+a missing Tokio runtime before installing diagnostics or beginning startup.
+The final snapshot is collected only after the service result is retained
+(startup-failure cleanup, or complete driver
 settlement including the shutdown metric after `Stopped`), exported under a
 separate allowance and followed by exactly-once exporter/provider closure; no
 readiness event, drain or cleanup hook can start it, and no service cleanup
@@ -1861,8 +1864,13 @@ not durable storage; a timed-out or cancelled request is neither delivery nor
 remote rollback. `FinalCoverage::Incomplete` reports unjoined tasks, uncertain
 native settlement and skipped or unjoined cleanup; `Reported` describes the
 report, not unsupervised producers. Owner drop requests drain and waiter
-cancellation requests nothing. Runtime death, SIGKILL, and blocking or panicking
-recorder code are not covered.
+cancellation requests nothing. Core retains the native service outcome independently
+of diagnostic installation, periodic work and finalization, including diagnostic
+panics. The reference retains that evidence through `ServiceCompletion::foundation`.
+A diagnostic panic does not guarantee resource closure; synchronous collection,
+closure and recorder calls cannot be preempted by async deadlines. Runtime death,
+SIGKILL and blocking or panicking recorders inside application work remain outside
+this isolation boundary.
 
 The supported TCP URL subset requires explicit host, username, database and
 sslmode; only password, sslmode and application_name query settings are accepted,

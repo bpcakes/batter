@@ -87,22 +87,18 @@ Each skipped finalizer produces one warning, including the first hook skipped
 when the shared work budget is exhausted.
 The opt-in `metrics` feature records bounded foundation outcome metrics through
 the `metrics` 0.24 facade, re-exported as `batter::telemetry::metrics::facade`;
-see that module for names, units, label domains and the series bound. Pass the
-exporter's recorder to `batter::telemetry::metrics::install` once in the binary,
-before starting the supervisor; a recorder on another `metrics` major version
-does not compile there. Flush after awaiting the supervisor's completion, not on
-observing `Stopped` readiness. Install one recorder/exporter in the binary and
-choose one that aggregates rather than queueing raw samples. Batter holds no
-metric buffer, so exporter flush and shutdown ordering belong to the application
-root. No Batter library includes an OpenTelemetry exporter, propagation or
-exporter shutdown adapter. The unpublished reference service's opt-in
-`metrics-export` feature is the application-root recipe: a catalog guard in
-front of `metrics-exporter-otel`, a shared SDK `ManualReader`, one serial
-OTLP/HTTP owner with fixed deadlines and payload/response ceilings, and a final
-snapshot exported only after the retained service result, under its own
-allowance, before exactly-once exporter/provider closure. Diagnostic failures
-stay in a separate completion field; see the
-[reference README](../examples/reference-service/README.md#opt-in-metrics-export).
+see that module for names, units, label domains and the series bound. For protected OTLP export, select facade feature `otlp`, prepare the endpoint,
+service identity and schedule explicitly, then pass the prepared exporter with
+`ScopedStartup` to `batter::service::start`. Core owns startup through cleanup
+and final diagnostic settlement; application and diagnostic outcomes remain
+separate. The reference application's `metrics-export` feature selects this
+adapter using its own settings schema and deployment policy.
+
+Other recorders can use the lower-level `batter::telemetry::metrics::install`
+path. That path leaves aggregation bounds and final export ordering to the
+application: flush only after awaiting driver completion, not readiness
+`Stopped`. Neither recorder installation nor collector acknowledgement proves
+remote durable storage. See the [adapter guide](../crates/batter-otlp/README.md).
 
 Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a

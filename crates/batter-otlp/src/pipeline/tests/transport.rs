@@ -9,7 +9,7 @@ use super::{
     Harness, key, pipeline,
 };
 use crate::diagnostics::{ExportFailure, ExportOutcome};
-use batter::telemetry::metrics::{self as catalog, facade::Recorder};
+use batter_core::telemetry::metrics::{self as catalog, facade::Recorder};
 use bytes::Bytes;
 use opentelemetry_http::HttpClient;
 use std::{sync::Arc, time::Duration};
@@ -164,7 +164,7 @@ fn stalled_collector_and_series_storm_change_no_result_or_bound() {
     let harness = Harness::new(Behavior::StallHeaders);
     let (recorder, mut session) = harness.pipeline(SHORT);
     let state = session.resources.state.clone();
-    let context = batter::operation::OperationOwner::new(Duration::from_secs(5))
+    let context = batter_core::operation::OperationOwner::new(Duration::from_secs(5))
         .unwrap()
         .into_context();
     let (outcome, value) = harness.run(&recorder, async {
@@ -173,7 +173,7 @@ fn stalled_collector_and_series_storm_change_no_result_or_bound() {
             // waits for it nor queues anything behind it.
             let started = Instant::now();
             for index in 0..10_000 {
-                let storm = batter::telemetry::metrics::facade::Key::from_name(format!(
+                let storm = batter_core::telemetry::metrics::facade::Key::from_name(format!(
                     "library_series_{index}"
                 ));
                 recorder

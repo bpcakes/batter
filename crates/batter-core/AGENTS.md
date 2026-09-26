@@ -37,13 +37,14 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
 - `src/command.rs` and `command/` own finite callbacks and independently retained
   LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
+- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
 - `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
   command, startup and process completion observers; their public policies stay separate.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined
   children with a nonconforming wrapper whose hidden child survives cleanup.
   `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;
   private std-only mechanics live in workspace `test-support/process/`.
-- `src/telemetry/metrics.rs` owns the opt-in bounded metric catalog; closed
+- `src/telemetry/metrics.rs` owns the opt-in bounded metric catalog; shared schema/validation in `metrics/catalog.rs`, closed
   label vocabularies are defined once in `metrics/vocabulary.rs`, name
   tables in `metrics/names.rs`, bounded key caches in `metrics/keys.rs` and
   the shared record-once guard in `metrics/terminal.rs`. Call sites use the

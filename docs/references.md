@@ -74,6 +74,23 @@ The resolved graph was checked with `cargo tree -e features`: no
 `http-proto` enables the exporter's trace feature and tonic-generated message
 types. These are source facts, not proof of collector durability.
 
+Extraction amendment, 2026-09-26 (`batter-i3ny`): the same Cargo-resolved bridge,
+SDK and OTLP versions now live in optional `batter-otlp`. Rechecked the published
+SDK 0.31.0 ManualReader documentation and OTLP response specification; the native
+force-flush and response semantics above are unchanged. Core now owns service
+completion and catalog definitions; adapter configuration remains explicit.
+Synchronous SDK collection/closure is not made preemptible by async deadlines.
+
+Review repair, 2026-09-26 (`batter-i3ny`): rechecked locked reqwest 0.12.28
+`src/retry.rs` and `src/async_impl/client.rs` against its
+[`ClientBuilder::retry` contract](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.retry).
+The default permits two extra dispatches for protocol NACKs, including HTTP/2
+`REFUSED_STREAM` and remote graceful `GOAWAY`. Another consumer can enable HTTP/2
+through Cargo feature unification. The adapter therefore selects
+`reqwest::retry::never()` explicitly. A native h2c `REFUSED_STREAM` regression
+compares the default policy with the production policy; it does not exercise TLS
+certificate validation or ALPN negotiation.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,

@@ -1,98 +1,63 @@
-//! Service completion -> final snapshot export -> diagnostic closure.
-
-use super::{ServiceCompletion, serve};
+use super::ServiceOutcome;
 use crate::{
-    config::{PreparedMetrics, ServingParts},
-    diagnostics::{FinalCoverage, IncompleteCoverage, MetricsExport},
-};
-use batter::{
-    BoxError,
     cleanup::{CleanupOutcome, CleanupReport},
     lifecycle::{ShutdownFailure, ShutdownReport},
-    startup::{InitializationError, StartupError},
+    startup::StartupError,
 };
 
-/// The retained service result plus what its report can claim about coverage.
-pub(super) struct ServiceEvidence {
-    pub(super) result: Result<(), BoxError>,
-    #[cfg_attr(not(feature = "metrics-export"), allow(dead_code))]
-    pub(super) coverage: FinalCoverage,
+/// Report coverage at the final diagnostic snapshot boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompletionCoverage {
+    /// Every direct task and cleanup hook was observed and native settlement
+    /// allowed dependency cleanup. Unsupervised producers may still exist.
+    Reported,
+    /// Retained evidence cannot establish complete coverage.
+    Incomplete(IncompleteCoverage),
 }
 
-/// One owned serving run. Diagnostics are installed before startup and
-/// finalized only after the service result, including startup failure cleanup
-/// or complete driver settlement, has been retained.
-pub(super) async fn orchestrate(
-    parts: ServingParts,
-    metrics: PreparedMetrics,
-) -> ServiceCompletion {
-    match metrics {
-        PreparedMetrics::Disabled => {
-            let evidence = serve(parts).await;
-            ServiceCompletion::new(evidence.result, MetricsExport::Disabled)
-        }
-        #[cfg(feature = "metrics-export")]
-        PreparedMetrics::Otlp(prepared) => exported(parts, prepared).await,
+/// Reasons observations may be missing or arrive after the final snapshot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IncompleteCoverage {
+    /// A coordinator terminated without its report.
+    pub missing_report: bool,
+    /// Direct tasks not observed to finish.
+    pub unjoined_tasks: usize,
+    /// Native components whose settlement did not allow dependency cleanup.
+    pub uncertain_native: usize,
+    /// Registered cleanup hooks never started.
+    pub skipped_cleanup: usize,
+    /// Cleanup hooks not observed to finish.
+    pub unjoined_cleanup: usize,
+}
+
+/// Opaque proof that this service's outcome was retained before finalization.
+/// It proves neither successful shutdown nor termination of arbitrary producers.
+/// Obtain it only by awaiting [`super::DiagnosticCompletion::wait`].
+pub struct RetainedCompletion(pub(super) CompletionCoverage);
+
+impl RetainedCompletion {
+    /// Inspect the coverage supported by the retained lifecycle reports.
+    pub fn coverage(&self) -> CompletionCoverage {
+        self.0
     }
 }
 
-#[cfg(feature = "metrics-export")]
-async fn exported(
-    parts: ServingParts,
-    prepared: Box<crate::metrics_export::Prepared>,
-) -> ServiceCompletion {
-    use crate::metrics_export::Installation;
-
-    let session = match prepared.install() {
-        Installation::Installed(session) => session,
-        Installation::Rejected(closure) => {
-            let evidence = serve(parts).await;
-            return ServiceCompletion::new(
-                evidence.result,
-                MetricsExport::InstallationRejected { closure },
-            );
-        }
-    };
-    let (evidence, report) = session
-        .around(serve(parts), |evidence: &ServiceEvidence| evidence.coverage)
-        .await;
-    ServiceCompletion::new(evidence.result, MetricsExport::Exported(report))
-}
-
-fn incomplete(coverage: IncompleteCoverage) -> FinalCoverage {
-    if coverage == IncompleteCoverage::default() {
-        FinalCoverage::Reported
-    } else {
-        FinalCoverage::Incomplete(coverage)
-    }
-}
-
-fn cleanup_coverage(cleanup: &CleanupReport, mut coverage: IncompleteCoverage) -> FinalCoverage {
+fn cleanup(cleanup: &CleanupReport, mut coverage: IncompleteCoverage) -> CompletionCoverage {
     coverage.skipped_cleanup = cleanup.skipped.len();
     coverage.unjoined_cleanup = cleanup
         .records
         .iter()
         .filter(|record| record.outcome == CleanupOutcome::Unjoined)
         .count();
-    incomplete(coverage)
-}
-
-/// Startup failure cleanup is retained before this is called.
-pub(super) fn startup_coverage<E>(error: &StartupError<InitializationError<E>>) -> FinalCoverage {
-    match error {
-        StartupError::Failed(failure) => {
-            cleanup_coverage(&failure.cleanup, IncompleteCoverage::default())
-        }
-        StartupError::Coordinator(_) => FinalCoverage::Incomplete(IncompleteCoverage {
-            missing_report: true,
-            ..IncompleteCoverage::default()
-        }),
+    if coverage == IncompleteCoverage::default() {
+        CompletionCoverage::Reported
+    } else {
+        CompletionCoverage::Incomplete(coverage)
     }
 }
 
-/// Driver return does not prove that unjoined or native-uncertain work stopped.
-pub(super) fn report_coverage(report: &ShutdownReport) -> FinalCoverage {
-    cleanup_coverage(
+fn shutdown(report: &ShutdownReport) -> CompletionCoverage {
+    cleanup(
         &report.cleanup,
         IncompleteCoverage {
             unjoined_tasks: report.unjoined.len(),
@@ -106,10 +71,16 @@ pub(super) fn report_coverage(report: &ShutdownReport) -> FinalCoverage {
     )
 }
 
-pub(super) fn shutdown_failure_coverage(failure: &ShutdownFailure) -> FinalCoverage {
-    match failure {
-        ShutdownFailure::Report(report) => report_coverage(report),
-        ShutdownFailure::Coordinator(_) => FinalCoverage::Incomplete(IncompleteCoverage {
+pub(super) fn coverage<E>(outcome: &ServiceOutcome<E>) -> CompletionCoverage {
+    match outcome {
+        ServiceOutcome::StartupFailed(StartupError::Failed(failure)) => {
+            cleanup(&failure.cleanup, IncompleteCoverage::default())
+        }
+        ServiceOutcome::Shutdown(Ok(success)) => shutdown(success.report()),
+        ServiceOutcome::Shutdown(Err(ShutdownFailure::Report(report))) => shutdown(report),
+        ServiceOutcome::StartupFailed(StartupError::Coordinator(_))
+        | ServiceOutcome::Shutdown(Err(ShutdownFailure::Coordinator(_)))
+        | ServiceOutcome::Coordinator(_) => CompletionCoverage::Incomplete(IncompleteCoverage {
             missing_report: true,
             ..IncompleteCoverage::default()
         }),
@@ -118,8 +89,18 @@ pub(super) fn shutdown_failure_coverage(failure: &ShutdownFailure) -> FinalCover
 
 #[cfg(test)]
 mod tests {
+    use super::CompletionCoverage as FinalCoverage;
+    use super::shutdown as report_coverage;
     use super::*;
-    use batter::{
+    use crate::{
+        cleanup::{CleanupOutcome, CleanupReport},
+        lifecycle::ShutdownReport,
+        startup::{InitializationError, StartupError},
+    };
+    fn startup_coverage<E>(error: &StartupError<InitializationError<E>>) -> FinalCoverage {
+        coverage(&ServiceOutcome::StartupFailed(error.clone()))
+    }
+    use crate::{
         cleanup::{CleanupRecord, SkipReason, SkippedCleanup},
         lifecycle::ShutdownCause,
         startup::{StartupCause, StartupFailure},

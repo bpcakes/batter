@@ -24,7 +24,7 @@ pub(super) enum MetricsSettings {
 pub(crate) enum PreparedMetrics {
     Disabled,
     #[cfg(feature = "metrics-export")]
-    Otlp(Box<crate::metrics_export::Prepared>),
+    Otlp(Box<batter::otlp::Prepared>),
 }
 
 impl MetricsSettings {
@@ -62,9 +62,14 @@ impl MetricsSettings {
         match self {
             Self::Disabled => Ok(PreparedMetrics::Disabled),
             #[cfg(feature = "metrics-export")]
-            Self::Otlp(endpoint) => crate::metrics_export::prepare(
+            Self::Otlp(endpoint) => batter::otlp::prepare(
                 endpoint.as_str(),
-                crate::metrics_export::Schedule::FIXED,
+                "batter-example-reference-service",
+                batter::otlp::Schedule::new(
+                    std::time::Duration::from_secs(10),
+                    std::time::Duration::from_secs(3),
+                    std::time::Duration::from_secs(5),
+                )?,
             )
             .map(|prepared| PreparedMetrics::Otlp(Box::new(prepared))),
         }
@@ -100,4 +105,23 @@ fn validate(value: &str) -> Result<url::Url, SettingsError> {
         ));
     }
     Ok(url)
+}
+
+impl batter::service::Diagnostics for PreparedMetrics {
+    type Report = crate::diagnostics::MetricsExport;
+
+    fn install(
+        self,
+        completion: batter::service::DiagnosticCompletion,
+    ) -> impl Future<Output = Self::Report> + Send + 'static {
+        let future: std::pin::Pin<Box<dyn Future<Output = Self::Report> + Send>> = match self {
+            Self::Disabled => Box::pin(async move {
+                let _ = completion.wait().await;
+                crate::diagnostics::MetricsExport::Disabled
+            }),
+            #[cfg(feature = "metrics-export")]
+            Self::Otlp(prepared) => Box::pin((*prepared).install(completion)),
+        };
+        future
+    }
 }

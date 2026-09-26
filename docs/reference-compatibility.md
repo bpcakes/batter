@@ -1,5 +1,11 @@
 # Native reference compatibility
 
+2026-09-26 extraction (`batter-i3ny`): the reference now selects optional
+`batter-otlp` through core protected service completion. The native versions below
+remain unchanged. Historical live runs predate this extraction; current pinned
+workspace and focused checks are recorded in the owning Bead.
+
+
 The metrics export recipe (`batter-8jr`) adds the reference package's opt-in
 `metrics-export` feature with optional `metrics-exporter-otel` 0.3.1,
 `opentelemetry`/`opentelemetry_sdk` 0.31.0, `opentelemetry-otlp` 0.31.1,

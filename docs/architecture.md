@@ -39,7 +39,7 @@ collection of wrappers around every dependency.
 The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
 `batter-runledger` and `batter-runlimit` adapters, `batter-test-support`
-utilities, and the standalone `batter-at-rest` crypto leaf are eight Batter
+utilities, and the standalone `batter-at-rest` crypto leaf are nine Batter
 libraries. Four native Runledger libraries and its operator TUI live under
 `runledger/`; five native Runlimit libraries live under `runlimit/`.
 `batter-example-postgres-lifecycle` is an unpublished executable package;
@@ -54,7 +54,8 @@ application composition root
   |-- batter facade -> batter-core lifecycle + cleanup
   |                         operation + retry + admission + settings
   |     `-- opt-in at-rest -> standalone batter-at-rest leaf
-  |-- native tracing subscriber and exporters (application-owned)
+  |-- native tracing subscriber and exporter selection (application-owned)
+  |-- optional batter-otlp -> batter-core protected service completion + native SDK
   |-- optional batter-axum -> batter-core + Axum / Tower
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
   |     `-- opt-in test-support -> external harness + generic test support
@@ -105,7 +106,7 @@ replaces the other. See
 [Runledger integration contract](integrations.md#runledger-optional-native-lifecycle-adapter).
 
 Each package declares its version, Rust minimum, and publication policy. The
-eight Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
+nine Batter packages use 0.0.1, native Runledger uses 0.13.0, and native
 Runlimit uses 0.4.0; all retain Rust 1.94 and restrict publication to crates.io.
 The two examples remain unpublished. A shared workspace does not imply a
 mandatory stack; the root lockfile and verification matrix remain shared.

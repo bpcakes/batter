@@ -2,7 +2,7 @@
 
 use super::{super::Schedule, Harness, QUIET, collector::Behavior, counter, find, series};
 use crate::diagnostics::{Closure, DiagnosticClosure, ExportFailure, ExportOutcome, FinalCoverage};
-use batter::{
+use batter_core::{
     cleanup::CleanupBudget,
     lifecycle::{ShutdownBudget, Supervisor},
     startup::Startup,
@@ -95,7 +95,7 @@ fn startup_failure_cleanup_is_exported_without_a_shutdown() {
     let harness = Harness::new(Behavior::Accept);
     let (recorder, session) = harness.pipeline(QUIET);
     let (_, report) = harness.run(&recorder, async {
-        let context = batter::operation::OperationOwner::new(Duration::from_secs(5))
+        let context = batter_core::operation::OperationOwner::new(Duration::from_secs(5))
             .unwrap()
             .into_context();
         let mut starting = Startup::scoped(supervisor(), context, cleanup_budget(), |scope| {
@@ -179,4 +179,27 @@ fn in_flight_periodic_export_settles_before_the_final_snapshot() {
         periodic.attempts + 1,
         "{periodic:?}"
     );
+}
+
+#[test]
+fn tiny_intervals_coalesce_without_iterating_over_elapsed_ticks() {
+    let harness = Harness::new(Behavior::StallHeaders);
+    let schedule = Schedule {
+        interval: Duration::from_nanos(1),
+        attempt: Duration::from_millis(100),
+        final_allowance: Duration::from_millis(100),
+    };
+    let (recorder, session) = harness.pipeline(schedule);
+    let started = Instant::now();
+    let (_, report) = harness.run(&recorder, async {
+        session
+            .around(tokio::time::sleep(Duration::from_millis(20)), |_| {
+                FinalCoverage::Reported
+            })
+            .await
+    });
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(report.periodic.coalesced_intervals > 1_000_000);
+    assert_eq!(report.periodic.attempts, 1);
+    assert_eq!(report.closure, CLOSED);
 }

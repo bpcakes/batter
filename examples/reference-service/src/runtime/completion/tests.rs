@@ -1,12 +1,13 @@
 //! Owner, waiter and observer semantics of the serving orchestration.
 
-use super::{OrchestrationFailure, ServiceCompletion, ServiceOwner};
+use super::ServiceOwner;
+use crate::diagnostics::MetricsExport;
+#[cfg(feature = "metrics-export")]
 use crate::diagnostics::{
     Closure, DiagnosticClosure, ExportFailure, ExportHistory, ExportOutcome, ExportReport,
-    FinalCoverage, GuardRejections, MetricsExport,
+    FinalCoverage, GuardRejections,
 };
 use batter::{
-    BoxError,
     cleanup::CleanupBudget,
     lifecycle::{Readiness, ShutdownBudget, Supervisor},
 };
@@ -21,6 +22,7 @@ fn supervisor() -> Supervisor {
     Supervisor::new(ShutdownBudget::new(second, second, second, cleanup).unwrap())
 }
 
+#[cfg(feature = "metrics-export")]
 fn report(final_export: ExportOutcome) -> MetricsExport {
     MetricsExport::Exported(ExportReport {
         periodic: ExportHistory::default(),
@@ -45,22 +47,28 @@ fn owned(release: oneshot::Receiver<()>) -> (ServiceOwner, batter::lifecycle::Li
         })
         .unwrap();
     supervisor
-        .on_cleanup("resource", move || async move {
+        .on_cleanup("postgres.pool", move || async move {
             let _ = release.await;
             Ok(())
         })
         .unwrap();
     let handle = supervisor.handle();
     let status = handle.status();
-    let running = supervisor.start();
-    let orchestration = async move {
-        let result = running.wait_checked().await;
-        ServiceCompletion::new(
-            result.map(|_| ()).map_err(BoxError::from),
-            MetricsExport::Disabled,
-        )
-    };
-    (ServiceOwner::spawn(handle, orchestration), status)
+    let startup = batter::startup::Startup::scoped(
+        supervisor,
+        batter::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
+        super::super::cleanup_budget(),
+        |_| Box::pin(async { Ok::<_, super::super::InitializationFailure>(()) }),
+    );
+    (
+        ServiceOwner::new(batter::service::start(
+            startup,
+            crate::config::PreparedMetrics::Disabled,
+        )),
+        status,
+    )
 }
 
 #[test]
@@ -101,60 +109,131 @@ fn waiter_cancellation_requests_nothing_and_later_observers_receive_the_completi
     }
 }
 
-#[test]
-fn an_orchestration_panic_is_published_as_an_abandoned_completion() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let owner = ServiceOwner::spawn(supervisor().handle(), async {
-            panic!("{PRIVATE}");
-        });
-        let completion = owner.wait().await;
-        assert_eq!(completion.metrics(), &MetricsExport::Abandoned);
-        let failure = completion.service().unwrap_err();
-        assert!(
-            failure
-                .error()
-                .downcast_ref::<OrchestrationFailure>()
-                .is_some()
-        );
-        for text in [
-            format!("{completion:?}"),
-            format!("{completion}"),
-            format!("{failure:?} {failure}"),
-        ] {
-            assert!(!text.contains(PRIVATE), "{text}");
-        }
-    });
+struct Diagnostic {
+    report: MetricsExport,
+    panic: bool,
+}
+impl batter::service::Diagnostics for Diagnostic {
+    type Report = MetricsExport;
+    async fn install(self, completion: batter::service::DiagnosticCompletion) -> MetricsExport {
+        let _ = completion.wait().await;
+        assert!(!self.panic, "{PRIVATE}");
+        self.report
+    }
 }
 
-#[test]
-fn diagnostics_never_change_the_service_result_or_exit_classification() {
+#[tokio::test]
+async fn diagnostic_panic_cannot_change_the_service_exit_code() {
+    for failed in [false, true] {
+        let mut process = supervisor();
+        process
+            .on_cleanup("postgres.pool", || async { Ok(()) })
+            .unwrap();
+        process
+            .register("component", |startup| async move {
+                let running = startup.acknowledge_started();
+                running.draining().await;
+                Ok(running.stopped())
+            })
+            .unwrap();
+        let status = process.status();
+        let handle = process.handle();
+        let startup = batter::startup::Startup::scoped(
+            process,
+            batter::operation::OperationOwner::new(Duration::from_secs(1))
+                .unwrap()
+                .into_context(),
+            super::super::cleanup_budget(),
+            move |_| {
+                Box::pin(async move {
+                    if failed {
+                        Err(super::super::initialization(std::io::Error::other(PRIVATE)))
+                    } else {
+                        Ok(())
+                    }
+                })
+            },
+        );
+        let owner = ServiceOwner::new(batter::service::start(
+            startup,
+            Diagnostic {
+                report: MetricsExport::Disabled,
+                panic: true,
+            },
+        ));
+        if !failed {
+            status.wait_ready().await.unwrap();
+            handle.request();
+        }
+        let completion = owner.wait().await;
+        assert_eq!(completion.metrics(), &MetricsExport::Abandoned);
+        assert_eq!(completion.service().is_err(), failed);
+        assert_eq!(
+            completion.exit_code(),
+            if failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        );
+        assert!(matches!(
+            completion.foundation().diagnostics(),
+            batter::service::DiagnosticOutcome::TaskFailed(_)
+        ));
+        if failed {
+            let original = completion
+                .service()
+                .unwrap_err()
+                .error()
+                .downcast_ref::<super::super::ProtectedRuntimeStartupFailure>()
+                .unwrap();
+            assert!(matches!(
+                original.startup(),
+                batter::startup::StartupError::Failed(_)
+            ));
+        }
+        assert!(!format!("{completion:?} {completion}").contains(PRIVATE));
+    }
+}
+
+#[cfg(feature = "metrics-export")]
+#[tokio::test]
+async fn collector_failure_keeps_service_success() {
+    let mut process = supervisor();
+    process
+        .on_cleanup("postgres.pool", || async { Ok(()) })
+        .unwrap();
+    process
+        .register("component", |startup| async move {
+            let running = startup.acknowledge_started();
+            running.draining().await;
+            Ok(running.stopped())
+        })
+        .unwrap();
+    let status = process.status();
+    let handle = process.handle();
+    let startup = batter::startup::Startup::scoped(
+        process,
+        batter::operation::OperationOwner::new(Duration::from_secs(1))
+            .unwrap()
+            .into_context(),
+        super::super::cleanup_budget(),
+        |_| Box::pin(async { Ok::<_, super::super::InitializationFailure>(()) }),
+    );
     let failed = ExportOutcome::Failed(ExportFailure::Status(503));
-    let succeeded = ServiceCompletion::new(Ok(()), report(failed));
-    assert!(succeeded.service().is_ok());
-    assert_eq!(succeeded.exit_code(), ExitCode::SUCCESS);
-    let MetricsExport::Exported(retained) = succeeded.metrics() else {
-        panic!("diagnostics are retained separately")
+    let owner = ServiceOwner::new(batter::service::start(
+        startup,
+        Diagnostic {
+            report: report(failed),
+            panic: false,
+        },
+    ));
+    status.wait_ready().await.unwrap();
+    handle.request();
+    let completion = owner.wait().await;
+    assert_eq!(completion.exit_code(), ExitCode::SUCCESS);
+    let MetricsExport::Exported(retained) = completion.metrics() else {
+        panic!("lost export report")
     };
     assert_eq!(retained.final_export, failed);
-
-    for metrics in [report(ExportOutcome::Acknowledged), report(failed)] {
-        let error: BoxError = Box::new(std::io::Error::other(PRIVATE));
-        let completion = ServiceCompletion::new(Err(error), metrics);
-        assert_eq!(completion.exit_code(), ExitCode::FAILURE);
-        let original = completion.service().unwrap_err().error();
-        assert_eq!(
-            original
-                .downcast_ref::<std::io::Error>()
-                .unwrap()
-                .to_string(),
-            PRIVATE
-        );
-        let text = format!("{completion:?} {completion}");
-        assert!(!text.contains(PRIVATE), "{text}");
-        assert!(text.contains("failed"));
-    }
 }

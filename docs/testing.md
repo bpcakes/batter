@@ -1941,13 +1941,20 @@ ignored. The runner controls reject missing startup/cancellation cases too.
 
 ## Reference metrics export
 
+Extraction verification (`batter-i3ny`, 2026-09-26): the complete
+`bash scripts/verify.sh` passed on macOS arm64 with pinned Rust 1.98.1, including
+all three Clippy configurations, six matrix parts, rustdoc and HTTP smokes.
+The new core ownership/panic tests, moved adapter tests and public worker consumer
+are in that matrix. No new Linux, hosted CI, MSRV or reference live PostgreSQL
+execution is claimed for this extraction; earlier live evidence stays historical.
+
 The reference package's opt-in `metrics-export` feature has four evidence layers.
 None requires a database except the explicit live runner.
 
-- Library unit tests in `examples/reference-service/src/metrics_export/tests.rs`
-  and `tests/` drive the real catalog guard, `metrics-exporter-otel` bridge, SDK
+- Adapter unit tests in `crates/batter-otlp/src/pipeline/tests.rs`
+  and its `tests/` modules drive the real catalog guard, `metrics-exporter-otel` bridge, SDK
   aggregation and OTLP transport against the shared loopback collector
-  (`tests/support/collector.rs`) with thread-scoped recorders on current-thread
+  (`crates/batter-otlp/tests/support/collector.rs`) with thread-scoped recorders on current-thread
   runtimes. They prove guard rejection before delegation; that every one of the
   `MAX_SERIES` foundation keys, with maximum-length names, fits and the next is
   rejected; cumulative counters, fixed histogram boundaries and catalog
@@ -1961,10 +1968,27 @@ None requires a database except the explicit live runner.
   and shutdown series present; startup-failure cleanup without a shutdown; typed
   final-allowance expiry with exactly-once closure; and in-flight periodic
   settlement plus coalescing before the final snapshot.
-- `runtime/completion/tests.rs` and `runtime/orchestration.rs` cover waiter
-  cancellation, owner-loss drain and later observers on both runtime flavors,
-  orchestration panics published as `Abandoned`, unchanged service
-  classification beside failed diagnostics, and report coverage classification.
+- Core `tests/service.rs` covers cleanup/finalization ordering, owner and waiter
+  separation, early owner loss, rejection before installation without a Tokio
+  runtime, and installation/first-poll/finalization panics
+  crossed with service success, startup failure and cleanup failure. Core coverage
+  tests retain the original incomplete-report cases. `startup_signals` includes
+  SIGINT/SIGTERM immediately after service start returns, before an executor yield.
+- `crates/batter-otlp/tests/service.rs` exercises the public API in a standalone
+  worker root, with cleanup completing while a periodic request remains stalled,
+  settlement before final cleanup/shutdown metrics, normal closure and rejected
+  second installation. Production and unit tests share the private orchestration
+  body. Adapter ordering tests include nanosecond intervals without iterative catch-up.
+- `crates/batter-otlp/src/pipeline/tests/http2.rs` uses native HTTP/2 stream
+  rejection: the default reqwest policy dispatches three times, while the
+  production client policy dispatches once and retains `Transport`. Dev-only
+  HTTP/2 feature unification exercises consumer dependency composition; h2c
+  isolates protocol policy and makes no new TLS/ALPN claim.
+- Core metric capture checks every original registration key and kind against
+  the shared catalog before sorting labels for sample lookup, including retry,
+  admission and coalesced-label observations in the existing metrics suite.
+- Reference `runtime/completion/tests.rs` checks application exit classification
+  and access to original native errors and diagnostic panic details.
 - `tests/metrics_export.rs` (requires the feature) runs each global installation
   in a cleared Unix child: startup-failure export on both runtime flavors,
   rejected installation with explicit closure, never-polled preparation, waiter

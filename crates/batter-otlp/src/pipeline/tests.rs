@@ -4,7 +4,9 @@
 
 #[path = "../../tests/support/collector.rs"]
 mod collector;
+#[path = "tests/ordering.rs"]
 mod ordering;
+#[path = "tests/transport.rs"]
 mod transport;
 
 use super::{
@@ -14,7 +16,7 @@ use super::{
     transport::PAYLOAD_MAX_BYTES,
 };
 use crate::diagnostics::{ExportOutcome, FinalCoverage, GuardRejections};
-use batter::telemetry::metrics::{
+use batter_core::telemetry::metrics::{
     self as catalog,
     facade::{
         Counter, Gauge, Histogram, Key, KeyName, Label, Level, Metadata, Recorder, SharedString,
@@ -45,7 +47,7 @@ fn pipeline(
     endpoint: &str,
     schedule: Schedule,
 ) -> (CatalogRecorder<OpenTelemetryRecorder>, Session) {
-    prepare(endpoint, schedule)
+    prepare(endpoint, super::SERVICE_NAME, schedule)
         .expect("valid loopback pipeline")
         .into_parts()
 }

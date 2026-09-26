@@ -1,6 +1,7 @@
 # Integration ownership contracts
 
-The `batter-axum`, `batter-sqlx`, `batter-runledger` and `batter-runlimit` adapters, native SQLx lifecycle example and
+The `batter-axum`, `batter-sqlx`, `batter-runledger`, `batter-runlimit` and
+`batter-otlp` adapters, native SQLx lifecycle example and
 unpublished reference command package exist in this snapshot. The latter
 composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
@@ -18,6 +19,8 @@ integration namespaces explicitly:
 | --- | --- | --- |
 | `at-rest` | `batter::at_rest` | `batter-at-rest` |
 | `axum` | `batter::axum` | `batter-axum` |
+| `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
+| `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
 | `runlimit` | `batter::runlimit` | `batter-runlimit` |
@@ -759,41 +762,46 @@ cannot keep database-dependent cases out of ordinary verification. The reference
 compiles ignored live cases during those checks and runs them through an
 explicit prerequisite-checking runner; skipped cases are not executed evidence.
 
-## OpenTelemetry metrics export: application-root recipe
+## OpenTelemetry metrics export: protected adapter
 
-Batter libraries record the bounded foundation catalog through the `metrics`
-0.24 facade and install nothing. The unpublished reference service owns the only
-exporter recipe, behind its `metrics-export` feature. It uses
-`metrics-exporter-otel` 0.3.1 over `opentelemetry`/`opentelemetry_sdk` 0.31.0,
-`opentelemetry-otlp` 0.31.1 (`http-proto`, `metrics`, no default blocking client
-or internal logs), `opentelemetry-http` 0.31.0 and `opentelemetry-proto` 0.31.0
-generated types. The SDK's experimental custom-reader surface stays private to
-that recipe. `http-proto` also enables upstream trace support and generated tonic
-message types; no trace pipeline or gRPC transport is configured.
+The facade's optional `otlp` feature exposes `batter::otlp`; direct consumers use
+`batter-otlp`. Both depend on core, with no exporter in the default graph.
+Applications prepare an explicit endpoint, bounded service identity and validated
+`Schedule`, then pass that inert owner with a protected `ScopedStartup` to
+`batter::service::start`. There is no canonical arbitrary-future runner or
+separate install/flush/close sequence. Environment names, deployment policy and
+exit classification remain application-owned. The reference service retains its
+`metrics-export` feature and literal-loopback HTTP policy.
 
-Upstream owns aggregation and OTLP encoding. The application owns:
+Core synchronously installs diagnostics and selected Unix signal listeners before
+returning the sole service owner. It owns protected initialization, startup failure
+cleanup and checked running shutdown, then releases an opaque diagnostic completion
+observation. The service result lives independently of the diagnostic task, so
+installation, periodic or finalization panics cannot replace it. Owner drop requests
+drain; cancelling a borrowed waiter requests nothing. Observers retain completion
+without retaining service ownership. The public `Diagnostics` trait is a lower-level
+adapter extension seam with explicit install/order/bounding obligations.
 
-- a catalog guard that admits only foundation names, exact label shapes and
-  vocabularies and at most `MAX_SERIES` complete keys, rejecting before the
-  bridge registry, per-key SDK callbacks or metadata allocate;
-- a shared `ManualReader` and one serial collection/export owner with fixed
-  interval, attempt deadline and final allowance; no `PeriodicReader`, command
-  channel, request queue or retry;
-- a bounded `reqwest` `HttpClient` that refuses oversized requests, bounds the
-  response, decodes `ExportMetricsServiceResponse` and retains a typed outcome
-  beside the SDK result, because upstream erases custom errors into strings and
-  accepts every 2xx without inspecting OTLP partial success;
-- explicit final collection and export after the retained service result, then
-  exactly-once exporter and provider closure. `ManualReader::force_flush` and
-  provider shutdown are not network flushes.
+The adapter uses `metrics-exporter-otel` 0.3.1, OpenTelemetry/SDK 0.31.0 and OTLP
+0.31.1. Native aggregation and protobuf encoding remain upstream; the experimental
+custom-reader interface is private. Core owns metric definitions and label validation;
+the adapter bounds complete keys before delegation, exports cumulative snapshots with
+one serial owner and retains typed transport/partial-rejection outcomes. Requests
+are capped at 2 MiB, responses at 64 KiB, with no queue or retry. Missed ticks
+coalesce in constant time. `ManualReader::force_flush` is not network delivery.
 
-Enabled mode rejects ambient `OTEL_*` and uses an empty resource with fixed
-attributes, because upstream builders merge environment headers, endpoints,
-timeouts and compression, and default resources read environment attributes.
-The collector must be a literal loopback HTTP address at `/v1/metrics`.
-Acknowledgement means only that one inspected collector response decoded
-without rejected points. See the
-[reference README](../examples/reference-service/README.md#opt-in-metrics-export)
+Final export begins after retained service completion and any in-flight periodic
+attempt, with a separate allowance. Normal finalization closes resources once.
+Allowances bound yielding I/O, not synchronous SDK collection/closure; panic cannot
+prove resource closure. Coverage describes reports, including missing reports,
+unjoined work and skipped cleanup, not global quiescence. Installation remains
+process-global and cannot be reset; rejection closes only the rejected pipeline.
+The Batter-only guard intentionally excludes application metrics.
+
+Native builders still read ambient configuration, so preparation rejects `OTEL_*`
+and uses explicit empty resources. Applications must not mutate environment during
+preparation. See the [adapter guide](../crates/batter-otlp/README.md),
+[reference configuration](../examples/reference-service/README.md#opt-in-metrics-export)
 and [primary sources](references.md#reference-metrics-export).
 
 ## Dependency direction and extraction criteria

@@ -9,15 +9,13 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
-  `src/runtime/completion.rs` owns the `ServiceOwner`/`ServiceObserver` and the
-  combined `ServiceCompletion`; `src/runtime/orchestration.rs` owns service
-  completion -> final metrics export -> diagnostic closure and report coverage.
-- `src/metrics_export.rs` and `src/metrics_export/` (feature `metrics-export`)
-  own the catalog guard, bounded OTLP/HTTP transport, manual-reader snapshots and
-  the serial export owner; `src/diagnostics.rs` owns the public outcome types and
-  `src/config/metrics.rs` the opt-in collector setting. `tests/metrics_export.rs`
-  isolates global installation in Unix children; `tests/support/collector.rs` is
-  the shared loopback collector and `tests/support/metrics_live.rs` the live cases.
+  `src/runtime/completion.rs` maps core service completion into application exit policy.
+- `batter::service::start` owns startup, shutdown, diagnostic settlement and
+  owner/observer publication. `batter::otlp` (feature `metrics-export`) owns the
+  bounded exporter; `src/config/metrics.rs` selects settings and timing and
+  `src/diagnostics.rs` reexports report types. `tests/metrics_export.rs` isolates
+  installation in Unix children. The shared collector lives in
+  `crates/batter-otlp/tests/support/collector.rs` at the workspace root.
 - `src/runtime.rs` uses protected startup with library-owned signals, reserves a
   cleanup slot before constructing the profiled database, and registers pool
   close before yielding. `src/database.rs` declares direct-login/public policy;
@@ -118,22 +116,14 @@ IPv4 loopback and Unix subprocess permissions. This test is not skipped when
 the host or container lacks IPv6. Never mutate process globals.
 Explicit live invocation fails when prerequisites are missing.
 
-Metrics export stays opt-in and application-owned. Absent
-`BATTER_METRICS_OTLP_ENDPOINT` installs nothing; an explicit value without the
-feature, a non-loopback/non-`/v1/metrics` URL, or ambient `OTEL_*` while enabled
-fails configuration before acquisition, and preparation rechecks the live
-environment without mutating it. Install only through Batter's canonical
-`install`, once, from the orchestration before startup; close rejected resources
-explicitly. Keep the catalog guard in front of the bridge and reject before
-delegation; do not admit arbitrary native series or grow beyond `MAX_SERIES`
-keys. Use the shared `ManualReader`, one serial owner and fixed timing; never add
-`PeriodicReader`, a queue, retries, force-flush-as-delivery or upstream error-text
-classification. Only a decoded OTLP response without rejected points is
-acknowledgement. Finalize only after the retained service result; never flush
-from readiness, drain or cleanup hooks, never spend service cleanup budgets on
-collector I/O, and never let diagnostics change the service result, report or
-exit classification. Owner drop requests drain; waiter cancellation requests
-nothing.
+Metrics export stays opt-in and explicitly selected by this application.
+Absent `BATTER_METRICS_OTLP_ENDPOINT` installs nothing. Preserve literal-loopback
+HTTP `/v1/metrics` policy, feature-off rejection and ambient OTEL_* validation.
+Use the optional Batter adapter through core protected service execution; do not
+restore an application monitor, arbitrary-future exporter wrapper, coverage
+classifier, periodic loop or paired flush/close protocol. Application checks and
+exit codes remain here. Keep the native completion available for diagnostic
+panic inspection and never let export failure change service classification.
 
 The provider effect key and canonical request are created in the submission
 transaction. Load and classify that retained effect before provider admission:

@@ -15,18 +15,15 @@ use batter::{
     registration::Registration,
     startup::{InitializationError, ProtectedStartupScope, Startup, StartupError},
 };
-use orchestration::{
-    ServiceEvidence, report_coverage, shutdown_failure_coverage, startup_coverage,
-};
 use runledger_core::jobs::JobExecutionHandler;
 use std::{fmt, time::Duration};
 
 mod announcement;
 mod completion;
-mod orchestration;
 
 pub use completion::{
-    OrchestrationFailure, ServiceCompletion, ServiceFailure, ServiceObserver, ServiceOwner,
+    NativeCompletion, OrchestrationFailure, ServiceCompletion, ServiceFailure, ServiceObserver,
+    ServiceOwner,
 };
 
 const STARTUP_ALLOWANCE: Duration = Duration::from_secs(20);
@@ -241,11 +238,7 @@ impl std::error::Error for RuntimePoolCleanupFailure {
 /// ```
 pub fn start(prepared: PreparedServing) -> ServiceOwner {
     let (parts, metrics) = prepared.into_parts();
-    let handle = parts.supervisor.handle();
-    ServiceOwner::spawn(
-        handle,
-        batter::telemetry::with_current_dispatch(orchestration::orchestrate(parts, metrics)),
-    )
+    ServiceOwner::new(batter::service::start(serving_startup(parts), metrics))
 }
 
 /// Start one serving run and await its retained completion.
@@ -268,21 +261,23 @@ pub async fn run(prepared: PreparedServing) -> ServiceCompletion {
     start(prepared).wait().await
 }
 
-async fn serve(parts: crate::config::ServingParts) -> ServiceEvidence {
+fn serving_startup(
+    parts: crate::config::ServingParts,
+) -> batter::startup::ScopedStartup<
+    impl for<'a> FnOnce(
+        &'a mut ProtectedStartupScope,
+    ) -> batter::startup::StartupFuture<'a, InitializationFailure>
+    + Send
+    + 'static,
+> {
     let supervisor = parts.supervisor;
     let lifecycle = supervisor.status();
     let admission = supervisor.operation_admission();
-    let context = match batter::operation::OperationOwner::new(STARTUP_ALLOWANCE) {
-        Ok(owner) => owner.into_context(),
-        Err(error) => {
-            return ServiceEvidence {
-                result: Err(error.into()),
-                coverage: crate::diagnostics::FinalCoverage::Reported,
-            };
-        }
-    };
+    let context = batter::operation::OperationOwner::new(STARTUP_ALLOWANCE)
+        .expect("static startup allowance is valid")
+        .into_context();
     let native_startup = context.clone();
-    let mut starting = Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
+    Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 scope.stage("postgres.acquire")?;
@@ -328,26 +323,6 @@ async fn serve(parts: crate::config::ServingParts) -> ServiceEvidence {
         })
     })
     .with_unix_signals("signals")
-    .start();
-    let pending = match starting.wait().await {
-        Ok(pending) => pending,
-        Err(error) => {
-            return ServiceEvidence {
-                coverage: startup_coverage(&error),
-                result: Err(startup_failure(error)),
-            };
-        }
-    };
-    match pending.wait_checked().await {
-        Ok(success) => ServiceEvidence {
-            coverage: report_coverage(success.report()),
-            result: check_application_shutdown(success),
-        },
-        Err(failure) => ServiceEvidence {
-            coverage: shutdown_failure_coverage(&failure),
-            result: Err(Box::new(failure)),
-        },
-    }
 }
 
 fn check_application_shutdown(success: ShutdownSuccess) -> Result<(), BoxError> {

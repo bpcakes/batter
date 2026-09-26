@@ -9,7 +9,7 @@
 //! I/O, never panic on a poisoned lock and never log.
 
 use crate::diagnostics::GuardRejections;
-use batter::telemetry::metrics::{
+use batter_core::telemetry::metrics::{
     self as catalog,
     facade::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit},
 };
@@ -27,165 +27,8 @@ pub(crate) const DESCRIPTION_MAX_BYTES: usize = 128;
 /// series bound, so every series Batter can create fits.
 pub(crate) const KEY_CAPACITY: usize = catalog::MAX_SERIES;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Counter,
-    Histogram,
-}
-
-#[derive(Clone, Copy)]
-enum Label {
-    /// An operation or task name, or one of the foundation placeholders.
-    Name(&'static str),
-    /// A closed foundation vocabulary.
-    Closed(&'static str, &'static [&'static str]),
-    /// The decision vocabulary selected by the preceding admission label.
-    Decision,
-}
-
-struct Shape {
-    name: &'static str,
-    kind: Kind,
-    unit: Unit,
-    labels: &'static [Label],
-}
-
-const OPERATION: &[Label] = &[
-    Label::Name("operation"),
-    Label::Closed("outcome", &catalog::OUTCOMES),
-];
-
-const CATALOG: [Shape; 10] = [
-    Shape {
-        name: catalog::OPERATION_COMPLETIONS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: OPERATION,
-    },
-    Shape {
-        name: catalog::OPERATION_DURATION,
-        kind: Kind::Histogram,
-        unit: Unit::Seconds,
-        labels: OPERATION,
-    },
-    Shape {
-        name: catalog::RETRY_ATTEMPTS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: OPERATION,
-    },
-    Shape {
-        name: catalog::RETRY_EXECUTIONS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[
-            Label::Name("operation"),
-            Label::Closed("result", catalog::RETRY_RESULTS),
-        ],
-    },
-    Shape {
-        name: catalog::ADMISSION_DECISIONS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[
-            Label::Closed("admission", catalog::ADMISSIONS),
-            Label::Decision,
-        ],
-    },
-    Shape {
-        name: catalog::TASK_EXITS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[
-            Label::Closed("kind", catalog::TASK_KINDS),
-            Label::Name("task"),
-            Label::Closed("outcome", catalog::TASK_OUTCOMES),
-        ],
-    },
-    Shape {
-        name: catalog::CLEANUP_HOOKS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[Label::Closed("outcome", catalog::CLEANUP_OUTCOMES)],
-    },
-    Shape {
-        name: catalog::SHUTDOWNS,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[
-            Label::Closed("cause", catalog::SHUTDOWN_CAUSES),
-            Label::Closed("result", catalog::SHUTDOWN_RESULTS),
-        ],
-    },
-    Shape {
-        name: catalog::SHUTDOWN_DURATION,
-        kind: Kind::Histogram,
-        unit: Unit::Seconds,
-        labels: &[Label::Closed("result", catalog::SHUTDOWN_RESULTS)],
-    },
-    Shape {
-        name: catalog::LABELS_COALESCED,
-        kind: Kind::Counter,
-        unit: Unit::Count,
-        labels: &[
-            Label::Closed("domain", catalog::COALESCE_DOMAINS),
-            Label::Closed("reason", catalog::COALESCE_REASONS),
-        ],
-    },
-];
-
-/// Histogram names that receive the fixed bucket boundaries.
-pub(crate) const HISTOGRAMS: [&str; 2] = [catalog::OPERATION_DURATION, catalog::SHUTDOWN_DURATION];
-
-fn shape(name: &str) -> Option<&'static Shape> {
-    CATALOG.iter().find(|shape| shape.name == name)
-}
-
-fn valid_name(value: &str) -> bool {
-    value == catalog::INVALID_NAME
-        || value == catalog::OVERFLOW_NAME
-        || (!value.is_empty()
-            && value.len() <= catalog::MAX_NAME_LEN
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')))
-}
-
-fn decisions(admission: &str) -> Option<&'static [&'static str]> {
-    match admission {
-        "bulkhead" => Some(catalog::BULKHEAD_DECISIONS),
-        "process" => Some(catalog::PROCESS_DECISIONS),
-        "root" => Some(catalog::ROOT_DECISIONS),
-        _ => None,
-    }
-}
-
-fn valid_labels(shape: &Shape, key: &Key) -> bool {
-    let mut labels = key.labels();
-    // Decision vocabularies depend on the admission value that precedes them.
-    let mut previous = None;
-    for expected in shape.labels {
-        let Some(label) = labels.next() else {
-            return false;
-        };
-        let value = label.value();
-        let valid = match *expected {
-            Label::Name(name) => label.key() == name && valid_name(value),
-            Label::Closed(name, values) => label.key() == name && values.contains(&value),
-            Label::Decision => {
-                label.key() == "decision"
-                    && previous
-                        .and_then(decisions)
-                        .is_some_and(|values| values.contains(&value))
-            }
-        };
-        previous = Some(value);
-        if !valid {
-            return false;
-        }
-    }
-    labels.next().is_none()
-}
+pub(crate) use batter_core::telemetry::metrics::catalog::HISTOGRAMS;
+use batter_core::telemetry::metrics::catalog::{MetricKind as Kind, shape};
 
 /// Shared guard evidence retained by the export owner after installation.
 #[derive(Default)]
@@ -238,11 +81,11 @@ impl GuardState {
             Self::reject(&self.unknown_names);
             return false;
         };
-        if shape.kind != kind {
+        if shape.kind() != kind {
             Self::reject(&self.unsupported_kinds);
             return false;
         }
-        if !valid_labels(shape, key) {
+        if !shape.accepts(key) {
             Self::reject(&self.invalid_labels);
             return false;
         }
@@ -272,7 +115,8 @@ impl GuardState {
             Self::reject(&self.unknown_names);
             return false;
         };
-        if shape.kind != kind || unit != Some(shape.unit) || text.len() > DESCRIPTION_MAX_BYTES {
+        if shape.kind() != kind || unit != Some(shape.unit()) || text.len() > DESCRIPTION_MAX_BYTES
+        {
             Self::reject(&self.invalid_descriptions);
             return false;
         }
