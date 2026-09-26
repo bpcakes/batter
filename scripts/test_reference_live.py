@@ -85,6 +85,13 @@ class ReferenceLiveControls(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][:4], ["cargo", "build", "-p", "batter-example-reference-service"])
         self.assertIn("--bins", run.call_args_list[1].args[0])
 
+    def test_live_targets_and_executables_include_the_metrics_export_feature(self):
+        for command in (reference_live.COMMAND, reference_live.BINARY_COMMAND):
+            self.assertEqual(command[command.index("--features") + 1], "metrics-export")
+        # The ignored library probes need no feature and keep their exact filters.
+        for command in (reference_live.SESSION_COMMAND, reference_live.STATE_COMMAND):
+            self.assertNotIn("--features", command)
+
     def test_session_probe_cannot_be_skipped_or_replaced_by_summary(self):
         output = f"test {SESSION_CASE} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out;"
         self.assertTrue(complete_session_execution(output))
@@ -102,18 +109,18 @@ class ReferenceLiveControls(unittest.TestCase):
                     reference_live.main()
 
     def test_case_classes_are_exact_and_disjoint(self):
-        self.assertEqual(len(DATABASE_CASES), 61)
+        self.assertEqual(len(DATABASE_CASES), 63)
         self.assertEqual(len(SYNTHETIC_ACQUISITION_CASES), 2)
         self.assertEqual(len(EXECUTABLE_CASES), 2)
         self.assertEqual(DISPATCH_CASES, {"child_fixture"})
-        self.assertEqual(len(CASES), 66)
+        self.assertEqual(len(CASES), 68)
         classes = (DATABASE_CASES, SYNTHETIC_ACQUISITION_CASES, EXECUTABLE_CASES, DISPATCH_CASES)
         self.assertEqual(sum(len(cases) for cases in classes), len(CASES))
         for case, expected in PROTECTED_STARTUP.items():
             self.assertIn(case, expected)
         announcement = reference_live.announcement()
-        self.assertIn("66 required cases", announcement)
-        self.assertIn("61 live database probes", announcement)
+        self.assertIn("68 required cases", announcement)
+        self.assertIn("63 live database probes", announcement)
 
     def test_configuration_cases_cannot_be_omitted_from_inventory_or_execution(self):
         configured = {"retirement_preserves_history_and_disables_old_catalog",
@@ -133,6 +140,8 @@ class ReferenceLiveControls(unittest.TestCase):
                       "configured_startup_pool_close_before_lease",
                       "configured_worker_concurrency",
                       "production_root_registers_provider_worker",
+                      "metrics_export_command_worker_and_shutdown",
+                      "metrics_collector_failure_preserves_results",
                       "provider_effect_crash_and_restart",
                       "provider_effect_outcome_contracts",
                       "child_fixture"} | set(PROTECTED_STARTUP)
