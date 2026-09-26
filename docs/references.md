@@ -6,6 +6,32 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Metrics facade 0.24.6: reviewed 2026-09-25
+
+For `batter-6vn`, checked the locked `metrics` 0.24.6 source (`src/recorder/mod.rs`,
+`src/handles.rs`, `src/key.rs`) and its
+[crate documentation](https://docs.rs/metrics/0.24.6/metrics/). Without an
+installed recorder, macros use a no-op recorder. `set_global_recorder` is
+one-time application setup; `set_default_local_recorder` scopes a recorder to
+the current thread, which the tests use with current-thread runtimes. Counter and
+histogram handles are infallible: a recorder cannot return a recording error to
+the caller, so dropping or coalescing is recorder policy. The crate declares
+Rust 1.71.1, below this repository's 1.94 minimum. Its normal dependencies
+are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
+`portable-atomic` with its `fallback` feature. Metric names follow
+[Prometheus naming practice](https://prometheus.io/docs/practices/naming/)
+(`_total` counters, base-unit `_seconds`) and its
+[cardinality guidance](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels).
+Recorder aggregation and exporter buffering were not reviewed; the selected
+exporter and its flush order belong to `batter-8jr`.
+
+Rechecked the locked recorder implementation on 2026-09-26: `with_recorder`
+prefers a thread-local recorder, including for description macros. There is no
+public global-recorder getter. Global installation requires `Sync`, without
+`Send`, and returns the rejected recorder through `SetRecorderError<R>`. Batter
+therefore retains a shared reference to the accepted recorder for direct catalog
+publication; ordinary observations still use the facade's scoped dispatch.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,

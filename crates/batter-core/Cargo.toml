@@ -16,7 +16,13 @@ autoexamples = false
 [lints]
 workspace = true
 
+[features]
+default = []
+## Record bounded-cardinality outcome metrics through the `metrics` facade.
+metrics = ["dep:metrics"]
+
 [dependencies]
+metrics = { workspace = true, optional = true }
 pin-project-lite.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "signal"] }
 tokio-util = { workspace = true, features = ["rt"] }

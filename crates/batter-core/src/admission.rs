@@ -99,27 +99,36 @@ impl Bulkhead {
         context: &OperationContext,
         admission: Admission,
     ) -> Result<OwnedSemaphorePermit, AdmissionError> {
-        context.check()?;
-        let semaphore = self.semaphore.clone();
-        match admission {
-            Admission::Reject => semaphore.try_acquire_owned().map_err(|error| match error {
-                TryAcquireError::NoPermits => AdmissionError::Overloaded,
-                TryAcquireError::Closed => AdmissionError::Closed,
-            }),
-            Admission::Wait => {
-                match context
-                    .run("batter.admission", |_| async move {
-                        semaphore.acquire_owned().await
-                    })
-                    .await
-                {
-                    Ok(permit) => Ok(permit),
-                    Err(OperationError::Failed(_)) => Err(AdmissionError::Closed),
-                    Err(OperationError::Interrupted(reason)) => {
-                        Err(AdmissionError::Interrupted(reason))
+        // Record exactly one decision, including `dropped` when a waiting
+        // caller abandons this future before admission completes.
+        let mut decision = crate::telemetry::record::BulkheadTerminal::new();
+        let result = match context.check() {
+            Err(reason) => Err(AdmissionError::Interrupted(reason)),
+            Ok(()) => {
+                let semaphore = self.semaphore.clone();
+                match admission {
+                    Admission::Reject => {
+                        semaphore.try_acquire_owned().map_err(|error| match error {
+                            TryAcquireError::NoPermits => AdmissionError::Overloaded,
+                            TryAcquireError::Closed => AdmissionError::Closed,
+                        })
                     }
+                    Admission::Wait => match context
+                        .run_internal("batter.admission", |_| async move {
+                            semaphore.acquire_owned().await
+                        })
+                        .await
+                    {
+                        Ok(permit) => Ok(permit),
+                        Err(OperationError::Failed(_)) => Err(AdmissionError::Closed),
+                        Err(OperationError::Interrupted(reason)) => {
+                            Err(AdmissionError::Interrupted(reason))
+                        }
+                    },
                 }
             }
-        }
+        };
+        decision.finish(&result);
+        result
     }
 }

@@ -59,11 +59,13 @@ and live PostgreSQL execution remain unverified in that record. The re-audit
 conclusions use inspected source and recorded evidence; checks for this planning
 change are recorded separately in its Jig session.
 
-Core operation, retry and semaphore admission production files are unchanged in
-this commit range. The SQLx demonstration still acquires a pool, probes it and
+Core operation, retry and semaphore admission production files were unchanged in
+the re-audited range; the later opt-in metrics work added observation hooks to
+them without changing their results. The SQLx demonstration still acquires a pool, probes it and
 explicitly tears it down. Runledger, Runlimit, typed application config, generated
-contracts, durable correlation and a metrics/exporter recipe remain outside the
-implemented capabilities. See [status](status.md) and [integrations](integrations.md).
+contracts, durable correlation and an exporter setup/flush recipe remain outside
+the implemented capabilities; bounded outcome metrics are an opt-in foundation
+feature. See [status](status.md) and [integrations](integrations.md).
 
 ## Failure mechanisms and ownership decisions
 

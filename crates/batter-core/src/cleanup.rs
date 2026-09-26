@@ -104,6 +104,10 @@ impl CleanupRecord {
         } else {
             tracing::warn!(target: "batter", cleanup = self.name, outcome = ?self.outcome, "cleanup observed");
         }
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Observed(self.outcome),
+            1,
+        );
     }
 }
 
@@ -265,6 +269,8 @@ impl CleanupStack {
     }
 
     /// Record that dependent teardown cannot safely proceed.
+    /// All skip warnings and metric counts precede captured-value destruction.
+    /// A captured destructor panic still propagates, preventing report return.
     pub fn skip(mut self, reason: SkipReason) -> CleanupReport {
         let mut report = CleanupReport::default();
         self.skip_remaining(&mut report, reason);
@@ -272,12 +278,25 @@ impl CleanupStack {
     }
 
     fn skip_remaining(&mut self, report: &mut CleanupReport, reason: SkipReason) {
-        while let Some(hook) = self.hooks.pop() {
+        // Take every hook before counting them, so a destructor that panics
+        // while they are dropped cannot leave them on the stack to be counted
+        // again as dropped.
+        let mut skipped = std::mem::take(&mut self.hooks);
+        // Describe every skip before destroying any application capture. A
+        // destructor panic must not suppress warnings for the remaining hooks.
+        for hook in skipped.iter().rev() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
                 reason,
             });
+        }
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Skipped,
+            skipped.len(),
+        );
+        while let Some(hook) = skipped.pop() {
+            drop(hook);
         }
     }
 
@@ -313,8 +332,7 @@ impl CleanupStack {
         );
         let mut report = CleanupReport::default();
         loop {
-            // Keep skipped hooks on the stack so reporting and capture drops
-            // follow the same reverse registration order for every skip reason.
+            // Let the shared skip path report pending hooks in reverse order.
             if Instant::now() >= work_deadline {
                 self.skip_remaining(&mut report, SkipReason::BudgetExhausted);
                 break;
@@ -323,6 +341,12 @@ impl CleanupStack {
                 break;
             };
             let name = hook.name;
+            // Armed as soon as the hook leaves the stack: from here its outcome
+            // is either observed below or reported as abandoned.
+            let mut observation = PendingCleanupObservation {
+                name,
+                observed: false,
+            };
             let deadline = work_deadline.min(Instant::now() + budget.per_hook);
             let mut running = JoinSet::new();
             let span = tracing::info_span!(target: "batter", "batter.cleanup", cleanup = name)
@@ -331,10 +355,6 @@ impl CleanupStack {
             running.spawn(scoped_dispatch::scope(
                 async move { (hook.action)().await }.instrument(span),
             ));
-            let mut observation = PendingCleanupObservation {
-                name,
-                observed: false,
-            };
             let completed = tokio::select! {
                 biased;
                 result = running.join_next() => result,
@@ -420,6 +440,7 @@ impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
+            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Abandoned, 1);
         }
     }
 }
@@ -428,6 +449,10 @@ impl Drop for CleanupStack {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
             tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");
+            crate::telemetry::record::cleanup(
+                crate::telemetry::record::CleanupHook::Dropped,
+                self.hooks.len(),
+            );
         }
     }
 }

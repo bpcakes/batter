@@ -185,7 +185,8 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 The default `batter` graph does not bring in encryption, Axum, SQLx, or test utilities.
 Adapter APIs are also available from their direct packages. The facade exposes
 `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
-`batter::test_support` through additive opt-in features; `runlimit-memory`,
+`batter::test_support` through additive opt-in features, and the `metrics`
+feature records bounded outcome metrics through `batter::telemetry::metrics`; `runlimit-memory`,
 `runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
 documented bridges. Each package declares its own version and Rust minimum.
 The eight Batter packages are 0.0.1, native Runledger is 0.13.0, and native

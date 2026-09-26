@@ -119,6 +119,64 @@ destruction. It returns a future and adds no task, heap allocation, or `Send` /
 inside it. It does not capture or enter the current span, drive a dropped future
 to completion, or supervise work.
 
+The opt-in `metrics` feature records each polled operation, started retry
+attempt, whole retry execution, bulkhead, process or root lifecycle admission
+decision, observed task exit, cleanup hook and supervisor shutdown exactly once,
+after the result is known and outside admission locks. The canonical setup is
+`telemetry::metrics::install(recorder)`: it accepts only a recorder on the
+re-exported `metrics` 0.24 facade, so another major version fails to compile,
+and it publishes descriptions to that recorder only after installing it, even
+inside a local recorder scope. Rejected recorders receive no catalog descriptions
+and are returned to the caller. Polled but dropped
+operations, retry attempts and executions, admission waits and supervisor
+drives record `dropped`, or `panicked` when destroyed during unwinding, through
+one shared guard. Retry execution recording follows destruction of discarded
+errors and owned callbacks, including jitter samplers. A panic during that
+destruction propagates and records `panicked`; values and errors transferred to
+the caller are outside the completed execution. A cleanup hook taken by a destroyed close driver records
+`abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
+the stack before being counted, so a capture destructor panic cannot count them
+again as dropped. Every skip warning is emitted before metrics and captured-value
+destruction; a captured destructor panic still propagates and prevents report
+return. Other futures dropped before their first poll record nothing. A retry attempt counts only once its
+factory is invoked. Foundation-owned waits (admission, backoff) are not counted
+as operations, while adapter boundaries such as `http.response_construction`
+are. Tracing diagnostics are emitted before a boundary's metric, and
+publishing `Stopped` never waits for recorder code: shutdown is recorded after
+`Stopped` and destruction of the owned shutdown future, before the report is
+returned, so flush after awaiting the driver's completion. A shutdown-future
+destructor panic records `panicked` without a completed-duration sample.
+Its duration is measured from the final canonical lifecycle
+stop instant, including earlier native timestamps learned after drain begins;
+abandoned drivers record no duration and record their shutdown after the
+supervisor's own queued work and cleanup, and a startup that fails before its
+running driver records only its cleanup hooks. Process admission decisions are
+recorded when the submitter's decision completes, before an accepted task can
+start. Once queued, an accepted task receives its lease even if admission
+recording unwinds, so recorder failure cannot strand its active count or create
+a missing-lease task panic. The recorder panic still propagates to the submitter.
+Root-admitted work is unsupervised and not ordered with shutdown. Without the
+metrics feature, shutdown does not read the shared clock for metric recording.
+Batter retains at most `MAX_SERIES` pre-built keys, so recording allocates only
+on a series' first observation. Labels come
+only from closed foundation vocabularies or a fixed-capacity, write-once table
+of operation/task names using the component-registration vocabulary; other
+names or names beyond capacity record `<invalid>` or `<overflow>` and increment
+a separate coalescing counter for each affected observation, without logging.
+Retry attempts and their enclosing execution are separate observations.
+The vocabulary rejects URLs,
+e-mail addresses and error text, but not identifiers embedded in otherwise valid
+names; leaked names can occupy slots first-come, never evicted. The catalog
+therefore has at most `MAX_SERIES` series regardless of traffic. Batter
+owns no metric buffer, queue, flush, retry or database write, so a slow,
+unavailable or saturated collector cannot change returned results or admission
+decisions. Durations come from monotonic `Duration` values and are finite and
+nonnegative. Recorder code runs synchronously, including in destructors; a
+blocking, panicking or unboundedly buffering recorder, runtime death and
+non-yielding destructors are outside this guarantee, as for tracing subscribers.
+Nested recorder panics during unwinding can abort the process.
+These metrics are best-effort diagnostics, not authoritative audit records.
+
 `reserve_finalization` divides an existing context into sibling work/finalization
 contexts. Work ends at the original deadline minus the positive reserve;
 finalization keeps the original deadline. Cancelling/finishing work does not

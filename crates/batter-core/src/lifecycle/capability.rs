@@ -233,11 +233,15 @@ impl OperationAdmission {
         deadline: crate::operation::RootDeadline,
     ) -> Result<crate::operation::OperationOwner, Readiness> {
         let readiness = self.shared.readiness();
-        if readiness != Readiness::Ready {
-            return Err(readiness);
-        }
-        let parent = self.shared.operation_token();
-        Ok(crate::operation::OperationOwner::under(deadline, &parent))
+        let admitted = if readiness == Readiness::Ready {
+            let parent = self.shared.operation_token();
+            Ok(crate::operation::OperationOwner::under(deadline, &parent))
+        } else {
+            Err(readiness)
+        };
+        // Recorder code runs only after the admission decision is complete.
+        crate::telemetry::record::root(readiness);
+        admitted
     }
 }
 

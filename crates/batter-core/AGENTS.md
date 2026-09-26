@@ -43,6 +43,12 @@ Windows support and non-Unix fallbacks are out of scope.
   children with a nonconforming wrapper whose hidden child survives cleanup.
   `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;
   private std-only mechanics live in workspace `test-support/process/`.
+- `src/telemetry/metrics.rs` owns the opt-in bounded metric catalog; closed
+  label vocabularies are defined once in `metrics/vocabulary.rs`, name
+  tables in `metrics/names.rs`, bounded key caches in `metrics/keys.rs` and
+  the shared record-once guard in `metrics/terminal.rs`. Call sites use the
+  always-compiled `telemetry/record.rs` shim, never feature attributes. Emit only after results are known
+  and outside admission locks; never add a buffer, retry or log for metrics.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation.
 
@@ -106,6 +112,7 @@ Run from the workspace root:
 
 ```sh
 cargo test -p batter-core --locked
+cargo test -p batter-core --features metrics --locked
 cargo test -p batter-core --doc --locked
 cargo clippy -p batter-core --all-targets --locked -- -D warnings
 python3 scripts/test_matrix.py workspace

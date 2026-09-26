@@ -297,6 +297,28 @@ impl ProcessHandle {
         T: Send + 'static,
         E: Error + Send + Sync + 'static,
     {
+        // Recorder code is arbitrary: observe rejections only after the
+        // admission lock and any rejected captures have been released.
+        // Accepted decisions are recorded inside `admit` before the lease.
+        let result = self.admit(name, factory, ancestor);
+        if let Err(error) = &result {
+            crate::telemetry::record::process_rejected(error);
+        }
+        result
+    }
+
+    fn admit<F, Fut, T, E>(
+        &self,
+        name: &'static str,
+        factory: F,
+        ancestor: Option<&Arc<AtomicBool>>,
+    ) -> Result<ProcessReceipt<T, E>, ProcessAdmissionError>
+    where
+        F: FnOnce(ProcessScope) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, Fatal<E>>> + Send + 'static,
+        T: Send + 'static,
+        E: Error + Send + Sync + 'static,
+    {
         validation::name(name)?;
         // Capture causality even if the task span is filtered out. Creating a
         // span or looking up its fallback parent may invoke subscriber code,
@@ -367,10 +389,25 @@ impl ProcessHandle {
             active,
             _permit: permit,
         };
-        // The task is already owned, including if the coordinator aborts before
-        // its first poll. In that case send drops the lease and releases capacity.
-        let _ = begin.send(lease);
+        // Accepted work already belongs to the supervisor. Even if recorder
+        // code unwinds, deliver its lease rather than stranding the task/count.
+        let start = ProcessStart(Some((begin, lease)));
+        // On the normal path admission recording still precedes task execution.
+        crate::telemetry::record::process_admitted();
+        drop(start);
         Ok(ProcessReceipt { result })
+    }
+}
+
+struct ProcessStart(Option<(oneshot::Sender<ActiveTask>, ActiveTask)>);
+
+impl Drop for ProcessStart {
+    fn drop(&mut self) {
+        if let Some((begin, lease)) = self.0.take() {
+            // If the coordinator already dropped the queued future, send drops
+            // the lease and releases its count and capacity instead.
+            let _ = begin.send(lease);
+        }
     }
 }
 
