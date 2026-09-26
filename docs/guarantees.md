@@ -143,8 +143,10 @@ factory is invoked. Foundation-owned waits (admission, backoff) are not counted
 as operations, while adapter boundaries such as `http.response_construction`
 are. Tracing diagnostics are emitted before a boundary's metric, and
 publishing `Stopped` never waits for recorder code: shutdown is recorded after
-`Stopped` and before the report is returned, so flush after awaiting the
-driver's completion. Its duration is measured from the final canonical lifecycle
+`Stopped` and destruction of the owned shutdown future, before the report is
+returned, so flush after awaiting the driver's completion. A shutdown-future
+destructor panic records `panicked` without a completed-duration sample.
+Its duration is measured from the final canonical lifecycle
 stop instant, including earlier native timestamps learned after drain begins;
 abandoned drivers record no duration and record their shutdown after the
 supervisor's own queued work and cleanup, and a startup that fails before its

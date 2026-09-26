@@ -47,7 +47,8 @@
 //! operations, for example `http.response_construction` for each admitted
 //! Axum request, and their names share the operation table. A polled
 //! supervisor drive records one shutdown: its report's result after it
-//! publishes `Stopped` and before the report is returned, or
+//! publishes `Stopped` and destroys its owned shutdown future, before the report
+//! is returned, or
 //! `dropped`/`panicked` (with cause `none` before a cause was selected) when
 //! the driver is destroyed first, after the supervisor's own queued work and
 //! cleanup are destroyed and recorded. Publishing `Stopped` never waits for

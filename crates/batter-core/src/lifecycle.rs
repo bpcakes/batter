@@ -508,14 +508,25 @@ impl Supervisor {
         // which owns the supervisor, so on abandonment the supervisor's queued
         // work and cleanup are destroyed (and recorded) first.
         let mut terminal = crate::telemetry::record::ShutdownTerminal::new();
-        self.drive(shutdown, &mut terminal).await
+        let (report, coordinator) = self.drive(shutdown, &mut terminal).await;
+        // The drive future and its owned shutdown future are now destroyed.
+        // Record before returning the report, after Stopped was published.
+        // Native settlement may have tightened the clock after drain began;
+        // the disabled shim leaves this supplier unevaluated.
+        terminal.finish(report.is_success(), || {
+            coordinator
+                .shared
+                .stop_started()
+                .expect("completed shutdown follows drain")
+        });
+        report
     }
 
     async fn drive<F>(
         mut self,
         shutdown: F,
         terminal: &mut crate::telemetry::record::ShutdownTerminal,
-    ) -> ShutdownReport
+    ) -> (ShutdownReport, LifecycleCoordinator)
     where
         F: Future<Output = ()>,
     {
@@ -585,19 +596,11 @@ impl Supervisor {
             unjoined: summary.unjoined,
             cleanup,
         };
-        // Publishing Stopped never depends on recorder code. The sample is
-        // recorded before the report is returned, so a root that flushes
-        // after awaiting the driver's completion observes it.
+        // Publishing Stopped never depends on recorder code. Transfer the
+        // coordinator so the outer guard can read the canonical clock after
+        // this future's remaining owned state is destroyed.
         self.coordinator.shared.stop_driver();
-        // Native settlement may have tightened the clock after drain began.
-        // The disabled shim leaves this supplier unevaluated.
-        terminal.finish(report.is_success(), || {
-            self.coordinator
-                .shared
-                .stop_started()
-                .expect("completed shutdown follows drain")
-        });
-        report
+        (report, self.coordinator)
     }
 
     async fn wait_for_shutdown<F>(&mut self, shutdown: F, tasks: &mut TaskSet) -> ShutdownCause

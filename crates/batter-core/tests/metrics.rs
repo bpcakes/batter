@@ -7,6 +7,8 @@ mod capture;
 mod ordering;
 #[path = "metrics/retry_destruction.rs"]
 mod retry_destruction;
+#[path = "metrics/shutdown_destruction.rs"]
+mod shutdown_destruction;
 #[path = "metrics/terminal.rs"]
 mod terminal;
 
