@@ -5,6 +5,8 @@
 mod capture;
 #[path = "metrics/ordering.rs"]
 mod ordering;
+#[path = "metrics/retry_destruction.rs"]
+mod retry_destruction;
 #[path = "metrics/terminal.rs"]
 mod terminal;
 

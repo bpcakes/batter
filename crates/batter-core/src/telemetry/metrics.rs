@@ -35,7 +35,11 @@
 //! a `CleanupStack` destroyed without closing, including one moved into a
 //! never-polled `close` future, records each hook as `dropped`, matching its
 //! existing abandonment warning. A whole retry execution is one
-//! [`RETRY_EXECUTIONS`] result. An attempt counts in [`RETRY_ATTEMPTS`] only
+//! [`RETRY_EXECUTIONS`] result, recorded after discarded errors and owned
+//! callbacks (including jitter samplers) are destroyed. A destructor panic
+//! before return records `panicked`; destruction of the returned value or error
+//! belongs to the caller and does not change that result.
+//! An attempt counts in [`RETRY_ATTEMPTS`] only
 //! once the boundary invokes its factory, so an interruption that wins the
 //! race first is not an attempt; neither counts as an operation.
 //! Foundation-owned waits (bulkhead waiting, retry backoff) are recorded only

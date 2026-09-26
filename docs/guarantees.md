@@ -130,7 +130,10 @@ inside a local recorder scope. Rejected recorders receive no catalog description
 and are returned to the caller. Polled but dropped
 operations, retry attempts and executions, admission waits and supervisor
 drives record `dropped`, or `panicked` when destroyed during unwinding, through
-one shared guard. A cleanup hook taken by a destroyed close driver records
+one shared guard. Retry execution recording follows destruction of discarded
+errors and owned callbacks, including jitter samplers. A panic during that
+destruction propagates and records `panicked`; values and errors transferred to
+the caller are outside the completed execution. A cleanup hook taken by a destroyed close driver records
 `abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
 the stack before being counted, so a capture destructor panic cannot count them
 again as dropped. Every skip warning is emitted before metrics and captured-value

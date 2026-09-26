@@ -443,7 +443,7 @@ where
     } = options;
     execute_with_delay(
         ExecutionSettings::new(context, operation, safety, policy, attempt_maximum),
-        |delay| match &mut sample {
+        move |delay| match &mut sample {
             Some(sample) => equal_jitter(delay, sample()),
             None => delay,
         },
@@ -488,7 +488,7 @@ where
 {
     execute_with_delay(
         ExecutionSettings::new(context, operation, safety, policy, None),
-        |delay| equal_jitter(delay, sample()),
+        move |delay| equal_jitter(delay, sample()),
         factory,
         classify,
     )
@@ -632,6 +632,26 @@ where
 
 async fn execute_with_delay<T, E, F, Fut, C, D>(
     settings: ExecutionSettings<'_>,
+    delay_for: D,
+    factory: F,
+    classify: C,
+) -> Result<T, RetryExecutionError<E>>
+where
+    F: FnMut(Attempt) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    C: FnMut(&E) -> RetryDecision,
+    D: FnMut(Duration) -> Duration,
+{
+    // Keep the guard outside the future that owns retained errors and callbacks.
+    // Await destroys that future before finish, including on cancellation/unwind.
+    let mut terminal = crate::telemetry::record::RetryTerminal::new(settings.operation);
+    let result = execute_loop(settings, delay_for, factory, classify).await;
+    terminal.finish(&result);
+    result
+}
+
+async fn execute_loop<T, E, F, Fut, C, D>(
+    settings: ExecutionSettings<'_>,
     mut delay_for: D,
     mut factory: F,
     mut classify: C,
@@ -642,11 +662,9 @@ where
     C: FnMut(&E) -> RetryDecision,
     D: FnMut(Duration) -> Duration,
 {
-    // One terminal result per execution, including `dropped`/`panicked`.
-    let mut terminal = crate::telemetry::record::RetryTerminal::new(settings.operation);
     let mut attempts = 0;
     let mut last_error = None;
-    let result = loop {
+    loop {
         if let Err(reason) = settings.context.check() {
             break Err(RetryExecutionError::Interrupted {
                 attempts,
@@ -735,7 +753,5 @@ where
             }
             Err(OperationError::Failed(never)) => match never {},
         }
-    };
-    terminal.finish(&result);
-    result
+    }
 }
