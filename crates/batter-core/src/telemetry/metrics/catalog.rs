@@ -5,8 +5,8 @@
 //! let metric = catalog::shape(OPERATION_COMPLETIONS).unwrap();
 //! assert_eq!(metric.name(), OPERATION_COMPLETIONS);
 //! ```
-use super as catalog;
 use super::facade::{Key, Unit};
+use crate::telemetry::metrics as catalog;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 /// Instrument kinds emitted by Batter.
