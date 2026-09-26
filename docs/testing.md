@@ -769,7 +769,7 @@ cleanup. It then runs the actual executable with a missing receiver and requires
 natural exit1, empty stdout and the exact sanitized stderr diagnostic. Each child
 has the existing eight-second reap bound; watchdog termination is failure, not
 successful settlement evidence. Its ordinary receiver/readiness phases remain
-the positive control, and the live inventory remains 66 cases.
+the positive control; the current live inventory has 68 cases.
 
 Ordinary reference HTTP tests separately pin the composition boundaries: a bare
 in-process `/live` request succeeds without `ConnectInfo`, while an authenticated
@@ -890,8 +890,10 @@ native release-mode regression. Detached at-rest package checks retain Cargo's
 default profile because the override belongs to this workspace, not the leaf
 manifest. See [Cargo profile semantics](references.md#cargo-test-artifacts-and-profiles-2026-09-24).
 
-`bash scripts/verify.sh` directly runs formatting, source file budgets, both
-Clippy configurations, all six parts of `scripts/test_matrix.py`, rustdoc with
+`bash scripts/verify.sh` directly runs formatting, source file budgets, three
+Clippy configurations (all-features workspace, default-feature Runlimit packages
+and the default-feature reference package without its opt-in metrics exporter),
+all six parts of `scripts/test_matrix.py`, rustdoc with
 warnings denied, and all five built HTTP process smoke profiles. Checks fail the
 script on any unsuccessful command. No plan, receipt, freshness digest or gate
 is involved. Record executed results and limitations in the owning Bead.
@@ -1603,7 +1605,7 @@ remain unchanged, and the copied lock may change only Axum's path identity.
 
 The reference live runner additionally requires the ignored library test
 `delivery::worker::state::live_tests::provider_state_lock_and_retry_boundaries`
-after its 66-case integration inventory and maintenance-session probe. It uses a
+after its 68-case integration inventory and maintenance-session probe. It uses a
 disposable harness database, synthetic native lease identity and no heartbeat to
 isolate the SQL authority boundary: lock-only waits on the job and effect rows
 cross expiry and must leave application state unchanged. It also discards the
@@ -1937,11 +1939,63 @@ its private child entry. It required zero ignored/filtered entries
 and exact per-name success; that ordinary workspace run left all 54 live probes
 ignored. The runner controls reject missing startup/cancellation cases too.
 
+## Reference metrics export
+
+The reference package's opt-in `metrics-export` feature has four evidence layers.
+None requires a database except the explicit live runner.
+
+- Library unit tests in `examples/reference-service/src/metrics_export/tests.rs`
+  and `tests/` drive the real catalog guard, `metrics-exporter-otel` bridge, SDK
+  aggregation and OTLP transport against the shared loopback collector
+  (`tests/support/collector.rs`) with thread-scoped recorders on current-thread
+  runtimes. They prove guard rejection before delegation; that every one of the
+  `MAX_SERIES` foundation keys, with maximum-length names, fits and the next is
+  rejected; cumulative counters, fixed histogram boundaries and catalog
+  descriptions/units; a worst-case payload below half the 2 MiB ceiling; one
+  closed outcome per collector behavior (acknowledged, partial rejection,
+  negative rejection count, non-success status, malformed and wrong content
+  type, declared and streamed oversized bodies, stalled headers and body,
+  refusal) without retry; refusal of oversized requests before dispatch;
+  unchanged operation results and bounded keys during a 10,000-name storm with a
+  stalled collector; final export after a blocked cleanup hook with task, cleanup
+  and shutdown series present; startup-failure cleanup without a shutdown; typed
+  final-allowance expiry with exactly-once closure; and in-flight periodic
+  settlement plus coalescing before the final snapshot.
+- `runtime/completion/tests.rs` and `runtime/orchestration.rs` cover waiter
+  cancellation, owner-loss drain and later observers on both runtime flavors,
+  orchestration panics published as `Abandoned`, unchanged service
+  classification beside failed diagnostics, and report coverage classification.
+- `tests/metrics_export.rs` (requires the feature) runs each global installation
+  in a cleared Unix child: startup-failure export on both runtime flavors,
+  rejected installation with explicit closure, never-polled preparation, waiter
+  and owner loss during partial setup, startup cleanup and the final export on
+  both runtime flavors, and the production executable's exit code and stderr.
+- `tests/configuration/metrics.rs` runs in both the default hostile-environment
+  matrix entry and the all-features workspace run: explicit settings without the
+  feature fail, loopback/path/credential/query policy, captured and live
+  `OTEL_*` rejection only when enabled, and maintenance ignore behavior.
+
+The live inventory adds `metrics_export_command_worker_and_shutdown`, which
+submits an authenticated command, waits for native provider execution and
+confirmation, sends SIGTERM and requires the final export to contain exactly one
+root admission and one `http.response_construction` operation for the command
+(probes are not operations), one `provider.dispatch` worker operation,
+`http`/`worker` task exits, pool cleanup and the requested successful shutdown
+plus its duration; and
+`metrics_collector_failure_preserves_results`, which repeats the command with a
+refused and then a stalled collector and requires the same accepted command,
+confirmed effect, single provider acceptance and clean silent exit. Exporting
+children use the eight-second reap bound plus the fixed eight-second diagnostic
+settlement allowance.
+
 ## Native lifecycle and offline retirement acceptance
 
-The current reference target has 66 entries: 61 live database probes, two
+The current reference target has 68 entries: 63 live database probes, two
 offline synthetic-acquisition signal controls, two offline executable-composition
-signal controls and the private child dispatch entry. Two exact legacy aliases
+signal controls and the private child dispatch entry. The two metrics export
+probes exist only with the `metrics-export` feature, so the runner builds the
+target and both executables with that feature; see
+[reference metrics export](#reference-metrics-export). Two exact legacy aliases
 were removed in the hard cutover instead of being counted as independent evidence.
 The runner classifies each entry explicitly and builds both process executables
 with the invoking toolchain before discovery. A Python control reads Cargo

@@ -94,7 +94,15 @@ does not compile there. Flush after awaiting the supervisor's completion, not on
 observing `Stopped` readiness. Install one recorder/exporter in the binary and
 choose one that aggregates rather than queueing raw samples. Batter holds no
 metric buffer, so exporter flush and shutdown ordering belong to the application
-root. No OpenTelemetry propagation or exporter shutdown adapter is included.
+root. No Batter library includes an OpenTelemetry exporter, propagation or
+exporter shutdown adapter. The unpublished reference service's opt-in
+`metrics-export` feature is the application-root recipe: a catalog guard in
+front of `metrics-exporter-otel`, a shared SDK `ManualReader`, one serial
+OTLP/HTTP owner with fixed deadlines and payload/response ceilings, and a final
+snapshot exported only after the retained service result, under its own
+allowance, before exactly-once exporter/provider closure. Diagnostic failures
+stay in a separate completion field; see the
+[reference README](../examples/reference-service/README.md#opt-in-metrics-export).
 
 Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a

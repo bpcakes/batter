@@ -42,7 +42,7 @@ Local development uses the current stable release pinned in `rust-toolchain.toml
 (Rust 1.98.1). Upgrade that pin deliberately, together with the pinned CI entries.
 All packages retain Rust 1.94 as their minimum; SQLx 0.9.0 requires it in the
 adapter and examples. Run `bash scripts/verify.sh` with the default toolchain.
-It directly runs formatting, file budgets, both Clippy configurations, all six
+It directly runs formatting, file budgets, all three Clippy configurations, all six
 test-matrix parts, rustdoc and all HTTP smoke profiles. It does not create plans,
 receipts or gates. Do not repeat the matrix after it passes.
 Routine Rust 1.94.0 verification belongs only in CI, including the standalone

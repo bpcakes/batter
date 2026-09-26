@@ -10,8 +10,10 @@ control job or reconciliation loop runs.
 The [compatibility manifest](../../docs/reference-compatibility.md) records version
 contracts and execution evidence. The earlier 58-entry live inventory passed on
 Linux with both supported toolchains. The prior 64-entry revision passed on macOS
-with both supported toolchains. The current 66-entry state-first provider suite
-passed on macOS with Rust 1.98.1 and exact 1.94.0 against PostgreSQL 18.6.
+with both supported toolchains. The 66-entry state-first provider suite
+passed on macOS with Rust 1.98.1 and exact 1.94.0 against PostgreSQL 18.6. The
+current 68-entry suite, adding the two metrics export cases, passed on macOS with
+Rust 1.98.1 against PostgreSQL 18.6; its Rust 1.94.0 run belongs to CI.
 Two exact legacy test aliases were removed rather than retained through the hard cutover.
 
 ## Staged worker and atomic delivery command
@@ -36,13 +38,16 @@ through `batter::sqlx::pool_in`, acquires a connection, applies native and
 forward-only application migrations, checks compatibility, synchronizes the
 delivery producer, binds HTTP and registers handler-bearing native preparation.
 A signal during initialization drains startup and awaits cleanup; after handoff
-the library-owned listeners belong to the running driver. A startup failure
-returned by `runtime::run` downcasts to `ProtectedRuntimeStartupFailure`. The
+the library-owned listeners belong to the running driver. `runtime::run` and the
+observer-capable `runtime::start` return a retained `ServiceCompletion`: its
+`service()` result keeps the original error, and `ServiceFailure::error()`
+downcasts a startup failure to `ProtectedRuntimeStartupFailure`. The
 earlier wrapper was removed in the coordinated hard cutover. Generic running
 failures retain `batter::lifecycle::ShutdownFailure`; an otherwise successful
 report missing its required pool record downcasts to
 `RuntimePoolCleanupFailure`, whose accessor exposes that report without rendering
-it. A failed production executable prints only `Error: reference service failed`
+it. Metrics diagnostics are a separate `metrics()` field and never change
+`exit_code()`. A failed production executable prints only `Error: reference service failed`
 and exits 1. Listener discovery never writes stdout. To discover a child-selected
 port, bind a Unix datagram receiver before launching the child and set
 `BATTER_LISTENER_ANNOUNCEMENT_PATH` to its absolute socket path. After TCP bind,
@@ -290,8 +295,9 @@ target; its native initialization, ownership, durable execution, callback and
 business-failure cases replace the retired hosted-control protocol cases.
 The earlier 58 runner entries (56 database and two offline signal cases), plus the
 separate maintenance-session probe, passed on both supported toolchains on Linux.
-The current inventory has 66 entries: 61 database probes, four offline signal
-controls and the private child entry. Its eight protected-startup rows are
+The current inventory has 68 entries: 63 database probes, four offline signal
+controls and the private child entry; the two metrics export probes require the
+`metrics-export` feature, which the runner selects. Its eight protected-startup rows are
 described in [testing](../../docs/testing.md#protected-startup-consumer-process-cases);
 the full baseline executed on PostgreSQL 18.6. The expanded assertions for
 resumed generation replacement, uncertain admission interruption and terminal
@@ -318,6 +324,65 @@ all attempt errors remain in its final report. Native detach and adapter retirem
 controls demonstrate why pool close alone is insufficient. Separate tests retain
 body, handled pool, consuming-cleanup and deferred-drain errors, and distinguish
 live waiter loss from actual runtime destruction and native lease Drop.
+
+## Opt-in metrics export
+
+Build with `--features metrics-export` and set `BATTER_METRICS_OTLP_ENDPOINT` to
+export the bounded foundation catalog (operations including
+`http.response_construction` and `provider.dispatch`, admission decisions, task
+exits, cleanup hooks and the shutdown outcome) over OTLP/HTTP protobuf:
+
+```sh
+BATTER_METRICS_OTLP_ENDPOINT='http://127.0.0.1:4318/v1/metrics' \
+  cargo run -p batter-example-reference-service --features metrics-export --locked
+```
+
+Without the setting nothing is installed and no collector is contacted; default
+successful runs stay silent. The value must be `http` to a literal loopback
+address at exactly `/v1/metrics`, without credentials, query or fragment.
+An explicit value in a build without the feature, a malformed value, or any
+ambient `OTEL_*` variable while export is enabled fails configuration before
+acquisition. Preparation rechecks the live environment before upstream builders
+that read `OTEL_*` values, without mutating it. The resource carries only
+`service.name`; there is no proxy discovery, redirect, TLS or remote collector.
+
+`runtime::start` installs one guarded recorder through Batter's canonical
+`telemetry::metrics::install`, which publishes catalog descriptions, before
+protected startup. A second process-wide installation is rejected: the rejected
+recorder, exporter and provider are closed explicitly and the service runs
+without export (`MetricsExport::InstallationRejected`). The guard admits only the
+foundation catalog with its exact label shapes and vocabularies and at most
+`MAX_SERIES` complete keys for the process lifetime, rejecting everything else
+before the `metrics-exporter-otel` registry, SDK callbacks or metadata allocate.
+Rejections are counted, never logged.
+
+One application-owned serial loop collects cumulative snapshots from a shared
+SDK `ManualReader` every ten seconds and exports each under a three-second
+deadline. There is no `PeriodicReader`, background SDK thread, request queue or
+retry; missed ticks are coalesced and counted, and a collector outage keeps
+aggregating the same bounded series. Histograms use twelve fixed boundaries
+(5 ms to 30 s, thirteen buckets). Requests above 2 MiB are refused before
+dispatch; responses above 64 KiB are rejected. The worst-case full catalog with
+maximum-length names encodes to about 0.55 MB. Refusal, header or body stalls,
+non-success status, OTLP partial rejection, malformed or oversized responses and
+deadline expiry each become a typed `ExportFailure`; only a decoded response
+without rejected points is `Acknowledged`, and that claims nothing about durable
+downstream storage. Upstream error text and collector bodies are never retained.
+
+Finalization is owned by the orchestration, not by readiness, drain or cleanup
+hooks. After protected startup failure cleanup, or complete driver settlement
+including the shutdown metric recorded after `Stopped`, scheduling stops, any
+in-flight periodic attempt settles under its own deadline, and one separate
+five-second allowance covers the final snapshot, its export and exactly-once
+exporter/provider closure. Service drain and cleanup budgets never wait on the
+collector. A report with unjoined tasks, uncertain native settlement or skipped
+or unjoined cleanup marks `FinalCoverage::Incomplete`. The combined
+`ServiceCompletion` keeps the original service result and report beside the
+`MetricsExport` diagnostics; the executable's exit code and stderr follow the
+service result only. Dropping the `ServiceOwner` requests ordinary drain; waiter
+cancellation requests nothing, and an observer taken earlier still receives the
+retained completion. Runtime death, SIGKILL, blocking or panicking recorder code
+and remote rollback of a cancelled request are outside the guarantee.
 
 ## Typed settings and native constructors
 
@@ -387,7 +452,8 @@ section validation to current probes without pretending they are serving roots.
 
 The protected service path consumes `ServingSettings` through `runtime::prepare`,
 which creates a must-use, non-cloneable `PreparedServing` without connecting,
-binding, migrating or spawning. `runtime::run` accepts only that value. The router
+binding, migrating or spawning. `runtime::run` and `runtime::start` accept only
+that value; a never-polled `run` future installs, connects and spawns nothing. The router
 similarly consumes an opaque `PreparedHttp`; it cannot reconstruct missing
 authentication or accept maintenance inputs. Offline commands consume
 `MaintenanceSettings::prepare` and receive only native database inputs.

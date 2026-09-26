@@ -22,8 +22,8 @@ are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
 [Prometheus naming practice](https://prometheus.io/docs/practices/naming/)
 (`_total` counters, base-unit `_seconds`) and its
 [cardinality guidance](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels).
-Recorder aggregation and exporter buffering were not reviewed; the selected
-exporter and its flush order belong to `batter-8jr`.
+Recorder aggregation and exporter buffering were not reviewed for `batter-6vn`;
+the selected exporter and its flush order are recorded below for `batter-8jr`.
 
 Rechecked the locked recorder implementation on 2026-09-26: `with_recorder`
 prefers a thread-local recorder, including for description macros. There is no
@@ -31,6 +31,48 @@ public global-recorder getter. Global installation requires `Sync`, without
 `Send`, and returns the rejected recorder through `SetRecorderError<R>`. Batter
 therefore retains a shared reference to the accepted recorder for direct catalog
 publication; ordinary observations still use the facade's scoped dispatch.
+
+## Reference metrics export: reviewed 2026-09-26
+
+For `batter-8jr`, resolved with Cargo and read the locked sources of
+`metrics-exporter-otel` 0.3.1, `opentelemetry` and `opentelemetry_sdk` 0.31.0,
+`opentelemetry-otlp` 0.31.1, `opentelemetry-http` 0.31.0 and
+`opentelemetry-proto` 0.31.0. Newer 0.33 OpenTelemetry releases exist, but the
+exporter bridge requires `opentelemetry` 0.31.
+
+- [metrics-exporter-otel source](https://docs.rs/crate/metrics-exporter-otel/0.3.1/source/):
+  `storage.rs` creates one observable counter with its own callback and
+  attribute vector per complete key and one histogram per key; `lib.rs` keeps a
+  registry entry per key and `metadata.rs` one description per name/kind, with
+  no bound. Histogram boundaries must be set before first creation.
+- [SDK `ManualReader`](https://docs.rs/opentelemetry_sdk/0.31.0/opentelemetry_sdk/metrics/struct.ManualReader.html)
+  and `metrics/mod.rs` export the reader, `MetricReader` and `Pipeline` only under
+  `experimental_metrics_custom_reader`. `manual_reader.rs::force_flush` is a
+  no-op and `shutdown_with_timeout` only detaches the producer; collection after
+  shutdown fails. `meter_provider.rs` ignores shutdown timeouts.
+  `pipeline.rs` applies a default 2,000-stream cardinality limit per instrument;
+  the largest foundation instrument has 792 series.
+  `Resource::builder()` reads `OTEL_*` resource detectors;
+  `Resource::builder_empty()` does not.
+- [OTLP HTTP metrics source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/metrics.rs)
+  treats every 2xx as success without decoding the response and formats a
+  non-success body and custom client errors into `InternalFailure` strings.
+  `exporter/http/mod.rs` merges `OTEL_EXPORTER_OTLP_*HEADERS` even with explicit
+  configuration, and reads endpoint, timeout and compression variables when not
+  set explicitly. The exporter performs no retry.
+- [`opentelemetry-http` `HttpClient`](https://docs.rs/opentelemetry-http/0.31.0/opentelemetry_http/trait.HttpClient.html)
+  receives the encoded `Request<Bytes>`, which permits a payload ceiling before
+  dispatch and a fixed, body-free response.
+- [OTLP partial success](https://opentelemetry.io/docs/specs/otlp/#partial-success)
+  requires distinguishing rejected points from full acceptance and forbids
+  automatic retry of partially accepted requests; a message without rejected
+  points is a warning. [OTLP/HTTP responses](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+  carry a protobuf `ExportMetricsServiceResponse` for protobuf requests.
+
+The resolved graph was checked with `cargo tree -e features`: no
+`internal-logs`, `reqwest-blocking-client` or `experimental_async_runtime`.
+`http-proto` enables the exporter's trace feature and tonic-generated message
+types. These are source facts, not proof of collector durability.
 
 ## Native query adapters: reviewed 2026-09-22
 

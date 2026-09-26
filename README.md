@@ -278,7 +278,7 @@ verification, and change rules; [status](docs/status.md) and
 bash scripts/verify.sh
 ```
 
-The script directly runs tests, both Clippy feature configurations, formatting,
+The script directly runs tests, all three Clippy feature configurations, formatting,
 rustdoc, five built HTTP smokes and the file-budget check. Verification creates
 no Jig plans, receipts or gates. A successful run needs no second full test run.
 

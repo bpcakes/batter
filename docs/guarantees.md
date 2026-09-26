@@ -823,8 +823,8 @@ the application root requires its named `postgres.pool` cleanup record;
 checked completion separately requires that hook to have succeeded.
 Cleanup registration rejects duplicate names, so if the otherwise successful
 report does not contain that record,
-`runtime::run` returns the public fixed-diagnostic
-`RuntimePoolCleanupFailure`; its `report` accessor retains typed inspection without
+the retained `ServiceCompletion` from `runtime::run` or `runtime::start` carries the public fixed-diagnostic
+`RuntimePoolCleanupFailure` as its service failure; its `report` accessor retains typed inspection without
 formatting application errors.
 A signal observed during acquisition
 or schema initialization yields `StartupCause::Draining` inside
@@ -1839,10 +1839,30 @@ serving. Dedicated maintenance files and overrides reject serving-only fields.
 Known serving fields may coexist in captured process environment and are ignored
 by maintenance without parsing; unknown reserved names and every PG* name fail.
 `runtime::prepare` consumes serving settings into a must-use non-cloneable inert
-owner; only that owner can enter `runtime::run`, while canonical
+owner; only that owner can enter `runtime::run` or `runtime::start`, while canonical
 `http::register_in` or explicit `http::in_process_client` consumes its
 narrower opaque `PreparedHttp`. These local types cannot prove remote database
 authentication or availability.
+
+With the opt-in `metrics-export` feature and an explicit loopback collector, the
+reference orchestration installs one guarded recorder before startup and owns the
+only flush. The guard rejects names, label shapes and keys outside the foundation
+catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
+exports manual-reader snapshots under fixed deadlines and payload/response
+ceilings, with no queue or retry. The final snapshot is collected only after the
+service result is retained (startup-failure cleanup, or complete driver
+settlement including the shutdown metric after `Stopped`), exported under a
+separate allowance and followed by exactly-once exporter/provider closure; no
+readiness event, drain or cleanup hook can start it, and no service cleanup
+budget waits on the collector. `ServiceCompletion` keeps the original service
+result, report and exit classification beside typed `MetricsExport` outcomes.
+`Acknowledged` means one decoded collector response without rejected points,
+not durable storage; a timed-out or cancelled request is neither delivery nor
+remote rollback. `FinalCoverage::Incomplete` reports unjoined tasks, uncertain
+native settlement and skipped or unjoined cleanup; `Reported` describes the
+report, not unsupervised producers. Owner drop requests drain and waiter
+cancellation requests nothing. Runtime death, SIGKILL, and blocking or panicking
+recorder code are not covered.
 
 The supported TCP URL subset requires explicit host, username, database and
 sslmode; only password, sslmode and application_name query settings are accepted,

@@ -9,6 +9,15 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
+  `src/runtime/completion.rs` owns the `ServiceOwner`/`ServiceObserver` and the
+  combined `ServiceCompletion`; `src/runtime/orchestration.rs` owns service
+  completion -> final metrics export -> diagnostic closure and report coverage.
+- `src/metrics_export.rs` and `src/metrics_export/` (feature `metrics-export`)
+  own the catalog guard, bounded OTLP/HTTP transport, manual-reader snapshots and
+  the serial export owner; `src/diagnostics.rs` owns the public outcome types and
+  `src/config/metrics.rs` the opt-in collector setting. `tests/metrics_export.rs`
+  isolates global installation in Unix children; `tests/support/collector.rs` is
+  the shared loopback collector and `tests/support/metrics_live.rs` the live cases.
 - `src/runtime.rs` uses protected startup with library-owned signals, reserves a
   cleanup slot before constructing the profiled database, and registers pool
   close before yielding. `src/database.rs` declares direct-login/public policy;
@@ -62,8 +71,8 @@ independent. Update `../../docs/reference-compatibility.md` with executed eviden
 Settings names/defaults/precedence and required passwords stay in this root.
 Keep `ServingSettings` and database-only `MaintenanceSettings` concrete and
 separate; do not restore a shared mode enum, optional serving capability, or
-conversion from maintenance into serving. `runtime::run` accepts only the inert,
-non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
+conversion from maintenance into serving. `runtime::run` and `runtime::start`
+accept only the inert, non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
 only `PreparedHttp` while inseparably selecting native peer registration.
 `http::in_process_client` is the lower-level test seam. Its opaque
 `InProcessRequestClient` cannot be served or expose the inner router, and each
@@ -108,6 +117,23 @@ requires enabled IPv6 loopback (`::1`) for its native protocol fixture, plus
 IPv4 loopback and Unix subprocess permissions. This test is not skipped when
 the host or container lacks IPv6. Never mutate process globals.
 Explicit live invocation fails when prerequisites are missing.
+
+Metrics export stays opt-in and application-owned. Absent
+`BATTER_METRICS_OTLP_ENDPOINT` installs nothing; an explicit value without the
+feature, a non-loopback/non-`/v1/metrics` URL, or ambient `OTEL_*` while enabled
+fails configuration before acquisition, and preparation rechecks the live
+environment without mutating it. Install only through Batter's canonical
+`install`, once, from the orchestration before startup; close rejected resources
+explicitly. Keep the catalog guard in front of the bridge and reject before
+delegation; do not admit arbitrary native series or grow beyond `MAX_SERIES`
+keys. Use the shared `ManualReader`, one serial owner and fixed timing; never add
+`PeriodicReader`, a queue, retries, force-flush-as-delivery or upstream error-text
+classification. Only a decoded OTLP response without rejected points is
+acknowledgement. Finalize only after the retained service result; never flush
+from readiness, drain or cleanup hooks, never spend service cleanup budgets on
+collector I/O, and never let diagnostics change the service result, report or
+exit classification. Owner drop requests drain; waiter cancellation requests
+nothing.
 
 The provider effect key and canonical request are created in the submission
 transaction. Load and classify that retained effect before provider admission:

@@ -759,6 +759,43 @@ cannot keep database-dependent cases out of ordinary verification. The reference
 compiles ignored live cases during those checks and runs them through an
 explicit prerequisite-checking runner; skipped cases are not executed evidence.
 
+## OpenTelemetry metrics export: application-root recipe
+
+Batter libraries record the bounded foundation catalog through the `metrics`
+0.24 facade and install nothing. The unpublished reference service owns the only
+exporter recipe, behind its `metrics-export` feature. It uses
+`metrics-exporter-otel` 0.3.1 over `opentelemetry`/`opentelemetry_sdk` 0.31.0,
+`opentelemetry-otlp` 0.31.1 (`http-proto`, `metrics`, no default blocking client
+or internal logs), `opentelemetry-http` 0.31.0 and `opentelemetry-proto` 0.31.0
+generated types. The SDK's experimental custom-reader surface stays private to
+that recipe. `http-proto` also enables upstream trace support and generated tonic
+message types; no trace pipeline or gRPC transport is configured.
+
+Upstream owns aggregation and OTLP encoding. The application owns:
+
+- a catalog guard that admits only foundation names, exact label shapes and
+  vocabularies and at most `MAX_SERIES` complete keys, rejecting before the
+  bridge registry, per-key SDK callbacks or metadata allocate;
+- a shared `ManualReader` and one serial collection/export owner with fixed
+  interval, attempt deadline and final allowance; no `PeriodicReader`, command
+  channel, request queue or retry;
+- a bounded `reqwest` `HttpClient` that refuses oversized requests, bounds the
+  response, decodes `ExportMetricsServiceResponse` and retains a typed outcome
+  beside the SDK result, because upstream erases custom errors into strings and
+  accepts every 2xx without inspecting OTLP partial success;
+- explicit final collection and export after the retained service result, then
+  exactly-once exporter and provider closure. `ManualReader::force_flush` and
+  provider shutdown are not network flushes.
+
+Enabled mode rejects ambient `OTEL_*` and uses an empty resource with fixed
+attributes, because upstream builders merge environment headers, endpoints,
+timeouts and compression, and default resources read environment attributes.
+The collector must be a literal loopback HTTP address at `/v1/metrics`.
+Acknowledgement means only that one inspected collector response decoded
+without rejected points. See the
+[reference README](../examples/reference-service/README.md#opt-in-metrics-export)
+and [primary sources](references.md#reference-metrics-export).
+
 ## Dependency direction and extraction criteria
 
 Applications depend on Batter and the upstream libraries. Batter adapters may
@@ -894,8 +931,9 @@ promotion or conversion into the serving types.
 Use `ServingSettings::from_process(selected_path, overrides)` once, then transfer
 the result through `runtime::prepare` before acquisition. The returned must-use,
 non-cloneable `PreparedServing` owns inert `PgPoolOptions`, `PgConnectOptions`,
-`Supervisor`, `JobsConfig`, provider client/bulkhead, bind address and `PreparedHttp`; `runtime::run`
-accepts only that owner. Router construction consumes only `PreparedHttp` and is
+`Supervisor`, `JobsConfig`, provider client/bulkhead, bind address, `PreparedHttp`
+and any prepared metrics pipeline; `runtime::run` and `runtime::start` accept only
+that owner and return or publish a retained `ServiceCompletion`. Router construction consumes only `PreparedHttp` and is
 infallible because authentication and local operational values are already
 concrete. Offline commands separately consume `MaintenanceSettings::prepare`.
 Tests can inject file/environment/override sources directly.
