@@ -25,16 +25,23 @@ async fn main() -> ExitCode {
     report_exit(run().await)
 }
 
-async fn run() -> Result<(), BoxError> {
+async fn run() -> Result<runtime::ServiceCompletion, BoxError> {
     let file = selected_settings_file(std::env::args_os())?;
     let settings = ServingSettings::from_process(file.as_deref(), SettingsSource::default())?;
     let prepared = runtime::prepare(settings)?;
-    runtime::run(prepared).await
+    Ok(runtime::run(prepared).await)
 }
 
-fn report_exit(result: Result<(), BoxError>) -> ExitCode {
+/// Exit classification follows the original service result only; metrics
+/// diagnostics are retained in the completion and never printed here.
+fn report_exit(result: Result<runtime::ServiceCompletion, BoxError>) -> ExitCode {
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(completion) => {
+            if completion.service().is_err() {
+                eprintln!("Error: reference service failed");
+            }
+            completion.exit_code()
+        }
         Err(error) => {
             if let Some(error) = error.downcast_ref::<batter::settings::SettingsError>() {
                 eprintln!("Error: configuration failed: {error}");

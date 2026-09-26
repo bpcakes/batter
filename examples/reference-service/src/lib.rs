@@ -42,6 +42,11 @@ pub fn native_connection<'borrow>(
 /// Application-owned validated settings and explicit native constructors.
 pub mod config;
 
+/// Retained metrics export outcomes, separate from the service result.
+pub mod diagnostics;
+#[cfg(feature = "metrics-export")]
+mod metrics_export;
+
 /// Atomic application command, durable delivery projection and query paths.
 pub mod delivery;
 mod provider;

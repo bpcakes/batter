@@ -32,6 +32,9 @@ mod watchdog {
     pub use contracts::process_contracts;
     #[path = "announcement_failure.rs"]
     pub(super) mod announcement_failure;
+    #[cfg(feature = "metrics-export")]
+    #[path = "exporting.rs"]
+    mod exporting;
     #[path = "listener.rs"]
     mod listener;
 
@@ -737,6 +740,7 @@ fn prepared() -> batter_example_reference_service::config::PreparedServing {
 async fn production() {
     batter_example_reference_service::runtime::run(prepared())
         .await
+        .service()
         .expect("clean production shutdown");
 }
 
@@ -761,13 +765,14 @@ async fn startup_drain(stage: &str) {
     } else {
         None
     };
-    let error = runtime::run(prepared())
-        .await
-        .expect_err("startup must drain");
+    let completion = runtime::run(prepared()).await;
     if let Some(observer) = signal_observer {
         observer.await.expect("signal observer completes");
     }
-    let failure = error
+    let failure = completion
+        .service()
+        .expect_err("startup must drain")
+        .error()
         .downcast_ref::<ProtectedRuntimeStartupFailure>()
         .expect("retained protected startup failure");
     let StartupError::Failed(startup) = failure.startup() else {

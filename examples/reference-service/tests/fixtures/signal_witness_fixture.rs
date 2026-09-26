@@ -36,15 +36,21 @@ async fn run() -> Result<(), BoxError> {
             received.ok_or_else(|| std::io::Error::other("SIGINT witness closed"))?;
             SIGINT_OBSERVED
         }
-        result = &mut application => return result,
+        completion = &mut application => return service_result(&completion),
     };
 
     // The parent signals only after the withheld native handshake is accepted,
     // which proves startup installed its own listeners. Await application cleanup
     // before touching output so a broken capture cannot discard the runtime owner.
-    let application = application.await;
+    let completion = application.await;
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{event}")?;
     stdout.flush()?;
-    application
+    service_result(&completion)
+}
+
+fn service_result(completion: &runtime::ServiceCompletion) -> Result<(), BoxError> {
+    completion
+        .service()
+        .map_err(|_| std::io::Error::other("reference service failed").into())
 }

@@ -38,9 +38,11 @@
 //! ```
 
 mod endpoint;
+mod metrics;
 mod pool;
 mod provider;
 mod worker;
+pub(crate) use metrics::PreparedMetrics;
 pub use pool::PoolSettings;
 pub use worker::WorkerSettings;
 
@@ -104,6 +106,7 @@ fn serving_names() -> Vec<&'static str> {
         .iter()
         .chain(pool::NAMES)
         .chain(provider::NAMES)
+        .chain(metrics::NAMES)
         .chain(worker::NAMES)
         .copied()
         .collect()
@@ -192,6 +195,7 @@ pub struct ServingSettings {
     authenticator: BearerAuthenticator,
     trusted_peer_policy: TrustedPeerPolicy,
     provider: provider::ProviderSettings,
+    metrics: metrics::MetricsSettings,
 }
 
 impl ServingSettings {
@@ -212,6 +216,11 @@ impl ServingSettings {
         overrides: SettingsSource,
     ) -> Result<Self, SettingsError> {
         let names = serving_names();
+        // Unrelated environment names are ignored, except that enabled metrics
+        // export rejects ambient OpenTelemetry configuration.
+        let ambient_otel = environment
+            .select(&[], metrics::AMBIENT_PREFIXES, true)
+            .is_err();
         let values = merge_sources(&names, &names, file, environment, overrides)?;
         let bind = values
             .text("BATTER_BIND")?
@@ -242,6 +251,7 @@ impl ServingSettings {
             authenticator: authenticator(&values)?,
             trusted_peer_policy: TrustedPeerPolicy::direct(),
             provider: provider::ProviderSettings::from_values(&values)?,
+            metrics: metrics::MetricsSettings::from_values(&values, ambient_otel)?,
         })
     }
 
@@ -261,6 +271,7 @@ impl ServingSettings {
     ) -> Result<PreparedServing, SettingsError> {
         let connect_options = self.endpoint.connect_options_from_process()?;
         let (provider, provider_bulkhead) = self.provider.prepare()?;
+        let metrics = self.metrics.prepare()?;
         Ok(PreparedServing {
             bind: self.bind,
             listener_announcement: self.listener_announcement,
@@ -276,6 +287,7 @@ impl ServingSettings {
                 authenticator: self.authenticator,
                 trusted_peer_policy: self.trusted_peer_policy,
             },
+            metrics,
         })
     }
 
@@ -505,6 +517,7 @@ pub struct PreparedServing {
     provider: crate::provider::ProviderClient,
     provider_bulkhead: Bulkhead,
     http: PreparedHttp,
+    metrics: PreparedMetrics,
 }
 
 pub(crate) struct ServingParts {
@@ -520,8 +533,10 @@ pub(crate) struct ServingParts {
 }
 
 impl PreparedServing {
-    pub(crate) fn into_parts(self) -> ServingParts {
-        ServingParts {
+    /// Separate the serving inputs from the diagnostic resources, which the
+    /// orchestration finalizes only after the service result is retained.
+    pub(crate) fn into_parts(self) -> (ServingParts, PreparedMetrics) {
+        let parts = ServingParts {
             bind: self.bind,
             listener_announcement: self.listener_announcement,
             pool_options: self.pool_options,
@@ -531,7 +546,8 @@ impl PreparedServing {
             provider: self.provider,
             provider_bulkhead: self.provider_bulkhead,
             http: self.http,
-        }
+        };
+        (parts, self.metrics)
     }
 }
 

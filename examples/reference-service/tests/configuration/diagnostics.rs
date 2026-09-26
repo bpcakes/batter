@@ -166,6 +166,8 @@ pub(crate) fn child(scenario: &str) {
             .build()
             .unwrap()
             .block_on(native_ipv6()),
+        #[cfg(feature = "metrics-export")]
+        "metrics-ambient-otel" => super::metrics::ambient_child(),
         "native-worker" => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

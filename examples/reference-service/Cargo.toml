@@ -11,8 +11,35 @@ default-run = "batter-example-reference-service"
 [lints]
 workspace = true
 
+[features]
+default = []
+# Opt-in application-root OTLP/HTTP metrics export. Default builds stay silent.
+metrics-export = [
+    "batter/metrics",
+    "dep:metrics-exporter-otel",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-http",
+    "dep:opentelemetry-proto",
+    "dep:prost",
+    "dep:bytes",
+    "dep:http",
+    "dep:async-trait",
+]
+
 [dependencies]
 batter = { workspace = true, features = ["axum", "sqlx", "runledger"] }
+metrics-exporter-otel = { version = "0.3.1", optional = true }
+opentelemetry = { version = "0.31.0", default-features = false, features = ["metrics"], optional = true }
+opentelemetry_sdk = { version = "0.31.0", default-features = false, features = ["metrics", "experimental_metrics_custom_reader"], optional = true }
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["http-proto", "metrics"], optional = true }
+opentelemetry-http = { version = "0.31.0", default-features = false, optional = true }
+opentelemetry-proto = { version = "0.31.0", default-features = false, features = ["gen-tonic-messages", "metrics"], optional = true }
+prost = { version = "0.14.1", default-features = false, features = ["std"], optional = true }
+bytes = { version = "1.10.1", optional = true }
+http = { version = "1.3.1", optional = true }
+async-trait = { version = "0.1.89", optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
 url = "2.5.8"
 percent-encoding = "2.3.2"
@@ -40,6 +67,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "ti
 [[example]]
 name = "retire_startup_controls"
 test = true
+
+[[test]]
+name = "metrics_export"
+required-features = ["metrics-export"]
 
 [[bin]]
 name = "signal_witness_fixture"

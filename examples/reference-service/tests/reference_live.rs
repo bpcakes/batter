@@ -359,6 +359,20 @@ async fn production_root_registers_provider_worker() {
     support::production_readiness().await;
 }
 
+#[cfg(feature = "metrics-export")]
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn metrics_export_command_worker_and_shutdown() {
+    support::metrics_live::exported_command_worker_and_shutdown().await;
+}
+
+#[cfg(feature = "metrics-export")]
+#[tokio::test]
+#[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
+async fn metrics_collector_failure_preserves_results() {
+    support::metrics_live::collector_failure_preserves_authoritative_results().await;
+}
+
 #[tokio::test]
 #[ignore = "requires an explicitly selected disposable PostgreSQL 18 endpoint"]
 async fn provider_effect_crash_and_restart() {

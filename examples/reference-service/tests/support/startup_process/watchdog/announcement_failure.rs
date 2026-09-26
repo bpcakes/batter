@@ -54,10 +54,11 @@ pub async fn child() {
         .expect("valid override"),
     )
     .expect("valid announcement settings");
-    let error = runtime::run(runtime::prepare(settings).expect("inert preparation"))
-        .await
-        .expect_err("missing receiver must fail startup");
-    let failure = error
+    let completion = runtime::run(runtime::prepare(settings).expect("inert preparation")).await;
+    let failure = completion
+        .service()
+        .expect_err("missing receiver must fail startup")
+        .error()
         .downcast_ref::<ProtectedRuntimeStartupFailure>()
         .expect("protected startup failure");
     let StartupError::Failed(report) = failure.startup() else {

@@ -1,3 +1,5 @@
+#[cfg(feature = "metrics-export")]
+pub mod collector;
 pub mod configuration;
 pub mod configured_worker;
 pub mod delivery;
@@ -20,6 +22,8 @@ pub mod fixture_template_observer;
 pub mod fixtures;
 pub mod leases;
 mod live_endpoint;
+#[cfg(feature = "metrics-export")]
+pub mod metrics_live;
 pub mod migrations;
 pub mod native_descendants;
 pub mod native_hosted;
