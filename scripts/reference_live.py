@@ -8,6 +8,8 @@ from parallel_process import run_parallel
 # Entries executed against the explicitly selected disposable PostgreSQL endpoints.
 DATABASE_CASES = frozenset({
     "production_root_registers_provider_worker",
+    "metrics_export_command_worker_and_shutdown",
+    "metrics_collector_failure_preserves_results",
     "provider_effect_crash_and_restart",
     "provider_effect_outcome_contracts",
     "retirement_preserves_history_and_disables_old_catalog",
@@ -86,9 +88,13 @@ CASES = frozenset().union(*CLASSES)
 if sum(len(cases) for cases in CLASSES) != len(CASES):
     raise RuntimeError("reference live case classes must be disjoint")
 
-COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--test", "reference_live", "--locked"]
+# The live inventory includes the opt-in metrics export cases, so the probe target
+# and both executables are built with that feature. Unconfigured runs stay silent.
+FEATURES = ["--features", "metrics-export"]
+COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", *FEATURES, "--test", "reference_live",
+           "--locked"]
 # Build both executables with the invoking toolchain before any executable control runs.
-BINARY_COMMAND = ["cargo", "build", "-p", "batter-example-reference-service", "--bins", "--locked"]
+BINARY_COMMAND = ["cargo", "build", "-p", "batter-example-reference-service", *FEATURES, "--bins", "--locked"]
 SESSION_CASE = "retirement::session::tests::maintenance_session_replacement_is_refused"
 SESSION_COMMAND = ["cargo", "test", "-p", "batter-example-reference-service", "--lib", "--locked",
                    SESSION_CASE, "--", "--exact", "--include-ignored"]

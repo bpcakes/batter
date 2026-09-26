@@ -9,6 +9,13 @@ Unix-only application is not a reusable database framework.
 ## Key entrypoints
 
 - `src/main.rs` and `src/runtime.rs` own the staged command/worker process root.
+  `src/runtime/completion.rs` maps core service completion into application exit policy.
+- `batter::service::start` owns startup, shutdown, diagnostic settlement and
+  owner/observer publication. `batter::otlp` (feature `metrics-export`) owns the
+  bounded exporter; `src/config/metrics.rs` selects settings and timing and
+  `src/diagnostics.rs` reexports report types. `tests/metrics_export.rs` isolates
+  installation in Unix children. The shared collector lives in
+  `crates/batter-otlp/tests/support/collector.rs` at the workspace root.
 - `src/runtime.rs` uses protected startup with library-owned signals, reserves a
   cleanup slot before constructing the profiled database, and registers pool
   close before yielding. `src/database.rs` declares direct-login/public policy;
@@ -62,8 +69,8 @@ independent. Update `../../docs/reference-compatibility.md` with executed eviden
 Settings names/defaults/precedence and required passwords stay in this root.
 Keep `ServingSettings` and database-only `MaintenanceSettings` concrete and
 separate; do not restore a shared mode enum, optional serving capability, or
-conversion from maintenance into serving. `runtime::run` accepts only the inert,
-non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
+conversion from maintenance into serving. `runtime::run` and `runtime::start`
+accept only the inert, non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
 only `PreparedHttp` while inseparably selecting native peer registration.
 `http::in_process_client` is the lower-level test seam. Its opaque
 `InProcessRequestClient` cannot be served or expose the inner router, and each
@@ -108,6 +115,15 @@ requires enabled IPv6 loopback (`::1`) for its native protocol fixture, plus
 IPv4 loopback and Unix subprocess permissions. This test is not skipped when
 the host or container lacks IPv6. Never mutate process globals.
 Explicit live invocation fails when prerequisites are missing.
+
+Metrics export stays opt-in and explicitly selected by this application.
+Absent `BATTER_METRICS_OTLP_ENDPOINT` installs nothing. Preserve literal-loopback
+HTTP `/v1/metrics` policy, feature-off rejection and ambient OTEL_* validation.
+Use the optional Batter adapter through core protected service execution; do not
+restore an application monitor, arbitrary-future exporter wrapper, coverage
+classifier, periodic loop or paired flush/close protocol. Application checks and
+exit codes remain here. Keep the native completion available for diagnostic
+panic inspection and never let export failure change service classification.
 
 The provider effect key and canonical request are created in the submission
 transaction. Load and classify that retained effect before provider admission:

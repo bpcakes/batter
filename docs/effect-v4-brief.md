@@ -46,7 +46,7 @@ boundaries can repeat committed side effects. Those are Batter's concerns.
 | Layer composition | One visible composition root, shared concrete services, partial-startup cleanup. | Pattern and example; generic graph/DI intentionally omitted. |
 | Expected failure vs defect vs interruption | Preserve E, observe JoinError, distinguish cancellation/deadline. | Implemented; no Effect Cause clone or universal domain error. |
 | Schedule/ExecutionPlan | One execution budget, fresh attempts, replay policy, provider delay, injected jitter, opt-in per-attempt caps, finalization reserve. | Retry, attempt caps and reserves implemented; fallback, retry-token budgets and circuits deferred. |
-| Coordinated observability | Operation/task/cleanup completion and separate HTTP status/outcome/latency. | Useful default tracing and opt-in bounded outcome metrics implemented; exporters and durable trace propagation deferred. |
+| Coordinated observability | Operation/task/cleanup completion and separate HTTP status/outcome/latency. | Useful default tracing and opt-in bounded outcome metrics implemented; an opt-in OTLP adapter uses core-owned protected service completion and ordered flush; durable trace propagation deferred. |
 | Schema/HttpApi coherence | Validated boundary types, explicit errors, generated contracts where useful. | Configurable infrastructure HTTP envelopes; OpenAPI/client generation deferred. |
 | Deterministic test services | Paused runtime time, scripted dependencies, real PostgreSQL integration separately. | Timer/script tests authored; PostgreSQL harness composition deferred. |
 | Durable work infrastructure | Use existing Runledger; never turn durable work into detached tasks. | Ownership contract documented; host/reference integration deferred. |

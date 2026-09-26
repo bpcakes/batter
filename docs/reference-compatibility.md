@@ -1,5 +1,25 @@
 # Native reference compatibility
 
+2026-09-26 extraction (`batter-i3ny`): the reference now selects optional
+`batter-otlp` through core protected service completion. The native versions below
+remain unchanged. Historical live runs predate this extraction; current pinned
+workspace and focused checks are recorded in the owning Bead.
+
+
+The metrics export recipe (`batter-8jr`) adds the reference package's opt-in
+`metrics-export` feature with optional `metrics-exporter-otel` 0.3.1,
+`opentelemetry`/`opentelemetry_sdk` 0.31.0, `opentelemetry-otlp` 0.31.1,
+`opentelemetry-http` 0.31.0, `opentelemetry-proto` 0.31.0, `prost` 0.14,
+`bytes`, `http` and `async-trait`, resolved into the generated Cargo.lock. Default
+builds keep the prior native graph. There is no migration or persisted-state
+change. The live inventory grows to 68 entries with two feature-gated database
+probes; the runner builds the target and both executables with the feature.
+Primary sources are recorded in [references](references.md#reference-metrics-export).
+Local evidence (2026-09-26, macOS, Rust 1.98.1): `bash scripts/verify.sh` passed,
+and the complete 68-entry live inventory plus both separate library probes passed
+against two disposable PostgreSQL 18.6 containers. Rust 1.94.0, Linux and hosted
+CI were not run for this change.
+
 The announcement propagation regression (`batter-x36`) adds typed startup/cleanup
 and actual-executable missing-receiver checks to the production-root live case.
 No native dependency, migration, production behavior or 66-case inventory change

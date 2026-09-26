@@ -273,6 +273,10 @@ pub struct ScopedStartup<F> {
 }
 
 impl<F> ScopedStartup<F> {
+    pub(crate) fn shutdown_handle(&self) -> crate::lifecycle::ShutdownHandle {
+        self.supervisor.handle()
+    }
+
     /// Keep readiness application-controlled after successful initialization.
     #[must_use = "the returned startup specification contains the selected approval policy"]
     pub fn without_readiness_approval(self) -> DeferredScopedStartup<F> {

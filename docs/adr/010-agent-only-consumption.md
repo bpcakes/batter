@@ -154,10 +154,41 @@ rejected-recorder ownership.
 
 An exporter that installs itself globally remains a lower-level escape hatch
 that bypasses both checks; the module documentation names that obligation.
-Flushing belongs to the application root after it awaits the supervisor's
-completion, and the recorder's own buffering, aggregation and faults cannot be
+On that lower-level recorder path, flushing belongs to the application root
+after it awaits supervisor completion; the protected OTLP path below owns it, and the recorder's own buffering, aggregation and faults cannot be
 proved by local types. Fresh-agent usability evaluation is proposed and
 unexecuted.
+
+### Protected diagnostic completion assessment (`batter-i3ny`)
+
+The reference application duplicated owner/observer monitoring and coordinated
+startup failure cleanup, running settlement and final export. Its outer task
+could discard an already-known service result if diagnostic finalization panicked.
+The supported path now consumes `ScopedStartup` plus an inert prepared diagnostic
+adapter through `service::start`. Consumers cannot pass an arbitrary future,
+construct diagnostic completion observations, clone the owner, or call a separate
+public final flush. Core retains the native result outside the diagnostic task,
+then releases the completion observation and joins diagnostics independently.
+Unix listeners remain installed before start returns. Read-only observers survive
+owner loss; dropped waiters do not initiate shutdown.
+The dynamically checked Tokio runtime precondition precedes diagnostic
+installation, so an invalid call cannot consume the process-global recorder slot.
+
+The lower-level `Diagnostics` trait allows custom adapter implementations. Its
+synchronous install, phase ordering, I/O bounds and termination obligations are
+explicit; custom trait forwarding can violate them and is not equivalent to the
+supported OTLP path. An opaque witness describes retained reports, including
+incomplete coverage, not cessation of unsupervised or remote activity. Application
+exit policy, configuration sources and deployment restrictions stay at the root.
+The catalog's kinds, units, descriptions and validation now have one core owner;
+the opt-in adapter guards complete-key capacity before native bridge allocation.
+
+Independent source review found a public timing hazard: nanosecond intervals could
+make iterative missed-tick catch-up block finalization. Catch-up now uses constant-
+time arithmetic with a saturating count. Behavioral regressions cover phase
+panics, retained startup/cleanup errors, early owner loss and signal installation;
+SDK/collector tests and a separate worker composition exercise adapter extraction.
+Fresh-agent consumer implementation/modification evaluation remains unexecuted.
 
 ## Recurring example review defects
 

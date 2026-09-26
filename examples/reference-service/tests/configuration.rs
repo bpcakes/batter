@@ -7,6 +7,7 @@ mod configuration {
     mod consumers;
     pub(crate) mod diagnostics;
     mod live_endpoint;
+    pub(crate) mod metrics;
     pub(crate) mod process;
     mod report;
     mod startup;

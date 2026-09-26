@@ -1,8 +1,10 @@
 //! Optional bounded-cardinality metrics through the [`metrics`] facade.
 //!
 //! Enable the `metrics` feature to record foundation outcomes into the
-//! recorder the application root passes to [`install`]. Batter never installs
-//! a recorder, exporter or global subscriber itself. Without a recorder, the
+//! recorder explicitly selected by the application root. Use the optional OTLP
+//! adapter through [`crate::service::start`], or supply a recorder to the
+//! lower-level [`install`] path. There is no ambient exporter discovery or
+//! global subscriber installation. Without a recorder, the
 //! facade's no-op recorder discards every observation.
 //!
 //! Batter records through `metrics` 0.24, re-exported as [`facade`].
@@ -102,12 +104,13 @@
 //!
 //! Recording is synchronous, happens after the boundary result is known, runs
 //! outside admission locks, and never returns an error, retries, logs or
-//! queues. Batter owns no buffer or flush: a slow or unavailable collector,
+//! queues. This recording module owns no buffer or flush: a slow or unavailable collector,
 //! a saturated exporter queue, or a recorder that drops samples cannot change
 //! a returned result or an admission decision, and rejected-request storms do
 //! not create Batter-owned write queues or database prerequisites. The
 //! recorder decides how its own buffering drops or coalesces; choose one with
-//! bounded aggregation and flush it at the application root.
+//! bounded aggregation. The optional OTLP adapter owns flush through protected
+//! service completion; other recorders leave that ordering to the application.
 //!
 //! Timing uses [`std::time::Duration`] from a monotonic clock, which cannot be
 //! negative; clock regression saturates to zero. Samples are finite seconds.
@@ -135,6 +138,7 @@
 //! # }
 //! ```
 
+pub mod catalog;
 mod installation;
 mod keys;
 mod names;
@@ -151,7 +155,6 @@ pub use vocabulary::{
 use super::{Boundary, Outcome, record::CleanupHook};
 use crate::lifecycle::{ProcessAdmissionError, Readiness, ShutdownCause, TaskOutcome};
 use keys::{KeyCache, increment, index_of, sample};
-use metrics::Unit;
 use names::{NameLabel, OPERATION_NAMES, TASK_NAMES};
 use std::time::Duration;
 
@@ -260,11 +263,13 @@ pub(crate) enum Coalesce {
 /// Catalog publication targets this recorder even inside a local recorder scope;
 /// subsequent observations continue to follow the facade's scoped dispatch.
 ///
-/// This is the canonical application-root setup: descriptions cannot be sent
-/// before the recorder exists, and a recorder built on another `metrics` major
-/// version does not implement [`facade::Recorder`] and fails to compile.
+/// This is the lower-level application-root path for a custom recorder:
+/// descriptions cannot be sent before the recorder exists, and a recorder built
+/// on another `metrics` major version does not implement [`facade::Recorder`].
 /// Install exactly once, before the supervisor starts; a second installation
-/// returns the rejected recorder. Batter never calls this itself.
+/// returns the rejected recorder. The optional OTLP adapter calls this during
+/// [`crate::service::start`]; pass its prepared exporter directly to that function
+/// without manually installing another recorder first.
 ///
 /// ```
 /// use batter_core::telemetry::metrics::{facade, install};
@@ -289,50 +294,15 @@ where
 }
 
 fn describe(recorder: &dyn facade::Recorder) {
-    let counter = |name: &'static str, unit: Unit, description: &'static str| {
-        recorder.describe_counter(name.into(), Some(unit), description.into());
-    };
-    let histogram = |name: &'static str, unit: Unit, description: &'static str| {
-        recorder.describe_histogram(name.into(), Some(unit), description.into());
-    };
-    counter(
-        OPERATION_COMPLETIONS,
-        Unit::Count,
-        "Completed Batter operation boundaries by outcome",
-    );
-    histogram(
-        OPERATION_DURATION,
-        Unit::Seconds,
-        "Elapsed Batter operation boundary time",
-    );
-    counter(
-        RETRY_ATTEMPTS,
-        Unit::Count,
-        "Finished Batter retry attempts by outcome",
-    );
-    counter(
-        RETRY_EXECUTIONS,
-        Unit::Count,
-        "Terminal Batter retry execution results",
-    );
-    counter(
-        ADMISSION_DECISIONS,
-        Unit::Count,
-        "Batter admission decisions",
-    );
-    counter(TASK_EXITS, Unit::Count, "Observed Batter task exits");
-    counter(CLEANUP_HOOKS, Unit::Count, "Batter cleanup hook outcomes");
-    counter(SHUTDOWNS, Unit::Count, "Batter supervisor drive results");
-    histogram(
-        SHUTDOWN_DURATION,
-        Unit::Seconds,
-        "Batter stop instant to shutdown-report time",
-    );
-    counter(
-        LABELS_COALESCED,
-        Unit::Count,
-        "Metric names replaced by a bounded placeholder",
-    );
+    for metric in &catalog::CATALOG {
+        let name = metric.name().into();
+        let unit = Some(metric.unit());
+        let description = metric.description().into();
+        match metric.kind() {
+            catalog::MetricKind::Counter => recorder.describe_counter(name, unit, description),
+            catalog::MetricKind::Histogram => recorder.describe_histogram(name, unit, description),
+        }
+    }
 }
 
 /// Series index of a name label combined with one closed-domain value.

@@ -1,6 +1,7 @@
 # Integration ownership contracts
 
-The `batter-axum`, `batter-sqlx`, `batter-runledger` and `batter-runlimit` adapters, native SQLx lifecycle example and
+The `batter-axum`, `batter-sqlx`, `batter-runledger`, `batter-runlimit` and
+`batter-otlp` adapters, native SQLx lifecycle example and
 unpublished reference command package exist in this snapshot. The latter
 composes pinned native upstream APIs in an atomic producer and explicit live probes; see the
 [compatibility manifest](reference-compatibility.md).
@@ -18,6 +19,8 @@ integration namespaces explicitly:
 | --- | --- | --- |
 | `at-rest` | `batter::at_rest` | `batter-at-rest` |
 | `axum` | `batter::axum` | `batter-axum` |
+| `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
+| `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
 | `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
 | `runlimit` | `batter::runlimit` | `batter-runlimit` |
@@ -759,6 +762,48 @@ cannot keep database-dependent cases out of ordinary verification. The reference
 compiles ignored live cases during those checks and runs them through an
 explicit prerequisite-checking runner; skipped cases are not executed evidence.
 
+## OpenTelemetry metrics export: protected adapter
+
+The facade's optional `otlp` feature exposes `batter::otlp`; direct consumers use
+`batter-otlp`. Both depend on core, with no exporter in the default graph.
+Applications prepare an explicit endpoint, bounded service identity and validated
+`Schedule`, then pass that inert owner with a protected `ScopedStartup` to
+`batter::service::start`. There is no canonical arbitrary-future runner or
+separate install/flush/close sequence. Environment names, deployment policy and
+exit classification remain application-owned. The reference service retains its
+`metrics-export` feature and literal-loopback HTTP policy.
+
+Core synchronously installs diagnostics and selected Unix signal listeners before
+returning the sole service owner. It owns protected initialization, startup failure
+cleanup and checked running shutdown, then releases an opaque diagnostic completion
+observation. The service result lives independently of the diagnostic task, so
+installation, periodic or finalization panics cannot replace it. Owner drop requests
+drain; cancelling a borrowed waiter requests nothing. Observers retain completion
+without retaining service ownership. The public `Diagnostics` trait is a lower-level
+adapter extension seam with explicit install/order/bounding obligations.
+
+The adapter uses `metrics-exporter-otel` 0.3.1, OpenTelemetry/SDK 0.31.0 and OTLP
+0.31.1. Native aggregation and protobuf encoding remain upstream; the experimental
+custom-reader interface is private. Core owns metric definitions and label validation;
+the adapter bounds complete keys before delegation, exports cumulative snapshots with
+one serial owner and retains typed transport/partial-rejection outcomes. Requests
+are capped at 2 MiB, responses at 64 KiB, with no queue or retry. Missed ticks
+coalesce in constant time. `ManualReader::force_flush` is not network delivery.
+
+Final export begins after retained service completion and any in-flight periodic
+attempt, with a separate allowance. Normal finalization closes resources once.
+Allowances bound yielding I/O, not synchronous SDK collection/closure; panic cannot
+prove resource closure. Coverage describes reports, including missing reports,
+unjoined work and skipped cleanup, not global quiescence. Installation remains
+process-global and cannot be reset; rejection closes only the rejected pipeline.
+The Batter-only guard intentionally excludes application metrics.
+
+Native builders still read ambient configuration, so preparation rejects `OTEL_*`
+and uses explicit empty resources. Applications must not mutate environment during
+preparation. See the [adapter guide](../crates/batter-otlp/README.md),
+[reference configuration](../examples/reference-service/README.md#opt-in-metrics-export)
+and [primary sources](references.md#reference-metrics-export).
+
 ## Dependency direction and extraction criteria
 
 Applications depend on Batter and the upstream libraries. Batter adapters may
@@ -894,8 +939,9 @@ promotion or conversion into the serving types.
 Use `ServingSettings::from_process(selected_path, overrides)` once, then transfer
 the result through `runtime::prepare` before acquisition. The returned must-use,
 non-cloneable `PreparedServing` owns inert `PgPoolOptions`, `PgConnectOptions`,
-`Supervisor`, `JobsConfig`, provider client/bulkhead, bind address and `PreparedHttp`; `runtime::run`
-accepts only that owner. Router construction consumes only `PreparedHttp` and is
+`Supervisor`, `JobsConfig`, provider client/bulkhead, bind address, `PreparedHttp`
+and any prepared metrics pipeline; `runtime::run` and `runtime::start` accept only
+that owner and return or publish a retained `ServiceCompletion`. Router construction consumes only `PreparedHttp` and is
 infallible because authentication and local operational values are already
 concrete. Offline commands separately consume `MaintenanceSettings::prepare`.
 Tests can inject file/environment/override sources directly.

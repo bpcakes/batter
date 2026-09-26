@@ -59,3 +59,8 @@ cargo run -p batter --example finite_command
 
 Version 0.0.1; Rust 1.94 minimum; the manifest targets crates.io. MIT licensed,
 including the optional `batter-at-rest` dependency.
+
+Select `otlp` for `batter::otlp`: explicit bounded metrics export through
+`batter::service::start`. Core owns protected startup through diagnostic completion;
+application configuration and exit policy remain at the root. See the
+[adapter guide](../batter-otlp/README.md).

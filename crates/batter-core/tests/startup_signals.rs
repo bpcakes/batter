@@ -1,3 +1,6 @@
+#[path = "startup_signals/service.rs"]
+mod owned_service;
+
 use batter_core::{
     RegistrationError,
     cleanup::{CleanupBudget, CleanupOutcome},
@@ -172,6 +175,8 @@ fn configured_signals_cover_start_return_running_and_explicit_opt_out() {
     }
 
     for signal in ["TERM", "INT"] {
+        let output = run_signaled_child("service", signal, true);
+        assert!(output.contains("service-cleaned"), "{output:?}");
         let output = run_signaled_child("startup", signal, true);
         assert!(output.contains("startup-cleanup"), "{output:?}");
         assert!(output.contains("startup-draining"), "{output:?}");
@@ -223,7 +228,8 @@ fn signal_child_capture_drains_stderr_and_reaps_a_pre_marker_stall() {
 
 fn run_child(mode: &str) {
     match mode {
-        "startup" => run_startup_child(),
+        "startup" => owned_service::run_startup_child(),
+        "service" => owned_service::run_service_child(),
         "held" => run_held_child(),
         "waiter" => run_waiter_child(),
         "running" => run_running_child(),
@@ -378,31 +384,6 @@ fn runtime() -> tokio::runtime::Runtime {
 fn wait_for_parent() {
     let mut release = [0_u8; 1];
     std::io::stdin().read_exact(&mut release).unwrap();
-}
-
-fn run_startup_child() {
-    runtime().block_on(async {
-        let mut process = supervisor();
-        process
-            .reserve_cleanup("signals")
-            .unwrap()
-            .register(|| async {
-                println!("startup-cleanup");
-                Ok(())
-            });
-        let mut starting = Startup::scoped(process, context(5), cleanup_budget(), |_scope| {
-            Box::pin(std::future::pending::<Result<(), RegistrationError>>())
-        })
-        .with_unix_signals("signals")
-        .start();
-        println!("start-returned");
-        std::io::stdout().flush().unwrap();
-        wait_for_parent();
-        let report = failure(starting.wait().await);
-        assert!(matches!(report.cause, StartupCause::Draining));
-        assert!(report.cleanup.is_success());
-        println!("startup-draining");
-    });
 }
 
 fn run_reserved_name_child(managed: bool) {
