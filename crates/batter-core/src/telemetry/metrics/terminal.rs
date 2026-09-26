@@ -149,7 +149,7 @@ impl Series for Shutdown {
     }
 
     fn record(&mut self, label: &'static str, finished: bool) {
-        // Duration is drain start to the final report; abandoned drivers
+        // Duration is canonical stop instant to final report; abandoned drivers
         // produce no report and therefore no duration sample.
         let elapsed = self
             .drain_started
@@ -176,8 +176,8 @@ impl ShutdownTerminal {
     }
 
     /// Record the completed report using the final canonical stop instant.
-    pub(crate) fn finish(&mut self, success: bool, started: Instant) {
-        self.0.series.drain_started = Some(started);
+    pub(crate) fn finish(&mut self, success: bool, started: impl FnOnce() -> Instant) {
+        self.0.series.drain_started = Some(started());
         self.0
             .finish(vocabulary::shutdown_result(End::Finished(success)));
     }

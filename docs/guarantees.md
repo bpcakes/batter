@@ -131,8 +131,9 @@ drives record `dropped`, or `panicked` when destroyed during unwinding, through
 one shared guard. A cleanup hook taken by a destroyed close driver records
 `abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
 the stack before being counted, so a capture destructor panic cannot count them
-again as dropped. Other futures dropped
-before their first poll record nothing. A retry attempt counts only once its
+again as dropped. Every skip warning is emitted before metrics and captured-value
+destruction; a captured destructor panic still propagates and prevents report
+return. Other futures dropped before their first poll record nothing. A retry attempt counts only once its
 factory is invoked. Foundation-owned waits (admission, backoff) are not counted
 as operations, while adapter boundaries such as `http.response_construction`
 are. Tracing diagnostics are emitted before a boundary's metric, and
@@ -144,13 +145,19 @@ abandoned drivers record no duration and record their shutdown after the
 supervisor's own queued work and cleanup, and a startup that fails before its
 running driver records only its cleanup hooks. Process admission decisions are
 recorded when the submitter's decision completes, before an accepted task can
-start; root-admitted work is unsupervised and not ordered with shutdown.
+start. Once queued, an accepted task receives its lease even if admission
+recording unwinds, so recorder failure cannot strand its active count or create
+a missing-lease task panic. The recorder panic still propagates to the submitter.
+Root-admitted work is unsupervised and not ordered with shutdown. Without the
+metrics feature, shutdown does not read the shared clock for metric recording.
 Batter retains at most `MAX_SERIES` pre-built keys, so recording allocates only
 on a series' first observation. Labels come
 only from closed foundation vocabularies or a fixed-capacity, write-once table
 of operation/task names using the component-registration vocabulary; other
 names or names beyond capacity record `<invalid>` or `<overflow>` and increment
-a separate coalescing counter, without logging. The vocabulary rejects URLs,
+a separate coalescing counter for each affected observation, without logging.
+Retry attempts and their enclosing execution are separate observations.
+The vocabulary rejects URLs,
 e-mail addresses and error text, but not identifiers embedded in otherwise valid
 names; leaked names can occupy slots first-come, never evicted. The catalog
 therefore has at most `MAX_SERIES` series regardless of traffic. Batter
@@ -160,6 +167,7 @@ decisions. Durations come from monotonic `Duration` values and are finite and
 nonnegative. Recorder code runs synchronously, including in destructors; a
 blocking, panicking or unboundedly buffering recorder, runtime death and
 non-yielding destructors are outside this guarantee, as for tracing subscribers.
+Nested recorder panics during unwinding can abort the process.
 These metrics are best-effort diagnostics, not authoritative audit records.
 
 `reserve_finalization` divides an existing context into sibling work/finalization

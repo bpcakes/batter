@@ -384,18 +384,30 @@ impl ProcessHandle {
         }
         admission.admit_finite();
         drop(admission);
-        // Recorded at the decision, outside the admission lock and before the
-        // lease below lets the task start, so it precedes the task's exit.
-        crate::telemetry::record::process_admitted();
         let lease = ActiveTask {
             coordinator: self.coordinator.clone(),
             active,
             _permit: permit,
         };
-        // The task is already owned, including if the coordinator aborts before
-        // its first poll. In that case send drops the lease and releases capacity.
-        let _ = begin.send(lease);
+        // Accepted work already belongs to the supervisor. Even if recorder
+        // code unwinds, deliver its lease rather than stranding the task/count.
+        let start = ProcessStart(Some((begin, lease)));
+        // On the normal path admission recording still precedes task execution.
+        crate::telemetry::record::process_admitted();
+        drop(start);
         Ok(ProcessReceipt { result })
+    }
+}
+
+struct ProcessStart(Option<(oneshot::Sender<ActiveTask>, ActiveTask)>);
+
+impl Drop for ProcessStart {
+    fn drop(&mut self) {
+        if let Some((begin, lease)) = self.0.take() {
+            // If the coordinator already dropped the queued future, send drops
+            // the lease and releases its count and capacity instead.
+            let _ = begin.send(lease);
+        }
     }
 }
 

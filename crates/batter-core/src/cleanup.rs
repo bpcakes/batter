@@ -269,6 +269,8 @@ impl CleanupStack {
     }
 
     /// Record that dependent teardown cannot safely proceed.
+    /// All skip warnings and metric counts precede captured-value destruction.
+    /// A captured destructor panic still propagates, preventing report return.
     pub fn skip(mut self, reason: SkipReason) -> CleanupReport {
         let mut report = CleanupReport::default();
         self.skip_remaining(&mut report, reason);
@@ -280,16 +282,21 @@ impl CleanupStack {
         // while they are dropped cannot leave them on the stack to be counted
         // again as dropped.
         let mut skipped = std::mem::take(&mut self.hooks);
-        crate::telemetry::record::cleanup(
-            crate::telemetry::record::CleanupHook::Skipped,
-            skipped.len(),
-        );
-        while let Some(hook) = skipped.pop() {
+        // Describe every skip before destroying any application capture. A
+        // destructor panic must not suppress warnings for the remaining hooks.
+        for hook in skipped.iter().rev() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
                 reason,
             });
+        }
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Skipped,
+            skipped.len(),
+        );
+        while let Some(hook) = skipped.pop() {
+            drop(hook);
         }
     }
 
@@ -325,8 +332,7 @@ impl CleanupStack {
         );
         let mut report = CleanupReport::default();
         loop {
-            // Keep skipped hooks on the stack so reporting and capture drops
-            // follow the same reverse registration order for every skip reason.
+            // Let the shared skip path report pending hooks in reverse order.
             if Instant::now() >= work_deadline {
                 self.skip_remaining(&mut report, SkipReason::BudgetExhausted);
                 break;
@@ -433,8 +439,8 @@ struct PendingCleanupObservation {
 impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
-            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Abandoned, 1);
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
+            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Abandoned, 1);
         }
     }
 }
@@ -442,11 +448,11 @@ impl Drop for PendingCleanupObservation {
 impl Drop for CleanupStack {
     fn drop(&mut self) {
         if !self.hooks.is_empty() {
+            tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");
             crate::telemetry::record::cleanup(
                 crate::telemetry::record::CleanupHook::Dropped,
                 self.hooks.len(),
             );
-            tracing::warn!(target: "batter", pending_hooks = self.hooks.len(), "cleanup stack dropped without close; asynchronous hooks were NOT run");
         }
     }
 }

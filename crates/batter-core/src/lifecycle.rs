@@ -590,12 +590,13 @@ impl Supervisor {
         // after awaiting the driver's completion observes it.
         self.coordinator.shared.stop_driver();
         // Native settlement may have tightened the clock after drain began.
-        let stop_started = self
-            .coordinator
-            .shared
-            .stop_started()
-            .expect("completed shutdown follows drain");
-        terminal.finish(report.is_success(), stop_started);
+        // The disabled shim leaves this supplier unevaluated.
+        terminal.finish(report.is_success(), || {
+            self.coordinator
+                .shared
+                .stop_started()
+                .expect("completed shutdown follows drain")
+        });
         report
     }
 

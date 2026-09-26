@@ -3,6 +3,8 @@
 
 #[path = "metrics/capture.rs"]
 mod capture;
+#[path = "metrics/ordering.rs"]
+mod ordering;
 #[path = "metrics/terminal.rs"]
 mod terminal;
 
