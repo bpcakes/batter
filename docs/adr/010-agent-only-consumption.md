@@ -141,6 +141,17 @@ installation test checks descriptions and recording. Recording itself needs no
 consumer calls: operations, retries, admission, tasks, cleanup and shutdown
 record through library-owned guards with closed label vocabularies.
 
+Installation also owns the catalog target: a local recorder scope cannot redirect
+descriptions away from the accepted global recorder. A private forwarding
+recorder holds a once-filled shared reference, preserving the upstream `Sync`
+bound without adding `Send`. The accepted recorder is retained for the process
+lifetime; a rejected recorder is returned intact. Setup fills the reference
+before invoking recorder code, and concurrent registrations wait only for that
+fill. The cost is one shared slot and a slot read per forwarded recorder call.
+This keeps installation on the caller's thread and adds no consumer sequencing
+requirement. The installation regression covers local scope dispatch and
+rejected-recorder ownership.
+
 An exporter that installs itself globally remains a lower-level escape hatch
 that bypasses both checks; the module documentation names that obligation.
 Flushing belongs to the application root after it awaits the supervisor's

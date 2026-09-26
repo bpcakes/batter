@@ -25,6 +25,13 @@ are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
 Recorder aggregation and exporter buffering were not reviewed; the selected
 exporter and its flush order belong to `batter-8jr`.
 
+Rechecked the locked recorder implementation on 2026-09-26: `with_recorder`
+prefers a thread-local recorder, including for description macros. There is no
+public global-recorder getter. Global installation requires `Sync`, without
+`Send`, and returns the rejected recorder through `SetRecorderError<R>`. Batter
+therefore retains a shared reference to the accepted recorder for direct catalog
+publication; ordinary observations still use the facade's scoped dispatch.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,

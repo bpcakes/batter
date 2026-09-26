@@ -18,6 +18,7 @@ use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
 #[derive(Debug, PartialEq)]
 enum Event {
+    Info,
     Warning,
     Metric,
     Destroyed(&'static str),
@@ -55,12 +56,14 @@ impl Recorder for OrderedRecorder {
     }
 }
 
-struct Warnings(Events);
+struct Diagnostics(Events);
 
-impl<S: tracing::Subscriber> Layer<S> for Warnings {
+impl<S: tracing::Subscriber> Layer<S> for Diagnostics {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
         if *event.metadata().level() == tracing::Level::WARN {
             self.0.lock().unwrap().push(Event::Warning);
+        } else if *event.metadata().level() == tracing::Level::INFO {
+            self.0.lock().unwrap().push(Event::Info);
         }
     }
 }
@@ -108,6 +111,55 @@ async fn recorder_panic_cannot_strand_an_accepted_process_task() {
 }
 
 #[tokio::test]
+async fn observed_cleanup_traces_before_recording() {
+    for succeeds in [true, false] {
+        let events = Events::default();
+        let recorder = OrderedRecorder {
+            capture: Capture::unbounded(),
+            events: events.clone(),
+            panic_admission: false,
+        };
+        let _recorder = metrics::set_default_local_recorder(&recorder);
+        let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let mut stack = CleanupStack::new();
+        stack
+            .push("resource.close", move || async move {
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("close failed").into())
+                }
+            })
+            .unwrap();
+        let second = std::time::Duration::from_secs(1);
+        let report = stack
+            .close(CleanupBudget::new(second, second, second).unwrap())
+            .await;
+        assert_eq!(report.records.len(), 1);
+        assert_eq!(report.records[0].error.is_none(), succeeds);
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                if succeeds {
+                    Event::Info
+                } else {
+                    Event::Warning
+                },
+                Event::Metric
+            ]
+        );
+        assert_eq!(
+            recorder.capture.count(
+                CLEANUP_HOOKS,
+                &[("outcome", if succeeds { "succeeded" } else { "failed" })]
+            ),
+            1.0
+        );
+    }
+}
+
+#[tokio::test]
 async fn abandoned_and_dropped_cleanup_warn_before_recording() {
     let events = Events::default();
     let recorder = OrderedRecorder {
@@ -116,7 +168,7 @@ async fn abandoned_and_dropped_cleanup_warn_before_recording() {
         panic_admission: false,
     };
     let _recorder = metrics::set_default_local_recorder(&recorder);
-    let subscriber = tracing_subscriber::registry().with(Warnings(events.clone()));
+    let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
     let _subscriber = tracing::subscriber::set_default(subscriber);
     let mut unclosed = CleanupStack::new();
     unclosed.push("unused", || async { Ok(()) }).unwrap();
@@ -164,7 +216,7 @@ fn skip_warns_for_every_hook_before_recording_and_destroying_captures() {
             panic_admission: false,
         };
         let _recorder = metrics::set_default_local_recorder(&recorder);
-        let subscriber = tracing_subscriber::registry().with(Warnings(events.clone()));
+        let subscriber = tracing_subscriber::registry().with(Diagnostics(events.clone()));
         let _subscriber = tracing::subscriber::set_default(subscriber);
         let mut stack = CleanupStack::new();
         for name in ["first", "second"] {

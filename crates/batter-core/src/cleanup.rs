@@ -99,15 +99,15 @@ impl std::fmt::Debug for CleanupRecord {
 
 impl CleanupRecord {
     fn log_observation(&self) {
-        crate::telemetry::record::cleanup(
-            crate::telemetry::record::CleanupHook::Observed(self.outcome),
-            1,
-        );
         if self.outcome == CleanupOutcome::Succeeded {
             tracing::info!(target: "batter", cleanup = self.name, outcome = ?self.outcome, "cleanup observed");
         } else {
             tracing::warn!(target: "batter", cleanup = self.name, outcome = ?self.outcome, "cleanup observed");
         }
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Observed(self.outcome),
+            1,
+        );
     }
 }
 

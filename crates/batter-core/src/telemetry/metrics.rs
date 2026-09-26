@@ -130,6 +130,7 @@
 //! # }
 //! ```
 
+mod installation;
 mod keys;
 mod names;
 mod terminal;
@@ -145,7 +146,7 @@ pub use vocabulary::{
 use super::{Boundary, Outcome, record::CleanupHook};
 use crate::lifecycle::{ProcessAdmissionError, Readiness, ShutdownCause, TaskOutcome};
 use keys::{KeyCache, increment, index_of, sample};
-use metrics::{Unit, describe_counter, describe_histogram};
+use metrics::Unit;
 use names::{NameLabel, OPERATION_NAMES, TASK_NAMES};
 use std::time::Duration;
 
@@ -251,6 +252,8 @@ pub(crate) enum Coalesce {
 
 /// Install `recorder` as the process-wide metrics recorder, then publish the
 /// catalog's names, units and descriptions to it.
+/// Catalog publication targets this recorder even inside a local recorder scope;
+/// subsequent observations continue to follow the facade's scoped dispatch.
 ///
 /// This is the canonical application-root setup: descriptions cannot be sent
 /// before the recorder exists, and a recorder built on another `metrics` major
@@ -275,49 +278,55 @@ pub fn install<R>(recorder: R) -> Result<(), facade::SetRecorderError<R>>
 where
     R: facade::Recorder + Sync + 'static,
 {
-    facade::set_global_recorder(recorder)?;
-    describe();
+    let recorder = installation::install(recorder)?;
+    describe(recorder);
     Ok(())
 }
 
-fn describe() {
-    describe_counter!(
+fn describe(recorder: &dyn facade::Recorder) {
+    let counter = |name: &'static str, unit: Unit, description: &'static str| {
+        recorder.describe_counter(name.into(), Some(unit), description.into());
+    };
+    let histogram = |name: &'static str, unit: Unit, description: &'static str| {
+        recorder.describe_histogram(name.into(), Some(unit), description.into());
+    };
+    counter(
         OPERATION_COMPLETIONS,
         Unit::Count,
-        "Completed Batter operation boundaries by outcome"
+        "Completed Batter operation boundaries by outcome",
     );
-    describe_histogram!(
+    histogram(
         OPERATION_DURATION,
         Unit::Seconds,
-        "Elapsed Batter operation boundary time"
+        "Elapsed Batter operation boundary time",
     );
-    describe_counter!(
+    counter(
         RETRY_ATTEMPTS,
         Unit::Count,
-        "Finished Batter retry attempts by outcome"
+        "Finished Batter retry attempts by outcome",
     );
-    describe_counter!(
+    counter(
         RETRY_EXECUTIONS,
         Unit::Count,
-        "Terminal Batter retry execution results"
+        "Terminal Batter retry execution results",
     );
-    describe_counter!(
+    counter(
         ADMISSION_DECISIONS,
         Unit::Count,
-        "Batter admission decisions"
+        "Batter admission decisions",
     );
-    describe_counter!(TASK_EXITS, Unit::Count, "Observed Batter task exits");
-    describe_counter!(CLEANUP_HOOKS, Unit::Count, "Batter cleanup hook outcomes");
-    describe_counter!(SHUTDOWNS, Unit::Count, "Batter supervisor drive results");
-    describe_histogram!(
+    counter(TASK_EXITS, Unit::Count, "Observed Batter task exits");
+    counter(CLEANUP_HOOKS, Unit::Count, "Batter cleanup hook outcomes");
+    counter(SHUTDOWNS, Unit::Count, "Batter supervisor drive results");
+    histogram(
         SHUTDOWN_DURATION,
         Unit::Seconds,
-        "Batter stop instant to shutdown-report time"
+        "Batter stop instant to shutdown-report time",
     );
-    describe_counter!(
+    counter(
         LABELS_COALESCED,
         Unit::Count,
-        "Metric names replaced by a bounded placeholder"
+        "Metric names replaced by a bounded placeholder",
     );
 }
 

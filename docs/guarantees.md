@@ -125,7 +125,9 @@ decision, observed task exit, cleanup hook and supervisor shutdown exactly once,
 after the result is known and outside admission locks. The canonical setup is
 `telemetry::metrics::install(recorder)`: it accepts only a recorder on the
 re-exported `metrics` 0.24 facade, so another major version fails to compile,
-and it publishes descriptions only after installing it. Polled but dropped
+and it publishes descriptions to that recorder only after installing it, even
+inside a local recorder scope. Rejected recorders receive no catalog descriptions
+and are returned to the caller. Polled but dropped
 operations, retry attempts and executions, admission waits and supervisor
 drives record `dropped`, or `panicked` when destroyed during unwinding, through
 one shared guard. A cleanup hook taken by a destroyed close driver records
