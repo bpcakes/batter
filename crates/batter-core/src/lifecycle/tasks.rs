@@ -68,9 +68,7 @@ impl TaskSet {
         );
     }
 
-    pub(super) fn spawn_process(&mut self, mut task: process::QueuedProcess) {
-        // Record the admission before this task can run, and so before its exit.
-        task.decision.record();
+    pub(super) fn spawn_process(&mut self, task: process::QueuedProcess) {
         let name = task.name;
         // The future already carries the submitting operation's span and
         // subscriber, independent of the coordinator's tracing context.
@@ -161,7 +159,8 @@ impl TaskSet {
         if exit.cause.is_some() {
             coordinator.shared.fail_task();
         }
-        // Recorder code runs only after a failure has closed admission.
+        // Recorder code runs only after a failure has closed process admission;
+        // root admission closes when the driver requests drain.
         crate::telemetry::record::task(exit.finite, exit.name, exit.outcome);
         exit.cause
     }

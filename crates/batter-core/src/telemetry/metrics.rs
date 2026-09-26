@@ -1,15 +1,16 @@
 //! Optional bounded-cardinality metrics through the [`metrics`] facade.
 //!
-//! Enable the `metrics` feature to record foundation outcomes into whichever
-//! recorder the application root installs. Batter never installs a recorder,
-//! exporter or global subscriber. Without a recorder, the facade's no-op
-//! recorder discards every observation.
+//! Enable the `metrics` feature to record foundation outcomes into the
+//! recorder the application root passes to [`install`]. Batter never installs
+//! a recorder, exporter or global subscriber itself. Without a recorder, the
+//! facade's no-op recorder discards every observation.
 //!
-//! Batter records through `metrics` 0.24, re-exported as [`facade`]. A recorder
-//! or exporter built on another major version of `metrics` is a different
-//! crate instance and silently receives nothing. Install it through
-//! [`facade::set_global_recorder`] or choose an exporter that depends on the
-//! same major version.
+//! Batter records through `metrics` 0.24, re-exported as [`facade`].
+//! [`install`] accepts only a recorder built on that version, so a recorder
+//! from another major version fails to compile on the canonical path, and it
+//! publishes the catalog descriptions only after the recorder exists. An
+//! exporter that installs itself globally bypasses both checks and must share
+//! this major version; that path is a lower-level escape hatch.
 //!
 //! # Catalog
 //!
@@ -41,23 +42,28 @@
 //! by their owning decision. Adapter boundaries are ordinary
 //! operations, for example `http.response_construction` for each admitted
 //! Axum request, and their names share the operation table. A polled
-//! supervisor drive records one shutdown: its report's result before it
-//! publishes `Stopped`, or `dropped`/`panicked` (with cause `none` before a
-//! cause was selected) when the driver is destroyed first. Its duration runs
+//! supervisor drive records one shutdown: its report's result after it
+//! publishes `Stopped` and before the report is returned, or
+//! `dropped`/`panicked` (with cause `none` before a cause was selected) when
+//! the driver is destroyed first, after the supervisor's own queued work and
+//! cleanup are destroyed and recorded. Publishing `Stopped` never waits for
+//! recorder code; flush the exporter after awaiting the driver's completion
+//! (for example `wait_checked`), not on observing readiness. Its duration runs
 //! from the lifecycle stop instant that every drain budget uses to the final
 //! report; abandoned drivers have no report and record no duration. A startup
 //! that fails before its running driver records its cleanup hooks, not a
 //! shutdown.
 //!
-//! Recording follows the boundary's own ordering. Task exits are recorded
-//! after a failure closes admission. An accepted process admission is recorded
-//! when the supervisor takes ownership of the queued task, so it precedes that
-//! task's exit and the shutdown; rejections are recorded after the admission
-//! lock is released. Root admission is recorded after its decision is
+//! Recording follows the boundary's own ordering and never runs inside the
+//! admission lock. A task exit is recorded after a failure closes process
+//! admission; root admission closes when drain is requested, shortly after.
+//! Process admission decisions, accepted or rejected, are recorded when the
+//! submitter's decision is complete; an accepted task cannot start before its
+//! decision is recorded. Root admission is recorded after its decision is
 //! complete. Root-admitted work is not supervised, so its decision and
 //! operations are not ordered with shutdown and may be recorded after
-//! `Stopped`. Histograms receive one sample per finished boundary. Aggregation, buckets,
-//! temporality and export are the recorder's policy.
+//! `Stopped`. Histograms receive one sample per finished boundary.
+//! Aggregation, buckets, temporality and export are the recorder's policy.
 //!
 //! # Label domains
 //!
@@ -112,11 +118,10 @@
 //! use std::time::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // The application root installs a recorder once, for example through
-//! // `batter_core::telemetry::metrics::facade::set_global_recorder` or an
-//! // exporter on the same `metrics` major version, then may publish the
-//! // catalog descriptions.
-//! batter_core::telemetry::metrics::describe();
+//! // The application root installs one recorder built on the re-exported
+//! // facade, usually an exporter's recorder, before starting the supervisor.
+//! # let recorder = batter_core::telemetry::metrics::facade::NoopRecorder;
+//! batter_core::telemetry::metrics::install(recorder)?;
 //! let context = OperationOwner::new(Duration::from_secs(1))?.into_context();
 //! context
 //!     .run("example.read", |_| async { Ok::<_, std::io::Error>(()) })
@@ -144,7 +149,7 @@ use metrics::{Unit, describe_counter, describe_histogram};
 use names::{NameLabel, OPERATION_NAMES, TASK_NAMES};
 use std::time::Duration;
 
-pub(crate) use terminal::{AdmittedDecision, BulkheadTerminal, RetryTerminal, ShutdownTerminal};
+pub(crate) use terminal::{AttemptTerminal, BulkheadTerminal, RetryTerminal, ShutdownTerminal};
 
 /// Completed operation boundaries, including dropped ones.
 pub const OPERATION_COMPLETIONS: &str = "batter_operation_completions_total";
@@ -244,11 +249,38 @@ pub(crate) enum Coalesce {
     Capacity,
 }
 
-/// Publish names, units and descriptions to the current recorder.
+/// Install `recorder` as the process-wide metrics recorder, then publish the
+/// catalog's names, units and descriptions to it.
 ///
-/// Call after installing the recorder. Descriptions are optional metadata;
-/// recording does not depend on them.
-pub fn describe() {
+/// This is the canonical application-root setup: descriptions cannot be sent
+/// before the recorder exists, and a recorder built on another `metrics` major
+/// version does not implement [`facade::Recorder`] and fails to compile.
+/// Install exactly once, before the supervisor starts; a second installation
+/// returns the rejected recorder. Batter never calls this itself.
+///
+/// ```
+/// use batter_core::telemetry::metrics::{facade, install};
+///
+/// // Any recorder built on the re-exported facade; exporters usually offer
+/// // a builder that returns one instead of installing it themselves.
+/// let recorder = facade::NoopRecorder;
+/// install(recorder).expect("first installation");
+/// ```
+///
+/// ```compile_fail,E0277
+/// // A value that is not a `metrics` 0.24 recorder is rejected at compile time.
+/// batter_core::telemetry::metrics::install(42_u8);
+/// ```
+pub fn install<R>(recorder: R) -> Result<(), facade::SetRecorderError<R>>
+where
+    R: facade::Recorder + Sync + 'static,
+{
+    facade::set_global_recorder(recorder)?;
+    describe();
+    Ok(())
+}
+
+fn describe() {
     describe_counter!(
         OPERATION_COMPLETIONS,
         Unit::Count,
@@ -290,37 +322,43 @@ pub fn describe() {
 }
 
 /// Series index of a name label combined with one closed-domain value.
-fn named(name: NameLabel, values: &[&str], value: &str) -> usize {
-    name.index * values.len() + index_of(values, value)
+fn named(name: NameLabel, values: &[&str], value: &str) -> Option<usize> {
+    Some(name.index * values.len() + index_of(values, value)?)
 }
 
 pub(crate) fn operation(
     boundary: Boundary,
-    factory_invoked: bool,
     name: &'static str,
     outcome: Outcome,
     elapsed: Duration,
 ) {
-    let cache = match boundary {
-        Boundary::Operation => &COMPLETION_KEYS,
-        Boundary::RetryAttempt if factory_invoked => &ATTEMPT_KEYS,
-        Boundary::RetryAttempt | Boundary::Internal => return,
-    };
+    if matches!(boundary, Boundary::Internal) {
+        return;
+    }
     let operation = OPERATION_NAMES.label(name);
     let outcome = vocabulary::outcome(outcome, std::thread::panicking());
-    let index = named(operation, &OUTCOMES, outcome);
+    let Some(index) = named(operation, &OUTCOMES, outcome) else {
+        return;
+    };
     let labels = [("operation", operation.text), ("outcome", outcome)];
-    increment(cache.key(index, labels), 1);
-    if matches!(boundary, Boundary::Operation) {
-        sample(DURATION_KEYS.key(index, labels), elapsed.as_secs_f64());
+    increment(COMPLETION_KEYS.key(index, labels), 1);
+    sample(DURATION_KEYS.key(index, labels), elapsed.as_secs_f64());
+}
+
+fn retry_attempt(name: &'static str, outcome: &'static str) {
+    let operation = OPERATION_NAMES.label(name);
+    if let Some(index) = named(operation, &OUTCOMES, outcome) {
+        let labels = [("operation", operation.text), ("outcome", outcome)];
+        increment(ATTEMPT_KEYS.key(index, labels), 1);
     }
 }
 
 fn retry_execution(name: &'static str, result: &'static str) {
     let operation = OPERATION_NAMES.label(name);
-    let index = named(operation, RETRY_RESULTS, result);
-    let labels = [("operation", operation.text), ("result", result)];
-    increment(RETRY_KEYS.key(index, labels), 1);
+    if let Some(index) = named(operation, RETRY_RESULTS, result) {
+        let labels = [("operation", operation.text), ("result", result)];
+        increment(RETRY_KEYS.key(index, labels), 1);
+    }
 }
 
 fn admission(kind: AdmissionKind, decision: &'static str) {
@@ -328,18 +366,30 @@ fn admission(kind: AdmissionKind, decision: &'static str) {
     let labels = [("admission", admission), ("decision", decision)];
     let key = match kind {
         AdmissionKind::Bulkhead => {
-            BULKHEAD_KEYS.key(index_of(BULKHEAD_DECISIONS, decision), labels)
+            index_of(BULKHEAD_DECISIONS, decision).map(|index| BULKHEAD_KEYS.key(index, labels))
         }
-        AdmissionKind::Process => PROCESS_KEYS.key(index_of(PROCESS_DECISIONS, decision), labels),
-        AdmissionKind::Root => ROOT_KEYS.key(index_of(ROOT_DECISIONS, decision), labels),
+        AdmissionKind::Process => {
+            index_of(PROCESS_DECISIONS, decision).map(|index| PROCESS_KEYS.key(index, labels))
+        }
+        AdmissionKind::Root => {
+            index_of(ROOT_DECISIONS, decision).map(|index| ROOT_KEYS.key(index, labels))
+        }
     };
-    increment(key, 1);
+    if let Some(key) = key {
+        increment(key, 1);
+    }
 }
 
 /// A rejected process admission, recorded after the admission lock and any
-/// rejected captures are released. Accepted decisions travel with the task.
+/// rejected captures are released.
 pub(crate) fn process_rejected(error: &ProcessAdmissionError) {
     admission(AdmissionKind::Process, vocabulary::process(Err(error)));
+}
+
+/// An accepted process admission, recorded after the admission lock is
+/// released and before the task's lease lets it start.
+pub(crate) fn process_admitted() {
+    admission(AdmissionKind::Process, vocabulary::process(Ok(())));
 }
 
 pub(crate) fn root(observed: Readiness) {
@@ -350,33 +400,45 @@ pub(crate) fn task(finite: bool, name: &'static str, outcome: TaskOutcome) {
     let kind = vocabulary::task_kind(finite);
     let outcome = vocabulary::task_outcome(outcome);
     let task = TASK_NAMES.label(name);
-    let index = index_of(TASK_KINDS, kind) * NAME_VALUES * TASK_OUTCOMES.len()
-        + named(task, TASK_OUTCOMES, outcome);
-    let labels = [("kind", kind), ("task", task.text), ("outcome", outcome)];
-    increment(TASK_KEYS.key(index, labels), 1);
+    let Some(kind_index) = index_of(TASK_KINDS, kind) else {
+        return;
+    };
+    if let Some(index) = named(task, TASK_OUTCOMES, outcome) {
+        let index = kind_index * NAME_VALUES * TASK_OUTCOMES.len() + index;
+        let labels = [("kind", kind), ("task", task.text), ("outcome", outcome)];
+        increment(TASK_KEYS.key(index, labels), 1);
+    }
 }
 
 /// Count `hooks` cleanup hooks with one outcome in a single increment.
 pub(crate) fn cleanup(hook: CleanupHook, hooks: usize) {
+    let outcome = vocabulary::cleanup(hook);
     if hooks == 0 {
         return;
     }
-    let outcome = vocabulary::cleanup(hook);
-    let key = CLEANUP_KEYS.key(index_of(CLEANUP_OUTCOMES, outcome), [("outcome", outcome)]);
-    increment(key, hooks as u64);
+    if let Some(index) = index_of(CLEANUP_OUTCOMES, outcome) {
+        increment(
+            CLEANUP_KEYS.key(index, [("outcome", outcome)]),
+            hooks as u64,
+        );
+    }
 }
 
 fn shutdown(cause: Option<ShutdownCause>, result: &'static str, elapsed: Option<Duration>) {
     let cause = vocabulary::shutdown_cause(cause);
-    let index = index_of(SHUTDOWN_CAUSES, cause) * SHUTDOWN_RESULTS.len()
-        + index_of(SHUTDOWN_RESULTS, result);
+    let (Some(cause_index), Some(result_index)) = (
+        index_of(SHUTDOWN_CAUSES, cause),
+        index_of(SHUTDOWN_RESULTS, result),
+    ) else {
+        return;
+    };
+    let index = cause_index * SHUTDOWN_RESULTS.len() + result_index;
     increment(
         SHUTDOWN_KEYS.key(index, [("cause", cause), ("result", result)]),
         1,
     );
     if let Some(elapsed) = elapsed {
-        let key =
-            SHUTDOWN_DURATION_KEYS.key(index_of(SHUTDOWN_RESULTS, result), [("result", result)]);
+        let key = SHUTDOWN_DURATION_KEYS.key(result_index, [("result", result)]);
         sample(key, elapsed.as_secs_f64());
     }
 }
@@ -384,12 +446,16 @@ fn shutdown(cause: Option<ShutdownCause>, result: &'static str, elapsed: Option<
 fn coalesced(domain: NameDomain, reason: Coalesce) {
     let domain = vocabulary::name_domain(domain);
     let reason = vocabulary::coalesce_reason(reason);
-    let index = index_of(COALESCE_DOMAINS, domain) * COALESCE_REASONS.len()
-        + index_of(COALESCE_REASONS, reason);
-    increment(
-        COALESCE_KEYS.key(index, [("domain", domain), ("reason", reason)]),
-        1,
-    );
+    if let (Some(domain_index), Some(reason_index)) = (
+        index_of(COALESCE_DOMAINS, domain),
+        index_of(COALESCE_REASONS, reason),
+    ) {
+        let index = domain_index * COALESCE_REASONS.len() + reason_index;
+        increment(
+            COALESCE_KEYS.key(index, [("domain", domain), ("reason", reason)]),
+            1,
+        );
+    }
 }
 
 #[cfg(test)]

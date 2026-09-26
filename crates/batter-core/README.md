@@ -58,8 +58,9 @@ work, add `Send` or `'static` bounds, or make cancellation run asynchronous clea
 The opt-in `metrics` feature records bounded-cardinality outcome metrics for
 operations, retries, admission, task exits, cleanup and shutdown through the
 `metrics` 0.24 facade, re-exported as `batter_core::telemetry::metrics::facade`.
-Install the recorder or exporter at the application root on that same major
-version; a recorder built on another `metrics` version receives nothing. Label
+Pass the exporter's recorder to `telemetry::metrics::install` at the
+application root; a recorder built on another `metrics` major version does not
+compile there. Label
 values come from closed vocabularies and fixed name tables, and Batter owns no
 metric buffer, queue, retry or flush. See `telemetry::metrics` for the catalog.
 

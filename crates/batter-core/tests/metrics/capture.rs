@@ -25,6 +25,7 @@ struct Store {
     samples: Vec<Sample>,
     discarded: usize,
     registrations: usize,
+    described: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -94,6 +95,19 @@ impl Capture {
         self.store.lock().unwrap().discarded
     }
 
+    /// Metric names the recorder received descriptions for, in order.
+    pub fn described(&self) -> Vec<String> {
+        self.store.lock().unwrap().described.clone()
+    }
+
+    fn describe(&self, key: KeyName) {
+        self.store
+            .lock()
+            .unwrap()
+            .described
+            .push(key.as_str().to_owned());
+    }
+
     /// Every registration, including those whose sample was discarded.
     pub fn registrations(&self) -> usize {
         self.store.lock().unwrap().registrations
@@ -152,9 +166,15 @@ impl HistogramFn for Handle {
 }
 
 impl Recorder for Capture {
-    fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
-    fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
-    fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+    fn describe_counter(&self, key: KeyName, _: Option<Unit>, _: SharedString) {
+        self.describe(key);
+    }
+    fn describe_gauge(&self, key: KeyName, _: Option<Unit>, _: SharedString) {
+        self.describe(key);
+    }
+    fn describe_histogram(&self, key: KeyName, _: Option<Unit>, _: SharedString) {
+        self.describe(key);
+    }
 
     fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
         Counter::from_arc(self.handle(key))

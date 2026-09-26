@@ -102,16 +102,14 @@ impl Outcome {
     }
 }
 
-/// Which metric family, if any, a finished operation boundary belongs to.
+/// Whether a finished operation boundary is an application operation for
+/// metrics. Tracing observes both kinds identically.
 #[derive(Clone, Copy)]
 pub(crate) enum Boundary {
     /// An application operation.
     Operation,
-    /// One retry attempt, counted only once its factory has been invoked; the
-    /// retry execution records its own terminal result.
-    RetryAttempt,
-    /// A foundation-owned wait (admission, backoff) whose owning boundary
-    /// records the decision; it is traced but emits no operation metrics.
+    /// A foundation-owned wait (admission, backoff) or a retry attempt, whose
+    /// owning boundary records its own metric.
     Internal,
 }
 
@@ -120,8 +118,6 @@ pub(crate) struct Observation {
     operation: &'static str,
     #[cfg(feature = "metrics")]
     boundary: Boundary,
-    #[cfg(feature = "metrics")]
-    factory_invoked: std::sync::atomic::AtomicBool,
     span: Span,
     context: Span,
     started: Instant,
@@ -146,8 +142,6 @@ impl Observation {
             operation,
             #[cfg(feature = "metrics")]
             boundary,
-            #[cfg(feature = "metrics")]
-            factory_invoked: std::sync::atomic::AtomicBool::new(false),
             span,
             context,
             started: Instant::now(),
@@ -162,29 +156,11 @@ impl Observation {
     pub(crate) fn finish(&mut self, outcome: Outcome) {
         self.outcome = outcome;
     }
-
-    /// Record that the boundary is about to invoke its factory. Call this in
-    /// the branch that invokes it, not from a preflight check.
-    pub(crate) fn mark_factory_invoked(&self) {
-        // Shared by reference into a `Send` future, so this must be `Sync`.
-        #[cfg(feature = "metrics")]
-        self.factory_invoked
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 impl Drop for Observation {
     fn drop(&mut self) {
         let elapsed = self.started.elapsed();
-        #[cfg(feature = "metrics")]
-        metrics::operation(
-            self.boundary,
-            self.factory_invoked
-                .load(std::sync::atomic::Ordering::Relaxed),
-            self.operation,
-            self.outcome,
-            elapsed,
-        );
         let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
         self.span.record("outcome", self.outcome.as_str());
         self.span.record("elapsed_ms", elapsed_ms);
@@ -205,5 +181,9 @@ impl Drop for Observation {
                 "operation boundary finished"
             );
         }
+        // Tracing diagnostics are emitted first so a faulty recorder cannot
+        // suppress them.
+        #[cfg(feature = "metrics")]
+        metrics::operation(self.boundary, self.operation, self.outcome, elapsed);
     }
 }

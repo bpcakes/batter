@@ -276,9 +276,15 @@ impl CleanupStack {
     }
 
     fn skip_remaining(&mut self, report: &mut CleanupReport, reason: SkipReason) {
-        let skipped = self.hooks.len();
-        crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Skipped, skipped);
-        while let Some(hook) = self.hooks.pop() {
+        // Take every hook before counting them, so a destructor that panics
+        // while they are dropped cannot leave them on the stack to be counted
+        // again as dropped.
+        let mut skipped = std::mem::take(&mut self.hooks);
+        crate::telemetry::record::cleanup(
+            crate::telemetry::record::CleanupHook::Skipped,
+            skipped.len(),
+        );
+        while let Some(hook) = skipped.pop() {
             tracing::warn!(target: "batter", cleanup = hook.name, ?reason, "cleanup skipped");
             report.skipped.push(SkippedCleanup {
                 name: hook.name,
@@ -329,6 +335,12 @@ impl CleanupStack {
                 break;
             };
             let name = hook.name;
+            // Armed as soon as the hook leaves the stack: from here its outcome
+            // is either observed below or reported as abandoned.
+            let mut observation = PendingCleanupObservation {
+                name,
+                observed: false,
+            };
             let deadline = work_deadline.min(Instant::now() + budget.per_hook);
             let mut running = JoinSet::new();
             let span = tracing::info_span!(target: "batter", "batter.cleanup", cleanup = name)
@@ -337,10 +349,6 @@ impl CleanupStack {
             running.spawn(scoped_dispatch::scope(
                 async move { (hook.action)().await }.instrument(span),
             ));
-            let mut observation = PendingCleanupObservation {
-                name,
-                observed: false,
-            };
             let completed = tokio::select! {
                 biased;
                 result = running.join_next() => result,
@@ -425,7 +433,7 @@ struct PendingCleanupObservation {
 impl Drop for PendingCleanupObservation {
     fn drop(&mut self) {
         if !self.observed {
-            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Dropped, 1);
+            crate::telemetry::record::cleanup(crate::telemetry::record::CleanupHook::Abandoned, 1);
             tracing::warn!(target: "batter", cleanup = self.name, "cleanup driver dropped before hook result was observed");
         }
     }

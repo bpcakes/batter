@@ -218,9 +218,6 @@ impl ProcessScope {
 pub(super) struct QueuedProcess {
     pub name: &'static str,
     pub future: Pin<Box<dyn Future<Output = TaskExit> + Send + 'static>>,
-    /// The committed admission, recorded when the coordinator takes
-    /// ownership of this entry and therefore before its task can exit.
-    pub decision: crate::telemetry::record::AdmittedDecision,
 }
 
 impl ProcessHandle {
@@ -302,7 +299,7 @@ impl ProcessHandle {
     {
         // Recorder code is arbitrary: observe rejections only after the
         // admission lock and any rejected captures have been released.
-        // Accepted decisions travel with the queued entry.
+        // Accepted decisions are recorded inside `admit` before the lease.
         let result = self.admit(name, factory, ancestor);
         if let Err(error) = &result {
             crate::telemetry::record::process_rejected(error);
@@ -375,29 +372,21 @@ impl ProcessHandle {
             .instrument(span),
             subscriber,
         ));
-        let queued = QueuedProcess {
-            name,
-            future,
-            decision: crate::telemetry::record::AdmittedDecision::new(),
-        };
-        if let Err(error) = self.sender.try_send(queued) {
+        if let Err(error) = self.sender.try_send(QueuedProcess { name, future }) {
             // Rejected work owns arbitrary application captures. Their native
             // destructors may request shutdown, so never drop them under our
             // admission lock.
             drop(admission);
-            let (rejected, error) = match error {
-                mpsc::error::TrySendError::Full(queued) => (queued, ProcessAdmissionError::Full),
-                mpsc::error::TrySendError::Closed(queued) => {
-                    (queued, ProcessAdmissionError::Closed)
-                }
-            };
-            // The rejection is recorded by the caller; this entry was never admitted.
-            let mut rejected = rejected;
-            rejected.decision.discard();
-            return Err(error);
+            return Err(match error {
+                mpsc::error::TrySendError::Full(_) => ProcessAdmissionError::Full,
+                mpsc::error::TrySendError::Closed(_) => ProcessAdmissionError::Closed,
+            });
         }
         admission.admit_finite();
         drop(admission);
+        // Recorded at the decision, outside the admission lock and before the
+        // lease below lets the task start, so it precedes the task's exit.
+        crate::telemetry::record::process_admitted();
         let lease = ActiveTask {
             coordinator: self.coordinator.clone(),
             active,

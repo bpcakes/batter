@@ -238,6 +238,7 @@ impl OperationContext {
     }
 
     /// Run a foundation-owned wait whose caller records its own decision.
+    /// Captures the dispatcher when called; await it immediately.
     pub(crate) fn run_internal<T, E, F, Fut>(
         &self,
         operation: &'static str,
@@ -318,7 +319,9 @@ impl OperationContext {
         .await
     }
 
-    /// Run one retry attempt with an outcome mapper owned by the retry boundary.
+    /// Run one traced retry attempt with an outcome mapper owned by the retry
+    /// boundary, which also records the attempt metric. Captures the
+    /// dispatcher when called; await it immediately.
     pub(crate) fn run_retry_attempt<T, E, F, Fut>(
         &self,
         operation: &'static str,
@@ -334,14 +337,15 @@ impl OperationContext {
             factory,
             |result| result,
             outcome,
-            Boundary::RetryAttempt,
+            Boundary::Internal,
         )
     }
 
-    /// The one observed boundary behind every `run` variant. Dispatch is
-    /// captured on first poll, as with ordinary async instrumentation, and the
-    /// returned future owns the factory, work and observation during drop too.
-    /// It is a plain function so wrappers add no extra async state machine.
+    /// The one observed boundary behind every `run` variant. It captures the
+    /// current dispatcher when called, and the returned future owns the
+    /// factory, work and observation during drop too. The public variants are
+    /// `async fn`s, so for them the call, and the capture, happens on first
+    /// poll; crate-internal callers must await the result immediately.
     fn observed<T, E, U, R, F, Fut, Resolve>(
         &self,
         operation: &'static str,
@@ -374,7 +378,6 @@ impl OperationContext {
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
         let mut observation = Observation::new(operation, boundary);
-        let observed = &observation;
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();
@@ -390,12 +393,7 @@ impl OperationContext {
                     _ = tokio::time::sleep_until(self.deadline) => {
                         Err(OperationError::Interrupted(Interruption::DeadlineExceeded))
                     }
-                    // Runs only when this branch is first polled, so an
-                    // interruption that wins the race leaves the factory unused.
-                    result = async move {
-                        observed.mark_factory_invoked();
-                        factory(scope).await
-                    } => {
+                    result = async move { factory(scope).await } => {
                         result.map_err(OperationError::Failed)
                     }
                 }

@@ -574,12 +574,19 @@ where
         .map(|maximum| settings.context.scoped_child_with_maximum(maximum));
     let attempt_context = attempt_context.as_ref().unwrap_or(settings.context);
     let attempt_deadline_is_tighter = attempt_context.deadline() < settings.context.deadline();
-    // Count inside the factory, not before run's cancellation preflight.
-    match attempt_context
+    // Count inside the factory, not before run's cancellation preflight. The
+    // attempt metric is armed at the same point, so an interruption that wins
+    // before the factory runs is not an attempt; a started attempt dropped or
+    // unwound before its result records `dropped` or `panicked`.
+    let mut attempt_metric = None;
+    let result = attempt_context
         .run_retry_attempt(
             settings.operation,
             |scope| {
                 *attempts += 1;
+                attempt_metric = Some(crate::telemetry::record::AttemptTerminal::new(
+                    settings.operation,
+                ));
                 tracing::debug!(target: "batter", attempt = *attempts, "attempt started");
                 let completion_scope = scope.clone();
                 let future = factory(Attempt {
@@ -599,8 +606,11 @@ where
             },
             attempt_outcome,
         )
-        .await
-    {
+        .await;
+    if let Some(metric) = &mut attempt_metric {
+        metric.finish(attempt_outcome(&result));
+    }
+    match result {
         Ok(AttemptCompletion::Returned(Ok(value))) => Ok(value),
         Ok(AttemptCompletion::Returned(Err(error))) => Err(AttemptFailure::Application(error)),
         Ok(AttemptCompletion::Cancelled(returned_error)) => Err(AttemptFailure::Interrupted {

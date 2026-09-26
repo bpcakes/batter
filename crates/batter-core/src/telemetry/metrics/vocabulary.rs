@@ -119,9 +119,10 @@ closed_domain! {
 }
 
 closed_domain! {
-    /// Values of the `outcome` label on [`super::CLEANUP_HOOKS`]. `dropped`
-    /// counts registered hooks that never ran because their stack or in-flight
-    /// close driver was destroyed.
+    /// Values of the `outcome` label on [`super::CLEANUP_HOOKS`]. `abandoned`
+    /// counts a hook taken by a close driver destroyed before observing it (it
+    /// may have started); `dropped` counts registered hooks that never ran
+    /// because their stack was destroyed.
     pub CLEANUP_OUTCOMES, fn cleanup(value: CleanupHook) {
         CleanupHook::Observed(CleanupOutcome::Succeeded) => "succeeded",
         CleanupHook::Observed(CleanupOutcome::Failed) => "failed",
@@ -130,6 +131,7 @@ closed_domain! {
         CleanupHook::Observed(CleanupOutcome::TimedOut) => "timed_out",
         CleanupHook::Observed(CleanupOutcome::Unjoined) => "unjoined",
         CleanupHook::Skipped => "skipped",
+        CleanupHook::Abandoned => "abandoned",
         CleanupHook::Dropped => "dropped",
     }
 }

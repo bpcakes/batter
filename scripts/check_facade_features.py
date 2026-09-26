@@ -146,7 +146,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "fn main() {}",
     ]
     if "metrics" in chosen:
-        lines.insert(1, "use batter::telemetry::metrics::{MAX_SERIES, describe};")
+        lines.insert(1, "use batter::telemetry::metrics::{MAX_SERIES, install};")
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:

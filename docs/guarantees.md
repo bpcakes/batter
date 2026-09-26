@@ -121,25 +121,29 @@ to completion, or supervise work.
 
 The opt-in `metrics` feature records each polled operation, started retry
 attempt, whole retry execution, bulkhead, process or root lifecycle admission
-decision, observed task exit, cleanup hook and supervisor shutdown exactly once
-into the application's `metrics` 0.24 recorder (re-exported as
-`telemetry::metrics::facade`; a recorder on another major version receives
-nothing), after the result is known and outside admission locks. Polled but
-dropped operations, retry executions, admission waits and supervisor drives
-record `dropped`, or `panicked` when destroyed during unwinding, through one
-shared guard; an unclosed
-cleanup stack records its hooks as `dropped`; other futures dropped before
-their first poll record nothing. A retry attempt counts only once its factory
-is invoked.
-Foundation-owned waits (admission, backoff) are not counted as operations,
-while adapter boundaries such as `http.response_construction` are. Shutdown is
-recorded before `Stopped` is published, with its duration measured from the
-lifecycle stop instant; abandoned drivers record no duration, and a startup that
-fails before its running driver records only its cleanup hooks. An accepted
-process admission is recorded before its task can exit; root-admitted work is
-unsupervised and not ordered with shutdown. Batter retains at most
-`MAX_SERIES` pre-built keys, so recording allocates only on a series' first
-observation. Labels come
+decision, observed task exit, cleanup hook and supervisor shutdown exactly once,
+after the result is known and outside admission locks. The canonical setup is
+`telemetry::metrics::install(recorder)`: it accepts only a recorder on the
+re-exported `metrics` 0.24 facade, so another major version fails to compile,
+and it publishes descriptions only after installing it. Polled but dropped
+operations, retry attempts and executions, admission waits and supervisor
+drives record `dropped`, or `panicked` when destroyed during unwinding, through
+one shared guard. A cleanup hook taken by a destroyed close driver records
+`abandoned`; hooks of an unclosed stack record `dropped`; other futures dropped
+before their first poll record nothing. A retry attempt counts only once its
+factory is invoked. Foundation-owned waits (admission, backoff) are not counted
+as operations, while adapter boundaries such as `http.response_construction`
+are. Tracing diagnostics are emitted before a boundary's metric, and
+publishing `Stopped` never waits for recorder code: shutdown is recorded after
+`Stopped` and before the report is returned, so flush after awaiting the
+driver's completion. Its duration is measured from the lifecycle stop instant;
+abandoned drivers record no duration and record their shutdown after the
+supervisor's own queued work and cleanup, and a startup that fails before its
+running driver records only its cleanup hooks. Process admission decisions are
+recorded when the submitter's decision completes, before an accepted task can
+start; root-admitted work is unsupervised and not ordered with shutdown.
+Batter retains at most `MAX_SERIES` pre-built keys, so recording allocates only
+on a series' first observation. Labels come
 only from closed foundation vocabularies or a fixed-capacity, write-once table
 of operation/task names using the component-registration vocabulary; other
 names or names beyond capacity record `<invalid>` or `<overflow>` and increment

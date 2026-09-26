@@ -3,7 +3,7 @@
 use super::{Coalesce, INVALID_NAME, NAME_CAPACITY, NameDomain, OVERFLOW_NAME, coalesced};
 use std::sync::{
     OnceLock,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 /// A bounded name label and its series index: an admitted slot, or one of the
@@ -28,6 +28,10 @@ pub(super) struct NameTable {
     slots: [OnceLock<&'static str>; NAME_CAPACITY],
     /// Each admitted name's hash, published after its slot; zero until then.
     hashes: [AtomicU64; NAME_CAPACITY],
+    /// Direct-mapped by the name's address: `slot + 1` of the last lookup that
+    /// resolved a name stored there, or zero. A hit is confirmed by pointer
+    /// identity with the write-once slot, so a stale entry only misses.
+    recent: [AtomicUsize; NAME_CAPACITY],
 }
 
 /// FNV-1a over the name bytes, forced nonzero so zero means "unpublished".
@@ -45,6 +49,7 @@ impl NameTable {
             domain,
             slots: [const { OnceLock::new() }; NAME_CAPACITY],
             hashes: [const { AtomicU64::new(0) }; NAME_CAPACITY],
+            recent: [const { AtomicUsize::new(0) }; NAME_CAPACITY],
         }
     }
 
@@ -60,6 +65,26 @@ impl NameTable {
     /// a slot returns that slot's name when it is the same name, so each
     /// distinct name occupies exactly one slot.
     pub(super) fn label(&self, name: &'static str) -> NameLabel {
+        // Call sites pass the same `'static` constant, so its address usually
+        // resolves the slot without hashing or comparing bytes.
+        let recent = &self.recent[(name.as_ptr() as usize >> 3) % NAME_CAPACITY];
+        if let Some(index) = recent.load(Ordering::Relaxed).checked_sub(1)
+            && let Some(existing) = self.slots[index].get()
+            && std::ptr::eq(*existing, name)
+        {
+            return NameLabel {
+                index,
+                text: existing,
+            };
+        }
+        let label = self.resolve(name);
+        if label.index < NAME_CAPACITY {
+            recent.store(label.index + 1, Ordering::Relaxed);
+        }
+        label
+    }
+
+    fn resolve(&self, name: &'static str) -> NameLabel {
         let hashed = hash(name);
         let home = (hashed % NAME_CAPACITY as u64) as usize;
         let mut valid = None;

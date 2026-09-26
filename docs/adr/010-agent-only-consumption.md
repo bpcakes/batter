@@ -127,6 +127,27 @@ process cancellation. These are explicit ownership limits, not claims of async
 drop or remote effect rollback. Fresh-agent usability evaluation is proposed
 and unexecuted.
 
+### Bounded metrics setup assessment (`batter-6vn`)
+
+The first metrics API exposed `describe()` beside an application-installed
+recorder. Calling it before installation compiled and silently lost every unit
+and description, and a recorder built on another `metrics` major version
+compiled and silently received nothing. The canonical path is now
+`telemetry::metrics::install(recorder)`: it requires a recorder implementing
+the re-exported `metrics` 0.24 `Recorder` trait, installs it, and only then
+publishes the catalog, so both misuses are rejected at compile time or cannot
+be written. A compile-fail rustdoc rejects a non-recorder value, and an
+installation test checks descriptions and recording. Recording itself needs no
+consumer calls: operations, retries, admission, tasks, cleanup and shutdown
+record through library-owned guards with closed label vocabularies.
+
+An exporter that installs itself globally remains a lower-level escape hatch
+that bypasses both checks; the module documentation names that obligation.
+Flushing belongs to the application root after it awaits the supervisor's
+completion, and the recorder's own buffering, aggregation and faults cannot be
+proved by local types. Fresh-agent usability evaluation is proposed and
+unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

@@ -2,6 +2,7 @@
 //! known only when it finishes or is destroyed.
 
 use super::{AdmissionKind, End, vocabulary};
+use crate::telemetry::Outcome;
 use crate::{admission::AdmissionError, lifecycle::ShutdownCause, retry::RetryExecutionError};
 use tokio::time::Instant;
 
@@ -42,12 +43,6 @@ impl<S: Series> Terminal<S> {
         if std::mem::replace(&mut self.armed, false) {
             self.series.record(label, true);
         }
-    }
-
-    /// Disarm without recording, for a boundary whose outcome is recorded
-    /// elsewhere.
-    fn discard(&mut self) {
-        self.armed = false;
     }
 }
 
@@ -114,36 +109,32 @@ impl BulkheadTerminal {
     }
 }
 
-struct Admitted;
+struct Attempt(&'static str);
 
-impl Series for Admitted {
-    // The decision was already made; destruction only fixes when it is seen.
+impl Series for Attempt {
     fn abandoned(&self) -> &'static str {
-        vocabulary::process(Ok(()))
+        match abandoned::<()>() {
+            End::Panicked => vocabulary::outcome(Outcome::Dropped, true),
+            _ => vocabulary::outcome(Outcome::Dropped, false),
+        }
     }
 
     fn record(&mut self, label: &'static str, _: bool) {
-        super::admission(AdmissionKind::Process, label);
+        super::retry_attempt(self.0, label);
     }
 }
 
-/// A process admission carried by its queued entry. The coordinator records
-/// it when it takes ownership of the entry, before the task can run or exit;
-/// an admitted entry destroyed unspawned still records it. An entry the queue
-/// rejected is discarded, because the caller records that rejection.
-pub(crate) struct AdmittedDecision(Terminal<Admitted>);
+/// One retry attempt, armed by the retry boundary when it invokes the
+/// attempt's factory; an attempt whose factory never ran has no guard.
+pub(crate) struct AttemptTerminal(Terminal<Attempt>);
 
-impl AdmittedDecision {
-    pub(crate) fn new() -> Self {
-        Self(Terminal::new(Admitted))
+impl AttemptTerminal {
+    pub(crate) fn new(operation: &'static str) -> Self {
+        Self(Terminal::new(Attempt(operation)))
     }
 
-    pub(crate) fn record(&mut self) {
-        self.0.finish(vocabulary::process(Ok(())));
-    }
-
-    pub(crate) fn discard(&mut self) {
-        self.0.discard();
+    pub(crate) fn finish(&mut self, outcome: Outcome) {
+        self.0.finish(vocabulary::outcome(outcome, false));
     }
 }
 
@@ -186,9 +177,8 @@ impl ShutdownTerminal {
         self.0.series.drain_started = Some(started);
     }
 
-    /// Record the completed report's result now; call before `Stopped` is
-    /// published so an application root cannot flush before this sample.
-    pub(crate) fn finish(mut self, success: bool) {
+    /// Record the completed report's result before the report is returned.
+    pub(crate) fn finish(&mut self, success: bool) {
         self.0
             .finish(vocabulary::shutdown_result(End::Finished(success)));
     }

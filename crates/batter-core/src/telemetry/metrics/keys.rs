@@ -40,12 +40,14 @@ impl<const N: usize> KeyCache<N> {
 }
 
 /// Position of `value` in a closed domain; values are the domain's own
-/// `'static` literals, so a pointer match usually ends the scan.
-pub(super) fn index_of(values: &[&str], value: &str) -> usize {
+/// `'static` literals, so a pointer match usually ends the scan. Every label
+/// comes from its domain's generated list (checked by the unit tests), so
+/// `None` would be a vocabulary defect; the sample is then skipped rather than
+/// panicking inside a destructor.
+pub(super) fn index_of(values: &[&str], value: &str) -> Option<usize> {
     values
         .iter()
         .position(|candidate| std::ptr::eq(*candidate, value) || *candidate == value)
-        .expect("label belongs to its closed domain")
 }
 
 pub(super) fn increment(key: &Key, by: u64) {

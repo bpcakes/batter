@@ -87,9 +87,11 @@ Each skipped finalizer produces one warning, including the first hook skipped
 when the shared work budget is exhausted.
 The opt-in `metrics` feature records bounded foundation outcome metrics through
 the `metrics` 0.24 facade, re-exported as `batter::telemetry::metrics::facade`;
-see that module for names, units, label domains and the series bound. An
-exporter on another `metrics` major version silently receives nothing. Install
-one recorder/exporter in the binary and
+see that module for names, units, label domains and the series bound. Pass the
+exporter's recorder to `batter::telemetry::metrics::install` once in the binary,
+before starting the supervisor; a recorder on another `metrics` major version
+does not compile there. Flush after awaiting the supervisor's completion, not on
+observing `Stopped` readiness. Install one recorder/exporter in the binary and
 choose one that aggregates rather than queueing raw samples. Batter holds no
 metric buffer, so exporter flush and shutdown ordering belong to the application
 root. No OpenTelemetry propagation or exporter shutdown adapter is included.

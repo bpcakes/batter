@@ -441,5 +441,4 @@ async fn results_are_identical_without_any_recorder() {
         .run("example.read", |_| async { Ok::<_, Infallible>(3) })
         .await;
     assert_eq!(result.unwrap(), 3);
-    catalog::describe();
 }

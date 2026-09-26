@@ -11,13 +11,17 @@ use crate::cleanup::CleanupOutcome;
 pub(crate) enum CleanupHook {
     Observed(CleanupOutcome),
     Skipped,
+    /// Taken by a close driver that was destroyed before observing it; the
+    /// hook may have started.
+    Abandoned,
+    /// Still registered when its stack was destroyed; the hook never ran.
     Dropped,
 }
 
 #[cfg(feature = "metrics")]
 pub(crate) use super::metrics::{
-    AdmittedDecision, BulkheadTerminal, RetryTerminal, ShutdownTerminal, cleanup, process_rejected,
-    root, task,
+    AttemptTerminal, BulkheadTerminal, RetryTerminal, ShutdownTerminal, cleanup, process_admitted,
+    process_rejected, root, task,
 };
 
 #[cfg(not(feature = "metrics"))]
@@ -30,6 +34,7 @@ mod disabled {
         admission::AdmissionError,
         lifecycle::{ProcessAdmissionError, Readiness, ShutdownCause, TaskOutcome},
         retry::RetryExecutionError,
+        telemetry::Outcome,
     };
     use tokio::time::Instant;
 
@@ -45,19 +50,19 @@ mod disabled {
     #[inline]
     pub(crate) fn task(_: bool, _: &'static str, _: TaskOutcome) {}
 
-    pub(crate) struct AdmittedDecision;
+    #[inline]
+    pub(crate) fn process_admitted() {}
 
-    impl AdmittedDecision {
+    pub(crate) struct AttemptTerminal;
+
+    impl AttemptTerminal {
         #[inline]
-        pub(crate) fn new() -> Self {
+        pub(crate) fn new(_: &'static str) -> Self {
             Self
         }
 
         #[inline]
-        pub(crate) fn record(&mut self) {}
-
-        #[inline]
-        pub(crate) fn discard(&mut self) {}
+        pub(crate) fn finish(&mut self, _: Outcome) {}
     }
 
     pub(crate) struct BulkheadTerminal;
@@ -96,6 +101,6 @@ mod disabled {
         pub(crate) fn draining(&mut self, _: ShutdownCause, _: Instant) {}
 
         #[inline]
-        pub(crate) fn finish(self, _: bool) {}
+        pub(crate) fn finish(&mut self, _: bool) {}
     }
 }

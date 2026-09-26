@@ -73,6 +73,13 @@ async fn every_retry_execution_records_one_terminal_result() {
     .await;
     assert!(dropped.is_err());
 
+    // Started attempts only: 1 + 2 returned, none for the pre-cancelled
+    // execution, and 1 dropped with its execution.
+    assert_eq!(capture.samples(RETRY_ATTEMPTS).len(), 4);
+    assert_eq!(
+        capture.count(RETRY_ATTEMPTS, &[("outcome", "dropped")]),
+        1.0
+    );
     for result in [
         "not_retryable",
         "attempts_exhausted",
@@ -132,7 +139,13 @@ async fn abandoned_cleanup_hooks_are_counted_as_dropped() {
     let closing = tokio::time::timeout(Duration::from_millis(1), in_flight.close(budget)).await;
     assert!(closing.is_err());
 
-    assert_eq!(capture.count(CLEANUP_HOOKS, &[("outcome", "dropped")]), 3.0);
+    // Never-run hooks of the unclosed stack are `dropped`; the hook the close
+    // driver had taken is `abandoned`, because it may have started.
+    assert_eq!(capture.count(CLEANUP_HOOKS, &[("outcome", "dropped")]), 2.0);
+    assert_eq!(
+        capture.count(CLEANUP_HOOKS, &[("outcome", "abandoned")]),
+        1.0
+    );
     assert_catalog(&capture);
 }
 
@@ -224,6 +237,9 @@ async fn unwinding_boundaries_record_panicked_instead_of_dropped() {
 fn stubborn_supervisor() -> Supervisor {
     let mut supervisor = Supervisor::new(super::shutdown_budget());
     supervisor
+        .on_cleanup("dependency.close", || async { Ok(()) })
+        .unwrap();
+    supervisor
         .register("service.component", |startup| async move {
             let _shutdown = startup.acknowledge_started();
             // Ignores drain so the driver stays inside its drain phase.
@@ -256,6 +272,13 @@ async fn abandoned_shutdown_drivers_record_exactly_one_dropped_shutdown() {
     assert_eq!(shutdowns("none"), 1.0);
     assert_eq!(shutdowns("requested"), 1.0);
     assert_eq!(capture.samples(SHUTDOWNS).len(), 2);
+    // Each abandoned supervisor's never-run cleanup is recorded before its
+    // shutdown sample, which is the last record of that drive.
+    let cleanup = capture
+        .first(CLEANUP_HOOKS, &[("outcome", "dropped")])
+        .unwrap();
+    assert!(cleanup < capture.first(SHUTDOWNS, &[]).unwrap());
+    assert_eq!(capture.count(CLEANUP_HOOKS, &[("outcome", "dropped")]), 2.0);
     // Abandoned drivers produce no report, so they record no duration.
     assert_eq!(capture.samples(SHUTDOWN_DURATION), []);
     assert_catalog(&capture);
@@ -273,8 +296,9 @@ async fn admission_wait_destroyed_while_unwinding_records_panicked() {
         async move {
             let wait = bulkhead.enter(&context, Admission::Wait);
             tokio::pin!(wait);
-            // Poll the wait once, then unwind while it is still owned.
-            assert!(futures_poll_once(wait.as_mut()).await.is_none());
+            // A zero timeout polls the wait exactly once while it stays owned.
+            let polled = tokio::time::timeout(Duration::ZERO, wait.as_mut()).await;
+            assert!(polled.is_err());
             panic!("sibling defect");
         }
     });
@@ -288,19 +312,4 @@ async fn admission_wait_destroyed_while_unwinding_records_panicked() {
     assert_eq!(decision("panicked"), 1.0);
     assert_eq!(decision("dropped"), 0.0);
     assert_catalog(&capture);
-}
-
-/// Poll `future` exactly once, returning its output if it was ready.
-async fn futures_poll_once<F: std::future::Future>(
-    future: std::pin::Pin<&mut F>,
-) -> Option<F::Output> {
-    let mut future = Some(future);
-    std::future::poll_fn(|context| {
-        let polled = future.take().unwrap().poll(context);
-        std::task::Poll::Ready(match polled {
-            std::task::Poll::Ready(output) => Some(output),
-            std::task::Poll::Pending => None,
-        })
-    })
-    .await
 }

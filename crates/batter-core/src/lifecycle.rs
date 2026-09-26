@@ -499,13 +499,26 @@ impl Supervisor {
             .into_driver(async move { scoped_dispatch::scope(self.drive_until(shutdown)).await })
     }
 
-    async fn drive_until<F>(mut self, shutdown: F) -> ShutdownReport
+    async fn drive_until<F>(self, shutdown: F) -> ShutdownReport
     where
         F: Future<Output = ()>,
     {
         // Armed before any work so an abandoned or unwinding driver still
-        // records exactly one shutdown.
+        // records exactly one shutdown. Declared before the drive future,
+        // which owns the supervisor, so on abandonment the supervisor's queued
+        // work and cleanup are destroyed (and recorded) first.
         let mut terminal = crate::telemetry::record::ShutdownTerminal::new();
+        self.drive(shutdown, &mut terminal).await
+    }
+
+    async fn drive<F>(
+        mut self,
+        shutdown: F,
+        terminal: &mut crate::telemetry::record::ShutdownTerminal,
+    ) -> ShutdownReport
+    where
+        F: Future<Output = ()>,
+    {
         self.coordinator.shared.start_driver();
         let mut tasks = TaskSet::default();
         let mut managed = Vec::new();
@@ -577,10 +590,11 @@ impl Supervisor {
             unjoined: summary.unjoined,
             cleanup,
         };
-        // Record before Stopped is published: an application root may flush
-        // its exporter as soon as it observes the stopped state.
-        terminal.finish(report.is_success());
+        // Publishing Stopped never depends on recorder code. The sample is
+        // recorded before the report is returned, so a root that flushes
+        // after awaiting the driver's completion observes it.
         self.coordinator.shared.stop_driver();
+        terminal.finish(report.is_success());
         report
     }
 

@@ -118,7 +118,6 @@ async fn finishing_unjoined_tasks_releases_ownership_without_claiming_terminatio
     }
     let mut tasks = TaskSet::default();
     tasks.spawn_process(process::QueuedProcess {
-        decision: crate::telemetry::record::AdmittedDecision::new(),
         name: "unfinished",
         future: Box::pin(async move {
             let _capture = Capture(Some(dropped));
