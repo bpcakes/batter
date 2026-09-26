@@ -538,12 +538,7 @@ impl Supervisor {
         let cancel = drain + self.budget.cancel;
         let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
-        // Measure from the canonical stop instant that every phase budget uses.
-        let stop_started = self.coordinator.shared.stop_started();
-        terminal.draining(
-            cause,
-            stop_started.unwrap_or_else(tokio::time::Instant::now),
-        );
+        terminal.draining(cause);
         tasks
             .collect_until(&mut self.queued, &self.coordinator, drain)
             .await;
@@ -594,7 +589,13 @@ impl Supervisor {
         // recorded before the report is returned, so a root that flushes
         // after awaiting the driver's completion observes it.
         self.coordinator.shared.stop_driver();
-        terminal.finish(report.is_success());
+        // Native settlement may have tightened the clock after drain began.
+        let stop_started = self
+            .coordinator
+            .shared
+            .stop_started()
+            .expect("completed shutdown follows drain");
+        terminal.finish(report.is_success(), stop_started);
         report
     }
 

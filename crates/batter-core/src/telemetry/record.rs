@@ -98,9 +98,9 @@ mod disabled {
         }
 
         #[inline]
-        pub(crate) fn draining(&mut self, _: ShutdownCause, _: Instant) {}
+        pub(crate) fn draining(&mut self, _: ShutdownCause) {}
 
         #[inline]
-        pub(crate) fn finish(&mut self, _: bool) {}
+        pub(crate) fn finish(&mut self, _: bool, _: Instant) {}
     }
 }

@@ -170,15 +170,14 @@ impl ShutdownTerminal {
         }))
     }
 
-    /// Select the cause; `started` is the canonical lifecycle stop instant
-    /// from which every drain budget is measured.
-    pub(crate) fn draining(&mut self, cause: ShutdownCause, started: Instant) {
+    /// Select the cause independently of later stop-clock tightening.
+    pub(crate) fn draining(&mut self, cause: ShutdownCause) {
         self.0.series.cause = Some(cause);
-        self.0.series.drain_started = Some(started);
     }
 
-    /// Record the completed report's result before the report is returned.
-    pub(crate) fn finish(&mut self, success: bool) {
+    /// Record the completed report using the final canonical stop instant.
+    pub(crate) fn finish(&mut self, success: bool, started: Instant) {
+        self.0.series.drain_started = Some(started);
         self.0
             .finish(vocabulary::shutdown_result(End::Finished(success)));
     }

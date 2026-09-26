@@ -313,3 +313,83 @@ async fn admission_wait_destroyed_while_unwinding_records_panicked() {
     assert_eq!(decision("dropped"), 0.0);
     assert_catalog(&capture);
 }
+
+#[test]
+fn skipped_cleanup_is_counted_once_when_capture_destruction_panics() {
+    let capture = Capture::unbounded();
+    let _recorder = facade::set_default_local_recorder(&capture);
+    struct PanicOnDrop;
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("capture destruction failed");
+        }
+    }
+    let mut stack = CleanupStack::new();
+    stack.push("first.close", || async { Ok(()) }).unwrap();
+    let captured = PanicOnDrop;
+    stack
+        .push("second.close", move || async move {
+            drop(captured);
+            Ok(())
+        })
+        .unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stack.skip(batter_core::cleanup::SkipReason::UnsafeTaskExit)
+    }));
+    assert!(result.is_err());
+    assert_eq!(capture.count(CLEANUP_HOOKS, &[("outcome", "skipped")]), 2.0);
+    assert_eq!(capture.count(CLEANUP_HOOKS, &[("outcome", "dropped")]), 0.0);
+    assert_eq!(capture.count(CLEANUP_HOOKS, &[]), 2.0);
+    assert_catalog(&capture);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_duration_uses_native_clock_tightened_after_drain_starts() {
+    use batter_core::lifecycle::{ManagedComponent, ManagedSettlement};
+    struct Settled;
+    impl ManagedSettlement for Settled {
+        fn is_success(&self) -> bool {
+            true
+        }
+        fn allows_dependency_cleanup(&self) -> bool {
+            true
+        }
+    }
+
+    let capture = Capture::unbounded();
+    let _recorder = facade::set_default_local_recorder(&capture);
+    let native_started = tokio::time::Instant::now();
+    let phase = Duration::from_secs(10);
+    let cleanup = CleanupBudget::new(phase, phase, phase).unwrap();
+    let budget = batter_core::lifecycle::ShutdownBudget::new(phase, phase, phase, cleanup).unwrap();
+    let mut supervisor = Supervisor::new(budget);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    supervisor
+        .register_managed("native", owner().into_context(), move |_| {
+            let mut stop = Some(stop);
+            Ok(ManagedComponent::new(
+                async { Ok(()) },
+                std::future::pending(),
+                move |parent_started| {
+                    assert!(parent_started >= native_started);
+                    if let Some(stop) = stop.take() {
+                        stop.send(()).unwrap();
+                    }
+                    native_started
+                },
+                async move {
+                    stopped.await.unwrap();
+                    Settled
+                },
+            ))
+        })
+        .unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    tokio::time::advance(Duration::from_secs(5)).await;
+    running.shutdown_checked().await.unwrap();
+    assert_eq!(capture.samples(SHUTDOWN_DURATION).len(), 1);
+    assert_eq!(capture.count(SHUTDOWN_DURATION, &[]), 5.0);
+    assert_eq!(capture.count(SHUTDOWNS, &[]), 1.0);
+    assert_catalog(&capture);
+}

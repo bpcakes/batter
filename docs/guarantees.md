@@ -129,14 +129,17 @@ and it publishes descriptions only after installing it. Polled but dropped
 operations, retry attempts and executions, admission waits and supervisor
 drives record `dropped`, or `panicked` when destroyed during unwinding, through
 one shared guard. A cleanup hook taken by a destroyed close driver records
-`abandoned`; hooks of an unclosed stack record `dropped`; other futures dropped
+`abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
+the stack before being counted, so a capture destructor panic cannot count them
+again as dropped. Other futures dropped
 before their first poll record nothing. A retry attempt counts only once its
 factory is invoked. Foundation-owned waits (admission, backoff) are not counted
 as operations, while adapter boundaries such as `http.response_construction`
 are. Tracing diagnostics are emitted before a boundary's metric, and
 publishing `Stopped` never waits for recorder code: shutdown is recorded after
 `Stopped` and before the report is returned, so flush after awaiting the
-driver's completion. Its duration is measured from the lifecycle stop instant;
+driver's completion. Its duration is measured from the final canonical lifecycle
+stop instant, including earlier native timestamps learned after drain begins;
 abandoned drivers record no duration and record their shutdown after the
 supervisor's own queued work and cleanup, and a startup that fails before its
 running driver records only its cleanup hooks. Process admission decisions are
