@@ -82,3 +82,7 @@ required-features = ["sqlx"]
 [[example]]
 name = "quota_service"
 required-features = ["runlimit-memory", "runlimit-axum"]
+
+[[test]]
+name = "composed_handler_consumer"
+required-features = ["axum", "sqlx", "runlimit-memory"]
