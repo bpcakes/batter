@@ -1,5 +1,5 @@
 use super::fast::{self, RollbackSlot};
-use super::{PgFailurePolicy, PgPolicyScope, run_atomic_profiled_with, run_atomic_with};
+use super::{PgFailurePolicy, PgPolicyScope, with};
 use crate::{
     PgProfiledPool,
     atomic_context::{retain, retain_with_fallback},
@@ -39,7 +39,10 @@ pub async fn run_atomic_with_in<T, P: PgFailurePolicy<T>>(
     policy: &P,
     work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
 ) -> Result<T, OperationError<P::Error>> {
-    retain(context, operation, run_atomic_with(pool, policy, work)).await
+    Box::pin(retain(context, operation, || {
+        with(pool, None, policy, work)
+    }))
+    .await
 }
 
 /// Policy-bound profiled work within one operation budget. The immutable pool
@@ -71,11 +74,9 @@ pub async fn run_atomic_profiled_with_in<T, P: PgFailurePolicy<T>>(
     policy: &P,
     work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
 ) -> Result<T, OperationError<P::Error>> {
-    retain(
-        context,
-        operation,
-        run_atomic_profiled_with(database.pool(), database.profile(), policy, work),
-    )
+    Box::pin(retain(context, operation, || {
+        with(database.pool(), Some(database.profile()), policy, work)
+    }))
     .await
 }
 
@@ -93,12 +94,13 @@ where
     P::Error: From<super::PgScopeRolledBack>,
 {
     let rollback = RollbackSlot::default();
-    retain_with_fallback(
+    let retained = rollback.clone();
+    Box::pin(retain_with_fallback(
         context,
         operation,
-        fast::run(pool, None, policy, work, rollback.clone()),
+        || fast::run(pool, None, policy, work, retained),
         || rollback.get().map(|confirmed| Err(confirmed.into())),
-    )
+    ))
     .await
 }
 
@@ -115,18 +117,21 @@ where
     P::Error: From<super::PgScopeRolledBack>,
 {
     let rollback = RollbackSlot::default();
-    retain_with_fallback(
+    let retained = rollback.clone();
+    Box::pin(retain_with_fallback(
         context,
         operation,
-        fast::run(
-            database.pool(),
-            Some(database.profile()),
-            policy,
-            work,
-            rollback.clone(),
-        ),
+        || {
+            fast::run(
+                database.pool(),
+                Some(database.profile()),
+                policy,
+                work,
+                retained,
+            )
+        },
         || rollback.get().map(|confirmed| Err(confirmed.into())),
-    )
+    ))
     .await
 }
 

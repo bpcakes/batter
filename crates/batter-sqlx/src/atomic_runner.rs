@@ -40,10 +40,7 @@ pub async fn run_atomic<T, E>(
     pool: &PgPool,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, PgAtomicError<T, E>> {
-    let owner = PgAtomicTransaction::begin(pool)
-        .await
-        .map_err(PgAtomicError::Begin)?;
-    run_owned(owner, work).await
+    Box::pin(atomic(pool, None, work)).await
 }
 
 /// Execute with declared role/path/settings restored and verified after reset,
@@ -53,16 +50,22 @@ pub async fn run_atomic_profiled<T, E>(
     profile: &crate::PgSessionProfile,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, PgAtomicError<T, E>> {
-    let owner = PgAtomicTransaction::begin_profiled(pool, profile)
-        .await
-        .map_err(PgAtomicError::Begin)?;
-    run_owned(owner, work).await
+    Box::pin(atomic(pool, Some(profile), work)).await
 }
 
-async fn run_owned<T, E>(
-    owner: PgAtomicTransaction,
+// The one unboxed workflow behind every atomic runner. Each public runner
+// heap-allocates its complete workflow exactly once, on first poll, so the
+// consumer's future holds a pointer rather than this state and its type depth.
+// Stable Rust cannot bound an `AsyncFnOnce` future by `Send`, so that erasure
+// keeps the concrete type; `Send` is still inferred from the callback.
+pub(crate) async fn atomic<T, E>(
+    pool: &PgPool,
+    profile: Option<&crate::PgSessionProfile>,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, PgAtomicError<T, E>> {
+    let owner = PgAtomicTransaction::begin_with_profile(pool, profile)
+        .await
+        .map_err(PgAtomicError::Begin)?;
     let mut scope = PgAtomicScope::new(owner);
     let result = work(&mut scope).await;
     scope.finish(result).await
