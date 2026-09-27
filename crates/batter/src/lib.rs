@@ -5,7 +5,7 @@
 //! adapter namespaces without changing native ownership.
 //!
 //! The default feature set is empty. Enable only the namespaces an application
-//! uses: `at-rest`, `axum`, `metrics`, `sqlx`, `runledger`, `runlimit`,
+//! uses: `at-rest`, `axum`, `metrics`, `otlp`, `sqlx`, `runledger`, `runlimit`,
 //! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
 //! `runlimit-axum`, and `sqlx-test-support`.
 //!
@@ -137,6 +137,10 @@ pub mod runlimit {
 pub mod test_support {
     pub use batter_test_support::*;
 }
+
+/// Optional bounded OTLP metrics adapter, driven by protected service completion.
+#[cfg(feature = "otlp")]
+pub use batter_otlp as otlp;
 
 #[cfg(test)]
 mod tests {

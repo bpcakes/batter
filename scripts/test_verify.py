@@ -54,6 +54,8 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
             ["cargo", "clippy", "-p", "runlimit-core", "-p", "runlimit-memory", "-p",
              "runlimit-postgres", "-p", "runlimit-http", "-p", "runlimit-axum",
              "--all-targets", "--locked", "--", "-D", "warnings"],
+            ["cargo", "clippy", "-p", "batter-example-reference-service", "--all-targets",
+             "--locked", "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
             *[["python3", "scripts/test_matrix.py", part] for part in
               ["workspace", "no-default-features", "doctests", "consumers", "runlimit", "scripts"]],
             ["cargo", "doc", "--workspace", "--all-features", "--no-deps", "--locked"],

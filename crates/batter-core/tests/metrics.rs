@@ -18,7 +18,7 @@ use batter_core::{
     lifecycle::{Fatal, ProcessAdmissionError, ProcessCapacity, ShutdownBudget, Supervisor},
     operation::{Interruption, OperationError, OperationOwner},
     retry::{self, ReplaySafety, RetryDecision, RetryPolicy},
-    telemetry::metrics::{self as catalog, *},
+    telemetry::metrics::*,
 };
 use capture::Capture;
 use std::{convert::Infallible, time::Duration};
@@ -403,7 +403,7 @@ async fn process_tasks_cleanup_and_shutdown_record_bounded_outcomes() {
         .unwrap();
     let shutdown = capture.first(SHUTDOWNS, &[]).unwrap();
     assert!(admitted < exited && exited < shutdown);
-    assert!(capture.series().len() <= catalog::MAX_SERIES);
+    assert!(capture.series().len() <= MAX_SERIES);
     assert_catalog(&capture);
 }
 

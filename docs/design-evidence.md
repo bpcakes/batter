@@ -63,9 +63,10 @@ Core operation, retry and semaphore admission production files were unchanged in
 the re-audited range; the later opt-in metrics work added observation hooks to
 them without changing their results. The SQLx demonstration still acquires a pool, probes it and
 explicitly tears it down. Runledger, Runlimit, typed application config, generated
-contracts, durable correlation and an exporter setup/flush recipe remain outside
-the implemented capabilities; bounded outcome metrics are an opt-in foundation
-feature. See [status](status.md) and [integrations](integrations.md).
+contracts, durable correlation and an exporter setup/flush recipe remained outside
+the implemented capabilities in that audit; bounded outcome metrics are an opt-in foundation
+feature. The reference application later added an opt-in exporter setup and
+ordered-flush recipe (`batter-8jr`). See [status](status.md) and [integrations](integrations.md).
 
 ## Failure mechanisms and ownership decisions
 

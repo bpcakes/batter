@@ -64,8 +64,11 @@ async fn install_publishes_the_catalog_to_the_recorder_it_installs() {
     let returned = install(rejected.clone()).unwrap_err().into_inner();
     assert!(rejected.described().is_empty());
     facade::with_local_recorder(&returned, || {
-        facade::counter!("rejected.identity").increment(1);
+        facade::counter!(CLEANUP_HOOKS, "outcome" => "succeeded").increment(1);
     });
-    assert_eq!(rejected.count("rejected.identity", &[]), 1.0);
+    assert_eq!(
+        rejected.count(CLEANUP_HOOKS, &[("outcome", "succeeded")]),
+        1.0
+    );
     assert_eq!(capture.described().len(), 10);
 }

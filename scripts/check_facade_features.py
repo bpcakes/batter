@@ -19,6 +19,7 @@ EXPECTED_FEATURES = {
     "at-rest",
     "axum",
     "metrics",
+    "otlp",
     "sqlx",
     "runledger",
     "runlimit",
@@ -91,6 +92,7 @@ def feature_cases() -> list[tuple[str, ...]]:
         ("at-rest",),
         ("axum",),
         ("metrics",),
+        ("otlp",),
         ("sqlx",),
         ("runledger",),
         ("runlimit",),
@@ -122,7 +124,10 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "polyval": at_rest,
         "ctr": at_rest,
         "batter-axum": axum,
-        "metrics": "metrics" in chosen,
+        "metrics": bool(chosen & {"metrics", "otlp"}),
+        "batter-otlp": "otlp" in chosen,
+        "opentelemetry_sdk": "otlp" in chosen,
+        "opentelemetry-otlp": "otlp" in chosen,
         "batter-sqlx": batter_sqlx,
         "batter-runledger": "runledger" in chosen,
         "batter-runlimit": runlimit,
@@ -145,8 +150,10 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "use batter::operation::OperationContext;",
         "fn main() {}",
     ]
-    if "metrics" in chosen:
+    if chosen & {"metrics", "otlp"}:
         lines.insert(1, "use batter::telemetry::metrics::{MAX_SERIES, install};")
+    if "otlp" in chosen:
+        lines.insert(1, "use batter::otlp::{prepare, Schedule};")
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
@@ -433,6 +440,7 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
         ((), "at-rest", "batter::at_rest"),
         ((), "axum", "batter::axum"),
         ((), "metrics", "batter::telemetry::metrics"),
+        ((), "otlp", "batter::otlp"),
         ((), "sqlx", "batter::sqlx"),
         ((), "runledger", "batter::runledger"),
         ((), "runlimit", "batter::runlimit"),

@@ -20,6 +20,7 @@ default = []
 at-rest = ["dep:batter-at-rest"]
 axum = ["dep:batter-axum"]
 metrics = ["batter-core/metrics"]
+otlp = ["dep:batter-otlp", "metrics"]
 sqlx = ["dep:batter-sqlx"]
 runledger = ["dep:batter-runledger", "sqlx"]
 runlimit = ["dep:batter-runlimit"]
@@ -30,6 +31,7 @@ test-support = ["dep:batter-test-support"]
 sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
 [dependencies]
+batter-otlp = { workspace = true, optional = true }
 batter-core = { path = "../batter-core", version = "0.0.1", default-features = false }
 batter-at-rest = { workspace = true, optional = true }
 batter-axum = { workspace = true, optional = true }

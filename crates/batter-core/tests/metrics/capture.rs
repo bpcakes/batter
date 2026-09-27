@@ -4,6 +4,7 @@
 //! discarded by the recorder and counted, never reported back to Batter.
 #![allow(dead_code)]
 
+use super::catalog::{self, MetricKind};
 use metrics::{
     Counter, CounterFn, Gauge, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder,
     SharedString, Unit,
@@ -113,7 +114,12 @@ impl Capture {
         self.store.lock().unwrap().registrations
     }
 
-    fn handle(&self, key: &Key) -> Arc<Handle> {
+    fn handle(&self, key: &Key, kind: MetricKind) -> Arc<Handle> {
+        let shape =
+            catalog::shape(key.name()).expect("foundation metric belongs to the shared catalog");
+        assert!(shape.kind() == kind, "wrong metric kind for {key:?}");
+        // Check the original order before normalizing labels for sample lookup.
+        assert!(shape.accepts(key), "catalog rejected emitted key: {key:?}");
         self.store.lock().unwrap().registrations += 1;
         let mut labels: Vec<_> = key
             .labels()
@@ -177,7 +183,7 @@ impl Recorder for Capture {
     }
 
     fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
-        Counter::from_arc(self.handle(key))
+        Counter::from_arc(self.handle(key, MetricKind::Counter))
     }
 
     fn register_gauge(&self, _: &Key, _: &Metadata<'_>) -> Gauge {
@@ -185,6 +191,6 @@ impl Recorder for Capture {
     }
 
     fn register_histogram(&self, key: &Key, _: &Metadata<'_>) -> Histogram {
-        Histogram::from_arc(self.handle(key))
+        Histogram::from_arc(self.handle(key, MetricKind::Histogram))
     }
 }

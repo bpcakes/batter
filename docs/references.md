@@ -22,8 +22,8 @@ are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
 [Prometheus naming practice](https://prometheus.io/docs/practices/naming/)
 (`_total` counters, base-unit `_seconds`) and its
 [cardinality guidance](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels).
-Recorder aggregation and exporter buffering were not reviewed; the selected
-exporter and its flush order belong to `batter-8jr`.
+Recorder aggregation and exporter buffering were not reviewed for `batter-6vn`;
+the selected exporter and its flush order are recorded below for `batter-8jr`.
 
 Rechecked the locked recorder implementation on 2026-09-26: `with_recorder`
 prefers a thread-local recorder, including for description macros. There is no
@@ -31,6 +31,99 @@ public global-recorder getter. Global installation requires `Sync`, without
 `Send`, and returns the rejected recorder through `SetRecorderError<R>`. Batter
 therefore retains a shared reference to the accepted recorder for direct catalog
 publication; ordinary observations still use the facade's scoped dispatch.
+
+## Reference metrics export: reviewed 2026-09-26
+
+For `batter-8jr`, resolved with Cargo and read the locked sources of
+`metrics-exporter-otel` 0.3.1, `opentelemetry` and `opentelemetry_sdk` 0.31.0,
+`opentelemetry-otlp` 0.31.1, `opentelemetry-http` 0.31.0 and
+`opentelemetry-proto` 0.31.0. Newer 0.33 OpenTelemetry releases exist, but the
+exporter bridge requires `opentelemetry` 0.31.
+
+- [metrics-exporter-otel source](https://docs.rs/crate/metrics-exporter-otel/0.3.1/source/):
+  `storage.rs` creates one observable counter with its own callback and
+  attribute vector per complete key and one histogram per key; `lib.rs` keeps a
+  registry entry per key and `metadata.rs` one description per name/kind, with
+  no bound. `metadata.rs::set_description` retains caller text, and `storage.rs`
+  applies it when creating an instrument, so the adapter checks the exact
+  catalog description before delegation. Histogram boundaries must be set
+  before first creation.
+- [SDK `ManualReader`](https://docs.rs/opentelemetry_sdk/0.31.0/opentelemetry_sdk/metrics/struct.ManualReader.html)
+  and `metrics/mod.rs` export the reader, `MetricReader` and `Pipeline` only under
+  `experimental_metrics_custom_reader`. `manual_reader.rs::force_flush` is a
+  no-op and `shutdown_with_timeout` only detaches the producer; collection after
+  shutdown fails. `meter_provider.rs` ignores shutdown timeouts.
+  `pipeline.rs` applies a default 2,000-stream cardinality limit per instrument;
+  the largest foundation instrument has 792 series.
+  `Resource::builder()` reads `OTEL_*` resource detectors;
+  `Resource::builder_empty()` does not.
+- [OTLP HTTP metrics source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/metrics.rs)
+  treats every 2xx as success without decoding the response and formats a
+  non-success body and custom client errors into `InternalFailure` strings.
+  The [HTTP builder source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/mod.rs)
+  merges `OTEL_EXPORTER_OTLP_*HEADERS` even with explicit
+  configuration, and reads endpoint, timeout and compression variables when not
+  set explicitly. With a caller-supplied HTTP client, its selected timeout is
+  retained in `_timeout` but not applied to the request; Batter's separate
+  attempt and final deadlines bound yielding transport work. The exporter
+  performs no retry.
+- [`opentelemetry-http` `HttpClient`](https://docs.rs/opentelemetry-http/0.31.0/opentelemetry_http/trait.HttpClient.html)
+  receives the encoded `Request<Bytes>`, which permits a payload ceiling before
+  dispatch and a fixed, body-free response.
+- [OTLP partial success](https://opentelemetry.io/docs/specs/otlp/#partial-success)
+  requires distinguishing rejected points from full acceptance and forbids
+  automatic retry of partially accepted requests; a message without rejected
+  points is a warning. [OTLP/HTTP responses](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+  require HTTP 200 for both full and partial success, and carry a protobuf
+  `ExportMetricsServiceResponse` for protobuf requests. The adapter treats
+  every other HTTP status as a typed failure, including other 2xx responses;
+  the upstream client accepts any 2xx, so this is an adapter-owned check.
+  [Binary Protobuf encoding](https://opentelemetry.io/docs/specs/otlp/#binary-protobuf-encoding)
+  requires the collector response to declare `Content-Type: application/x-protobuf`.
+
+The resolved graph was checked with `cargo tree -e features`: no
+`internal-logs`, `reqwest-blocking-client` or `experimental_async_runtime`.
+`http-proto` enables the exporter's trace feature and tonic-generated message
+types. These are source facts, not proof of collector durability.
+
+Extraction amendment, 2026-09-26 (`batter-i3ny`): the same Cargo-resolved bridge,
+SDK and OTLP versions now live in optional `batter-otlp`. Rechecked the published
+SDK 0.31.0 ManualReader documentation and OTLP response specification; the native
+force-flush and response semantics above are unchanged. Core now owns service
+completion and catalog definitions; adapter configuration remains explicit.
+Synchronous SDK collection/closure is not made preemptible by async deadlines.
+
+Review repair, 2026-09-26 (`batter-i3ny`): rechecked locked reqwest 0.12.28
+`src/retry.rs` and `src/async_impl/client.rs` against its
+[`ClientBuilder::retry` contract](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.retry).
+The default permits two extra dispatches for protocol NACKs, including HTTP/2
+`REFUSED_STREAM` and remote graceful `GOAWAY`. Another consumer can enable HTTP/2
+through Cargo feature unification. The adapter therefore selects
+`reqwest::retry::never()` explicitly. A native h2c `REFUSED_STREAM` regression
+compares the default policy with the production policy; it does not exercise TLS
+certificate validation or ALPN negotiation.
+
+Branch review repair, 2026-09-27 (`batter-i3ny`): rechecked the primary
+[OTLP/HTTP response contract](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+and locked Tokio 1.53.1
+[`Instant::checked_add`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.checked_add).
+OTLP requires HTTP 200 for full and partial success, so the adapter rejects
+other 2xx statuses before decoding. `checked_add` returns `None` if a later
+deadline no longer fits; schedule validation checks representability only at
+construction, so the serial owner clamps an extreme allowance at each use.
+
+## Native PostgreSQL container mapping: reviewed 2026-09-27
+
+In locked testcontainers 0.28.0,
+[`RawContainer::get_host_port_ipv4`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/containers/async_container/raw.rs)
+reads the container's ports and reports an error while the requested mapping is
+absent. [`Client::ports`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/client.rs)
+inspects Docker on each call. A full local workspace run observed the mapping
+absent through ten 250 ms attempts, while a focused rerun of the same native
+test passed. Runledger test support now waits under its existing 30-second
+PostgreSQL bootstrap allowance before failing that prerequisite; this is a
+bounded fixture readiness policy, not evidence that Docker always publishes a
+mapping or that the database is ready.
 
 ## Native query adapters: reviewed 2026-09-22
 

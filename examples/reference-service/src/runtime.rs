@@ -19,6 +19,12 @@ use runledger_core::jobs::JobExecutionHandler;
 use std::{fmt, time::Duration};
 
 mod announcement;
+mod completion;
+
+pub use completion::{
+    NativeCompletion, OrchestrationFailure, ServiceCompletion, ServiceFailure, ServiceObserver,
+    ServiceOwner,
+};
 
 const STARTUP_ALLOWANCE: Duration = Duration::from_secs(20);
 
@@ -190,17 +196,57 @@ impl std::error::Error for RuntimePoolCleanupFailure {
     }
 }
 
-/// Run a purpose-qualified preparation until shutdown.
-/// Native loop acknowledgement, fresh PostgreSQL health and explicit application
-/// approval are separate. No production startup control job is created.
-/// The provider handler is registered before native preparation, and ordinary
-/// startup approval remains contingent on every critical acknowledgement.
+/// Start one owned serving run on the current Tokio runtime.
 ///
-/// Startup-owned SIGTERM/SIGINT listeners are installed before initialization.
-/// A startup failure downcasts to [`ProtectedRuntimeStartupFailure`]. Generic
-/// running failures downcast to [`batter::lifecycle::ShutdownFailure`]; an
-/// otherwise successful report without its required pool-cleanup record
-/// downcasts to [`RuntimePoolCleanupFailure`].
+/// Calling this function is the explicit execution boundary: the returned
+/// owner's orchestration installs any configured metrics recorder, then runs
+/// protected startup with library-owned SIGTERM/SIGINT listeners, native loop
+/// acknowledgement, fresh PostgreSQL health and explicit application approval
+/// as separate readiness inputs. No production startup control job is created.
+/// The provider handler is registered before native preparation.
+///
+/// The final metrics snapshot is collected only after protected startup
+/// failure cleanup or complete running-driver settlement, including the
+/// shutdown metric recorded after `Stopped`, then exported under its own
+/// allowance before the exporter and provider are closed. Readiness, drain and
+/// cleanup hooks cannot begin that finalization, and collector I/O never spends
+/// service cleanup budgets. The completion retains the original service result
+/// separately from [`crate::diagnostics::MetricsExport`].
+///
+/// A startup failure downcasts from [`ServiceFailure::error`] to
+/// [`ProtectedRuntimeStartupFailure`]. Generic running failures downcast to
+/// [`batter::lifecycle::ShutdownFailure`]; an otherwise successful report
+/// without its required pool-cleanup record downcasts to
+/// [`RuntimePoolCleanupFailure`].
+///
+/// # Panics
+///
+/// Panics outside a Tokio runtime.
+///
+/// ```no_run
+/// use batter_example_reference_service::{config::PreparedServing, runtime};
+///
+/// async fn serve(prepared: PreparedServing) -> std::process::ExitCode {
+///     let owner = runtime::start(prepared);
+///     // Keep an observer before any owner loss; waiter cancellation requests nothing.
+///     let observer = owner.observer();
+///     let completion = owner.wait().await;
+///     drop(owner);
+///     assert_eq!(observer.wait().await.exit_code(), completion.exit_code());
+///     completion.exit_code()
+/// }
+/// ```
+pub fn start(prepared: PreparedServing) -> ServiceOwner {
+    let (parts, metrics) = prepared.into_parts();
+    ServiceOwner::new(batter::service::start(serving_startup(parts), metrics))
+}
+
+/// Start one serving run and await its retained completion.
+///
+/// Never polling the returned future starts no application work. Dropping it
+/// after the first poll drops the owner, which requests drain; the orchestration
+/// still settles cleanup, the final export and diagnostic closure. Use
+/// [`start`] to keep an observer across owner loss.
 ///
 /// Maintenance preparation cannot cross this boundary:
 ///
@@ -211,14 +257,27 @@ impl std::error::Error for RuntimePoolCleanupFailure {
 ///     let future = runtime::run(prepared);
 /// }
 /// ```
-pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
-    let parts = prepared.into_parts();
+pub async fn run(prepared: PreparedServing) -> ServiceCompletion {
+    start(prepared).wait().await
+}
+
+fn serving_startup(
+    parts: crate::config::ServingParts,
+) -> batter::startup::ScopedStartup<
+    impl for<'a> FnOnce(
+        &'a mut ProtectedStartupScope,
+    ) -> batter::startup::StartupFuture<'a, InitializationFailure>
+    + Send
+    + 'static,
+> {
     let supervisor = parts.supervisor;
     let lifecycle = supervisor.status();
     let admission = supervisor.operation_admission();
-    let context = batter::operation::OperationOwner::new(STARTUP_ALLOWANCE)?.into_context();
+    let context = batter::operation::OperationOwner::new(STARTUP_ALLOWANCE)
+        .expect("static startup allowance is valid")
+        .into_context();
     let native_startup = context.clone();
-    let mut starting = Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
+    Startup::scoped(supervisor, context, cleanup_budget(), move |scope| {
         Box::pin(async move {
             let result: Result<(), BoxError> = async {
                 scope.stage("postgres.acquire")?;
@@ -264,10 +323,6 @@ pub async fn run(prepared: PreparedServing) -> Result<(), BoxError> {
         })
     })
     .with_unix_signals("signals")
-    .start();
-    let pending = starting.wait().await.map_err(startup_failure)?;
-    check_application_shutdown(pending.wait_checked().await?)?;
-    Ok(())
 }
 
 fn check_application_shutdown(success: ShutdownSuccess) -> Result<(), BoxError> {

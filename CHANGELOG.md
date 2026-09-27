@@ -14,6 +14,17 @@ contracts, capability facts and validation history.
 - Migrate the runnable service, worker, quota, SQLx, and reference consumers to
   checked completion. Preserve body and shutdown failures together in the finite
   process example and add external `anyhow`/`BoxError` lifecycle controls.
+- Add public `batter-core::service` protected completion and the shared
+  `telemetry::metrics::catalog`. The facade exposes service completion and an
+  opt-in `otlp` feature for the new public `batter-otlp` package. The adapter
+  guards catalog keys and descriptions before a shared SDK `ManualReader`, exports serial bounded
+  OTLP/HTTP snapshots, and retains typed collector outcomes. It rejects
+  unsupported response media types, including empty-body responses.
+- Add the unpublished reference service's opt-in `metrics-export` consumer.
+  Its `runtime::run` returns a retained `ServiceCompletion`, and `runtime::start`
+  returns a `ServiceOwner` with cloneable observers. Final export follows the
+  retained service result and closes normally afterward; metrics diagnostics
+  never change the service result or exit classification.
 
 ## 0.0.1 — 2026-09-22
 
