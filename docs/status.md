@@ -1,5 +1,14 @@
 # Implementation status
 
+2026-09-27 OTLP guard closure repair (`batter-i3ny`): recorder calls now register
+as active before delegation; close stops new calls and waits for active ones.
+Later registrations or descriptions cannot reach the bridge. A forced interleaving
+regression failed on the prior implementation and passes with the gate. The final
+report reads rejection counters after closure waits for active calls. Existing
+metric handles held by detached producers cannot be revoked; this change does
+not claim global quiescence or collector durability. Verification details belong
+to the owning Bead.
+
 2026-09-25 verification simplification (`batter-zrnx`): direct `scripts/verify.sh` commands replace
 Jig plans, receipts and gates. The unchanged file-budget policy uses Jig’s
 standalone checker in local verification and CI. Tracked work state and plans

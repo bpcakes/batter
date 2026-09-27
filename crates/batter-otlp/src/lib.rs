@@ -359,12 +359,14 @@ impl Session {
     async fn finish(mut self, coverage: FinalCoverage) -> ExportReport {
         let deadline = deadline_after(Instant::now(), self.schedule.final_allowance);
         let final_export = self.attempt(deadline).await;
-        let rejected = self.resources.state.rejections();
+        let state = self.resources.state.clone();
+        let closure = self.resources.close();
+        let rejected = state.rejections();
         ExportReport {
             periodic: self.history,
             final_export,
             coverage,
-            closure: self.resources.close(),
+            closure,
             rejected,
         }
     }

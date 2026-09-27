@@ -792,6 +792,10 @@ coalesce in constant time. `ManualReader::force_flush` is not network delivery.
 
 Final export begins after retained service completion and any in-flight periodic
 attempt, with a separate allowance. Normal finalization closes resources once.
+Guard closure waits for in-flight recorder delegation, then rejects later
+registrations and descriptions before they reach the bridge. Handles already
+obtained by detached producers cannot be revoked or joined by the guard.
+The final report reads rejection counts after this closure barrier.
 Allowances bound yielding I/O, not synchronous SDK collection/closure; panic cannot
 prove resource closure. Coverage describes reports, including missing reports,
 unjoined work and skipped cleanup, not global quiescence. Installation remains

@@ -56,7 +56,8 @@ pub struct ExportReport {
     pub coverage: FinalCoverage,
     /// Explicit exporter and provider closure after the final export.
     pub closure: DiagnosticClosure,
-    /// Observations rejected before the metrics bridge allocated anything.
+    /// Rejections from recorder calls admitted before guard closure. Calls
+    /// after closure do not delegate or increment these counters.
     pub rejected: GuardRejections,
 }
 

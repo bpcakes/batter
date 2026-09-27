@@ -4,6 +4,8 @@
 
 #[path = "../../tests/support/collector.rs"]
 mod collector;
+#[path = "tests/guard_closure.rs"]
+mod guard_closure;
 #[path = "tests/ordering.rs"]
 mod ordering;
 #[path = "tests/transport.rs"]

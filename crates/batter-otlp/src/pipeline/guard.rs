@@ -13,11 +13,13 @@ use batter_core::telemetry::metrics::{
     self as catalog,
     facade::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit},
 };
+#[cfg(test)]
+use std::sync::RwLockWriteGuard;
 use std::{
     collections::HashSet,
     sync::{
-        PoisonError, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Condvar, Mutex, PoisonError, RwLock,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -35,12 +37,31 @@ use batter_core::telemetry::metrics::catalog::{MetricKind as Kind, shape};
 #[derive(Default)]
 pub(crate) struct GuardState {
     keys: RwLock<HashSet<Key>>,
-    closed: AtomicBool,
+    gate: Mutex<Gate>,
+    idle: Condvar,
     unknown_names: AtomicU64,
     invalid_labels: AtomicU64,
     invalid_descriptions: AtomicU64,
     unsupported_kinds: AtomicU64,
     capacity: AtomicU64,
+}
+
+#[derive(Default)]
+struct Gate {
+    closed: bool,
+    active: usize,
+}
+
+struct InFlight<'a>(&'a GuardState);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        let mut gate = self.0.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        gate.active -= 1;
+        if gate.active == 0 {
+            self.0.idle.notify_all();
+        }
+    }
 }
 
 impl GuardState {
@@ -63,10 +84,35 @@ impl GuardState {
             .len()
     }
 
-    /// Stop delegating after the final snapshot. Later observations cannot be
-    /// exported and must not allocate in the bridge.
+    #[cfg(test)]
+    pub(crate) fn hold_keys(&self) -> RwLockWriteGuard<'_, HashSet<Key>> {
+        self.keys.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gate_state(&self) -> (bool, usize) {
+        let gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        (gate.closed, gate.active)
+    }
+
+    /// Reject new recorder calls, then wait for in-flight delegation.
+    /// Existing handles held outside the service cannot be revoked.
     pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        let mut gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        gate.closed = true;
+        while gate.active != 0 {
+            gate = self.idle.wait(gate).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Keep the admission counted through upstream delegation.
+    fn open(&self) -> Option<InFlight<'_>> {
+        let mut gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+        if gate.closed {
+            return None;
+        }
+        gate.active += 1;
+        Some(InFlight(self))
     }
 
     fn reject(counter: &AtomicU64) {
@@ -75,9 +121,6 @@ impl GuardState {
 
     /// Validate a registration, then admit its key within the fixed capacity.
     fn admit(&self, key: &Key, kind: Kind) -> bool {
-        if self.closed.load(Ordering::SeqCst) {
-            return false;
-        }
         let Some(shape) = shape(key.name()) else {
             Self::reject(&self.unknown_names);
             return false;
@@ -147,12 +190,18 @@ impl<R: Recorder> CatalogRecorder<R> {
 
 impl<R: Recorder> Recorder for CatalogRecorder<R> {
     fn describe_counter(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+        let Some(_open) = self.state.open() else {
+            return;
+        };
         if self.state.describe(&key, Kind::Counter, unit, &description) {
             self.inner.describe_counter(key, unit, description);
         }
     }
 
     fn describe_gauge(&self, key: KeyName, _: Option<Unit>, _: SharedString) {
+        let Some(_open) = self.state.open() else {
+            return;
+        };
         if shape(key.as_str()).is_some() {
             GuardState::reject(&self.state.invalid_descriptions);
         } else {
@@ -161,6 +210,9 @@ impl<R: Recorder> Recorder for CatalogRecorder<R> {
     }
 
     fn describe_histogram(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+        let Some(_open) = self.state.open() else {
+            return;
+        };
         if self
             .state
             .describe(&key, Kind::Histogram, unit, &description)
@@ -170,6 +222,9 @@ impl<R: Recorder> Recorder for CatalogRecorder<R> {
     }
 
     fn register_counter(&self, key: &Key, metadata: &Metadata<'_>) -> Counter {
+        let Some(_open) = self.state.open() else {
+            return Counter::noop();
+        };
         if self.state.admit(key, Kind::Counter) {
             self.inner.register_counter(key, metadata)
         } else {
@@ -178,6 +233,9 @@ impl<R: Recorder> Recorder for CatalogRecorder<R> {
     }
 
     fn register_gauge(&self, key: &Key, _: &Metadata<'_>) -> Gauge {
+        let Some(_open) = self.state.open() else {
+            return Gauge::noop();
+        };
         if shape(key.name()).is_some() {
             GuardState::reject(&self.state.unsupported_kinds);
         } else {
@@ -187,6 +245,9 @@ impl<R: Recorder> Recorder for CatalogRecorder<R> {
     }
 
     fn register_histogram(&self, key: &Key, metadata: &Metadata<'_>) -> Histogram {
+        let Some(_open) = self.state.open() else {
+            return Histogram::noop();
+        };
         if self.state.admit(key, Kind::Histogram) {
             self.inner.register_histogram(key, metadata)
         } else {

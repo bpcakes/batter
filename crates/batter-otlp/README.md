@@ -36,6 +36,8 @@ need an explicitly composed recorder elsewhere.
 Final collection follows the retained startup/shutdown result. Any in-flight
 periodic attempt settles first, then final export receives its own allowance.
 Exporter/provider closure follows the attempt exactly once on normal completion.
+Guard closure waits for in-flight recorder delegation and rejects later registrations
+and descriptions. Previously obtained handles remain outside that guard.
 Allowances bound yielding I/O, not synchronous SDK collection/closure or blocking
 recorder code. Diagnostic panic is retained but cannot guarantee resource closure.
 Report coverage does not prove unsupervised work stopped; acknowledgement does
