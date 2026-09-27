@@ -306,6 +306,7 @@ dependencies = [
  "batter-core",
  "cookie",
  "http-body",
+ "pin-project-lite",
  "serde",
  "tokio",
  "tower",
