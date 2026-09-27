@@ -190,6 +190,31 @@ panics, retained startup/cleanup errors, early owner loss and signal installatio
 SDK/collector tests and a separate worker composition exercise adapter extraction.
 Fresh-agent consumer implementation/modification evaluation remains unexecuted.
 
+### Private-response referrer assessment (`batter-lto`)
+
+The adapter previously fixed `Referrer-Policy: same-origin`. A consumer needing
+`no-referrer` kept separate header middleware whose effect depended on its
+placement: inside `private_response`, it was silently overwritten. The
+canonical choice is now the exhaustive `Copy` `PrivateResponsePolicy`, which is
+itself the Tower layer, so selection and application are one value in one
+`layer` call without a paired state and middleware function. Weaker, raw, empty
+and comma-listed tokens have no representation (compile-fail rustdoc), and
+`no-store`/`nosniff` cannot be deselected. Application keeps an existing
+all-`no-referrer` field, so nested layers resolve to the strictest choice in
+either order instead of depending on layer order.
+
+The stateless `private_response` remains the compatibility path for the
+default. It ignores router state, so pairing it with a policy through
+`from_fn_with_state` still applies `same-origin`; its rustdoc directs new
+compositions to the typed layer. Intermediate middleware can rewrite the field,
+an outer short-circuit bypasses the layer, and page markup or `fetch` options
+can change the document's policy; these remain application boundaries.
+`NoReferrer` makes same-origin HTML form posts carry `Origin: null`, so
+exact-origin form mutation needs `SameOriginReferrer`: a documented browser
+protocol consequence, not a local type invariant. Per-group application through
+`HttpBoundary` belongs to `batter-tc9w.3`. Fresh-agent usability evaluation is
+proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

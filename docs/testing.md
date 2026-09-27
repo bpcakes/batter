@@ -1450,15 +1450,19 @@ status/code mapping, and deterministic Origin/Fetch/marker/content precedence.
 Every marker policy automatically requires exact same-origin Fetch Metadata; a
 regression uses the user-agent-added `Upgrade-Insecure-Requests` navigation
 field to prove that the marker alone and a cross-site value both fail closed.
-Real Axum Router cases prove private headers cover inner success,
+Real Axum Router cases run the compatibility middleware and both
+`PrivateResponsePolicy` layers. They prove private headers cover inner success,
 application errors, rejection middleware and fallback, preserve response data,
 do not cover an outer short-circuit, and compose inside one `observe_http` event
-without request-header leakage. The exact `Referrer-Policy: same-origin` value
-pins the specification-level composition with exact-origin HTML form mutations;
+without request-header leakage. Direct and layered cases pin both exact
+referrer values, replacement of weaker handler fields, retention of an
+all-`no-referrer` field, nesting in either order, the documented
+intermediate-rewrite limit and inner-service error passthrough. The exact values
+pin the specification-level composition with exact-origin HTML form mutations;
 no browser request constructor is simulated. Adapter doctests compile the public
-consumer shapes. No browser process, application session store, CORS policy, or
-real credential protocol is simulated; the target proves the HTTP header
-contract.
+consumer shapes, and a compile-fail doctest rejects a weaker referrer variant.
+No browser process, application session store, CORS policy, or real credential
+protocol is simulated; the target proves the HTTP header contract.
 
 ## Axum operational defaults
 

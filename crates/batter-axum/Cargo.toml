@@ -19,6 +19,7 @@ workspace = true
 batter-core.workspace = true
 axum.workspace = true
 cookie.workspace = true
+pin-project-lite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "net"] }
 tracing.workspace = true

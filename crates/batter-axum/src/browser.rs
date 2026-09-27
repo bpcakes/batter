@@ -2,9 +2,10 @@
 //!
 //! This module validates trusted origins, reads one named cookie without
 //! duplicate ambiguity, emits fixed-scope cookies, checks application-selected
-//! browser mutation signals, and applies private-response headers. It does not
-//! authenticate callers, authorize requests, configure CORS, define a CSRF
-//! token protocol, or clear server-side session state.
+//! browser mutation signals, and applies private-response headers with a typed
+//! referrer choice. It does not authenticate callers, authorize requests,
+//! configure CORS, define a CSRF token protocol, or clear server-side session
+//! state.
 //!
 //! All trusted configuration is constructed before serving. Request checks are
 //! synchronous and do not log or retain observed header values.
@@ -24,4 +25,7 @@ pub use mutation::{
     RequiredHeaderError,
 };
 pub use origin::{BrowserOrigin, BrowserOriginError};
-pub use private_response::{apply_private_response_headers, private_response};
+pub use private_response::{
+    PrivateResponseFuture, PrivateResponsePolicy, PrivateResponseService,
+    apply_private_response_headers, private_response,
+};

@@ -25,6 +25,16 @@ contracts, capability facts and validation history.
   returns a `ServiceOwner` with cloneable observers. Final export follows the
   retained service result and closes normally afterward; metrics diagnostics
   never change the service result or exit classification.
+- Add `batter_axum::browser::PrivateResponsePolicy`, an exhaustive choice
+  between `SameOriginReferrer` (the default) and `NoReferrer` for private
+  responses. The policy is one Tower layer and also applies directly to a
+  `HeaderMap`; `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`
+  stay fixed and weaker referrer policies are unrepresentable. Every
+  application, including the unchanged compatibility `private_response` and
+  `apply_private_response_headers`, now keeps an existing all-`no-referrer`
+  field instead of replacing it with `same-origin`, so an outer layer cannot
+  weaken an inner `NoReferrer` choice. Rustdoc explains the `Referer` and
+  `Origin` consequences for document navigations and HTML form mutations.
 
 ## 0.0.1 — 2026-09-22
 

@@ -1547,17 +1547,30 @@ replacing siblings. Before mutation they reject an existing field with the same
 case-sensitive cookie name, preventing ambiguous set/set, set/removal, and
 removal/set responses. The error is typed and contains no cookie name or value.
 
-Private-response mutation overwrites exactly `Cache-Control: no-store`,
-`Referrer-Policy: same-origin`, and `X-Content-Type-Options: nosniff`, preserving
-status, body, extensions and unrelated headers. The referrer policy withholds
-referrer information from cross-origin requests while preserving the serialized
-origin on same-origin non-CORS mutations such as HTML form submissions. A
-non-CORS form post to another origin carries `Origin: null` and cannot satisfy
-that target's exact-origin policy; such a page/target layout requires a
-different response policy and composition. The
-middleware covers inner success, error, rejection and fallback responses; it
-cannot affect an outer short-circuit that never calls it and creates no
-observation of its own.
+Private-response mutation overwrites `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff` and sets one `Referrer-Policy` field selected
+by the exhaustive `PrivateResponsePolicy`: `same-origin` (`SameOriginReferrer`,
+the default and the compatibility `private_response` value) or `no-referrer`
+(`NoReferrer`). Weaker, raw and comma-listed referrer policies are
+unrepresentable. Status, body, extensions and unrelated headers are preserved.
+Existing fields of all three names are replaced, except that an existing
+`Referrer-Policy` made only of exact `no-referrer` fields stays `no-referrer`
+under `SameOriginReferrer`. Nested private-response layers therefore never
+weaken an inner `NoReferrer` choice unless intermediate middleware rewrites the
+field.
+
+The selected value is the document's initial referrer policy. Under
+`SameOriginReferrer`, same-origin non-CORS mutations such as HTML form posts keep
+the serialized origin, while a non-CORS form post to another origin carries
+`Origin: null` and cannot satisfy that target's exact-origin policy. Under
+`NoReferrer`, every non-CORS mutation, including a same-origin form post, carries
+`Origin: null`, and same-origin navigations send no `Referer`. The `Origin` of
+CORS-mode requests, the default for script `fetch`, and `Sec-Fetch-Site` are
+unaffected. Page markup and `fetch` options can still change the policy; Batter
+does not control page content. The layer and compatibility middleware cover
+inner success, error, rejection and fallback responses; they cannot affect an
+outer short-circuit that never calls them and create no observation of their
+own.
 
 These are bounded header/cookie mechanics, not authentication, authorization,
 CORS, proxy trust, token generation/comparison, a complete CSRF proof, browser
