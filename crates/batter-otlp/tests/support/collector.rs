@@ -41,6 +41,12 @@ pub enum Behavior {
     Malformed,
     /// 200 with a non-empty body that is not protobuf.
     WrongContentType,
+    /// 200 with an empty body and a non-protobuf content type.
+    EmptyWrongContentType,
+    /// 200 with a protobuf-prefix lookalike content type.
+    PrefixContentType,
+    /// 200 with a valid protobuf content type parameter.
+    ParameterizedContentType,
     /// 200 declaring a body above any reasonable response ceiling.
     DeclaredOversized,
     /// 200 streaming a body above the response ceiling without a length.
@@ -190,6 +196,10 @@ fn protobuf(status: StatusCode, message: &impl Message) -> Response {
         .into_response()
 }
 
+fn typed_response(content_type: &'static str, body: impl IntoResponse) -> Response {
+    (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], body).into_response()
+}
+
 async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
     let Ok(request) = ExportMetricsServiceRequest::decode(body) else {
         return (StatusCode::BAD_REQUEST, BODY_MARKER).into_response();
@@ -217,24 +227,23 @@ async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
             BODY_MARKER,
         )
             .into_response(),
-        Behavior::Malformed => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/x-protobuf")],
-            vec![0xff; 16],
-        )
-            .into_response(),
-        Behavior::WrongContentType => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/plain")],
-            BODY_MARKER,
-        )
-            .into_response(),
-        Behavior::DeclaredOversized => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/x-protobuf")],
-            vec![0; OVERSIZED],
-        )
-            .into_response(),
+        Behavior::Malformed => typed_response("application/x-protobuf", vec![0xff; 16]),
+        Behavior::WrongContentType => typed_response("text/plain", BODY_MARKER),
+        Behavior::EmptyWrongContentType => typed_response("text/plain", Vec::<u8>::new()),
+        Behavior::PrefixContentType => typed_response(
+            "application/x-protobuf-extra",
+            ExportMetricsServiceResponse {
+                partial_success: Some(ExportMetricsPartialSuccess {
+                    rejected_data_points: 0,
+                    error_message: String::new(),
+                }),
+            }
+            .encode_to_vec(),
+        ),
+        Behavior::ParameterizedContentType => {
+            typed_response("application/x-protobuf; charset=binary", Vec::<u8>::new())
+        }
+        Behavior::DeclaredOversized => typed_response("application/x-protobuf", vec![0; OVERSIZED]),
         Behavior::StreamedOversized => {
             let chunks = (0..OVERSIZED / 4096).map(|_| Ok::<_, std::io::Error>(vec![0; 4096]));
             (

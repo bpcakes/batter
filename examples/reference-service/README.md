@@ -12,8 +12,10 @@ contracts and execution evidence. The earlier 58-entry live inventory passed on
 Linux with both supported toolchains. The prior 64-entry revision passed on macOS
 with both supported toolchains. The 66-entry state-first provider suite
 passed on macOS with Rust 1.98.1 and exact 1.94.0 against PostgreSQL 18.6. The
-current 68-entry suite, adding the two metrics export cases, passed on macOS with
-Rust 1.98.1 against PostgreSQL 18.6; its Rust 1.94.0 run belongs to CI.
+68-entry suite, adding the two metrics export cases, passed on macOS with
+Rust 1.98.1 against PostgreSQL 18.6 before the service/exporter extraction.
+Those live results do not establish current-tree PostgreSQL behavior. The live
+suite has not been rerun on this tree; routine Rust 1.94.0 verification is CI-owned.
 Two exact legacy test aliases were removed rather than retained through the hard cutover.
 
 ## Staged worker and atomic delivery command

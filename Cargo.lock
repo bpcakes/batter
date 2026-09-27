@@ -382,6 +382,7 @@ dependencies = [
  "h2",
  "http",
  "metrics-exporter-otel",
+ "mime",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-otlp",

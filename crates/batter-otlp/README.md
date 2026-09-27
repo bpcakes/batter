@@ -23,11 +23,14 @@ including synchronous installation and asynchronous diagnostic panics. Diagnosti
 are process-global: a second installation is rejected and closes only its own
 pipeline. After successful installation the recorder cannot be reset/reloaded.
 
-The adapter admits only Batter's catalog through its shared schema, caps complete
-keys before bridge allocation, uses fixed histogram buckets, and exports
+The adapter admits only Batter's catalog names, labels and descriptions through
+its shared schema, caps complete keys before bridge allocation, uses fixed
+histogram buckets, and exports
 cumulative manual-reader snapshots with one serial owner. It has no queue or
 retry, limits requests to 2 MiB and responses to 64 KiB, and retains typed failure
-categories. It is a dedicated Batter-only pipeline; custom application metrics
+categories. A successful collector response must declare the Protobuf media type
+even when its body is empty; a lookalike media type cannot acknowledge an export.
+It is a dedicated Batter-only pipeline; custom application metrics
 need an explicitly composed recorder elsewhere.
 
 Final collection follows the retained startup/shutdown result. Any in-flight

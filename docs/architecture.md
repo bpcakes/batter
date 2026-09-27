@@ -38,7 +38,7 @@ collection of wrappers around every dependency.
 
 The root is a virtual Cargo workspace. The `batter` facade and its single
 `batter-core` implementation, the `batter-axum`, `batter-sqlx`,
-`batter-runledger` and `batter-runlimit` adapters, `batter-test-support`
+`batter-runledger`, `batter-runlimit` and `batter-otlp` adapters, `batter-test-support`
 utilities, and the standalone `batter-at-rest` crypto leaf are nine Batter
 libraries. Four native Runledger libraries and its operator TUI live under
 `runledger/`; five native Runlimit libraries live under `runlimit/`.

@@ -150,13 +150,14 @@ impl BoundedClient {
             .headers()
             .get(http::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.starts_with(PROTOBUF));
+            .and_then(|value| value.parse::<mime::Mime>().ok())
+            .is_some_and(|value| value.essence_str() == PROTOBUF);
         self.slot.enter(Phase::Receiving);
         let body = match timeout_at(deadline, bounded_body(response)).await {
             Err(_) => return Err(ExportFailure::BodyTimedOut),
             Ok(body) => body?,
         };
-        if !body.is_empty() && !protobuf {
+        if !protobuf {
             return Err(ExportFailure::MalformedResponse);
         }
         classify_response(&body)

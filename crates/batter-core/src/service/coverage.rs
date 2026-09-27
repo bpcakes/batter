@@ -182,4 +182,33 @@ mod tests {
             })
         );
     }
+
+    #[tokio::test]
+    async fn coordinator_failures_mark_missing_reports() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let error = Arc::new(task.await.unwrap_err());
+        let expected = FinalCoverage::Incomplete(IncompleteCoverage {
+            missing_report: true,
+            ..IncompleteCoverage::default()
+        });
+        assert_eq!(
+            coverage(&ServiceOutcome::<std::io::Error>::Coordinator(
+                error.clone()
+            )),
+            expected
+        );
+        assert_eq!(
+            coverage(&ServiceOutcome::<std::io::Error>::StartupFailed(
+                StartupError::Coordinator(error.clone())
+            )),
+            expected
+        );
+        assert_eq!(
+            coverage(&ServiceOutcome::<std::io::Error>::Shutdown(Err(
+                ShutdownFailure::Coordinator(error)
+            ))),
+            expected
+        );
+    }
 }

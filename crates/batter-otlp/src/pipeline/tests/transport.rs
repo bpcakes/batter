@@ -52,6 +52,18 @@ fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
             ExportOutcome::Failed(MalformedResponse),
         ),
         (
+            Behavior::EmptyWrongContentType,
+            ExportOutcome::Failed(MalformedResponse),
+        ),
+        (
+            Behavior::PrefixContentType,
+            ExportOutcome::Failed(MalformedResponse),
+        ),
+        (
+            Behavior::ParameterizedContentType,
+            ExportOutcome::Acknowledged,
+        ),
+        (
             Behavior::DeclaredOversized,
             ExportOutcome::Failed(ResponseTooLarge),
         ),

@@ -44,7 +44,10 @@ exporter bridge requires `opentelemetry` 0.31.
   `storage.rs` creates one observable counter with its own callback and
   attribute vector per complete key and one histogram per key; `lib.rs` keeps a
   registry entry per key and `metadata.rs` one description per name/kind, with
-  no bound. Histogram boundaries must be set before first creation.
+  no bound. `metadata.rs::set_description` retains caller text, and `storage.rs`
+  applies it when creating an instrument, so the adapter checks the exact
+  catalog description before delegation. Histogram boundaries must be set
+  before first creation.
 - [SDK `ManualReader`](https://docs.rs/opentelemetry_sdk/0.31.0/opentelemetry_sdk/metrics/struct.ManualReader.html)
   and `metrics/mod.rs` export the reader, `MetricReader` and `Pipeline` only under
   `experimental_metrics_custom_reader`. `manual_reader.rs::force_flush` is a
@@ -68,6 +71,8 @@ exporter bridge requires `opentelemetry` 0.31.
   automatic retry of partially accepted requests; a message without rejected
   points is a warning. [OTLP/HTTP responses](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
   carry a protobuf `ExportMetricsServiceResponse` for protobuf requests.
+  [Binary Protobuf encoding](https://opentelemetry.io/docs/specs/otlp/#binary-protobuf-encoding)
+  requires the collector response to declare `Content-Type: application/x-protobuf`.
 
 The resolved graph was checked with `cargo tree -e features`: no
 `internal-logs`, `reqwest-blocking-client` or `experimental_async_runtime`.

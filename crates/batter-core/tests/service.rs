@@ -1,10 +1,12 @@
 use batter_core::{
     cleanup::{CleanupBudget, CleanupOutcome},
-    lifecycle::{Readiness, ShutdownBudget, Supervisor},
+    lifecycle::{
+        ManagedComponent, ManagedSettlement, Readiness, ShutdownBudget, ShutdownFailure, Supervisor,
+    },
     operation::OperationOwner,
     service::{
         self, CompletionCoverage, DiagnosticCompletion, DiagnosticOutcome, Diagnostics,
-        ServiceOutcome,
+        IncompleteCoverage, ServiceOutcome,
     },
     startup::{InitializationError, Startup, StartupCause, StartupError},
 };
@@ -306,4 +308,74 @@ async fn owner_dropped_before_first_poll_still_retains_cleanup_and_diagnostics()
         completion.diagnostics(),
         DiagnosticOutcome::Completed(CompletionCoverage::Reported)
     ));
+}
+
+#[tokio::test]
+async fn uncertain_native_settlement_remains_incomplete_after_service_completion() {
+    struct NativeReport;
+    impl ManagedSettlement for NativeReport {
+        fn is_success(&self) -> bool {
+            false
+        }
+        fn allows_dependency_cleanup(&self) -> bool {
+            false
+        }
+    }
+
+    let process = supervisor();
+    let status = process.status();
+    let native_context = OperationOwner::new(SECOND).unwrap().into_context();
+    let startup = Startup::scoped(
+        process,
+        OperationOwner::new(SECOND).unwrap().into_context(),
+        cleanup(),
+        move |scope| {
+            Box::pin(async move {
+                scope
+                    .registration()
+                    .register_managed("native", native_context, |_| {
+                        let (stop, stopped) = oneshot::channel();
+                        let mut stop = Some(stop);
+                        Ok(ManagedComponent::new(
+                            async { Ok::<(), batter_core::BoxError>(()) },
+                            std::future::pending(),
+                            move |deadline| {
+                                if let Some(stop) = stop.take() {
+                                    let _ = stop.send(());
+                                }
+                                deadline
+                            },
+                            async move {
+                                let _ = stopped.await;
+                                NativeReport
+                            },
+                        ))
+                    })?;
+                Ok::<_, batter_core::RegistrationError>(())
+            })
+        },
+    );
+    let owner = service::start(startup, diagnostic(PanicAt::Never));
+    status.wait_ready().await.unwrap();
+    owner.request_shutdown();
+    let completion = owner.wait().await;
+    let ServiceOutcome::Shutdown(Err(ShutdownFailure::Report(report))) = completion.service()
+    else {
+        panic!("uncertain native settlement must fail checked shutdown: {completion:?}")
+    };
+    assert_eq!(report.managed.len(), 1);
+    assert!(report.managed[0].outcome.finished);
+    assert!(!report.managed[0].outcome.allows_dependency_cleanup());
+    let DiagnosticOutcome::Completed(CompletionCoverage::Incomplete(incomplete)) =
+        completion.diagnostics()
+    else {
+        panic!("diagnostics must retain incomplete coverage: {completion:?}")
+    };
+    assert_eq!(
+        *incomplete,
+        IncompleteCoverage {
+            uncertain_native: 1,
+            ..IncompleteCoverage::default()
+        }
+    );
 }

@@ -1846,7 +1846,7 @@ authentication or availability.
 
 With the opt-in `metrics-export` feature and an explicit loopback collector, the
 reference selects `batter-otlp` through `batter::service::start`, which owns
-installation before protected startup and releases the final flush. The guard rejects names, label shapes and keys outside the foundation
+installation before protected startup and releases the final flush. The guard rejects names, label shapes, descriptions and keys outside the foundation
 catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
 exports manual-reader snapshots under fixed deadlines and payload/response
 ceilings, with no queue or retry. The adapter explicitly disables native HTTP protocol
@@ -1859,8 +1859,10 @@ separate allowance and followed by exactly-once exporter/provider closure; no
 readiness event, drain or cleanup hook can start it, and no service cleanup
 budget waits on the collector. `ServiceCompletion` keeps the original service
 result, report and exit classification beside typed `MetricsExport` outcomes.
-`Acknowledged` means one decoded collector response without rejected points,
-not durable storage; a timed-out or cancelled request is neither delivery nor
+`Acknowledged` means one decoded collector response with the Protobuf media type
+and without rejected points, even when the encoded response body is empty.
+Wrong or missing media types cannot acknowledge an export. It does not prove
+durable storage; a timed-out or cancelled request is neither delivery nor
 remote rollback. `FinalCoverage::Incomplete` reports unjoined tasks, uncertain
 native settlement and skipped or unjoined cleanup; `Reported` describes the
 report, not unsupervised producers. Owner drop requests drain and waiter

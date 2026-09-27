@@ -199,7 +199,7 @@ fn describe(recorder: &dyn Recorder) {
         (catalog::SHUTDOWNS, Kind::Counter, Unit::Count),
         (catalog::SHUTDOWN_DURATION, Kind::Histogram, Unit::Seconds),
     ] {
-        let description = SharedString::from(format!("{name} description"));
+        let description = SharedString::from(catalog::catalog::shape(name).unwrap().description());
         match kind {
             Kind::Counter => recorder.describe_counter(name.into(), Some(unit), description),
             Kind::Histogram => recorder.describe_histogram(name.into(), Some(unit), description),
@@ -270,6 +270,7 @@ fn guard_rejects_outside_the_catalog_before_delegation() {
     let name = || KeyName::from_const_str(catalog::OPERATION_COMPLETIONS);
     guard.describe_counter(name(), Some(Unit::Seconds), "unit".into());
     guard.describe_counter(name(), None, "missing unit".into());
+    guard.describe_counter(name(), Some(Unit::Count), "alternate description".into());
     let oversized = "x".repeat(DESCRIPTION_MAX_BYTES + 1);
     guard.describe_counter(name(), Some(Unit::Count), oversized.into());
     guard.describe_histogram(name(), Some(Unit::Count), "kind".into());
@@ -289,7 +290,7 @@ fn guard_rejects_outside_the_catalog_before_delegation() {
         GuardRejections {
             unknown_names: 3,
             invalid_labels: 8,
-            invalid_descriptions: 5,
+            invalid_descriptions: 6,
             unsupported_kinds: 2,
             capacity: 0,
         }
@@ -341,6 +342,13 @@ fn full_catalog_aggregates_into_one_bounded_cumulative_payload() {
     harness.run(&recorder, async {
         let mut session = session;
         describe(&recorder);
+        // A later consumer description cannot replace catalog metadata before
+        // the bridge creates its first instrument.
+        recorder.describe_counter(
+            catalog::OPERATION_COMPLETIONS.into(),
+            Some(Unit::Count),
+            "alternate description".into(),
+        );
         for (kind, key) in &series_keys {
             register(&recorder, *kind, key);
         }
@@ -352,7 +360,13 @@ fn full_catalog_aggregates_into_one_bounded_cumulative_payload() {
         let (_, report) = session.around(async {}, |_| FinalCoverage::Reported).await;
         assert_eq!(report.final_export, ExportOutcome::Acknowledged);
         assert_eq!(report.periodic.attempts, 0);
-        assert_eq!(report.rejected, GuardRejections::default());
+        assert_eq!(
+            report.rejected,
+            GuardRejections {
+                invalid_descriptions: 1,
+                ..GuardRejections::default()
+            }
+        );
 
         let requests = collector.requests();
         assert_eq!(requests.len(), 2);
@@ -387,7 +401,9 @@ fn full_catalog_aggregates_into_one_bounded_cumulative_payload() {
         assert_eq!(completions.unit, "1");
         assert_eq!(
             completions.description,
-            format!("{} description", catalog::OPERATION_COMPLETIONS)
+            catalog::catalog::shape(catalog::OPERATION_COMPLETIONS)
+                .unwrap()
+                .description()
         );
         let duration = find(&exported, catalog::OPERATION_DURATION, &labels).unwrap();
         assert_eq!(duration.unit, "s");

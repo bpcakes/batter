@@ -21,7 +21,8 @@ use std::{
     },
 };
 
-/// Longest accepted catalog description in bytes.
+/// Longest accepted catalog description in bytes; descriptions must also match
+/// the catalog text exactly.
 pub(crate) const DESCRIPTION_MAX_BYTES: usize = 128;
 /// Complete keys admitted for the process lifetime: the foundation's own
 /// series bound, so every series Batter can create fits.
@@ -115,7 +116,10 @@ impl GuardState {
             Self::reject(&self.unknown_names);
             return false;
         };
-        if shape.kind() != kind || unit != Some(shape.unit()) || text.len() > DESCRIPTION_MAX_BYTES
+        if shape.kind() != kind
+            || unit != Some(shape.unit())
+            || text.len() > DESCRIPTION_MAX_BYTES
+            || text != shape.description()
         {
             Self::reject(&self.invalid_descriptions);
             return false;
