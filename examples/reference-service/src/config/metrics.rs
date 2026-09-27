@@ -120,7 +120,9 @@ impl batter::service::Diagnostics for PreparedMetrics {
                 crate::diagnostics::MetricsExport::Disabled
             }),
             #[cfg(feature = "metrics-export")]
-            Self::Otlp(prepared) => Box::pin((*prepared).install(completion)),
+            Self::Otlp(prepared) => {
+                Box::pin(async move { (*prepared).install(completion).await.into() })
+            }
         };
         future
     }

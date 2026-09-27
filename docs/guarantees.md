@@ -1858,7 +1858,10 @@ settlement including the shutdown metric after `Stopped`), exported under a
 separate allowance and followed by exactly-once exporter/provider closure; no
 readiness event, drain or cleanup hook can start it, and no service cleanup
 budget waits on the collector. `ServiceCompletion` keeps the original service
-result, report and exit classification beside typed `MetricsExport` outcomes.
+result, report and exit classification beside application-owned `MetricsExport`
+outcomes. The adapter's completed report contains only export and
+rejected-installation outcomes; disabled configuration and abandoned diagnostic
+execution are classified by the application.
 `Acknowledged` means one decoded HTTP 200 collector response with the Protobuf
 media type and without rejected points, even when the encoded response body is empty.
 Wrong or missing media types cannot acknowledge an export. It does not prove

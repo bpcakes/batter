@@ -350,6 +350,9 @@ BATTER_METRICS_OTLP_ENDPOINT='http://127.0.0.1:4318/v1/metrics' \
 Without the setting nothing is installed and no collector is contacted; default
 successful runs stay silent. The value must be `http` to a literal loopback
 address at exactly `/v1/metrics`, without credentials, query or fragment.
+The application's `MetricsExport` also represents disabled configuration and
+abandoned diagnostic execution; the adapter's completed report contains only
+exported or rejected-installation outcomes.
 An explicit value in a build without the feature, a malformed value, or any
 ambient `OTEL_*` variable while export is enabled fails configuration before
 acquisition. Preparation rechecks the live environment before upstream builders

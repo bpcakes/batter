@@ -16,20 +16,15 @@
 //! fn final_export_acknowledged(metrics: &MetricsExport) -> bool {
 //!     match metrics {
 //!         MetricsExport::Exported(report) => report.final_export == ExportOutcome::Acknowledged,
-//!         MetricsExport::Disabled
-//!         | MetricsExport::InstallationRejected { .. }
-//!         | MetricsExport::Abandoned => false,
+//!         MetricsExport::InstallationRejected { .. } => false,
 //!     }
 //! }
-//! # assert!(!final_export_acknowledged(&MetricsExport::Disabled));
+//! # let _ = final_export_acknowledged;
 //! ```
 
 /// Metrics export outcome for one serving run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetricsExport {
-    /// No collector endpoint was configured, so no recorder was installed and
-    /// no collector was contacted.
-    Disabled,
     /// Another process-wide recorder already existed. The rejected recorder and
     /// the prepared pipeline were explicitly closed, and the service ran
     /// without this export.
@@ -39,9 +34,6 @@ pub enum MetricsExport {
     },
     /// The recorder was installed and the export owner finalized it.
     Exported(ExportReport),
-    /// The orchestration terminated without diagnostic finalization. Retained
-    /// diagnostic resources were not explicitly closed.
-    Abandoned,
 }
 
 /// Retained evidence from an installed export pipeline.

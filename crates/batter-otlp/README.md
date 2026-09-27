@@ -22,6 +22,9 @@ waiter does not. Service and diagnostics have separate retained outcomes,
 including synchronous installation and asynchronous diagnostic panics. Diagnostics
 are process-global: a second installation is rejected and closes only its own
 pipeline. After successful installation the recorder cannot be reset/reloaded.
+The adapter's completed report is either `Exported` or `InstallationRejected`.
+Endpoint absence belongs to application configuration, while a panicked or failed
+diagnostic task remains a separate core `DiagnosticOutcome`.
 
 The adapter admits only Batter's catalog names, labels and descriptions through
 its shared schema, caps complete keys before bridge allocation, uses fixed
