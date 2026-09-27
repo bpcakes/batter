@@ -35,8 +35,10 @@ pub enum Behavior {
     Accept,
     /// 200 with OTLP partial success rejecting the given points.
     PartialReject(i64),
-    /// A non-success status with a body that must not be retained.
+    /// A status with a body that must not be retained.
     Status(u16),
+    /// A status with a valid Protobuf response, including an empty body.
+    ProtobufStatus(u16),
     /// 200 declaring protobuf with undecodable bytes.
     Malformed,
     /// 200 with a non-empty body that is not protobuf.
@@ -227,6 +229,10 @@ async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
             BODY_MARKER,
         )
             .into_response(),
+        Behavior::ProtobufStatus(code) => protobuf(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            &ExportMetricsServiceResponse::default(),
+        ),
         Behavior::Malformed => typed_response("application/x-protobuf", vec![0xff; 16]),
         Behavior::WrongContentType => typed_response("text/plain", BODY_MARKER),
         Behavior::EmptyWrongContentType => typed_response("text/plain", Vec::<u8>::new()),

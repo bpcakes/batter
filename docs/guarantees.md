@@ -1859,8 +1859,8 @@ separate allowance and followed by exactly-once exporter/provider closure; no
 readiness event, drain or cleanup hook can start it, and no service cleanup
 budget waits on the collector. `ServiceCompletion` keeps the original service
 result, report and exit classification beside typed `MetricsExport` outcomes.
-`Acknowledged` means one decoded collector response with the Protobuf media type
-and without rejected points, even when the encoded response body is empty.
+`Acknowledged` means one decoded HTTP 200 collector response with the Protobuf
+media type and without rejected points, even when the encoded response body is empty.
 Wrong or missing media types cannot acknowledge an export. It does not prove
 durable storage; a timed-out or cancelled request is neither delivery nor
 remote rollback. `FinalCoverage::Incomplete` reports unjoined tasks, uncertain
@@ -1869,6 +1869,9 @@ report, not unsupervised producers. Owner drop requests drain and waiter
 cancellation requests nothing. Core retains the native service outcome independently
 of diagnostic installation, periodic work and finalization, including diagnostic
 panics. The reference retains that evidence through `ServiceCompletion::foundation`.
+If an extreme schedule allowance ceases to fit in a monotonic instant after
+validation, the export owner shortens that allowance until its deadline is
+representable; this cannot lengthen an attempt or bypass final closure.
 A diagnostic panic does not guarantee resource closure; synchronous collection,
 closure and recorder calls cannot be preempted by async deadlines. Runtime death,
 SIGKILL and blocking or panicking recorders inside application work remain outside

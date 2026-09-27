@@ -82,7 +82,7 @@ pub struct ExportHistory {
 /// Result of one collection and export attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportOutcome {
-    /// The collector returned a success status and an OTLP response that
+    /// The collector returned HTTP 200 and an OTLP response that
     /// decoded without rejected data points.
     Acknowledged,
     /// The attempt did not establish acknowledgement.
@@ -107,7 +107,7 @@ pub enum ExportFailure {
     BodyTimedOut,
     /// Another transport failure after the request may have been dispatched.
     Transport,
-    /// The collector returned a non-success HTTP status.
+    /// The collector returned an HTTP status other than 200.
     Status(u16),
     /// The response body exceeded the fixed response ceiling.
     ResponseTooLarge,

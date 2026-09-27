@@ -13,8 +13,10 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// Select positive, representable durations. Attempts may exceed the
-    /// interval; elapsed ticks then coalesce instead of accumulating work.
+    /// Select positive durations representable at construction. If clock
+    /// advancement later makes an extreme allowance unrepresentable, the
+    /// adapter shortens it to a representable deadline. Attempts may exceed
+    /// the interval; elapsed ticks then coalesce instead of accumulating work.
     pub fn new(
         interval: Duration,
         attempt: Duration,

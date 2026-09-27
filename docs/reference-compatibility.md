@@ -3,7 +3,7 @@
 2026-09-26 extraction (`batter-i3ny`): the reference now selects optional
 `batter-otlp` through core protected service completion. The native versions below
 remain unchanged. Historical live runs predate this extraction; current pinned
-workspace and focused checks are recorded in the owning Bead.
+workspace, focused and any later live checks are recorded in the owning Bead.
 
 
 The metrics export recipe (`batter-8jr`) adds the reference package's opt-in

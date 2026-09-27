@@ -64,8 +64,9 @@ pub trait Diagnostics: Send + 'static {
 /// This carries no shutdown authority and cannot be constructed by consumers.
 ///
 /// ```compile_fail
-/// use batter_core::service::DiagnosticCompletion;
-/// let completion = DiagnosticCompletion::default();
+/// use batter_core::service::{CompletionCoverage, DiagnosticCompletion};
+/// let (_, receiver) = tokio::sync::watch::channel::<Option<CompletionCoverage>>(None);
+/// let _completion = DiagnosticCompletion(receiver);
 /// ```
 pub struct DiagnosticCompletion(watch::Receiver<Option<CompletionCoverage>>);
 

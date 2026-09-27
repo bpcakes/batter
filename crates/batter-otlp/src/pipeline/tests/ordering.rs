@@ -203,3 +203,28 @@ fn tiny_intervals_coalesce_without_iterating_over_elapsed_ticks() {
     assert_eq!(report.periodic.attempts, 1);
     assert_eq!(report.closure, CLOSED);
 }
+
+#[test]
+fn a_validated_allowance_is_clamped_if_later_deadline_overflows() {
+    let start = Instant::now();
+    let (mut lower, mut upper) = (0, u64::MAX);
+    while lower < upper {
+        let middle = lower + (upper - lower) / 2 + 1;
+        if start.checked_add(Duration::from_secs(middle)).is_some() {
+            lower = middle;
+        } else {
+            upper = middle - 1;
+        }
+    }
+    assert!(lower > 3_601);
+    let allowance = Duration::from_secs(lower - 3_600);
+    let schedule = Schedule::new(allowance, Duration::from_secs(1), allowance).unwrap();
+    let later = start + Duration::from_secs(3_601);
+    assert!(later.checked_add(schedule.final_allowance).is_none());
+    let deadline = crate::deadline_after(later, schedule.final_allowance);
+    assert!(deadline > later);
+    assert_eq!(
+        crate::deadline_after(start, Duration::from_secs(1)),
+        start + Duration::from_secs(1)
+    );
+}

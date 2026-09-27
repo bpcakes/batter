@@ -70,7 +70,10 @@ exporter bridge requires `opentelemetry` 0.31.
   requires distinguishing rejected points from full acceptance and forbids
   automatic retry of partially accepted requests; a message without rejected
   points is a warning. [OTLP/HTTP responses](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
-  carry a protobuf `ExportMetricsServiceResponse` for protobuf requests.
+  require HTTP 200 for both full and partial success, and carry a protobuf
+  `ExportMetricsServiceResponse` for protobuf requests. The adapter treats
+  every other HTTP status as a typed failure, including other 2xx responses;
+  the upstream client accepts any 2xx, so this is an adapter-owned check.
   [Binary Protobuf encoding](https://opentelemetry.io/docs/specs/otlp/#binary-protobuf-encoding)
   requires the collector response to declare `Content-Type: application/x-protobuf`.
 
@@ -95,6 +98,28 @@ through Cargo feature unification. The adapter therefore selects
 `reqwest::retry::never()` explicitly. A native h2c `REFUSED_STREAM` regression
 compares the default policy with the production policy; it does not exercise TLS
 certificate validation or ALPN negotiation.
+
+Branch review repair, 2026-09-27 (`batter-i3ny`): rechecked the primary
+[OTLP/HTTP response contract](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+and locked Tokio 1.53.1
+[`Instant::checked_add`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.checked_add).
+OTLP requires HTTP 200 for full and partial success, so the adapter rejects
+other 2xx statuses before decoding. `checked_add` returns `None` if a later
+deadline no longer fits; schedule validation checks representability only at
+construction, so the serial owner clamps an extreme allowance at each use.
+
+## Native PostgreSQL container mapping: reviewed 2026-09-27
+
+In locked testcontainers 0.28.0,
+[`RawContainer::get_host_port_ipv4`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/containers/async_container/raw.rs)
+reads the container's ports and reports an error while the requested mapping is
+absent. [`Client::ports`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/client.rs)
+inspects Docker on each call. A full local workspace run observed the mapping
+absent through ten 250 ms attempts, while a focused rerun of the same native
+test passed. Runledger test support now waits under its existing 30-second
+PostgreSQL bootstrap allowance before failing that prerequisite; this is a
+bounded fixture readiness policy, not evidence that Docker always publishes a
+mapping or that the database is ready.
 
 ## Native query adapters: reviewed 2026-09-22
 

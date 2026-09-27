@@ -1960,14 +1960,16 @@ None requires a database except the explicit live runner.
   rejected; cumulative counters, fixed histogram boundaries and catalog
   descriptions/units; a worst-case payload below half the 2 MiB ceiling; one
   closed outcome per collector behavior (acknowledged, partial rejection,
-  negative rejection count, non-success status, malformed and wrong content
-  type, declared and streamed oversized bodies, stalled headers and body,
+  negative rejection count, non-200 status including 202/204 with valid Protobuf,
+  malformed and wrong content type, declared and streamed oversized bodies, stalled headers and body,
   refusal) without retry; refusal of oversized requests before dispatch;
   unchanged operation results and bounded keys during a 10,000-name storm with a
   stalled collector; final export after a blocked cleanup hook with task, cleanup
   and shutdown series present; startup-failure cleanup without a shutdown; typed
   final-allowance expiry with exactly-once closure; and in-flight periodic
   settlement plus coalescing before the final snapshot.
+  A synthetic later instant proves that a duration accepted at construction
+  is shortened without panic if its original deadline stops fitting.
 - Core `tests/service.rs` covers cleanup/finalization ordering, owner and waiter
   separation, early owner loss, rejection before installation without a Tokio
   runtime, and installation/first-poll/finalization panics
@@ -2167,6 +2169,9 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+After container start, native test support polls Docker's published PostgreSQL
+port under a 30-second bootstrap allowance; a missing mapping still fails the
+test. Connection and PostgreSQL 18 checks follow that mapping.
 
 `python3 scripts/check_runledger_workspace.py` checks actual local Cargo package
 identity, publishing restrictions, dependency direction, and migration/cache

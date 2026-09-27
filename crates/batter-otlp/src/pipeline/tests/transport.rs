@@ -44,6 +44,14 @@ fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
         (Behavior::Status(503), ExportOutcome::Failed(Status(503))),
         (Behavior::Status(400), ExportOutcome::Failed(Status(400))),
         (
+            Behavior::ProtobufStatus(202),
+            ExportOutcome::Failed(Status(202)),
+        ),
+        (
+            Behavior::ProtobufStatus(204),
+            ExportOutcome::Failed(Status(204)),
+        ),
+        (
             Behavior::Malformed,
             ExportOutcome::Failed(MalformedResponse),
         ),

@@ -142,7 +142,7 @@ impl BoundedClient {
             Ok(Ok(response)) => response,
         };
         let status = response.status();
-        if !status.is_success() {
+        if status != reqwest::StatusCode::OK {
             // The status is the whole retained evidence; the body is not read.
             return Err(ExportFailure::Status(status.as_u16()));
         }

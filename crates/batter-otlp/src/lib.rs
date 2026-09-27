@@ -254,6 +254,18 @@ struct Session {
     history: ExportHistory,
 }
 
+/// An allowance checked during preparation can stop fitting as the clock
+/// advances. Only in that extreme case, shorten it until the deadline fits.
+fn deadline_after(start: Instant, allowance: Duration) -> Instant {
+    let mut bounded = allowance;
+    loop {
+        if let Some(deadline) = start.checked_add(bounded) {
+            return deadline;
+        }
+        bounded /= 2;
+    }
+}
+
 impl Session {
     fn new(resources: Resources, schedule: Schedule) -> Self {
         Self {
@@ -312,17 +324,19 @@ impl Session {
     /// under its own deadline before this returns.
     async fn periodic(mut self, mut stop: watch::Receiver<bool>) -> Self {
         let interval = self.schedule.interval;
-        let mut next = Instant::now() + interval;
+        let mut next = deadline_after(Instant::now(), interval);
         loop {
             tokio::select! {
                 biased;
                 _ = stop.wait_for(|stopped| *stopped) => return self,
                 () = tokio::time::sleep_until(next) => {}
             }
-            let outcome = self.attempt(Instant::now() + self.schedule.attempt).await;
+            let outcome = self
+                .attempt(deadline_after(Instant::now(), self.schedule.attempt))
+                .await;
             self.history.record(outcome);
             let now = Instant::now();
-            next += interval;
+            next = deadline_after(next, interval);
             if next <= now {
                 let elapsed = now.duration_since(next).as_nanos();
                 let missed = elapsed / interval.as_nanos() + 1;
@@ -335,7 +349,7 @@ impl Session {
                     (remainder / 1_000_000_000) as u64,
                     (remainder % 1_000_000_000) as u32,
                 );
-                next = now + (interval - remainder);
+                next = deadline_after(now, interval - remainder);
             }
         }
     }
@@ -343,7 +357,7 @@ impl Session {
     /// Export the final snapshot under the separate allowance, then close the
     /// exporter and provider exactly once.
     async fn finish(mut self, coverage: FinalCoverage) -> ExportReport {
-        let deadline = Instant::now() + self.schedule.final_allowance;
+        let deadline = deadline_after(Instant::now(), self.schedule.final_allowance);
         let final_export = self.attempt(deadline).await;
         let rejected = self.resources.state.rejections();
         ExportReport {
