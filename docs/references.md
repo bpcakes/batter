@@ -60,9 +60,13 @@ exporter bridge requires `opentelemetry` 0.31.
 - [OTLP HTTP metrics source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/metrics.rs)
   treats every 2xx as success without decoding the response and formats a
   non-success body and custom client errors into `InternalFailure` strings.
-  `exporter/http/mod.rs` merges `OTEL_EXPORTER_OTLP_*HEADERS` even with explicit
+  The [HTTP builder source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/mod.rs)
+  merges `OTEL_EXPORTER_OTLP_*HEADERS` even with explicit
   configuration, and reads endpoint, timeout and compression variables when not
-  set explicitly. The exporter performs no retry.
+  set explicitly. With a caller-supplied HTTP client, its selected timeout is
+  retained in `_timeout` but not applied to the request; Batter's separate
+  attempt and final deadlines bound yielding transport work. The exporter
+  performs no retry.
 - [`opentelemetry-http` `HttpClient`](https://docs.rs/opentelemetry-http/0.31.0/opentelemetry_http/trait.HttpClient.html)
   receives the encoded `Request<Bytes>`, which permits a payload ceiling before
   dispatch and a fixed, body-free response.

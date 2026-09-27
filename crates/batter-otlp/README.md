@@ -49,3 +49,6 @@ custom-reader interface is private to this adapter. See `docs/references.md` at
 the workspace root for inspected sources.
 
 Run `cargo test -p batter-otlp --locked` and the workspace verification script.
+The adapter tests rerun affected cases in clean child processes when the invoking
+shell has `OTEL_*` settings; a separate child proves public preparation still
+rejects those settings.

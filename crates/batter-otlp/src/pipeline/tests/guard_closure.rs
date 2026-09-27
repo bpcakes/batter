@@ -137,6 +137,9 @@ fn close_waits_for_delegation_and_rejects_later_recorder_calls() {
 
 #[test]
 fn final_report_includes_rejection_completed_during_closure() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let (recorder, session) = pipeline("http://127.0.0.1:1/v1/metrics", QUIET);
     let state = session.resources.state.clone();
     for (kind, key) in every_series() {

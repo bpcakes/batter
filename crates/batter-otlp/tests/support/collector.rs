@@ -55,6 +55,8 @@ pub enum Behavior {
     StreamedOversized,
     /// Read the request, then send no response headers until released.
     StallHeaders,
+    /// Acknowledge after a controlled delay in response headers.
+    DelayHeaders(Duration),
     /// Send headers and part of the body, then stall until released.
     StallBody,
 }
@@ -262,6 +264,10 @@ async fn export(State(shared): State<Arc<Shared>>, body: Bytes) -> Response {
         Behavior::StallHeaders => {
             let _ = closing.wait_for(|closed| *closed).await;
             StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+        Behavior::DelayHeaders(delay) => {
+            tokio::time::sleep(delay).await;
+            protobuf(StatusCode::OK, &ExportMetricsServiceResponse::default())
         }
         Behavior::StallBody => {
             let first = futures_util::stream::iter([Ok::<_, std::io::Error>(vec![0x0a])]);

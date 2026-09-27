@@ -28,6 +28,9 @@ fn supervisor() -> Supervisor {
 
 #[test]
 fn final_export_follows_cleanup_and_the_shutdown_metric_after_stopped() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::Accept);
     let (recorder, session) = harness.pipeline(QUIET);
     let collector = harness.collector();
@@ -92,6 +95,9 @@ fn final_export_follows_cleanup_and_the_shutdown_metric_after_stopped() {
 
 #[test]
 fn startup_failure_cleanup_is_exported_without_a_shutdown() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::Accept);
     let (recorder, session) = harness.pipeline(QUIET);
     let (_, report) = harness.run(&recorder, async {
@@ -129,6 +135,9 @@ fn startup_failure_cleanup_is_exported_without_a_shutdown() {
 
 #[test]
 fn final_allowance_expiry_is_typed_and_resources_still_close_once() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::StallHeaders);
     let schedule = Schedule {
         final_allowance: Duration::from_millis(300),
@@ -149,7 +158,31 @@ fn final_allowance_expiry_is_typed_and_resources_still_close_once() {
 }
 
 #[test]
+fn final_export_can_outlast_the_periodic_attempt_allowance() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
+    let harness = Harness::new(Behavior::DelayHeaders(Duration::from_millis(350)));
+    let schedule = Schedule {
+        attempt: Duration::from_millis(100),
+        final_allowance: Duration::from_secs(2),
+        ..QUIET
+    };
+    let (recorder, session) = harness.pipeline(schedule);
+    let (_, report) = harness.run(&recorder, async {
+        session.around(async {}, |_| FinalCoverage::Reported).await
+    });
+    assert_eq!(report.periodic.attempts, 0);
+    assert_eq!(report.final_export, ExportOutcome::Acknowledged);
+    assert_eq!(report.closure, CLOSED);
+    assert_eq!(harness.collector().requests().len(), 1);
+}
+
+#[test]
 fn in_flight_periodic_export_settles_before_the_final_snapshot() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::StallHeaders);
     let schedule = Schedule {
         interval: Duration::from_millis(50),
@@ -183,6 +216,9 @@ fn in_flight_periodic_export_settles_before_the_final_snapshot() {
 
 #[test]
 fn tiny_intervals_coalesce_without_iterating_over_elapsed_ticks() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::StallHeaders);
     let schedule = Schedule {
         interval: Duration::from_nanos(1),

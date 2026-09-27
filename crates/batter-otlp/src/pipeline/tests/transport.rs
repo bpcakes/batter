@@ -30,6 +30,9 @@ fn record_one(recorder: &dyn Recorder) {
 
 #[test]
 fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     use ExportFailure::*;
     for (behavior, expected) in [
         (Behavior::Accept, ExportOutcome::Acknowledged),
@@ -102,6 +105,9 @@ fn every_collector_response_maps_to_one_closed_outcome_without_retry() {
 
 #[test]
 fn refused_connection_is_a_known_non_dispatch() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::Accept);
     let endpoint = harness.runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -181,6 +187,9 @@ fn outer_deadline_classification_uses_only_typed_evidence() {
 
 #[test]
 fn stalled_collector_and_series_storm_change_no_result_or_bound() {
+    if super::otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::StallHeaders);
     let (recorder, mut session) = harness.pipeline(SHORT);
     let state = session.resources.state.clone();

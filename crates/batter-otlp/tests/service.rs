@@ -1,6 +1,8 @@
 //! Public adapter composition in a database-free worker root.
 #[path = "support/collector.rs"]
 mod collector;
+#[path = "support/otel_env.rs"]
+mod otel_env;
 
 use batter_core::{
     cleanup::CleanupBudget,
@@ -17,8 +19,13 @@ use batter_otlp::{
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use std::time::Duration;
 
+// One scenario checks startup, cleanup, export and the second installation.
+#[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn owned_worker_exports_after_cleanup_and_second_installation_is_rejected() {
+    if otel_env::rerun_if_ambient() {
+        return;
+    }
     let collector = collector::Collector::start(collector::Behavior::StallHeaders)
         .await
         .unwrap();
@@ -120,6 +127,32 @@ async fn owned_worker_exports_after_cleanup_and_second_installation_is_rejected(
     );
     assert_final_metrics(&requests[1]);
     collector.close().await.unwrap();
+}
+
+#[test]
+fn public_prepare_rejects_ambient_opentelemetry_settings() {
+    let status = otel_env::clean_child("ambient_rejection_child")
+        .env("BATTER_OTLP_AMBIENT_CHILD", "1")
+        .env("OTEL_SERVICE_NAME", "fixture")
+        .status()
+        .expect("ambient rejection test starts");
+    assert!(status.success(), "ambient rejection child failed: {status}");
+}
+
+#[test]
+fn ambient_rejection_child() {
+    if std::env::var_os("BATTER_OTLP_AMBIENT_CHILD").is_none() {
+        return;
+    }
+    let second = Duration::from_secs(1);
+    let error = prepare(
+        "http://127.0.0.1:4318/v1/metrics",
+        "example-worker",
+        Schedule::new(second, second, second).unwrap(),
+    )
+    .err()
+    .expect("ambient OpenTelemetry setting must be rejected");
+    assert_eq!(error.field(), "environment");
 }
 
 fn assert_final_metrics(request: &ExportMetricsServiceRequest) {

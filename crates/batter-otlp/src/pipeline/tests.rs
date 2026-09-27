@@ -8,6 +8,8 @@ mod collector;
 mod guard_closure;
 #[path = "tests/ordering.rs"]
 mod ordering;
+#[path = "../../tests/support/otel_env.rs"]
+mod otel_env;
 #[path = "tests/transport.rs"]
 mod transport;
 
@@ -337,6 +339,9 @@ fn every_foundation_series_fits_and_the_next_key_is_rejected() {
 
 #[test]
 fn full_catalog_aggregates_into_one_bounded_cumulative_payload() {
+    if otel_env::rerun_if_ambient() {
+        return;
+    }
     let harness = Harness::new(Behavior::Accept);
     let (recorder, session) = harness.pipeline(QUIET);
     let collector = harness.collector();
