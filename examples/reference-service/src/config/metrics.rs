@@ -121,7 +121,8 @@ impl batter::service::Diagnostics for PreparedMetrics {
             }),
             #[cfg(feature = "metrics-export")]
             Self::Otlp(prepared) => {
-                Box::pin(async move { (*prepared).install(completion).await.into() })
+                let export = (*prepared).install(completion);
+                Box::pin(async move { export.await.into() })
             }
         };
         future

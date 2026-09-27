@@ -361,7 +361,10 @@ that read `OTEL_*` values, without mutating it. The resource carries only
 
 `runtime::start` installs one guarded recorder through Batter's canonical
 `telemetry::metrics::install`, which publishes catalog descriptions, before
-protected startup. A second process-wide installation is rejected: the rejected
+protected startup. The selected adapter is installed synchronously even though
+its export report is awaited later. Isolated process tests attempt a competing
+installation immediately after `runtime::start` returns on both Tokio runtime
+flavors. A second process-wide installation is rejected: the rejected
 recorder, exporter and provider are closed explicitly and the service runs
 without export (`MetricsExport::InstallationRejected`). The guard admits only the
 foundation catalog with its exact label shapes and vocabularies and at most

@@ -1846,8 +1846,11 @@ authentication or availability.
 
 With the opt-in `metrics-export` feature and an explicit loopback collector, the
 reference selects `batter-otlp` through `batter::service::start`, which owns
-installation before protected startup and releases the final flush. The guard rejects names, label shapes, descriptions and keys outside the foundation
-catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
+installation before protected startup and releases the final flush. The
+reference calls the selected adapter's installation synchronously, then maps
+its eventual report; an immediate competing recorder cannot take its slot.
+The guard rejects names, label shapes, descriptions and keys outside the
+foundation catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
 exports manual-reader snapshots under fixed deadlines and payload/response
 ceilings, with no queue or retry. The adapter explicitly disables native HTTP protocol
 retries even when consumer dependencies enable HTTP/2. Service startup rejects

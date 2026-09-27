@@ -42,6 +42,12 @@ fn startup_failure_cleanup_is_exported_on_both_runtime_flavors() {
 }
 
 #[test]
+fn recorder_is_installed_before_startup_can_run_on_both_runtime_flavors() {
+    scenario("installation-before-startup-current");
+    scenario("installation-before-startup-multi");
+}
+
+#[test]
 fn rejected_installation_closes_the_pipeline_and_keeps_the_service_result() {
     scenario("rejected-installation");
 }

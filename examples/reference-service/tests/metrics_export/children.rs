@@ -30,6 +30,8 @@ pub fn dispatch(scenario: &str) {
     match scenario {
         "startup-export-current" => current(startup_export()),
         "startup-export-multi" => multi(startup_export()),
+        "installation-before-startup-current" => current(installation_before_startup()),
+        "installation-before-startup-multi" => multi(installation_before_startup()),
         "rejected-installation" => current(rejected_installation()),
         "never-polled" => current(never_polled()),
         "owner-loss-current" => current(owner_loss()),
@@ -150,6 +152,28 @@ async fn startup_export() {
     let settings = settings(&refused_address().await, &collector.endpoint(), "200");
     let owner = runtime::start(runtime::prepare(settings).unwrap());
     let completion = owner.wait().await;
+    startup_failure(&completion, |cause| {
+        matches!(cause, StartupCause::Failed(_))
+    });
+    assert_eq!(
+        exported(&completion).final_export,
+        ExportOutcome::Acknowledged
+    );
+    assert_cleanup_exported(&collector);
+    collector.close().await.unwrap();
+}
+
+async fn installation_before_startup() {
+    let collector = Collector::start(Behavior::Accept).await.unwrap();
+    let settings = settings(&refused_address().await, &collector.endpoint(), "200");
+    let owner = runtime::start(runtime::prepare(settings).unwrap());
+    // No await or executor yield occurs between start and this competing install.
+    let competing_install_succeeded = catalog::install(NoopRecorder).is_ok();
+    let completion = owner.wait().await;
+    assert!(
+        !competing_install_succeeded,
+        "the selected recorder must own the global slot before startup"
+    );
     startup_failure(&completion, |cause| {
         matches!(cause, StartupCause::Failed(_))
     });
