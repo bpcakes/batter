@@ -4177,3 +4177,37 @@ MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
 release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
 tests against PostgreSQL 16. The import preserves those native source contracts;
 [provenance](../runlimit/IMPORT.md) records adapted workspace administration.
+
+## Private-response referrer choice, 2026-09-27
+
+Rechecked for `batter-lto` against the living specifications.
+
+- The [Referrer Policy editor's draft](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-no-referrer)
+  defines `no-referrer` as sending no referrer information to any origin,
+  including same-origin navigations, and
+  [`same-origin`](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-same-origin)
+  as sending the full referrer URL only on same-origin requests. Its
+  [delivery section](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-delivery)
+  also lists the `meta` element, `referrerpolicy` attributes, the `noreferrer`
+  link relation and inheritance, so a response field cannot constrain page
+  content. [Header parsing](https://w3c.github.io/webappsec-referrer-policy/#parse-referrer-policy-from-header)
+  keeps the last recognized token across fields, and a redirect response
+  [replaces](https://w3c.github.io/webappsec-referrer-policy/#set-requests-referrer-policy-on-redirect)
+  the next request's policy. Batter emits one field with one recognized token.
+- The HTML Standard [creates a document or worker policy
+  container](https://html.spec.whatwg.org/multipage/browsers.html#creating-a-policy-container-from-a-fetch-response)
+  whose referrer policy comes from the response's `Referrer-Policy` field.
+- The Fetch Standard [Origin-header algorithm](https://fetch.spec.whatwg.org/#append-a-request-origin-header)
+  consults the referrer policy only when response tainting is not `cors`, the
+  method is neither `GET` nor `HEAD`, and the
+  [request mode](https://fetch.spec.whatwg.org/#concept-request-mode) is not
+  `cors`. There `no-referrer` always serializes `null`, and `same-origin`
+  serializes `null` only for a cross-origin URL. Navigations, including HTML
+  form submissions, use `navigate` mode, while a
+  [`Request`](https://fetch.spec.whatwg.org/#dom-request) built from a URL
+  string falls back to `cors` mode. `NoReferrer` therefore breaks exact-origin
+  HTML form mutations but not CORS-mode script mutations.
+- The [Fetch Metadata editor's draft](https://w3c.github.io/webappsec-fetch-metadata/#abstract-opdef-set-site)
+  derives `Sec-Fetch-Site` from the request origin, its URL list and direct user
+  navigation, not from the referrer policy, so strict custom-marker policies are
+  unaffected by `NoReferrer`.

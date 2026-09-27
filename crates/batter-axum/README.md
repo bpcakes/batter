@@ -62,16 +62,26 @@ supported browsers must emit `Sec-Fetch-Site`. The optional JSON check parses
 the complete RFC 9110 media type and parameter byte grammar, not merely an
 `application/json` prefix.
 
-Wrap assembled private routes and their fallback with
-`middleware::from_fn(browser::private_response)`. Put mutation rejection inside
-that layer so rejection responses receive the headers, and put `observe_http`
-outside it to observe the final application-selected status once. An outer
-short-circuit that does not call the private layer cannot receive its headers.
-The layer selects `Referrer-Policy: same-origin`: cross-origin destinations do
-not receive referrer information, while same-origin HTML form mutations retain
-the `Origin` value required by `MutationPolicy::exact_origin`. A non-CORS form
-post to a different origin instead carries `Origin: null`; that page/target
-layout needs a deliberately different response policy and composition.
+Wrap assembled private routes and their fallback with one
+`.layer(browser::PrivateResponsePolicy::...)`, choosing the referrer policy
+deliberately for that route group. Every policy overwrites
+`Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; only the two
+referrer policies that never send referrer information cross-origin are
+representable. `SameOriginReferrer`, the default, keeps the serialized `Origin`
+on same-origin HTML form posts, as `MutationPolicy::exact_origin` requires; a
+non-CORS form post to a different origin carries `Origin: null`. `NoReferrer`
+also withholds same-origin referrers, so every HTML form post, even a
+same-origin one, carries `Origin: null` and fails an exact-origin check; use
+CORS-mode `fetch` mutations or a custom-marker policy on those pages.
+`Sec-Fetch-Site` is unaffected. The field only sets the document's initial
+policy; page markup and `fetch` options can still change it. Applying either
+policy keeps an existing all-`no-referrer` field, so an outer layer cannot
+weaken an inner `NoReferrer` choice. The compatibility
+`middleware::from_fn(browser::private_response)` applies `SameOriginReferrer`.
+Put mutation rejection inside the layer so rejection responses receive the
+headers, and put `observe_http` outside it to observe the final
+application-selected status once. An outer short-circuit that does not call the
+private layer cannot receive its headers.
 
 These helpers do not authenticate a caller, distinguish a browser from a
 non-browser client, select routes, configure CORS or
