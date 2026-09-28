@@ -161,8 +161,8 @@ Carry the foundation `ReadinessDecision` in response extensions; do not recreate
 lifecycle/health classification or accept a broad `HealthStatus` as a failure.
 Application readiness conditions narrow that foundation decision; never evaluate
 them in the adapter. A probe renderer chooses only the body and headers: apply
-the readiness status, decision extension and severity, or the liveness 200,
-after it returns so no renderer can alter them, and reserve a rendered probe's
+the readiness status, decision extension and severity, or the liveness 200
+and default severity, after it returns so no renderer can alter them, and reserve a rendered probe's
 path in the same duplicate and guarded-route checks outside admission.
 Keep `readiness_status` and `default_readiness_level` as the canonical reusable
 adapter mappings. The unready payload is named `ReadinessUnreadyReason`; do not

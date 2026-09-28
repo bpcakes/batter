@@ -1595,20 +1595,28 @@ extension and the policy's severity, and the capture holds one completion per
 probe at that severity and status. In every unready lifecycle or dependency
 phase the application condition is probed both satisfied and unsatisfied
 without changing the decision, and it is never asked while the dependency is
-unready; once lifecycle and dependency are ready, the unsatisfied condition
-yields `ReadinessUnreadyReason::Condition` and restoring it yields Ready. A
-second test keeps both rendered probes outside admission while starting and
-draining: guarded work is rejected before its handler, liveness answers 200
-although its renderer returns 503, and neither renderer sees an
-`OperationContext` or interruption responder. Adapter unit tests reject a
-rendered probe path reused by any probe kind and guarded routes matching a
-rendered probe path, without calling a renderer or application code.
-Foundation unit tests cover every lifecycle, dependency and condition
-combination, the dependency-condition-lifecycle sampling order, accumulation in
-order and name validation. During implementation, returning the renderer's
-response unchanged, keeping a renderer-chosen severity or liveness status,
-letting a condition replace a dependency reason and consulting conditions for a
-starting lifecycle each made these tests fail.
+unready, which in this test covers every starting probe. A condition can still
+be asked while starting once the dependency is healthy, because lifecycle is
+read last; the foundation table shows its answer is then discarded. Once
+lifecycle and dependency are ready, the unsatisfied condition yields
+`ReadinessUnreadyReason::Condition` and restoring it yields Ready. A second
+test keeps both rendered probes outside admission while starting and draining:
+guarded work is rejected before its handler, liveness answers 200 although its
+renderer returns 503, and neither renderer sees an `OperationContext` or
+interruption responder. Under INFO filtering, a liveness renderer returning
+503 with a TRACE override still produces exactly one INFO completion with
+status 200. With an application's `operational_http_with_quota` outside the
+assembled router, both renderers fail to claim the quota observer's writer from
+cloned metadata and the completions keep `quota_outcome="not_checked"`.
+Adapter unit tests reject a rendered probe path reused by any probe kind and
+guarded routes matching a rendered probe path, without calling a renderer or
+application code. Foundation unit tests cover every lifecycle, dependency and
+condition combination, the dependency-condition-lifecycle sampling order,
+accumulation in order and name validation. Returning the renderer's response
+unchanged, keeping a renderer-chosen readiness severity, liveness status or
+liveness severity, leaving the quota writer on renderer metadata, letting a
+condition replace a dependency reason and letting a condition's answer decide a
+starting lifecycle's decision each made these tests fail.
 
 ## HTTP/1.1 instrumented lifetime observations
 

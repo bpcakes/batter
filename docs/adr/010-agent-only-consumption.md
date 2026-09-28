@@ -370,9 +370,10 @@ override the lifecycle.
 placement outside admission and every collision check on the boundary, exactly
 as for the empty-body probes. The renderer receives a `Copy` decision and the
 request metadata and returns a response; the boundary then sets the status from
-`readiness_status` (200 for liveness) and replaces the decision and severity
-extensions, so no renderer, including one returning a contradicting status or
-forged extensions, changes what an orchestrator or the completion event sees.
+`readiness_status` and replaces the decision and severity extensions, or for
+liveness sets 200 and removes any severity override, so no renderer, including
+one returning a contradicting status or forged extensions, changes what an
+orchestrator or the completion event sees.
 Application conditions narrow the foundation decision rather than wrap it. A
 check returns only whether its condition holds (a check returning a decision
 does not compile), is asked only after the dependency sample establishes
@@ -381,12 +382,16 @@ new `ReadinessUnreadyReason::Condition`, which carries a validated
 `ReadinessCondition` name (raw strings do not compile) and defaults to WARN.
 Conditions accumulate, so adding one cannot silently drop another, and the
 empty-body `dependency_readiness` reports them too because it reads the same
-decision. Tests send every decision through a contradicting renderer, probe
-both condition answers in every unready lifecycle and dependency phase, narrow
-Ready through the condition, keep both probes outside admission and reject
-every duplicate and guarded probe path; they fail when the renderer's status or
-severity survives, when a condition replaces a dependency reason, or when a
-condition is consulted for a starting lifecycle.
+decision. A condition may still be asked while the process is starting,
+whenever the dependency is healthy, because lifecycle is read last; its answer
+is then discarded. Tests send every decision through a contradicting renderer,
+probe both condition answers in every unready lifecycle and dependency phase,
+narrow Ready through the condition, keep a liveness completion at INFO under
+INFO filtering, deny both renderers the quota observer's writer, keep both
+probes outside admission and reject every duplicate and guarded probe path.
+They fail when a renderer's status or severity survives, when the quota writer
+stays on renderer metadata, when a condition replaces a dependency reason, or
+when a condition's answer decides the decision for a starting lifecycle.
 
 Remaining boundaries are explicit. Condition checks and renderers run
 synchronously inside the probe request, and probes carry no

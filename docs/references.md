@@ -1500,10 +1500,12 @@ published crate sources. In http 1.5.0,
 [`Response::status_mut`](https://docs.rs/http/1.5.0/http/response/struct.Response.html#method.status_mut)
 replaces the status of an already-built response, and
 [`Extensions::insert`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.insert)
-returns and replaces an existing value of the same type. The boundary's
-rendered probes therefore apply the status and the `ReadinessDecision` and
-`HttpObservationLevel` extensions after the application renderer returns, so
-whatever the renderer set is replaced rather than kept. The
+returns and replaces an existing value of the same type, while
+[`Extensions::remove`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.remove)
+drops it. The boundary's rendered probes therefore apply the status and the
+`ReadinessDecision` and `HttpObservationLevel` extensions after the application
+renderer returns, and remove a liveness renderer's `HttpObservationLevel`, so
+whatever the renderer set is replaced or dropped rather than kept. The
 [Axum 0.8.9 method router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/method_routing.rs)
 documents that `get` routes also serve HEAD requests with the response body
 removed, so a HEAD probe keeps the rendered probe's status and headers without

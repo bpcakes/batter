@@ -1409,11 +1409,13 @@ body or Batter's private quota writer; a probe is never admitted, so no
 `OperationContext` or `RequestInterruptionResponder` is present. The renderer
 returns the response body and headers, for example an OpenAPI-documented JSON
 document, but not the probe's outcome. The boundary then sets liveness to 200
-and readiness to `readiness_status` of the one fresh decision it passed to the
-renderer, and replaces the `ReadinessDecision` and `HttpObservationLevel`
-response extensions with that decision and the policy's severity. A renderer
-therefore cannot report an unready process as ready, forge the decision
-extension or change the completion event's severity. Assembly never calls a
+and removes any `HttpObservationLevel` override from it, so its completion
+keeps the empty-body probe's default INFO. It sets readiness to
+`readiness_status` of the one fresh decision it passed to the renderer and
+replaces the `ReadinessDecision` and `HttpObservationLevel` response extensions
+with that decision and the policy's severity. A renderer therefore cannot
+report an unready process as ready, forge the decision extension or change the
+completion event's severity. Assembly never calls a
 renderer. A renderer that blocks or panics does so inside the probe request
 like any handler; probes carry no response-construction deadline.
 

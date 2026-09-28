@@ -433,7 +433,9 @@ handlers. `.with_rendered_liveness(path, |parts| ...)` and
 `.with_rendered_readiness(path, readiness, |decision, parts| ...)` take the same
 validated `ProbePath` and collision checks as the empty-body probes; the
 renderer returns the application's body and headers, and the boundary then sets
-the status and the decision and severity extensions from the decision itself.
+the status and completion severity itself: 200 with the default INFO for
+liveness, and the decision's status, decision extension and policy severity for
+readiness.
 Map every `ReadinessDecision` your documentation promises, including
 `ReadinessUnreadyReason::Condition`, in the renderer, and read the generated
 `CorrelationId` from `parts` when the envelope reports a request ID. When

@@ -14,12 +14,13 @@ contracts, capability facts and validation history.
   receives the request metadata, and for readiness one fresh
   `ReadinessDecision`, and returns the body and headers, for example
   OpenAPI-documented JSON. The boundary keeps the probe path, its placement
-  outside admission and every probe-collision check, then sets the status (200
-  for liveness, `readiness_status` for readiness) and replaces the
-  `ReadinessDecision` and `HttpObservationLevel` extensions with the decision
-  and the policy's severity, so a renderer cannot report an unready process as
-  ready. `ReadinessEvaluator::with_condition` and
-  `ReadinessPolicy::with_condition` add application readiness conditions,
+  outside admission and every probe-collision check. It then sets liveness to
+  200 with the default INFO completion severity, and sets readiness to
+  `readiness_status` and replaces the `ReadinessDecision` and
+  `HttpObservationLevel` extensions with the decision and the policy's
+  severity, so a renderer cannot report an unready process as ready or change
+  how the probe's completion is logged. `ReadinessEvaluator::with_condition`
+  and `ReadinessPolicy::with_condition` add application readiness conditions,
   named by a validated `ReadinessCondition`, whose synchronous checks run only
   while the dependency is ready and can only turn a ready decision into the new
   `ReadinessUnreadyReason::Condition(name)`, rendered 503 and WARN by default.

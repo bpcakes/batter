@@ -237,11 +237,12 @@ same duplicate and guarded-route checks and mount the probe in the same place,
 outside every group's admission and inside correlation and the observer. The
 renderer receives the request metadata, including the generated
 `CorrelationId`, and for readiness one fresh `ReadinessDecision`, and returns
-the body and headers. After it returns, the boundary sets the status, 200 for
-liveness and `readiness_status(decision)` for readiness, and replaces the
-`ReadinessDecision` and `HttpObservationLevel` extensions with the decision and
-the policy's severity. A renderer therefore chooses what the probe says, never
-whether the process is ready or how the completion event is logged.
+the body and headers. After it returns, the boundary sets liveness to 200 and
+removes any `HttpObservationLevel` override, so its completion keeps the
+default INFO, and sets readiness to `readiness_status(decision)` and replaces
+the `ReadinessDecision` and `HttpObservationLevel` extensions with the decision
+and the policy's severity. A renderer therefore chooses what the probe says,
+never whether the process is ready or how the completion event is logged.
 
 Add application readiness requirements, such as held key leases, with
 `ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`. The

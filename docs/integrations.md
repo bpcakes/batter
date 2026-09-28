@@ -119,9 +119,10 @@ through `with_rendered_liveness(path, render)` and
 path, its outside-admission placement and every probe-collision check. The
 readiness renderer receives one fresh `ReadinessDecision` and the request
 metadata, including the generated `CorrelationId`, and returns the body and
-headers; the boundary then sets the status (200 for liveness,
-`readiness_status` for readiness) and the decision and severity extensions, so
-a renderer cannot change what the orchestrator or the completion event sees.
+headers; the boundary then sets the status and completion severity (200 with
+the default INFO for liveness; `readiness_status`, the decision extension and
+the policy's severity for readiness), so a renderer cannot change what the
+orchestrator or the completion event sees.
 Add application readiness requirements, such as held key leases, with
 `ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`: a
 synchronous check of state the application already holds that can only turn a
