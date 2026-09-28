@@ -1,5 +1,9 @@
 //! Guarded application routes whose identities remain visible to assembly.
 
+use super::{
+    RouteInventory,
+    declared::{DeclaredRouter, nested_pattern},
+};
 use axum::{
     Router,
     extract::Request,
@@ -20,7 +24,8 @@ use tower::{Layer, Service};
 /// fallback was declared, because only the default route group may own one.
 /// Arbitrary [`Router::nest_service`] input is deliberately absent because an
 /// opaque service exposes no route inventory; use [`Self::nest`] with another
-/// `GuardedRouter` instead.
+/// `GuardedRouter` instead. A router built by another router builder joins
+/// through [`Self::from_router`] with a declared [`RouteInventory`].
 ///
 /// ```
 /// use axum::{http::StatusCode, routing::get};
@@ -49,6 +54,7 @@ pub struct GuardedRouter<S = ()> {
     pub(super) router: Router<S>,
     pub(super) route_patterns: Vec<String>,
     pub(super) declares_fallback: bool,
+    pub(super) declared: Vec<DeclaredRouter<S>>,
 }
 
 impl<S> GuardedRouter<S>
@@ -61,6 +67,70 @@ where
             router: Router::new(),
             route_patterns: Vec::new(),
             declares_fallback: false,
+            declared: Vec::new(),
+        }
+    }
+
+    /// Admit a router built by another router builder, serving only its
+    /// declared routes.
+    ///
+    /// A router converted from another builder, for example an OpenAPI router
+    /// through `Router::from`, exposes no route inventory, so the application
+    /// declares the patterns it serves. Awaited assembly routes a path of each
+    /// declared pattern through a library-owned inspection copy of the router,
+    /// whose every route and fallback only reports what matched, and returns
+    /// [`BoundaryAssemblyError::RouteInventoryMismatch`] unless that path
+    /// reaches the route registered with exactly that pattern. The same copy
+    /// rejects any route of the router, declared or not, that matches a probe
+    /// path. No application handler, fallback or middleware is called or
+    /// polled.
+    ///
+    /// When serving, a request reaches the admitted router only if the router
+    /// would route it to a declared pattern; every other request is routed as
+    /// though the router were absent. An undeclared route or the router's own
+    /// fallback therefore never serves a request, and group overlap is decided
+    /// from the declared patterns: they must not share a request path with a
+    /// probe, another group or another route set of their own group. The
+    /// router then runs inside its group's policy like any guarded route, with
+    /// native routing, path parameters and `MatchedPath`. [`Self::nest`],
+    /// [`Self::merge`], [`Self::layer`], [`Self::route_layer`] and
+    /// [`Self::with_state`] carry the admitted router and its inventory along.
+    ///
+    /// ```
+    /// use axum::{Router, extract::Path, routing::get};
+    /// use batter_axum::{
+    ///     GuardedRouter, HttpBoundary, ProbePath, RequestPolicy, ResponseConstructionBudget,
+    ///     RouteGroup, RouteInventory,
+    /// };
+    /// use batter_core::lifecycle::ShutdownHandle;
+    /// use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Stands in for a router converted from another router builder.
+    /// let converted: Router = Router::new()
+    ///     .route("/items", get(|| async { "items" }))
+    ///     .route("/items/{id}", get(|Path(id): Path<u32>| async move { id.to_string() }));
+    /// let items = GuardedRouter::from_router(
+    ///     converted,
+    ///     RouteInventory::new(["/items", "/items/{id}"])?,
+    /// );
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// approval.approve();
+    /// let budget = ResponseConstructionBudget::new(Duration::from_secs(10))?;
+    /// let policy = RequestPolicy::new(control.operation_admission(), budget);
+    /// let assembled = HttpBoundary::new(policy.clone())
+    ///     .with_liveness(ProbePath::new("/live")?)?
+    ///     .with_group(RouteGroup::new("items", policy, items))?
+    ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+    ///     .await?;
+    /// # let _ = assembled.into_router();
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// [`BoundaryAssemblyError::RouteInventoryMismatch`]: super::BoundaryAssemblyError::RouteInventoryMismatch
+    pub fn from_router(router: Router<S>, inventory: RouteInventory) -> Self {
+        Self {
+            declared: vec![DeclaredRouter::new(router, inventory)],
+            ..Self::new()
         }
     }
 
@@ -92,17 +162,17 @@ where
         self.router = self.router.nest(path, nested.router);
         self.declares_fallback |= nested.declares_fallback;
         for nested_path in nested.route_patterns {
-            let full_path = if path.ends_with('/') {
-                format!("{path}{}", nested_path.trim_start_matches('/'))
-            } else if nested_path == "/" {
-                path.to_owned()
-            } else {
-                format!("{path}{nested_path}")
-            };
+            let full_path = nested_pattern(path, &nested_path);
             if !self.route_patterns.contains(&full_path) {
                 self.route_patterns.push(full_path);
             }
         }
+        self.declared.extend(
+            nested
+                .declared
+                .into_iter()
+                .map(|declared| declared.nest(path)),
+        );
         self
     }
 
@@ -115,6 +185,7 @@ where
                 self.route_patterns.push(path);
             }
         }
+        self.declared.extend(other.declared);
         self
     }
 
@@ -144,7 +215,8 @@ where
         self
     }
 
-    /// Apply a native Axum layer to every current guarded route and fallback.
+    /// Apply a native Axum layer to every current guarded route and fallback,
+    /// including every admitted router.
     pub fn layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,
@@ -153,11 +225,17 @@ where
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
+        self.declared = self
+            .declared
+            .into_iter()
+            .map(|declared| declared.map_router(|router| router.layer(layer.clone())))
+            .collect();
         self.router = self.router.layer(layer);
         self
     }
 
-    /// Apply a native Axum layer to every current explicit guarded route.
+    /// Apply a native Axum layer to every current explicit guarded route,
+    /// including the routes of every admitted router.
     pub fn route_layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,
@@ -166,13 +244,35 @@ where
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
-        self.router = self.router.route_layer(layer);
+        // Axum rejects a route layer on a router without routes. An admitted
+        // router without routes cannot pass assembly, so it is left unchanged.
+        self.declared = self
+            .declared
+            .into_iter()
+            .map(|declared| {
+                declared.map_router(|router| {
+                    if router.has_routes() {
+                        router.route_layer(layer.clone())
+                    } else {
+                        router
+                    }
+                })
+            })
+            .collect();
+        if self.declared.is_empty() || self.router.has_routes() {
+            self.router = self.router.route_layer(layer);
+        }
         self
     }
 
     /// Supply native Axum state while retaining the guarded route inventory.
     pub fn with_state<S2>(self, state: S) -> GuardedRouter<S2> {
         GuardedRouter {
+            declared: self
+                .declared
+                .into_iter()
+                .map(|declared| declared.map_router(|router| router.with_state(state.clone())))
+                .collect(),
             router: self.router.with_state(state),
             route_patterns: self.route_patterns,
             declares_fallback: self.declares_fallback,

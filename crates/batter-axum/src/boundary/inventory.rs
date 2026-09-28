@@ -24,10 +24,14 @@ async fn report_guarded_route_match() -> Response {
 }
 
 /// Build a library-owned router that only reports whether a pattern matched.
+///
+/// Every pattern was already registered by an application router, and an
+/// admitted router may have been built without Axum's 0.7 syntax checks, so
+/// those checks are not repeated here.
 fn inventory<'a>(patterns: impl IntoIterator<Item = &'a String>) -> Router {
     patterns
         .into_iter()
-        .fold(Router::new(), |inventory, pattern| {
+        .fold(Router::new().without_v07_checks(), |inventory, pattern| {
             inventory.route(pattern, any(report_guarded_route_match))
         })
 }
@@ -75,7 +79,8 @@ pub(super) async fn overlapping_groups(
     None
 }
 
-async fn share_path(first: &[String], second: &[String]) -> bool {
+/// Whether any pattern of `first` and any pattern of `second` share a request path.
+pub(super) async fn share_path(first: &[String], second: &[String]) -> bool {
     for first in first {
         for second in second {
             let shared = match shared_path(first, second) {

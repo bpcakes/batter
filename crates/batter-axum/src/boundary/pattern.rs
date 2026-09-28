@@ -37,7 +37,7 @@ pub(super) fn shared_path(first: &str, second: &str) -> SharedPath {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum Segment {
+pub(super) enum Segment {
     /// Unescaped literal bytes.
     Literal(Vec<u8>),
     /// A literal prefix followed by a capture ending the segment.
@@ -46,7 +46,8 @@ enum Segment {
     Wildcard(Vec<u8>),
 }
 
-fn parse(pattern: &str) -> Option<Vec<Segment>> {
+/// Split a route pattern into segments, or `None` outside the analyzed syntax.
+pub(super) fn parse(pattern: &str) -> Option<Vec<Segment>> {
     let mut raw = pattern
         .as_bytes()
         .strip_prefix(b"/")?

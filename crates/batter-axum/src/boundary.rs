@@ -1,12 +1,15 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
-use crate::{ReadinessPolicy, dependency_readiness, liveness, operational_http, serving};
-use axum::{Router, middleware, routing::get};
+use crate::{ReadinessPolicy, dependency_readiness, liveness, serving};
+use assembly::Assembling;
+use axum::{Router, routing::get};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
 use group::DEFAULT_GROUP;
 use std::{error::Error, fmt};
 use tokio::net::TcpListener;
 
+mod assembly;
+mod declared;
 mod group;
 mod guarded;
 mod inventory;
@@ -15,6 +18,7 @@ mod probe;
 #[cfg(test)]
 mod tests;
 
+pub use declared::{RouteInventory, RouteInventoryError};
 pub use group::{BrowserPolicy, GroupPolicy, RouteGroup, RouteGroupError};
 pub use guarded::GuardedRouter;
 pub use probe::{ProbePath, ProbePathError, ProbeRegistrationError};
@@ -34,6 +38,19 @@ pub enum BoundaryAssemblyError {
         /// The group declared later.
         second: &'static str,
     },
+    /// A router admitted with [`GuardedRouter::from_router`] does not serve a
+    /// pattern of its [`RouteInventory`]: no path of the pattern reaches the
+    /// route registered with exactly that pattern.
+    RouteInventoryMismatch {
+        /// The group containing the admitted router.
+        group: &'static str,
+    },
+    /// Declared routes of a router admitted with [`GuardedRouter::from_router`]
+    /// can match the same request path as other routes of the same group.
+    OverlappingRouteInventory {
+        /// The group containing the overlapping routes.
+        group: &'static str,
+    },
 }
 
 impl fmt::Display for BoundaryAssemblyError {
@@ -45,6 +62,14 @@ impl fmt::Display for BoundaryAssemblyError {
             Self::OverlappingGroupPaths { first, second } => write!(
                 formatter,
                 "route groups {first} and {second} can match the same path"
+            ),
+            Self::RouteInventoryMismatch { group } => write!(
+                formatter,
+                "route inventory in group {group} does not match its router"
+            ),
+            Self::OverlappingRouteInventory { group } => write!(
+                formatter,
+                "route inventory in group {group} can match the same path as other routes of that group"
             ),
         }
     }
@@ -194,15 +219,19 @@ impl HttpBoundary {
     /// groups keep unsupported methods on their routes inside their own
     /// policy. Routes added to the result afterward would sit outside the
     /// boundary, so the result is not a bare [`Router`].
-    /// Route validation polls only library-owned inert inventories. It does not
-    /// poll guarded handlers, fallbacks, or their middleware. A probe path
-    /// reserves the complete route identity in every group, so even a different
-    /// guarded method at that path is rejected before Axum merge can panic.
+    /// Route validation polls only library-owned inert inventories and
+    /// inspection copies. It does not poll guarded handlers, fallbacks, or
+    /// their middleware. A probe path reserves the complete route identity in
+    /// every group, so even a different guarded method at that path is
+    /// rejected before Axum merge can panic.
     /// Routes of different groups may not match one request path, even with
     /// different methods; overlap is decided from the retained patterns and
     /// confirmed by routing a shared path through each pattern alone. If a
     /// request URI cannot preserve that path verbatim, assembly conservatively
-    /// rejects the overlap before native merging.
+    /// rejects the overlap before native merging. Routers admitted with
+    /// [`GuardedRouter::from_router`] are checked against their
+    /// [`RouteInventory`] first, their declared patterns take part in the
+    /// overlap decision, and they are never merged into the native router.
     pub async fn assemble(
         self,
         guarded: GuardedRouter,
@@ -213,45 +242,15 @@ impl HttpBoundary {
             probes,
             probe_paths,
         } = self;
-        validate(&guarded, &groups, &probe_paths).await?;
-        let mut router = probes;
-        for group in groups {
-            router = router.merge(group.policy.apply(group.routes.router));
-        }
-        // With two default fallbacks Axum retains the second router's; a second
-        // custom fallback also supersedes a first default. Named groups declare
-        // no fallback, so merging the default group last retains its layered one.
-        let router = router
-            .merge(policy.apply(guarded.router))
-            .layer(middleware::from_fn(operational_http));
-        Ok(AssembledHttp { router })
-    }
-}
-
-/// Reject probe collisions in any group, then overlapping group paths.
-async fn validate(
-    default: &GuardedRouter,
-    groups: &[RouteGroup],
-    probes: &[ProbePath],
-) -> Result<(), BoundaryAssemblyError> {
-    let inventories: Vec<(&'static str, &[String])> =
-        std::iter::once((DEFAULT_GROUP, default.route_patterns.as_slice()))
+        let groups = std::iter::once(Assembling::new(DEFAULT_GROUP, policy, guarded))
             .chain(
                 groups
-                    .iter()
-                    .map(|group| (group.name, group.routes.route_patterns.as_slice())),
+                    .into_iter()
+                    .map(|group| Assembling::new(group.name, group.policy, group.routes)),
             )
             .collect();
-    for &(_, patterns) in &inventories {
-        if inventory::claims_probe(patterns, probes).await {
-            return Err(BoundaryAssemblyError::GuardedProbePath);
-        }
-    }
-    match inventory::overlapping_groups(&inventories).await {
-        Some((first, second)) => {
-            Err(BoundaryAssemblyError::OverlappingGroupPaths { first, second })
-        }
-        None => Ok(()),
+        let router = assembly::assemble(probes, &probe_paths, groups).await?;
+        Ok(AssembledHttp { router })
     }
 }
 

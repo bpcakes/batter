@@ -252,7 +252,8 @@ fn is_safe(method: &Method) -> bool {
 /// # Ok(()) }
 /// ```
 ///
-/// A bare Axum router exposes no route inventory, so it cannot join a group:
+/// A bare Axum router exposes no route inventory, so it cannot join a group
+/// without [`GuardedRouter::from_router`](crate::GuardedRouter::from_router):
 ///
 /// ```compile_fail,E0308
 /// # use batter_axum::{RequestPolicy, RouteGroup};
@@ -290,7 +291,7 @@ impl RouteGroup {
         {
             return Err(RouteGroupError::InvalidName);
         }
-        if self.routes.route_patterns.is_empty() {
+        if self.routes.route_patterns.is_empty() && self.routes.declared.is_empty() {
             return Err(RouteGroupError::NoRoutes);
         }
         if self.routes.declares_fallback {
