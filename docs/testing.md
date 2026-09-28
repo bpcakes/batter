@@ -1549,10 +1549,16 @@ nested service, middleware or fallback of an admitted router runs during
 validation. During implementation, dropping the inspection copy's fallback
 reporter and forwarding undeclared matches each made the target fail.
 
-A counting layer on native routes, on an admitted router and around it shows
-that requests served through a prepared make-service reuse the layers built
-before serving, with and without an admitted router; leaving the admitted
-router or its inspection copy unprepared made the count grow with each request.
+A counting layer on native routes and a handler fallback, on an admitted router
+and around it shows that requests served through a prepared make-service reuse
+the layers built before serving, with and without an admitted router; leaving
+the admitted router, its inspection copy or the moved default fallbacks
+unprepared made the count grow with each request. With a default fallback
+nested below `/tenants/{tenant}`, an admitted route
+`/tenants/{tenant}/items/{id}` in either the default or a named group still
+extracts exactly its own two path parameters, and the nested fallback and a
+native route below it keep theirs; leaving the nested fallback in front of the
+dispatch made that test fail.
 A pattern unit test registers each parser rule's accepted and rejected patterns,
 including empty, lone-`*` and embedded-`*` parameter names and the 25-capture
 limit, with the pinned Axum router and requires the parser to agree; inventory

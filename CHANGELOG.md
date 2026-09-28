@@ -19,8 +19,9 @@ contracts, capability facts and validation history.
   not serve. Declared patterns join the group overlap check, and the new
   `OverlappingRouteInventory` rejects declared routes that share a path with
   other routes of their own group. An admitted router is never merged into the
-  native router: requests that no native route matches are offered to it, and
-  it serves only those it routes to a declared pattern, inside its group's
+  native router: requests that no native route matches are offered to it at
+  the native router's root fallback, ahead of the default group's fallbacks,
+  and it serves only those it routes to a declared pattern, inside its group's
   policy, so undeclared routes and its own fallbacks never serve. Assembly
   prepares each admitted router once, so its layers are built once rather than
   per request. `GuardedRouter` moves into its own module without changing its

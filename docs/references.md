@@ -1514,14 +1514,18 @@ instead. Matching also extends path parameters already present,
 `append_nested_matched_path` prefixes an existing `MatchedPath`, and
 `Router::route_service` refuses a `Router`, so forwarding from a registered
 outer route into a converted router would duplicate its parameters and prefix
-its matched path. The boundary instead consults inspection copies, through a
-layer outermost on every native route and fallback, only for requests without a
-native `MatchedPath`, and forwards the request unchanged. `into_make_service`,
+its matched path. The fallback router's `insert_url_params` drops only the
+private fallback parameter, so a nested fallback below a capture also adds that
+capture before its endpoint runs. The boundary therefore makes a library
+dispatch the native router's root fallback, whose routes capture nothing,
+consults inspection copies only there, forwards the request unchanged, and
+moves the default group's fallbacks behind the dispatch. `into_make_service`,
 `into_make_service_with_connect_info` and the `axum::serve` stream service each
 call `with_state(())` on the router they serve, which turns every boxed handler
 into a route once; a router called from inside another service is never
 prepared that way and rebuilds lazily applied layers on every request. Assembly
-therefore prepares each admitted router and inspection copy itself.
+therefore prepares each admitted router, inspection copy and moved fallback
+router itself.
 `Router::nest` re-registers nested routes under the outer router's 0.7 syntax
 checks, so admitted routers are nested into a router without them. The
 [http 1.5.0 path parser](https://docs.rs/http/1.5.0/src/http/uri/path.rs.html)

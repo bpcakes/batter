@@ -319,16 +319,20 @@ overlap other routes of their own group, because admitted routers are consulted
 only when native routing finds no route, rather than by Axum's route priority.
 Forwarding from a registered outer route was rejected: Axum appends the outer
 match to the admitted router's `MatchedPath` and path parameters, and
-`Router::route_service` refuses routers. Axum prepares only the router it
-serves, so assembly prepares each admitted router and its inspection copy once;
-otherwise every request would rebuild their layers and reset state such as a
-concurrency limit. The dispatch layer sits outermost on the native router, so
-native routes keep Axum's own preparation. Tests cover these rejections,
-unreachable undeclared routes and fallbacks, declared routes inside their
-group's policy with native parameters, one completion per request, nesting,
-layers and layer reuse across requests; they fail when the inspection copy
-leaves fallbacks in place, dispatch ignores the inventory, or either admitted
-router copy is left unprepared.
+`Router::route_service` refuses routers. Dispatch is the native router's root
+fallback, the one point where a request carries no path captures, so the
+default group's fallbacks sit behind it: a nested fallback below a capture that
+matched first would add that capture to the forwarded request. Axum prepares
+only the router it serves, so assembly prepares each admitted router, its
+inspection copy and the moved fallbacks once; otherwise every request would
+rebuild their layers and reset state such as a concurrency limit. Native routes
+stay in the served router and keep Axum's own preparation. Tests cover these
+rejections, unreachable undeclared routes and fallbacks, declared routes inside
+their group's policy with native parameters, including below a nested fallback
+with a capture, one completion per request, nesting, layers and layer reuse
+across requests; they fail when the inspection copy leaves fallbacks in place,
+dispatch ignores the inventory, a nested fallback stays in front of the
+dispatch, or any copy behind the dispatch is left unprepared.
 
 Remaining boundaries are explicit. The inventory is application input, for
 example an OpenAPI document's paths plus any undocumented route, and a route it
@@ -337,9 +341,10 @@ filled with `{}`, so a route whose literal spells escaped braces could take that
 path and fail the inventory closed. Routes inside an opaque nested service of
 the admitted router cannot be declared. Each admitted router adds one
 library-owned inspection routing to each request that no native route matches.
-Layer state inside an admitted router is shared by all of its requests, as with
-Axum's make-service conversion, even where `axum::serve` would prepare a native
-router per connection. No
+Layer state inside an admitted router, and around the default group's
+fallbacks when admitted routers exist, is shared by all of their requests, as
+with Axum's make-service conversion, even where `axum::serve` would prepare a
+native router per connection. No
 OpenAPI-builder dependency or convenience is added. Fresh-agent usability
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.

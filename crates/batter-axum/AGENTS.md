@@ -120,12 +120,14 @@ is replaced by a library reporter; never call the router itself to validate it.
 Reject a declared pattern unless a path of it reaches the route registered with
 exactly that pattern, and keep the pattern parser accepting exactly the patterns
 the pinned Axum router registers. Never merge an admitted router into the
-native router: offer it only requests that no native route matched, serve it,
-inside its group's policy and its own observer, only for requests its
-inspection copy routes to a declared pattern, and keep its declared patterns
-disjoint from probes, other groups and its own group's other routes. Prepare
-each admitted router and inspection copy once at assembly so requests never
-rebuild their layers, and leave native routes to Axum's own preparation. Do not
+native router: offer it only requests that reach the native router's root
+fallback, where no capture has been added, keep the default group's fallbacks
+behind that dispatch, serve it, inside its group's policy and its own observer,
+only for requests its inspection copy routes to a declared pattern, and keep its
+declared patterns disjoint from probes, other groups and its own group's other
+routes. Prepare each admitted router, inspection copy and moved fallback router
+once at assembly so requests never rebuild their layers, and leave native routes
+to Axum's own preparation. Do not
 reintroduce raw probe patterns. Route groups keep one fixed order: correlation
 and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the

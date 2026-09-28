@@ -1376,17 +1376,20 @@ declared or not, that matches a probe path returns `GuardedProbePath`. Declared
 patterns join the cross-group overlap check and must not share a request path
 with the group's native routes or another admitted router
 (`OverlappingRouteInventory`). An admitted router is never merged into the
-native router. A layer outermost on every native route and fallback passes a
-request that a native route matched straight through; any other request, which
-native routing would send to a fallback, goes through the inspection copies,
-and the unchanged request is forwarded to an admitted router, inside its
-group's policy and its own outermost correlation and observer, only when its
-copy reaches a declared pattern. Every other request continues to the default
-group's fallback. Undeclared routes and an admitted router's own fallbacks
-therefore never serve a request. Assembly prepares each admitted router and its
-inspection copy once, as Axum's make-service conversion prepares a served
-router, so no request rebuilds their layers and state held by those layers is
-shared by all of the router's requests; native routes keep Axum's own
+native router. Instead the native router's only fallback is a library dispatch,
+reached through its root fallback routes, which capture nothing: a request that
+no native route matched goes through the inspection copies there, carrying no
+path parameters or matched path, and is forwarded unchanged to an admitted
+router, inside its group's policy and its own outermost correlation and
+observer, only when its copy reaches a declared pattern. Every other request
+continues to the default group's root or nested fallbacks, which sit behind the
+dispatch with their policy and observer, because a nested fallback below a
+capture that matched first would add that capture to the forwarded request.
+Undeclared routes and an admitted router's own fallbacks therefore never serve
+a request. Assembly prepares each admitted router, its inspection copy and the
+moved default fallbacks once, as Axum's make-service conversion prepares a
+served router, so no request rebuilds their layers and state held by those
+layers is shared by all of their requests; native routes keep Axum's own
 preparation. Axum exposes no route enumeration, so the inventory remains
 application input: a route it omits is unreachable rather than verified. Each
 admitted router adds one inspection routing, outside the observer, to each
