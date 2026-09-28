@@ -1376,15 +1376,21 @@ declared or not, that matches a probe path returns `GuardedProbePath`. Declared
 patterns join the cross-group overlap check and must not share a request path
 with the group's native routes or another admitted router
 (`OverlappingRouteInventory`). An admitted router is never merged into the
-native router. Serving routes each request through the inspection copies first
-and forwards the unchanged request to an admitted router, inside its group's
-policy and its own outermost correlation and observer, only when its copy
-reaches a declared pattern; every other request takes the native path, so
-unmatched paths still reach the default group's fallback. Undeclared routes and
-an admitted router's own fallbacks therefore never serve a request. Axum
-exposes no route enumeration, so the inventory remains application input: a
-route it omits is unreachable rather than verified. Each admitted router adds
-one inspection routing per request outside the observer.
+native router. A layer outermost on every native route and fallback passes a
+request that a native route matched straight through; any other request, which
+native routing would send to a fallback, goes through the inspection copies,
+and the unchanged request is forwarded to an admitted router, inside its
+group's policy and its own outermost correlation and observer, only when its
+copy reaches a declared pattern. Every other request continues to the default
+group's fallback. Undeclared routes and an admitted router's own fallbacks
+therefore never serve a request. Assembly prepares each admitted router and its
+inspection copy once, as Axum's make-service conversion prepares a served
+router, so no request rebuilds their layers and state held by those layers is
+shared by all of the router's requests; native routes keep Axum's own
+preparation. Axum exposes no route enumeration, so the inventory remains
+application input: a route it omits is unreachable rather than verified. Each
+admitted router adds one inspection routing, outside the observer, to each
+request that no native route matches.
 
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling

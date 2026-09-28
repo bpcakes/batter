@@ -1549,6 +1549,15 @@ nested service, middleware or fallback of an admitted router runs during
 validation. During implementation, dropping the inspection copy's fallback
 reporter and forwarding undeclared matches each made the target fail.
 
+A counting layer on native routes, on an admitted router and around it shows
+that requests served through a prepared make-service reuse the layers built
+before serving, with and without an admitted router; leaving the admitted
+router or its inspection copy unprepared made the count grow with each request.
+A pattern unit test registers each parser rule's accepted and rejected patterns,
+including empty, lone-`*` and embedded-`*` parameter names and the 25-capture
+limit, with the pinned Axum router and requires the parser to agree; inventory
+construction rejects those names as `InvalidPattern`.
+
 ## Axum operational defaults
 
 `cargo test -p batter-axum --test operational --locked` exercises the actual

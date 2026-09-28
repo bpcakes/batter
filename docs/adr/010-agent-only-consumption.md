@@ -316,13 +316,19 @@ unreachable, visibly answered by the default fallback, rather than exempt from
 the probe and overlap checks, and the router's own fallbacks cannot become a
 named group's fallback. Declared patterns join the overlap check and must not
 overlap other routes of their own group, because admitted routers are consulted
-before native routing rather than by Axum's route priority. Forwarding from a
-registered outer route was rejected: Axum appends the outer match to the
-admitted router's `MatchedPath` and path parameters, and `Router::route_service`
-refuses routers. Tests cover these rejections, unreachable undeclared routes
-and fallbacks, declared routes inside their group's policy with native
-parameters, one completion per request, nesting and layers; they fail when the
-inspection copy leaves fallbacks in place or dispatch ignores the inventory.
+only when native routing finds no route, rather than by Axum's route priority.
+Forwarding from a registered outer route was rejected: Axum appends the outer
+match to the admitted router's `MatchedPath` and path parameters, and
+`Router::route_service` refuses routers. Axum prepares only the router it
+serves, so assembly prepares each admitted router and its inspection copy once;
+otherwise every request would rebuild their layers and reset state such as a
+concurrency limit. The dispatch layer sits outermost on the native router, so
+native routes keep Axum's own preparation. Tests cover these rejections,
+unreachable undeclared routes and fallbacks, declared routes inside their
+group's policy with native parameters, one completion per request, nesting,
+layers and layer reuse across requests; they fail when the inspection copy
+leaves fallbacks in place, dispatch ignores the inventory, or either admitted
+router copy is left unprepared.
 
 Remaining boundaries are explicit. The inventory is application input, for
 example an OpenAPI document's paths plus any undocumented route, and a route it
@@ -330,7 +336,10 @@ omits stays unreachable. Validation proves each declared pattern with one path
 filled with `{}`, so a route whose literal spells escaped braces could take that
 path and fail the inventory closed. Routes inside an opaque nested service of
 the admitted router cannot be declared. Each admitted router adds one
-library-owned inspection routing per request before native routing. No
+library-owned inspection routing to each request that no native route matches.
+Layer state inside an admitted router is shared by all of its requests, as with
+Axum's make-service conversion, even where `axum::serve` would prepare a native
+router per connection. No
 OpenAPI-builder dependency or convenience is added. Fresh-agent usability
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.

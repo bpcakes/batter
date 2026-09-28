@@ -1514,16 +1514,31 @@ instead. Matching also extends path parameters already present,
 `append_nested_matched_path` prefixes an existing `MatchedPath`, and
 `Router::route_service` refuses a `Router`, so forwarding from a registered
 outer route into a converted router would duplicate its parameters and prefix
-its matched path. The boundary instead consults inspection copies before native
-routing and forwards the request unchanged. `Router::nest` re-registers nested
-routes under the outer router's 0.7 syntax checks, so admitted routers are
-nested into a router without them. The
+its matched path. The boundary instead consults inspection copies, through a
+layer outermost on every native route and fallback, only for requests without a
+native `MatchedPath`, and forwards the request unchanged. `into_make_service`,
+`into_make_service_with_connect_info` and the `axum::serve` stream service each
+call `with_state(())` on the router they serve, which turns every boxed handler
+into a route once; a router called from inside another service is never
+prepared that way and rebuilds lazily applied layers on every request. Assembly
+therefore prepares each admitted router and inspection copy itself.
+`Router::nest` re-registers nested routes under the outer router's 0.7 syntax
+checks, so admitted routers are nested into a router without them. The
 [http 1.5.0 path parser](https://docs.rs/http/1.5.0/src/http/uri/path.rs.html)
 accepts `{` and `}` in request paths for compatibility, so inventory paths can
 use `{}` as filler that ordinary literal routes cannot spell unescaped.
 Registering a capture beside a catch-all in the same position fails with a
 matchit insertion conflict under these versions, as an admitted-router test
 fixture observed on 2026-09-28.
+
+matchit 0.8.4's `find_wildcard` in
+[`tree.rs`](https://docs.rs/matchit/0.8.4/src/matchit/tree.rs.html) rejects a
+parameter name that is empty or whose first byte is `}`, a check made before
+unescaping; a catch-all named only `*`; and `*` or `/` after a name's first
+byte. `normalize_params` names captures from `a` and panics while naming a 26th.
+The route pattern parser mirrors these rules, so `RouteInventory::new` rejects
+such patterns as `InvalidPattern`, and a unit test compares the parser with
+Axum's own registration for each rule and at the 25-capture limit.
 
 ## HTTP route group matching reviewed: 2026-09-28
 

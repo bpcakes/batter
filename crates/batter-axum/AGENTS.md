@@ -64,8 +64,10 @@ Windows support and non-Unix fallbacks are out of scope.
   analysis with native Axum routing over every short path a witness can use.
   `tests/route_groups/admitted.rs` and `admitted_validation.rs` cover admitted
   routers: declared routes inside their group's policy, unreachable undeclared
-  routes and fallbacks, and probe, inventory and overlap rejections without
-  polling application code.
+  routes and fallbacks, layers reused across served requests, and probe,
+  inventory and overlap rejections without polling application code. The
+  pattern unit tests also compare the parser with Axum's own route
+  registration.
 - `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
@@ -116,10 +118,14 @@ through `GuardedRouter::from_router` with a `RouteInventory`. Learn its routes
 only through an inspection copy whose every route, method fallback and fallback
 is replaced by a library reporter; never call the router itself to validate it.
 Reject a declared pattern unless a path of it reaches the route registered with
-exactly that pattern. Never merge an admitted router into the native router:
-serve it, inside its group's policy and its own observer, only for requests its
+exactly that pattern, and keep the pattern parser accepting exactly the patterns
+the pinned Axum router registers. Never merge an admitted router into the
+native router: offer it only requests that no native route matched, serve it,
+inside its group's policy and its own observer, only for requests its
 inspection copy routes to a declared pattern, and keep its declared patterns
-disjoint from probes, other groups and its own group's other routes. Do not
+disjoint from probes, other groups and its own group's other routes. Prepare
+each admitted router and inspection copy once at assembly so requests never
+rebuild their layers, and leave native routes to Axum's own preparation. Do not
 reintroduce raw probe patterns. Route groups keep one fixed order: correlation
 and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the

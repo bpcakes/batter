@@ -203,8 +203,11 @@ router were absent. An undeclared route therefore answers with the default
 group's fallback, and the admitted router's own fallback never runs, so declare
 fallbacks on the default `GuardedRouter`. Declared routes run inside their
 group's policy with native Axum routing, path parameters and `MatchedPath`, and
-each request still has one completion event. Serving consults each admitted
-router's inspection copy once per request before native routing.
+each request still has one completion event. Only a request that no native
+route matches, and that would otherwise reach a fallback, consults each admitted
+router's inspection copy. Assembly prepares an admitted router once, as
+`into_make_service` prepares a served router, so its layers are built once and
+their state is shared by all of its requests.
 
 ```rust
 use axum::Router;
