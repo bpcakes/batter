@@ -5,5 +5,6 @@ mod operational {
     mod connect_info;
     mod correlation;
     mod readiness;
+    mod rendered_probes;
     mod serving;
 }

@@ -1,11 +1,11 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
-use crate::{ReadinessPolicy, dependency_readiness, liveness, serving};
+use crate::{ReadinessDecision, ReadinessPolicy, dependency_readiness, liveness, serving};
 use assembly::Assembling;
-use axum::{Router, routing::get};
+use axum::{Router, http::request::Parts, response::Response, routing::get};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
 use group::DEFAULT_GROUP;
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, sync::Arc};
 use tokio::net::TcpListener;
 
 mod assembly;
@@ -87,10 +87,12 @@ impl Error for BoundaryAssemblyError {}
 /// own layers and routes. The routes passed to [`Self::assemble`] form the
 /// `default` group, whose policy is given to [`Self::new`] and which owns every
 /// root and nested fallback; [`Self::with_group`] adds named groups with their
-/// own [`GroupPolicy`]. The caller supplies only policies, probe paths and
-/// guarded routes; the order cannot be changed, no probe can end up inside an
-/// admission gate, and no request path can reach routes of two groups. This is
-/// the canonical path. [`crate::observe_http`], [`crate::request_admission`],
+/// own [`GroupPolicy`]. The caller supplies only policies, probe paths, optional
+/// probe renderers and guarded routes; the order cannot be changed, no probe
+/// can end up inside an admission gate, and no request path can reach routes
+/// of two groups. A probe renderer chooses the probe's body and headers, never
+/// its status or readiness decision. This is the canonical path.
+/// [`crate::observe_http`], [`crate::request_admission`],
 /// [`crate::request_scope`] and [`crate::operational_http`] remain available for
 /// compositions the boundary cannot express; each documents the ordering it
 /// then leaves with the caller.
@@ -172,7 +174,9 @@ impl HttpBoundary {
         Ok(self)
     }
 
-    /// Mount the process liveness probe at a validated literal path outside admission.
+    /// Mount the process liveness probe at a validated literal path outside
+    /// admission, answering an empty 200. [`Self::with_rendered_liveness`]
+    /// answers with the application's body instead.
     ///
     /// Raw strings cannot cross this boundary:
     ///
@@ -188,7 +192,36 @@ impl HttpBoundary {
         Ok(self)
     }
 
-    /// Mount lifecycle-plus-dependency readiness at a validated literal path.
+    /// Mount the process liveness probe at a validated literal path outside
+    /// admission, with the application's response.
+    ///
+    /// `render` receives the request metadata, including the generated
+    /// [`CorrelationId`](crate::CorrelationId) but not the body, and returns
+    /// the application's response, for example a documented JSON body and its
+    /// headers. The boundary then sets status 200, replacing any status the
+    /// renderer chose: answering at all is the liveness signal. The path is
+    /// reserved and checked exactly as for [`Self::with_liveness`]. `render`
+    /// runs synchronously for every probe request and must not block the
+    /// runtime. See [`Self::with_rendered_readiness`] for an example.
+    pub fn with_rendered_liveness<F>(
+        mut self,
+        path: ProbePath,
+        render: F,
+    ) -> Result<Self, ProbeRegistrationError>
+    where
+        F: Fn(&Parts) -> Response + Send + Sync + 'static,
+    {
+        self.reserve_probe(path)?;
+        self.probes = self
+            .probes
+            .route(path.as_str(), probe::rendered_liveness(Arc::new(render)));
+        Ok(self)
+    }
+
+    /// Mount lifecycle-plus-dependency readiness at a validated literal path
+    /// outside admission, answering an empty 200 or 503.
+    /// [`Self::with_rendered_readiness`] answers with the application's body
+    /// instead.
     pub fn with_readiness<E: Send + Sync + 'static>(
         mut self,
         path: ProbePath,
@@ -198,6 +231,110 @@ impl HttpBoundary {
         self.probes = self.probes.route(
             path.as_str(),
             get(dependency_readiness::<E>).with_state(policy),
+        );
+        Ok(self)
+    }
+
+    /// Mount lifecycle-plus-dependency readiness at a validated literal path
+    /// outside admission, with the application's response.
+    ///
+    /// Each request takes one fresh decision from `policy`, including any
+    /// application conditions added with [`ReadinessPolicy::with_condition`],
+    /// and passes it to `render` with the request metadata, including the
+    /// generated [`CorrelationId`](crate::CorrelationId) but not the body.
+    /// `render` chooses the body and headers, for example an
+    /// OpenAPI-documented JSON document, and cannot alter the decision: the
+    /// boundary then sets the status from [`crate::readiness_status`], 200 only
+    /// for [`ReadinessDecision::Ready`] and 503 otherwise, and replaces the
+    /// [`ReadinessDecision`] and [`HttpObservationLevel`](crate::HttpObservationLevel)
+    /// response extensions with the decision and the policy's severity,
+    /// whatever the renderer set. The path is reserved and checked exactly as
+    /// for [`Self::with_readiness`]. `render` runs synchronously for every probe
+    /// request and must not block the runtime.
+    ///
+    /// ```
+    /// use axum::{
+    ///     Json,
+    ///     http::request::Parts,
+    ///     response::{IntoResponse, Response},
+    ///     routing::get,
+    /// };
+    /// use batter_axum::{
+    ///     CorrelationId, GuardedRouter, HttpBoundary, ProbePath, ReadinessDecision,
+    ///     ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+    /// };
+    /// use batter_core::{
+    ///     health::{HealthMonitor, HealthPolicy},
+    ///     lifecycle::ShutdownHandle,
+    ///     readiness::{ReadinessCondition, ReadinessUnreadyReason},
+    /// };
+    /// use serde::Serialize;
+    /// use std::{
+    ///     convert::Infallible,
+    ///     sync::{Arc, atomic::{AtomicBool, Ordering}},
+    ///     time::Duration,
+    /// };
+    ///
+    /// /// The application's documented probe body.
+    /// #[derive(Serialize)]
+    /// struct ProbeBody {
+    ///     status: &'static str,
+    ///     request_id: Option<String>,
+    /// }
+    ///
+    /// fn probe_body(status: &'static str, parts: &Parts) -> Response {
+    ///     let request_id = parts.extensions.get::<CorrelationId>().map(|id| id.to_string());
+    ///     Json(ProbeBody { status, request_id }).into_response()
+    /// }
+    ///
+    /// fn readiness_body(decision: ReadinessDecision, parts: &Parts) -> Response {
+    ///     let status = match decision {
+    ///         ReadinessDecision::Ready => "ready",
+    ///         ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition)) => {
+    ///             condition.as_str()
+    ///         }
+    ///         ReadinessDecision::Unready(_) => "unavailable",
+    ///     };
+    ///     probe_body(status, parts)
+    /// }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// approval.approve();
+    /// let second = Duration::from_secs(1);
+    /// let health = HealthPolicy::new(second, second, second * 3, second)?;
+    /// let monitor = HealthMonitor::new(health, || async { Ok::<_, Infallible>(()) });
+    /// // Application state that the application's own tasks keep current.
+    /// let leases_valid = Arc::new(AtomicBool::new(false));
+    /// let leases = leases_valid.clone();
+    /// let readiness = ReadinessPolicy::new(control.status(), monitor.reader())
+    ///     .with_condition(ReadinessCondition::new("key-leases")?, move || {
+    ///         leases.load(Ordering::Acquire)
+    ///     });
+    /// let budget = ResponseConstructionBudget::new(second)?;
+    /// let assembled = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+    ///     .with_rendered_liveness(ProbePath::new("/live")?, |parts| probe_body("live", parts))?
+    ///     .with_rendered_readiness(ProbePath::new("/ready")?, readiness, readiness_body)?
+    ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+    ///     .await?;
+    /// // Inside protected startup: assembled.register_in(scope, "http", listener)?;
+    /// # let _ = (assembled.into_router(), leases_valid);
+    /// # drop(monitor);
+    /// # Ok(()) }
+    /// ```
+    pub fn with_rendered_readiness<E, F>(
+        mut self,
+        path: ProbePath,
+        policy: ReadinessPolicy<E>,
+        render: F,
+    ) -> Result<Self, ProbeRegistrationError>
+    where
+        E: Send + Sync + 'static,
+        F: Fn(ReadinessDecision, &Parts) -> Response + Send + Sync + 'static,
+    {
+        self.reserve_probe(path)?;
+        self.probes = self.probes.route(
+            path.as_str(),
+            probe::rendered_readiness(policy, Arc::new(render)),
         );
         Ok(self)
     }

@@ -1,14 +1,13 @@
 use crate::HttpObservationLevel;
 use axum::{
-    Extension,
     extract::State,
-    http::StatusCode,
-    response::{IntoResponse, Response},
+    http::{StatusCode, request::Parts},
+    response::Response,
 };
 use batter_core::{
     health::HealthReader,
     lifecycle::LifecycleStatus,
-    readiness::{ReadinessEvaluator, ReadinessUnreadyReason},
+    readiness::{ReadinessCondition, ReadinessEvaluator, ReadinessUnreadyReason},
 };
 use tracing::Level;
 
@@ -79,12 +78,16 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
     }
 }
 
-/// Read-only dependency and lifecycle readiness with explicit severity policy.
+/// Read-only dependency, lifecycle and application-condition readiness with
+/// explicit severity policy.
 ///
 /// Reads never invoke the probe, refresh a timestamp or retain writer ownership.
-/// Lifecycle is checked after dependency sampling so an observed drain overrides
-/// cached success. This is a point-in-time decision, not atomic with later drain.
-/// Mount outside admission. Existing [`crate::readiness`] remains status-only.
+/// Lifecycle is checked after dependency sampling and any application
+/// conditions, so an observed drain overrides cached success. This is a
+/// point-in-time decision, not atomic with later drain. Mount outside
+/// admission, as [`crate::HttpBoundary::with_readiness`] and
+/// [`crate::HttpBoundary::with_rendered_readiness`] do. Existing
+/// [`crate::readiness`] remains status-only.
 ///
 /// ```
 /// use axum::{Router, routing::get};
@@ -135,7 +138,8 @@ impl<E> Clone for ReadinessPolicy<E> {
 }
 
 impl<E> ReadinessPolicy<E> {
-    /// Select INFO for expected Starting/Draining, WARN for dependency/Stopped failures.
+    /// Select INFO for expected Starting/Draining, WARN for dependency,
+    /// application-condition and Stopped failures.
     pub fn new(lifecycle: LifecycleStatus, dependency: HealthReader<E>) -> Self {
         Self {
             evaluator: ReadinessEvaluator::new(lifecycle, dependency),
@@ -152,6 +156,31 @@ impl<E> ReadinessPolicy<E> {
         self
     }
 
+    /// Narrow readiness with an application condition.
+    ///
+    /// While `satisfied` returns `false`, a decision that would otherwise be
+    /// Ready is `Unready(ReadinessUnreadyReason::Condition(condition))`, which
+    /// renders 503 and defaults to WARN. The condition is asked only when the
+    /// dependency is ready and cannot make an unready lifecycle or dependency
+    /// ready; see [`ReadinessEvaluator::with_condition`] for when it runs.
+    /// Conditions accumulate in the order added. Condition names are validated
+    /// [`ReadinessCondition`]s, never raw strings:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_axum::ReadinessPolicy;
+    ///
+    /// fn unvalidated(policy: ReadinessPolicy<std::io::Error>) {
+    ///     let _ = policy.with_condition("key-leases", || true);
+    /// }
+    /// ```
+    pub fn with_condition<F>(mut self, condition: ReadinessCondition, satisfied: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.evaluator = self.evaluator.with_condition(condition, satisfied);
+        self
+    }
+
     /// Obtain a fresh read-only decision. No dependency cause enters the response.
     pub fn decision(&self) -> ReadinessDecision {
         self.evaluator.decision()
@@ -160,14 +189,29 @@ impl<E> ReadinessPolicy<E> {
     /// Empty-body 200/503 with typed decision and severity response extensions.
     pub fn response(&self) -> Response {
         let decision = self.decision();
-        (
-            Extension(decision),
-            Extension(HttpObservationLevel((self.level)(decision))),
-            readiness_status(decision),
-        )
-            .into_response()
+        self.finish(decision, Response::default())
+    }
+
+    /// Render a fresh decision with the application's renderer, then apply the
+    /// adapter-owned status, decision extension and severity.
+    pub(crate) fn render(&self, parts: &Parts, renderer: &ReadinessRenderer) -> Response {
+        let decision = self.decision();
+        self.finish(decision, renderer(decision, parts))
+    }
+
+    /// Replace the status and the decision and severity extensions, whatever a
+    /// renderer set, so only the decision and the severity policy select them.
+    fn finish(&self, decision: ReadinessDecision, mut response: Response) -> Response {
+        *response.status_mut() = readiness_status(decision);
+        let extensions = response.extensions_mut();
+        extensions.insert(decision);
+        extensions.insert(HttpObservationLevel((self.level)(decision)));
+        response
     }
 }
+
+/// An application renderer for readiness probe responses.
+pub(crate) type ReadinessRenderer = dyn Fn(ReadinessDecision, &Parts) -> Response + Send + Sync;
 
 /// Serve [`ReadinessPolicy`]'s read-only decision outside guarded routes.
 pub async fn dependency_readiness<E>(State(policy): State<ReadinessPolicy<E>>) -> Response {

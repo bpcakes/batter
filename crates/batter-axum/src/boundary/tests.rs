@@ -111,6 +111,121 @@ async fn boundary_rejects_guarded_probe_paths_without_polling_application_code()
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
+#[test]
+fn rendered_probes_share_duplicate_path_rejection_with_every_probe_kind() {
+    use axum::response::{IntoResponse, Response};
+
+    let second = Duration::from_secs(1);
+    let boundary = || {
+        HttpBoundary::new(RequestPolicy::new(
+            ShutdownHandle::new_unapproved().operation_admission(),
+            ResponseConstructionBudget::new(second).unwrap(),
+        ))
+    };
+    let health_policy = HealthPolicy::new(second, second, second * 3, second).unwrap();
+    let monitor = HealthMonitor::new(health_policy, || async { Ok::<_, Infallible>(()) });
+    let readiness =
+        || ReadinessPolicy::new(ShutdownHandle::new_unapproved().status(), monitor.reader());
+    let live = |_: &axum::http::request::Parts| -> Response { "live".into_response() };
+    let ready = |_, _: &axum::http::request::Parts| -> Response { "ready".into_response() };
+    let path = ProbePath::new("/health").unwrap();
+
+    let results = [
+        boundary()
+            .with_rendered_liveness(path, live)
+            .unwrap()
+            .with_liveness(path)
+            .err(),
+        boundary()
+            .with_liveness(path)
+            .unwrap()
+            .with_rendered_liveness(path, live)
+            .err(),
+        boundary()
+            .with_readiness(path, readiness())
+            .unwrap()
+            .with_rendered_readiness(path, readiness(), ready)
+            .err(),
+        boundary()
+            .with_rendered_readiness(path, readiness(), ready)
+            .unwrap()
+            .with_rendered_liveness(path, live)
+            .err(),
+        boundary()
+            .with_rendered_readiness(path, readiness(), ready)
+            .unwrap()
+            .with_rendered_readiness(path, readiness(), ready)
+            .err(),
+    ];
+    for result in results {
+        assert_eq!(result, Some(ProbeRegistrationError::DuplicatePath));
+    }
+}
+
+#[tokio::test]
+async fn boundary_rejects_guarded_rendered_probe_paths_without_polling_application_code() {
+    use axum::{
+        response::{IntoResponse, Response},
+        routing::{get, post},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let second = Duration::from_secs(1);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let health_policy = HealthPolicy::new(second, second, second * 3, second).unwrap();
+    let monitor = HealthMonitor::new(health_policy, || async { Ok::<_, Infallible>(()) });
+    for (guarded_path, liveness) in [("/live", true), ("/{probe}", false)] {
+        let route_calls = calls.clone();
+        let fallback_calls = calls.clone();
+        let (live_calls, ready_calls) = (calls.clone(), calls.clone());
+        let guarded = GuardedRouter::new()
+            .route(
+                guarded_path,
+                post(move || {
+                    route_calls.fetch_add(1, Ordering::SeqCst);
+                    async { "guarded" }
+                }),
+            )
+            .route("/work", get(|| async { "work" }))
+            .fallback(move || {
+                fallback_calls.fetch_add(1, Ordering::SeqCst);
+                async { "fallback" }
+            });
+        let boundary = HttpBoundary::new(RequestPolicy::new(
+            ShutdownHandle::new_unapproved().operation_admission(),
+            ResponseConstructionBudget::new(second).unwrap(),
+        ));
+        let boundary = if liveness {
+            boundary.with_rendered_liveness(
+                ProbePath::new("/live").unwrap(),
+                move |_| -> Response {
+                    live_calls.fetch_add(1, Ordering::SeqCst);
+                    "live".into_response()
+                },
+            )
+        } else {
+            boundary.with_rendered_readiness(
+                ProbePath::new("/ready").unwrap(),
+                ReadinessPolicy::new(ShutdownHandle::new_unapproved().status(), monitor.reader()),
+                move |_, _| -> Response {
+                    ready_calls.fetch_add(1, Ordering::SeqCst);
+                    "ready".into_response()
+                },
+            )
+        };
+        let result = boundary.unwrap().assemble(guarded).await;
+
+        assert!(
+            matches!(result, Err(BoundaryAssemblyError::GuardedProbePath)),
+            "{guarded_path}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn boundary_rejects_nested_guarded_probe_paths_without_polling_application_code() {
     use axum::routing::post;

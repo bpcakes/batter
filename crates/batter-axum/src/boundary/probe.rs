@@ -1,4 +1,51 @@
-use std::{error::Error, fmt};
+use crate::{ReadinessPolicy, quota_observation::QuotaObservation, readiness::ReadinessRenderer};
+use axum::{
+    extract::Request,
+    http::{StatusCode, request::Parts},
+    response::Response,
+    routing::{MethodRouter, get},
+};
+use std::{error::Error, fmt, sync::Arc};
+
+/// An application renderer for liveness probe responses.
+type LivenessRenderer = dyn Fn(&Parts) -> Response + Send + Sync;
+
+/// Serve liveness with the application's response and the fixed 200 status.
+pub(super) fn rendered_liveness(render: Arc<LivenessRenderer>) -> MethodRouter {
+    get(move |request: Request| {
+        let render = render.clone();
+        async move {
+            let mut response = render(&renderer_parts(request));
+            // Answering at all is the liveness signal; no renderer can change it.
+            *response.status_mut() = StatusCode::OK;
+            response
+        }
+    })
+}
+
+/// Serve one fresh readiness decision per request with the application's
+/// response; the policy then applies the decision's status and extensions.
+pub(super) fn rendered_readiness<E>(
+    policy: ReadinessPolicy<E>,
+    render: Arc<ReadinessRenderer>,
+) -> MethodRouter
+where
+    E: Send + Sync + 'static,
+{
+    get(move |request: Request| {
+        let (policy, render) = (policy.clone(), render.clone());
+        async move { policy.render(&renderer_parts(request), render.as_ref()) }
+    })
+}
+
+/// The probe request's metadata without its body or the observer's private
+/// quota writer.
+fn renderer_parts(request: Request) -> Parts {
+    let (mut parts, body) = request.into_parts();
+    drop(body);
+    parts.extensions.remove::<QuotaObservation>();
+    parts
+}
 
 /// A validated, literal route for a process probe.
 ///
