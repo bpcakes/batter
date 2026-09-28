@@ -1639,13 +1639,24 @@ never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
 custom renderer afterward replaces this policy. Domain responses remain owned
 by their handler.
 
-The reference application's canonical `http::register_in` operation constructs
-the trusted-peer router and selects native `ConnectInfo<SocketAddr>` registration
-at one application-owned boundary. This prevents the production root from
-choosing direct-peer policy and transport metadata independently; the generic
-adapter cannot infer an arbitrary router's extension requirements. The
-application installs `TrustedRequestMetadata` after `operational_http` and before
-authentication/admission. It accepts only `ConnectInfo<SocketAddr>` supplied by
+The reference application's canonical `http::register_in` operation assembles
+its routes through `HttpBoundary` and registers the result with
+`AssembledHttp::register_with_connect_info_in` at one application-owned
+boundary. This prevents the production root from choosing direct-peer policy
+and transport metadata independently; the generic adapter cannot infer an
+arbitrary router's extension requirements. The boundary owns correlation, the
+single observer, probes outside admission, and lifecycle admission with the
+request deadline around every business route and the unmatched-path fallback.
+The application installs `TrustedRequestMetadata` after admission and before
+authentication, as route layers of its `GuardedRouter`; the body limit is a
+guarded layer inside them. A draining or not-yet-ready process therefore returns
+the admission rejection (503 `service_unavailable` in the infrastructure
+envelope) before installing metadata or authenticating, including to requests
+without credentials that an admitted process would answer with 401.
+Authentication runs within the request's operation deadline. Unmatched paths
+reach the 404 fallback only after admission, and an unsupported method on a
+matched route reaches its 405 after admission, metadata and authentication.
+Metadata installation accepts only `ConnectInfo<SocketAddr>` supplied by
 that production native serving path or explicitly asserted by the opaque
 in-process request client. It retains the IP as an opaque `TrustedPeer`; the source port is not a stable
 admission identity. `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `traceparent`,
@@ -1654,9 +1665,9 @@ direct peer is therefore the proxy. No trusted-proxy mode is implemented.
 Missing native peer metadata fails closed with the shared sanitized internal
 response and generated correlation.
 
-Liveness and readiness remain outside the peer-, authentication- and
-admission-gated business router, so an in-process probe needs no synthetic peer
-extension. Axum extractor rejections also remain native responses: malformed
+Liveness and readiness are `HttpBoundary` probes outside the admission-,
+peer- and authentication-gated business routes, so an in-process probe needs no
+synthetic peer extension. Axum extractor rejections also remain native responses: malformed
 JSON, invalid paths and body-limit failures are not promised the application's
 JSON problem envelope. The outer operational middleware still supplies its
 generated response ID header. Tests and callers must distinguish raw HTTP
@@ -1664,9 +1675,11 @@ responses from routes whose contract promises an envelope.
 
 `TrustedRequestMetadata` has no public or test constructor. Production combines
 the adapter-owned correlation with native `ConnectInfo` inside the application
-middleware. The lower-level `http::in_process_client` returns an opaque
-`InProcessRequestClient` that neither implements a serving service nor exposes
-its inner router. Each request requires a caller-selected synthetic peer, and
+middleware. The lower-level `http::in_process_client` awaits the same boundary
+assembly and returns an opaque `InProcessRequestClient` that neither implements
+a serving service nor exposes its inner router. A rejected assembly is returned
+as the sanitized `BoundaryAssemblyError`, wrapped in `HttpRegistrationError` by
+`register_in`. Each request requires a caller-selected synthetic peer, and
 the client replaces the exact `ConnectInfo<SocketAddr>` extension itself. Axum's
 extractor-only `MockConnectInfo` fallback is not observed by
 middleware that reads request extensions directly.

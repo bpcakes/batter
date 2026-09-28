@@ -235,22 +235,33 @@ prove graceful startup/drain and demonstrate an outstanding stream surviving
 wrapper abortion with cleanup skipped; they do not establish a general body,
 WebSocket or disconnect ownership contract.
 
-The reference consumer composes those helpers as
-`operational_http -> direct-peer metadata -> bearer authentication ->
-request_admission -> handler`. Its `TrustedPeerPolicy` has one explicit mode:
+The reference consumer assembles its routes through `HttpBoundary`, so requests
+pass `operational_http -> request admission and deadline -> direct-peer
+metadata -> bearer authentication -> handler`. The boundary owns the first two
+positions; the metadata and authentication middleware are route layers of the
+application's `GuardedRouter`, and the body limit is a guarded layer inside
+them. The repository owner selected admission before
+authentication on 2026-09-28, matching Runlimit's authenticated assembly. A
+draining or not-yet-ready process therefore answers with the admission
+rejection, 503 `service_unavailable`, before any authentication work, where the
+earlier composition answered a request without credentials with 401.
+Authentication runs within the request deadline, and unmatched paths reach the
+guarded 404 fallback only after admission instead of a bare 404 outside it.
+Authentication before admission is not a canonical composition. Its `TrustedPeerPolicy` has one explicit mode:
 trust the IP from native `ConnectInfo<SocketAddr>` and ignore every forwarding,
 trace and client request-ID header. The application-owned `http::register_in`
-operation constructs that router and selects
-`register_http_with_connect_info_in` together; the production root does not make
+operation assembles that boundary and registers it with
+`AssembledHttp::register_with_connect_info_in` together; the production root does not make
 an independent transport-registration choice. Serving settings pin this policy
 in code and carry it through preparation; no environment setting selects a trust
-mode. The lower-level `in_process_client` returns an opaque non-service type and
-requires a synthetic peer for every request; it owns insertion of the exact
-`ConnectInfo<SocketAddr>` and cannot expose or serve its inner router.
+mode. The lower-level `in_process_client` awaits the same assembly and returns
+an opaque non-service type that requires a synthetic peer for every request; it
+owns insertion of the exact `ConnectInfo<SocketAddr>` and cannot expose or
+serve its inner router.
 `MockConnectInfo` affects extractor
 fallback only and is not read by this middleware. No proxy allowlist/CIDR mode
-or forwarded-header parser exists. Liveness and readiness are merged outside
-that business boundary and therefore do not require peer metadata. Axum path,
+or forwarded-header parser exists. Liveness and readiness are boundary probes
+outside admission and therefore do not require peer metadata. Axum path,
 JSON and body-limit extractor rejections remain native transport responses, not
 application problem envelopes; the outer operational layer still assigns their
 response correlation header.

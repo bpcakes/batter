@@ -8,6 +8,17 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Move the reference service's HTTP surface onto `HttpBoundary`, with lifecycle
+  admission and the request deadline before trusted peer metadata and bearer
+  authentication, following the repository owner's 2026-09-28 decision. Its
+  `http::register_in` and `http::in_process_client` are now async:
+  `register_in` registers through `AssembledHttp::register_with_connect_info_in`
+  and returns `HttpRegistrationError`, and `in_process_client` returns
+  `Result<InProcessRequestClient, BoundaryAssemblyError>`. Requests to a
+  draining or not-yet-ready process, including those without credentials, now
+  receive the admission rejection (503 `service_unavailable`) instead of 401;
+  unmatched paths receive the 404 fallback only after admission instead of
+  outside it; authentication now runs within the request deadline.
 - Add named `HttpBoundary` route groups. `with_group(RouteGroup::new(name,
   policy, routes))` gives a set of guarded routes its own `RequestPolicy`, for
   example a longer upload budget, and an optional `BrowserPolicy`. The boundary

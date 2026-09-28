@@ -41,6 +41,8 @@ Unix-only application is not a reusable database framework.
 - `src/provider.rs` owns the selected HTTP effect protocol. It is application
   code, not a generic provider adapter or an exactly-once claim.
 - `src/http.rs` and `src/auth.rs` own authenticated command/reconciliation routes.
+  `src/http.rs` assembles them through `HttpBoundary`; `src/http/tests.rs` and
+  `src/http/tests/admission_order.rs` cover the boundary without PostgreSQL.
 - `src/request.rs` owns direct-socket peer trust and combines it with the shared
   adapter correlation without owning application authority or request lifetime.
 - `src/schema.rs` owns repeated migration/compatibility/producer-definition startup.
@@ -71,8 +73,9 @@ Keep `ServingSettings` and database-only `MaintenanceSettings` concrete and
 separate; do not restore a shared mode enum, optional serving capability, or
 conversion from maintenance into serving. `runtime::run` and `runtime::start`
 accept only the inert, non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
-only `PreparedHttp` while inseparably selecting native peer registration.
-`http::in_process_client` is the lower-level test seam. Its opaque
+only `PreparedHttp` while inseparably selecting native peer registration for the
+assembled boundary.
+`http::in_process_client` is the lower-level test seam over the same assembly. Its opaque
 `InProcessRequestClient` cannot be served or expose the inner router, and each
 request requires an exact synthetic peer. Maintenance ignores known serving-only names from captured
 environment without parsing them, but dedicated files/overrides reject those
@@ -191,11 +194,18 @@ and secret-disclosure checks. Socket publication acknowledges bind, not readines
 
 Keep request metadata outside authority and operation lifetime. The production
 root must use application-owned `http::register_in`, which alone selects
-`register_http_with_connect_info_in`; only its accepted socket peer
+`AssembledHttp::register_with_connect_info_in`; only its accepted socket peer
 may populate `TrustedPeer`. Ignore forwarding, trace and client request-ID
 headers until a separately validated proxy policy is implemented. The bearer
-credential alone selects `OwnerId`, replacing any prior extension. Reuse
-`operational_http`, `CorrelationId`, `request_admission` and
+credential alone selects `OwnerId`, replacing any prior extension. Assemble the
+router only through `HttpBoundary`, which owns correlation, the single observer,
+probes and lifecycle admission; do not call `operational_http`,
+`request_admission`, `register_http_*`, `liveness` or `dependency_readiness`
+directly. Keep admission outside trusted metadata and authentication: install
+both as `GuardedRouter` route layers (metadata outside authentication), keep the
+body limit a guarded layer and keep the 404 fallback in the guarded router.
+Authentication before admission would be a low-level composition, not this
+root's order (repository owner decision, 2026-09-28). Reuse `CorrelationId` and
 `render_infrastructure_failure`; do not add another ID generator, observation
 layer, response-header setter or infrastructure renderer. Pass metadata,
 authority and `OperationContext` explicitly. No arbitrary spawned task inherits

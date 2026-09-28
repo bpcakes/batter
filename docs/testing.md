@@ -1741,9 +1741,9 @@ serving scenarios also execute the peer variant through startup waiter/owner
 abandonment and a streaming body surviving forced wrapper abort. These checks
 do not establish application authentication or proxy-trust correctness.
 
-The reference package separately exercises its actual business-boundary function
-with the production `operational_http`, direct-peer metadata, bearer
-authentication and request-admission order. Twelve overlapping requests use
+The reference package separately exercises its actual boundary-assembly function
+with the production `HttpBoundary` order: correlation and observation, request
+admission, direct-peer metadata, then bearer authentication. Twelve overlapping requests use
 distinct injected native peer IPs and forged forwarding, trace, request-ID and
 owner-extension values; each handler and nested `OperationContext` returns its
 own generated correlation and expected peer, and the configured owner always
@@ -1753,7 +1753,19 @@ deadline. Authentication and domain-failure cases require the selected peer to
 remain absent from their response bodies. Additional cases cover absent optional headers, missing `ConnectInfo`
 failing closed, unauthenticated and domain-invalid production routes, and forced
 request cancellation retaining the correct response/header identity while the
-separate operation context becomes cancelled. These ordinary tests substitute a
+separate operation context becomes cancelled. Admission-order cases run each
+request while the lifecycle is starting, ready and draining. Before readiness and
+during drain, a request without credentials, a request without native peer
+metadata and an authenticated request all receive the admission rejection
+(503 `service_unavailable`, without a `WWW-Authenticate` challenge), whereas once
+admitted the first two receive authentication's 401 and the metadata layer's
+fail-closed 500. An authenticated request reaches its deterministic handler with
+the configured owner only while ready, and the same request during drain does
+not call it. Unmatched paths receive the 404 fallback only when admitted, with
+no authentication, while an unsupported method on a matched route receives its
+405 only when admitted and authenticated, and 401 without credentials. A negative control that rebuilt
+the former order, with admission inside authentication, made the starting-phase
+cases return 401 and the unmatched path 404. These ordinary tests substitute a
 deterministic handler only after applying the same production boundary and need
 no PostgreSQL. Adapter real-socket tests independently establish ConnectInfo
 provenance by comparing the observed value with each client's own socket address;
@@ -1762,11 +1774,12 @@ the reference policy tests establish the exact SocketAddr-to-IP step. The databa
 requires the helper to select a synthetic peer for every request. It requires every parsed JSON
 `request_id` to equal the generated response header.
 
-The application-owned `http::register_in` function fuses router construction
+The application-owned `http::register_in` function fuses boundary assembly
 with native peer-aware registration. An ordinary non-database real-socket case
-starts that exact operation and requires authenticated-boundary 401 rather than
-the missing-peer 500 control. The production-root live case supplies the final
-evidence layer: after the real listener becomes live, it sends an unauthorized request to the matched
+starts that exact operation and, once the supervisor is ready, requires
+authenticated-boundary 401 rather than the missing-peer 500 control. The
+production-root live case supplies the final evidence layer: after `/ready`
+returns 200, because admission precedes authentication, it sends an unauthorized request to the matched
 `/delivery-commands/transport-probe` route and requires 401
 `authentication_required` plus matching header/body identity. Replacing native
 ConnectInfo registration with plain registration would instead hit the retained
