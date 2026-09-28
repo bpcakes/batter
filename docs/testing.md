@@ -1515,8 +1515,9 @@ inside admission and mutation checks, and no application code runs during
 rejected assembly.
 
 Pattern unit tests in `crates/batter-axum/src/boundary/pattern/tests.rs` compare
-the overlap analysis with native Axum 0.8.9 routing: for 23 patterns covering
-literals, empty and escaped segments, prefixed captures and wildcards, every
+the overlap analysis with native Axum 0.8.9 routing: for 25 patterns covering
+literals, empty and escaped segments, prefixed captures, captures whose name
+starts with `/`, and wildcards, every
 constructed shared path must route through both patterns alone, and no pair
 judged disjoint may share any of the 584 paths of up to three segments built
 from the segments a constructed path can contain. During implementation, moving
@@ -1545,8 +1546,8 @@ reject declared routes overlapping another group, native routes of their own
 group or another admitted router. Sibling literals equal to conventional
 fillers do not take inventory paths, undeclared routes take no part in overlap,
 and invalid inventories fail at construction. No handler, method fallback,
-nested service, middleware or fallback of an admitted router runs during
-validation. During implementation, dropping the inspection copy's fallback
+nested service, middleware or fallback service of an admitted router is called
+during validation. During implementation, dropping the inspection copy's fallback
 reporter and forwarding undeclared matches each made the target fail.
 
 A counting layer on native routes and a handler fallback, on an admitted router

@@ -305,7 +305,12 @@ run application handlers, fallbacks or middleware.
 construction rejects an empty inventory and patterns outside the analyzed Axum
 syntax. Assembly inspects a copy of the router whose every route, method
 fallback and fallback is replaced by a library reporter, so validation runs
-Axum's matcher but no application code. A declared pattern that no path of it
+Axum's matcher and calls or polls no application handler, fallback or
+middleware service. Preparing that copy still runs, once, the constructors of
+application layers that Axum applies lazily to handlers, as Axum's preparation
+of a served router would, even when assembly is then rejected; an application
+layer whose constructor has side effects shows them at assembly. A declared
+pattern that no path of it
 reaches with exactly that pattern returns `RouteInventoryMismatch`, and any
 route of the router matching a probe path, declared or not, returns
 `GuardedProbePath`. Completeness of the inventory cannot be proved locally, so

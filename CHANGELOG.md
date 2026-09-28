@@ -13,8 +13,8 @@ contracts, capability facts and validation history.
   `GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`. The
   application declares the route patterns the router may serve. Assembly
   checks each declared pattern and rejects probe collisions through a
-  library-owned inspection copy of the router that calls no application
-  handler, fallback or middleware, returning the new
+  library-owned inspection copy of the router that calls or polls no
+  application handler, fallback or middleware service, returning the new
   `BoundaryAssemblyError::RouteInventoryMismatch` for a pattern the router does
   not serve. Declared patterns join the group overlap check, and the new
   `OverlappingRouteInventory` rejects declared routes that share a path with

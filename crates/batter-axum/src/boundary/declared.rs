@@ -203,7 +203,10 @@ impl Service<Request> for Report {
 /// then replaces the path routes again, outermost. Axum still matches the path
 /// and records `MatchedPath`, but no application handler, fallback or
 /// middleware service is called or polled. The copy is prepared once, so
-/// routing through it never rebuilds the layers it replaced.
+/// routing through it never rebuilds the layers it replaced. Preparing it, like
+/// Axum's preparation of a served router, runs the constructors of application
+/// layers that Axum applies lazily to handlers, once, even if assembly then
+/// fails.
 #[derive(Clone)]
 pub(super) struct Inspection(Router);
 

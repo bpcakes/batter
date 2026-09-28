@@ -1525,7 +1525,11 @@ call `with_state(())` on the router they serve, which turns every boxed handler
 into a route once; a router called from inside another service is never
 prepared that way and rebuilds lazily applied layers on every request. Assembly
 therefore prepares each admitted router, inspection copy and moved fallback
-router itself.
+router itself. Preparation turns a boxed handler into a route through
+`into_route`, which applies each lazily mapped layer by calling its
+`Layer::layer`, so preparing an inspection copy runs those application
+constructors once, even when assembly is then rejected, although the services
+they build are replaced and never called.
 `Router::nest` re-registers nested routes under the outer router's 0.7 syntax
 checks, so admitted routers are nested into a router without them. The
 [http 1.5.0 path parser](https://docs.rs/http/1.5.0/src/http/uri/path.rs.html)
@@ -1539,10 +1543,13 @@ matchit 0.8.4's `find_wildcard` in
 [`tree.rs`](https://docs.rs/matchit/0.8.4/src/matchit/tree.rs.html) rejects a
 parameter name that is empty or whose first byte is `}`, a check made before
 unescaping; a catch-all named only `*`; and `*` or `/` after a name's first
-byte. `normalize_params` names captures from `a` and panics while naming a 26th.
-The route pattern parser mirrors these rules, so `RouteInventory::new` rejects
-such patterns as `InvalidPattern`, and a unit test compares the parser with
-Axum's own registration for each rule and at the 25-capture limit.
+byte. It never tests the first byte for `/`, so `/items/{/id}` registers a
+capture named `/id` that matches `/items/7`, and that `/` does not split the
+segment. `normalize_params` names captures from `a` and panics while naming a
+26th. The route pattern parser mirrors these rules, so `RouteInventory::new`
+rejects such patterns as `InvalidPattern` and accepts `/items/{/id}`, and a unit
+test compares the parser with Axum's own registration for each rule and at the
+25-capture limit.
 
 ## HTTP route group matching reviewed: 2026-09-28
 

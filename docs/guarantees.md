@@ -1366,7 +1366,10 @@ awaited assembly builds an inspection copy of each admitted router:
 fallback route and the catch-all fallback with a library-owned reporter, and
 `route_layer` then marks the path routes outermost. Routing a request through
 that copy runs Axum's matcher, which records `MatchedPath`, but calls or polls
-no application handler, fallback or middleware service. For each declared
+no application handler, fallback or middleware service. Preparing the copy, like
+Axum's preparation of a served router, runs the constructors of application
+layers that Axum applies lazily to handlers, once, even when assembly is then
+rejected. For each declared
 pattern, assembly routes one path of it, with `{}` filling every capture and
 wildcard, and returns `RouteInventoryMismatch` naming the group unless that path
 reaches the route registered with exactly that pattern. A pattern whose path no

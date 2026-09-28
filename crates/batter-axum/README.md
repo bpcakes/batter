@@ -195,7 +195,9 @@ route registered with exactly that pattern. The same copy rejects any route of
 the router, declared or not, that matches a probe path. Declared patterns take
 part in the group overlap check and must not share a request path with the
 other routes of their own group (`OverlappingRouteInventory`). No application
-handler, fallback or middleware is called or polled.
+handler, fallback or middleware service is called or polled. Preparing the
+inspection copy does run, once, the constructors of application layers that
+Axum applies lazily to handlers, even when assembly is then rejected.
 
 When serving, a request reaches the admitted router only if that router would
 route it to a declared pattern; every other request is routed as though the
