@@ -151,7 +151,8 @@ publication waits without merging command, startup or process outcome types.
 full inner-future destruction, without heap allocation.
 `crates/batter-axum/src/lib.rs` owns the separately selected Axum adapter and
 `boundary.rs` owns the route-inventory-preserving `GuardedRouter` plus the
-library-ordered `HttpBoundary` composition;
+library-ordered `HttpBoundary` composition, whose non-overlapping route groups
+carry their own request and browser policy;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics without owning
 credential meaning, authorization, CORS or application error envelopes.

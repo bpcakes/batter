@@ -1493,6 +1493,41 @@ application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
+## HTTP route group matching reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9, whose router delegates path matching to
+matchit 0.8.4; both were reviewed from their published crate sources. In the
+[Axum 0.8.9 router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs),
+`Router::layer` wraps path routes, the fallback router and the catch-all
+fallback; `merge` keeps the second router's fallback when both are defaults,
+prefers a custom fallback over a default one and panics on two custom ones; and
+`nest` adds the nested router's fallback entries only when that router has a
+custom fallback. Path routes are tried before fallback routes, and
+`path_for_nested_route` joins prefixes exactly as `GuardedRouter::nest` records
+them. Route groups therefore reject named-group fallbacks and merge the default
+group last.
+
+The [matchit 0.8.4 documentation](https://docs.rs/matchit/0.8.4/matchit/) and
+its `tree.rs` and `escape.rs` sources define the pattern grammar the overlap
+analysis mirrors: `{{` and `}}` are literal braces, one parameter per segment
+may follow a literal prefix but must end the segment, a catch-all must end the
+route, parameter names are normalized, and literals take priority over
+parameters with backtracking. A parameter matches up to the next `/`; the
+exact-prefix comparison at the end of a path means a final parameter needs at
+least one byte, while an earlier one may be empty. A catch-all needs at least
+one byte. The pinned [route documentation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/docs/routing/route.md)
+states that `/{*key}` does not match `/`. An isolated Axum 0.8.9 reproduction
+on 2026-09-28 confirmed that `/users/{id}` rejects `/users/`, `/users/{id}/x`
+accepts `/users//x`, `/a{x}` rejects `/a`, `/x/{*rest}` rejects `/x/` but
+accepts `/x//`, and `/{{x}}` matches the literal path `/{x}`. The repository's
+pattern unit test repeats this comparison against native routing for every
+pattern pair it covers.
+
+[RFC 9110 section 9.2.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.1)
+defines GET, HEAD, OPTIONS and TRACE as the safe methods. Route-group mutation
+checks skip exactly those and check every other method, including extension
+methods.
+
 ## HTTP observation severity reviewed: 2026-09-09
 
 Resolved Axum 0.8.9 and tracing 0.1.44 remain unchanged in Cargo.lock.

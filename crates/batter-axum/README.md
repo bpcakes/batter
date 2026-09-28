@@ -62,7 +62,9 @@ supported browsers must emit `Sec-Fetch-Site`. The optional JSON check parses
 the complete RFC 9110 media type and parameter byte grammar, not merely an
 `application/json` prefix.
 
-Wrap assembled private routes and their fallback with one
+On the canonical path, a route group's `BrowserPolicy` installs the private
+headers and mutation checks; see [route groups](#http-boundary-and-route-groups).
+In a manual composition, wrap assembled private routes and their fallback with one
 `.layer(browser::PrivateResponsePolicy::...)`, choosing the referrer policy
 deliberately for that route group. Every policy overwrites
 `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; only the two
@@ -90,6 +92,8 @@ server state, or define response bodies. SameSite and Fetch Metadata remain
 defense-in-depth signals; `Cache-Control: no-store` is not a complete privacy
 guarantee.
 
+## HTTP boundary and route groups
+
 Construct each configured route with `ProbePath::new`, then use
 `HttpBoundary::new(RequestPolicy)` with `with_liveness`, `with_readiness` and
 build application routes with `GuardedRouter`, and call `assemble(guarded)`.
@@ -110,6 +114,89 @@ Probes receive HTTP status/outcome/latency events without acquiring an execution
 policy. Guarded fallbacks and rejected requests are observed too, but the
 fallback remains inside admission and is rejected while the process is not
 accepting work.
+
+`HttpBoundary::new` also accepts a `GroupPolicy`, and `with_group` adds named
+`RouteGroup`s. The routes passed to `assemble` are the group named `default`.
+Each group has its own `RequestPolicy`, for example a longer upload budget, and
+an optional `BrowserPolicy`. From the outside in, the boundary installs server
+correlation with the single HTTP observer, then for each group its
+`PrivateResponsePolicy` headers when it has a browser policy, lifecycle
+admission with the group's response-construction deadline, `MutationPolicy`
+checks on every method other than GET, HEAD, OPTIONS and TRACE when configured,
+and finally the application's own layers and handlers. The private headers
+therefore cover the group's admission, deadline, method and mutation
+rejections, and the mutation renderer receives the admitted request's
+metadata. `BrowserPolicy::with_mutation_checks` takes the application's
+renderer for the sanitized `MutationRejection`;
+`BrowserPolicy::without_mutation_checks` states that the group's mutating
+routes rely on other authentication. There is no empty browser policy.
+
+Only the default group may declare a root or nested fallback, so every
+unmatched path reaches the default fallback inside the default group's
+admission, even under a named group's route prefix. A named group needs at
+least one route and a unique name of 1–96 ASCII alphanumeric, `.`, `_` or `-`
+bytes; `with_group` rejects other groups before routing. Assembly rejects a
+probe path that any group's route can match, and two groups whose routes can
+match the same request path, even with different methods. The sanitized
+`BoundaryAssemblyError::OverlappingGroupPaths` names both groups. Overlap is
+decided from the retained route patterns and confirmed by routing the shared
+path through each pattern alone; no application code runs. If a request URI
+cannot preserve that shared path verbatim, assembly conservatively rejects the
+overlap before native merging, where even unreachable route literals can collide.
+
+```rust
+use axum::{response::IntoResponse, routing::{get, put}};
+use batter_axum::{
+    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, RequestPolicy, RouteGroup,
+    browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
+};
+
+async fn assemble(
+    ordinary: RequestPolicy,
+    uploads: RequestPolicy,
+    account: RequestPolicy,
+) -> Result<batter_axum::AssembledHttp, Box<dyn std::error::Error>> {
+    let browser = BrowserPolicy::with_mutation_checks(
+        PrivateResponsePolicy::SameOriginReferrer,
+        MutationPolicy::exact_origin(BrowserOrigin::https("https://app.example")?),
+        |rejection, _parts| (rejection.status(), rejection.code()).into_response(),
+    );
+    let upload_routes = GuardedRouter::new().route("/uploads/{name}", put(|| async { "stored" }));
+    let account_routes = GuardedRouter::new().route("/account", get(|| async { "profile" }));
+    Ok(HttpBoundary::new(ordinary)
+        .with_group(RouteGroup::new("uploads", uploads, upload_routes))?
+        .with_group(RouteGroup::new(
+            "account",
+            GroupPolicy::browser(account, browser),
+            account_routes,
+        ))?
+        .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+        .await?)
+}
+```
+
+### Migrating manual compositions to route groups
+
+Existing `HttpBoundary::new(RequestPolicy)` and `assemble(guarded)` calls keep
+their meaning; route groups are additive.
+
+- Replace per-handler Origin, Fetch Metadata or custom-marker checks with one
+  `BrowserPolicy::with_mutation_checks` on the group that owns those routes, and
+  move the rejection envelope into its renderer. Handlers no longer call
+  `MutationPolicy::check`.
+- Replace hand-written private-response middleware, or `private_response`
+  layered around a route group, with `GroupPolicy::browser` and the chosen
+  `PrivateResponsePolicy`. The boundary places the headers outside the group's
+  admission, so admission and deadline rejections receive them too.
+- Replace separately layered `request_admission` routers that differ only in
+  their budget with one `RouteGroup` per `RequestPolicy`.
+- Drop prose ordering rules such as "add admission before merging probes" or
+  "keep exactly one HTTP observer": the boundary installs that order.
+- Move a fallback from a named group into the default group, and split routes
+  that two groups would share, including one path served with different
+  methods, into a single group.
+
+## Low-level composition and observation
 
 For compositions the boundary cannot express, `request_admission`, `observe_http`
 and `operational_http` remain available. `observe_http` requires no lifecycle

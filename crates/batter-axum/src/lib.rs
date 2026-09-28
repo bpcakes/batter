@@ -10,7 +10,9 @@
 //!
 //! [`HttpBoundary`] is the canonical composition: it keeps probes outside
 //! admission and installs correlation with the single HTTP observer outermost,
-//! so the layer order is library-owned. Only the outermost observer emits a
+//! so the layer order is library-owned. Named [`RouteGroup`]s give sets of
+//! guarded routes their own [`RequestPolicy`] and optional [`BrowserPolicy`]
+//! inside that same fixed order. Only the outermost observer emits a
 //! completion event; nested Batter middleware contributes adapter facts to
 //! that observer's shared retained state. The individual middlewares remain
 //! available for compositions the boundary cannot express and document the
@@ -30,8 +32,8 @@ pub mod quota_observation;
 pub mod browser;
 
 pub use boundary::{
-    AssembledHttp, BoundaryAssemblyError, GuardedRouter, HttpBoundary, ProbePath, ProbePathError,
-    ProbeRegistrationError,
+    AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
+    ProbePath, ProbePathError, ProbeRegistrationError, RouteGroup, RouteGroupError,
 };
 pub use correlation::{
     CorrelationId, operational_http, operational_http_with_quota, render_infrastructure_failure,

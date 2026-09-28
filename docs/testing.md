@@ -1486,6 +1486,44 @@ consumer shapes, and a compile-fail doctest rejects a weaker referrer variant.
 No browser process, application session store, CORS policy, or real credential
 protocol is simulated; the target proves the HTTP header contract.
 
+## HTTP route groups
+
+`cargo test -p batter-axum --test route_groups --locked` assembles one
+consumer-shaped boundary with a default group under a one-second budget, an
+upload group under three seconds and a private browser group with exact-origin
+mutation checks and `no-referrer` headers, plus liveness, readiness and a
+guarded fallback. On the paused Tokio clock the same two-second work expires at
+one second in the default group and completes in the upload group, whose longer
+work expires at exactly three seconds. Before readiness every group rejects
+through its own admission while probes answer; the private group's admission,
+deadline, method and mutation rejections carry its headers, and unmatched
+paths, including one under the private prefix, reach the default fallback
+without them. Failure paths cover a capture shadowing another group's literal,
+one path with different methods in two groups, overlaps between two named
+groups, and shared paths that a request URI rejects or changes (spaces, tabs,
+non-ASCII bytes, query and fragment delimiters). Those paths must return a
+sanitized overlap error before native merging, for same or different methods
+and default or named group pairs, without polling application code.
+Other failures cover probes inside a named group, invalid, reused and reserved names, empty
+groups, root, nested and merged fallbacks in named groups, missing,
+mismatched and duplicated Origin fields, cross-site Fetch Metadata, and every
+non-safe method including an extension method, while safe methods pass. Across
+groups the target also requires one correlated completion per response, the
+first-poll dispatch for an aborted group request, and cancellation of an
+escaped group context after response construction. Application layers run
+inside admission and mutation checks, and no application code runs during
+rejected assembly.
+
+Pattern unit tests in `crates/batter-axum/src/boundary/pattern/tests.rs` compare
+the overlap analysis with native Axum 0.8.9 routing: for 23 patterns covering
+literals, empty and escaped segments, prefixed captures and wildcards, every
+constructed shared path must route through both patterns alone, and no pair
+judged disjoint may share any of the 584 paths of up to three segments built
+from the segments a constructed path can contain. During implementation, moving
+mutation checks outside admission, private headers inside admission, dropping
+the overlap check and merging the default group first each made the target
+fail.
+
 ## Axum operational defaults
 
 `cargo test -p batter-axum --test operational --locked` exercises the actual
