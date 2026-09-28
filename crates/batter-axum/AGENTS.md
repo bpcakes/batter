@@ -108,7 +108,9 @@ and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the
 application's layers. Only the default group owns root or nested fallbacks and
 is merged last. Group routes must not share a request path in any method; keep
-overlap decisions confirmed by native routing of each pattern alone, and update
+overlap decisions confirmed by native routing of each pattern alone when its
+witness survives request URI construction unchanged; otherwise reject the
+overlap before native merging. Update
 the pattern analysis and its Axum comparison test whenever the Axum or matchit
 pin changes. Apply `observe_http` after
 assembling routes/fallback; use `request_admission` inside it. If generated

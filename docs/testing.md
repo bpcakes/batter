@@ -1500,7 +1500,11 @@ deadline, method and mutation rejections carry its headers, and unmatched
 paths, including one under the private prefix, reach the default fallback
 without them. Failure paths cover a capture shadowing another group's literal,
 one path with different methods in two groups, overlaps between two named
-groups, probes inside a named group, invalid, reused and reserved names, empty
+groups, and shared paths that a request URI rejects or changes (spaces, tabs,
+non-ASCII bytes, query and fragment delimiters). Those paths must return a
+sanitized overlap error before native merging, for same or different methods
+and default or named group pairs, without polling application code.
+Other failures cover probes inside a named group, invalid, reused and reserved names, empty
 groups, root, nested and merged fallbacks in named groups, missing,
 mismatched and duplicated Origin fields, cross-site Fetch Metadata, and every
 non-safe method including an extension method, while safe methods pass. Across

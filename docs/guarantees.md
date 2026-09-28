@@ -1349,7 +1349,10 @@ overlap decision constructs a shared path under the pinned matchit 0.8.4 rules:
 a capture may be empty except in the final segment, a wildcard needs a
 non-empty tail, and `{{`/`}}` are literal braces. Assembly confirms that path by
 routing it through an inert router for each pattern alone, without polling
-application handlers, fallbacks or middleware. These are local routing and
+application handlers, fallbacks or middleware. If a request URI cannot preserve
+the shared path verbatim, assembly conservatively rejects the overlap before
+native merging; unreachable route literals can still collide during that merge.
+These are local routing and
 header mechanics: browser signals are not authentication, authorization, CORS
 or complete CSRF protection, and a group budget bounds response construction
 only.

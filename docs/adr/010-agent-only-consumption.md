@@ -240,7 +240,10 @@ matcher also gives literals priority over captures, so routes in two groups
 could silently shadow each other: assembly decides from the retained patterns
 whether two groups can match one request path, in any method, confirms each
 shared path through native routing of each pattern alone, and returns an error
-naming both groups. A pattern outside the analyzed syntax fails closed. A bare
+naming both groups. A pattern outside the analyzed syntax or a shared path that
+request URI construction cannot preserve verbatim fails closed. This keeps
+unreachable but conflicting native route literals from panicking during merge;
+the existing fallible assembly boundary owns rejection before execution. A bare
 `Router` cannot join a group (compile-fail rustdoc). Tests cover these
 rejections, per-group deadlines, headers on every rejection, the fallback owner,
 and removal of each ordering or overlap rule.

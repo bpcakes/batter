@@ -94,11 +94,15 @@ async fn share_path(first: &[String], second: &[String]) -> bool {
 
 /// Confirm a constructed path with native routing of each pattern alone.
 ///
-/// A path that cannot form a request URI cannot reach either route.
+/// Fail closed when a request URI cannot preserve the witness path: native
+/// route registration accepts such literals, and merging them can still panic.
 async fn witnessed(first: &String, second: &String, path: &str) -> bool {
     let (Ok(first_request), Ok(second_request)) = (inspection(path), inspection(path)) else {
-        return false;
+        return true;
     };
+    if first_request.uri().path() != path {
+        return true;
+    }
     reports_match(&inventory([first]), first_request).await
         && reports_match(&inventory([second]), second_request).await
 }

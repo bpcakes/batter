@@ -126,6 +126,34 @@ async fn overlapping_group_paths_are_rejected_without_polling_application_code()
 }
 
 #[tokio::test]
+async fn unrepresentable_overlap_witnesses_are_rejected_without_polling() {
+    let calls = Calls::new();
+    for path in ["/a b", "/a\tb", "/caf\u{e9}", "/a?b", "/a#b"] {
+        for method in [GET, PUT] {
+            let result = assemble(
+                calls.routes(&[(path, GET)]),
+                vec![("uploads", calls.routes(&[(path, method)]))],
+                &[],
+            )
+            .await;
+            assert_eq!(result.err(), Some(overlap("default", "uploads")));
+
+            let result = assemble(
+                GuardedRouter::new(),
+                vec![
+                    ("uploads", calls.routes(&[(path, GET)])),
+                    ("account", calls.routes(&[(path, method)])),
+                ],
+                &[],
+            )
+            .await;
+            assert_eq!(result.err(), Some(overlap("uploads", "account")));
+        }
+    }
+    calls.assert_untouched();
+}
+
+#[tokio::test]
 async fn disjoint_group_paths_assemble() {
     let calls = Calls::new();
     let default = calls.routes(&[("/files/{id}", GET), ("/uploads", GET)]);

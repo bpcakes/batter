@@ -140,7 +140,9 @@ probe path that any group's route can match, and two groups whose routes can
 match the same request path, even with different methods. The sanitized
 `BoundaryAssemblyError::OverlappingGroupPaths` names both groups. Overlap is
 decided from the retained route patterns and confirmed by routing the shared
-path through each pattern alone; no application code runs.
+path through each pattern alone; no application code runs. If a request URI
+cannot preserve that shared path verbatim, assembly conservatively rejects the
+overlap before native merging, where even unreachable route literals can collide.
 
 ```rust
 use axum::{response::IntoResponse, routing::{get, put}};

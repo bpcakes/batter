@@ -383,7 +383,9 @@ impl HttpBoundary {
     /// guarded method at that path is rejected before Axum merge can panic.
     /// Routes of different groups may not match one request path, even with
     /// different methods; overlap is decided from the retained patterns and
-    /// confirmed by routing a shared path through each pattern alone.
+    /// confirmed by routing a shared path through each pattern alone. If a
+    /// request URI cannot preserve that path verbatim, assembly conservatively
+    /// rejects the overlap before native merging.
     pub async fn assemble(
         self,
         guarded: GuardedRouter,
