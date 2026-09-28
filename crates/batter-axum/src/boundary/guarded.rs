@@ -92,9 +92,11 @@ where
     /// from the declared patterns: they must not share a request path with a
     /// probe, another group or another route set of their own group. The
     /// router then runs inside its group's policy like any guarded route, with
-    /// native routing, path parameters and `MatchedPath`. [`Self::nest`],
-    /// [`Self::merge`], [`Self::layer`], [`Self::route_layer`] and
-    /// [`Self::with_state`] carry the admitted router and its inventory along.
+    /// native routing, path parameters and `MatchedPath`. Assembly prepares it
+    /// once, as Axum prepares a router it serves, so its layers are built once
+    /// and shared by all of its requests. [`Self::nest`], [`Self::merge`],
+    /// [`Self::layer`], [`Self::route_layer`] and [`Self::with_state`] carry the
+    /// admitted router and its inventory along.
     ///
     /// ```
     /// use axum::{Router, extract::Path, routing::get};

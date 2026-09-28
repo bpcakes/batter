@@ -2,7 +2,7 @@
 
 use super::{
     BoundaryAssemblyError, GroupPolicy, GuardedRouter, ProbePath,
-    declared::{Admitted, DeclaredRouter, Dispatch, Inspection},
+    declared::{Admitted, DeclaredRouter, DispatchLayer, Inspection},
     inventory,
 };
 use crate::operational_http;
@@ -88,9 +88,10 @@ impl Assembling {
 ///
 /// Named groups are merged into the probes and the default group last, with
 /// correlation and the single observer outermost on every route. Admitted
-/// routers are served in front of that router, each inside its group's policy
-/// and its own observer, for exactly the requests they route to a declared
-/// pattern; they are never merged into it.
+/// routers are never merged into that router: a layer outside it offers them
+/// each request that no native route matched, and one serves the request,
+/// inside its group's policy and its own observer, only when it routes it to a
+/// declared pattern.
 pub(super) async fn assemble(
     probes: Router,
     probe_paths: &[ProbePath],
@@ -113,7 +114,7 @@ pub(super) async fn assemble(
     Ok(if admitted.is_empty() {
         router
     } else {
-        Router::new().fallback_service(Dispatch::new(admitted, router))
+        router.layer(DispatchLayer::new(admitted))
     })
 }
 
@@ -164,9 +165,9 @@ async fn validate(
 /// Whether an admitted router's declared routes share a request path with the
 /// group's native routes or with another admitted router of the group.
 ///
-/// Admitted routers are consulted before native routing, so such a path would
-/// otherwise be served by whichever router is consulted first rather than by
-/// Axum's route priority.
+/// Admitted routers are consulted only after native routing finds no route, so
+/// a native route would silently take such a path, and among admitted routers
+/// the first one consulted would, instead of Axum's route priority deciding.
 async fn declared_overlap(group: &Assembling) -> bool {
     for (index, declared) in group.declared.iter().enumerate() {
         if inventory::share_path(&declared.patterns, &group.patterns).await {

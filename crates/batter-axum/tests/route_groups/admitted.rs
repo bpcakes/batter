@@ -224,6 +224,54 @@ async fn nesting_merging_and_layers_carry_the_admitted_router() {
     assert_eq!(headers["x-layer"], "route");
 }
 
+/// A layer that counts how often Axum builds the service it wraps.
+#[derive(Clone)]
+struct CountBuilds(Arc<AtomicUsize>);
+
+impl<S> tower::Layer<S> for CountBuilds {
+    type Service = S;
+
+    fn layer(&self, inner: S) -> S {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        inner
+    }
+}
+
+#[tokio::test]
+async fn served_requests_reuse_layers_built_before_serving() {
+    for admitted in [false, true] {
+        let builds = Arc::new(AtomicUsize::new(0));
+        let handle = ready_handle();
+        let default = GuardedRouter::new()
+            .route("/work", get(|| async { "work" }))
+            .layer(CountBuilds(builds.clone()));
+        let mut boundary = HttpBoundary::new(request_policy(&handle, SECOND));
+        if admitted {
+            let converted = Router::new()
+                .route("/items/{id}", get(|| async { "item" }))
+                .layer(CountBuilds(builds.clone()));
+            let inventory = RouteInventory::new(["/items/{id}"]).unwrap();
+            let items =
+                GuardedRouter::from_router(converted, inventory).layer(CountBuilds(builds.clone()));
+            let group = RouteGroup::new("items", request_policy(&handle, SECOND), items);
+            boundary = boundary.with_group(group).unwrap();
+        }
+        let assembled = boundary.assemble(default).await.unwrap();
+        // Prepare the router once, as registration with the direct peer does.
+        let app = assembled
+            .into_router()
+            .into_make_service()
+            .oneshot(())
+            .await
+            .unwrap();
+        let built = count(&builds);
+        for path in ["/work", "/items/7", "/work", "/items/8", "/missing"] {
+            call(&app, request(Method::GET, path)).await;
+        }
+        assert_eq!(count(&builds), built, "admitted={admitted}");
+    }
+}
+
 fn completions(text: &str) -> Vec<&str> {
     text.lines()
         .filter(|line| line.contains("HTTP response boundary finished"))
