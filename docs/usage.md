@@ -420,8 +420,11 @@ remains available for adapter-owned tests and applications that need that packag
 boundary.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
-render your envelope. Install trusted metadata middleware outside the policy so
-it is available even for readiness/deadline failures. `HttpBoundary` installs
+render your envelope. In a manual composition, install trusted metadata
+middleware outside the policy so it is available even for readiness/deadline
+failures. `HttpBoundary` runs application layers inside admission, so its
+renderer receives the adapter's `CorrelationId` and request parts but no
+application metadata. `HttpBoundary` installs
 `operational_http`, which generates a UUID and replaces incoming header/Tower/
 adapter identities; it emits one HTTP completion with an event-local ID even
 when INFO spans are disabled. Extract `Extension<CorrelationId>` for explicit
@@ -436,13 +439,16 @@ binding the native listener. Construct both projections at the composition root 
 supervisor or its shutdown handle. These helpers cannot request shutdown or
 approve readiness and do not own domain errors, body streaming or authentication.
 
-The reference application demonstrates the application-owned next layer. Its
-canonical `http::register_in` builds the router and selects
-`register_http_with_connect_info_in` as one operation, then builds `TrustedRequestMetadata`
-from only the accepted socket peer plus `CorrelationId`, then authenticates
-`OwnerId` before request admission. It ignores forwarding, trace and client-ID
-headers and implements no proxy mode. Handlers extract metadata, authority and
-`OperationContext` separately; correlation is never a grant.
+The reference application demonstrates the application-owned next layer inside
+the boundary. Its canonical `http::register_in` assembles its `GuardedRouter`
+through `HttpBoundary` and registers it with
+`AssembledHttp::register_with_connect_info_in` as one operation. Each admitted
+request then builds `TrustedRequestMetadata` from only the accepted socket peer
+plus `CorrelationId` and authenticates `OwnerId`, both within the request
+deadline; a draining or not-yet-ready process rejects the request before either
+runs. It ignores forwarding, trace and client-ID headers and implements no proxy
+mode. Handlers extract metadata, authority and `OperationContext` separately;
+correlation is never a grant.
 
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their

@@ -19,12 +19,13 @@ use axum::{
     routing::{get, post},
 };
 use batter::axum::{
-    CorrelationId, HttpFailure, RequestPolicy, liveness, operational_http,
-    render_infrastructure_failure, request_admission,
+    AssembledHttp, BoundaryAssemblyError, CorrelationId, GuardedRouter, HttpBoundary, HttpFailure,
+    ProbePath, ReadinessPolicy, RequestPolicy, render_infrastructure_failure,
 };
 use batter::{
     RegistrationError,
-    admission::{Admission, AdmissionError, Bulkhead},
+    admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
+    health::HealthReader,
     lifecycle::{LifecycleStatus, OperationAdmission},
     operation::{Interruption, OperationContext},
     registration::RegistrationTarget,
@@ -45,13 +46,36 @@ struct AppState {
     database: Bulkhead,
 }
 
-/// Register the production command router with its required native peer metadata.
+/// Failure to assemble or register the reference HTTP server.
 ///
-/// This is the canonical serving boundary. It consumes the direct-peer policy in
-/// [`PreparedHttp`] and inseparably selects Axum's native
-/// [`axum::extract::ConnectInfo`] registration. An arbitrary router cannot tell a
-/// generic server adapter which request extensions it requires, so this
-/// application-owned function keeps those two choices in one place.
+/// Both causes are sanitized library errors. Neither contains request,
+/// credential or configuration data.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum HttpRegistrationError {
+    /// The fixed business routes could not be combined with the probes.
+    #[error(transparent)]
+    Assembly(#[from] BoundaryAssemblyError),
+    /// Protected registration rejected the assembled server.
+    #[error(transparent)]
+    Registration(#[from] RegistrationError),
+}
+
+/// Assemble and register the production command router with its required
+/// native peer metadata.
+///
+/// This is the canonical serving boundary. [`HttpBoundary`] owns server
+/// correlation, the single HTTP observer, the `/live` and `/ready` probes
+/// outside admission, and lifecycle admission with the request deadline around
+/// every business route and the unmatched-path fallback. Inside that admission
+/// the application installs [`TrustedRequestMetadata`] and then authenticates
+/// the bearer credential, so a draining or not-yet-ready process rejects a
+/// request before any authentication work.
+///
+/// Registration consumes the direct-peer policy in [`PreparedHttp`] and
+/// inseparably selects Axum's native [`axum::extract::ConnectInfo`] registration
+/// through [`AssembledHttp::register_with_connect_info_in`]. An arbitrary router
+/// cannot tell a generic server adapter which request extensions it requires, so
+/// this application-owned function keeps those two choices in one place.
 ///
 /// ```no_run
 /// use batter::{
@@ -59,18 +83,21 @@ struct AppState {
 ///     lifecycle::ShutdownHandle,
 ///     registration::RegistrationTarget,
 /// };
-/// use batter_example_reference_service::{config::PreparedHttp, http::register_in};
+/// use batter_example_reference_service::{
+///     config::PreparedHttp,
+///     http::{HttpRegistrationError, register_in},
+/// };
 /// use runledger_postgres::RunledgerDatabase;
 /// use tokio::net::TcpListener;
 ///
-/// fn register<E: Send + Sync + 'static, T: RegistrationTarget + ?Sized>(
+/// async fn register<E: Send + Sync + 'static, T: RegistrationTarget + ?Sized>(
 ///     target: &mut T,
 ///     prepared: PreparedHttp,
 ///     control: ShutdownHandle,
 ///     pool: RunledgerDatabase,
 ///     health: HealthReader<E>,
 ///     listener: TcpListener,
-/// ) -> Result<(), batter::RegistrationError> {
+/// ) -> Result<(), HttpRegistrationError> {
 ///     register_in(
 ///         target,
 ///         listener,
@@ -80,23 +107,25 @@ struct AppState {
 ///         pool,
 ///         health,
 ///     )
+///     .await
 /// }
 /// ```
-pub fn register_in<E, T>(
+pub async fn register_in<E, T>(
     target: &mut T,
     listener: TcpListener,
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
     pool: RunledgerDatabase,
-    health: batter::health::HealthReader<E>,
-) -> Result<(), RegistrationError>
+    health: HealthReader<E>,
+) -> Result<(), HttpRegistrationError>
 where
     E: Send + Sync + 'static,
     T: RegistrationTarget + ?Sized,
 {
-    let application = router(prepared, lifecycle, admission, pool, health);
-    batter::axum::register_http_with_connect_info_in(target, "http", listener, application)
+    let assembled = assemble(prepared, lifecycle, admission, pool, health).await?;
+    assembled.register_with_connect_info_in(target, "http", listener)?;
+    Ok(())
 }
 
 /// In-process request client that always supplies an explicitly selected peer.
@@ -136,10 +165,13 @@ impl InProcessRequestClient {
 
 /// Build a non-servable request client for an in-process caller.
 ///
-/// Business routes require configured bearer authentication, then lifecycle
-/// admission/deadline, then process-local database admission. Health endpoints
-/// stay outside those gates. The outer operational middleware supplies only
-/// server-generated diagnostics; it cannot select `OwnerId`.
+/// The client serves the same [`HttpBoundary`] assembly as [`register_in`].
+/// Business routes require lifecycle admission and the request deadline, then
+/// trusted peer metadata and configured bearer authentication, then
+/// process-local database admission. Unmatched paths reach a 404 fallback
+/// inside the same lifecycle admission. Health endpoints stay outside those
+/// gates. The outer operational middleware supplies only server-generated
+/// diagnostics; it cannot select `OwnerId`.
 ///
 /// This is a lower-level test seam, not the production serving path. Each call
 /// to [`InProcessRequestClient::request`] requires an exact synthetic peer.
@@ -147,16 +179,19 @@ impl InProcessRequestClient {
 /// the same boundary that consumes the direct-peer policy.
 ///
 /// ```
-/// use batter::{health::HealthReader, lifecycle::ShutdownHandle};
-/// use batter_example_reference_service::{config::PreparedHttp, http::in_process_client};
+/// use batter::{axum::BoundaryAssemblyError, health::HealthReader, lifecycle::ShutdownHandle};
+/// use batter_example_reference_service::{
+///     config::PreparedHttp,
+///     http::{InProcessRequestClient, in_process_client},
+/// };
 /// use runledger_postgres::RunledgerDatabase;
 ///
-/// fn can_issue_test_requests(
+/// async fn can_issue_test_requests(
 ///     prepared: PreparedHttp,
 ///     control: ShutdownHandle,
 ///     pool: RunledgerDatabase,
 ///     health: HealthReader<()>,
-/// ) -> batter_example_reference_service::http::InProcessRequestClient {
+/// ) -> Result<InProcessRequestClient, BoundaryAssemblyError> {
 ///     in_process_client(
 ///         prepared,
 ///         control.status(),
@@ -164,6 +199,7 @@ impl InProcessRequestClient {
 ///         pool,
 ///         health,
 ///     )
+///     .await
 /// }
 /// ```
 ///
@@ -174,7 +210,7 @@ impl InProcessRequestClient {
 /// use batter_example_reference_service::{config::PreparedMaintenance, http::in_process_client};
 /// use runledger_postgres::RunledgerDatabase;
 ///
-/// fn cannot_route(
+/// async fn cannot_route(
 ///     prepared: PreparedMaintenance,
 ///     control: ShutdownHandle,
 ///     pool: RunledgerDatabase,
@@ -186,80 +222,91 @@ impl InProcessRequestClient {
 ///         control.operation_admission(),
 ///         pool,
 ///         health,
-///     );
+///     )
+///     .await;
 /// }
 /// ```
-pub fn in_process_client<E: Send + Sync + 'static>(
+pub async fn in_process_client<E: Send + Sync + 'static>(
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
     pool: RunledgerDatabase,
-    health: batter::health::HealthReader<E>,
-) -> InProcessRequestClient {
-    InProcessRequestClient {
-        application: router(prepared, lifecycle, admission, pool, health),
-    }
+    health: HealthReader<E>,
+) -> Result<InProcessRequestClient, BoundaryAssemblyError> {
+    let assembled = assemble(prepared, lifecycle, admission, pool, health).await?;
+    // The adapter has no request-only client yet; this type keeps the
+    // assembled router private and unservable.
+    Ok(InProcessRequestClient {
+        application: assembled.into_router(),
+    })
 }
 
-fn router<E: Send + Sync + 'static>(
+async fn assemble<E: Send + Sync + 'static>(
     prepared: PreparedHttp,
     lifecycle: LifecycleStatus,
     admission: OperationAdmission,
     pool: RunledgerDatabase,
-    health: batter::health::HealthReader<E>,
-) -> Router {
-    let probes = Router::new()
-        .route("/live", get(liveness))
-        .route("/ready", get(batter::axum::dependency_readiness::<E>))
-        .with_state(batter::axum::ReadinessPolicy::new(lifecycle, health));
-    router_with_probes(prepared, admission, pool, probes)
-}
-
-fn router_with_probes(
-    prepared: PreparedHttp,
-    admission: OperationAdmission,
-    pool: RunledgerDatabase,
-    probes: Router,
-) -> Router {
-    let state = AppState {
-        deliveries: DeliveryService::new(pool),
-        database: Bulkhead::new(prepared.bulkhead_capacity),
-    };
-    let business = business_boundary(
-        Router::new()
-            .route("/records/{record_id}/deliveries", post(submit_delivery))
-            .route("/deliveries/{delivery_id}", get(get_delivery))
-            .route(
-                "/delivery-commands/{idempotency_key}",
-                get(get_delivery_by_key),
-            )
-            .with_state(state),
-        &prepared,
+    health: HealthReader<E>,
+) -> Result<AssembledHttp, BoundaryAssemblyError> {
+    let routes = delivery_routes(pool, prepared.bulkhead_capacity);
+    assemble_routes(
+        routes,
+        prepared,
         admission,
-    );
-    business
-        .merge(probes)
-        .fallback(|| async { StatusCode::NOT_FOUND })
-        .layer(middleware::from_fn(operational_http))
+        ReadinessPolicy::new(lifecycle, health),
+    )
+    .await
 }
 
-fn business_boundary(
-    routes: Router,
-    prepared: &PreparedHttp,
+fn delivery_routes(pool: RunledgerDatabase, bulkhead_capacity: BulkheadCapacity) -> GuardedRouter {
+    GuardedRouter::new()
+        .route("/records/{record_id}/deliveries", post(submit_delivery))
+        .route("/deliveries/{delivery_id}", get(get_delivery))
+        .route(
+            "/delivery-commands/{idempotency_key}",
+            get(get_delivery_by_key),
+        )
+        .with_state(AppState {
+            deliveries: DeliveryService::new(pool),
+            database: Bulkhead::new(bulkhead_capacity),
+        })
+}
+
+/// Install the application's layers around `routes` and assemble the boundary.
+///
+/// The boundary adds correlation and the observer outermost, keeps the probes
+/// outside admission and admits every guarded route and the fallback with the
+/// request deadline. Route layers added later run outside earlier ones, so an
+/// admitted request installs trusted metadata, then authenticates, then reaches
+/// the handler under the body limit.
+async fn assemble_routes<E: Send + Sync + 'static>(
+    routes: GuardedRouter,
+    prepared: PreparedHttp,
     admission: OperationAdmission,
-) -> Router {
+    readiness: ReadinessPolicy<E>,
+) -> Result<AssembledHttp, BoundaryAssemblyError> {
     let policy = RequestPolicy::new(admission, prepared.request_budget).with_infrastructure_json();
-    routes
+    let guarded = routes
         .layer(DefaultBodyLimit::max(REQUEST_BODY_MAX_BYTES))
-        .route_layer(middleware::from_fn_with_state(policy, request_admission))
         .route_layer(middleware::from_fn_with_state(
-            prepared.authenticator.clone(),
+            prepared.authenticator,
             authenticate,
         ))
         .route_layer(middleware::from_fn_with_state(
             prepared.trusted_peer_policy,
             install_trusted_request_metadata,
         ))
+        .fallback(|| async { StatusCode::NOT_FOUND });
+    HttpBoundary::new(policy)
+        .with_liveness(ProbePath::new("/live").expect("static liveness path is valid"))
+        .expect("liveness path is unique")
+        .with_readiness(
+            ProbePath::new("/ready").expect("static readiness path is valid"),
+            readiness,
+        )
+        .expect("readiness path is unique")
+        .assemble(guarded)
+        .await
 }
 
 async fn authenticate(

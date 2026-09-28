@@ -260,6 +260,37 @@ comparison test re-run whenever that pin changes. Routers built outside
 sealing the low-level middleware (`batter-tc9w.2`) remain separate tasks.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
+### Reference HTTP boundary assessment (`batter-tc9w.4`)
+
+The reference application composed `operational_http`, `request_admission`,
+probe handlers and `register_http_with_connect_info_in` by hand, in the order
+correlation, trusted peer metadata, bearer authentication, admission. Nothing
+recorded a reason for that order. A draining or starting process authenticated
+before rejecting, authentication ran outside the request deadline, and unmatched
+paths bypassed admission with a bare 404. On 2026-09-28 the repository owner
+decided that the canonical path admits before authenticating, as Runlimit's
+authenticated assembly does; authentication before admission is a low-level
+composition.
+
+The reference now declares its routes on `GuardedRouter` and assembles them
+with `HttpBoundary`. Trusted metadata and authentication are route layers inside
+admission, the body limit is a guarded layer, and the 404 fallback is guarded.
+The boundary owns correlation, the observer, probe placement and admission, so
+the application can no longer put its middleware outside admission, merge a
+probe inside it or add a second observer. `register_in` still fuses assembly
+with native `ConnectInfo` registration, so the root cannot choose plain
+registration for a router that needs the peer, and it returns assembly failure
+as `HttpRegistrationError` instead of discarding it. Authentication reads the
+trusted metadata and fails closed without it, so reversing those two route
+layers fails every business request rather than weakening one; ordinary tests
+also pin admission first while starting, ready and draining.
+
+The in-process client still takes the router through `AssembledHttp::into_router`
+until `batter-tc9w.2` supplies an opaque request-only client; the reference
+type keeps it private and unservable. These checks prove local ordering only,
+not proxy trust or any remote client behaviour. Fresh-agent usability
+evaluation is proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

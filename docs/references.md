@@ -1650,6 +1650,11 @@ maps each matched path endpoint through `layer`, including its method fallback.
 This differs from `MethodRouter::route_layer`, which wraps only registered methods.
 The tested router therefore rejects a matched unsupported method through admission
 while unavailable, and returns 405 while Ready. No package version changed.
+On 2026-09-28 (`batter-tc9w.4`) the same locked 0.8.9 source was rechecked for
+the reference service, whose trusted-metadata and authentication middleware are
+`GuardedRouter` route layers inside `HttpBoundary` admission: an unsupported
+method on a matched reference route is admitted and authenticated before its
+405, while the router's catch-all 404 fallback receives admission only.
 
 ## HTTP, SQL, and observability
 

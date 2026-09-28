@@ -83,12 +83,24 @@ The authenticated routes are:
 - `GET /delivery-commands/{idempotency_key}` for reconciliation when the caller
   did not receive the POST response.
 
-The application-owned `http::register_in` boundary builds the trusted-peer
-router and inseparably selects native `ConnectInfo<SocketAddr>` registration, so
-the production root cannot choose those two requirements independently.
-The separate `http::in_process_client` test seam returns an opaque request
-client rather than a `Router`; it cannot enter a production serving operation
-and requires an explicit synthetic peer for every request.
+The application-owned `http::register_in` boundary assembles these routes
+through Batter's `HttpBoundary` and inseparably selects native
+`ConnectInfo<SocketAddr>` registration, so the production root cannot choose
+those two requirements independently. The boundary owns server correlation, the
+single HTTP observer, the `/live` and `/ready` probes outside admission, and
+lifecycle admission with the request deadline around every business route and
+the 404 fallback. Inside admission, route layers install trusted request
+metadata and then authenticate the bearer credential, and the request body limit
+applies to the handler. A request to a draining or not-yet-ready process
+therefore receives the admission rejection, 503 `service_unavailable`, even
+without credentials; only an admitted request can receive 401. Authentication
+runs within the request's operation deadline, and unmatched paths receive the
+404 only after admission. The repository owner selected this order on
+2026-09-28; authentication before admission is not a canonical composition.
+The separate `http::in_process_client` test seam awaits the same assembly and
+returns an opaque request client rather than a `Router`; it cannot enter a
+production serving operation and requires an explicit synthetic peer for every
+request.
 `TrustedRequestMetadata` combines that direct peer IP
 with Batter's server-generated `CorrelationId`, separately from the authenticated
 `OwnerId` and request `OperationContext`. Application and infrastructure bodies
