@@ -1,19 +1,22 @@
-//! Application-rendered probes: the renderer receives every readiness decision
-//! and chooses the body, while the boundary keeps the status, decision and
-//! severity, and both probes stay outside admission.
+//! Application-rendered probes: renderers receive every readiness decision and
+//! choose only the body, never the status, decision, severity or quota writer,
+//! and both probes stay outside admission.
 
 use crate::capture::Capture;
 use axum::{
     Extension, Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header, request::Parts},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
 use batter_axum::{
     CorrelationId, GuardedRouter, HttpBoundary, HttpObservationLevel, ProbePath, ReadinessDecision,
     ReadinessPolicy, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
-    default_readiness_level, readiness_status,
+    default_readiness_level, operational_http_with_quota,
+    quota_observation::{QuotaRecorder, QuotaTerminalFacts},
+    readiness_status,
 };
 use batter_core::{
     cleanup::CleanupBudget,
@@ -442,4 +445,56 @@ fn rendered_liveness_completion_keeps_the_default_severity_under_info_filtering(
     assert_eq!(events.len(), 1, "{text}");
     assert!(events[0].trim_start().starts_with("INFO"), "{text}");
     assert!(events[0].contains("status=200"), "{text}");
+}
+
+/// Try to claim the quota observer's private writer from cloned request
+/// metadata, forging a denial with it when that succeeds.
+fn claims_quota_writer(parts: &Parts) -> String {
+    let mut request = Request::from_parts(parts.clone(), Body::empty());
+    let claimed = QuotaRecorder::take(&mut request)
+        .map(|writer| writer.start().finish(QuotaTerminalFacts::QuotaDenied))
+        .is_some();
+    format!("claimed={claimed}")
+}
+
+#[test]
+fn rendered_probe_renderers_cannot_claim_the_quota_writer() {
+    let capture = Capture::new();
+    let bodies = capture.block_on(async {
+        let handle = ShutdownHandle::new_unapproved();
+        let monitor = HealthMonitor::new(
+            HealthPolicy::new(SECOND, SECOND, 3 * SECOND, SECOND).unwrap(),
+            || async { Ok::<_, io::Error>(()) },
+        );
+        let budget = ResponseConstructionBudget::new(SECOND).unwrap();
+        let app = HttpBoundary::new(RequestPolicy::new(handle.operation_admission(), budget))
+            .with_rendered_liveness(ProbePath::new("/live").unwrap(), |parts| {
+                claims_quota_writer(parts).into_response()
+            })
+            .unwrap()
+            .with_rendered_readiness(
+                ProbePath::new("/ready").unwrap(),
+                ReadinessPolicy::new(handle.status(), monitor.reader()),
+                |_, parts| claims_quota_writer(parts).into_response(),
+            )
+            .unwrap()
+            .assemble(GuardedRouter::new().route("/work", get(|| async { "work" })))
+            .await
+            .unwrap()
+            .into_router()
+            // An application's outer quota observer puts the writer on every request.
+            .layer(middleware::from_fn(operational_http_with_quota));
+        let mut bodies = Vec::new();
+        for path in ["/live", "/ready"] {
+            bodies.push(text(app.clone().oneshot(get_request(path)).await.unwrap()).await);
+        }
+        bodies
+    });
+
+    assert_eq!(bodies, ["claimed=false", "claimed=false"]);
+    let text = capture.text();
+    let events = completions(&text);
+    assert_eq!(events.len(), 2, "{text}");
+    let unchecked = |event: &&str| event.contains("quota_outcome=\"not_checked\"");
+    assert!(events.iter().all(unchecked), "{text}");
 }
