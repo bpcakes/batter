@@ -2,7 +2,7 @@
 
 use super::{
     BoundaryAssemblyError, GroupPolicy, GuardedRouter, ProbePath,
-    declared::{Admitted, DeclaredRouter, DispatchLayer, Inspection},
+    declared::{Admitted, DeclaredRouter, Dispatch, Inspection},
     inventory,
 };
 use crate::operational_http;
@@ -88,10 +88,11 @@ impl Assembling {
 ///
 /// Named groups are merged into the probes and the default group last, with
 /// correlation and the single observer outermost on every route. Admitted
-/// routers are never merged into that router: a layer outside it offers them
-/// each request that no native route matched, and one serves the request,
-/// inside its group's policy and its own observer, only when it routes it to a
-/// declared pattern.
+/// routers are never merged into that router. When there are any, its only
+/// fallback is a [`Dispatch`], which offers them each request that no native
+/// route matched; one serves the request, inside its group's policy and its own
+/// observer, only when it routes it to a declared pattern. The default group's
+/// fallbacks move behind that dispatch, with their policy and the observer.
 pub(super) async fn assemble(
     probes: Router,
     probe_paths: &[ProbePath],
@@ -105,17 +106,23 @@ pub(super) async fn assemble(
     for group in groups {
         router = router.merge(group.install(&mut admitted));
     }
-    // With two default fallbacks Axum retains the second router's; a second
-    // custom fallback also supersedes a first default. Named groups declare
-    // no fallback, so merging the default group last retains its layered one.
-    let router = router
-        .merge(default.install(&mut admitted))
-        .layer(middleware::from_fn(operational_http));
-    Ok(if admitted.is_empty() {
-        router
-    } else {
-        router.layer(DispatchLayer::new(admitted))
-    })
+    let default = default.install(&mut admitted);
+    if admitted.is_empty() {
+        // With two default fallbacks Axum retains the second router's; a second
+        // custom fallback also supersedes a first default. Named groups declare
+        // no fallback, so merging the default group last retains its layered one.
+        return Ok(router
+            .merge(default)
+            .layer(middleware::from_fn(operational_http)));
+    }
+    // Only the root fallback routes of the native router capture nothing, so
+    // the default group's fallbacks, including nested ones below a capture,
+    // move behind the dispatch there.
+    let fallbacks = default.clone().layer(middleware::from_fn(operational_http));
+    Ok(router
+        .merge(default.reset_fallback())
+        .layer(middleware::from_fn(operational_http))
+        .fallback_service(Dispatch::new(admitted, fallbacks)))
 }
 
 /// Reject inventory mismatches, then probe collisions in any group, then

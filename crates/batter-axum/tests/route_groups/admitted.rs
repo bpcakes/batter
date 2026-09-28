@@ -224,6 +224,53 @@ async fn nesting_merging_and_layers_carry_the_admitted_router() {
     assert_eq!(headers["x-layer"], "route");
 }
 
+#[tokio::test]
+async fn nested_fallback_captures_stay_out_of_admitted_routes() {
+    for named in [false, true] {
+        let converted = Router::new().route(
+            "/tenants/{tenant}/items/{id}",
+            get(|Path((tenant, id)): Path<(String, u32)>| async move { format!("{tenant}:{id}") }),
+        );
+        let inventory = RouteInventory::new(["/tenants/{tenant}/items/{id}"]).unwrap();
+        let items = GuardedRouter::from_router(converted, inventory);
+        let tenant = GuardedRouter::new()
+            .route(
+                "/profile",
+                get(|Path(tenant): Path<String>| async move { format!("profile:{tenant}") }),
+            )
+            .fallback(|Path(tenant): Path<String>| async move {
+                (StatusCode::NOT_FOUND, format!("tenant fallback:{tenant}"))
+            });
+        let mut default = default_routes().nest("/tenants/{tenant}", tenant);
+        let handle = ready_handle();
+        let mut boundary = HttpBoundary::new(request_policy(&handle, SECOND));
+        if named {
+            let group = RouteGroup::new("items", request_policy(&handle, SECOND), items);
+            boundary = boundary.with_group(group).unwrap();
+        } else {
+            default = default.merge(items);
+        }
+        let app = boundary.assemble(default).await.unwrap().into_router();
+        for (path, status, body) in [
+            ("/tenants/acme/items/7", StatusCode::OK, "acme:7"),
+            ("/tenants/acme/profile", StatusCode::OK, "profile:acme"),
+            (
+                "/tenants/acme/missing",
+                StatusCode::NOT_FOUND,
+                "tenant fallback:acme",
+            ),
+            ("/missing", StatusCode::NOT_FOUND, "default fallback"),
+        ] {
+            let (actual, _, text) = call(&app, request(Method::GET, path)).await;
+            assert_eq!(
+                (actual, text.as_str()),
+                (status, body),
+                "{path} named={named}"
+            );
+        }
+    }
+}
+
 /// A layer that counts how often Axum builds the service it wraps.
 #[derive(Clone)]
 struct CountBuilds(Arc<AtomicUsize>);
@@ -242,9 +289,8 @@ async fn served_requests_reuse_layers_built_before_serving() {
     for admitted in [false, true] {
         let builds = Arc::new(AtomicUsize::new(0));
         let handle = ready_handle();
-        let default = GuardedRouter::new()
-            .route("/work", get(|| async { "work" }))
-            .layer(CountBuilds(builds.clone()));
+        // A handler fallback, unlike Axum's default one, is layered lazily.
+        let default = default_routes().layer(CountBuilds(builds.clone()));
         let mut boundary = HttpBoundary::new(request_policy(&handle, SECOND));
         if admitted {
             let converted = Router::new()

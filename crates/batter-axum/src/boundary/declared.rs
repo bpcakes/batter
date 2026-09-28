@@ -10,7 +10,7 @@ use axum::{
     extract::{MatchedPath, Request},
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{Route, future::RouteFuture},
+    routing::Route,
 };
 use std::{
     collections::HashSet,
@@ -22,7 +22,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tower::{Layer, Service, ServiceExt, layer::layer_fn};
+use tower::{Service, ServiceExt, layer::layer_fn};
 
 /// Capture and wildcard filler for inventory witnesses. Route literals contain
 /// braces only when escaped, so an ordinary literal route cannot take priority
@@ -327,94 +327,51 @@ impl Admitted {
     }
 }
 
-/// Offer the requests that no native route matched to the admitted routers.
+/// The root fallback of a boundary with admitted routers.
 ///
-/// Applied outermost to every native route and fallback. A request that
-/// reached a native route carries its `MatchedPath` and passes straight
-/// through. Any other request is on its way to a fallback: it goes to the
-/// admitted router that routes it to a declared pattern, if one does, and to
-/// the fallback otherwise. Native routes are left to Axum's own preparation.
-#[derive(Clone)]
-pub(super) struct DispatchLayer {
-    admitted: Arc<[Admitted]>,
-}
-
-impl DispatchLayer {
-    pub(super) fn new(admitted: Vec<Admitted>) -> Self {
-        Self {
-            admitted: admitted.into(),
-        }
-    }
-}
-
-impl Layer<Route> for DispatchLayer {
-    type Service = Dispatch;
-
-    fn layer(&self, native: Route) -> Dispatch {
-        Dispatch {
-            admitted: self.admitted.clone(),
-            native,
-        }
-    }
-}
-
-/// One native route or fallback behind [`DispatchLayer`].
+/// A request arrives here only when no native route matched it, through the
+/// capture-free root fallback routes, so it carries no path parameters or
+/// matched path. It goes unchanged to the admitted router that routes it to a
+/// declared pattern, if one does, and otherwise to the default group's
+/// fallbacks. Those sit behind this service because a nested fallback matched
+/// first would add its path captures to the request.
 #[derive(Clone)]
 pub(super) struct Dispatch {
     admitted: Arc<[Admitted]>,
-    native: Route,
+    fallbacks: Router,
+}
+
+impl Dispatch {
+    /// Prepare `fallbacks` once, like the admitted routers.
+    pub(super) fn new(admitted: Vec<Admitted>, fallbacks: Router) -> Self {
+        Self {
+            admitted: admitted.into(),
+            fallbacks: fallbacks.with_state(()),
+        }
+    }
 }
 
 impl Service<Request> for Dispatch {
     type Response = Response;
     type Error = Infallible;
-    type Future = Dispatched;
+    type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
 
-    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
-        Service::<Request>::poll_ready(&mut self.native, context)
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: Request) -> Dispatched {
-        if request.extensions().get::<MatchedPath>().is_some() {
-            return Dispatched::Native {
-                future: self.native.call(request),
-            };
-        }
-        let Self { admitted, native } = self.clone();
-        Dispatched::Fallback {
-            future: Box::pin(async move {
-                for router in admitted.iter() {
-                    if router.serves(request.uri()).await {
-                        return router.served.clone().oneshot(request).await;
-                    }
+    fn call(&mut self, request: Request) -> Self::Future {
+        let Self {
+            admitted,
+            fallbacks,
+        } = self.clone();
+        Box::pin(async move {
+            for router in admitted.iter() {
+                if router.serves(request.uri()).await {
+                    return router.served.clone().oneshot(request).await;
                 }
-                native.oneshot(request).await
-            }),
-        }
-    }
-}
-
-pin_project_lite::pin_project! {
-    /// Response future of a request behind [`DispatchLayer`].
-    #[project = DispatchedProjection]
-    pub(super) enum Dispatched {
-        Native {
-            #[pin]
-            future: RouteFuture<Infallible>,
-        },
-        Fallback {
-            future: Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>,
-        },
-    }
-}
-
-impl Future for Dispatched {
-    type Output = Result<Response, Infallible>;
-
-    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            DispatchedProjection::Native { future } => future.poll(context),
-            DispatchedProjection::Fallback { future } => future.as_mut().poll(context),
-        }
+            }
+            fallbacks.oneshot(request).await
+        })
     }
 }
