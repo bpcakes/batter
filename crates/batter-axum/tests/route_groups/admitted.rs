@@ -271,6 +271,19 @@ async fn nested_fallback_captures_stay_out_of_admitted_routes() {
     }
 }
 
+#[tokio::test]
+async fn a_slash_named_capture_extracts_its_value() {
+    let converted = Router::new().route(
+        "/items/{/id}",
+        get(|Path(id): Path<u32>| async move { id.to_string() }),
+    );
+    let inventory = RouteInventory::new(["/items/{/id}"]).unwrap();
+    let items = GuardedRouter::from_router(converted, inventory);
+    let app = with_items_group(&ready_handle(), items).await;
+    let (status, _, body) = call(&app, request(Method::GET, "/items/7")).await;
+    assert_eq!((status, body.as_str()), (StatusCode::OK, "7"));
+}
+
 /// A layer that counts how often Axum builds the service it wraps.
 #[derive(Clone)]
 struct CountBuilds(Arc<AtomicUsize>);

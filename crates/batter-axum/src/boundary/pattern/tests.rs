@@ -34,6 +34,15 @@ fn parses_literals_escapes_captures_and_wildcards() {
     // Escaped braces may also appear inside a parameter name or before it.
     assert_eq!(parse("/{a}}b}"), Some(vec![capture("")]));
     assert_eq!(parse("/{{{id}"), Some(vec![capture("{")]));
+    // A name's first byte may be `/` without splitting the segment.
+    assert_eq!(
+        parse("/items/{/id}"),
+        Some(vec![literal("items"), capture("")])
+    );
+    assert_eq!(
+        parse("/{/id}/{*rest}"),
+        Some(vec![capture(""), wildcard("")])
+    );
     for invalid in [
         "",
         "relative",
@@ -49,6 +58,11 @@ fn parses_literals_escapes_captures_and_wildcards() {
         "/{**}",
         "/{*a*}",
         "/{}}a}",
+        "/{a/b}",
+        "/{/a/b}",
+        "/{*/a}",
+        "/{/*}",
+        "/{/}x",
     ] {
         assert_eq!(parse(invalid), None, "{invalid}");
     }
@@ -85,6 +99,14 @@ fn parse_accepts_exactly_the_patterns_axum_registers() {
         "/{*a}}b}",
         "/{-}",
         "/{*-}",
+        "/items/{/id}",
+        "/{/}",
+        "/{/id}/{*rest}",
+        "/{a/b}",
+        "/{/a/b}",
+        "/{*/a}",
+        "/{/*}",
+        "/{/}x",
         "/{}",
         "/{*}",
         "/{a*b}",
@@ -169,6 +191,8 @@ const PATTERNS: &[&str] = &[
     "/a/{*r}",
     "/{x}/{*r}",
     "/a/b/{*r}",
+    "/{/x}",
+    "/a/{/x}",
 ];
 
 /// Every constructed witness segment is drawn from these literals and prefixes.

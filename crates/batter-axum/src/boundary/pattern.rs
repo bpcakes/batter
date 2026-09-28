@@ -7,8 +7,9 @@
 //! the capture ends the pattern. A wildcard `prefix{*name}` ends the pattern and
 //! matches `prefix` followed by at least one byte, including `/`. As matchit
 //! requires, a parameter name is not empty and does not start with `}`, a
-//! wildcard name is not a lone `*`, `*` appears only as a name's first byte, and
-//! a pattern has at most 25 captures.
+//! wildcard name is not a lone `*`, and `*` and `/` appear only as a name's
+//! first byte, where a `/` does not split the segment. A pattern has at most 25
+//! captures.
 
 #[cfg(test)]
 mod tests;
@@ -54,18 +55,20 @@ pub(super) enum Segment {
 
 /// Split a route pattern into segments, or `None` outside the analyzed syntax.
 pub(super) fn parse(pattern: &str) -> Option<Vec<Segment>> {
-    let mut raw = pattern
-        .as_bytes()
-        .strip_prefix(b"/")?
-        .split(|byte| *byte == b'/')
-        .peekable();
+    let bytes = pattern.as_bytes().strip_prefix(b"/")?;
     let mut segments = Vec::new();
-    while let Some(bytes) = raw.next() {
-        let segment = parse_segment(bytes)?;
-        if matches!(segment, Segment::Wildcard(_)) && raw.peek().is_some() {
+    let mut index = 0;
+    loop {
+        let (segment, end) = parse_segment(bytes, index)?;
+        let last = end == bytes.len();
+        if matches!(segment, Segment::Wildcard(_)) && !last {
             return None;
         }
         segments.push(segment);
+        if last {
+            break;
+        }
+        index = end + 1;
     }
     let captures = segments
         .iter()
@@ -74,26 +77,29 @@ pub(super) fn parse(pattern: &str) -> Option<Vec<Segment>> {
     (captures <= MAX_CAPTURES).then_some(segments)
 }
 
-fn parse_segment(bytes: &[u8]) -> Option<Segment> {
+/// Parse the segment starting at `index`; return it with the index of the `/`
+/// that ends it, or of the pattern's end.
+fn parse_segment(bytes: &[u8], mut index: usize) -> Option<(Segment, usize)> {
     let mut literal = Vec::new();
-    let mut index = 0;
     while let Some(&byte) = bytes.get(index) {
-        if matches!(byte, b'{' | b'}') && bytes.get(index + 1) == Some(&byte) {
+        if byte == b'/' {
+            break;
+        } else if matches!(byte, b'{' | b'}') && bytes.get(index + 1) == Some(&byte) {
             literal.push(byte);
             index += 2;
         } else if byte == b'{' {
-            // A parameter must close with the segment's final byte.
-            let close = closing_brace(bytes, index + 1)?;
-            if close + 1 != bytes.len() {
+            let (wildcard, close) = parameter(bytes, index + 1)?;
+            // A parameter must end its segment.
+            let end = close + 1;
+            if !matches!(bytes.get(end), None | Some(b'/')) {
                 return None;
             }
-            // matchit tests a name's first byte for `}` before unescaping it.
-            return match &bytes[index + 1..close] {
-                [] | [b'}', ..] | [b'*'] => None,
-                [_, rest @ ..] if rest.contains(&b'*') => None,
-                [b'*', ..] => Some(Segment::Wildcard(literal)),
-                _ => Some(Segment::Capture(literal)),
+            let segment = if wildcard {
+                Segment::Wildcard(literal)
+            } else {
+                Segment::Capture(literal)
             };
+            return Some((segment, end));
         } else if byte == b'}' {
             return None;
         } else {
@@ -101,19 +107,31 @@ fn parse_segment(bytes: &[u8]) -> Option<Segment> {
             index += 1;
         }
     }
-    Some(Segment::Literal(literal))
+    Some((Segment::Literal(literal), index))
 }
 
-/// Find the first unescaped `}` after a parameter's opening brace.
-fn closing_brace(bytes: &[u8], mut index: usize) -> Option<usize> {
+/// Check the parameter name starting at `start` as matchit does, and return
+/// whether it names a wildcard, with the index of its closing brace.
+///
+/// matchit reads a name's first byte before unescaping and accepts any byte
+/// there except `}`, including `/`; after it, `*` and `/` are invalid and `}}`
+/// is an escaped brace. A wildcard's name continues after its `*`.
+fn parameter(bytes: &[u8], start: usize) -> Option<(bool, usize)> {
+    let first = *bytes.get(start)?;
+    if first == b'}' {
+        return None;
+    }
+    let mut index = start + 1;
     while let Some(&byte) = bytes.get(index) {
-        if byte == b'}' {
-            if bytes.get(index + 1) != Some(&b'}') {
-                return Some(index);
+        match byte {
+            b'}' if bytes.get(index + 1) == Some(&b'}') => index += 2,
+            b'}' => {
+                let wildcard = first == b'*';
+                return (!wildcard || index > start + 1).then_some((wildcard, index));
             }
-            index += 1;
+            b'*' | b'/' => return None,
+            _ => index += 1,
         }
-        index += 1;
     }
     None
 }

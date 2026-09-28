@@ -260,6 +260,27 @@ async fn undeclared_routes_take_no_part_in_overlap() {
 }
 
 #[tokio::test]
+async fn a_capture_name_may_start_with_a_slash() {
+    let app = Application::new();
+    // matchit reads a parameter name's first byte before looking for `/`.
+    for named in [false, true] {
+        let admitted = app.admitted(app.router(&["/items/{/id}"]), &["/items/{/id}"]);
+        let (default, items) = if named {
+            (app.native(&["/work"]), Some(admitted))
+        } else {
+            (admitted, None)
+        };
+        let assembled = assemble(default, items, &["/live"]).await;
+        assert!(assembled.is_ok(), "{:?}", assembled.err());
+    }
+    // A native route with such a name no longer fails the overlap analysis.
+    let items = app.native(&["/other"]);
+    let assembled = assemble(app.native(&["/items/{/id}"]), Some(items), &[]).await;
+    assert!(assembled.is_ok(), "{:?}", assembled.err());
+    app.assert_untouched();
+}
+
+#[tokio::test]
 async fn a_named_group_may_consist_of_admitted_routers() {
     let app = Application::new();
     let admitted = app.admitted(app.router(&["/items"]), &["/items"]);
