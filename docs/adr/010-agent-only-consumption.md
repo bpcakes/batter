@@ -291,6 +291,69 @@ type keeps it private and unservable. These checks prove local ordering only,
 not proxy trust or any remote client behaviour. Fresh-agent usability
 evaluation is proposed and unexecuted.
 
+### Admitted router assessment (`batter-tc9w.8`)
+
+Both surveyed downstream consumers build their routes with an OpenAPI router
+builder and convert the result with `Router::from`. `GuardedRouter` accepted
+only its own route operations, so such a router could not join `HttpBoundary`
+without giving up the route identities that probe, overlap and fallback checks
+need, and fell back to the low-level middleware and caller memory. Axum 0.8.9
+exposes no route enumeration, and learning a router's routes by calling it would
+run application handlers, fallbacks or middleware.
+
+`GuardedRouter::from_router` admits such a router only with a `RouteInventory`;
+construction rejects an empty inventory and patterns outside the analyzed Axum
+syntax. Assembly inspects a copy of the router whose every route, method
+fallback and fallback is replaced by a library reporter, so validation runs
+Axum's matcher and calls or polls no application handler, fallback or
+middleware service. Preparing that copy still runs, once, the constructors of
+application layers that Axum applies lazily to handlers, as Axum's preparation
+of a served router would, even when assembly is then rejected; an application
+layer whose constructor has side effects shows them at assembly. A declared
+pattern that no path of it
+reaches with exactly that pattern returns `RouteInventoryMismatch`, and any
+route of the router matching a probe path, declared or not, returns
+`GuardedProbePath`. Completeness of the inventory cannot be proved locally, so
+it is enforced by reachability instead: the admitted router is never merged
+into the native router, and serving forwards a request to it only when its
+inspection copy reaches a declared pattern. An omitted route is therefore
+unreachable, visibly answered by the default fallback, rather than exempt from
+the probe and overlap checks, and the router's own fallbacks cannot become a
+named group's fallback. Declared patterns join the overlap check and must not
+overlap other routes of their own group, because admitted routers are consulted
+only when native routing finds no route, rather than by Axum's route priority.
+Forwarding from a registered outer route was rejected: Axum appends the outer
+match to the admitted router's `MatchedPath` and path parameters, and
+`Router::route_service` refuses routers. Dispatch is the native router's root
+fallback, the one point where a request carries no path captures, so the
+default group's fallbacks sit behind it: a nested fallback below a capture that
+matched first would add that capture to the forwarded request. Axum prepares
+only the router it serves, so assembly prepares each admitted router, its
+inspection copy and the moved fallbacks once; otherwise every request would
+rebuild their layers and reset state such as a concurrency limit. Native routes
+stay in the served router and keep Axum's own preparation. Tests cover these
+rejections, unreachable undeclared routes and fallbacks, declared routes inside
+their group's policy with native parameters, including below a nested fallback
+with a capture, one completion per request, nesting, layers and layer reuse
+across requests; they fail when the inspection copy leaves fallbacks in place,
+dispatch ignores the inventory, a nested fallback stays in front of the
+dispatch, or any copy behind the dispatch is left unprepared.
+
+Remaining boundaries are explicit. The inventory is application input, for
+example an OpenAPI document's paths plus any undocumented route, and a route it
+omits stays unreachable. Validation proves each declared pattern with one path
+filled with `{}`, so a route whose literal spells escaped braces could take that
+path and fail the inventory closed. Routes inside an opaque nested service of
+the admitted router cannot be declared. Each admitted router adds one
+library-owned inspection routing to each request that no native route matches.
+Layer state inside an admitted router, and around the default group's
+fallbacks when admitted routers exist, is shared by all of their requests, as
+with Axum's make-service conversion, even where `axum::serve` would prepare a
+native router per connection. No
+OpenAPI-builder dependency or convenience is added. Fresh-agent usability
+evaluation is proposed and unexecuted; the downstream ports belong to
+`batter-tc9w.9`.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

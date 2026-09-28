@@ -34,6 +34,15 @@ fn parses_literals_escapes_captures_and_wildcards() {
     // Escaped braces may also appear inside a parameter name or before it.
     assert_eq!(parse("/{a}}b}"), Some(vec![capture("")]));
     assert_eq!(parse("/{{{id}"), Some(vec![capture("{")]));
+    // A name's first byte may be `/` without splitting the segment.
+    assert_eq!(
+        parse("/items/{/id}"),
+        Some(vec![literal("items"), capture("")])
+    );
+    assert_eq!(
+        parse("/{/id}/{*rest}"),
+        Some(vec![capture(""), wildcard("")])
+    );
     for invalid in [
         "",
         "relative",
@@ -43,10 +52,81 @@ fn parses_literals_escapes_captures_and_wildcards() {
         "/}",
         "/{{a}",
         "/{a}}",
+        "/{}",
+        "/{*}",
+        "/{a*b}",
+        "/{**}",
+        "/{*a*}",
+        "/{}}a}",
+        "/{a/b}",
+        "/{/a/b}",
+        "/{*/a}",
+        "/{/*}",
+        "/{/}x",
     ] {
         assert_eq!(parse(invalid), None, "{invalid}");
     }
     assert_eq!(shared_path("/{id}.json", "/a"), SharedPath::Unanalyzed);
+}
+
+/// Whether the pinned Axum router registers `pattern` on its own.
+fn axum_registers(pattern: &str) -> bool {
+    std::panic::catch_unwind(|| {
+        let _ = Router::<()>::new()
+            .without_v07_checks()
+            .route(pattern, any(|| async {}));
+    })
+    .is_ok()
+}
+
+#[test]
+fn parse_accepts_exactly_the_patterns_axum_registers() {
+    let captures =
+        |count: usize| -> String { (0..count).map(|index| format!("/{{p{index}}}")).collect() };
+    let (most, too_many) = (captures(25), captures(26));
+    for pattern in [
+        "/",
+        "/a",
+        "/{a}",
+        "/v{a}",
+        "/{*a}",
+        "/v{*a}",
+        "/{a}/{*b}",
+        "/{{a}}",
+        "/{a}}b}",
+        "/{a{b}",
+        "/{{{a}",
+        "/{*a}}b}",
+        "/{-}",
+        "/{*-}",
+        "/items/{/id}",
+        "/{/}",
+        "/{/id}/{*rest}",
+        "/{a/b}",
+        "/{/a/b}",
+        "/{*/a}",
+        "/{/*}",
+        "/{/}x",
+        "/{}",
+        "/{*}",
+        "/{a*b}",
+        "/{**}",
+        "/{*a*}",
+        "/{}}a}",
+        "/{a",
+        "/a}",
+        "/{a}b",
+        "/{a}{b}",
+        "/{*a}/b",
+        most.as_str(),
+        too_many.as_str(),
+    ] {
+        assert_eq!(
+            parse(pattern).is_some(),
+            axum_registers(pattern),
+            "{pattern}"
+        );
+    }
 }
 
 #[test]
@@ -111,6 +191,8 @@ const PATTERNS: &[&str] = &[
     "/a/{*r}",
     "/{x}/{*r}",
     "/a/b/{*r}",
+    "/{/x}",
+    "/a/{/x}",
 ];
 
 /// Every constructed witness segment is drawn from these literals and prefixes.

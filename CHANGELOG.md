@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Admit routers built by another router builder, for example an OpenAPI router
+  converted with `Router::from`, through
+  `GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`. The
+  application declares the route patterns the router may serve. Assembly
+  checks each declared pattern and rejects probe collisions through a
+  library-owned inspection copy of the router that calls or polls no
+  application handler, fallback or middleware service, returning the new
+  `BoundaryAssemblyError::RouteInventoryMismatch` for a pattern the router does
+  not serve. Declared patterns join the group overlap check, and the new
+  `OverlappingRouteInventory` rejects declared routes that share a path with
+  other routes of their own group. An admitted router is never merged into the
+  native router: requests that no native route matches are offered to it at
+  the native router's root fallback, ahead of the default group's fallbacks,
+  and it serves only those it routes to a declared pattern, inside its group's
+  policy, so undeclared routes and its own fallbacks never serve. Assembly
+  prepares each admitted router once, so its layers are built once rather than
+  per request. `GuardedRouter` moves into its own module without changing its
+  public path. Existing compositions are unchanged.
 - Move the reference service's HTTP surface onto `HttpBoundary`, with lifecycle
   admission and the request deadline before trusted peer metadata and bearer
   authentication, following the repository owner's 2026-09-28 decision. Its

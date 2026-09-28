@@ -415,6 +415,18 @@ composition, move per-handler Origin/CSRF checks into a group's mutation policy
 and renderer, hand-written private-response middleware into its
 `PrivateResponsePolicy`, and each separately layered budget into its own group;
 see the [adapter migration notes](../crates/batter-axum/README.md#migrating-manual-compositions-to-route-groups).
+
+Admit a router built by another router builder, such as an OpenAPI router
+converted with `Router::from`, with
+`GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`, and pass
+the result as a route group or merge it into the default routes. List every
+route pattern the router should serve exactly as registered: an OpenAPI
+document's paths are one source, and routes added without documentation must
+be listed too, because undeclared routes are never served. Assembly returns
+`RouteInventoryMismatch` for a declared pattern the router does not serve and
+`OverlappingRouteInventory` for declared routes that share a path with other
+routes of their group. Declare fallbacks on the default `GuardedRouter`; an
+admitted router's own fallback never runs.
 The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
 remains available for adapter-owned tests and applications that need that package
 boundary.

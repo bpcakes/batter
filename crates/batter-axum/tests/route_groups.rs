@@ -1,4 +1,8 @@
 //! Guarded route groups with their own request and browser policy.
+#[path = "route_groups/admitted.rs"]
+mod admitted;
+#[path = "route_groups/admitted_validation.rs"]
+mod admitted_validation;
 #[path = "route_groups/browser.rs"]
 mod browser;
 #[path = "../../../test-support/capture.rs"]

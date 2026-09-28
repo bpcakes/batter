@@ -175,6 +175,56 @@ async fn assemble(
 }
 ```
 
+### Routers built by another router builder
+
+A router built by another router builder, for example an OpenAPI router
+converted with `Router::from`, discloses no route inventory, so it cannot be
+declared through `GuardedRouter::route`. Admit it with
+`GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`, listing
+every route pattern it should serve exactly as the router registered it. The
+result is an ordinary `GuardedRouter`: it can form a named group or join the
+default group, and `nest`, `merge`, `layer`, `route_layer` and `with_state`
+carry the admitted router and its inventory along.
+
+Awaited assembly checks the inventory before anything is served. For each
+declared pattern it routes a path of that pattern through a library-owned
+inspection copy of the router, whose every route, method fallback and fallback
+only reports what matched, and returns
+`BoundaryAssemblyError::RouteInventoryMismatch` unless the path reaches the
+route registered with exactly that pattern. The same copy rejects any route of
+the router, declared or not, that matches a probe path. Declared patterns take
+part in the group overlap check and must not share a request path with the
+other routes of their own group (`OverlappingRouteInventory`). No application
+handler, fallback or middleware service is called or polled. Preparing the
+inspection copy does run, once, the constructors of application layers that
+Axum applies lazily to handlers, even when assembly is then rejected.
+
+When serving, a request reaches the admitted router only if that router would
+route it to a declared pattern; every other request is routed as though the
+router were absent. An undeclared route therefore answers with the default
+group's fallback, and the admitted router's own fallback never runs, so declare
+fallbacks on the default `GuardedRouter`. Declared routes run inside their
+group's policy with native Axum routing, path parameters and `MatchedPath`, and
+each request still has one completion event. Only a request that no native
+route matches consults each admitted router's inspection copy, at the root
+fallback where it carries no path captures; the default group's root and nested
+fallbacks then answer the requests no admitted router serves. Assembly prepares
+an admitted router, and when there are any the default group's fallbacks, once,
+as `into_make_service` prepares a served router, so their layers are built once
+and their state is shared by all of their requests.
+
+```rust
+use axum::Router;
+use batter_axum::{GuardedRouter, RouteInventory, RouteInventoryError};
+
+fn items(converted: Router) -> Result<GuardedRouter, RouteInventoryError> {
+    // An OpenAPI document's paths are one source for the inventory; list
+    // routes added without documentation too, or they stay unreachable.
+    let inventory = RouteInventory::new(["/items", "/items/{id}"])?;
+    Ok(GuardedRouter::from_router(converted, inventory))
+}
+```
+
 ### Migrating manual compositions to route groups
 
 Existing `HttpBoundary::new(RequestPolicy)` and `assemble(guarded)` calls keep

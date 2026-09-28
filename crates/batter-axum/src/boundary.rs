@@ -1,28 +1,26 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
-use crate::{ReadinessPolicy, dependency_readiness, liveness, operational_http, serving};
-use axum::{
-    Router,
-    extract::Request,
-    handler::Handler,
-    middleware,
-    response::IntoResponse,
-    routing::{MethodRouter, Route, get},
-};
+use crate::{ReadinessPolicy, dependency_readiness, liveness, serving};
+use assembly::Assembling;
+use axum::{Router, routing::get};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
 use group::DEFAULT_GROUP;
-use std::{convert::Infallible, error::Error, fmt};
+use std::{error::Error, fmt};
 use tokio::net::TcpListener;
-use tower::{Layer, Service};
 
+mod assembly;
+mod declared;
 mod group;
+mod guarded;
 mod inventory;
 mod pattern;
 mod probe;
 #[cfg(test)]
 mod tests;
 
+pub use declared::{RouteInventory, RouteInventoryError};
 pub use group::{BrowserPolicy, GroupPolicy, RouteGroup, RouteGroupError};
+pub use guarded::GuardedRouter;
 pub use probe::{ProbePath, ProbePathError, ProbeRegistrationError};
 
 /// Sanitized failure to combine probes with guarded application routes.
@@ -40,6 +38,19 @@ pub enum BoundaryAssemblyError {
         /// The group declared later.
         second: &'static str,
     },
+    /// A router admitted with [`GuardedRouter::from_router`] does not serve a
+    /// pattern of its [`RouteInventory`]: no path of the pattern reaches the
+    /// route registered with exactly that pattern.
+    RouteInventoryMismatch {
+        /// The group containing the admitted router.
+        group: &'static str,
+    },
+    /// Declared routes of a router admitted with [`GuardedRouter::from_router`]
+    /// can match the same request path as other routes of the same group.
+    OverlappingRouteInventory {
+        /// The group containing the overlapping routes.
+        group: &'static str,
+    },
 }
 
 impl fmt::Display for BoundaryAssemblyError {
@@ -52,188 +63,19 @@ impl fmt::Display for BoundaryAssemblyError {
                 formatter,
                 "route groups {first} and {second} can match the same path"
             ),
+            Self::RouteInventoryMismatch { group } => write!(
+                formatter,
+                "route inventory in group {group} does not match its router"
+            ),
+            Self::OverlappingRouteInventory { group } => write!(
+                formatter,
+                "route inventory in group {group} can match the same path as other routes of that group"
+            ),
         }
     }
 }
 
 impl Error for BoundaryAssemblyError {}
-
-/// Guarded application routes whose identities remain visible to [`HttpBoundary`].
-///
-/// This is the canonical application-router builder. It mirrors the Axum
-/// operations that preserve route identity while retaining every declared path
-/// separately from the native router. That retained inventory lets boundary
-/// assembly reject probe collisions and overlapping route groups without
-/// executing application services. It also records whether a root or nested
-/// fallback was declared, because only the default route group may own one.
-/// Arbitrary [`Router::nest_service`] input is deliberately absent because an
-/// opaque service exposes no route inventory; use [`Self::nest`] with another
-/// `GuardedRouter` instead.
-///
-/// ```
-/// use axum::{http::StatusCode, routing::get};
-/// use batter_axum::GuardedRouter;
-///
-/// let nested: GuardedRouter =
-///     GuardedRouter::new().route("/work", get(|| async { "ok" }));
-/// let guarded = GuardedRouter::new()
-///     .nest("/api", nested)
-///     .fallback(|| async { StatusCode::NOT_FOUND });
-/// # let _ = guarded;
-/// ```
-///
-/// Opaque nested services cannot enter the protected path:
-///
-/// ```compile_fail,E0599
-/// use axum::Router;
-/// use batter_axum::GuardedRouter;
-///
-/// let guarded = GuardedRouter::new().nest_service("/api", Router::new());
-/// ```
-#[must_use = "pass the guarded routes to HttpBoundary::assemble"]
-pub struct GuardedRouter<S = ()> {
-    router: Router<S>,
-    route_patterns: Vec<String>,
-    declares_fallback: bool,
-}
-
-impl<S> GuardedRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    /// Start an empty guarded application router.
-    pub fn new() -> Self {
-        Self {
-            router: Router::new(),
-            route_patterns: Vec::new(),
-            declares_fallback: false,
-        }
-    }
-
-    /// Add an Axum method router and retain its route pattern for assembly validation.
-    pub fn route(mut self, path: &str, method_router: MethodRouter<S>) -> Self {
-        self.router = self.router.route(path, method_router);
-        if !self.route_patterns.iter().any(|known| known == path) {
-            self.route_patterns.push(path.to_owned());
-        }
-        self
-    }
-
-    /// Add an infallible service at one guarded route and retain its pattern.
-    pub fn route_service<T>(mut self, path: &str, service: T) -> Self
-    where
-        T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
-        T::Response: IntoResponse,
-        T::Future: Send + 'static,
-    {
-        self.router = self.router.route_service(path, service);
-        if !self.route_patterns.iter().any(|known| known == path) {
-            self.route_patterns.push(path.to_owned());
-        }
-        self
-    }
-
-    /// Nest guarded routes while retaining their fully qualified route patterns.
-    pub fn nest(mut self, path: &str, nested: GuardedRouter<S>) -> Self {
-        self.router = self.router.nest(path, nested.router);
-        self.declares_fallback |= nested.declares_fallback;
-        for nested_path in nested.route_patterns {
-            let full_path = if path.ends_with('/') {
-                format!("{path}{}", nested_path.trim_start_matches('/'))
-            } else if nested_path == "/" {
-                path.to_owned()
-            } else {
-                format!("{path}{nested_path}")
-            };
-            if !self.route_patterns.contains(&full_path) {
-                self.route_patterns.push(full_path);
-            }
-        }
-        self
-    }
-
-    /// Merge another guarded router and retain both route inventories.
-    pub fn merge(mut self, other: GuardedRouter<S>) -> Self {
-        self.router = self.router.merge(other.router);
-        self.declares_fallback |= other.declares_fallback;
-        for path in other.route_patterns {
-            if !self.route_patterns.contains(&path) {
-                self.route_patterns.push(path);
-            }
-        }
-        self
-    }
-
-    /// Set the guarded fallback without treating it as an explicit route identity.
-    ///
-    /// Only the default route group, passed to [`HttpBoundary::assemble`], can
-    /// contain a root or nested fallback.
-    pub fn fallback<H, T>(mut self, handler: H) -> Self
-    where
-        H: Handler<T, S>,
-        T: 'static,
-    {
-        self.router = self.router.fallback(handler);
-        self.declares_fallback = true;
-        self
-    }
-
-    /// Set an infallible guarded fallback service for the default route group.
-    pub fn fallback_service<T>(mut self, service: T) -> Self
-    where
-        T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
-        T::Response: IntoResponse,
-        T::Future: Send + 'static,
-    {
-        self.router = self.router.fallback_service(service);
-        self.declares_fallback = true;
-        self
-    }
-
-    /// Apply a native Axum layer to every current guarded route and fallback.
-    pub fn layer<L>(mut self, layer: L) -> Self
-    where
-        L: Layer<Route> + Clone + Send + Sync + 'static,
-        L::Service: Service<Request> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
-        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
-        <L::Service as Service<Request>>::Future: Send + 'static,
-    {
-        self.router = self.router.layer(layer);
-        self
-    }
-
-    /// Apply a native Axum layer to every current explicit guarded route.
-    pub fn route_layer<L>(mut self, layer: L) -> Self
-    where
-        L: Layer<Route> + Clone + Send + Sync + 'static,
-        L::Service: Service<Request> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
-        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
-        <L::Service as Service<Request>>::Future: Send + 'static,
-    {
-        self.router = self.router.route_layer(layer);
-        self
-    }
-
-    /// Supply native Axum state while retaining the guarded route inventory.
-    pub fn with_state<S2>(self, state: S) -> GuardedRouter<S2> {
-        GuardedRouter {
-            router: self.router.with_state(state),
-            route_patterns: self.route_patterns,
-            declares_fallback: self.declares_fallback,
-        }
-    }
-}
-
-impl<S> Default for GuardedRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Library-owned HTTP composition.
 ///
@@ -377,15 +219,19 @@ impl HttpBoundary {
     /// groups keep unsupported methods on their routes inside their own
     /// policy. Routes added to the result afterward would sit outside the
     /// boundary, so the result is not a bare [`Router`].
-    /// Route validation polls only library-owned inert inventories. It does not
-    /// poll guarded handlers, fallbacks, or their middleware. A probe path
-    /// reserves the complete route identity in every group, so even a different
-    /// guarded method at that path is rejected before Axum merge can panic.
+    /// Route validation polls only library-owned inert inventories and
+    /// inspection copies. It does not poll guarded handlers, fallbacks, or
+    /// their middleware. A probe path reserves the complete route identity in
+    /// every group, so even a different guarded method at that path is
+    /// rejected before Axum merge can panic.
     /// Routes of different groups may not match one request path, even with
     /// different methods; overlap is decided from the retained patterns and
     /// confirmed by routing a shared path through each pattern alone. If a
     /// request URI cannot preserve that path verbatim, assembly conservatively
-    /// rejects the overlap before native merging.
+    /// rejects the overlap before native merging. Routers admitted with
+    /// [`GuardedRouter::from_router`] are checked against their
+    /// [`RouteInventory`] first, their declared patterns take part in the
+    /// overlap decision, and they are never merged into the native router.
     pub async fn assemble(
         self,
         guarded: GuardedRouter,
@@ -396,45 +242,15 @@ impl HttpBoundary {
             probes,
             probe_paths,
         } = self;
-        validate(&guarded, &groups, &probe_paths).await?;
-        let mut router = probes;
-        for group in groups {
-            router = router.merge(group.policy.apply(group.routes.router));
-        }
-        // With two default fallbacks Axum retains the second router's; a second
-        // custom fallback also supersedes a first default. Named groups declare
-        // no fallback, so merging the default group last retains its layered one.
-        let router = router
-            .merge(policy.apply(guarded.router))
-            .layer(middleware::from_fn(operational_http));
-        Ok(AssembledHttp { router })
-    }
-}
-
-/// Reject probe collisions in any group, then overlapping group paths.
-async fn validate(
-    default: &GuardedRouter,
-    groups: &[RouteGroup],
-    probes: &[ProbePath],
-) -> Result<(), BoundaryAssemblyError> {
-    let inventories: Vec<(&'static str, &[String])> =
-        std::iter::once((DEFAULT_GROUP, default.route_patterns.as_slice()))
+        let groups = std::iter::once(Assembling::new(DEFAULT_GROUP, policy, guarded))
             .chain(
                 groups
-                    .iter()
-                    .map(|group| (group.name, group.routes.route_patterns.as_slice())),
+                    .into_iter()
+                    .map(|group| Assembling::new(group.name, group.policy, group.routes)),
             )
             .collect();
-    for &(_, patterns) in &inventories {
-        if inventory::claims_probe(patterns, probes).await {
-            return Err(BoundaryAssemblyError::GuardedProbePath);
-        }
-    }
-    match inventory::overlapping_groups(&inventories).await {
-        Some((first, second)) => {
-            Err(BoundaryAssemblyError::OverlappingGroupPaths { first, second })
-        }
-        None => Ok(()),
+        let router = assembly::assemble(probes, &probe_paths, groups).await?;
+        Ok(AssembledHttp { router })
     }
 }
 

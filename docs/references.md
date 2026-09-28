@@ -1493,6 +1493,64 @@ application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
+## Admitted router inspection reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9, matchit 0.8.4 and http 1.5.0, reviewed
+from their published crate sources. The
+[Axum 0.8.9 router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs)
+has no method that lists a router's routes, so a router built by another
+builder needs an application-supplied inventory. `Router::layer` maps every
+path route, fallback route and the catch-all fallback, and the
+[path router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/path_router.rs)
+layers each endpoint through `Endpoint::layer`, which applies
+[`MethodRouter::layer`](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/method_routing.rs)
+to every method endpoint and the method fallback. `Router::route_layer` takes
+the same path for path routes only and panics on a router without routes, which
+`has_routes` reports. A layer that returns its own service therefore replaces
+every application service while Axum still matches the path. Path-route
+matching records `MatchedPath` before calling the endpoint; fallback routes
+record none, and a `nest_service` tail records the private `MatchedNestedPath`
+instead. Matching also extends path parameters already present,
+`append_nested_matched_path` prefixes an existing `MatchedPath`, and
+`Router::route_service` refuses a `Router`, so forwarding from a registered
+outer route into a converted router would duplicate its parameters and prefix
+its matched path. The fallback router's `insert_url_params` drops only the
+private fallback parameter, so a nested fallback below a capture also adds that
+capture before its endpoint runs. The boundary therefore makes a library
+dispatch the native router's root fallback, whose routes capture nothing,
+consults inspection copies only there, forwards the request unchanged, and
+moves the default group's fallbacks behind the dispatch. `into_make_service`,
+`into_make_service_with_connect_info` and the `axum::serve` stream service each
+call `with_state(())` on the router they serve, which turns every boxed handler
+into a route once; a router called from inside another service is never
+prepared that way and rebuilds lazily applied layers on every request. Assembly
+therefore prepares each admitted router, inspection copy and moved fallback
+router itself. Preparation turns a boxed handler into a route through
+`into_route`, which applies each lazily mapped layer by calling its
+`Layer::layer`, so preparing an inspection copy runs those application
+constructors once, even when assembly is then rejected, although the services
+they build are replaced and never called.
+`Router::nest` re-registers nested routes under the outer router's 0.7 syntax
+checks, so admitted routers are nested into a router without them. The
+[http 1.5.0 path parser](https://docs.rs/http/1.5.0/src/http/uri/path.rs.html)
+accepts `{` and `}` in request paths for compatibility, so inventory paths can
+use `{}` as filler that ordinary literal routes cannot spell unescaped.
+Registering a capture beside a catch-all in the same position fails with a
+matchit insertion conflict under these versions, as an admitted-router test
+fixture observed on 2026-09-28.
+
+matchit 0.8.4's `find_wildcard` in
+[`tree.rs`](https://docs.rs/matchit/0.8.4/src/matchit/tree.rs.html) rejects a
+parameter name that is empty or whose first byte is `}`, a check made before
+unescaping; a catch-all named only `*`; and `*` or `/` after a name's first
+byte. It never tests the first byte for `/`, so `/items/{/id}` registers a
+capture named `/id` that matches `/items/7`, and that `/` does not split the
+segment. `normalize_params` names captures from `a` and panics while naming a
+26th. The route pattern parser mirrors these rules, so `RouteInventory::new`
+rejects such patterns as `InvalidPattern` and accepts `/items/{/id}`, and a unit
+test compares the parser with Axum's own registration for each rule and at the
+25-capture limit.
+
 ## HTTP route group matching reviewed: 2026-09-28
 
 `Cargo.lock` still resolves Axum 0.8.9, whose router delegates path matching to

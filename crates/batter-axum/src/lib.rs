@@ -12,7 +12,8 @@
 //! admission and installs correlation with the single HTTP observer outermost,
 //! so the layer order is library-owned. Named [`RouteGroup`]s give sets of
 //! guarded routes their own [`RequestPolicy`] and optional [`BrowserPolicy`]
-//! inside that same fixed order. Only the outermost observer emits a
+//! inside that same fixed order. A router built by another router builder joins
+//! through [`GuardedRouter::from_router`] and serves only its declared routes. Only the outermost observer emits a
 //! completion event; nested Batter middleware contributes adapter facts to
 //! that observer's shared retained state. The individual middlewares remain
 //! available for compositions the boundary cannot express and document the
@@ -33,7 +34,8 @@ pub mod browser;
 
 pub use boundary::{
     AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
-    ProbePath, ProbePathError, ProbeRegistrationError, RouteGroup, RouteGroupError,
+    ProbePath, ProbePathError, ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory,
+    RouteInventoryError,
 };
 pub use correlation::{
     CorrelationId, operational_http, operational_http_with_quota, render_infrastructure_failure,

@@ -1515,14 +1515,55 @@ inside admission and mutation checks, and no application code runs during
 rejected assembly.
 
 Pattern unit tests in `crates/batter-axum/src/boundary/pattern/tests.rs` compare
-the overlap analysis with native Axum 0.8.9 routing: for 23 patterns covering
-literals, empty and escaped segments, prefixed captures and wildcards, every
+the overlap analysis with native Axum 0.8.9 routing: for 25 patterns covering
+literals, empty and escaped segments, prefixed captures, captures whose name
+starts with `/`, and wildcards, every
 constructed shared path must route through both patterns alone, and no pair
 judged disjoint may share any of the 584 paths of up to three segments built
 from the segments a constructed path can contain. During implementation, moving
 mutation checks outside admission, private headers inside admission, dropping
 the overlap check and merging the default group first each made the target
 fail.
+
+The same target covers routers admitted through `GuardedRouter::from_router`.
+A stateful router with an undeclared route inside its declared paths, another
+outside them and its own fallback serves `/items` and `/items/{id}` in a private
+browser group: the path parameter and `MatchedPath` come from one native
+routing, and the group's mutation, method and drain rejections and its
+three-second deadline apply with the group's headers, while the undeclared
+routes and the router's own fallback answer with the default fallback without
+running. Nested under `/v1` and merged with native routes, the router keeps its
+prefixed patterns and receives route and router layers in order; one
+completion per request names the declared route, and an aborted admitted
+request is destroyed under its first-poll dispatch. Validation fixtures route
+only POST with application method fallbacks, so inspection reaches those
+fallbacks too. Failure paths reject declared and undeclared routes matching a
+probe, including a wildcard and an opaque nested service, in the default and a
+named group; reject as inventory mismatches a missing pattern, a renamed
+parameter, a literal served by a wildcard, a pattern inside an opaque nested
+service, a path no request URI can carry and a router without routes; and
+reject declared routes overlapping another group, native routes of their own
+group or another admitted router. Sibling literals equal to conventional
+fillers do not take inventory paths, undeclared routes take no part in overlap,
+and invalid inventories fail at construction. No handler, method fallback,
+nested service, middleware or fallback service of an admitted router is called
+during validation. During implementation, dropping the inspection copy's fallback
+reporter and forwarding undeclared matches each made the target fail.
+
+A counting layer on native routes and a handler fallback, on an admitted router
+and around it shows that requests served through a prepared make-service reuse
+the layers built before serving, with and without an admitted router; leaving
+the admitted router, its inspection copy or the moved default fallbacks
+unprepared made the count grow with each request. With a default fallback
+nested below `/tenants/{tenant}`, an admitted route
+`/tenants/{tenant}/items/{id}` in either the default or a named group still
+extracts exactly its own two path parameters, and the nested fallback and a
+native route below it keep theirs; leaving the nested fallback in front of the
+dispatch made that test fail.
+A pattern unit test registers each parser rule's accepted and rejected patterns,
+including empty, lone-`*` and embedded-`*` parameter names and the 25-capture
+limit, with the pinned Axum router and requires the parser to agree; inventory
+construction rejects those names as `InvalidPattern`.
 
 ## Axum operational defaults
 
