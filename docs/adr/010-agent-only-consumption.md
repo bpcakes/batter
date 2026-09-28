@@ -354,6 +354,55 @@ OpenAPI-builder dependency or convenience is added. Fresh-agent usability
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.
 
+### Probe renderer and readiness condition assessment (`batter-tc9w.5`)
+
+`HttpBoundary` mounted only the adapter's empty-body liveness and readiness
+handlers. One surveyed consumer documents JSON probe bodies in its OpenAPI
+contract, and the other also requires an application condition, held key
+leases, before reporting readiness, so both mounted their own probe handlers
+beside the boundary. Each such handler chose its path, its placement relative to
+admission, its status and severity, and recombined lifecycle and health itself:
+a probe merged inside admission would reject while starting, a handler could
+answer 200 for an unready decision, and a hand-composed application check could
+override the lifecycle.
+
+`with_rendered_liveness` and `with_rendered_readiness` keep the path, the
+placement outside admission and every collision check on the boundary, exactly
+as for the empty-body probes. The renderer receives a `Copy` decision and the
+request metadata and returns a response; the boundary then sets the status from
+`readiness_status` (200 for liveness) and replaces the decision and severity
+extensions, so no renderer, including one returning a contradicting status or
+forged extensions, changes what an orchestrator or the completion event sees.
+Application conditions narrow the foundation decision rather than wrap it. A
+check returns only whether its condition holds (a check returning a decision
+does not compile), is asked only after the dependency sample establishes
+readiness and before the final lifecycle read, and can only turn Ready into the
+new `ReadinessUnreadyReason::Condition`, which carries a validated
+`ReadinessCondition` name (raw strings do not compile) and defaults to WARN.
+Conditions accumulate, so adding one cannot silently drop another, and the
+empty-body `dependency_readiness` reports them too because it reads the same
+decision. Tests send every decision through a contradicting renderer, probe
+both condition answers in every unready lifecycle and dependency phase, narrow
+Ready through the condition, keep both probes outside admission and reject
+every duplicate and guarded probe path; they fail when the renderer's status or
+severity survives, when a condition replaces a dependency reason, or when a
+condition is consulted for a starting lifecycle.
+
+Remaining boundaries are explicit. Condition checks and renderers run
+synchronously inside the probe request, and probes carry no
+response-construction deadline because they sit outside admission; a check or
+renderer that blocks, performs I/O or panics affects that probe like any
+handler, which the evaluator cannot detect. Whether a check reflects key leases
+or any other remote fact is application state that Batter cannot verify. Checks
+added under one name report the same condition, deliberately allowing several
+checks of one requirement; distinct requirements need distinct names for a
+renderer to tell them apart. Adding `Condition` breaks exhaustive matches on
+`ReadinessUnreadyReason`, a change taken under the exhaustive-enum policy with
+a changelog migration note. `readiness_status` fixes the unready status at 503,
+and a hand-mounted handler built from `ReadinessPolicy::decision` remains a
+weaker low-level composition. Fresh-agent usability evaluation is proposed and
+unexecuted; the downstream ports belong to `batter-tc9w.9`.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

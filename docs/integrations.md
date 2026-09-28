@@ -113,6 +113,20 @@ send to a declared pattern reach it, inside its group's policy; undeclared
 routes and its own fallbacks never serve. No OpenAPI-builder dependency is
 involved; the application supplies the inventory.
 
+Serve the application's own probe bodies, for example OpenAPI-documented JSON,
+through `with_rendered_liveness(path, render)` and
+`with_rendered_readiness(path, readiness, render)`. The boundary still owns the
+path, its outside-admission placement and every probe-collision check. The
+readiness renderer receives one fresh `ReadinessDecision` and the request
+metadata, including the generated `CorrelationId`, and returns the body and
+headers; the boundary then sets the status (200 for liveness,
+`readiness_status` for readiness) and the decision and severity extensions, so
+a renderer cannot change what the orchestrator or the completion event sees.
+Add application readiness requirements, such as held key leases, with
+`ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`: a
+synchronous check of state the application already holds that can only turn a
+ready decision into `ReadinessUnreadyReason::Condition(name)`.
+
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
 `read_cookie` scans every Cookie field for one exact target; `BrowserCookie`
@@ -235,7 +249,11 @@ WARN. Reuse `readiness_status` for the adapter's 200/503 mapping and
 decisions. Response extensions contain `ReadinessDecision`; import
 `ReadinessUnreadyReason` from the foundation only to match its unready case. The final
 lifecycle read overrides cached health on observed drain; this decision is not
-atomic with subsequent transitions.
+atomic with subsequent transitions. `with_condition` adds an application
+condition, named by a validated `ReadinessCondition`, that is asked only after
+the dependency is ready and before the final lifecycle read; an unsatisfied one
+yields `Unready(ReadinessUnreadyReason::Condition(name))` with 503 and WARN by
+default, and none can make an unready lifecycle or dependency ready.
 `RequestPolicy` separately accepts `OperationAdmission`, which can create only a
 readiness-gated downward-cancelled operation context. Neither policy retains
 `ShutdownHandle` or can request shutdown or approve readiness.

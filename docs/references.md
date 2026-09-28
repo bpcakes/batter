@@ -1493,6 +1493,22 @@ application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
+## Rendered probe outcome reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9 and http 1.5.0, reviewed from their
+published crate sources. In http 1.5.0,
+[`Response::status_mut`](https://docs.rs/http/1.5.0/http/response/struct.Response.html#method.status_mut)
+replaces the status of an already-built response, and
+[`Extensions::insert`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.insert)
+returns and replaces an existing value of the same type. The boundary's
+rendered probes therefore apply the status and the `ReadinessDecision` and
+`HttpObservationLevel` extensions after the application renderer returns, so
+whatever the renderer set is replaced rather than kept. The
+[Axum 0.8.9 method router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/method_routing.rs)
+documents that `get` routes also serve HEAD requests with the response body
+removed, so a HEAD probe keeps the rendered probe's status and headers without
+its body. No new upstream runtime behaviour is claimed.
+
 ## Admitted router inspection reviewed: 2026-09-28
 
 `Cargo.lock` still resolves Axum 0.8.9, matchit 0.8.4 and http 1.5.0, reviewed
@@ -2333,7 +2349,9 @@ re-export is deliberately removed because preserving that type path would let a
 pre-cutover response-extension lookup compile while missing the new decision
 extension. Adapter-owned `readiness_status` and `default_readiness_level` replace
 the former associated helpers without moving HTTP or tracing types into the
-foundation.
+foundation. On 2026-09-28 `batter-tc9w.5` added
+`ReadinessUnreadyReason::Condition` under this policy: exhaustive consumer
+matches must add the application-condition case, which the changelog records.
 
 ### Direct TCP peer registration: rechecked 2026-09-16
 

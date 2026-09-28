@@ -1031,7 +1031,7 @@ excludes archived reviews under `.agent/reviews`.
 | Dropping an active cleanup driver aborts its hook and does not start dependencies | [cleanup.rs](../crates/batter-core/tests/cleanup.rs) |
 | Inert registration, monotonic readiness, early success as failure | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
 | Error/panic observation, drain/cancel distinction, abort reports | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
-| Dependency health freshness, exhaustive observation-to-readiness classification, unrepresentable healthy-as-failure state, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter-core/tests/health.rs), foundation [readiness](../crates/batter-core/src/readiness.rs), and [ownership](../crates/batter-core/tests/health/ownership.rs), [publication](../crates/batter-core/tests/health/publication.rs) |
+| Dependency health freshness, exhaustive observation-to-readiness classification, unrepresentable healthy-as-failure state, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter-core/tests/health.rs), foundation [readiness](../crates/batter-core/src/readiness.rs) with its [unit tests](../crates/batter-core/src/readiness/tests.rs), and [ownership](../crates/batter-core/tests/health/ownership.rs), [publication](../crates/batter-core/tests/health/publication.rs) |
 | Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic, simultaneous drain/destruction classification and readiness/handoff | [startup.rs](../crates/batter-core/tests/startup.rs), [protected_startup.rs](../crates/batter-core/tests/protected_startup.rs), [registration.rs](../crates/batter-core/tests/registration.rs) |
 | Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, deterministic same-poll failure/success reception, TERM/INT during start and running, cleanup-owned observation of delayed repeated signals without deadline restart, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter-core/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter-core/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter-core/src/lifecycle/unix.rs) |
 | Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
@@ -1063,7 +1063,7 @@ excludes archived reviews under `.agent/reviews`.
 | HTTP event fields independent of span filtering | [Event fields](../crates/batter-axum/tests/observation/event_fields.rs): direct event visitors check typed fields at all severities, WARN/ERROR with INFO spans disabled, admission rejection, unmatched routes and future destruction under another ambient subscriber. |
 | Observation filtering and middleware order | [Composition edges](../crates/batter-axum/tests/observation/composition_edges.rs): DEBUG/TRACE overrides suppressed by INFO with a WARN positive control, outer status/severity rewriting after observation, and retained overrides read by each nested observer. |
 | HTTP context ownership and handler unwinds | [Correlation](../crates/batter-axum/tests/observation/correlation.rs): mixed target filters, interleaved completion/drop under other spans/subscribers, retained parent lifetime, untouched application fields, no replacement of an absent parent, propagated task panic, cancelled admitted context and sanitized dropped observations. |
-| Foundation decision and example readiness policy over real HTTP | Foundation unit/rustdoc tests exhaust every lifecycle/health classification, deterministically require dependency sampling before lifecycle, and reject `Dependency(Healthy)`; Axum rustdoc makes the old reason import fail loudly, while [operational tests](../crates/batter-axum/tests/operational/readiness.rs) preserve all valid typed decisions, reusable status/severity mappings, partial default severity delegation and drain precedence; [example tests](../crates/batter/examples/http_service/tests.rs) cover the actual router's Starting/Ready/Draining/Stopped statuses and event levels with generated request correlation. A separately owned listener stays available through all phases; this does not prove the binary's connection shutdown timing. |
+| Foundation decision and example readiness policy over real HTTP | Foundation unit/rustdoc tests exhaust every lifecycle/health/application-condition classification, deterministically require dependency sampling, then conditions, before lifecycle, show that no condition makes an unready lifecycle or dependency ready, and reject `Dependency(Healthy)`; Axum rustdoc makes the old reason import fail loudly, while [operational tests](../crates/batter-axum/tests/operational/readiness.rs) preserve all valid typed decisions, reusable status/severity mappings, partial default severity delegation and drain precedence, and [rendered probe tests](../crates/batter-axum/tests/operational/rendered_probes.rs) keep status, decision and severity boundary-owned under application bodies; [example tests](../crates/batter/examples/http_service/tests.rs) cover the actual router's Starting/Ready/Draining/Stopped statuses and event levels with generated request correlation. A separately owned listener stays available through all phases; this does not prove the binary's connection shutdown timing. |
 | Explicit HTTP observation severity | [Severity](../crates/batter-axum/tests/observation/severity.rs): all five event levels, preserved defaults/status/outcome/identity/response data, expected readiness vs unrelated unguarded failure, custom rendering, middleware override replacement/removal and ignored request-side hints. Rendering tests include forced cancellation with an ERROR override on a 429; lifetime tests keep dropped futures at WARN despite an annotated response constructed but never returned. |
 | Split/legacy rendering and request lifetime | [Rendering](../crates/batter-axum/tests/observation/rendering.rs) and [lifetime](../crates/batter-axum/tests/observation/lifetime.rs): actual custom status, original metadata, timeout, forced cancellation, inert unpolled futures, cross-subscriber abort/destruction, context cancellation and post-response body drop. |
 | Axum middleware placement and observation ownership | [Placement](../crates/batter-axum/tests/observation/placement.rs): existing vs late-added routes, pre-routing missing metadata, observation-free admission and explicit duplicate observations when wrapping the legacy middleware. |
@@ -1584,6 +1584,31 @@ registration/abandonment listener release, and a stream retained after request
 budget and direct-wrapper abort. The test explicitly releases and awaits that
 body after observing unsuccessful shutdown and skipped dependency cleanup.
 These tests establish the stated limits, not general streaming ownership.
+
+Rendered probe tests drive the same HealthMonitor and lifecycle phases through
+`HttpBoundary::with_rendered_readiness` with a renderer that tries to alter the
+outcome: it always answers 200 with a forged Ready decision and TRACE severity.
+The renderer receives every decision, including each dependency reason, Stopped
+and an application condition, and for each one the response keeps the
+renderer's body and content type but the decision's status, the true decision
+extension and the policy's severity, and the capture holds one completion per
+probe at that severity and status. In every unready lifecycle or dependency
+phase the application condition is probed both satisfied and unsatisfied
+without changing the decision, and it is never asked while the dependency is
+unready; once lifecycle and dependency are ready, the unsatisfied condition
+yields `ReadinessUnreadyReason::Condition` and restoring it yields Ready. A
+second test keeps both rendered probes outside admission while starting and
+draining: guarded work is rejected before its handler, liveness answers 200
+although its renderer returns 503, and neither renderer sees an
+`OperationContext` or interruption responder. Adapter unit tests reject a
+rendered probe path reused by any probe kind and guarded routes matching a
+rendered probe path, without calling a renderer or application code.
+Foundation unit tests cover every lifecycle, dependency and condition
+combination, the dependency-condition-lifecycle sampling order, accumulation in
+order and name validation. During implementation, returning the renderer's
+response unchanged, keeping a renderer-chosen severity or liveness status,
+letting a condition replace a dependency reason and consulting conditions for a
+starting lifecycle each made these tests fail.
 
 ## HTTP/1.1 instrumented lifetime observations
 

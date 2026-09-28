@@ -95,8 +95,9 @@ guarantee.
 ## HTTP boundary and route groups
 
 Construct each configured route with `ProbePath::new`, then use
-`HttpBoundary::new(RequestPolicy)` with `with_liveness`, `with_readiness` and
-build application routes with `GuardedRouter`, and call `assemble(guarded)`.
+`HttpBoundary::new(RequestPolicy)` with `with_liveness` and `with_readiness`, or
+their rendered variants for application probe bodies, build application routes
+with `GuardedRouter`, and call `assemble(guarded)`.
 `ProbePath` rejects captures, wildcards and other
 non-literal route syntax before Axum can mount it. The fallible probe-registration
 methods reject a repeated path across all probe kinds before Axum routing can
@@ -225,6 +226,65 @@ fn items(converted: Router) -> Result<GuardedRouter, RouteInventoryError> {
 }
 ```
 
+### Application probe bodies and readiness conditions
+
+`with_liveness` and `with_readiness` answer with empty bodies. When the
+application documents its probe bodies, for example as OpenAPI JSON, use
+`with_rendered_liveness(path, render)` and
+`with_rendered_readiness(path, readiness, render)` instead of mounting probe
+handlers beside the boundary. They take the same `ProbePath`, reserve it in the
+same duplicate and guarded-route checks and mount the probe in the same place,
+outside every group's admission and inside correlation and the observer. The
+renderer receives the request metadata, including the generated
+`CorrelationId`, and for readiness one fresh `ReadinessDecision`, and returns
+the body and headers. After it returns, the boundary sets the status, 200 for
+liveness and `readiness_status(decision)` for readiness, and replaces the
+`ReadinessDecision` and `HttpObservationLevel` extensions with the decision and
+the policy's severity. A renderer therefore chooses what the probe says, never
+whether the process is ready or how the completion event is logged.
+
+Add application readiness requirements, such as held key leases, with
+`ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`. The
+check synchronously reads state the application already maintains; it is asked
+only after the dependency is ready and before the final lifecycle read, and
+while it returns `false` a decision that would be Ready becomes
+`Unready(ReadinessUnreadyReason::Condition(name))`, rendered 503 and WARN by
+default. It cannot make an unready lifecycle or dependency ready or replace its
+reason. Renderers and checks run inside the probe request, which has no
+response-construction deadline, so they must not block.
+
+```rust
+use axum::{
+    Json,
+    http::request::Parts,
+    response::{IntoResponse, Response},
+};
+use batter_axum::{CorrelationId, ReadinessDecision};
+use batter_core::readiness::ReadinessUnreadyReason;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ProbeBody {
+    status: &'static str,
+    request_id: Option<String>,
+}
+
+fn readiness_body(decision: ReadinessDecision, parts: &Parts) -> Response {
+    let status = match decision {
+        ReadinessDecision::Ready => "ready",
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition)) => {
+            condition.as_str()
+        }
+        ReadinessDecision::Unready(_) => "unavailable",
+    };
+    let request_id = parts.extensions.get::<CorrelationId>().map(|id| id.to_string());
+    Json(ProbeBody { status, request_id }).into_response()
+}
+
+// HttpBoundary::new(policy)
+//     .with_rendered_readiness(ProbePath::new("/ready")?, readiness, readiness_body)?
+```
+
 ### Migrating manual compositions to route groups
 
 Existing `HttpBoundary::new(RequestPolicy)` and `assemble(guarded)` calls keep
@@ -283,8 +343,8 @@ still one event.
 Set overrides in handlers, failure renderers or middleware inside observation.
 Middleware changing a response must retain, replace or remove the override to
 match its own policy. Status-only probes retain default severity.
-`ReadinessPolicy` selects INFO for Starting/Draining and WARN for Stopped and
-unhealthy dependencies while Ready. Their status remains 503 and outcome remains `server_error`, so
+`ReadinessPolicy` selects INFO for Starting/Draining and WARN for Stopped,
+unhealthy dependencies and unsatisfied application conditions while Ready. Their status remains 503 and outcome remains `server_error`, so
 status/outcome alerts still need application-owned probe filtering.
 
 Axum's `Router::layer` runs after routing and covers only routes/fallback already
@@ -351,9 +411,11 @@ the last renderer selection wins. Domain error mappings remain application-owned
 
 Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
 outside admission. Its response has an empty body and 200 only when lifecycle is
-Ready and the latest read-only health snapshot is healthy. The response extension
+Ready, the latest read-only health snapshot is healthy and every application
+condition added with `with_condition` is satisfied. The response extension
 carries the foundation's `ReadinessDecision`: either Ready or Unready with a
-Starting/Draining/Stopped or typed dependency-unready reason. Healthy has no
+Starting/Draining/Stopped, typed dependency-unready or named application-condition
+reason. Healthy has no
 dependency-unready representation. `readiness_status` exposes the adapter's
 200/503 mapping and `default_readiness_level` exposes its INFO/WARN mapping;
 `with_level` receives the valid decision and can delegate unmatched cases to that
