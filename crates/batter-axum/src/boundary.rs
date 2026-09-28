@@ -198,11 +198,13 @@ impl HttpBoundary {
     /// `render` receives the request metadata, including the generated
     /// [`CorrelationId`](crate::CorrelationId) but not the body, and returns
     /// the application's response, for example a documented JSON body and its
-    /// headers. The boundary then sets status 200, replacing any status the
-    /// renderer chose: answering at all is the liveness signal. The path is
-    /// reserved and checked exactly as for [`Self::with_liveness`]. `render`
-    /// runs synchronously for every probe request and must not block the
-    /// runtime. See [`Self::with_rendered_readiness`] for an example.
+    /// headers. Answering at all is the liveness signal, so the boundary then
+    /// sets status 200, replacing any status the renderer chose, and removes
+    /// any [`HttpObservationLevel`](crate::HttpObservationLevel) override, so
+    /// the completion event keeps the empty-body probe's default INFO. The
+    /// path is reserved and checked exactly as for [`Self::with_liveness`].
+    /// `render` runs synchronously for every probe request and must not block
+    /// the runtime. See [`Self::with_rendered_readiness`] for an example.
     pub fn with_rendered_liveness<F>(
         mut self,
         path: ProbePath,

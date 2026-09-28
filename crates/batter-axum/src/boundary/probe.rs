@@ -1,4 +1,7 @@
-use crate::{ReadinessPolicy, quota_observation::QuotaObservation, readiness::ReadinessRenderer};
+use crate::{
+    HttpObservationLevel, ReadinessPolicy, quota_observation::QuotaObservation,
+    readiness::ReadinessRenderer,
+};
 use axum::{
     extract::Request,
     http::{StatusCode, request::Parts},
@@ -10,14 +13,17 @@ use std::{error::Error, fmt, sync::Arc};
 /// An application renderer for liveness probe responses.
 type LivenessRenderer = dyn Fn(&Parts) -> Response + Send + Sync;
 
-/// Serve liveness with the application's response and the fixed 200 status.
+/// Serve liveness with the application's response and the empty-body probe's
+/// fixed 200 status and default completion severity.
 pub(super) fn rendered_liveness(render: Arc<LivenessRenderer>) -> MethodRouter {
     get(move |request: Request| {
         let render = render.clone();
         async move {
             let mut response = render(&renderer_parts(request));
-            // Answering at all is the liveness signal; no renderer can change it.
+            // Answering at all is the liveness signal; no renderer can change
+            // its status or, through an override, its completion severity.
             *response.status_mut() = StatusCode::OK;
+            response.extensions_mut().remove::<HttpObservationLevel>();
             response
         }
     })

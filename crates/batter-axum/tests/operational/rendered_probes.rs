@@ -181,6 +181,13 @@ async fn assert_unready_either_way(
     leases.set(true);
 }
 
+/// The HTTP completion events in a capture, in emission order.
+fn completions(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.contains("HTTP response boundary finished"))
+        .collect()
+}
+
 async fn sample(run: &mut (impl Future<Output = ()> + Unpin)) {
     assert!(
         poll_fn(|cx| Poll::Ready(std::pin::Pin::new(&mut *run).poll(cx)))
@@ -322,10 +329,7 @@ async fn renderer_receives_every_decision_without_choosing_status_decision_or_se
     // One completion event per probe, at the policy's severity rather than the
     // renderer's forged TRACE.
     let text = capture.text();
-    let events: Vec<_> = text
-        .lines()
-        .filter(|line| line.contains("HTTP response boundary finished"))
-        .collect();
+    let events = completions(&text);
     assert_eq!(events.len(), rendered.len(), "{text}");
     for (event, decision) in events.iter().zip(&rendered) {
         let level = default_readiness_level(*decision).as_str();
@@ -409,5 +413,33 @@ async fn rendered_probes_answer_outside_admission_with_application_bodies() {
     handle.request();
     assert_unadmitted_probes().await;
     assert_eq!(work.load(Ordering::SeqCst), 1);
-    drop(monitor);
+}
+
+#[test]
+fn rendered_liveness_completion_keeps_the_default_severity_under_info_filtering() {
+    // INFO filtering, as in production: a TRACE completion would be dropped.
+    let capture = Capture::new();
+    let answer = capture.block_on(async {
+        let handle = ShutdownHandle::new_unapproved();
+        let budget = ResponseConstructionBudget::new(SECOND).unwrap();
+        let app = HttpBoundary::new(RequestPolicy::new(handle.operation_admission(), budget))
+            .with_rendered_liveness(ProbePath::new("/live").unwrap(), |_| {
+                let quiet = HttpObservationLevel(Level::TRACE);
+                (StatusCode::SERVICE_UNAVAILABLE, Extension(quiet), "live").into_response()
+            })
+            .unwrap()
+            .assemble(GuardedRouter::new().route("/work", get(|| async { "work" })))
+            .await
+            .unwrap()
+            .into_router();
+        let response = app.oneshot(get_request("/live")).await.unwrap();
+        (response.status(), text(response).await)
+    });
+
+    assert_eq!(answer, (StatusCode::OK, "live".to_owned()));
+    let text = capture.text();
+    let events = completions(&text);
+    assert_eq!(events.len(), 1, "{text}");
+    assert!(events[0].trim_start().starts_with("INFO"), "{text}");
+    assert!(events[0].contains("status=200"), "{text}");
 }
