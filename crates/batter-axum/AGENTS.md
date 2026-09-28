@@ -15,9 +15,13 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
   `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
   `request_scope` compatibility entry point, probes, and failures.
-- `src/boundary.rs` owns the canonical `GuardedRouter`/`HttpBoundary`/`AssembledHttp`
-  composition. Probe routes remain outside admission while the guarded
-  router's default, custom, nested, and method fallbacks remain inside it.
+- `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
+  composition and `src/boundary/guarded.rs` the `GuardedRouter` builder. Probe
+  routes remain outside admission while the guarded router's default, custom,
+  nested, and method fallbacks remain inside it. `src/boundary/assembly.rs`
+  owns validation order and group composition; `src/boundary/declared.rs` owns
+  `RouteInventory`, the inspection copy of a router admitted through
+  `GuardedRouter::from_router` and request dispatch to its declared routes.
   `src/boundary/group.rs` owns `RouteGroup`, `GroupPolicy`, `BrowserPolicy` and
   the per-group layer order; `src/boundary/pattern.rs` decides whether two
   retained route patterns share a request path under the pinned matchit 0.8.4
@@ -58,6 +62,10 @@ Windows support and non-Unix fallbacks are out of scope.
   groups, and one correlated observation, scoped dispatch and context
   cancellation across groups. The pattern unit tests compare the overlap
   analysis with native Axum routing over every short path a witness can use.
+  `tests/route_groups/admitted.rs` and `admitted_validation.rs` cover admitted
+  routers: declared routes inside their group's policy, unreachable undeclared
+  routes and fallbacks, and probe, inventory and overlap rejections without
+  polling application code.
 - `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
@@ -102,7 +110,16 @@ configuration error before Axum routing. The canonical guarded builder must
 retain route identities through route, merge and typed nesting; do not admit an
 opaque nested service whose routes cannot be inspected. Awaited assembly must
 reject any guarded route that can match a reserved probe path by querying only
-the inert retained inventory, without polling application code. Do not
+the inert retained inventory or an admitted router's inspection copy, without
+polling application code. A router built outside `GuardedRouter` joins only
+through `GuardedRouter::from_router` with a `RouteInventory`. Learn its routes
+only through an inspection copy whose every route, method fallback and fallback
+is replaced by a library reporter; never call the router itself to validate it.
+Reject a declared pattern unless a path of it reaches the route registered with
+exactly that pattern. Never merge an admitted router into the native router:
+serve it, inside its group's policy and its own observer, only for requests its
+inspection copy routes to a declared pattern, and keep its declared patterns
+disjoint from probes, other groups and its own group's other routes. Do not
 reintroduce raw probe patterns. Route groups keep one fixed order: correlation
 and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the

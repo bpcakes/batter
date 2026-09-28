@@ -100,6 +100,19 @@ OPTIONS and TRACE. Application layers on a group run inside both. Assembly
 rejects groups that can match one request path and probes that any group can
 match, with sanitized errors and without polling application code.
 
+A router built by another router builder, for example an OpenAPI router
+converted with `Router::from`, joins through
+`GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`, as a named
+group or inside the default group. Assembly routes a path of every declared
+pattern through a library-owned inspection copy of that router and rejects the
+inventory unless the path reaches the route registered with exactly that
+pattern, rejects any of its routes that matches a probe path, and applies the
+overlap rules to the declared patterns, which must also not overlap the other
+routes of their own group. At request time only requests that the router would
+send to a declared pattern reach it, inside its group's policy; undeclared
+routes and its own fallbacks never serve. No OpenAPI-builder dependency is
+involved; the application supplies the inventory.
+
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
 `read_cookie` scans every Cookie field for one exact target; `BrowserCookie`

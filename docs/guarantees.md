@@ -1357,6 +1357,35 @@ header mechanics: browser signals are not authentication, authorization, CORS
 or complete CSRF protection, and a group budget bounds response construction
 only.
 
+Routers built outside `GuardedRouter` join the canonical path only through
+`GuardedRouter::from_router` with a `RouteInventory` of the route patterns they
+may serve. Construction rejects an empty inventory and any pattern outside the
+Axum 0.8 syntax that the overlap analysis parses. Before anything is served,
+awaited assembly builds an inspection copy of each admitted router:
+`Router::layer` replaces every path route, including its method fallback, every
+fallback route and the catch-all fallback with a library-owned reporter, and
+`route_layer` then marks the path routes outermost. Routing a request through
+that copy runs Axum's matcher, which records `MatchedPath`, but calls or polls
+no application handler, fallback or middleware service. For each declared
+pattern, assembly routes one path of it, with `{}` filling every capture and
+wildcard, and returns `RouteInventoryMismatch` naming the group unless that path
+reaches the route registered with exactly that pattern. A pattern whose path no
+request URI can carry verbatim, a route inside an opaque nested service and a
+pattern whose path another route takes all fail closed. Any route of the copy,
+declared or not, that matches a probe path returns `GuardedProbePath`. Declared
+patterns join the cross-group overlap check and must not share a request path
+with the group's native routes or another admitted router
+(`OverlappingRouteInventory`). An admitted router is never merged into the
+native router. Serving routes each request through the inspection copies first
+and forwards the unchanged request to an admitted router, inside its group's
+policy and its own outermost correlation and observer, only when its copy
+reaches a declared pattern; every other request takes the native path, so
+unmatched paths still reach the default group's fallback. Undeclared routes and
+an admitted router's own fallbacks therefore never serve a request. Axum
+exposes no route enumeration, so the inventory remains application input: a
+route it omits is unreachable rather than verified. Each admitted router adds
+one inspection routing per request outside the observer.
+
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling
 an inner layer. Therefore a manual composition that promises generated identity

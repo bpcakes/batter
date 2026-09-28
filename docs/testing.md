@@ -1524,6 +1524,31 @@ mutation checks outside admission, private headers inside admission, dropping
 the overlap check and merging the default group first each made the target
 fail.
 
+The same target covers routers admitted through `GuardedRouter::from_router`.
+A stateful router with an undeclared route inside its declared paths, another
+outside them and its own fallback serves `/items` and `/items/{id}` in a private
+browser group: the path parameter and `MatchedPath` come from one native
+routing, and the group's mutation, method and drain rejections and its
+three-second deadline apply with the group's headers, while the undeclared
+routes and the router's own fallback answer with the default fallback without
+running. Nested under `/v1` and merged with native routes, the router keeps its
+prefixed patterns and receives route and router layers in order; one
+completion per request names the declared route, and an aborted admitted
+request is destroyed under its first-poll dispatch. Validation fixtures route
+only POST with application method fallbacks, so inspection reaches those
+fallbacks too. Failure paths reject declared and undeclared routes matching a
+probe, including a wildcard and an opaque nested service, in the default and a
+named group; reject as inventory mismatches a missing pattern, a renamed
+parameter, a literal served by a wildcard, a pattern inside an opaque nested
+service, a path no request URI can carry and a router without routes; and
+reject declared routes overlapping another group, native routes of their own
+group or another admitted router. Sibling literals equal to conventional
+fillers do not take inventory paths, undeclared routes take no part in overlap,
+and invalid inventories fail at construction. No handler, method fallback,
+nested service, middleware or fallback of an admitted router runs during
+validation. During implementation, dropping the inspection copy's fallback
+reporter and forwarding undeclared matches each made the target fail.
+
 ## Axum operational defaults
 
 `cargo test -p batter-axum --test operational --locked` exercises the actual
