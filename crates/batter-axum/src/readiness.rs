@@ -39,9 +39,10 @@ pub const fn readiness_status(decision: ReadinessDecision) -> StatusCode {
 
 /// Map a valid readiness decision to its default observation severity.
 ///
-/// Ready, Starting and Draining use INFO. Stopped and dependency-unready
-/// decisions use WARN. A custom [`ReadinessPolicy::with_level`] callback can
-/// delegate unmatched decisions here instead of copying the default table.
+/// Ready, Starting and Draining use INFO. Stopped, dependency-unready and
+/// unsatisfied application-condition decisions use WARN. A custom
+/// [`ReadinessPolicy::with_level`] callback can delegate unmatched decisions
+/// here instead of copying the default table.
 ///
 /// ```
 /// use batter_core::readiness::{ReadinessDecision, ReadinessUnreadyReason};
@@ -71,7 +72,9 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
             ReadinessUnreadyReason::Starting | ReadinessUnreadyReason::Draining,
         ) => Level::INFO,
         ReadinessDecision::Unready(
-            ReadinessUnreadyReason::Stopped | ReadinessUnreadyReason::Dependency(_),
+            ReadinessUnreadyReason::Stopped
+            | ReadinessUnreadyReason::Dependency(_)
+            | ReadinessUnreadyReason::Condition(_),
         ) => Level::WARN,
     }
 }
