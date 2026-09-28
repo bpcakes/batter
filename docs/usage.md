@@ -400,6 +400,21 @@ to its shared private state. A plain observer may wrap `operational_http`, but
 admission, `request_scope`, deadlines and other rejecting middleware must remain
 inside it to retain generated correlation on every outcome. Routes added after
 assembly sit outside the boundary.
+Give routes their own budget or browser posture with a named `RouteGroup`:
+`with_group(RouteGroup::new("uploads", upload_policy, routes))` before
+`assemble`. A `GroupPolicy::browser(policy, BrowserPolicy::with_mutation_checks(...))`
+group receives its `PrivateResponsePolicy` headers on every response, including
+admission, deadline and mutation rejections, and checks its `MutationPolicy`
+inside admission on every method except GET, HEAD, OPTIONS and TRACE, rendering
+rejections through the application's renderer.
+`BrowserPolicy::without_mutation_checks` names the header-only choice. The routes
+passed to `assemble` form the `default` group, which alone declares fallbacks.
+Assembly rejects groups whose routes can match one request path, even with
+different methods, and probe paths that any group can match. To migrate a manual
+composition, move per-handler Origin/CSRF checks into a group's mutation policy
+and renderer, hand-written private-response middleware into its
+`PrivateResponsePolicy`, and each separately layered budget into its own group;
+see the [adapter migration notes](../crates/batter-axum/README.md#migrating-manual-compositions-to-route-groups).
 The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
 remains available for adapter-owned tests and applications that need that package
 boundary.

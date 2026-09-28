@@ -18,6 +18,11 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/boundary.rs` owns the canonical `GuardedRouter`/`HttpBoundary`/`AssembledHttp`
   composition. Probe routes remain outside admission while the guarded
   router's default, custom, nested, and method fallbacks remain inside it.
+  `src/boundary/group.rs` owns `RouteGroup`, `GroupPolicy`, `BrowserPolicy` and
+  the per-group layer order; `src/boundary/pattern.rs` decides whether two
+  retained route patterns share a request path under the pinned matchit 0.8.4
+  rules, and `src/boundary/inventory.rs` confirms probe and group collisions
+  through inert routers. `src/boundary/probe.rs` owns `ProbePath`.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
   private-response headers with a typed same-origin/no-referrer choice. They do
@@ -47,6 +52,12 @@ Windows support and non-Unix fallbacks are out of scope.
   matrices, sanitized failures, Set-Cookie append/removal, mutation precedence,
   and real Axum private-response layer placement, both referrer choices,
   overwrite and non-weakening nesting.
+- `tests/route_groups.rs` and `tests/route_groups/` cover the consumer-shaped
+  default/upload/private-browser composition, per-group deadlines, browser
+  rejections and headers, rejected overlaps, probes inside groups, invalid
+  groups, and one correlated observation, scoped dispatch and context
+  cancellation across groups. The pattern unit tests compare the overlap
+  analysis with native Axum routing over every short path a witness can use.
 - `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
@@ -92,7 +103,14 @@ retain route identities through route, merge and typed nesting; do not admit an
 opaque nested service whose routes cannot be inspected. Awaited assembly must
 reject any guarded route that can match a reserved probe path by querying only
 the inert retained inventory, without polling application code. Do not
-reintroduce raw probe patterns. Apply `observe_http` after
+reintroduce raw probe patterns. Route groups keep one fixed order: correlation
+and the single observer outermost, then per group the private-response headers,
+admission with the group budget, mutation checks on non-safe methods, and the
+application's layers. Only the default group owns root or nested fallbacks and
+is merged last. Group routes must not share a request path in any method; keep
+overlap decisions confirmed by native routing of each pattern alone, and update
+the pattern analysis and its Axum comparison test whenever the Axum or matchit
+pin changes. Apply `observe_http` after
 assembling routes/fallback; use `request_admission` inside it. If generated
 correlation is required, `operational_http` must be outside admission,
 `request_scope`, deadlines, authentication and any other short-circuiting

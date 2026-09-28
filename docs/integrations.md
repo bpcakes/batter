@@ -90,6 +90,16 @@ middlewares remain available for compositions the boundary cannot express. Domai
 services receive their own dependencies through State/FromRef/constructors;
 request operation context arrives through Extension<OperationContext>.
 
+Declare route sets with a different budget or browser posture as named
+`RouteGroup`s through `with_group`; the routes passed to `assemble` are the
+`default` group and alone own fallbacks. Each group carries a `GroupPolicy`: its
+`RequestPolicy` and an optional `BrowserPolicy` whose `PrivateResponsePolicy`
+headers sit outside the group's admission and whose `MutationPolicy` checks, with
+an application renderer, sit inside it for every method except GET, HEAD,
+OPTIONS and TRACE. Application layers on a group run inside both. Assembly
+rejects groups that can match one request path and probes that any group can
+match, with sanitized errors and without polling application code.
+
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
 `read_cookie` scans every Cookie field for one exact target; `BrowserCookie`

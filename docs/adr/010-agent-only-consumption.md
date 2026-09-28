@@ -212,8 +212,50 @@ can change the document's policy; these remain application boundaries.
 `NoReferrer` makes same-origin HTML form posts carry `Origin: null`, so
 exact-origin form mutation needs `SameOriginReferrer`: a documented browser
 protocol consequence, not a local type invariant. Per-group application through
-`HttpBoundary` belongs to `batter-tc9w.3`. Fresh-agent usability evaluation is
-proposed and unexecuted.
+`HttpBoundary` is assessed below (`batter-tc9w.3`). Fresh-agent usability
+evaluation is proposed and unexecuted.
+
+### HTTP route group assessment (`batter-tc9w.3`)
+
+`HttpBoundary` previously applied one `RequestPolicy` to every guarded route.
+A read-only survey of two downstream consumers found a second request budget
+for uploads, about thirty per-handler Origin/CSRF calls, private-response
+middleware layered by hand around private route groups, and ordering rules kept
+in prose. Each was a caller-memory obligation beside the canonical path: a new
+mutating handler compiled without its check, and private-response middleware
+placed inside admission would silently miss admission rejections.
+
+Named `RouteGroup`s now carry a `GroupPolicy`, and the boundary installs one
+order per group: private-response headers outside admission with the group's
+budget, `MutationPolicy` checks on every non-safe method inside it, then
+application layers. A mutation check therefore covers new handlers, extension
+methods and method fallbacks without per-handler calls. `BrowserPolicy` has no
+empty or default value; its two constructors name the mutation choice, and the
+application renders the sanitized rejection. Axum retains the last merged
+default fallback and panics on two custom ones, so fallback ownership would
+otherwise depend on merge order: only the default group may declare a root or
+nested fallback, it is merged last, and `with_group` rejects named-group
+fallbacks, empty groups and invalid or reused names before routing. Axum's
+matcher also gives literals priority over captures, so routes in two groups
+could silently shadow each other: assembly decides from the retained patterns
+whether two groups can match one request path, in any method, confirms each
+shared path through native routing of each pattern alone, and returns an error
+naming both groups. A pattern outside the analyzed syntax fails closed. A bare
+`Router` cannot join a group (compile-fail rustdoc). Tests cover these
+rejections, per-group deadlines, headers on every rejection, the fallback owner,
+and removal of each ordering or overlap rule.
+
+Remaining boundaries are explicit. Browser signals are not authentication,
+authorization, CORS or complete CSRF protection; choosing
+`without_mutation_checks` for cookie-authenticated mutations, or letting a safe
+method change state, stays application policy. Group membership is path-level,
+so one path served with two budgets by method must use one group, and unmatched
+paths under a named group's prefix receive the default group's policy. The
+overlap analysis mirrors the pinned matchit 0.8.4 rules and needs its Axum
+comparison test re-run whenever that pin changes. Routers built outside
+`GuardedRouter` (`batter-tc9w.8`), real consumer ports (`batter-tc9w.9`) and
+sealing the low-level middleware (`batter-tc9w.2`) remain separate tasks.
+Fresh-agent usability evaluation is proposed and unexecuted.
 
 ## Recurring example review defects
 

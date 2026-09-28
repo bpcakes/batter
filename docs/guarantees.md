@@ -1326,6 +1326,34 @@ observer state, so stacked wrappers cannot duplicate observations or hide inner
 quota facts. Operation events remain separate. Subscriber filtering and
 transport delivery are application-owned.
 
+Named route groups extend that order without changing it. `HttpBoundary::new`
+takes the default group's `GroupPolicy`, into which a `RequestPolicy` converts,
+and `with_group` adds a `RouteGroup` with its own `RequestPolicy` and optional
+`BrowserPolicy`. Correlation and the single observer stay outermost. Each group's
+routes then receive, from the outside in, the group's `PrivateResponsePolicy`
+headers when it has a browser policy, lifecycle admission with the group's
+response-construction deadline, `MutationPolicy` checks on every method except
+GET, HEAD, OPTIONS and TRACE when configured, and the application's own layers.
+The private headers therefore cover that group's admission, deadline,
+method-fallback and mutation rejections. A mutation rejection is rendered by the
+application's renderer from the sanitized `MutationRejection` and the admitted
+request's metadata, without the body. Only the default group, the routes passed
+to `assemble`, may declare root or nested fallbacks, and it is merged last, so
+every path that no route matches reaches its fallback inside its admission,
+including paths under a named group's prefix. `with_group` rejects an invalid or
+reused name (`default` is reserved), a group without routes, and any fallback,
+before routing. Awaited assembly rejects a probe path that any group's route can
+match (`GuardedProbePath`) and two groups whose route patterns can match one
+request path with any methods (`OverlappingGroupPaths`, naming both groups). The
+overlap decision constructs a shared path under the pinned matchit 0.8.4 rules:
+a capture may be empty except in the final segment, a wildcard needs a
+non-empty tail, and `{{`/`}}` are literal braces. Assembly confirms that path by
+routing it through an inert router for each pattern alone, without polling
+application handlers, fallbacks or middleware. These are local routing and
+header mechanics: browser signals are not authentication, authorization, CORS
+or complete CSRF protection, and a group budget bounds response construction
+only.
+
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling
 an inner layer. Therefore a manual composition that promises generated identity

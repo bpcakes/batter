@@ -8,6 +8,22 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add named `HttpBoundary` route groups. `with_group(RouteGroup::new(name,
+  policy, routes))` gives a set of guarded routes its own `RequestPolicy`, for
+  example a longer upload budget, and an optional `BrowserPolicy`. The boundary
+  installs one fixed order per group: `PrivateResponsePolicy` headers outside the
+  group's admission, so admission, deadline, method and mutation rejections
+  receive them; `MutationPolicy` checks with an application renderer on every
+  method except GET, HEAD, OPTIONS and TRACE inside admission; then application
+  layers. `HttpBoundary::new` also accepts a `GroupPolicy` for the default
+  group, and existing `HttpBoundary::new(RequestPolicy)` callers are unchanged.
+  Only the default group may declare fallbacks. `with_group` rejects invalid or
+  reused names, empty groups and named-group fallbacks, and assembly rejects
+  probes or groups that can match one request path, even with different
+  methods, confirming each shared path by native routing without polling
+  application code. The adapter README carries migration notes for per-handler
+  Origin/CSRF checks, hand-written private-response middleware and separately
+  layered budgets.
 - Bound canonical adapter futures. `PgLease::acquire`, the `PgQueryHandle`
   helpers and every `run_atomic*` runner allocate their operation once on first
   poll (24-376 bytes, previously up to 79 KB). `Quota::run` erases its native
