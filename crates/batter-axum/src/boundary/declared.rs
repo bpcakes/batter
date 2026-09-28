@@ -34,7 +34,8 @@ const FILLER: &str = "{}";
 /// Pass the inventory with the router to [`GuardedRouter::from_router`]. Each
 /// pattern uses Axum 0.8 route syntax and is spelled exactly as the router
 /// registered it, including any nesting prefix applied inside that router.
-/// Repeated patterns are kept once. Construction validates only the syntax;
+/// Repeated patterns are kept once. Construction validates only the syntax,
+/// including the parameter names Axum's router accepts;
 /// [`HttpBoundary::assemble`] checks every pattern against the router.
 ///
 /// ```

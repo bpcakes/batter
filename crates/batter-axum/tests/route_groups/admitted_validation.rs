@@ -277,8 +277,11 @@ fn inventories_need_valid_absolute_patterns() {
         RouteInventory::new(Vec::<&str>::new()),
         Err(RouteInventoryError::Empty)
     );
+    // Parameter names that Axum's router refuses are rejected here too.
+    let unnamed = ["/{}", "/{*}", "/{a*b}", "/{**}", "/{}}a}"];
     for (index, invalid) in ["", "items", "/{id", "/id}", "/{*path}/more", "/{id}x"]
         .into_iter()
+        .chain(unnamed)
         .enumerate()
     {
         let patterns = ["/valid", invalid];

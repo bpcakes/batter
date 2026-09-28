@@ -5,13 +5,19 @@
 //! are literal braces. A capture `prefix{name}` ends its segment and matches
 //! `prefix` followed by any bytes except `/`; that remainder may be empty unless
 //! the capture ends the pattern. A wildcard `prefix{*name}` ends the pattern and
-//! matches `prefix` followed by at least one byte, including `/`.
+//! matches `prefix` followed by at least one byte, including `/`. As matchit
+//! requires, a parameter name is not empty and does not start with `}`, a
+//! wildcard name is not a lone `*`, `*` appears only as a name's first byte, and
+//! a pattern has at most 25 captures.
 
 #[cfg(test)]
 mod tests;
 
 /// Filler for capture and wildcard remainders in a constructed path.
 const FILLER: u8 = b'x';
+
+/// matchit 0.8.4 names captures from `a` and panics while naming a 26th.
+const MAX_CAPTURES: usize = 25;
 
 /// Whether two route patterns can match one request path.
 #[derive(Debug, Eq, PartialEq)]
@@ -61,7 +67,11 @@ pub(super) fn parse(pattern: &str) -> Option<Vec<Segment>> {
         }
         segments.push(segment);
     }
-    Some(segments)
+    let captures = segments
+        .iter()
+        .filter(|segment| matches!(segment, Segment::Capture(_)))
+        .count();
+    (captures <= MAX_CAPTURES).then_some(segments)
 }
 
 fn parse_segment(bytes: &[u8]) -> Option<Segment> {
@@ -73,14 +83,17 @@ fn parse_segment(bytes: &[u8]) -> Option<Segment> {
             index += 2;
         } else if byte == b'{' {
             // A parameter must close with the segment's final byte.
-            if closing_brace(bytes, index + 1)? + 1 != bytes.len() {
+            let close = closing_brace(bytes, index + 1)?;
+            if close + 1 != bytes.len() {
                 return None;
             }
-            return Some(if bytes.get(index + 1) == Some(&b'*') {
-                Segment::Wildcard(literal)
-            } else {
-                Segment::Capture(literal)
-            });
+            // matchit tests a name's first byte for `}` before unescaping it.
+            return match &bytes[index + 1..close] {
+                [] | [b'}', ..] | [b'*'] => None,
+                [_, rest @ ..] if rest.contains(&b'*') => None,
+                [b'*', ..] => Some(Segment::Wildcard(literal)),
+                _ => Some(Segment::Capture(literal)),
+            };
         } else if byte == b'}' {
             return None;
         } else {
