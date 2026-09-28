@@ -303,7 +303,8 @@ fn serving_startup(
                     admission.clone(),
                     database,
                     health,
-                )?;
+                )
+                .await?;
 
                 scope.stage("worker.register")?;
                 let mut registry = runledger_runtime::registry::JobRegistry::new();
