@@ -435,6 +435,56 @@ def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
     print(f"facade checked completion: {result.group(1)} external runtime tests and two negative controls passed", flush=True)
 
 
+COMPOSED_FEATURES = ("axum", "runlimit-memory", "sqlx")
+# The canonical composition must not need consumer depth, stack or erasure workarounds.
+COMPOSED_WORKAROUNDS = ("recursion_limit", "RUST_MIN_STACK", "stack_size", "Box::pin",
+                        "BoxFuture", ".boxed(", "Pin<Box")
+
+
+def run_composed_handler_case(cargo: list[str], host: str, root_lock: bytes,
+                              known: set[tuple[str, str, str | None]], parent: Path,
+                              target: Path) -> None:
+    """Run quota, pooled-query and atomic composition in one external Axum handler.
+
+    The independent crate keeps rustc's default recursion limit and runs the
+    handler on the default test-thread stack, unoptimized and optimized; the
+    original consumer failures were layout-query depth and stack overflow.
+    """
+    source = (ROOT / "crates/batter/tests/composed_handler_consumer.rs").read_text()
+    found = [token for token in COMPOSED_WORKAROUNDS if token in source]
+    if found:
+        raise RuntimeError(f"composed handler fixture contains consumer workarounds: {found}")
+    case = parent / "composed-handler"
+    (case / "src").mkdir(parents=True)
+    (case / "tests").mkdir()
+    dependencies = [
+        facade_dependency(COMPOSED_FEATURES),
+        'axum = "0.8.9"',
+        "runlimit-core = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-core")) + " }",
+        "runlimit-memory = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + " }",
+        'sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres"] }',
+        'tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }',
+        'tower = { version = "0.5.3", features = ["util"] }',
+    ]
+    (case / "Cargo.toml").write_text(
+        manifest("facade-composed-consumer", dependencies, COMPOSED_FEATURES))
+    (case / "Cargo.lock").write_bytes(root_lock)
+    (case / "src/main.rs").write_text("fn main() {}\n")
+    (case / "tests/composed_handler.rs").write_text(source)
+    check_graph(run_metadata(cargo, host, case), COMPOSED_FEATURES, known)
+    for profile in ([], ["--release"]):
+        output = execute(
+            ["env", "-u", "RUST_MIN_STACK", *cargo, "test", *profile, "--locked", "--offline",
+             "--test", "composed_handler", "--target-dir", str(target)], case, timeout=900,
+        )
+        if not re.search(r"(?m)^test result: ok\. 1 passed; 0 failed; 0 ignored;", output):
+            raise RuntimeError(f"composed handler consumer did not pass {profile or ['--debug']}")
+    if (ROOT / "Cargo.lock").read_bytes() != root_lock:
+        raise RuntimeError("repository Cargo.lock changed during composed handler checks")
+    print("facade composed handler: quota, pooled query and atomic workflow ran at the default "
+          "recursion limit and test-thread stack, unoptimized and optimized", flush=True)
+
+
 def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     return [
         ((), "at-rest", "batter::at_rest"),
@@ -583,6 +633,7 @@ def main() -> int:
         run_identity_case(cargo, host, root_lock, parent, target, selected)
         print("facade identity all-features: compatibility passed", flush=True)
         run_checked_completion_case(cargo, host, root_lock, known, parent, target)
+        run_composed_handler_case(cargo, host, root_lock, known, parent, target)
     if (ROOT / "Cargo.lock").read_bytes() != root_lock:
         raise RuntimeError("repository Cargo.lock changed during facade feature checks")
     print("facade feature isolation, negative gating, and identity checks passed", flush=True)

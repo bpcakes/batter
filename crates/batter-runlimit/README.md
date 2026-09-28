@@ -19,6 +19,16 @@ Allowed batches yield native validated `Allowance` values. Enforced and shadow
 denials retain the native index and nonzero evaluated batch size as well as the
 typed denial details.
 
+The native check and the admitted work future are each heap-allocated once when
+they start, so neither a PostgreSQL limiter's acquisition nor the work's nested
+adapters enter the caller's future: `Quota::run` stays near 1.1 KB in unoptimized
+and optimized builds, and a handler's layout and `Send` proof stop at it. The
+work future must therefore be `Send`, as handler and spawned-task futures already
+are; its own `Send` proof runs where it is created. `AttemptRunner::run` likewise
+erases native admission, and its completion uses the erased SQLx runner.
+`tests/future_size.rs` bounds these futures, and a composition of quota, pooled
+query and atomic workflow, at 4 KiB in both profiles.
+
 `HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy, routes)`
 guards every supplied route. It rejects empty and mixed-mode policy sets at
 construction. Call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`

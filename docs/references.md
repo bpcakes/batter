@@ -4211,3 +4211,36 @@ Rechecked for `batter-lto` against the living specifications.
   derives `Sec-Fetch-Site` from the request origin, its URL list and direct user
   navigation, not from the referrer policy, so strict custom-marker policies are
   unaffected by `NoReferrer`.
+
+## Canonical adapter future size and depth, 2026-09-28
+
+Rechecked for `batter-3q3` against the selected sources.
+
+- SQLx 0.9.0 [`Pool::acquire`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/mod.rs)
+  returns an unerased `impl Future + 'static`, while the pool
+  [`Executor` implementation](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/executor.rs)
+  erases acquisition plus the query as one `BoxFuture`. Batter mirrors that:
+  one erasure per operation, never one per internal layer. The unerased
+  acquisition measured 2,528 bytes unoptimized and 8,608 optimized on Rust
+  1.98.1 (macOS arm64), and was copied through every enclosing boundary.
+- `AsyncFnOnce` is [stable since 1.85.0](https://github.com/rust-lang/rust/blob/1.98.1/library/core/src/ops/async_function.rs),
+  but its `CallOnceFuture` and `Output` associated types remain unstable
+  (`async_fn_traits`). Stable code cannot name or bound a callback's future, so a
+  generic runner cannot coerce it into `dyn Future + Send`; a concretely typed
+  `Pin<Box<F>>` keeps inferred auto traits. Nameable futures (native checks,
+  quota work, native admission, pooled queries) use `dyn Future + Send`.
+- The Reference's [`recursion_limit`](https://doc.rust-lang.org/reference/attributes/limits.html#the-recursion_limit-attribute)
+  default in rustc is 128. Rust 1.98.1 reports `queries overflow the depth limit`
+  with the query depth reached while computing a coroutine layout, and E0275 for
+  auto-trait proofs, both against that limit. A heap pointer ends the layout
+  query; only `dyn` erasure ends an auto-trait proof. At the pinned base the
+  committed composed-handler consumer reached layout depth 130; it now compiles
+  at limit 64 (probed in steps of 8), unoptimized and optimized.
+- [`std::thread`](https://doc.rust-lang.org/std/thread/#stack-size) documents a
+  2 MiB default for spawned threads on Tier-1 platforms, overridden by
+  `RUST_MIN_STACK`; libtest runs each test on such a thread. A bare
+  [`#[tokio::test]`](https://docs.rs/tokio-macros/2.7.2/tokio_macros/attr.test.html)
+  builds a current-thread runtime whose `block_on` polls on that test thread.
+  That consumer, compiled at the pinned base with a raised limit, needed more
+  than 1 MiB of this stack unoptimized; it now runs in at most 320 KiB
+  unoptimized and 96 KiB optimized, including the complete HTTP boundary.

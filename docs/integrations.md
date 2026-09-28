@@ -266,6 +266,15 @@ downstream code receives only `PgScopedSql::executor()`. `PgReadOnlySnapshot`
 owns generic coherent read-only inspections. See the
 [transaction contract](../crates/batter-sqlx/README.md#owned-transactions-and-snapshots).
 
+`PgLease::acquire`, `PgQueryHandle` helpers and every `run_atomic*` runner
+allocate their whole operation once on first poll, so their futures hold only
+arguments and a pointer. Handlers, finite tasks and tests compose them at rustc's
+default recursion limit and test-thread stack without local limits, stack
+settings or boxing. Runners keep the callback's concrete type (stable Rust cannot
+bound an `AsyncFnOnce` future by `Send`) and separately erase transaction birth,
+so SQLx acquisition stays out of consumer `Send` proofs. See the
+[size and depth contract](../crates/batter-sqlx/README.md#future-size-and-composition-depth).
+
 For a declared session policy, use `PgSessionProfile::with_timeouts` and
 `PgProfiledPool`; select statement, lock, idle-in-transaction and total-transaction
 timeouts together. Zero explicitly disables the selected limit. Pool hooks and
@@ -565,6 +574,10 @@ the parent's total deadline; cancellation after a grant can prevent work without
 erasing the grant. No retry or refund is automatic. Inner work retries do not
 repeat quota admission. A started check without an observed result means unknown
 consumption, not proof of continued local execution or remote rollback.
+The native check and the admitted work future are each heap-allocated once when
+they start. A PostgreSQL limiter's acquisition and adapters nested in the work
+therefore stay out of the caller's future size, layout and `Send` proof. The work
+future must be `Send`; the internal HTTP boundary keeps its own direct path.
 
 `HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy,
 protected_routes)` rejects an empty policy set or mixed enforced/shadow modes
@@ -663,6 +676,8 @@ reuse. No arbitrary hook-bearing pool can construct the attempt owner.
 `run_atomic_profiled_in` retains acknowledged and uncertain results before
 operation resolution. A valid claim holds its native row lock through commit;
 verification-lease expiry after claim does not revoke that transaction.
+Native admission is heap-allocated once and completion uses the erased SQLx
+runner, so the runner's future stays small inside handlers.
 
 See the [compiled quota consumer](../crates/batter/examples/quota_service.rs),
 [attempt consumer rustdoc](../crates/batter-runlimit/src/attempts.rs), and

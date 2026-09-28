@@ -74,6 +74,14 @@ Never equate retirement, commit cancellation or an unconfirmed commit with rollb
 Public lease closures never receive a native connection or transaction and the
 opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply
 to the same physical connection that was acquired.
+Canonical entry points (`PgLease::acquire`, `PgQueryHandle` helpers, every
+`run_atomic*`) heap-allocate their whole operation exactly once on first poll;
+public variants share private unboxed workflows instead of boxing each other.
+Transaction birth is one `dyn Send` erasure, and futures generic over consumer
+types acquire through `crate::acquire`. Construct adapter futures inside their
+operation boundary (`retain*` take constructors); never pass one by value
+through nested layers. `tests/future_size.rs` and the facade composed-handler
+consumer guard these sizes and the consumer's default recursion limit.
 Never log native error contents automatically. Core and generic support remain
 independent of SQLx. Never provision PostgreSQL in this package. Verifier discovery preserves selected
 object identities separately from effective ACL sources. Evaluation shares one

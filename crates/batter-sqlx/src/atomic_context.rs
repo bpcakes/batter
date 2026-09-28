@@ -1,11 +1,11 @@
-use crate::{PgAtomicError, PgAtomicScope, PgProfiledPool, run_atomic, run_atomic_profiled};
+use crate::{PgAtomicError, PgAtomicScope, PgProfiledPool, atomic_runner::atomic};
 use batter_core::operation::{OperationContext, OperationError};
 use sqlx::PgPool;
 use std::{convert::Infallible, future::Future, sync::Mutex};
 
 /// Execute an owned atomic workflow within an existing operation budget.
 ///
-/// This is the context-aware counterpart of [`run_atomic`]. It retains the
+/// This is the context-aware counterpart of [`crate::run_atomic`]. It retains the
 /// complete native outcome in the same poll that acknowledges disposition,
 /// before deadline/cancellation resolution and operation telemetry. Confirmed
 /// output, acknowledged rejection, and explicit commit uncertainty cannot be
@@ -36,13 +36,13 @@ pub async fn run_atomic_in<T, E>(
     operation: &'static str,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, OperationError<PgAtomicError<T, E>>> {
-    retain(context, operation, run_atomic(pool, work)).await
+    Box::pin(retain(context, operation, || atomic(pool, None, work))).await
 }
 
 /// Execute atomic work under a pool owner's declared profile and operation budget.
 /// Admission through [`PgProfiledPool::pool`] and this completion path use the
 /// same policy, even though atomic acquisition discards inherited session state.
-/// Profile setup/validation and disposition belong to [`run_atomic_profiled`];
+/// Profile setup/validation and disposition belong to [`crate::run_atomic_profiled`];
 /// outcome retention and interruption semantics are identical to [`run_atomic_in`].
 ///
 /// ```no_run
@@ -62,26 +62,27 @@ pub async fn run_atomic_profiled_in<T, E>(
     operation: &'static str,
     work: impl AsyncFnOnce(&mut PgAtomicScope) -> Result<T, E>,
 ) -> Result<T, OperationError<PgAtomicError<T, E>>> {
-    retain(
-        context,
-        operation,
-        run_atomic_profiled(database.pool(), database.profile(), work),
-    )
+    Box::pin(retain(context, operation, || {
+        atomic(database.pool(), Some(database.profile()), work)
+    }))
     .await
 }
 
-pub(crate) async fn retain<T, E>(
+pub(crate) async fn retain<T, E, Work: Future<Output = Result<T, E>>>(
     context: &OperationContext,
     operation: &'static str,
-    work: impl Future<Output = Result<T, E>>,
+    work: impl FnOnce() -> Work,
 ) -> Result<T, OperationError<E>> {
     retain_with_fallback(context, operation, work, || None).await
 }
 
-pub(crate) async fn retain_with_fallback<T, E>(
+// `work` constructs the adapter future inside the boundary, exactly once. A
+// future passed by value would be copied into every enclosing boundary layer,
+// multiplying its size (and the stack used to move it) about ninefold.
+pub(crate) async fn retain_with_fallback<T, E, Work: Future<Output = Result<T, E>>>(
     context: &OperationContext,
     operation: &'static str,
-    work: impl Future<Output = Result<T, E>>,
+    work: impl FnOnce() -> Work,
     fallback: impl FnOnce() -> Option<Result<T, E>>,
 ) -> Result<T, OperationError<E>> {
     let retained = Mutex::new(None);
@@ -90,7 +91,7 @@ pub(crate) async fn retain_with_fallback<T, E>(
         .run_resolved(
             operation,
             move |_| async move {
-                let result = work.await;
+                let result = work().await;
                 *slot.lock().expect("private atomic outcome slot") = Some(result);
                 Ok::<(), Infallible>(())
             },
@@ -126,7 +127,7 @@ mod tests {
             let owner =
                 batter_core::operation::OperationOwner::new(Duration::from_secs(1)).unwrap();
             let context = owner.context().clone();
-            let result = retain(&context, "test.atomic", async {
+            let result = retain(&context, "test.atomic", || async {
                 owner.cancel();
                 outcome
             })
@@ -146,7 +147,7 @@ mod tests {
             .unwrap()
             .into_context();
         let observed = AtomicUsize::new(0);
-        let result = retain(&context, "test.atomic", async {
+        let result = retain(&context, "test.atomic", || async {
             tokio::time::sleep(Duration::from_millis(10)).await;
             observed.fetch_add(1, Ordering::SeqCst);
             Ok::<_, ()>(42)
@@ -169,9 +170,7 @@ mod tests {
             let context = batter_core::operation::OperationOwner::new(Duration::from_millis(10))
                 .unwrap()
                 .into_context();
-            let result = retain(
-                &context,
-                "test.atomic",
+            let result = retain(&context, "test.atomic", || {
                 std::future::poll_fn(|cx| {
                     // Advance the paused clock within this poll, without yielding
                     // between the simulated acknowledgement and its return value.
@@ -190,8 +189,8 @@ mod tests {
                         Err(Interruption::DeadlineExceeded)
                     ));
                     std::task::Poll::Ready(outcome)
-                }),
-            )
+                })
+            })
             .await;
             match outcome {
                 Ok(value) => assert_eq!(result.unwrap(), value),

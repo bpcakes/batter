@@ -16,6 +16,10 @@ WORKSPACE_TESTS = ["cargo", "test", "--workspace", "--all-features", "--all-targ
 HOSTILE_CONFIGURATION = ["env", "PGDATA=/unused-configuration-fixture", "PGUSER=parent-fixture",
                          "PGPASSWORD=parent-secret-marker", "cargo", "test", "-p",
                          "batter-example-reference-service", "--test", "configuration", "--locked"]
+# Canonical adapter future bounds must also hold with optimized layouts.
+FUTURE_SIZE_RELEASE = ["cargo", "test", "-p", "batter-sqlx", "-p", "batter-runlimit", "--features",
+                       "batter-runlimit/memory,batter-runlimit/postgres", "--release",
+                       "--test", "future_size", "--locked"]
 DOC_TESTS = ["cargo", "test", "--workspace", "--all-features", "--doc", "--locked"]
 RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                 "-p", "test_parallel_process.py", "-v"]
@@ -52,8 +56,10 @@ def parts():
     runner so sibling outcomes are retained before the part returns.
     """
     return {
-        "workspace": [(["workspace-tests", "configuration-hostile-environment", "reference-runner-controls"],
-                       [WORKSPACE_TESTS, HOSTILE_CONFIGURATION, REFERENCE_RUNNER_TESTS])],
+        "workspace": [(["workspace-tests", "configuration-hostile-environment", "reference-runner-controls",
+                        "release-future-sizes"],
+                       [WORKSPACE_TESTS, HOSTILE_CONFIGURATION, REFERENCE_RUNNER_TESTS,
+                        FUTURE_SIZE_RELEASE])],
         "no-default-features": [(["core-library", "facade-library", "core-tests"],
                                  [CORE_CHECK, FACADE_CHECK, CORE_TESTS])],
         "doctests": [(["doctests"], [DOC_TESTS])],

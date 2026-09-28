@@ -93,6 +93,23 @@ use sqlx::{
     pool::PoolConnection,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
+use std::{future::Future, pin::Pin};
+
+/// A future erased once at an adapter boundary, as SQLx erases its own pool
+/// query futures. Unerased adapter futures would add their whole state and
+/// type depth to every enclosing consumer future's size, layout and `Send`
+/// proof. Erase at operation boundaries (plus `acquire` below), never at every
+/// internal layer.
+pub(crate) type SendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// SQLx does not erase `PgPool::acquire`, whose future is large and deeply
+/// nested. Futures generic over consumer types are laid out in the consumer's
+/// crate, so they acquire through this erasure instead.
+pub(crate) fn acquire(
+    pool: &PgPool,
+) -> SendFuture<'static, Result<PoolConnection<Postgres>, sqlx::Error>> {
+    Box::pin(pool.acquire())
+}
 
 /// One checked-out connection, retired unless [`Self::with_connection`] proves pool return ready.
 ///
@@ -123,18 +140,19 @@ impl PgLease {
     /// cancellation while acquisition is pending; this lease begins only when
     /// acquisition yields a connection. SQLx may discard a connection during
     /// acquisition; no server-session bound is implied at that boundary either.
+    /// The bounded acquisition is heap-allocated once, on first poll, so the
+    /// returned future stays small and shallow inside consumer handlers.
     pub async fn acquire(
         pool: &PgPool,
         context: &OperationContext,
     ) -> Result<Self, OperationError<SqlxFailure>> {
-        context
-            .run("postgres.acquire", |_| async {
-                let connection = pool.acquire().await.map_err(SqlxFailure::from)?;
-                Ok(Self {
-                    connection: Some(connection),
-                })
+        let acquisition: SendFuture<'_, _> = Box::pin(context.run("postgres.acquire", |_| async {
+            let connection = pool.acquire().await.map_err(SqlxFailure::from)?;
+            Ok(Self {
+                connection: Some(connection),
             })
-            .await
+        }));
+        acquisition.await
     }
 
     fn connection_mut(&mut self) -> &mut PgConnection {

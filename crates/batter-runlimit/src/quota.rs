@@ -5,7 +5,15 @@ use runlimit_core::{
     Allowance, BatchDecision, BatchDecisionView, Check, ConsumptionStatus, Denial, Limiter,
     QuotaDenial, RateLimitPolicy,
 };
-use std::{future::Future, num::NonZeroUsize, sync::Arc};
+use std::{future::Future, num::NonZeroUsize, pin::Pin, sync::Arc};
+
+// Native checks can own pool acquisition and transactions (PostgreSQL); erase
+// them once so their state and type depth never enter the consumer's future.
+type NativeCheck<'a, E> = Pin<Box<dyn Future<Output = Result<BatchDecision, E>> + Send + 'a>>;
+// Admitted work often nests further adapters (atomic runners, queries). Erasing
+// it once ends the caller's layout and `Send` proof at this boundary; the work
+// future's own `Send` proof is checked separately where it is created.
+type AdmittedWork<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
 /// A narrow bridge; native policy, storage, and error types stay upstream.
 pub trait ConsumptionError: std::error::Error + Send + Sync + 'static {
@@ -205,6 +213,11 @@ where
     /// Constructing the returned future does not call the native limiter. Once
     /// polled, the native check may take effect before yielding. No automatic
     /// retries, spawned work, refundable grant, or streaming lifetime.
+    ///
+    /// The native check and the admitted work future are each heap-allocated
+    /// once, when they start, so this future stays small and its type shallow
+    /// inside handlers and tasks that compose further adapters. The work future
+    /// must therefore be `Send`, as handler and spawned-task futures already are.
     pub async fn run<T, E, F, Fut>(
         &self,
         context: &OperationContext,
@@ -213,13 +226,13 @@ where
     ) -> RunResult<T, E, L::CheckAllError>
     where
         F: FnOnce(OperationContext) -> Fut,
-        Fut: Future<Output = Result<T, E>>,
+        Fut: Future<Output = Result<T, E>> + Send,
     {
         batter_core::telemetry::with_current_dispatch(self.run_recorded(
             context,
             checks,
             |_| {},
-            work,
+            |scope| -> AdmittedWork<'_, T, E> { Box::pin(work(scope)) },
         ))
         .await
     }
@@ -242,7 +255,9 @@ where
             .run("quota.check", |_| async {
                 interrupted_check = InterruptedCheck::InFlight;
                 record(&Snapshot::Started);
-                let result = self.limiter.check_all(checks.checks).await;
+                let check: NativeCheck<'_, L::CheckAllError> =
+                    Box::pin(self.limiter.check_all(checks.checks));
+                let result = check.await;
                 match &result {
                     Ok(decision) => record(&Snapshot::Decided(decision.clone())),
                     Err(error) => record(&Snapshot::Failed(error.consumption())),

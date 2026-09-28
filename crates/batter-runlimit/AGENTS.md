@@ -28,6 +28,10 @@ workspace feature unification. Future facade imports must follow actual layout.
 
 One native atomic batch precedes work. Never split it into sequential checks or
 automatically retry/refund. Same parent deadline bounds admission and work.
+`Quota::run` erases the native check and the admitted `Send` work future once
+each, and `AttemptRunner::run` erases native admission, so consumer work and
+native acquisition never enter the caller's future; `tests/future_size.rs`
+bounds them. The internal HTTP seam keeps its direct work path.
 An admitted quota does not establish factory invocation or application success.
 Take the observation writer before calling application authentication/handlers;
 forwarded headers and prior principal extensions are not subject authority.

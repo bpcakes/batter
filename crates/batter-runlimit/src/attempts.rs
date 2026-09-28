@@ -71,9 +71,13 @@ use runlimit_core::attempts::{
 };
 use runlimit_postgres::{
     CheckError, PostgresConfig,
-    attempts::{PgAttemptClaimResult, PostgresAttemptLimiter},
+    attempts::{PgAttemptClaimResult, PgAttemptReceipt, PostgresAttemptLimiter},
 };
-use std::{error::Error, fmt, future::Future, sync::Arc};
+use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+
+type NativeAdmission<'a> = Pin<
+    Box<dyn Future<Output = Result<AttemptAdmission<PgAttemptReceipt>, CheckError>> + Send + 'a>,
+>;
 
 /// The application's final decision, made under the owned database transaction.
 /// A rejected authentication is a durable business outcome, not an instruction
@@ -318,7 +322,7 @@ impl AttemptRunner {
     {
         batter_core::telemetry::with_current_dispatch(async move {
             let admitted = context
-                .run("attempt.admit", |_| self.limiter.admit(subject))
+                .run("attempt.admit", |_| self.admit(subject))
                 .await
                 .map_err(|error| match error {
                     OperationError::Failed(error) => AttemptError::Admission(error),
@@ -413,6 +417,12 @@ impl AttemptRunner {
             result
         })
         .await
+    }
+
+    // Native admission owns its own pool acquisition and transaction. Erase it
+    // once, like the atomic birth, so neither enters the caller's future.
+    fn admit<'a>(&'a self, subject: AttemptSubject<'a>) -> NativeAdmission<'a> {
+        Box::pin(self.limiter.admit(subject))
     }
 }
 

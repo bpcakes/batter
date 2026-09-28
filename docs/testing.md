@@ -14,6 +14,27 @@ while `anyhow` chain formatting can reveal it. They do
 not establish compatibility of a pinned downstream application graph; that
 requires a separate candidate rehearsal with Cargo metadata and locked tests.
 
+Canonical adapter future bounds (`batter-3q3`) run in
+`crates/batter-sqlx/tests/future_size.rs` and
+`crates/batter-runlimit/tests/future_size.rs`: unoptimized with the workspace
+tests and again with `--release` in the same matrix part. Futures are built
+against lazy pools and dropped unpolled. Lease, pooled-query and all twelve
+atomic-runner futures must stay within 1 KiB, including a runner callback that
+holds 16 KiB across an await. Quota and attempt futures, quota work holding 16 KiB,
+and a quota-protected composition of a pooled query and an atomic workflow must
+stay within 4 KiB. All five tests fail at the pinned base; for example
+`AttemptRunner::run` measured 28,408 bytes there.
+`crates/batter/tests/composed_handler_consumer.rs` registers one Axum handler
+composing `Quota::run`, `run_atomic_in` and `PgQueryHandle` behind
+`HttpBoundary`. `scripts/check_facade_features.py` also copies it into an
+independent consumer crate, rejects fixture text that adds a recursion limit,
+stack setting or boxed future, removes `RUST_MIN_STACK` and runs it unoptimized
+and optimized. Without a database both operations fail at acquisition after
+admission, so every layer is polled, and the second request observes the consumed
+quota. At the pinned base the same consumer fails to compile with `queries
+overflow the depth limit` (layout depth 130). Both checks are regression gates,
+not measurements of remote query execution.
+
 Transaction timeout profiles (`batter-qhps`) have offline precision/range and
 override controls in `crates/batter-sqlx/tests/profile.rs`. The explicit live
 inventory adds six PostgreSQL 18 cases in `atomic_live/profile_timeouts.rs`,
@@ -499,8 +520,9 @@ feature runner. `scripts/check_facade_features.py` uses disposable external
 workspaces to compile each declared feature, the standalone at-rest leaf, the representative Axum/SQLx and
 Runlimit unions, and all-features; it checks the selected normal graph, nine
 focused disabled-module failures, and one all-feature direct/facade identity
-fixture. It runs under the invoking toolchain and leaves the repository lock
-unchanged. The separate `scripts/check_runlimit_features.py` gate still covers
+fixture. It then runs the checked-completion and composed quota/SQLx handler
+consumers described at the top of this guide. It runs under the invoking
+toolchain and leaves the repository lock unchanged. The separate `scripts/check_runlimit_features.py` gate still covers
 all eight native Runlimit feature combinations. The matrix then checks all
 workspace targets, doctests, Clippy with warnings denied,
 and rustdoc with warnings denied. The workspace run includes the SQLx executable
@@ -901,7 +923,7 @@ is involved. Record executed results and limitations in the owning Bead.
 The six test parts retain their existing command selections:
 
 - `workspace`: all-feature workspace tests, hostile-environment configuration
-  tests and reference runner controls.
+  tests, reference runner controls and optimized canonical future-size bounds.
 - `no-default-features`: minimal core/facade compilation and core tests.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.

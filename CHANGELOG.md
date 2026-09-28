@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Bound canonical adapter futures. `PgLease::acquire`, the `PgQueryHandle`
+  helpers and every `run_atomic*` runner allocate their operation once on first
+  poll (24-376 bytes, previously up to 79 KB). `Quota::run` erases its native
+  check and admitted work, and `AttemptRunner::run` its native admission (about
+  1.1 KB, previously up to 28 KB). Quota-protected Axum handlers composing these
+  adapters now compile at rustc's default recursion limit and run on the default
+  test-thread stack without local limits, `RUST_MIN_STACK` or boxing.
+  `Quota::run` now requires a `Send` work future. Size tests run unoptimized and
+  optimized, and an external composed-handler consumer runs in facade checks.
 - Add checked owned-process wait and shutdown methods that propagate unsuccessful
   reports and coordinator failures through `?` while retaining successful report
   evidence. Explicit raw-report methods coexist with unchanged legacy signatures.

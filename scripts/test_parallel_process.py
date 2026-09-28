@@ -349,7 +349,7 @@ class MatrixTests(unittest.TestCase):
 
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
-                         {"workspace": [3], "no-default-features": [3], "doctests": [1],
+                         {"workspace": [4], "no-default-features": [3], "doctests": [1],
                           "consumers": [4, 4], "runlimit": [3], "scripts": [4, 1]})
         commands = [command for recorded in batches.values() for batch in recorded for command in batch]
         self.assertCountEqual(commands, [
@@ -360,8 +360,9 @@ class MatrixTests(unittest.TestCase):
             matrix.RUNLEDGER_TOOL_CONTROLS, matrix.RUNLIMIT_CONSUMER, matrix.RUNLIMIT_CONSUMER_CONTROLS,
             matrix.RUNLIMIT_GRAPH, matrix.RUNLIMIT_CONTROLS, matrix.RUNLIMIT_DEFAULT,
             matrix.RUNLIMIT_RELEASE, matrix.FACADE_FEATURES, matrix.FACADE_CACHE_CONTROLS,
+            matrix.FUTURE_SIZE_RELEASE,
         ])
-        self.assertEqual(len(commands), 23)
+        self.assertEqual(len(commands), 24)
         workspace, = batches["workspace"]
         self.assertIn("--all-targets", workspace[0])
         self.assertIn("--workspace", workspace[0])
@@ -370,6 +371,8 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("PGPASSWORD=parent-secret-marker", workspace[1])
         self.assertIn("configuration", workspace[1])
         self.assertIn("--locked", workspace[1])
+        self.assertEqual(workspace[3][workspace[3].index("--test") + 1], "future_size")
+        self.assertIn("--release", workspace[3])
         self.assertTrue(all("--no-default-features" in command
                             for command in batches["no-default-features"][0]))
         self.assertIn("--doc", batches["doctests"][0][0])
