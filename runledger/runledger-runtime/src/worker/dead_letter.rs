@@ -1,4 +1,6 @@
-use runledger_core::jobs::{JobContext, JobDeadLetterInfo};
+use runledger_core::jobs::{
+    JobContext, JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason, JobFailure,
+};
 use runledger_postgres::jobs;
 use tracing::warn;
 
@@ -6,6 +8,20 @@ use crate::dead_letter_hook::{
     DEAD_LETTER_HOOK_TIMEOUT, DeadLetterHookOutcome, invoke_dead_letter_hook,
 };
 use crate::registry::JobRegistry;
+
+/// Dead-letter metadata for a terminal failure the executing worker observed.
+pub(super) fn worker_dead_letter_info(
+    failure: &JobFailure,
+    reason: JobDeadLetterReason,
+    max_attempts: i32,
+) -> JobDeadLetterInfo {
+    JobDeadLetterInfo::new(
+        failure.clone(),
+        reason,
+        Some(max_attempts),
+        JobDeadLetterOrigin::Worker,
+    )
+}
 
 pub(super) async fn notify_handler_of_dead_letter(
     registry: &JobRegistry,

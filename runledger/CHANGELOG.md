@@ -6,6 +6,25 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Changed
+
+- Breaking: `JobDeadLetterInfo` carries a typed `origin`
+  (`JobDeadLetterOrigin::Worker` or `JobDeadLetterOrigin::Reaper`) naming the
+  runtime component that dead-lettered the job and invoked the hook, and
+  `JobDeadLetterInfo::new` takes it as a fourth argument. Hooks distinguish
+  reaper-originated dead letters by this field instead of inferring it from the
+  dead-letter reason or the worker identity. Constructor calls must supply the
+  fourth argument, and struct literals must include `origin`. Exhaustive struct
+  patterns must bind `origin` or add `..`; ordinary access to existing fields
+  remains compatible.
+- Reaper-originated dead-letter hooks receive the durable attempt's worker
+  identity in `JobContext::worker_id`, the lease owner the claim recorded on
+  both `job_queue` and `job_attempts`, instead of the fixed string `reaper`.
+  Hooks that settle terminal callbacks by matching the context's worker
+  identity against the persisted attempt now match reaped attempts too. A reaped
+  terminal lease without a recorded owner, a state the claim path never
+  produces, skips the hook with a warning rather than inventing an identity.
+
 ## [0.13.0] - 2026-09-22
 
 [Release source](https://github.com/bpcakes/batter/tree/runledger-v0.13.0/runledger)
