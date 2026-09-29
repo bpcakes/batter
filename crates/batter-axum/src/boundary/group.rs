@@ -36,9 +36,10 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 /// maps the sanitized [`MutationRejection`] into the application's envelope and
 /// receives the request metadata, including a
 /// [`CorrelationId`](crate::CorrelationId) and the admitted
-/// `OperationContext`, but not the body or private quota/observation/operational
-/// ownership state. Redispatching cloned metadata cannot mutate the original
-/// request's observation.
+/// `OperationContext` extension, but not the body, the private
+/// quota/observation/operational ownership state or the admission record.
+/// Redispatching cloned metadata cannot mutate the original request's
+/// observation, and the new request is not admitted without admission of its own.
 ///
 /// ```
 /// use axum::response::IntoResponse;
@@ -204,14 +205,13 @@ fn is_safe(method: &Method) -> bool {
 ///
 /// ```
 /// use axum::{
-///     Extension,
 ///     response::IntoResponse,
 ///     routing::{get, post},
 /// };
-/// use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
+/// use batter_core::lifecycle::ShutdownHandle;
 /// use batter_axum::{
-///     BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, ProbePath, RequestPolicy,
-///     ResponseConstructionBudget, RouteGroup,
+///     AdmittedRequest, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, ProbePath,
+///     RequestPolicy, ResponseConstructionBudget, RouteGroup,
 ///     browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
 /// };
 /// use std::time::Duration;
@@ -225,12 +225,11 @@ fn is_safe(method: &Method) -> bool {
 /// let uploads = GuardedRouter::new().route("/uploads", post(|| async { "stored" }));
 /// let account = GuardedRouter::new().route(
 ///     "/account",
-///     get(|| async { "profile" }).post(
-///         |Extension(context): Extension<OperationContext>| async move {
-///             context.check().expect("admitted context");
-///             "saved"
-///         },
-///     ),
+///     get(|| async { "profile" }).post(|admitted: AdmittedRequest| async move {
+///         // The account group's own 10-second admission budget.
+///         admitted.context().check().expect("admitted context");
+///         "saved"
+///     }),
 /// );
 /// let browser = BrowserPolicy::with_mutation_checks(
 ///     PrivateResponsePolicy::SameOriginReferrer,

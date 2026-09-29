@@ -15,6 +15,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
   `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
   `request_scope` compatibility entry point, probes, and failures.
+- `src/admitted.rs` owns the private admission record, the `AdmittedRequest`
+  extractor that guarded handlers use instead of raw extensions and its
+  sanitized `AdmittedRequestRejection`.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition and `src/boundary/guarded.rs` the `GuardedRouter` builder. Probe
   routes remain outside admission while the guarded router's default, custom,
@@ -39,8 +42,10 @@ Windows support and non-Unix fallbacks are out of scope.
   the one outer completion event.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
-  Its private `renderer_parts` filter removes quota, observation and operational
-  ownership state at every application renderer boundary, retaining public metadata.
+  Its private operational marker carries the generated identity that admission
+  records. Its private `renderer_parts` filter removes quota, observation and
+  operational ownership state and the admission record at every application
+  renderer boundary, retaining public metadata.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
@@ -58,7 +63,9 @@ Windows support and non-Unix fallbacks are out of scope.
   all readiness reasons, native startup/drain and a body surviving wrapper abort;
   `tests/operational/rendered_probes.rs` covers application-rendered probes
   outside admission, every decision through a contradicting renderer and
-  application conditions.
+  application conditions. `tests/operational/admitted_request.rs` covers the
+  extractor behind every group, its rejection outside admission and in both
+  unsupported lower-level orders, and forged or replaced raw extensions.
 - `tests/browser.rs` and `tests/browser/` cover the public browser transport
   matrices, sanitized failures, Set-Cookie append/removal, mutation precedence,
   and real Axum private-response layer placement, both referrer choices,
@@ -176,6 +183,15 @@ futures. No application callback belongs in the observation guard's destructor.
 Use the shared metadata filter for probes, failure/interruption renderers and
 browser rejections. Removing only the quota writer leaves cloned metadata able
 to replace the original observer's facts through ordinary middleware redispatch.
+Admission records the admitted request only inside the operational wrapper that
+owns the request, with the identity from that wrapper's private marker, never
+the public `CorrelationId` extension. Keep the record's type private, keep
+`AdmittedRequest` without `Clone` or a public constructor, read only the record
+in its extractor, never raw extensions, and keep its rejection the sanitized
+`HttpFailure::Internal` response. The renderer filter must drop the record so
+redispatched metadata is never admitted. Raw `OperationContext` and
+`RequestInterruptionResponder` extensions stay for adapters and existing
+handlers; do not document them as the handler path.
 Keep sanitized HTTP completion fields on the event independently of span filtering.
 The all-targets test gate includes the example's live readiness tests and requires
 loopback socket permission. Preserve both enabled-event and filtered-event assertions.

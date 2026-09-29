@@ -87,8 +87,16 @@ reserved probe path before Axum merge, without polling application code. Observa
 covers public probes without admission and covers guarded fallbacks plus
 rejection responses inside admission. The individual
 middlewares remain available for compositions the boundary cannot express. Domain
-services receive their own dependencies through State/FromRef/constructors;
-request operation context arrives through Extension<OperationContext>.
+services receive their own dependencies through State/FromRef/constructors.
+Guarded handlers and route layers extract `AdmittedRequest`, which carries the
+request's `OperationContext`, its generated `CorrelationId` and the admission
+policy's `RequestInterruptionResponder`. Only admission inside the operational
+wrapper creates it, and no application layer can construct, insert or replace
+it. Extracted anywhere else, for example on a route added after assembly, it
+answers `AdmittedRequestRejection`, the sanitized 500 Problem JSON of
+`HttpFailure::Internal`, instead of Axum's missing-extension text. The native
+extensions are still inserted for Batter's adapters and existing handlers, but
+they are ordinary replaceable values; applications should not read them.
 
 Declare route sets with a different budget or browser posture as named
 `RouteGroup`s through `with_group`; the routes passed to `assemble` are the
@@ -221,7 +229,8 @@ glue. It composes exactly one existing observer inside server UUID correlation.
 Tower HTTP's native UUID generator is used directly; its header-preserving setter
 is unsuitable at an untrusted boundary. Incoming x-request-id values, Tower
 RequestId and previous CorrelationId extensions are replaced, as is any inner
-response ID. Read `Extension<CorrelationId>` for explicit downstream metadata;
+response ID. Admitted handlers read the ID from `AdmittedRequest::correlation_id`
+and renderers from their request metadata, for explicit downstream metadata;
 this is never authentication or authority. HTTP completion fields include the ID
 even with INFO spans disabled; native operation spans retain their normal filter
 semantics. Existing custom identity/observe_http and request_scope remain valid.
@@ -299,10 +308,11 @@ application problem envelopes; the outer operational layer still assigns their
 response correlation header.
 
 `TrustedRequestMetadata` carries the shared adapter `CorrelationId` and opaque
-direct peer only and intentionally has no public constructor. `OwnerId` remains
+direct peer only and intentionally has no public constructor; its middleware
+takes that ID from the `AdmittedRequest`. `OwnerId` remains
 separate authority selected by the configured
-bearer credential, and `OperationContext` remains the request deadline/
-cancellation capability. Handler and error helpers receive metadata explicitly;
+bearer credential, and the handlers' `AdmittedRequest` supplies the request
+deadline/cancellation `OperationContext`. Handler and error helpers receive metadata explicitly;
 domain/authentication and shared infrastructure bodies use its typed correlation,
 while the outer adapter alone sets the response header and records completion.
 The public `TrustedPeer` value is the application-owned admission input required

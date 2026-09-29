@@ -40,7 +40,8 @@ arbitrary Router or fallback. A public and protected GET at the same path
 panic during `prepare`, before serving. Use distinct GET paths.
 Handler principals arrive through the
 `Authenticated<P>` extractor, not `Extension<P>`; its value cannot be constructed
-outside the adapter. Authentication receives no request body, and subject
+outside the adapter. The admitted request's context and generated correlation
+arrive through `batter_axum::AdmittedRequest` in the same way. Authentication receives no request body, and subject
 selection uses its result and the actual peer, not forwarded headers. Closure
 signatures are checked at `new`. Prepared serving installs peer metadata and one
 retained HTTP observer; the alternative test transport requires an explicit

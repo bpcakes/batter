@@ -8,6 +8,26 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Extract the admitted request through one typed extractor. Guarded handlers
+  and route layers take `AdmittedRequest`, whose `context()`,
+  `correlation_id()` and `interruption_responder()` return the request's
+  `OperationContext`, the `CorrelationId` that its operational wrapper generated
+  and the admission policy's `RequestInterruptionResponder`. Admission records
+  it privately, and only inside `operational_http`, which `HttpBoundary` and
+  Runlimit's protected assembly always install. The value has no public
+  constructor and is not `Clone`, so applications can neither construct it nor
+  insert it into request extensions, and inserting or replacing the raw
+  extensions cannot change it. Extracting it where admission recorded nothing,
+  such as a route added after assembly or `request_admission` without
+  `operational_http` outside it, answers the new `AdmittedRequestRejection`: the
+  fixed 500 Problem JSON of `HttpFailure::Internal`, instead of Axum's
+  missing-extension text that names the type. Renderer metadata also drops the
+  admission record, so a request redispatched from it is not admitted. The
+  facade HTTP example and the reference service use the extractor. Migration:
+  replace `Extension<OperationContext>`, `Extension<CorrelationId>` and
+  `Extension<RequestInterruptionResponder>` handler arguments with one
+  `AdmittedRequest`; admission still inserts the raw extensions, so existing
+  handlers keep working.
 - Isolate private observation ownership at every application renderer boundary.
   Probe, failure/interruption and browser rejection metadata retain public
   correlation and application extensions but exclude the quota writer, shared

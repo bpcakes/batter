@@ -1,9 +1,9 @@
 //! Renderer metadata can be reused as data, but cannot retain the original
-//! request's private observation or operational ownership.
+//! request's private observation, operational ownership or admission.
 
 use crate::capture::Capture;
 use axum::{
-    Extension, Router,
+    Extension, RequestExt, Router,
     body::{Body, to_bytes},
     extract::Request,
     http::{Method, StatusCode, request::Parts},
@@ -12,8 +12,9 @@ use axum::{
     routing::{any, get},
 };
 use batter_axum::{
-    BrowserPolicy, CorrelationId, GroupPolicy, GuardedRouter, HttpBoundary, ProbePath,
-    ReadinessPolicy, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
+    AdmittedRequest, BrowserPolicy, CorrelationId, GroupPolicy, GuardedRouter, HttpBoundary,
+    ProbePath, ReadinessPolicy, RequestInterruptionResponder, RequestPolicy,
+    ResponseConstructionBudget,
     browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
     operational_http, operational_http_with_quota,
     quota_observation::{QuotaRecorder, QuotaTerminalFacts},
@@ -82,13 +83,21 @@ fn redispatch(parts: &Parts, quota: bool) -> Response {
                 request.extensions().get::<ApplicationMetadata>(),
                 Some(&ApplicationMetadata("kept"))
             );
+            // The child has no admission of its own, so it must not be admitted.
+            let admitted = request.extract_parts::<AdmittedRequest>().await.is_ok();
             if quota {
                 QuotaRecorder::take(&mut request)
                     .unwrap()
                     .start()
                     .finish(QuotaTerminalFacts::QuotaDenied);
             }
-            ([("x-child-id", id)], "child")
+            (
+                [
+                    ("x-child-id", id),
+                    ("x-child-admitted", admitted.to_string()),
+                ],
+                "child",
+            )
         }),
     );
     let inner = if quota {
@@ -104,11 +113,16 @@ fn redispatch(parts: &Parts, quota: bool) -> Response {
         panic!("in-memory child must complete synchronously");
     };
     let child_id = child.headers()["x-child-id"].to_str().unwrap().to_owned();
+    let child_admitted = child.headers()["x-child-admitted"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     // Assert outside the renderer, after the outer completion has also run.
     (
         [
             ("x-renderer-id", original_id),
             ("x-child-id", child_id),
+            ("x-child-admitted", child_admitted),
             (
                 "x-child-response-id",
                 child
@@ -223,6 +237,7 @@ fn check(surface: Surface) {
                 .unwrap()
                 .to_owned();
             assert_eq!(response.headers()["x-renderer-id"], original_id);
+            assert_eq!(response.headers()["x-child-admitted"], "false");
             let child_id = response.headers()["x-child-id"]
                 .to_str()
                 .unwrap()

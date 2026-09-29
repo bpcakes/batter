@@ -176,6 +176,49 @@ async fn assemble(
 }
 ```
 
+### Admitted request context
+
+Guarded handlers and route layers extract `AdmittedRequest`, one value with the
+request's `OperationContext`, the `CorrelationId` its operational wrapper
+generated and the admission policy's `RequestInterruptionResponder`:
+
+```rust
+use axum::response::{IntoResponse, Response};
+use batter_axum::AdmittedRequest;
+use batter_core::operation::OperationError;
+use std::convert::Infallible;
+
+async fn work(admitted: AdmittedRequest) -> Response {
+    let request_id = admitted.correlation_id().to_string();
+    match admitted
+        .context()
+        .run("demo.read", |_scope| async { Ok::<_, Infallible>("ok") })
+        .await
+    {
+        Ok(body) => ([("x-demo-request", request_id)], body).into_response(),
+        Err(OperationError::Interrupted(reason)) => {
+            admitted.interruption_responder().render(reason)
+        }
+        Err(OperationError::Failed(never)) => match never {},
+    }
+}
+```
+
+Only admission creates the value, and only inside the `operational_http`
+wrapper that generated the request's correlation, which the boundary always
+installs. Its type is not `Clone` and has no public constructor, so no
+application layer can construct it or insert it into request extensions. The
+extractor reads admission's private record, so layers that insert, replace or
+remove the native `OperationContext`, `CorrelationId` or
+`RequestInterruptionResponder` extensions cannot change it. A handler reached
+without admission, such as a route added to the assembled router, answers
+`AdmittedRequestRejection`: the fixed 500 Problem JSON of
+`HttpFailure::Internal`, instead of Axum's missing-extension text, which names
+the missing type. To migrate, replace `Extension<OperationContext>`,
+`Extension<CorrelationId>` and `Extension<RequestInterruptionResponder>`
+handler arguments with one `AdmittedRequest` and its three accessors. The raw
+extensions remain for Batter's adapters and existing handlers.
+
 ### Routers built by another router builder
 
 A router built by another router builder, for example an OpenAPI router
@@ -317,7 +360,9 @@ their meaning; route groups are additive.
 ## Low-level composition and observation
 
 For compositions the boundary cannot express, `request_admission`, `observe_http`
-and `operational_http` remain available. `observe_http` requires no lifecycle
+and `operational_http` remain available. Admission records an `AdmittedRequest`
+only with `operational_http` outside it; otherwise its handlers receive the
+sanitized rejection. `observe_http` requires no lifecycle
 state and adds no deadline or operation context. `RequestPolicy` keeps readiness
 and deadlines combined. The existing `request_scope` remains the combined
 observation/admission compatibility entry point. Only the outermost observer
@@ -403,8 +448,9 @@ HTTP traffic; application probe and timing policy remain explicit.
 
 Use `operational_http` instead of outer `observe_http` to generate a UUID, replace
 incoming x-request-id and Tower/adapter identity extensions, observe once, and
-replace the response ID header. Extract `Extension<CorrelationId>` and propagate
-its string explicitly to nested application metadata. It carries no authority.
+replace the response ID header. Admitted handlers read it with
+`AdmittedRequest::correlation_id` and propagate its string explicitly to nested
+application metadata. It carries no authority.
 The HTTP completion event has its own `request_id` even with all INFO spans
 disabled, including on drop under another dispatch. Native nested tracing still
 requires enabled spans; no tenant/principal or inbound trace context is inferred.

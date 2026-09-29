@@ -44,7 +44,8 @@ Only declared GET/HEAD probe handlers may bypass admission, authentication and
 quota; unsupported methods use Axum's default 405 without a custom handler.
 Preserve a protected root fallback when provided, and the default unmatched
 404 otherwise.
-Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority.
+Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority,
+and `batter_axum::AdmittedRequest` for the admitted context and correlation.
 The allowed result retains native scalar decision metadata without exposing a
 denial arm. Match every native `DenialView` reason explicitly; a future reason
 must force an adapter and contract update when the native contract changes.

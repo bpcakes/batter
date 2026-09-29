@@ -424,6 +424,57 @@ and a hand-mounted handler built from `ReadinessPolicy::decision` remains a
 weaker low-level composition. Fresh-agent usability evaluation is proposed and
 unexecuted; the downstream ports belong to `batter-tc9w.9`.
 
+### Admitted request extractor assessment (`batter-tc9w.6`)
+
+Admission inserted the request's `OperationContext` and
+`RequestInterruptionResponder` as native extensions, and `operational_http` a
+public `CorrelationId`. One surveyed consumer takes `Extension<OperationContext>`
+in 55 handlers, plus the responder and correlation in scope handlers; the
+other reads the context extension on every handler. Each handler therefore
+reassembled the admitted request from three independent extension reads. A
+handler outside admission compiled and answered Axum's missing-extension 500,
+whose text names the internal type. Any application layer could insert or
+replace those values, for example a context with another deadline, and the
+handler could not tell. Admission placed outside correlation, an unsupported
+order, still gave handlers all three values while its own rejections and
+deadline responses lacked the generated identity.
+
+Handlers now extract one `AdmittedRequest`. Admission records it privately,
+and only inside the operational wrapper that generated the request's
+correlation, taking the identity from that wrapper's private marker rather than
+the public extension. The public value has a private field and is not `Clone`,
+so it can be neither constructed nor inserted into request extensions
+(compile-fail rustdocs). The extractor reads only admission's private record,
+so raw extensions can neither supply nor alter it. Where nothing was recorded,
+it answers `AdmittedRequestRejection`, the fixed 500 Problem JSON of
+`HttpFailure::Internal` at the default WARN severity. That includes a
+lower-level `request_admission` or `request_scope` without `operational_http`
+outside it, so the known-invalid order fails every extracting request instead
+of looking equivalent to the protected path. The shared renderer filter also
+removes the record, so a request redispatched from renderer metadata is not
+admitted. Axum's handler traits do not expose which extractors a handler
+uses, so assembly cannot reject an extracting handler outside admission. On the
+canonical path every guarded route and fallback is admitted, which leaves routes
+added to the router taken from `AssembledHttp::into_router` and low-level
+compositions as the ways to reach the rejection. `batter-tc9w.2` owns replacing
+`into_router`. The facade HTTP example and the reference service now extract
+the admitted request. Tests cover every group's own context and generated
+identity, the rejection outside admission and in both unsupported lower-level
+orders, forged and replaced raw extensions, and redispatch from every renderer.
+They fail when the renderer filter keeps the record or when admission takes the
+public identity.
+
+Remaining boundaries are explicit. The raw extensions are still inserted for
+Batter's adapters, whose Runlimit boundary reads the context and responder, and
+for existing handlers; removing them would break both, so they remain documented
+as ordinary replaceable values. Copying a whole extension map from an admitted
+request into another request copies the record with every other value. The
+rejection cannot use the application's envelope because no request policy is
+known outside admission; an application that needs its envelope extracts
+`Result<AdmittedRequest, AdmittedRequestRejection>`. Fresh-agent usability
+evaluation is proposed and unexecuted; the downstream ports belong to
+`batter-tc9w.9`.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
