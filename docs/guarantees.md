@@ -54,7 +54,12 @@ timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
 The admission failure renderer receives ordinary request metadata without the
-private writer, including when admission fails before the quota boundary runs.
+private writer, shared observation state or operational ownership marker,
+including when admission fails before the quota boundary runs. The same filter
+protects captured interruption metadata, probe renderers and browser rejection
+renderers. Public correlation and application extensions remain available;
+redispatch through an operational wrapper owns a separate correlation and
+completion and cannot replace the original observation's quota facts.
 The non-cloneable writer moves from unstarted to started to consumed terminal
 publication. Dropping it before a check leaves `NotChecked`; dropping it during
 a check leaves `Unresolved`. A published terminal fact cannot be replaced with a
@@ -1398,6 +1403,28 @@ application input: a route it omits is unreachable rather than verified. Each
 admitted router adds one inspection routing, outside the observer, to each
 request that no native route matches.
 
+Probes can carry the application's own bodies. `with_rendered_liveness` and
+`with_rendered_readiness` reserve their `ProbePath` exactly as `with_liveness`
+and `with_readiness` do: the path joins the same duplicate-path rejection and
+the same assembly check against every group's routes, and the probe is mounted
+outside every group's admission, inside correlation and the single observer.
+The application renderer runs synchronously for each probe request with the
+request metadata, including the generated `CorrelationId`, but without the
+body or Batter's private quota writer, observation state or operational ownership
+marker; a probe is never admitted, so no
+`OperationContext` or `RequestInterruptionResponder` is present. The renderer
+returns the response body and headers, for example an OpenAPI-documented JSON
+document, but not the probe's outcome. The boundary then sets liveness to 200
+and removes any `HttpObservationLevel` override from it, so its completion
+keeps the empty-body probe's default INFO. It sets readiness to
+`readiness_status` of the one fresh decision it passed to the renderer and
+replaces the `ReadinessDecision` and `HttpObservationLevel` response extensions
+with that decision and the policy's severity. A renderer therefore cannot
+report an unready process as ready, forge the decision extension or change the
+completion event's severity. Assembly never calls a
+renderer. A renderer that blocks or panics does so inside the probe request
+like any handler; probes carry no response-construction deadline.
+
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling
 an inner layer. Therefore a manual composition that promises generated identity
@@ -1737,21 +1764,40 @@ operation context. No task-local inheritance, arbitrary-spawn propagation,
 inbound trace retention, durable correlation envelope, or quota backend follows.
 
 The foundation `ReadinessEvaluator` stores `LifecycleStatus` and `HealthReader`,
-reads a fresh dependency snapshot then lifecycle readiness, and invokes no probe
-or writer-retaining operation. Every `HealthStatus` is explicitly classified as
+reads a fresh dependency snapshot, then any application conditions, then
+lifecycle readiness, and invokes no probe or writer-retaining operation. Every
+`HealthStatus` is explicitly classified as
 `DependencyReadiness`; Healthy is Ready, while Unknown, ProbeFailed,
 ProbeTimedOut, Stale and WriterStopped carry the corresponding
 `DependencyUnreadyReason`. Overall `ReadinessDecision` is either Ready or
 Unready(ReadinessUnreadyReason), and `ReadinessUnreadyReason::Dependency` cannot contain a
-healthy value. Ready requires both healthy and lifecycle Ready; an observed drain
-overrides cached health. A subsequent transition may immediately obsolete the
-decision.
+healthy value. Ready requires both healthy and lifecycle Ready, and every
+application condition satisfied; an observed drain overrides cached health. A
+subsequent transition may immediately obsolete the decision.
+
+`ReadinessEvaluator::with_condition`, and `ReadinessPolicy::with_condition` in
+the adapter, add an application condition named by a validated
+`ReadinessCondition` (1–96 ASCII alphanumeric, `.`, `_` or `-` bytes). Its
+synchronous check returns only whether the condition holds. It runs only after
+the dependency sample establishes readiness and before the final lifecycle
+read, in the order conditions were added, and the first unsatisfied condition
+stops the remaining checks. That condition turns a decision that lifecycle and
+dependency health would make Ready into
+`Unready(ReadinessUnreadyReason::Condition(name))`. A condition is never asked
+while the dependency is unready, and its answer is discarded when the final
+lifecycle read is not Ready, so no condition can make an unready lifecycle or
+dependency ready or replace its reason. Checks added under one name report the
+same condition; clones of an evaluator or policy share its conditions. The
+check must read state the application already holds, without blocking or I/O:
+the evaluator adds no timeout, and a blocking check stalls the probe request
+that asked it.
 
 `ReadinessPolicy` translates that valid foundation decision. Responses have empty
-bodies, 200 for Ready and 503 for Unready, and retain `ReadinessDecision` in
-extensions. Starting/Draining default INFO; Stopped and every dependency-unready
-reason default WARN. `readiness_status` and `default_readiness_level` expose those
-adapter mappings; explicit level policy receives the complete decision, can
+bodies unless a rendered `HttpBoundary` probe supplies one, 200 for Ready and
+503 for Unready, and retain `ReadinessDecision` in extensions. Starting/Draining
+default INFO; Stopped, every dependency-unready reason and an unsatisfied
+application condition default WARN. `readiness_status` and
+`default_readiness_level` expose those adapter mappings; explicit level policy receives the complete decision, can
 delegate unmatched cases to the default, and alters neither status, decision,
 body nor outcome. The old `ReadinessReason` name is absent from both Axum and
 the foundation so stale extension lookups fail at compilation even after an
@@ -1761,7 +1807,9 @@ stopped health writer still yields Draining/INFO; after process completion it
 yields Stopped/WARN. Reading either state creates no probes. `ReadinessDecision`,
 `ReadinessUnreadyReason` and `DependencyUnreadyReason` are intentionally exhaustive:
 new semantic states require the corresponding API compatibility and consumer
-policy review. Old `readiness` and `liveness` keep their status-only contracts.
+policy review; `ReadinessUnreadyReason::Condition` is such a state, so an
+exhaustive match must now handle it. Old `readiness` and `liveness` keep their
+status-only contracts.
 
 `register_http` transfers a bound TcpListener and initialized Router into a
 critical component. The factory does no work before supervision starts and

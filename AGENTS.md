@@ -132,8 +132,8 @@ and transfer to the running driver.
 `crates/batter-core/src/health.rs` and `health/` own sequential dependency sampling,
 read-only freshness snapshots and writer lifetime.
 `crates/batter-core/src/readiness.rs` owns the pure lifecycle-plus-dependency decision,
-including the dependency-first/lifecycle-second read order and unrepresentable
-healthy-as-failure states.
+including the dependency-first/lifecycle-last read order, application conditions
+that can only narrow readiness and unrepresentable healthy-as-failure states.
 `crates/batter-core/src/cleanup.rs` owns explicit LIFO finalizers and pre-acquisition reservations.
 `crates/batter-core/src/operation.rs` owns deadline/cancellation boundaries,
 typed failures, and pre-telemetry resolution of application-retained outcomes.
@@ -153,7 +153,8 @@ full inner-future destruction, without heap allocation.
 `boundary.rs` and `boundary/` own the route-inventory-preserving `GuardedRouter`,
 routers admitted through a declared `RouteInventory`, and the library-ordered
 `HttpBoundary` composition, whose non-overlapping route groups carry their own
-request and browser policy;
+request and browser policy and whose probes may render application bodies
+without choosing their status;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics without owning
 credential meaning, authorization, CORS or application error envelopes.

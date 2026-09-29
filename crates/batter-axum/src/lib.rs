@@ -131,7 +131,9 @@ pub struct RequestPolicy {
 /// A nested adapter can use it when its own operation observes cancellation or
 /// deadline expiry before the outer admission operation is polled again. The
 /// application cannot construct one with a different request or policy. The
-/// captured metadata excludes Batter's private quota observation writer.
+/// captured metadata excludes Batter's private quota writer, shared observation
+/// state and operational ownership marker. Public correlation and application
+/// extensions remain available; redispatch cannot mutate the original observer.
 ///
 /// ```
 /// use axum::{extract::Request, response::Response};
@@ -155,21 +157,12 @@ enum InterruptionRendering {
     },
 }
 
-fn renderer_parts(parts: &Parts) -> Parts {
-    let mut snapshot = parts.clone();
-    // The renderer needs request metadata, never the observer's private writer.
-    snapshot
-        .extensions
-        .remove::<quota_observation::QuotaObservation>();
-    snapshot
-}
-
 impl RequestInterruptionResponder {
     fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
         match &policy.failure_renderer {
             Some(renderer) => Self(InterruptionRendering::Custom {
                 renderer: renderer.clone(),
-                original_parts: Arc::new(renderer_parts(original_parts)),
+                original_parts: Arc::new(correlation::renderer_parts(original_parts.clone())),
             }),
             None => Self(InterruptionRendering::Default),
         }
@@ -178,8 +171,8 @@ impl RequestInterruptionResponder {
     /// Render cancellation or deadline expiry with the admission policy's envelope.
     ///
     /// The custom renderer receives the original request metadata captured
-    /// before inner adapter extensions were inserted, without the private
-    /// quota observation writer.
+    /// before inner adapter extensions were inserted, without private quota,
+    /// observation or operational ownership state.
     pub fn render(&self, reason: Interruption) -> Response {
         let failure = match reason {
             Interruption::Cancelled => HttpFailure::Cancelled,
@@ -272,7 +265,9 @@ impl RequestPolicy {
     ///
     /// The callback receives a snapshot of the original request parts at entry
     /// to this middleware, including application extensions but excluding
-    /// Batter's private quota observation writer. Install trusted
+    /// Batter's private quota writer, shared observation state and operational
+    /// ownership marker. Redispatching cloned metadata creates independent
+    /// observation and correlation under an operational wrapper. Install trusted
     /// correlation/identity extensions in an outer layer before this boundary;
     /// Batter does not authenticate header values or log these parts. Handler
     /// changes to extensions are not included. The callback owns its response
@@ -301,7 +296,7 @@ impl RequestPolicy {
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {
         match &self.failure_renderer {
-            Some(renderer) => renderer(failure, &renderer_parts(parts)),
+            Some(renderer) => renderer(failure, &correlation::renderer_parts(parts.clone())),
             None => failure.into_response(),
         }
     }

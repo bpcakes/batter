@@ -273,15 +273,22 @@ critical component failures. There is no hidden task or service registry.
 
 The HTTP composition registers a monitor during owned startup and passes only
 its reader to the readiness route. The foundation `ReadinessEvaluator` samples
-the cached dependency observation first and lifecycle second; it never queries a
-dependency, and an observed drain overrides the earlier health sample. A broad
+the cached dependency observation first, then any application conditions, and
+lifecycle last; it never queries a dependency, and an observed drain overrides
+the earlier samples. A broad
 `HealthStatus` is exhaustively projected into `DependencyReadiness`, then combined
 into `ReadinessDecision::Ready` or `Unready(ReadinessUnreadyReason)`. Dependency reasons
 accept only `DependencyUnreadyReason`, so Healthy cannot be represented as a
-failure. The Axum adapter owns only HTTP status, response extensions and severity.
+failure. Application conditions are synchronous checks named by a validated
+`ReadinessCondition`; they are asked only while the dependency is ready and can
+only narrow a ready decision to `Unready(ReadinessUnreadyReason::Condition)`.
+The Axum adapter owns only HTTP status, response extensions and severity.
 It exposes those conversions as `readiness_status` and
 `default_readiness_level` so custom rendering and severity policy reuse the same
-table without moving HTTP or tracing types into the foundation.
+table without moving HTTP or tracing types into the foundation. The canonical
+`HttpBoundary` probes accept an application renderer for the body and headers,
+then apply that status and those extensions themselves, so the decision stays
+foundation-owned and the probe outcome adapter-owned.
 Acknowledging the monitor's initialization does not make an unknown dependency
 healthy. Application timing policy and actual probe implementation stay in the
 composition root.

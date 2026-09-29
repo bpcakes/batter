@@ -26,7 +26,8 @@ Windows support and non-Unix fallbacks are out of scope.
   the per-group layer order; `src/boundary/pattern.rs` decides whether two
   retained route patterns share a request path under the pinned matchit 0.8.4
   rules, and `src/boundary/inventory.rs` confirms probe and group collisions
-  through inert routers. `src/boundary/probe.rs` owns `ProbePath`.
+  through inert routers. `src/boundary/probe.rs` owns `ProbePath` and the
+  handlers of application-rendered probes.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
   private-response headers with a typed same-origin/no-referrer choice. They do
@@ -38,11 +39,14 @@ Windows support and non-Unix fallbacks are out of scope.
   the one outer completion event.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
+  Its private `renderer_parts` filter removes quota, observation and operational
+  ownership state at every application renderer boundary, retaining public metadata.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
 - `src/readiness.rs` translates the foundation's valid readiness decision into
-  HTTP status, response extensions and observation severity.
+  HTTP status, response extensions and observation severity, and applies them
+  after an application probe renderer returns.
 - `src/serving.rs` registers a bound native listener/router with the supervisor,
   including opt-in direct TCP peer `ConnectInfo<SocketAddr>` through protected authority.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
@@ -51,7 +55,10 @@ Windows support and non-Unix fallbacks are out of scope.
 - `tests/http.rs`, `tests/telemetry.rs`, `tests/observation.rs` and
   `tests/scoped_dispatch.rs` cover failures, complete-router observations,
   middleware placement, and future destruction. `tests/operational/` covers forged/concurrent IDs,
-  all readiness reasons, native startup/drain and a body surviving wrapper abort.
+  all readiness reasons, native startup/drain and a body surviving wrapper abort;
+  `tests/operational/rendered_probes.rs` covers application-rendered probes
+  outside admission, every decision through a contradicting renderer and
+  application conditions.
 - `tests/browser.rs` and `tests/browser/` cover the public browser transport
   matrices, sanitized failures, Set-Cookie append/removal, mutation precedence,
   and real Axum private-response layer placement, both referrer choices,
@@ -154,6 +161,11 @@ Readiness defaults: Starting/Draining INFO; dependency failures while Ready and
 Stopped WARN. Existing status-only probes and Problem JSON remain compatible.
 Carry the foundation `ReadinessDecision` in response extensions; do not recreate
 lifecycle/health classification or accept a broad `HealthStatus` as a failure.
+Application readiness conditions narrow that foundation decision; never evaluate
+them in the adapter. A probe renderer chooses only the body and headers: apply
+the readiness status, decision extension and severity, or the liveness 200
+and default severity, after it returns so no renderer can alter them, and reserve a rendered probe's
+path in the same duplicate and guarded-route checks outside admission.
 Keep `readiness_status` and `default_readiness_level` as the canonical reusable
 adapter mappings. The unready payload is named `ReadinessUnreadyReason`; do not
 introduce a `ReadinessReason` alias or re-export. Pre-cutover extension lookups
@@ -161,6 +173,9 @@ must fail loudly rather than compile and miss the new decision extension.
 Observation severity overrides are explicit response extensions, independent of
 admission. Preserve actual status/outcome and the default WARN for dropped
 futures. No application callback belongs in the observation guard's destructor.
+Use the shared metadata filter for probes, failure/interruption renderers and
+browser rejections. Removing only the quota writer leaves cloned metadata able
+to replace the original observer's facts through ordinary middleware redispatch.
 Keep sanitized HTTP completion fields on the event independently of span filtering.
 The all-targets test gate includes the example's live readiness tests and requires
 loopback socket permission. Preserve both enabled-event and filtered-event assertions.

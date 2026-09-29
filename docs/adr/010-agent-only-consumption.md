@@ -354,6 +354,76 @@ OpenAPI-builder dependency or convenience is added. Fresh-agent usability
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.
 
+### Probe renderer and readiness condition assessment (`batter-tc9w.5`)
+
+`HttpBoundary` mounted only the adapter's empty-body liveness and readiness
+handlers. One surveyed consumer documents JSON probe bodies in its OpenAPI
+contract, and the other also requires an application condition, held key
+leases, before reporting readiness, so both mounted their own probe handlers
+beside the boundary. Each such handler chose its path, its placement relative to
+admission, its status and severity, and recombined lifecycle and health itself:
+a probe merged inside admission would reject while starting, a handler could
+answer 200 for an unready decision, and a hand-composed application check could
+override the lifecycle.
+
+`with_rendered_liveness` and `with_rendered_readiness` keep the path, the
+placement outside admission and every collision check on the boundary, exactly
+as for the empty-body probes. The renderer receives a `Copy` decision and the
+request metadata and returns a response; the boundary then sets the status from
+`readiness_status` and replaces the decision and severity extensions, or for
+liveness sets 200 and removes any severity override, so no renderer, including
+one returning a contradicting status or forged extensions, changes what an
+orchestrator or the completion event sees.
+Application conditions narrow the foundation decision rather than wrap it. A
+check returns only whether its condition holds (a check returning a decision
+does not compile), is asked only after the dependency sample establishes
+readiness and before the final lifecycle read, and can only turn Ready into the
+new `ReadinessUnreadyReason::Condition`, which carries a validated
+`ReadinessCondition` name (raw strings do not compile) and defaults to WARN.
+Conditions accumulate, so adding one cannot silently drop another, and the
+empty-body `dependency_readiness` reports them too because it reads the same
+decision. A condition may still be asked while the process is starting,
+whenever the dependency is healthy, because lifecycle is read last; its answer
+is then discarded. Tests send every decision through a contradicting renderer,
+probe both condition answers in every unready lifecycle and dependency phase,
+narrow Ready through the condition, keep a liveness completion at INFO under
+INFO filtering, deny both renderers the quota observer's writer, keep both
+probes outside admission and reject every duplicate and guarded probe path.
+They fail when a renderer's status or severity survives, when the quota writer
+stays on renderer metadata, when a condition replaces a dependency reason, or
+when a condition's answer decides the decision for a starting lifecycle.
+
+The metadata isolation review found an indirect capability after direct quota
+writer removal: cloned `Parts` still carried shared observation state, allowing
+redispatch through quota middleware to replace the original probe's quota facts.
+The same incomplete filter existed in failure/interruption and browser rejection
+rendering. This was an adapter design gap, not an application protocol obligation.
+All renderer crossings now use one private filter removing the quota writer,
+shared observation state and operational ownership marker. Ordinary nested
+middleware keeps those states; a new request made from renderer metadata gets
+independent correlation and completion under an operational wrapper. Public
+correlation and application metadata remain available to renderers. Merely adding
+another probe-only removal would leave sibling paths exposed; a new public
+metadata type would break signatures without being needed to remove these
+library-owned capabilities. Redispatch regressions cover both probes, admission
+failure, captured interruption rendering and browser rejection with ordinary and
+quota wrappers, checking original facts and independent child completion.
+
+Remaining boundaries are explicit. Condition checks and renderers run
+synchronously inside the probe request, and probes carry no
+response-construction deadline because they sit outside admission; a check or
+renderer that blocks, performs I/O or panics affects that probe like any
+handler, which the evaluator cannot detect. Whether a check reflects key leases
+or any other remote fact is application state that Batter cannot verify. Checks
+added under one name report the same condition, deliberately allowing several
+checks of one requirement; distinct requirements need distinct names for a
+renderer to tell them apart. Adding `Condition` breaks exhaustive matches on
+`ReadinessUnreadyReason`, a change taken under the exhaustive-enum policy with
+a changelog migration note. `readiness_status` fixes the unready status at 503,
+and a hand-mounted handler built from `ReadinessPolicy::decision` remains a
+weaker low-level composition. Fresh-agent usability evaluation is proposed and
+unexecuted; the downstream ports belong to `batter-tc9w.9`.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

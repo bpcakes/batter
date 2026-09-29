@@ -427,6 +427,22 @@ be listed too, because undeclared routes are never served. Assembly returns
 `OverlappingRouteInventory` for declared routes that share a path with other
 routes of their group. Declare fallbacks on the default `GuardedRouter`; an
 admitted router's own fallback never runs.
+
+Keep documented probe bodies on the boundary instead of hand-mounting probe
+handlers. `.with_rendered_liveness(path, |parts| ...)` and
+`.with_rendered_readiness(path, readiness, |decision, parts| ...)` take the same
+validated `ProbePath` and collision checks as the empty-body probes; the
+renderer returns the application's body and headers, and the boundary then sets
+the status and completion severity itself: 200 with the default INFO for
+liveness, and the decision's status, decision extension and policy severity for
+readiness.
+Map every `ReadinessDecision` your documentation promises, including
+`ReadinessUnreadyReason::Condition`, in the renderer, and read the generated
+`CorrelationId` from `parts` when the envelope reports a request ID. When
+readiness also depends on application state, such as held key leases, add
+`readiness.with_condition(ReadinessCondition::new("key-leases")?, check)` to
+the `ReadinessPolicy`; `check` synchronously reads state the application
+already maintains and can only turn a ready decision unready.
 The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
 remains available for adapter-owned tests and applications that need that package
 boundary.
@@ -608,7 +624,10 @@ readiness request. This performs no dependency I/O. It samples the dependency
 first and lifecycle second, returning only `ReadinessDecision::Ready` or
 `Unready(ReadinessUnreadyReason)`, so an observed drain wins and a healthy dependency
 cannot appear as an unready reason. `HealthStatus::readiness()` separately
-exposes the exhaustive dependency-only classification.
+exposes the exhaustive dependency-only classification. Add application
+conditions with `with_condition`; they are asked between the dependency and
+lifecycle reads, only while the dependency is ready, and an unsatisfied one
+reports `Unready(ReadinessUnreadyReason::Condition(name))`.
 
 To inspect why a probe failed, call `reader.snapshot()` and inspect `status()` and
 `last_probe()`; original errors require deliberate trusted access through

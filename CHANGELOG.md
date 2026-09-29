@@ -8,6 +8,33 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Isolate private observation ownership at every application renderer boundary.
+  Probe, failure/interruption and browser rejection metadata retain public
+  correlation and application extensions but exclude the quota writer, shared
+  observation state and operational ownership marker. Redispatching cloned
+  metadata through operational middleware creates an independent request rather
+  than altering the original request's correlation or quota observations.
+- Render probe bodies from the readiness decision. `HttpBoundary` adds
+  `with_rendered_liveness(path, render)` and
+  `with_rendered_readiness(path, readiness, render)`: the application renderer
+  receives the request metadata, and for readiness one fresh
+  `ReadinessDecision`, and returns the body and headers, for example
+  OpenAPI-documented JSON. The boundary keeps the probe path, its placement
+  outside admission and every probe-collision check. It then sets liveness to
+  200 with the default INFO completion severity, and sets readiness to
+  `readiness_status` and replaces the `ReadinessDecision` and
+  `HttpObservationLevel` extensions with the decision and the policy's
+  severity, so a renderer cannot report an unready process as ready or change
+  how the probe's completion is logged. `ReadinessEvaluator::with_condition`
+  and `ReadinessPolicy::with_condition` add application readiness conditions,
+  named by a validated `ReadinessCondition`, whose synchronous checks run only
+  while the dependency is ready and can only turn a ready decision into the new
+  `ReadinessUnreadyReason::Condition(name)`, rendered 503 and WARN by default.
+  Migration: exhaustive matches on `ReadinessUnreadyReason` must add a
+  `Condition(_)` arm; `default_readiness_level` already maps it to WARN. Replace
+  probe handlers mounted beside the boundary with the rendered probe methods,
+  and an application readiness check inside such a handler with
+  `with_condition`. Existing empty-body probes are unchanged.
 - Admit routers built by another router builder, for example an OpenAPI router
   converted with `Router::from`, through
   `GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`. The
