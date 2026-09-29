@@ -1,10 +1,11 @@
 use std::future::pending;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use runledger_core::jobs::{
-    JobCompletion, JobContext, JobDeadLetterInfo, JobFailure, JobStatus, JobType,
+    JobCompletion, JobContext, JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason,
+    JobFailure, JobStatus, JobType,
 };
 use runledger_postgres::jobs::{
     JobDefinitionUpsert, JobEnqueue, JobRunningUpdate, claim_jobs_for_types, enqueue_job,
@@ -393,6 +394,185 @@ async fn run_reaper_loop_shutdown_waits_for_inflight_terminal_hook_delivery() {
         terminal_completions.load(Ordering::SeqCst),
         1,
         "shutdown must not drop terminal hook delivery for already reaped jobs"
+    );
+
+    teardown_ephemeral_pool(pool, database).await;
+}
+
+struct RecordingIdentityHookHandler {
+    deliveries: Arc<Mutex<Vec<(JobContext, JobDeadLetterInfo)>>>,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RecordingIdentityHookHandler {
+    fn job_type(&self) -> JobType<'static> {
+        JobType::new("jobs.test.reaper.hook.identity")
+    }
+
+    async fn execute(
+        &self,
+        _context: JobContext,
+        _payload: Value,
+    ) -> Result<JobCompletion, JobFailure> {
+        Ok(JobCompletion::success())
+    }
+
+    async fn on_dead_letter(
+        &self,
+        context: JobContext,
+        _payload: Value,
+        dead_letter: JobDeadLetterInfo,
+    ) {
+        self.deliveries
+            .lock()
+            .expect("delivery list lock should not be poisoned")
+            .push((context, dead_letter));
+    }
+}
+
+#[tokio::test]
+async fn run_reaper_loop_dead_letter_hook_carries_the_durable_attempts_worker_identity() {
+    let (pool, database) = setup_ephemeral_pool("runtime_reaper_hook_identity", 8).await;
+    let job_type = JobType::new("jobs.test.reaper.hook.identity");
+    let lease_owner = "reaper-hook-identity-worker";
+
+    let mut tx = pool.begin().await.expect("begin tx");
+    upsert_job_definition_tx(
+        &mut tx,
+        &JobDefinitionUpsert {
+            job_type,
+            version: 1,
+            max_attempts: 1,
+            default_timeout_seconds: 30,
+            default_priority: 100,
+            is_enabled: true,
+        },
+    )
+    .await
+    .expect("upsert job definition");
+    tx.commit().await.expect("commit tx");
+
+    let job_id = enqueue_job(
+        &pool,
+        &JobEnqueue {
+            job_type,
+            organization_id: None,
+            payload: &json!({"kind":"hook-identity"}),
+            priority: None,
+            max_attempts: None,
+            timeout_seconds: None,
+            next_run_at: None,
+            idempotency_key: None,
+            stage: Some(runledger_core::jobs::JobStage::Queued),
+        },
+    )
+    .await
+    .expect("enqueue hook-identity job");
+
+    let claimed = claim_jobs_for_types(&pool, lease_owner, 60, 1, &[job_type])
+        .await
+        .expect("claim hook-identity job");
+    let claimed_job = claimed.first().expect("claimed job exists");
+    assert_eq!(claimed_job.worker_id.as_deref(), Some(lease_owner));
+
+    mark_job_running(
+        &pool,
+        claimed_job.id,
+        claimed_job.run_number,
+        claimed_job.attempt,
+        lease_owner,
+        &JobRunningUpdate {
+            progress_done: None,
+            progress_total: None,
+            checkpoint: None,
+        },
+    )
+    .await
+    .expect("persist running stage before expiring lease");
+
+    sqlx::query(
+        "UPDATE job_queue
+         SET lease_expires_at = now() - interval '10 seconds'
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("expire leased hook-identity job");
+
+    let deliveries = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = JobRegistry::new();
+    registry.register(RecordingIdentityHookHandler {
+        deliveries: deliveries.clone(),
+    });
+
+    let config = JobsConfig {
+        worker_id: "runtime-reaper-test".to_string(),
+        poll_interval: Duration::from_secs(30),
+        claim_batch_size: 1,
+        lease_ttl_seconds: 30,
+        max_global_concurrency: 1,
+        reaper_interval: Duration::from_secs(5),
+        schedule_poll_interval: Duration::from_secs(30),
+        reaper_retry_delay_ms: 1_000,
+    };
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(run_reaper_loop(pool.clone(), registry, config, shutdown_rx));
+
+    let (context, dead_letter) = timeout(Duration::from_secs(3), async {
+        loop {
+            let delivered = deliveries
+                .lock()
+                .expect("delivery list lock should not be poisoned")
+                .first()
+                .cloned();
+            if let Some(delivery) = delivered {
+                break delivery;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for the reaper dead-letter hook");
+
+    shutdown_tx
+        .send(true)
+        .expect("shutdown receiver should still be active");
+    timeout(Duration::from_secs(2), task)
+        .await
+        .expect("reaper loop should exit after shutdown")
+        .expect("reaper loop joins cleanly");
+
+    let attempt_worker_id: String = sqlx::query_scalar(
+        "SELECT worker_id FROM job_attempts
+         WHERE job_id = $1 AND run_number = $2 AND attempt = $3",
+    )
+    .bind(job_id)
+    .bind(context.run_number)
+    .bind(context.attempt)
+    .fetch_one(&pool)
+    .await
+    .expect("load the durable attempt's worker id");
+
+    assert_eq!(
+        context.worker_id, attempt_worker_id,
+        "reaper hook context must carry the worker recorded on the durable attempt row"
+    );
+    assert_eq!(context.worker_id, lease_owner);
+    assert_eq!(context.job_id, job_id);
+    assert_eq!(context.run_number, claimed_job.run_number);
+    assert_eq!(context.attempt, claimed_job.attempt);
+    assert_eq!(dead_letter.origin, JobDeadLetterOrigin::Reaper);
+    assert_eq!(dead_letter.reason, JobDeadLetterReason::LeaseExpired);
+
+    let persisted = get_job_by_id(&pool, None, job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    assert_eq!(persisted.status, JobStatus::DeadLettered);
+    assert!(
+        persisted.worker_id.is_none(),
+        "the dead-lettered queue row no longer names an owner, so the hook identity must come from the reaped record"
     );
 
     teardown_ephemeral_pool(pool, database).await;

@@ -207,8 +207,8 @@ async fn shared_settings_survive_catalog_defaults_and_disabled_specs_keep_handle
 #[tokio::test]
 async fn typed_dispatch_retains_execution_services_and_raw_terminal_cleanup() {
     use runledger_core::jobs::{
-        JobDeadLetterInfo, JobDeadLetterReason, JobExecution, JobExecutionError,
-        JobExecutionServices, JobExecutionUpdate,
+        JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason, JobExecution,
+        JobExecutionError, JobExecutionServices, JobExecutionUpdate,
     };
     use std::time::{Duration, Instant};
     struct Services(Instant);
@@ -279,7 +279,12 @@ async fn typed_dispatch_retains_execution_services_and_raw_terminal_cleanup() {
         .on_dead_letter(
             context,
             json!({"invalid":"raw"}),
-            JobDeadLetterInfo::new(error, JobDeadLetterReason::FailureKindNonRetryable, None),
+            JobDeadLetterInfo::new(
+                error,
+                JobDeadLetterReason::FailureKindNonRetryable,
+                None,
+                JobDeadLetterOrigin::Worker,
+            ),
         )
         .await;
     assert_eq!(calls.load(Ordering::SeqCst), 2);

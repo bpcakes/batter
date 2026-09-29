@@ -9,7 +9,7 @@ use runledger_postgres::jobs::{
 };
 use tracing::{error, info, warn};
 
-use super::dead_letter::notify_handler_of_dead_letter;
+use super::dead_letter::{notify_handler_of_dead_letter, worker_dead_letter_info};
 use super::execution::{is_lease_owner_mismatch_error, lease_owner_mismatch_failure};
 use super::observers::{JobRunningNotification, TerminalJobObserverEvent, TerminalObserverTasks};
 use crate::WorkerError;
@@ -111,7 +111,7 @@ fn failure_completion_post_commit_effects(
 ) -> FailureCompletionPostCommitEffects {
     let dead_letter = match &outcome.disposition {
         jobs::JobFailureCompletionDisposition::DeadLettered { reason } => Some(
-            JobDeadLetterInfo::new(failure.clone(), *reason, Some(outcome.max_attempts)),
+            worker_dead_letter_info(failure, *reason, outcome.max_attempts),
         ),
         jobs::JobFailureCompletionDisposition::RetryScheduled { .. }
         | jobs::JobFailureCompletionDisposition::RetryScheduledAt { .. } => None,

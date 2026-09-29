@@ -1,3 +1,5 @@
+use runledger_core::jobs::JobDeadLetterOrigin;
+
 use super::*;
 
 #[tokio::test]
@@ -209,6 +211,11 @@ async fn process_claimed_job_reports_attempt_exhaustion_to_dead_letter_hook() {
     assert_eq!(dead_letters.len(), 1);
     let dead_letter = &dead_letters[0];
     assert_eq!(dead_letter.reason, JobDeadLetterReason::AttemptsExhausted);
+    assert_eq!(
+        dead_letter.origin,
+        JobDeadLetterOrigin::Worker,
+        "worker-delivered dead letters must identify their origin by type"
+    );
     assert_eq!(dead_letter.failure.kind, JobFailureKind::Retryable);
     assert_eq!(dead_letter.max_attempts, Some(1));
 

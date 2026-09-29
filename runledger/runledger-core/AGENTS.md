@@ -8,6 +8,8 @@ Shared durable-execution contracts: handler traits, job/workflow enums, runtime 
 - `src/jobs.rs`: public jobs/workflow exports.
 - `src/jobs/handler.rs`: handler traits and registry trait.
 - `src/jobs/runtime_types.rs`: `JobContext`, `JobFailure`, `JobProgress`.
+- `src/jobs/dead_letter.rs`: `JobDeadLetterInfo`, `JobDeadLetterReason`, and the
+  `JobDeadLetterOrigin` that tells hooks whether the worker or the reaper delivered them.
 - `src/jobs/status.rs`: persisted status/event enums.
 - `src/jobs/workflow_enqueue/*`: workflow enqueue builders, shared step-shape
   validation, and DAG validation.
