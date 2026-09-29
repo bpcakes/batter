@@ -19,8 +19,8 @@ use axum::{
     routing::{get, post},
 };
 use batter::axum::{
-    AssembledHttp, BoundaryAssemblyError, CorrelationId, GuardedRouter, HttpBoundary, HttpFailure,
-    ProbePath, ReadinessPolicy, RequestPolicy, render_infrastructure_failure,
+    AdmittedRequest, AssembledHttp, BoundaryAssemblyError, GuardedRouter, HttpBoundary,
+    HttpFailure, ProbePath, ReadinessPolicy, RequestPolicy, render_infrastructure_failure,
 };
 use batter::{
     RegistrationError,
@@ -311,6 +311,7 @@ async fn assemble_routes<E: Send + Sync + 'static>(
 
 async fn authenticate(
     State(authenticator): State<BearerAuthenticator>,
+    admitted: AdmittedRequest,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
@@ -320,8 +321,10 @@ async fn authenticate(
         .get::<TrustedRequestMetadata>()
         .cloned()
     else {
-        let correlation_id = request.extensions().get::<CorrelationId>();
-        return render_infrastructure_failure(HttpFailure::Internal, correlation_id);
+        return render_infrastructure_failure(
+            HttpFailure::Internal,
+            Some(admitted.correlation_id()),
+        );
     };
     match authenticator.authenticate(request.headers().get(header::AUTHORIZATION)) {
         Ok(owner) => {
@@ -383,15 +386,16 @@ async fn submit_delivery(
     State(state): State<AppState>,
     Extension(owner): Extension<OwnerId>,
     Extension(metadata): Extension<TrustedRequestMetadata>,
-    Extension(context): Extension<OperationContext>,
+    admitted: AdmittedRequest,
     Path(record_id): Path<Uuid>,
     Json(request): Json<SubmitDelivery>,
 ) -> Response {
-    let _permit = match state.database.enter(&context, Admission::Reject).await {
+    let context = admitted.context();
+    let _permit = match state.database.enter(context, Admission::Reject).await {
         Ok(permit) => permit,
         Err(error) => return admission_failure(error, &metadata),
     };
-    let command_context = match command_context(&context) {
+    let command_context = match command_context(context) {
         Ok(context) => context,
         Err(interruption) => {
             return render_infrastructure_failure(
@@ -534,17 +538,18 @@ async fn get_delivery(
     State(state): State<AppState>,
     Extension(owner): Extension<OwnerId>,
     Extension(metadata): Extension<TrustedRequestMetadata>,
-    Extension(context): Extension<OperationContext>,
+    admitted: AdmittedRequest,
     Path(delivery_id): Path<Uuid>,
 ) -> Response {
-    let _permit = match state.database.enter(&context, Admission::Reject).await {
+    let context = admitted.context();
+    let _permit = match state.database.enter(context, Admission::Reject).await {
         Ok(permit) => permit,
         Err(error) => return admission_failure(error, &metadata),
     };
     query_response(
         state
             .deliveries
-            .get_by_id(&context, owner, delivery_id)
+            .get_by_id(context, owner, delivery_id)
             .await,
         false,
         &metadata,
@@ -555,17 +560,18 @@ async fn get_delivery_by_key(
     State(state): State<AppState>,
     Extension(owner): Extension<OwnerId>,
     Extension(metadata): Extension<TrustedRequestMetadata>,
-    Extension(context): Extension<OperationContext>,
+    admitted: AdmittedRequest,
     Path(idempotency_key): Path<String>,
 ) -> Response {
-    let _permit = match state.database.enter(&context, Admission::Reject).await {
+    let context = admitted.context();
+    let _permit = match state.database.enter(context, Admission::Reject).await {
         Ok(permit) => permit,
         Err(error) => return admission_failure(error, &metadata),
     };
     query_response(
         state
             .deliveries
-            .get_by_key(&context, owner, &idempotency_key)
+            .get_by_key(context, owner, &idempotency_key)
             .await,
         true,
         &metadata,

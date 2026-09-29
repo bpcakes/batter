@@ -187,6 +187,58 @@ fn assert_readiness(capture: Capture, levels: [Option<&str>; 4]) {
     }
 }
 
+#[tokio::test]
+async fn guarded_handlers_extract_the_admitted_request_with_its_generated_identity() {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use batter::{
+        health::{HealthMonitor, HealthPolicy},
+        lifecycle::ShutdownHandle,
+    };
+    use tower::ServiceExt;
+
+    let second = Duration::from_secs(1);
+    let policy = HealthPolicy::new(second, second * 2, second * 4, second).unwrap();
+    let monitor = HealthMonitor::new(policy, || async { Ok::<_, io::Error>(()) });
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let app = router(
+        handle.status(),
+        handle.operation_admission(),
+        ResponseConstructionBudget::new(second).unwrap(),
+        monitor.reader(),
+        BulkheadCapacity::new(32).unwrap(),
+    )
+    .await
+    .unwrap()
+    .into_router();
+    let request = |path: &str| {
+        Request::builder()
+            .uri(path)
+            .header("x-request-id", "untrusted-correlation-value")
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let work = app.clone().oneshot(request("/work")).await.unwrap();
+    assert_eq!(work.status(), StatusCode::OK);
+    assert_eq!(to_bytes(work.into_body(), 64).await.unwrap(), "ok\n");
+
+    let fail = app.oneshot(request("/fail")).await.unwrap();
+    assert_eq!(fail.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let id = fail.headers()["x-request-id"].to_str().unwrap().to_owned();
+    assert_eq!(id.len(), 36);
+    let body = to_bytes(fail.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        body,
+        format!(
+            r#"{{"code":"internal_error","message":"An internal error occurred","request_id":"{id}"}}"#
+        )
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_observations() {
     use axum::{
