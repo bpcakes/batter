@@ -207,9 +207,10 @@ body limit a guarded layer and keep the 404 fallback in the guarded router.
 Authentication before admission would be a low-level composition, not this
 root's order (repository owner decision, 2026-09-28). Reuse `CorrelationId` and
 `render_infrastructure_failure`; do not add another ID generator, observation
-layer, response-header setter or infrastructure renderer. Pass metadata,
-authority and `OperationContext` explicitly. No arbitrary spawned task inherits
-request metadata.
+layer, response-header setter or infrastructure renderer. Handlers and route
+layers take the `OperationContext` and `CorrelationId` from Batter's
+`AdmittedRequest`, never from raw extensions. Pass metadata, authority and the
+context explicitly. No arbitrary spawned task inherits request metadata.
 
 ## Common commands
 

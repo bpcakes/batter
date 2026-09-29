@@ -102,8 +102,9 @@ returns an opaque request client rather than a `Router`; it cannot enter a
 production serving operation and requires an explicit synthetic peer for every
 request.
 `TrustedRequestMetadata` combines that direct peer IP
-with Batter's server-generated `CorrelationId`, separately from the authenticated
-`OwnerId` and request `OperationContext`. Application and infrastructure bodies
+with Batter's server-generated `CorrelationId`, which its middleware takes from
+the `AdmittedRequest`, separately from the authenticated `OwnerId` and the
+request `OperationContext` that handlers take from the same `AdmittedRequest`. Application and infrastructure bodies
 that carry `request_id` agree with the generated `x-request-id` response header.
 `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `traceparent`, `tracestate` and
 client request IDs are ignored; behind a proxy the direct peer is the proxy.

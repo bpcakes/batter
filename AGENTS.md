@@ -154,7 +154,8 @@ full inner-future destruction, without heap allocation.
 routers admitted through a declared `RouteInventory`, and the library-ordered
 `HttpBoundary` composition, whose non-overlapping route groups carry their own
 request and browser policy and whose probes may render application bodies
-without choosing their status;
+without choosing their status; `admitted.rs` owns the privately recorded
+`AdmittedRequest` that guarded handlers extract instead of raw extensions;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics without owning
 credential meaning, authorization, CORS or application error envelopes.

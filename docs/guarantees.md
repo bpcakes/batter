@@ -1310,7 +1310,8 @@ Neither operation interruption nor native failure classification authorizes repl
 ## HTTP boundary
 
 `request_admission` applies the combined readiness/deadline `RequestPolicy` and
-inserts `OperationContext`. `observe_http` independently observes response
+records the admitted request that handlers extract as `AdmittedRequest`,
+described below. `observe_http` independently observes response
 construction without lifecycle state, a deadline or a context extension. The
 existing `request_scope` combines those behaviors for compatibility, and
 `HttpBoundary` assembles probes, admission, correlation and the observer in one
@@ -1425,6 +1426,35 @@ completion event's severity. Assembly never calls a
 renderer. A renderer that blocks or panics does so inside the probe request
 like any handler; probes carry no response-construction deadline.
 
+Guarded handlers and route layers extract `AdmittedRequest`: one value holding
+the admitted request's `OperationContext`, the `CorrelationId` that its
+operational wrapper generated and its `RequestInterruptionResponder`. Admission
+records it privately after the readiness read, and only inside the
+`operational_http` wrapper that owns the request's correlation, as
+`HttpBoundary` and the protected `HttpQuota` assembly install it. The recorded
+identity is the one on the response header and the completion event, even when
+an application layer between that wrapper and admission removes the public
+`CorrelationId` extension. The record's type is private, so no application
+layer can insert, replace or remove it by type. The public value has a private
+field and no constructor, and it is not `Clone`, so it can be neither
+constructed nor inserted into request extensions (compile-fail rustdocs).
+Extracting it where admission recorded nothing answers
+`AdmittedRequestRejection`. That covers a route outside admission, a
+lower-level `request_admission` or `request_scope` without `operational_http`
+outside it, and that wrapper placed inside admission. The rejection is the
+fixed 500 Problem JSON of `HttpFailure::Internal` with `no-store`, naming no
+type, where Axum's missing-extension rejection answers text naming the missing
+type; its completion keeps the WARN default for 5xx. Admission still inserts
+the native `OperationContext` and `RequestInterruptionResponder` extensions, and
+`operational_http` the public `CorrelationId`, for Batter's adapters and
+existing handlers. They are ordinary extensions that any layer can insert,
+replace or remove; raw values neither make the extractor succeed nor change
+what it returns. The shared renderer filter also removes the admission record,
+so a request redispatched from renderer metadata is admitted only by admission
+of its own. Copying a whole extension map from an admitted request into another
+request copies the record with every other value: a transplant of values that
+admission created, not a construction.
+
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling
 an inner layer. Therefore a manual composition that promises generated identity
@@ -1515,8 +1545,8 @@ panic, cancels admitted context, and emits one WARN `dropped` HTTP event without
 a status or panic payload. This covers Rust unwinding, not aborting panics.
 
 The admission point is the readiness read. A request racing drain may be admitted
-when that read sees Ready. It receives an OperationContext extension tied to
-forced process cancellation, not immediate drain. Server-side duration is fixed
+when that read sees Ready. Its admitted `OperationContext` is tied to forced
+process cancellation, not immediate drain. Server-side duration is fixed
 by RequestPolicy; the middleware trusts no client deadline or proxy metadata.
 With the documented `Router::layer` composition, admission wraps guarded routes
 and their default, custom, nested and method fallbacks: unsupported methods and
@@ -1754,8 +1784,9 @@ middleware that reads request extensions directly.
 
 The bearer credential remains the only reference authority input and replaces a
 preexisting `OwnerId` extension before a handler runs. `TrustedRequestMetadata`
-contains neither owner authority nor `OperationContext`; handlers extract and
-pass all three separately. Application success/domain/authentication bodies and
+contains neither owner authority nor `OperationContext`; handlers extract the
+owner, the metadata and the `AdmittedRequest` that carries the context
+separately and pass each explicitly. Application success/domain/authentication bodies and
 shared infrastructure bodies use the typed `CorrelationId`, so any body
 `request_id` agrees with the outer generated response header. Correlation never
 grants access, selects the durable owner, or extends request lifetime.

@@ -1625,7 +1625,34 @@ browser rejection. The child settles in one poll without I/O or spawning. Each
 case requires preserved public correlation/application metadata, distinct child
 correlation with response rewriting, one completion for each request and unchanged
 original quota facts. All five cases failed before shared private-state filtering;
-direct quota-writer removal alone did not isolate observation ownership.
+direct quota-writer removal alone did not isolate observation ownership. Each
+child also fails to extract an `AdmittedRequest`, because it has no admission of
+its own; keeping the admission record in the filter made the browser case fail,
+the one renderer that runs inside admission.
+
+[`admitted_request.rs`](../crates/batter-axum/tests/operational/admitted_request.rs)
+covers the typed extractor. Handlers in the default group, its fallback and a
+90-second upload group each extract their own group's context, which is the
+native context's deadline and is cancelled once the response is built, and the
+generated identity on the response header and the single completion event. The
+extracted responder renders cancellation in the policy's JSON envelope. A route
+added to the assembled router, a correlated route without admission, admission
+without `operational_http` and `operational_http` inside admission all answer
+the exact Problem JSON 500 with `no-store`, at WARN when observed, while
+`Extension<OperationContext>` in the same position answers Axum's text naming
+the type. Admission inside correlation and `request_scope` inside it succeed,
+including when an application layer between them removes the public
+`CorrelationId`. A native context inserted outside admission satisfies
+`Extension<OperationContext>` but not the extractor, and one replaced inside
+admission changes the native extension but not the admitted context or
+identity. Taking the identity from the public extension instead of the
+wrapper's private marker made the removal case fail. Compile-fail rustdocs
+reject constructing the value and inserting it into request extensions, and
+[example tests](../crates/batter/examples/http_service/tests.rs) run the facade
+example's `/work` and `/fail` handlers through the extractor with a matching
+generated envelope identity. A handler behind Runlimit's protected assembly
+extracts it beside `Authenticated<P>`, with the response's generated identity
+([Runlimit HTTP tests](../crates/batter-runlimit/tests/http/dispatch_and_concurrency.rs)).
 
 ## HTTP/1.1 instrumented lifetime observations
 

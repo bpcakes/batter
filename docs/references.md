@@ -1493,6 +1493,29 @@ application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
+## Admitted request extraction reviewed: 2026-09-29
+
+`Cargo.lock` still resolves Axum 0.8.9, axum-core 0.5.6 and http 1.5.0, reviewed
+from their published crate sources. In http 1.5.0,
+[`Extensions::insert`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.insert)
+and the `get_or_insert` family require `T: Clone + Send + Sync + 'static`,
+while `get`, `get_mut` and `remove` name the type without requiring `Clone`.
+`Extensions` itself derives `Clone`, and `extend` merges another whole map. A
+value that is not `Clone` therefore cannot be stored in request extensions, and
+a stored type that callers cannot name cannot be read, replaced or removed by
+type, although cloning or extending a whole map copies every stored value. The
+[Axum 0.8.9 `Extension` extractor](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/extension.rs)
+rejects a missing value with `MissingExtension`. axum-core 0.5.6's rejection
+macro renders that as status 500 with a `text/plain` body naming the type:
+``Extension of type `T` was not found. Perhaps you forgot to add it? See
+`axum::Extension`.`` An extractor's own `FromRequestParts::Rejection` chooses
+its response instead, and axum-core implements `FromRequestParts` for
+`Result<T, T::Rejection>`, so a handler can receive the rejection value and
+render it itself. `AdmittedRequest` relies on these rules: admission stores a
+private `Clone` record that only Batter can name, the public value is not
+`Clone`, and its rejection renders `HttpFailure::Internal`. No new upstream
+runtime behaviour is claimed.
+
 ## Rendered probe outcome reviewed: 2026-09-28
 
 `Cargo.lock` still resolves Axum 0.8.9 and http 1.5.0, reviewed from their

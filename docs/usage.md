@@ -400,6 +400,20 @@ to its shared private state. A plain observer may wrap `operational_http`, but
 admission, `request_scope`, deadlines and other rejecting middleware must remain
 inside it to retain generated correlation on every outcome. Routes added after
 assembly sit outside the boundary.
+Guarded handlers and route layers take one `admitted: AdmittedRequest`
+extractor: `admitted.context()` is the request's `OperationContext` for nested
+operations and admission waits, `admitted.correlation_id()` the generated
+`CorrelationId` for metadata and envelopes, and
+`admitted.interruption_responder().render(reason)` answers a nested
+interruption in the admission policy's envelope. It replaces
+`Extension<OperationContext>`, `Extension<CorrelationId>` and
+`Extension<RequestInterruptionResponder>` in handlers; those raw extensions
+remain for Batter's adapters but any layer can replace them, and outside
+admission they answer Axum's missing-extension text. A handler that the
+boundary did not admit, such as a route added after assembly, answers the
+sanitized 500 `AdmittedRequestRejection` instead. Extract
+`Result<AdmittedRequest, AdmittedRequestRejection>` to render that case in the
+application's own envelope.
 Give routes their own budget or browser posture with a named `RouteGroup`:
 `with_group(RouteGroup::new("uploads", upload_policy, routes))` before
 `assemble`. A `GroupPolicy::browser(policy, BrowserPolicy::with_mutation_checks(...))`
@@ -455,8 +469,8 @@ renderer receives the adapter's `CorrelationId` and request parts but no
 application metadata. `HttpBoundary` installs
 `operational_http`, which generates a UUID and replaces incoming header/Tower/
 adapter identities; it emits one HTTP completion with an event-local ID even
-when INFO spans are disabled. Extract `Extension<CorrelationId>` for explicit
-metadata propagation.
+when INFO spans are disabled. Read `AdmittedRequest::correlation_id` for
+explicit metadata propagation.
 Applications remain responsible for durable uniqueness requirements and trust policy.
 The example selects `with_infrastructure_json()` and uses
 `render_infrastructure_failure` in handlers; legacy Problem JSON and custom
@@ -475,8 +489,8 @@ request then builds `TrustedRequestMetadata` from only the accepted socket peer
 plus `CorrelationId` and authenticates `OwnerId`, both within the request
 deadline; a draining or not-yet-ready process rejects the request before either
 runs. It ignores forwarding, trace and client-ID headers and implements no proxy
-mode. Handlers extract metadata, authority and `OperationContext` separately;
-correlation is never a grant.
+mode. Handlers extract metadata, authority and the `AdmittedRequest` carrying
+the `OperationContext` separately; correlation is never a grant.
 
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their
