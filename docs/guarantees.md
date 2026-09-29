@@ -54,7 +54,12 @@ timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
 The admission failure renderer receives ordinary request metadata without the
-private writer, including when admission fails before the quota boundary runs.
+private writer, shared observation state or operational ownership marker,
+including when admission fails before the quota boundary runs. The same filter
+protects captured interruption metadata, probe renderers and browser rejection
+renderers. Public correlation and application extensions remain available;
+redispatch through an operational wrapper owns a separate correlation and
+completion and cannot replace the original observation's quota facts.
 The non-cloneable writer moves from unstarted to started to consumed terminal
 publication. Dropping it before a check leaves `NotChecked`; dropping it during
 a check leaves `Unresolved`. A published terminal fact cannot be replaced with a
@@ -1405,7 +1410,8 @@ the same assembly check against every group's routes, and the probe is mounted
 outside every group's admission, inside correlation and the single observer.
 The application renderer runs synchronously for each probe request with the
 request metadata, including the generated `CorrelationId`, but without the
-body or Batter's private quota writer; a probe is never admitted, so no
+body or Batter's private quota writer, observation state or operational ownership
+marker; a probe is never admitted, so no
 `OperationContext` or `RequestInterruptionResponder` is present. The renderer
 returns the response body and headers, for example an OpenAPI-documented JSON
 document, but not the probe's outcome. The boundary then sets liveness to 200

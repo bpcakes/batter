@@ -5,7 +5,7 @@ use crate::{
 use axum::{
     Json,
     extract::Request,
-    http::header,
+    http::{header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -18,6 +18,20 @@ use tracing::Instrument;
 /// Observation ownership is separate because either wrapper can be outermost.
 #[derive(Clone, Copy)]
 struct OperationalScope;
+
+/// Pass data to application renderers without delegating the original
+/// request's observation or operational ownership. A renderer can clone Parts
+/// into another request and run supported middleware, so removing only the
+/// direct quota writer would leave shared observation mutation reachable.
+/// Keep public correlation and application extensions available for rendering.
+pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
+    parts
+        .extensions
+        .remove::<crate::quota_observation::QuotaObservation>();
+    parts.extensions.remove::<ObservationState>();
+    parts.extensions.remove::<OperationalScope>();
+    parts
+}
 
 /// Server-generated UUID correlation, never authentication or authorization.
 ///

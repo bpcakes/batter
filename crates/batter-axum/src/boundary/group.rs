@@ -4,8 +4,7 @@ use super::GuardedRouter;
 use crate::{
     RequestPolicy,
     browser::{MutationPolicy, MutationRejection, PrivateResponsePolicy},
-    quota_observation::QuotaObservation,
-    request_admission,
+    correlation, request_admission,
 };
 use axum::{
     Router,
@@ -37,7 +36,9 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 /// maps the sanitized [`MutationRejection`] into the application's envelope and
 /// receives the request metadata, including a
 /// [`CorrelationId`](crate::CorrelationId) and the admitted
-/// `OperationContext`, but not the body.
+/// `OperationContext`, but not the body or private quota/observation/operational
+/// ownership state. Redispatching cloned metadata cannot mutate the original
+/// request's observation.
 ///
 /// ```
 /// use axum::response::IntoResponse;
@@ -176,11 +177,9 @@ async fn check_mutation(
     match guard.policy.check(request.headers()) {
         Ok(()) => next.run(request).await,
         Err(rejection) => {
-            let (mut parts, body) = request.into_parts();
+            let (parts, body) = request.into_parts();
             drop(body);
-            // The renderer needs request metadata, never the observer's private writer.
-            parts.extensions.remove::<QuotaObservation>();
-            (guard.render)(rejection, &parts)
+            (guard.render)(rejection, &correlation::renderer_parts(parts))
         }
     }
 }

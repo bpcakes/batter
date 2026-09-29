@@ -393,6 +393,22 @@ They fail when a renderer's status or severity survives, when the quota writer
 stays on renderer metadata, when a condition replaces a dependency reason, or
 when a condition's answer decides the decision for a starting lifecycle.
 
+The metadata isolation review found an indirect capability after direct quota
+writer removal: cloned `Parts` still carried shared observation state, allowing
+redispatch through quota middleware to replace the original probe's quota facts.
+The same incomplete filter existed in failure/interruption and browser rejection
+rendering. This was an adapter design gap, not an application protocol obligation.
+All renderer crossings now use one private filter removing the quota writer,
+shared observation state and operational ownership marker. Ordinary nested
+middleware keeps those states; a new request made from renderer metadata gets
+independent correlation and completion under an operational wrapper. Public
+correlation and application metadata remain available to renderers. Merely adding
+another probe-only removal would leave sibling paths exposed; a new public
+metadata type would break signatures without being needed to remove these
+library-owned capabilities. Redispatch regressions cover both probes, admission
+failure, captured interruption rendering and browser rejection with ordinary and
+quota wrappers, checking original facts and independent child completion.
+
 Remaining boundaries are explicit. Condition checks and renderers run
 synchronously inside the probe request, and probes carry no
 response-construction deadline because they sit outside admission; a check or

@@ -693,7 +693,8 @@ are `NotConsumed`. The native exhaustive errors no longer contain a
 post-commit malformed-response variant. Native decisions are built before commit.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
 quota rejection. `request_admission` captures the original request metadata without the
-private quota writer and installs an opaque interruption responder for the inner
+private quota writer, shared observation state and operational ownership marker,
+and installs an opaque interruption responder for the inner
 adapter; it uses
 the same `RequestPolicy` renderer as an outer cancellation or deadline. A
 custom renderer, including `with_infrastructure_json`, owns that response's

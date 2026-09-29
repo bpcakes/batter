@@ -1,7 +1,4 @@
-use crate::{
-    HttpObservationLevel, ReadinessPolicy, quota_observation::QuotaObservation,
-    readiness::ReadinessRenderer,
-};
+use crate::{HttpObservationLevel, ReadinessPolicy, correlation, readiness::ReadinessRenderer};
 use axum::{
     extract::Request,
     http::{StatusCode, request::Parts},
@@ -44,13 +41,11 @@ where
     })
 }
 
-/// The probe request's metadata without its body or the observer's private
-/// quota writer.
+/// The probe request's metadata without its body or private operational state.
 fn renderer_parts(request: Request) -> Parts {
-    let (mut parts, body) = request.into_parts();
+    let (parts, body) = request.into_parts();
     drop(body);
-    parts.extensions.remove::<QuotaObservation>();
-    parts
+    correlation::renderer_parts(parts)
 }
 
 /// A validated, literal route for a process probe.

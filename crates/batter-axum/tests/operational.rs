@@ -6,5 +6,6 @@ mod operational {
     mod correlation;
     mod readiness;
     mod rendered_probes;
+    mod renderer_isolation;
     mod serving;
 }

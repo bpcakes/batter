@@ -39,6 +39,8 @@ Windows support and non-Unix fallbacks are out of scope.
   the one outer completion event.
 - `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
+  Its private `renderer_parts` filter removes quota, observation and operational
+  ownership state at every application renderer boundary, retaining public metadata.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
   `operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
@@ -171,6 +173,9 @@ must fail loudly rather than compile and miss the new decision extension.
 Observation severity overrides are explicit response extensions, independent of
 admission. Preserve actual status/outcome and the default WARN for dropped
 futures. No application callback belongs in the observation guard's destructor.
+Use the shared metadata filter for probes, failure/interruption renderers and
+browser rejections. Removing only the quota writer leaves cloned metadata able
+to replace the original observer's facts through ordinary middleware redispatch.
 Keep sanitized HTTP completion fields on the event independently of span filtering.
 The all-targets test gate includes the example's live readiness tests and requires
 loopback socket permission. Preserve both enabled-event and filtered-event assertions.

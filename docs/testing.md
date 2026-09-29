@@ -1618,6 +1618,15 @@ liveness severity, leaving the quota writer on renderer metadata, letting a
 condition replace a dependency reason and letting a condition's answer decide a
 starting lifecycle's decision each made these tests fail.
 
+[`renderer_isolation.rs`](../crates/batter-axum/tests/operational/renderer_isolation.rs)
+redispatches cloned renderer metadata through ordinary and quota operational
+wrappers for liveness, readiness, admission failure, captured interruption and
+browser rejection. The child settles in one poll without I/O or spawning. Each
+case requires preserved public correlation/application metadata, distinct child
+correlation with response rewriting, one completion for each request and unchanged
+original quota facts. All five cases failed before shared private-state filtering;
+direct quota-writer removal alone did not isolate observation ownership.
+
 ## HTTP/1.1 instrumented lifetime observations
 
 Run `cargo test -p batter-axum --test http_lifetime_observations --locked` from the root.

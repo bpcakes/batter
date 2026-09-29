@@ -196,7 +196,8 @@ impl HttpBoundary {
     /// admission, with the application's response.
     ///
     /// `render` receives the request metadata, including the generated
-    /// [`CorrelationId`](crate::CorrelationId) but not the body, and returns
+    /// [`CorrelationId`](crate::CorrelationId) but not the body or private
+    /// quota/observation/operational ownership state, and returns
     /// the application's response, for example a documented JSON body and its
     /// headers. Answering at all is the liveness signal, so the boundary then
     /// sets status 200, replacing any status the renderer chose, and removes
@@ -243,7 +244,9 @@ impl HttpBoundary {
     /// Each request takes one fresh decision from `policy`, including any
     /// application conditions added with [`ReadinessPolicy::with_condition`],
     /// and passes it to `render` with the request metadata, including the
-    /// generated [`CorrelationId`](crate::CorrelationId) but not the body.
+    /// generated [`CorrelationId`](crate::CorrelationId) but not the body or
+    /// private quota/observation/operational ownership state. Cloned renderer
+    /// metadata cannot rewrite the original request's observation on redispatch.
     /// `render` chooses the body and headers, for example an
     /// OpenAPI-documented JSON document, and cannot alter the decision: the
     /// boundary then sets the status from [`crate::readiness_status`], 200 only

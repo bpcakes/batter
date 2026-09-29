@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Isolate private observation ownership at every application renderer boundary.
+  Probe, failure/interruption and browser rejection metadata retain public
+  correlation and application extensions but exclude the quota writer, shared
+  observation state and operational ownership marker. Redispatching cloned
+  metadata through operational middleware creates an independent request rather
+  than altering the original request's correlation or quota observations.
 - Render probe bodies from the readiness decision. `HttpBoundary` adds
   `with_rendered_liveness(path, render)` and
   `with_rendered_readiness(path, readiness, render)`: the application renderer
