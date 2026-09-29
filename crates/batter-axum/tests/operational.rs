@@ -2,6 +2,7 @@
 mod capture;
 
 mod operational {
+    mod admitted_request;
     mod connect_info;
     mod correlation;
     mod readiness;

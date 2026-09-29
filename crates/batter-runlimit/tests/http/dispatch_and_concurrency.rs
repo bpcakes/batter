@@ -85,3 +85,35 @@ async fn concurrent_requests_have_independent_admission_observations() {
     assert!(success_event.contains("quota_consumption=\"consumed\""));
     finish(running).await;
 }
+
+#[tokio::test]
+async fn protected_handlers_extract_the_admitted_request() {
+    let running = running().await;
+    let routes = Router::new().route(
+        "/work",
+        post(
+            |principal: Authenticated<Principal>, admitted: batter_axum::AdmittedRequest| async move {
+                admitted.context().check().expect("admitted context");
+                format!("{}:{}", principal.principal().0, admitted.correlation_id())
+            },
+        ),
+    );
+    let client = prepare(
+        Quota::new(memory()),
+        vec![policy("owner", 1)],
+        request_policy(&running, 1000),
+        routes,
+    )
+    .in_process();
+    let response = client
+        .request(request("/work", "Bearer secret-a"), peer())
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = response.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(body, format!("owner-a:{id}"));
+    finish(running).await;
+}

@@ -91,21 +91,23 @@ impl Error for BoundaryAssemblyError {}
 /// probe renderers and guarded routes; the order cannot be changed, no probe
 /// can end up inside an admission gate, and no request path can reach routes
 /// of two groups. A probe renderer chooses the probe's body and headers, never
-/// its status or readiness decision. This is the canonical path.
+/// its status or readiness decision. Guarded handlers extract the
+/// [`AdmittedRequest`](crate::AdmittedRequest) that their group's admission
+/// recorded. This is the canonical path.
 /// [`crate::observe_http`], [`crate::request_admission`],
 /// [`crate::request_scope`] and [`crate::operational_http`] remain available for
 /// compositions the boundary cannot express; each documents the ordering it
 /// then leaves with the caller.
 ///
 /// ```
-/// use axum::{Extension, Router, routing::get};
+/// use axum::routing::get;
 /// use batter_core::{
 ///     health::{HealthMonitor, HealthPolicy},
 ///     lifecycle::ShutdownHandle,
-///     operation::OperationContext,
 /// };
 /// use batter_axum::{
-///     HttpBoundary, ProbePath, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+///     AdmittedRequest, HttpBoundary, ProbePath, ReadinessPolicy, RequestPolicy,
+///     ResponseConstructionBudget,
 /// };
 /// use std::{convert::Infallible, time::Duration};
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -116,8 +118,8 @@ impl Error for BoundaryAssemblyError {}
 /// let monitor = HealthMonitor::new(policy, || async { Ok::<_, Infallible>(()) });
 /// let guarded = batter_axum::GuardedRouter::new().route(
 ///     "/work",
-///     get(|Extension(context): Extension<OperationContext>| async move {
-///         context.check().expect("admitted context");
+///     get(|admitted: AdmittedRequest| async move {
+///         admitted.context().check().expect("admitted context");
 ///         "ok"
 ///     }),
 /// );
