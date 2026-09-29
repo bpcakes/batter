@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::future::Future;
 
 use crate::settlement::TaskSet;
-use runledger_core::jobs::{JobContext, JobDeadLetterInfo, JobDeadLetterReason};
+use runledger_core::jobs::{
+    JobContext, JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason,
+};
 use runledger_postgres::jobs::{ReapedLeaseDisposition, ReapedLeaseRecord};
 use tokio::sync::watch;
 use tokio::task::Id;
@@ -15,7 +17,6 @@ use crate::dead_letter_hook::{
 use crate::registry::JobRegistry;
 use crate::shutdown;
 
-const REAPER_WORKER_ID: &str = "reaper";
 const REAPER_TERMINAL_HOOK_MAX_CONCURRENCY: usize = 8;
 #[cfg(test)]
 const TERMINAL_HOOK_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_millis(150);
@@ -25,6 +26,9 @@ const TERMINAL_HOOK_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 const TERMINAL_HOOK_ABORT_DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
 #[cfg(not(test))]
 const TERMINAL_HOOK_ABORT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 pub(super) async fn notify_handlers_of_terminal_lease_expirations(
@@ -95,6 +99,11 @@ where
             continue;
         };
 
+        let Some(worker_id) = job.worker_id.clone() else {
+            warn_missing_lease_owner(job);
+            continue;
+        };
+
         if let Some(before_first_hook_admission) = before_first_hook_admission.take() {
             before_first_hook_admission();
         }
@@ -109,7 +118,7 @@ where
             run_number: job.run_number,
             attempt: job.attempt,
             organization_id: job.organization_id,
-            worker_id: REAPER_WORKER_ID.to_string(),
+            worker_id,
             checkpoint: job.checkpoint.clone(),
         };
         let payload = payload.clone();
@@ -117,6 +126,7 @@ where
             job.failure.clone(),
             JobDeadLetterReason::LeaseExpired,
             Some(job.max_attempts),
+            JobDeadLetterOrigin::Reaper,
         );
         let hook_meta = HookMetadata {
             job_id: job.job_id.to_string(),
@@ -132,6 +142,7 @@ where
             job_type = %job.job_type,
             run_number = job.run_number,
             attempt = job.attempt,
+            worker_id = %context.worker_id,
         );
 
         let tasks = fanout.in_flight.registry();
@@ -404,6 +415,16 @@ impl TerminalHookFanout {
             }
         }
     }
+}
+
+fn warn_missing_lease_owner(job: &ReapedLeaseRecord) {
+    warn!(
+        job_id = %job.job_id,
+        job_type = %job.job_type,
+        run_number = job.run_number,
+        attempt = job.attempt,
+        "reaped terminal lease has no recorded lease owner; skipping its dead-letter hook because the durable attempt's worker identity is unavailable"
+    );
 }
 
 fn log_terminal_hook_shutdown_drain_start(in_flight_terminal_hooks: usize) {
