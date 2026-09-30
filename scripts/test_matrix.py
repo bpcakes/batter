@@ -36,6 +36,9 @@ RUNLEDGER_CONSUMER = [sys.executable, "scripts/check_runledger_consumer.py"]
 RUNLEDGER_TOOL_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_runledger_tools.py", "-v"]
 RUNLIMIT_CONSUMER = [sys.executable, "scripts/check_runlimit_consumer.py"]
+SINGLE_FACADE_CONSUMER = [sys.executable, "scripts/check_single_facade_consumer.py"]
+SINGLE_FACADE_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                          "-p", "test_single_facade_consumer.py", "-v"]
 RUNLIMIT_CONSUMER_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                               "-p", "test_runlimit_consumer.py", "-v"]
 RUNLIMIT_GRAPH = [sys.executable, "scripts/check_runlimit_workspace.py"]
@@ -68,12 +71,16 @@ def parts():
         "consumers": [(["facade-feature-controls", "runledger-consumer", "runledger-workspace", "runledger-graph-controls"],
                        [FACADE_FEATURES, RUNLEDGER_CONSUMER, RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS]),
                       (["facade-cache-controls", "runlimit-consumer", "runlimit-isolated-features", "runledger-tool-controls"],
-                       [FACADE_CACHE_CONTROLS, RUNLIMIT_CONSUMER, RUNLIMIT_FEATURES, RUNLEDGER_TOOL_CONTROLS])],
+                       [FACADE_CACHE_CONTROLS, RUNLIMIT_CONSUMER, RUNLIMIT_FEATURES, RUNLEDGER_TOOL_CONTROLS]),
+                      # The single-facade consumer owns a PostgreSQL container and
+                      # a full facade build; keep it in its own batch.
+                      (["single-facade-consumer"], [SINGLE_FACADE_CONSUMER])],
         "runlimit": [(["runlimit-default", "runlimit-release", "runlimit-workspace"],
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls"], [RUNLIMIT_CONSUMER_CONTROLS])],
+                    (["runlimit-consumer-controls", "single-facade-controls"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS])],
     }
 
 

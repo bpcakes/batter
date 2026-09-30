@@ -14,16 +14,25 @@ readme = "README.md"
 [lints]
 workspace = true
 
+[features]
+default = []
+# Reachability for Runledger's own Docker-provisioned PostgreSQL test support.
+# Test-only; it selects no runtime behaviour and stays out of the default graph.
+test-support = ["dep:runledger-test-support"]
+
 [dependencies]
 batter-core.workspace = true
 batter-sqlx.workspace = true
+# Declared directly so `native::core` can re-export the one native identity that
+# `runledger-postgres` and `runledger-runtime` already resolve.
+runledger-core.workspace = true
 runledger-postgres.workspace = true
 runledger-runtime.workspace = true
+runledger-test-support = { workspace = true, optional = true }
 sqlx = { workspace = true, features = ["postgres"] }
 
 [dev-dependencies]
 batter-test-support.workspace = true
-runledger-core.workspace = true
 serde_json = "1"
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres"] }

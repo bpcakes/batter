@@ -23,10 +23,15 @@ metrics = ["batter-core/metrics"]
 otlp = ["dep:batter-otlp", "metrics"]
 sqlx = ["dep:batter-sqlx"]
 runledger = ["dep:batter-runledger", "sqlx"]
+runledger-test-support = ["runledger", "batter-runledger/test-support"]
 runlimit = ["dep:batter-runlimit"]
 runlimit-memory = ["runlimit", "batter-runlimit/memory"]
 runlimit-postgres = ["runlimit", "batter-runlimit/postgres"]
 runlimit-axum = ["runlimit", "axum", "batter-runlimit/axum"]
+# Native Runlimit transport packages. Neither selects the Batter Axum adapter or
+# this facade's protected quota-before-body assembly.
+runlimit-native-http = ["runlimit", "batter-runlimit/native-http"]
+runlimit-native-axum = ["runlimit", "batter-runlimit/native-axum"]
 test-support = ["dep:batter-test-support"]
 sqlx-test-support = ["sqlx", "test-support", "batter-sqlx/test-support"]
 
@@ -45,6 +50,8 @@ anyhow = "1.0"
 axum.workspace = true
 runlimit-core = { workspace = true }
 runlimit-memory = { workspace = true }
+runlimit-http = { workspace = true }
+runlimit-axum = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "signal", "net"] }
@@ -86,3 +93,7 @@ required-features = ["runlimit-memory", "runlimit-axum"]
 [[test]]
 name = "composed_handler_consumer"
 required-features = ["axum", "sqlx", "runlimit-memory"]
+
+[[test]]
+name = "native_transport_consumer"
+required-features = ["runlimit-memory", "runlimit-native-http", "runlimit-native-axum"]

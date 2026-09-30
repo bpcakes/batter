@@ -3,13 +3,17 @@
 ## Purpose
 
 Translate Runledger initialization and complete native settlement into Batter
-managed registration, and reexport Runledger's phase-scoped atomic runner. Follow the root Unix-only policy. Native task
+managed registration, reexport Runledger's phase-scoped atomic runner, and make
+the native Runledger packages reachable through one facade dependency. Follow the
+root Unix-only policy. Native task
 ownership, durable job outcomes, registry/catalog policy and database provisioning stay native.
 
 ## Key entrypoints
 
 - `src/lib.rs`: inert registration, startup observation, stop propagation and native report.
 - `src/lib.rs`: opaque `run_atomic` composition without native connection exposure.
+- `src/lib.rs`: the `native` module reexporting `runledger-core`, `runledger-postgres`,
+  `runledger-runtime` and, behind `test-support`, `runledger-test-support`.
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
 - Reference service: application schema, handler selection and dependency health.
 
@@ -32,6 +36,15 @@ snapshot evidence; never restore borrowed session/transaction views.
 `run_atomic` owns disposition and consumes the intent phase before queue operations.
 It uses Batter's SQLx foundation and only releases outputs after acknowledgement.
 No raw owner extraction or legacy bridge is supported.
+The `native` module reexports the native packages themselves, never wrappers or
+copies, so facade and direct paths keep one type identity. Reachability is not
+ownership: keep `register_in` the protected path, keep the module documentation's
+caller obligations current when native lifecycle APIs change, and never let a
+native namespace become the documented way to run a worker. `native::test_support`
+stays behind its own opt-in feature and out of the default graph; Docker
+provisioning and teardown remain Runledger's. Adding a namespace never authorizes
+changing a native runtime, storage, policy or lifecycle. `runledger-tui` is
+binary-only and has no namespace.
 
 ## Common commands
 
@@ -40,6 +53,8 @@ No raw owner extraction or legacy bridge is supported.
 The native packages live under `runledger/` in the shared workspace. Run
 `scripts/check_runledger_workspace.py` to check actual Cargo source identity and
 ownership direction. No source pin, sibling checkout or foundation patch remains.
-Validate both feature branches together. Publication is governed by the active
+Validate both feature branches together. `python3 scripts/check_single_facade_consumer.py`
+executes the single-dependency consumer, and `python3 scripts/check_facade_features.py`
+proves each namespace's reachability, isolation and identity. Publication is governed by the active
 `batter-ddc` release task. Final acceptance includes root pinned-toolchain/live
 gates locally and MSRV verification in CI.

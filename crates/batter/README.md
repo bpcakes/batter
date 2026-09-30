@@ -20,11 +20,14 @@ The default feature set is empty. The available feature/module pairs are:
 | `axum` | `batter::axum` |
 | `metrics` | `batter::telemetry::metrics`: bounded foundation outcome metrics through the `metrics` facade; no recorder or exporter is installed |
 | `sqlx` | `batter::sqlx` |
-| `runledger` | `batter::runledger` plus the required `batter::sqlx` capability |
-| `runlimit` | `batter::runlimit` |
-| `runlimit-memory` | native memory error bridge through `batter::runlimit` |
-| `runlimit-postgres` | native PostgreSQL error bridge through `batter::runlimit` |
+| `runledger` | `batter::runledger` and `batter::runledger::native::{core, postgres, runtime}`, plus the required `batter::sqlx` capability |
+| `runledger-test-support` | `batter::runledger::native::test_support`: test-only reachability for Runledger's own PostgreSQL support |
+| `runlimit` | `batter::runlimit` and `batter::runlimit::native` |
+| `runlimit-memory` | native memory error bridge plus `batter::runlimit::memory` |
+| `runlimit-postgres` | native PostgreSQL error bridge plus `batter::runlimit::postgres` |
 | `runlimit-axum` | `batter::runlimit::http` and `batter::axum` |
+| `runlimit-native-http` | `batter::runlimit::native_transport::http`: native response metadata, no transport framework |
+| `runlimit-native-axum` | `batter::runlimit::native_transport::axum`: the native caller-controlled layer, without `batter::axum` |
 | `test-support` | `batter::test_support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` plus generic support |
 
@@ -38,6 +41,15 @@ batter = { path = "../batter", features = ["axum", "runlimit-axum"] }
 The facade selects namespaces; `batter-at-rest`, native Axum, SQLx, Runledger, Runlimit and the
 external PostgreSQL harness remain direct ecosystem dependencies with their
 existing ownership and configuration.
+
+The `native`, `memory`, `postgres` and `native_transport` namespaces are the
+native packages themselves, so one `batter` dependency needs no direct
+native-package declaration and no `[patch]`; see the
+[single-dependency recipe](../../docs/reference-compatibility.md#single-dependency-recipe).
+They are deliberately low-level and do not move ownership:
+`batter::runledger::register_in` remains the protected registration path and
+`batter::runlimit::http` the protected quota-before-body assembly, while each
+native module documents the obligations its callers take on.
 
 The standalone encryption package can be selected directly as `batter-at-rest`;
 the facade always retains its normal `batter-core` dependency. Cargo unifies
