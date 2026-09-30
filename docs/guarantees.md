@@ -1842,8 +1842,15 @@ policy review; `ReadinessUnreadyReason::Condition` is such a state, so an
 exhaustive match must now handle it. Old `readiness` and `liveness` keep their
 status-only contracts.
 
-`register_http` transfers a bound TcpListener and initialized Router into a
-critical component. The factory does no work before supervision starts and
+`register_http` transfers a bound listener and initialized Router into a
+critical component. The listener is any `axum::serve::Listener` whose address
+type is `Debug`: a `TcpListener`, a Unix listener, or an application-owned
+listener that completes its own TLS handshakes.
+The listener type is inferred without adding an explicit type argument. Existing
+TCP calls, including `register_http_in::<Supervisor>(...)`, its connect-info
+companion and both `AssembledHttp` methods with an explicit registration target,
+retain their source compatibility and TCP function-pointer signatures.
+The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
 remain necessary. Invalid or duplicate registration releases only the rejected
 listener. Cancelling a borrowed StartingSupervisor waiter leaves the listener
@@ -1860,13 +1867,36 @@ though every direct task was joined. The test separately releases the body.
 There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
 `register_http` and `register_http_in` accept a plain Router and supply no
 ConnectInfo extension. Their opt-in companion `register_http_with_connect_info_in`
-uses native `into_make_service_with_connect_info::<SocketAddr>` so middleware and
-handlers can extract the accepted TCP socket's remote address and port. Forwarded,
+uses native `into_make_service_with_connect_info::<L::Addr>` so middleware and
+handlers can extract the listener's own accepted peer. For a TcpListener, and for
+a TLS listener over TCP, that remains `ConnectInfo<SocketAddr>` with the accepted
+socket's remote address and port. Forwarded,
 X-Forwarded-For and X-Real-IP headers are not interpreted; behind a proxy the peer
 is the proxy. Authentication, proxy trust and application extension replacement
 remain application-owned. The companion shares the registration, acknowledgement,
 listener-release, graceful-drain and conservative wrapper-abort contracts above.
-It accepts no arbitrary make-service, custom metadata type or alternate listener.
+It accepts no arbitrary make-service or custom metadata type. Pinned Axum 0.8.9
+implements `Connected` for a bare listener only for TcpListener and generically
+only for `ListenerExt::tap_io`, so the companion applies an empty tap itself; it
+changes no accepted connection and no reported address, and its extra `Clone`,
+`Sync` and `'static` address bounds are Axum's `Connected` requirements.
+
+Accepting any listener moves no policy into Batter. The listener owns binding,
+certificates, private keys, protocol versions, ALPN, client-certificate rules,
+handshake concurrency and accept retry; Axum's trait cannot return an accept
+error, so accept failures never reach the component exit. When drain arrives the
+accept in progress, including a handshake awaited inside it, is dropped without
+being awaited, and the listener is released before connection completion is
+awaited. Work a listener spawns onto the runtime instead of polling inside
+`accept` is a detached descendant with exactly the standing of Axum's own
+connection tasks: registration proves nothing about its termination, and wrapper
+abortion still conservatively skips cleanup. A real rustls regression serves the
+canonical assembled boundary with a generated certificate and asserts startup
+acknowledgement before readiness, a probe answered outside admission, the
+transport peer against a client-owned oracle, a drain that waits for a response
+still streaming on an open connection, the destruction of an accept parked in its
+handshake, and release of rejected and abandoned listeners. TLS crates are
+`batter-axum` dev-dependencies only; no published package gains a TLS dependency.
 
 ## Optional database fixture finish
 

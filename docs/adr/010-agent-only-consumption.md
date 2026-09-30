@@ -475,6 +475,66 @@ known outside admission; an application that needs its envelope extracts
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.
 
+### Generic serving listener assessment (`batter-tc9w.7`)
+
+Owned serving accepted only `tokio::net::TcpListener`. A read-only survey of two
+downstream consumers found one of them rebuilding TLS serving as its own managed
+component of about two hundred lines. It owned a rustls listener and its
+handshakes, which is application policy, but it also repeated Batter's
+registration, startup acknowledgement, graceful-drain signal and stopped-proof
+assembly, which is not. Those repeated lines are the caller-memory obligation:
+copied lifecycle wiring can acknowledge startup at the wrong moment, omit the
+graceful-shutdown signal, or discard the `ComponentExit` proof, and nothing in
+the adapter's shape prevented it.
+
+`register_http`, `register_http_in`, `register_http_with_connect_info_in` and
+both `AssembledHttp` registration methods now accept any `axum::serve::Listener`.
+The canonical assembled boundary therefore serves TLS through exactly the path
+that already owns listener transfer, acknowledgement, drain and conservative
+cleanup, and the application keeps only the part it actually owns. Existing
+`TcpListener` call sites keep their signatures and behaviour, so this removes an
+obligation without adding a choice.
+The public listener parameters use argument-position `impl Listener` with
+associated-address bounds. Adding a named listener type parameter would break
+existing explicit registration-target arguments; compilation coverage checks
+those original call forms for the raw helpers and both assembled methods. This
+signature choice preserves the same ownership transfer and address constraints;
+it introduces no additional registration phase or caller obligation.
+
+Peer metadata stays library-owned. Pinned Axum 0.8.9 implements `Connected` for a
+bare listener only for `TcpListener`, and generically only for
+`ListenerExt::tap_io`, so a consumer reaching connect info for its own listener
+had to know that and wrap it. `register_http_with_connect_info_in` now applies
+that empty tap itself, and `ConnectInfo<L::Addr>` follows from the registration
+choice rather than from an upstream implementation detail. The address bounds in
+the signature are Axum's own `Connected` and `Debug` requirements, so a listener
+whose address cannot supply connect info fails to compile at registration instead
+of answering Axum's missing-extension 500 on every request.
+
+What remains with the application is explicit and could not be narrowed locally.
+`Listener::accept` cannot return an error, so retry and backoff after a failed
+accept, certificate and key selection, protocol versions, ALPN,
+client-certificate rules and handshake concurrency are the listener's own policy;
+Batter installs no crypto provider and takes no TLS dependency outside test
+material. A listener that spawns handshakes onto the runtime instead of polling
+them inside `accept` creates detached descendants, exactly like Axum's own
+connection tasks: registration proves nothing about their termination, and a
+wrapper abort or panic still conservatively skips cleanup. Rust cannot express
+"this trait implementation detaches nothing", so that stays a disclosed caller
+obligation rather than an invented guarantee. Drain destroys the accept in
+progress without awaiting it, which the suite asserts directly.
+
+The pre-existing mismatch between a handler extracting `ConnectInfo` and a
+registration that installs none is unchanged: `Router` carries no connect-info
+type, so the two registration methods remain the only place that choice is
+visible. `batter-tc9w.9` owns porting the surveyed consumers. Tests serve an
+assembled boundary over a real generated-certificate rustls listener and cover
+startup acknowledgement before readiness, a probe outside admission, the
+transport peer against a client-owned oracle, drain while a response is still
+streaming on an open connection, release of an accept parked in its handshake,
+and release of rejected and abandoned listeners. Fresh-agent usability evaluation
+is proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

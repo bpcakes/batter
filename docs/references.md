@@ -4385,3 +4385,50 @@ Rechecked for `batter-3q3` against the selected sources.
   That consumer, compiled at the pinned base with a raised limit, needed more
   than 1 MiB of this stack unoptimized; it now runs in at most 320 KiB
   unoptimized and 96 KiB optimized, including the complete HTTP boundary.
+
+## Generic serving listeners and connection metadata, 2026-09-30
+
+Rechecked for `batter-tc9w.7` against the resolved Axum 0.8.9 sources in the
+locked registry, not the `latest` documentation.
+
+- [`axum::serve::Listener`](https://docs.rs/axum/0.8.9/axum/serve/trait.Listener.html)
+  (`src/serve/listener.rs`) requires `Send + 'static`, an
+  `Io: AsyncRead + AsyncWrite + Unpin + Send + 'static`, an `Addr: Send`, and
+  `accept(&mut self) -> impl Future<Output = (Io, Addr)> + Send`. Accept returns
+  no error, so the trait's own text requires an implementation to log and retry
+  instead; the pinned `TcpListener` and `UnixListener` implementations loop over
+  `handle_accept_error`, which returns immediately for connection errors and
+  otherwise logs and sleeps one second. A listener therefore cannot report an
+  accept failure to Batter's component exit.
+- `serve(listener, make_service)` (`src/serve/mod.rs`) accepts any such listener,
+  and `Router<()>` implements `Service<IncomingStream<'_, L>>` for every
+  `L: Listener` (`src/routing/mod.rs`). `WithGracefulShutdown` additionally
+  requires `L::Addr: Debug`, which the adapter's public bounds pass through.
+- `WithGracefulShutdown::run` selects between `listener.accept()` and the signal.
+  When the signal wins it breaks the loop, so the accept future in progress —
+  including a handshake awaited inside it — is dropped without being awaited,
+  then the listener itself is dropped, and only afterwards does it wait for the
+  spawned connection tasks to finish. Batter's registered task therefore releases
+  a pending accept and the listener before it awaits connection completion, and
+  still cannot claim that connection tasks or a listener's own spawned work
+  terminated.
+- [`Connected`](https://docs.rs/axum/0.8.9/axum/extract/connect_info/trait.Connected.html)
+  (`src/extract/connect_info.rs`) is implemented for `IncomingStream<'_, L>` in
+  exactly two shapes: `SocketAddr` for the concrete `TcpListener`, and `L::Addr`
+  for `TapIo<L, F>` where `L: Listener`, `L::Addr: Clone + Sync + 'static` and
+  `F: FnMut(&mut L::Io) + Send + 'static`. There is no blanket implementation for
+  a bare custom listener, so `ListenerExt::tap_io` is the pinned route to connect
+  info for one. `TapIo` keeps `Io` and `Addr` and runs its closure on each
+  accepted `Io` after `accept` returns; an empty closure changes nothing
+  observable, and the two `Connected` implementations produce the same
+  `SocketAddr` for a `TcpListener`.
+- Test-only transport material resolved with Cargo at the same date:
+  `rcgen` 0.14.10, whose `generate_simple_self_signed` returns a
+  `CertifiedKey { cert, signing_key }` and whose default features select `ring`,
+  `rustls` 0.23.44 and `tokio-rustls` 0.26.5, all taken with `default-features =
+  false` and the `ring` provider so no `aws-lc-rs` toolchain enters the graph.
+  `rustls` 0.23.44 was already resolved for the workspace through SQLx's
+  `tls-rustls-ring`. The suite selects the provider explicitly with
+  `builder_with_provider`, so feature unification cannot make provider selection
+  ambiguous. These crates are dev-dependencies of `batter-axum` only; no
+  published package gains a TLS dependency.

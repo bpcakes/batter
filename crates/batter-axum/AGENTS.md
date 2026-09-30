@@ -52,8 +52,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/readiness.rs` translates the foundation's valid readiness decision into
   HTTP status, response extensions and observation severity, and applies them
   after an application probe renderer returns.
-- `src/serving.rs` registers a bound native listener/router with the supervisor,
-  including opt-in direct TCP peer `ConnectInfo<SocketAddr>` through protected authority.
+- `src/serving.rs` registers any bound `axum::serve::Listener` plus a router with
+  the supervisor, including the listener's opt-in direct peer `ConnectInfo`
+  through protected authority. Transport policy stays with the listener.
 - `../batter/examples/http_service.rs` demonstrates adoption of these public helpers.
   `http_service/config.rs` owns its explicit file/environment settings and
   configured router capacity; example tests run in normal Cargo discovery.
@@ -66,6 +67,13 @@ Windows support and non-Unix fallbacks are out of scope.
   application conditions. `tests/operational/admitted_request.rs` covers the
   extractor behind every group, its rejection outside admission and in both
   unsupported lower-level orders, and forged or replaced raw extensions.
+- `tests/tls_serving.rs` and `tests/tls_serving/` serve the canonical assembled
+  boundary over a test-owned rustls listener with a generated certificate. They
+  own the certificate, provider, accept loop and handshake, because those are
+  application policy; keep them out of `src/`. They cover acknowledgement before
+  readiness, the transport peer, drain with a connection still streaming,
+  destruction of an accept parked in its handshake, and release of rejected and
+  abandoned listeners.
 - `tests/browser.rs` and `tests/browser/` cover the public browser transport
   matrices, sanitized failures, Set-Cookie append/removal, mutation precedence,
   and real Axum private-response layer placement, both referrer choices,
@@ -120,7 +128,10 @@ pin/drop implementation. Nested Batter observers intentionally emit once; keep
 adapter facts in the library-owned shared observation state so wrapper order
 cannot discard them. Bound response construction without claiming body
 streaming or detached connection-task shutdown. Keep probe routes separate from
-guarded business routes. Canonical probes accept only validated `ProbePath`
+guarded business routes. Serving accepts any `axum::serve::Listener`; never move
+certificate, provider, protocol-version, ALPN or handshake policy into the
+adapter, and never claim that a listener's own spawned work was joined.
+Canonical probes accept only validated `ProbePath`
 values, and duplicate paths must fail through the boundary's sanitized
 configuration error before Axum routing. The canonical guarded builder must
 retain route identities through route, merge and typed nesting; do not admit an
