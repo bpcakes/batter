@@ -30,6 +30,54 @@ not test an application's behavior; a passing test with a lossy oracle cannot
 establish a contract it never asserted. A matching revision/fingerprint improves
 attribution, but does not turn a reviewer concern into a reproduced failure.
 
+## Executed downstream consumer evidence for the canonical HTTP path
+
+On 2026-09-30 a fresh implementation agent ported one real HTTP surface from each
+of two independent downstream consumers onto `HttpBoundary` at the revision then
+under review, before `batter-tc9w.2` seals public composition (`batter-tc9w.9`).
+The work happened only in disposable read-only copies of each consumer's
+committed revision; neither consumer repository was modified, and their
+identities, paths and patches stay outside this repository, as for the 2026-09-08
+retrospective above.
+
+Both surfaces are real application boundaries, not invented examples: generated
+OpenAPI routers, application-rendered probe bodies, operator-configured browser
+response policy, shared error envelopes, per-process client admission, direct-peer
+metadata and, in one consumer, native TLS serving. Both ports used only the
+canonical API — route groups, probe renderers, the typed extractor, generic
+listeners and admitted routers — and both ended with no direct
+`operational_http`, `request_admission` or `register_http_*` use in the ported
+surface. Each consumer's separately deployed second surface was left un-ported
+and keeps those calls; that is task scope, not a library gap.
+
+Two results are worth keeping as design evidence rather than as delivery notes.
+
+The generic-listener registration removed a whole hand-written component. One
+consumer had rebuilt registration, startup acknowledgement, graceful drain and
+cleanup around `axum::serve` because the adapter accepted only a TCP listener;
+after the port its listener passes straight to
+`AssembledHttp::register_with_connect_info_in`, and its own TLS test — verified
+peer, an idle half-open handshake that does not block drain, plaintext refused,
+checked shutdown — still passes. Deriving each admitted router's `RouteInventory`
+from the document its generated router produces also kept the declared inventory
+from drifting from the generated composition, and left both committed public
+contracts unchanged.
+
+Two gaps were found and filed, each blocking `batter-tc9w.2` with a reproducer:
+the canonical boundary keeps the default route group's fallback inside that
+group's admission and offers no renderer for it outside admission the way it does
+for probes, so an unmatched path cannot keep the application's status, envelope or
+group response policy in every lifecycle state
+(`batter-http-boundary-fallback-placement-4oxv`); and `ReadinessPolicy` cannot be
+constructed without a dependency `HealthReader`, which has no constructor outside
+`HealthMonitor`, so a process whose readiness is the lifecycle plus its own
+conditions must invent and supervise a no-op dependency monitor to reach the
+canonical readiness probe at all
+(`batter-readiness-without-dependency-monitor-w4hk`). The second is the caller
+obligation [ADR-010](adr/010-agent-only-consumption.md) names; the first made
+three original, unmodified consumer assertions fail. Neither was repaired under
+that evaluation task, which was not authorized to change library code.
+
 ## What changed in the implemented foundation
 
 The re-audit inspected the four commits after `e5f2f04`, including the actual
