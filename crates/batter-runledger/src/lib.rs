@@ -72,6 +72,76 @@ pub use runledger_postgres::{
     run_atomic_fail_fast_with, run_atomic_with,
 };
 
+/// The exact native Runledger packages this adapter resolves.
+///
+/// These namespaces exist so one `batter` dependency can reach the native
+/// worker, catalog, configuration, queue and migration APIs that this adapter
+/// does not translate. They are the native packages themselves, so every type
+/// has the same identity through the direct and facade paths.
+///
+/// They are deliberately low-level. Runledger keeps ownership of durable job
+/// policy, persistence, scheduling and descendant supervision; nothing here is
+/// wrapped, re-validated or brought under Batter's protected lifecycle. A caller
+/// that builds a live native supervisor itself takes on the obligations
+/// [`register_in`] otherwise discharges: observing initialization,
+/// requesting shutdown within a budget, classifying the settlement and ordering
+/// dependency cleanup after it. Use [`register_in`] with an inert
+/// [`native::runtime::PreparedSupervisor`] for the protected composition; reach for
+/// these namespaces for the preparation, schema and queue operations that have
+/// no Batter-owned equivalent.
+///
+/// Runledger's fifth package, the `runledger-tui` operator binary, has no
+/// library target and therefore no namespace here.
+///
+/// ```
+/// use batter_runledger::native::{core, postgres, runtime};
+/// use std::time::Duration;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let payload = serde_json::json!({"name": "example"});
+/// let intent = postgres::jobs::JobEnqueueIntent::new(
+///     core::jobs::JobType::new("example.greeting"),
+///     &payload,
+///     "example-greeting-1",
+/// )
+/// .with_max_attempts(1);
+/// let config = runtime::config::IntentPromoterConfig::new(Duration::from_millis(50), 10);
+/// config.validate()?;
+/// # let _ = intent;
+/// # Ok(())
+/// # }
+/// # example().unwrap();
+/// ```
+pub mod native {
+    /// Native contracts: job types, handlers, payload specs and failure kinds.
+    pub use runledger_core as core;
+    /// Native persistence: migrations, queue operations and durable intents.
+    pub use runledger_postgres as postgres;
+    /// Native execution: worker configuration, catalog, registry and supervisor.
+    pub use runledger_runtime as runtime;
+
+    /// Runledger's own PostgreSQL test support, selected with `test-support`.
+    ///
+    /// Test-only reachability so an external consumer's tests need no second
+    /// native declaration. Docker provisioning, the shared container, the
+    /// ephemeral-database connection budget and teardown remain Runledger's;
+    /// this is not a Batter fixture harness and callers still own creating,
+    /// consuming and dropping each disposable database. Never select it in a
+    /// deployed graph.
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), sqlx::Error> {
+    /// let database =
+    ///     batter_runledger::native::test_support::create_ephemeral_database("example").await?;
+    /// // The caller owns the database for as long as it needs it, then drops it.
+    /// let _url = database.url().to_owned();
+    /// database.teardown().await
+    /// # }
+    /// ```
+    #[cfg(feature = "test-support")]
+    pub use runledger_test_support as test_support;
+}
+
 /// Original native shutdown evidence. The process report retains this concrete
 /// type under `managed[*].outcome.settlement`; use `downcast_ref::<NativeReport>()`
 /// for explicit inspection. Default formatting uses native redacted diagnostics.

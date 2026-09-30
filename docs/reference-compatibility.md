@@ -79,8 +79,103 @@ the 84-case SQLx suite, the reference inventory and adapter probe. The
 its exact compile-only scope. Older evidence below retains its recorded source
 scope; it does not validate the current graph by itself.
 
+### Single-dependency recipe
+
+One `batter` dependency and its features reach Runledger and Runlimit at one
+revision. No direct native-package declaration and no `[patch]` section are
+required:
+
+```toml
+[dependencies]
+batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", default-features = false, features = [
+  "runledger",            # batter::runledger::native::{core, postgres, runtime}
+  "runlimit-postgres",    # batter::runlimit::{native, postgres}
+  "runlimit-memory",      # batter::runlimit::memory
+  "runlimit-native-http", # batter::runlimit::native_transport::http
+  "runlimit-native-axum", # batter::runlimit::native_transport::axum
+  "at-rest",              # batter::at_rest
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
+
+[dev-dependencies]
+batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", default-features = false, features = [
+  "runledger-test-support", # batter::runledger::native::test_support
+] }
+```
+
+Registry crates such as Tokio, SQLx and serde are ordinary ecosystem
+dependencies, not native-workspace side pins. Enable only what an application
+uses: the facade default feature set stays empty and no feature silently selects
+another backend or transport. `runlimit-native-axum` selects the Axum crate that
+the native layer needs, but never `batter-axum` or `batter::runlimit::http`.
+
+| Facade path | Native package | Feature |
+| --- | --- | --- |
+| `batter::runledger::native::core` | `runledger-core` | `runledger` |
+| `batter::runledger::native::postgres` | `runledger-postgres` | `runledger` |
+| `batter::runledger::native::runtime` | `runledger-runtime` | `runledger` |
+| `batter::runledger::native::test_support` | `runledger-test-support` | `runledger-test-support` |
+| `batter::runlimit::native` | `runlimit-core` | `runlimit` |
+| `batter::runlimit::memory` | `runlimit-memory` | `runlimit-memory` |
+| `batter::runlimit::postgres` | `runlimit-postgres` | `runlimit-postgres` |
+| `batter::runlimit::native_transport::http` | `runlimit-http` | `runlimit-native-http` |
+| `batter::runlimit::native_transport::axum` | `runlimit-axum` | `runlimit-native-axum` |
+
+Each namespace is the native package itself, so a type reached through the
+facade and the same type reached through a direct dependency are one identity.
+`runledger-tui` is a binary-only package and has no namespace.
+
+These namespaces are deliberately low-level and are not equivalent to Batter's
+protected composition. `batter::runledger::register_in` still owns registering
+inert native preparation, observing initialization, requesting shutdown within a
+budget, classifying the settlement and ordering dependency cleanup; a caller that
+builds a live native supervisor instead takes on all of that.
+`batter::runlimit::http` still owns authenticated quota-before-body assembly,
+while `native_transport::axum` leaves subject derivation, rejection mapping and
+response selection to the application, and `native_transport::http` serializes an
+unstable Internet-Draft header set. Adding these namespaces authorizes no change
+to native runtimes, storage, policy or lifecycle ownership.
+
+Apply the Runledger migration history before Runlimit's. Runledger filters shared
+SQLx history through its own compatibility fence, and `PostgresLimiter::migrate`
+sets `set_ignore_missing(true)`, so the two coexist in one `_sqlx_migrations`
+history in that order. An application that keeps a strict host migrator must
+instead vendor the bundled Runlimit SQL as its own ordered migrations.
+
+`consumers/single_facade_consumer.rs` is the executed acceptance consumer:
+`scripts/check_single_facade_consumer.py` builds it from a Git-free source copy,
+asserts its resolved manifest declares only `batter` from this workspace with
+default features disabled and no `[patch]`, and requires each step to run exactly
+once against a disposable PostgreSQL 18 database. It applies both migration
+histories, commits a durable enqueue intent and an atomic queue row in one
+transaction, observes the registered native worker execute the promoted intent
+and the enqueued job under Batter's protected lifecycle, admits and then denies a
+native PostgreSQL quota, and encodes that denial's response metadata. Driving a
+request through the native Axum layer is executed separately, through the same
+facade paths, by `crates/batter/tests/native_transport_consumer.rs`.
+`consumers/single_facade_harness.rs` owns the disposable database through
+`batter::runledger::native::test_support` and declares only `batter` as well;
+Docker provisioning and teardown remain Runledger's. `scripts/check_facade_features.py`
+proves the per-feature reachability, graph isolation and type identity of every
+namespace in the table above, including that each one is absent without its
+feature.
+
+Publication order is unchanged. The new declarations are
+`batter-runledger -> runledger-core`, which `runledger-postgres` and
+`runledger-runtime` already resolved; the optional
+`batter-runledger -> runledger-test-support`, whose own dependencies are all
+external; `batter-runlimit -> runlimit-http` and `-> runlimit-axum`, both
+optional and already published alongside the other native Runlimit packages; and
+`runlimit-http`/`runlimit-axum` as `batter` development dependencies, alongside
+the existing `runlimit-core` and `runlimit-memory` ones. Every edge points from a
+Batter adapter or the facade to a native package, so the native packages still
+precede the Batter adapters in the release train `batter-ddc` owns and no
+reordering is required. Nothing here publishes.
+
 ### Git consumers
 
+Direct native-package selection remains supported for consumers that want it.
 Select `batter` or a direct Runledger package from the same immutable Batter Git
 revision. Cargo discovers the package in this workspace and follows its local
 path dependencies from that checkout; consumers need no Runledger source patch.

@@ -45,6 +45,14 @@ through `PgFailurePolicy`. All types required by its five handlers, including
 policy using only adapter imports. These are the original native types: the
 reexports do not add constructors or relax transaction ownership and poisoning.
 
+The `native` module reexports the native packages themselves —
+`native::core`, `native::postgres`, `native::runtime`, and `native::test_support`
+behind the opt-in `test-support` feature — so one `batter` dependency reaches
+worker preparation, the job catalog, durable intents and the migrators. They are
+deliberately low-level: `register_in` remains the protected registration path, and
+the module rustdoc states what a caller that builds a live native supervisor takes
+on instead.
+
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;
 earlier discoveries shorten active phase waits without replacing the first native

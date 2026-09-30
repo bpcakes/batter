@@ -65,7 +65,14 @@ Use `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
 feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
 `runlimit-axum` forward the existing native adapter capabilities;
 `sqlx-test-support` additionally exposes `batter::sqlx::test_support` and
-generic test support. Direct adapter packages remain supported when an
+generic test support. The same features also reach the native packages
+themselves — `batter::runledger::native::{core, postgres, runtime}`,
+`batter::runlimit::{native, memory, postgres}` and
+`batter::runlimit::native_transport::{http, axum}`, plus the test-only
+`batter::runledger::native::test_support` — so one `batter` dependency needs no
+direct native declaration and no `[patch]`; see the
+[single-dependency recipe](reference-compatibility.md#single-dependency-recipe).
+Those namespaces are deliberately low-level and move no ownership. Direct adapter packages remain supported when an
 application needs their native package boundary. In particular,
 `batter-at-rest` supports direct runtime-free use as `batter_at_rest`; the
 facade feature re-exports the same types and is not required for encryption.
@@ -215,8 +222,14 @@ For Runledger workers, select the implemented
 [`batter-runledger` managed adapter](../crates/batter-runledger/src/lib.rs).
 During owned startup, complete dependency/schema initialization, create native
 inert preparation with
-`runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`,
-and pass it to `batter_runledger::register_in(scope, name, context, prepared)`.
+`runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`
+(or `batter::runledger::native::runtime::Supervisor::builder(...)` through the
+facade), and pass it to
+`batter_runledger::register_in(scope, name, context, prepared)`. Reaching the
+native builder through the facade does not change that `register_in` is the
+protected path: building a live supervisor instead moves initialization
+observation, the stop budget, settlement classification and cleanup ordering to
+the caller.
 The adapter translates native initialization, stop clocks and retained descendant
 settlement into Batter ownership; Runledger retains its internal supervisor and
 durable work policy. Follow the [reference composition root](../examples/reference-service/src/runtime.rs)
