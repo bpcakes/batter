@@ -35,10 +35,10 @@ attribution, but does not turn a reviewer concern into a reproduced failure.
 On 2026-09-30 a fresh implementation agent ported one real HTTP surface from each
 of two independent downstream consumers onto `HttpBoundary` at the revision then
 under review, before `batter-tc9w.2` seals public composition (`batter-tc9w.9`).
-The work happened only in disposable read-only copies of each consumer's
-committed revision; neither consumer repository was modified, and their
-identities, paths and patches stay outside this repository, as for the 2026-09-08
-retrospective above.
+The work happened only in disposable copies made from each consumer's
+committed revision and then modified for the port; neither consumer repository
+was modified. Their identities, paths and patches stay outside this repository,
+as for the 2026-09-08 retrospective above.
 
 Both surfaces are real application boundaries, not invented examples: generated
 OpenAPI routers, application-rendered probe bodies, operator-configured browser
@@ -60,8 +60,8 @@ after the port its listener passes straight to
 peer, an idle half-open handshake that does not block drain, plaintext refused,
 checked shutdown — still passes. Deriving each admitted router's `RouteInventory`
 from the document its generated router produces also kept the declared inventory
-from drifting from the generated composition, and left both committed public
-contracts unchanged.
+from drifting from the generated composition, and left both generated public
+OpenAPI documents unchanged. This does not establish behavioral compatibility.
 
 Two gaps were found and filed, each blocking `batter-tc9w.2` with a reproducer:
 the canonical boundary keeps the default route group's fallback inside that
@@ -77,6 +77,23 @@ canonical readiness probe at all
 obligation [ADR-010](adr/010-agent-only-consumption.md) names; the first made
 three original, unmodified consumer assertions fail. Neither was repaired under
 that evaluation task, which was not authorized to change library code.
+
+The final evidence review distinguished in-process router checks from socket
+serving. Consumer A's initially skipped database-readiness test and production
+socket/signal-shutdown test were then executed in its disposable copy; both
+passed, including pool saturation/recovery and explicit cleanup. The earlier
+73-test credential/project suite and consumer B's TLS test also passed.
+Other gated tests remain unexecuted; the owning Bead records the limits.
+
+Compatibility acceptance remains incomplete. Consumer A's two fallback tests
+and consumer B's fallback-header test pass only after their original assertions
+were changed to characterize the regressions. Those green reruns do not prove
+the original contracts. Consumer B's database HTTP suite has six failures in
+both the repinned baseline and the characterized port (25 pass in each); their
+cause is unresolved, and the comparison does not exclude a repin-related
+failure. `batter-tc9w.9` remains open: these results establish an executed
+evaluation with gaps, not that all existing surface tests pass. Both gap Beads
+continue to block sealing independently of this task's acceptance.
 
 ## What changed in the implemented foundation
 
