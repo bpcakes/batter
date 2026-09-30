@@ -1,5 +1,23 @@
 # Implementation status
 
+2026-09-30 reference executable build race repair (`batter-oq21`): the `workspace`
+matrix part no longer runs the all-feature workspace tests in the same batch as
+the default-feature reference configuration tests. Both uplift
+`target/debug/batter-example-reference-service`, and Cargo releases the build
+directory lock before tests run, so the default build could replace the
+metrics-enabled executable that `metrics_export::executable` spawns. A plain
+`bash scripts/verify.sh` run failed that way during `batter-0jsf`, which could only
+be validated behind a temporary external launcher. `scripts/test_matrix.py` now
+declares the feature selection each labelled command uplifts and rejects a plan
+that pairs two selections for one binary, renames, repeats or drops a declared
+label. Every command, feature set, hostile environment, bound and assertion is
+unchanged, all six parts remain, and unrelated commands still run in parallel
+beside each build. Executed controls schedule stand-in subprocesses that
+reproduce the replacement, require non-overlap and retained artifacts, and fail
+against the prior single-batch schedule. No application or runtime API changed,
+the metrics test was not weakened and no retry was added. Verification details
+belong to the owning Bead.
+
 2026-09-27 OTLP guard closure repair (`batter-i3ny`): recorder calls now register
 as active before delegation; close stops new calls and waits for active ones.
 Later registrations or descriptions cannot reach the bridge. A forced interleaving

@@ -1,7 +1,7 @@
 """Failure and coverage controls for concurrent local verification."""
 
 import errno
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -349,10 +349,15 @@ class MatrixTests(unittest.TestCase):
 
             self.assertEqual(self.run_part(part, execute), 0)
         self.assertEqual({part: [len(batch) for batch in recorded] for part, recorded in batches.items()},
-                         {"workspace": [4], "no-default-features": [3], "doctests": [1],
+                         {"workspace": [2, 2], "no-default-features": [3], "doctests": [1],
                           "consumers": [4, 4], "runlimit": [3], "scripts": [4, 1]})
-        commands = [command for recorded in batches.values() for batch in recorded for command in batch]
-        self.assertCountEqual(commands, [
+        planned = matrix.parts()
+        # Each part executes exactly the batches it plans, in the planned order.
+        self.assertEqual({part: [commands for _, commands in plan] for part, plan in planned.items()},
+                         batches)
+        commands = {label: command for plan in planned.values() for labels, batch in plan
+                    for label, command in zip(labels, batch)}
+        self.assertCountEqual(commands.values(), [
             matrix.CORE_CHECK, matrix.FACADE_CHECK, matrix.CORE_TESTS, matrix.WORKSPACE_TESTS,
             matrix.HOSTILE_CONFIGURATION, matrix.DOC_TESTS, matrix.RUNNER_TESTS, matrix.SMOKE_TESTS,
             matrix.REFERENCE_RUNNER_TESTS, matrix.SQLX_RUNNER_TESTS, matrix.RUNLIMIT_FEATURES,
@@ -363,23 +368,26 @@ class MatrixTests(unittest.TestCase):
             matrix.FUTURE_SIZE_RELEASE,
         ])
         self.assertEqual(len(commands), 24)
-        workspace, = batches["workspace"]
-        self.assertIn("--all-targets", workspace[0])
-        self.assertIn("--workspace", workspace[0])
-        self.assertEqual(workspace[1][0], "env")
-        self.assertIn("PGDATA=/unused-configuration-fixture", workspace[1])
-        self.assertIn("PGPASSWORD=parent-secret-marker", workspace[1])
-        self.assertIn("configuration", workspace[1])
-        self.assertIn("--locked", workspace[1])
-        self.assertEqual(workspace[3][workspace[3].index("--test") + 1], "future_size")
-        self.assertIn("--release", workspace[3])
+        self.assertIn("--all-targets", commands["workspace-tests"])
+        self.assertIn("--workspace", commands["workspace-tests"])
+        hostile = commands["configuration-hostile-environment"]
+        self.assertEqual(hostile[0], "env")
+        self.assertIn("PGDATA=/unused-configuration-fixture", hostile)
+        self.assertIn("PGPASSWORD=parent-secret-marker", hostile)
+        self.assertIn("configuration", hostile)
+        self.assertIn("--locked", hostile)
+        future_sizes = commands["release-future-sizes"]
+        self.assertEqual(future_sizes[future_sizes.index("--test") + 1], "future_size")
+        self.assertIn("--release", future_sizes)
+        self.assertIn("test_reference_live.py", commands["reference-runner-controls"])
         self.assertTrue(all("--no-default-features" in command
                             for command in batches["no-default-features"][0]))
         self.assertIn("--doc", batches["doctests"][0][0])
         self.assertIn("test_parallel_process.py", batches["scripts"][0][0])
         self.assertIn("scripts/test_smoke_postgres.py", batches["scripts"][0][1])
         self.assertTrue(all("runlimit" in " ".join(command) for command in batches["runlimit"][0]))
-        self.assertTrue(all("--locked" in command for command in commands if command[0] == "cargo"))
+        self.assertTrue(all("--locked" in command for command in commands.values()
+                            if command[0] == "cargo"))
 
     def test_failure_stops_later_batches_of_its_part(self):
         for part, planned in matrix.parts().items():
@@ -411,6 +419,197 @@ class MatrixTests(unittest.TestCase):
         selected, = re.findall(r"for part in ([^;]+); do", script)
         self.assertCountEqual(selected.split(), matrix.parts())
         self.assertIn('python3 scripts/test_matrix.py "$part"', script)
+
+
+class ExclusiveBuildTests(unittest.TestCase):
+    """Controls for commands that uplift one binary under different selections.
+
+    Cargo releases the build directory lock when linking finishes, so a peer
+    command can replace an uplifted executable while an earlier command still
+    spawns it from its tests. These controls execute the real scheduling with
+    stand-in subprocesses that reproduce exactly that replacement.
+    """
+
+    owner_hold = 1.0
+    peer_hold = 0.6
+
+    def scheduled(self):
+        return {label: command for plan in matrix.parts().values()
+                for labels, batch in plan for label, command in zip(labels, batch)}
+
+    def uplifting_fixture(self, directory):
+        """Stand in for the all-feature run whose tests spawn the executable."""
+        return python(f"""
+import json, time
+from pathlib import Path
+root = Path({directory!r})
+artifact = root / 'reference-executable'
+started = time.monotonic()
+artifact.write_text('all-features')
+(root / 'uplifted').touch()
+deadline = time.monotonic() + {self.owner_hold}
+while time.monotonic() < deadline:
+    time.sleep(0.01)
+observed = artifact.read_text()
+(root / 'workspace-tests.json').write_text(json.dumps(
+    {{'started': started, 'finished': time.monotonic(), 'observed': observed}}))
+raise SystemExit(0 if observed == 'all-features' else 9)
+""")
+
+    def replacing_fixture(self, directory):
+        """Stand in for the default-feature run that rebuilds the same binary."""
+        return python(f"""
+import json, time
+from pathlib import Path
+root = Path({directory!r})
+artifact = root / 'reference-executable'
+started = time.monotonic()
+deadline = started + 5
+while not (root / 'uplifted').exists() and time.monotonic() < deadline:
+    time.sleep(0.01)
+artifact.write_text('default')
+deadline = time.monotonic() + {self.peer_hold}
+while time.monotonic() < deadline:
+    time.sleep(0.01)
+(root / 'configuration-hostile-environment.json').write_text(json.dumps(
+    {{'started': started, 'finished': time.monotonic(), 'observed': 'default'}}))
+""")
+
+    def peer_fixture(self, directory, label):
+        """Stand in for an unrelated command that may run beside either build."""
+        return python(f"""
+import json, time
+from pathlib import Path
+started = time.monotonic()
+deadline = started + {self.peer_hold}
+while time.monotonic() < deadline:
+    time.sleep(0.01)
+(Path({directory!r}) / '{label}.json').write_text(json.dumps(
+    {{'started': started, 'finished': time.monotonic(), 'observed': None}}))
+""")
+
+    def execute_workspace(self, directory, prior=False):
+        """Run the real workspace part with stand-in commands and record spans."""
+        rendered = {}
+
+        def bounded(commands, **kwargs):
+            # The matrix keeps its own bounds; only the watchdog is shortened so a
+            # stuck control cannot hold the suite for the full matrix allowance.
+            self.assertEqual(kwargs["timeout"], 1500)
+            self.assertEqual(kwargs["output_limit"], 8 * 1024 * 1024)
+            self.assertTrue(kwargs["retain_tail"])
+            return parallel.run_parallel(commands, **{**kwargs, "timeout": 30})
+
+        def render(labels, outcomes):
+            rendered.update(zip(labels, outcomes))
+
+        patches = [
+            mock.patch.object(sys, "argv", ["test_matrix.py", "workspace"]),
+            mock.patch.object(matrix, "run_parallel", bounded),
+            mock.patch.object(matrix, "render_outcomes", render),
+            mock.patch.object(matrix, "WORKSPACE_TESTS", self.uplifting_fixture(directory)),
+            mock.patch.object(matrix, "HOSTILE_CONFIGURATION", self.replacing_fixture(directory)),
+            mock.patch.object(matrix, "REFERENCE_RUNNER_TESTS",
+                              self.peer_fixture(directory, "reference-runner-controls")),
+            mock.patch.object(matrix, "FUTURE_SIZE_RELEASE",
+                              self.peer_fixture(directory, "release-future-sizes")),
+        ]
+        with ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            if prior:
+                # Built here so the prior batch holds the stand-ins, not real Cargo runs.
+                planned = self.prior_schedule()
+                stack.enter_context(mock.patch.object(matrix, "parts", lambda: planned))
+            status = matrix.main()
+        spans = {path.stem: json.loads(path.read_text())
+                 for path in Path(directory).glob("*.json")}
+        return status, rendered, spans
+
+    def prior_schedule(self):
+        """The single batch this task replaced, rebuilt from the same commands."""
+        return {"workspace": [(["workspace-tests", "configuration-hostile-environment",
+                                "reference-runner-controls", "release-future-sizes"],
+                               [matrix.WORKSPACE_TESTS, matrix.HOSTILE_CONFIGURATION,
+                                matrix.REFERENCE_RUNNER_TESTS, matrix.FUTURE_SIZE_RELEASE])]}
+
+    @staticmethod
+    def overlapping(first, second):
+        return first["started"] < second["finished"] and second["started"] < first["finished"]
+
+    def test_declared_uplifts_agree_with_the_scheduled_commands(self):
+        commands = self.scheduled()
+        for label, declared in matrix.UPLIFTED_BINARIES.items():
+            with self.subTest(label=label):
+                command = commands[label]
+                selection, = [chosen for binary, chosen in declared
+                              if binary == matrix.REFERENCE_BINARY]
+                self.assertEqual(selection, "all-features" if "--all-features" in command
+                                 else "default")
+        for label, command in commands.items():
+            # Cargo builds a package's binaries for its integration tests so they
+            # can spawn CARGO_BIN_EXE_*; only doctest runs skip them.
+            selects = "--workspace" in command or matrix.REFERENCE_BINARY in command
+            with self.subTest(label=label):
+                self.assertEqual(selects and "--doc" not in command,
+                                 label in matrix.UPLIFTED_BINARIES)
+
+    def test_no_batch_mixes_feature_selections_for_one_binary(self):
+        placement = {}
+        for part, plan in matrix.parts().items():
+            for index, (labels, _) in enumerate(plan):
+                self.assertEqual(matrix.conflicting_binaries(labels), ())
+                for label in labels:
+                    placement[label] = (part, index)
+        self.assertNotEqual(placement["workspace-tests"],
+                            placement["configuration-hostile-environment"])
+        self.assertEqual(matrix.conflicting_binaries(
+            ["workspace-tests", "configuration-hostile-environment"]),
+            (matrix.REFERENCE_BINARY,))
+
+    def test_prior_conflicting_schedule_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "conflicting feature selections"):
+            matrix._scheduled(self.prior_schedule())
+
+    def test_losing_or_repeating_a_declared_label_is_rejected(self):
+        plan = {part: [(list(labels), list(commands)) for labels, commands in batches]
+                for part, batches in matrix.parts().items()}
+        renamed = json.loads(json.dumps(plan))
+        renamed["workspace"][0][0][0] = "workspace-tests-renamed"
+        with self.assertRaisesRegex(ValueError, "unscheduled"):
+            matrix._scheduled(renamed)
+        repeated = json.loads(json.dumps(plan))
+        repeated["doctests"][0][0][0] = "workspace-tests"
+        with self.assertRaisesRegex(ValueError, "unique"):
+            matrix._scheduled(repeated)
+        unlabelled = json.loads(json.dumps(plan))
+        unlabelled["doctests"][0][0].clear()
+        with self.assertRaisesRegex(ValueError, "exactly one label"):
+            matrix._scheduled(unlabelled)
+
+    def test_scheduled_builds_never_overlap_and_keep_the_uplifted_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status, rendered, spans = self.execute_workspace(directory)
+        self.assertEqual(status, 0)
+        self.assertTrue(all(outcome.ok for outcome in rendered.values()), rendered)
+        self.assertEqual(spans["workspace-tests"]["observed"], "all-features")
+        self.assertGreaterEqual(spans["configuration-hostile-environment"]["started"],
+                                spans["workspace-tests"]["finished"])
+        # Unrelated commands still run beside each conflicting build.
+        self.assertTrue(self.overlapping(spans["workspace-tests"],
+                                         spans["reference-runner-controls"]))
+        self.assertTrue(self.overlapping(spans["configuration-hostile-environment"],
+                                         spans["release-future-sizes"]))
+
+    def test_prior_schedule_still_replaces_the_artifact_under_the_same_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status, rendered, spans = self.execute_workspace(directory, prior=True)
+        self.assertEqual(status, 1)
+        self.assertEqual(rendered["workspace-tests"].status, 9)
+        self.assertFalse(rendered["workspace-tests"].ok)
+        self.assertEqual(spans["workspace-tests"]["observed"], "default")
+        self.assertTrue(self.overlapping(spans["workspace-tests"],
+                                         spans["configuration-hostile-environment"]))
 
 
 class MutationCopyTests(unittest.TestCase):
