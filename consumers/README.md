@@ -22,6 +22,10 @@ while awaiting checked shutdown. Protected startup owns the pool finalizer, so
 failed or uncertain settlement cannot bypass conservative cleanup skipping.
 `single_facade_completion_tests.rs` exercises error retention and ordering; the
 runner executes it from the same external manifest before the live consumer.
+`single_facade_quota.rs` checks the application's expected admission and denial
+while retaining every unexpected native outcome in a redacted error. Its tests
+cover native backend causes, consumption certainty, interruption progress and
+a closed-pool failure through checked shutdown, including cleanup failure.
 All temporary Cargo builds force `SQLX_OFFLINE=true`, independent of an ambient
 `DATABASE_URL`; runtime database selection still belongs to the harness.
 `scripts/test_single_facade_consumer.py` covers that script's own assertions.

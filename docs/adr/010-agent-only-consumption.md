@@ -518,7 +518,9 @@ They do not, and the naming carries that:
 - `runledger::native::test_support` is documented as test-only and must not be
   selected in a deployed graph. This is application policy: Cargo cannot express
   "development graphs only" for a feature, and the facade cannot detect the
-  caller's profile.
+  caller's profile. The recipe requires resolver 2 or 3 for dev-dependency
+  feature separation and an explicit resolver at a virtual workspace root;
+  resolver 1 also enables these features in ordinary dependency builds.
 
 What types cannot express here is deliberate. These are the native packages'
 own APIs; Batter does not narrow them, and narrowing them would create the second

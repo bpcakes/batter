@@ -18,6 +18,7 @@
 //! this workspace. `consumers/single_facade_harness.rs` owns the database.
 
 mod single_facade_completion;
+mod single_facade_quota;
 
 use batter::cleanup::CleanupBudget;
 use batter::lifecycle::{ShutdownBudget, Supervisor};
@@ -36,10 +37,10 @@ use batter::runledger::native::runtime::{
     config::{IntentPromoterConfig, JobsConfig},
 };
 use batter::runledger::{PgSessionProfile, RunledgerDatabase, run_atomic, verify_schema};
-use batter::runlimit::native::{Check, Denial, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
+use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};
 use batter::runlimit::native_transport::http::draft_11;
 use batter::runlimit::postgres::PostgresLimiter;
-use batter::runlimit::{Checks, Quota, RunResult};
+use batter::runlimit::{Checks, Quota};
 use batter::startup::Startup;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -321,23 +322,14 @@ async fn run_limiter(limiter: PostgresLimiter, subject: &str) -> Outcome {
             async { Ok::<_, std::convert::Infallible>(()) }
         })
         .await;
-    if !matches!(admitted, RunResult::Admitted { work: Ok(()), .. }) {
-        return Err("first check must admit".into());
-    }
+    single_facade_quota::expect_admission(admitted)?;
     let denied = quota
         .run(&context, Checks::new(&checks)?, |_| {
             invoked += 1;
             async { Ok::<_, std::convert::Infallible>(()) }
         })
         .await;
-    let RunResult::Rejected {
-        index: 0,
-        denial: Denial::QuotaExceeded(exhausted),
-        ..
-    } = denied
-    else {
-        return Err("exhausted check must deny with a native quota denial".into());
-    };
+    let exhausted = single_facade_quota::expect_exhaustion(denied)?;
     if invoked != 1 {
         return Err("a denied quota must not invoke work".into());
     }

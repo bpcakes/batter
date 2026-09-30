@@ -127,7 +127,11 @@ pub mod native {
     /// ephemeral-database connection budget and teardown remain Runledger's;
     /// this is not a Batter fixture harness and callers still own creating,
     /// consuming and dropping each disposable database. Never select it in a
-    /// deployed graph.
+    /// deployed graph. Selecting it only in `[dev-dependencies]` requires Cargo
+    /// resolver 2 or 3 to keep it out of ordinary builds; set `resolver = "3"`
+    /// under `[workspace]` at a virtual workspace root. Resolver 1 unifies the
+    /// development features into normal dependencies too. Other selected
+    /// features or dependencies must not enable it in the deployed graph either.
     ///
     /// ```no_run
     /// # async fn example() -> Result<(), sqlx::Error> {

@@ -104,6 +104,21 @@ batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", defaul
 ] }
 ```
 
+Keeping `runledger-test-support` confined to development builds requires Cargo
+feature resolver **2 or 3**. Set the resolver in the consuming workspace root;
+in particular, a virtual workspace cannot infer it from a member's edition:
+
+```toml
+[workspace]
+resolver = "3"
+```
+
+Resolver 1 unifies these development features into ordinary builds of the same
+dependency, enabling the native test-support and Docker dependency graph.
+Resolver 2/3 keeps them out when development targets are not being built, provided
+no other selected dependency or feature enables them. See the
+[Cargo resolver contract](https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2).
+
 Registry crates such as Tokio, SQLx and serde are ordinary ecosystem
 dependencies, not native-workspace side pins. Enable only what an application
 uses: the facade default feature set stays empty and no feature silently selects
@@ -155,8 +170,10 @@ native PostgreSQL quota, and encodes that denial's response metadata. Driving a
 request through the native Axum layer is executed separately, through the same
 facade paths, by `crates/batter/tests/native_transport_consumer.rs`.
 The consumer registers pool cleanup through protected startup and retains its
-work result through checked shutdown on readiness, submission and receive
-failures. The driver orders or conservatively skips dependency cleanup; combined
+work result through checked shutdown on readiness, submission, receive and quota
+failures. Unexpected quota outcomes retain their original backend cause,
+consumption certainty and interruption evidence in a redacted consumer error.
+The driver orders or conservatively skips dependency cleanup; combined
 work and shutdown failures retain both causes without formatting their contents.
 The source-copy runner also executes completion failure controls and forces
 SQLx offline metadata for every temporary build, even with an ambient database URL.

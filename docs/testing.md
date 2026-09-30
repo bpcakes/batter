@@ -2471,6 +2471,16 @@ panic retains the report and skips dependency cleanup. Protected startup owns
 the consumer's pool finalizer, including failed initialization, and the running
 body retains every returned error through checked completion.
 
+The same manifest runs `consumers/single_facade_quota_tests.rs`. Both quota
+expectations preserve concrete backend causes and consumption certainty,
+including synthetic lost-commit evidence, admission interruption progress and
+interrupted admitted work. Formatting redacts retained causes. A real native
+limiter against a closed lazy pool proves its acquisition failure survives
+`run_limiter` and checked shutdown, with and without a simultaneous cleanup
+failure. This needs no database server; it does not simulate a lost remote
+commit acknowledgement. The live harness still exercises successful admission
+followed by quota denial against PostgreSQL 18.
+
 `scripts/test_single_facade_consumer.py` is the runner's own control suite. It
 requires that a declared native-workspace dependency, a `[patch]` table, a facade
 dependency left on default features, a missing or duplicated root package, a

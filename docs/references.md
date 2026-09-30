@@ -322,7 +322,7 @@ historical sibling-source and Git-pin/view evidence below describes earlier impl
 The new strong path does not retain those views as a compatibility bridge.
 PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
 
-## Facade feature and resolver semantics: reviewed 2026-09-18
+## Facade feature and resolver semantics: reviewed 2026-09-18; resolver rechecked 2026-09-30
 
 - Cargo's [feature reference](https://doc.rust-lang.org/cargo/reference/features.html)
   defines optional dependency features, `dep:` names, additive feature
@@ -332,6 +332,13 @@ PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
   explains why a workspace `--all-features` build cannot prove an isolated
   consumer graph. The facade runner therefore gives each temporary consumer an
   external workspace boundary and checks normal dependency reachability.
+- Rechecked the [resolver 2 feature rules](https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2)
+  and [virtual workspace rules](https://doc.rust-lang.org/cargo/reference/workspaces.html#virtual-workspace)
+  for `batter-0jsf`: resolver 2/3 separates dev-dependency features from ordinary
+  builds when development targets are not built. Resolver 1 unifies them; a
+  virtual workspace needs an explicit resolver because it has no root package
+  edition. The recipe now records that precondition. This is an enabled build
+  graph claim, not a claim about unused code surviving final binary linking.
 - Cargo's [target reference](https://doc.rust-lang.org/cargo/reference/cargo-targets.html)
   defines `required-features` for the runnable consumer moves scheduled in the
   next delivery. This B delivery leaves those example roots in their current

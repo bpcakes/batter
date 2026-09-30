@@ -169,6 +169,8 @@ class SourceCopyTests(unittest.TestCase):
             keep = [CONSUMER_SOURCE, HARNESS_SOURCE, 'consumers/README.md',
                     'consumers/single_facade_completion.rs',
                     'consumers/single_facade_completion_tests.rs',
+                    'consumers/single_facade_quota.rs',
+                    'consumers/single_facade_quota_tests.rs',
                     'crates/batter/Cargo.toml',
                     'runledger/runledger-test-support/Cargo.toml']
             for name in keep + ['.git/config', 'consumers/.env', 'target/consumer']:
