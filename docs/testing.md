@@ -928,8 +928,10 @@ is involved. Record executed results and limitations in the owning Bead.
 
 The six test parts retain their existing command selections:
 
-- `workspace`: all-feature workspace tests, hostile-environment configuration
-  tests, reference runner controls and optimized canonical future-size bounds.
+- `workspace`: all-feature workspace tests and reference runner controls, then
+  hostile-environment configuration tests and optimized canonical future-size
+  bounds. The two Cargo runs occupy separate batches because both uplift
+  `target/debug/batter-example-reference-service`; see the scheduling rule below.
 - `no-default-features`: minimal core/facade compilation and core tests.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
@@ -983,11 +985,46 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The six parts hold the same 23 commands in batches of at most four: `consumers`
-and `scripts` use two batches, and the others use one. Runner controls require
-that the parts partition all 23 commands exactly once and that direct verification invokes each part exactly once. They inject a failure at every command
+The six parts hold 26 commands in batches of at most four: `workspace` and
+`scripts` use two batches, `consumers` uses three, and the others use one. Runner controls
+require that the parts partition all 26 commands exactly once, that each part
+executes exactly the batches it plans in order, and that direct verification
+invokes each part exactly once. They inject a failure at every command
 position and require that no later batch of that part starts; surplus mocked
 outcomes cannot stand in for an unexecuted batch.
+
+Cargo uplifts one debug executable per binary target and builds a package's
+binaries for its integration tests, which reach them through `CARGO_BIN_EXE_*`.
+The build directory lock is released once linking finishes, so a peer command
+that rebuilds the same binary under a different feature selection replaces that
+file while an earlier command is still spawning it. `scripts/test_matrix.py`
+therefore declares the selection each labelled command uplifts and refuses a plan
+that places two selections for one binary in the same batch, or that renames,
+repeats or drops a declared label. The all-feature workspace run, whose
+`metrics_export::executable` test spawns the metrics-enabled reference executable,
+and the default-feature reference configuration run are the declared pair; they
+now sit in different batches of the `workspace` part. This is a scheduling rule
+only: no command, feature set, hostile environment, bound or assertion changed,
+and unrelated commands still run beside each of them.
+
+Controls in `scripts/test_parallel_process.py` execute that scheduling with
+stand-in subprocesses which write, hold and re-read a shared artifact the way the
+real build and test phases do. They require that the two declared runs never
+overlap and that the artifact survives, that an unrelated command still overlaps
+each of them, that the declaration agrees with the commands actually scheduled
+(a run selecting the reference package outside a doctest run must be declared),
+and that the prior single-batch schedule is rejected. A further control runs that
+prior grouping with the same stand-ins and observes the replaced artifact and the
+failing exit status, so the coverage is sensitive to the defect rather than to
+the current batch shape alone. Each stand-in records readiness after its work
+and waits for the participants in the batch actually launched by the matrix.
+These bounded marker handshakes establish overlap without assuming relative
+interpreter startup speeds. In the conflicting batch, the replacement waits
+for the initial write and the owner waits for the replacement's readiness
+before reading. Controls delay individual children beyond the former fixed
+hold windows and require the same outcomes; an absent peer must fail the
+handshake and prevent later batches. The ten-second handshake deadline and
+30-second control watchdog bound failures rather than prescribe scheduling.
 
 The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
 checks file budgets and Python script controls. Both reuse only the pinned
