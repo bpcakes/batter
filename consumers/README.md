@@ -17,6 +17,13 @@ exist so the manifests those checks generate stay reviewable source in Git.
 
 `scripts/check_single_facade_consumer.py` builds both from a Git-free source
 copy, asserts the consumer's resolved graph, and requires each executed marker.
+The consumer's private `single_facade_completion.rs` retains the work result
+while awaiting checked shutdown. Protected startup owns the pool finalizer, so
+failed or uncertain settlement cannot bypass conservative cleanup skipping.
+`single_facade_completion_tests.rs` exercises error retention and ordering; the
+runner executes it from the same external manifest before the live consumer.
+All temporary Cargo builds force `SQLX_OFFLINE=true`, independent of an ambient
+`DATABASE_URL`; runtime database selection still belongs to the harness.
 `scripts/test_single_facade_consumer.py` covers that script's own assertions.
 Runlimit's direct-package consumers stay in [`runlimit/smoke`](../runlimit/smoke);
 they prove a different contract and still declare native packages on purpose.

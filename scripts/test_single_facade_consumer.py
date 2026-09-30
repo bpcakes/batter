@@ -1,9 +1,14 @@
 """Failure controls for the single-dependency facade consumer check."""
 import copy
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
+import check_single_facade_consumer as runner
 from check_single_facade_consumer import (CONSUMER_SOURCE, HARNESS_SOURCE, IDENTITIES, MARKERS,
                                           consumer_manifest, executable, harness_manifest,
                                           require_markers, validate_single_dependency,
@@ -76,6 +81,37 @@ class ManifestTests(unittest.TestCase):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_every_temporary_build_overrides_hostile_sqlx_environment(self):
+        # Execute the actual launch commands with a tiny Cargo stand-in. Unlike
+        # command-list inspection this proves the child receives the override.
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            cargo = directory / 'cargo.py'
+            cargo.write_text('import json, os, sys\n'
+                             'assert os.environ["SQLX_OFFLINE"] == "true"\n'
+                             'assert os.environ["DATABASE_URL"] == "postgres://unavailable"\n'
+                             'if "build" in sys.argv:\n'
+                             ' print(json.dumps(dict(reason="compiler-artifact",\n'
+                             '       target=dict(name="consumer"), executable="/built/consumer")))\n')
+
+            def execute(command, cwd, **_kwargs):
+                return subprocess.run(command, cwd=cwd, check=True, capture_output=True,
+                                      text=True).stdout
+
+            for offline in ('false', None):
+                with self.subTest(offline=offline), mock.patch.dict(os.environ), \
+                        mock.patch.object(runner, 'run', side_effect=execute):
+                    os.environ['DATABASE_URL'] = 'postgres://unavailable'
+                    if offline is None:
+                        os.environ.pop('SQLX_OFFLINE', None)
+                    else:
+                        os.environ['SQLX_OFFLINE'] = offline
+                    command = [sys.executable, str(cargo)]
+                    self.assertEqual(runner.build(command, directory, directory, 'consumer'),
+                                     '/built/consumer')
+                    runner.check_completion(command, directory, directory)
+                    runner.run_harness(command, directory, directory, '/built/consumer')
+
     def test_each_required_identity_must_be_single_local_and_present(self):
         source, consumer = Path('/copied').resolve(), Path('/consumer').resolve()
         packages = [dict(name=name, source=None, manifest_path=str(source / name / 'Cargo.toml'))
@@ -131,6 +167,8 @@ class SourceCopyTests(unittest.TestCase):
             parent = Path(directory)
             root = parent / 'root'
             keep = [CONSUMER_SOURCE, HARNESS_SOURCE, 'consumers/README.md',
+                    'consumers/single_facade_completion.rs',
+                    'consumers/single_facade_completion_tests.rs',
                     'crates/batter/Cargo.toml',
                     'runledger/runledger-test-support/Cargo.toml']
             for name in keep + ['.git/config', 'consumers/.env', 'target/consumer']:

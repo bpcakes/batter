@@ -154,6 +154,12 @@ and the enqueued job under Batter's protected lifecycle, admits and then denies 
 native PostgreSQL quota, and encodes that denial's response metadata. Driving a
 request through the native Axum layer is executed separately, through the same
 facade paths, by `crates/batter/tests/native_transport_consumer.rs`.
+The consumer registers pool cleanup through protected startup and retains its
+work result through checked shutdown on readiness, submission and receive
+failures. The driver orders or conservatively skips dependency cleanup; combined
+work and shutdown failures retain both causes without formatting their contents.
+The source-copy runner also executes completion failure controls and forces
+SQLx offline metadata for every temporary build, even with an ambient database URL.
 `consumers/single_facade_harness.rs` owns the disposable database through
 `batter::runledger::native::test_support` and declares only `batter` as well;
 Docker provisioning and teardown remain Runledger's. `scripts/check_facade_features.py`

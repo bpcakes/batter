@@ -103,8 +103,18 @@ def require_markers(output):
 
 
 def build(cargo, directory, target, name):
-    return executable(run([*cargo, "build", "--locked", "--offline", "--message-format", "json",
-                           "--target-dir", str(target)], directory), name)
+    return executable(run(["env", "SQLX_OFFLINE=true", *cargo, "build", "--locked", "--offline",
+                           "--message-format", "json", "--target-dir", str(target)], directory), name)
+
+
+def check_completion(cargo, directory, target):
+    run(["env", "SQLX_OFFLINE=true", "RUST_TEST_NOCAPTURE=0", *cargo, "test", "--locked", "--offline",
+         "--target-dir", str(target), "--bin", "single-facade-consumer"], directory, echo=True)
+
+
+def run_harness(cargo, directory, target, binary):
+    return run(["env", "SQLX_OFFLINE=true", *cargo, "run", "--locked", "--offline",
+                "--target-dir", str(target), "--", binary], directory, echo=True)
 
 
 def main():
@@ -140,8 +150,8 @@ def main():
         validate_single_dependency((harness / "Cargo.toml").read_text(), resolved_harness, names,
                                    package="single-facade-harness")
         binary = build(cargo, consumer, target, "single-facade-consumer")
-        require_markers(run([*cargo, "run", "--locked", "--offline", "--target-dir", str(target),
-                             "--", binary], harness, echo=True))
+        check_completion(cargo, consumer, target)
+        require_markers(run_harness(cargo, harness, target, binary))
     if (ROOT / "Cargo.lock").read_bytes() != locked:
         raise RuntimeError("source lockfile changed during single-facade verification")
     print("Git-free source copy: one batter dependency executed Runledger migrations, durable "

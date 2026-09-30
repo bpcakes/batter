@@ -2418,6 +2418,12 @@ part, in its own batch because it owns a PostgreSQL container and a full facade
 build. It copies export-eligible sources without `.git` and builds two temporary
 external crates.
 
+Every temporary Cargo build, including the harness and the consumer's Rust
+failure controls, forces `SQLX_OFFLINE=true`. Cargo's `--offline` alone does not
+prevent SQLx macros from contacting an ambient `DATABASE_URL`. A hostile-shell
+control executes each launch command with SQLx offline mode unset or false and
+an unrelated database URL, checking the environment received by the child.
+
 `consumers/single_facade_consumer.rs` is the acceptance consumer. Its manifest
 declares `batter` with `default-features = false` and the features
 `runledger`, `runlimit-postgres` and `runlimit-native-http`, plus the registry
@@ -2455,6 +2461,15 @@ through the same facade paths by
 workspace test part runs. That test also asserts the transport types' identity
 against direct dependencies. This consumer does not exercise the layer and claims
 no coverage for it.
+
+Before the live consumer, its external manifest runs
+`consumers/single_facade_completion_tests.rs`: a held worker drain proves a work
+error waits for settlement before dependency cleanup and return; failed
+readiness retains both the application error and task report; receive failure
+plus cleanup failure retains both causes with redacted formatting; and worker
+panic retains the report and skips dependency cleanup. Protected startup owns
+the consumer's pool finalizer, including failed initialization, and the running
+body retains every returned error through checked completion.
 
 `scripts/test_single_facade_consumer.py` is the runner's own control suite. It
 requires that a declared native-workspace dependency, a `[patch]` table, a facade
