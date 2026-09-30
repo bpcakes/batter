@@ -475,6 +475,61 @@ known outside admission; an application that needs its envelope extracts
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.
 
+### Native package reachability assessment (`batter-0jsf`)
+
+The facade exposed `batter::runledger` and `batter::runlimit` but not the native
+packages they translate. `batter-runledger` re-exported selected
+`runledger_postgres` items and held `runledger-core` only as a dev-dependency, so
+worker preparation, `JobsConfig`, `JobCatalog`, durable intents and the migrator
+were unreachable; `batter-runlimit` re-exported `runlimit-core` and, behind
+`postgres`, `runlimit-postgres`, but not `runlimit-memory`, `runlimit-http` or
+`runlimit-axum`. Both surveyed consumers therefore declared the same workspace
+revision two to eight times, and the cost was structural: every new capability
+added another declaration to keep in step, and one consumer fell 139 commits
+behind. Repeated declarations a consumer must keep consistent are the same signal
+this ADR names for repeated coordination instructions.
+
+Each native library package is now reachable through a feature-gated namespace
+that is the native package itself, so facade and direct paths cannot diverge into
+two identities. The invalid state this removes is a consumer holding two source
+identities for one workspace; it is now unrepresentable through the documented
+recipe because there is nothing left to declare separately.
+
+The namespaces are deliberately weaker than the protected path, and the review
+question is whether they make a known-invalid composition look equivalent to it.
+They do not, and the naming carries that:
+
+- `runledger::native::{core, postgres, runtime}` is reached through a segment
+  named `native`, and its module documentation states the obligations a caller
+  takes on by building a live native supervisor instead of handing inert
+  preparation to `register_in`: observing initialization, requesting shutdown
+  within a budget, classifying the settlement and ordering dependency cleanup.
+  `register_in` still accepts only a `PreparedSupervisor`, and the existing
+  compile-fail rustdocs still reject a live supervisor and a closure hiding one.
+  Reachability adds no way to pass a live supervisor through the protected
+  boundary.
+- `runlimit::native_transport::{http, axum}` is named apart from
+  `runlimit::http`, which remains the protected quota-before-body assembly. The
+  native layer's documentation states that subject derivation, rejection mapping,
+  status and body selection stay with the caller and that it acquires no operation
+  deadline, admission ordering or telemetry from the foundation. Its features
+  select neither `batter-axum` nor `runlimit::http`, so the two never appear as
+  interchangeable spellings of one capability.
+- `runledger::native::test_support` is documented as test-only and must not be
+  selected in a deployed graph. This is application policy: Cargo cannot express
+  "development graphs only" for a feature, and the facade cannot detect the
+  caller's profile. The recipe requires resolver 2 or 3 for dev-dependency
+  feature separation and an explicit resolver at a virtual workspace root;
+  resolver 1 also enables these features in ordinary dependency builds.
+
+What types cannot express here is deliberate. These are the native packages'
+own APIs; Batter does not narrow them, and narrowing them would create the second
+identity the task exists to remove. The remaining boundary is that a consumer can
+reach a low-level native path where a protected one exists. That is the standing
+escape-hatch position of this ADR, not a new weakening, and the documented
+canonical path is unchanged. Fresh-agent usability evaluation of the recipe is
+proposed and unexecuted.
+
 ### Generic serving listener assessment (`batter-tc9w.7`)
 
 Owned serving accepted only `tokio::net::TcpListener`. A read-only survey of two

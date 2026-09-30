@@ -221,11 +221,17 @@ An external disposable Cargo consumer additionally checks a valid assembled
 service and confirms wrong auth and selector closure signatures fail at
 `HttpQuota::new`.
 
-`python3 scripts/check_runlimit_features.py` compiles all eight independent feature
-subsets in a disposable consumer workspace with the current toolchain. It checks
-normal dependency reachability, refuses external source/version drift from the
-repository lock, and requires the specific disabled-HTTP import error without
-`axum`. This runner is part of the `consumers` matrix part.
+`python3 scripts/check_runlimit_features.py` compiles all 32 independent feature
+subsets of `memory`, `postgres`, `axum`, `native-http` and `native-axum` in a
+disposable consumer workspace with the current toolchain. It checks
+normal dependency reachability and reaches each selected namespace, refuses
+external source/version drift from the repository lock, requires the specific
+disabled-`http` import error without `axum`, and the specific
+disabled-`native_transport` import error without either native transport feature.
+The Axum crate is expected whenever `axum` or `native-axum` is selected, while
+`batter-axum` is expected only for `axum`, so the native transport layer cannot
+quietly pull in the Batter Axum adapter. This runner is part of the `consumers`
+matrix part.
 It reads the declared feature inventory from Cargo metadata and fails if a
 feature is added without a graph-membership expectation. A runner control
 injects an additional declared feature and requires that failure. Protected
@@ -523,7 +529,7 @@ focused disabled-module failures, and one all-feature direct/facade identity
 fixture. It then runs the checked-completion and composed quota/SQLx handler
 consumers described at the top of this guide. It runs under the invoking
 toolchain and leaves the repository lock unchanged. The separate `scripts/check_runlimit_features.py` gate still covers
-all eight native Runlimit feature combinations. The matrix then checks all
+every native Runlimit feature combination. The matrix then checks all
 workspace targets, doctests, Clippy with warnings denied,
 and rustdoc with warnings denied. The workspace run includes the SQLx executable
 and compiles the reference compatibility cases as ignored. Since the Runledger
@@ -922,8 +928,10 @@ is involved. Record executed results and limitations in the owning Bead.
 
 The six test parts retain their existing command selections:
 
-- `workspace`: all-feature workspace tests, hostile-environment configuration
-  tests, reference runner controls and optimized canonical future-size bounds.
+- `workspace`: all-feature workspace tests and reference runner controls, then
+  hostile-environment configuration tests and optimized canonical future-size
+  bounds. The two Cargo runs occupy separate batches because both uplift
+  `target/debug/batter-example-reference-service`; see the scheduling rule below.
 - `no-default-features`: minimal core/facade compilation and core tests.
 - `doctests`: workspace all-feature doctests.
 - `consumers`: facade feature checks, native consumers and graph/tool controls.
@@ -977,11 +985,46 @@ available to the other stream. Truncated streams receive explicit omission marke
 (at most two additional marker lines); overflow still fails verification. Logs
 within the limit remain exact. Machine-readable scheduling and mutation capture
 keeps its prefix-only policy.
-The six parts hold the same 23 commands in batches of at most four: `consumers`
-and `scripts` use two batches, and the others use one. Runner controls require
-that the parts partition all 23 commands exactly once and that direct verification invokes each part exactly once. They inject a failure at every command
+The six parts hold 26 commands in batches of at most four: `workspace` and
+`scripts` use two batches, `consumers` uses three, and the others use one. Runner controls
+require that the parts partition all 26 commands exactly once, that each part
+executes exactly the batches it plans in order, and that direct verification
+invokes each part exactly once. They inject a failure at every command
 position and require that no later batch of that part starts; surplus mocked
 outcomes cannot stand in for an unexecuted batch.
+
+Cargo uplifts one debug executable per binary target and builds a package's
+binaries for its integration tests, which reach them through `CARGO_BIN_EXE_*`.
+The build directory lock is released once linking finishes, so a peer command
+that rebuilds the same binary under a different feature selection replaces that
+file while an earlier command is still spawning it. `scripts/test_matrix.py`
+therefore declares the selection each labelled command uplifts and refuses a plan
+that places two selections for one binary in the same batch, or that renames,
+repeats or drops a declared label. The all-feature workspace run, whose
+`metrics_export::executable` test spawns the metrics-enabled reference executable,
+and the default-feature reference configuration run are the declared pair; they
+now sit in different batches of the `workspace` part. This is a scheduling rule
+only: no command, feature set, hostile environment, bound or assertion changed,
+and unrelated commands still run beside each of them.
+
+Controls in `scripts/test_parallel_process.py` execute that scheduling with
+stand-in subprocesses which write, hold and re-read a shared artifact the way the
+real build and test phases do. They require that the two declared runs never
+overlap and that the artifact survives, that an unrelated command still overlaps
+each of them, that the declaration agrees with the commands actually scheduled
+(a run selecting the reference package outside a doctest run must be declared),
+and that the prior single-batch schedule is rejected. A further control runs that
+prior grouping with the same stand-ins and observes the replaced artifact and the
+failing exit status, so the coverage is sensitive to the defect rather than to
+the current batch shape alone. Each stand-in records readiness after its work
+and waits for the participants in the batch actually launched by the matrix.
+These bounded marker handshakes establish overlap without assuming relative
+interpreter startup speeds. In the conflicting batch, the replacement waits
+for the initial write and the owner waits for the replacement's readiness
+before reading. Controls delay individual children beyond the former fixed
+hold windows and require the same outcomes; an absent peer must fail the
+handshake and prevent later batches. The ten-second handshake deadline and
+30-second control watchdog bound failures rather than prescribe scheduling.
 
 The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
 checks file budgets and Python script controls. Both reuse only the pinned
@@ -2444,6 +2487,98 @@ With Docker, `psql` and SQLx CLI 0.9.0 installed, run
 to include the live database-ahead regression. It applies an extra migration to an
 owned disposable PostgreSQL 18 container, removes that migration from its source
 fixture, and proves refresh rejects it before copying or preparing sources.
+
+## Single-dependency facade consumer
+
+`python3 scripts/check_single_facade_consumer.py` runs in the `consumers` matrix
+part, in its own batch because it owns a PostgreSQL container and a full facade
+build. It copies export-eligible sources without `.git` and builds two temporary
+external crates.
+
+Every temporary Cargo build, including the harness and the consumer's Rust
+failure controls, forces `SQLX_OFFLINE=true`. Cargo's `--offline` alone does not
+prevent SQLx macros from contacting an ambient `DATABASE_URL`. A hostile-shell
+control executes each launch command with SQLx offline mode unset or false and
+an unrelated database URL, checking the environment received by the child.
+
+`consumers/single_facade_consumer.rs` is the acceptance consumer. Its manifest
+declares `batter` with `default-features = false` and the features
+`runledger`, `runlimit-postgres` and `runlimit-native-http`, plus the registry
+crates Tokio, SQLx and serde_json, and no `[patch]` table. The runner asserts
+from resolved Cargo metadata that the only workspace package it declares is
+`batter`, that the facade keeps default features disabled, that every required
+identity resolves exactly once from the source copy, and that no external source
+drifts from the root lock, which must remain unchanged.
+
+`consumers/single_facade_harness.rs` owns the disposable database and is checked
+under the same single-dependency assertion; it reaches Runledger's existing
+native test support through the facade's `runledger-test-support` feature. Docker
+and PostgreSQL 18 are required. The harness creates an ephemeral database, runs
+the built consumer binary with `DATABASE_URL`, and drops the database whether or
+not the consumer succeeded; provisioning and teardown remain Runledger's.
+It also selects the facade's generic `test-support` feature: after both operations
+complete, `finish` combines the classified execution result and teardown. The
+private report retains both errors and renders child exit status while redacting
+error contents. Three harness controls cover launch-plus-cleanup failure,
+unsuccessful exit or signal plus cleanup failure, and each single failure/success
+combination. These synthetic outcome controls do not inject a live drop failure.
+
+The consumer must emit each of these exactly once, and each is executed against
+the real database rather than compile-checked:
+
+1. Both migration histories applied — Runledger's first, then Runlimit's — plus
+   Runledger's schema-compatibility verification.
+2. One transaction that writes application state, records a required durable
+   enqueue intent and, after the irreversible queue-phase transition, enqueues a
+   second job; the committed intent and queue rows are then read back.
+3. The registered native worker executing both jobs — the promoted intent and the
+   direct enqueue — under Batter's protected lifecycle, from readiness through a
+   requested drain and checked completion.
+4. A native PostgreSQL fixed-window quota admitting once and then denying, with
+   no work invoked on the denial.
+5. That denial's response metadata encoded through the native draft-11 encoder.
+
+Driving a request through the native Axum admission layer is executed separately
+through the same facade paths by
+`crates/batter/tests/native_transport_consumer.rs`, which the all-feature
+workspace test part runs. That test also asserts the transport types' identity
+against direct dependencies. This consumer does not exercise the layer and claims
+no coverage for it.
+
+Before the live consumer, its external manifest runs
+`consumers/single_facade_completion_tests.rs`: a held worker drain proves a work
+error waits for settlement before dependency cleanup and return; failed
+readiness retains both the application error and task report; receive failure
+plus cleanup failure retains both causes with redacted formatting; and worker
+panic retains the report and skips dependency cleanup. Protected startup owns
+the consumer's pool finalizer, including failed initialization, and the running
+body retains every returned error through checked completion.
+
+The same manifest runs `consumers/single_facade_quota_tests.rs`. Both quota
+expectations preserve concrete backend causes and consumption certainty,
+including synthetic lost-commit evidence, admission interruption progress and
+interrupted admitted work. Formatting redacts retained causes. A real native
+limiter against a closed lazy pool proves its acquisition failure survives
+`run_limiter` and checked shutdown, with and without a simultaneous cleanup
+failure. This needs no database server; it does not simulate a lost remote
+commit acknowledgement. The live harness still exercises successful admission
+followed by quota denial against PostgreSQL 18.
+
+`scripts/test_single_facade_consumer.py` is the runner's own control suite. It
+also builds tiny packages with the actual generated lint tables to prove that
+an accidental unused must-use result fails in both packages while warnings from
+a dependency and explicit `let _` discards remain allowed. Formatting controls
+execute the runner's Cargo formatting command and prove drift fails for both
+standalone roots. These checks run on the selected toolchain; neither a global
+`RUSTFLAGS` override nor a dependency-wide warning policy is introduced. The live
+runner checks formatting and denies package-local warnings for both generated
+manifests, then runs their Rust controls before the live harness. The suite also
+requires that a declared native-workspace dependency, a `[patch]` table, a facade
+dependency left on default features, a missing or duplicated root package, a
+missing, duplicated, remote or sibling identity, a missing or repeated execution
+marker, and a build output naming no matching executable all fail, and that the
+source copy retains both consumer sources while excluding `.git`, `.env` files
+and `target/`.
 
 ## Native Runlimit workspace verification
 

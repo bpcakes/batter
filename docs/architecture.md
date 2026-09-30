@@ -70,10 +70,17 @@ The facade's default feature set is empty, so an ordinary `batter` dependency
 selects only `batter-core`. Applications opt into `batter::at_rest`, `batter::axum`,
 `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
 `batter::test_support` explicitly. `runlimit-memory`, `runlimit-postgres`,
-`runlimit-axum`, and `sqlx-test-support` forward the existing adapter features;
-they do not add facade-owned storage, HTTP, or fixture implementations. The
+`runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
+`runledger-test-support`, and `sqlx-test-support` forward the existing adapter
+features; they do not add facade-owned storage, HTTP, or fixture
+implementations. The
 facade re-exports the adapter types, preserving identity with direct adapter
-imports. See the [feature selection contract](integrations.md#facade-feature-selection)
+imports, and the same features expose the native Runledger and Runlimit packages
+themselves under explicitly native namespaces, so one dependency reaches them
+without a direct declaration or a `[patch]` section. Reachability is not
+ownership: the native namespaces are low-level paths whose caller obligations are
+documented on each module, and the protected `register_in` and
+`batter::runlimit::http` compositions are unchanged. See the [feature selection contract](integrations.md#facade-feature-selection)
 and the [facade package guide](../crates/batter/README.md).
 
 The foundation graph has Tokio, tokio-util, tracing, thiserror, and pin-project-lite.

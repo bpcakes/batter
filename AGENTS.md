@@ -121,7 +121,11 @@ cause has been removed.
 
 `crates/batter/src/lib.rs` is the public facade. It re-exports the single
 `batter-core` implementation and owns optional adapter namespaces plus the
-public foundation examples; it contains no duplicate runtime.
+public foundation examples; it contains no duplicate runtime. Its feature bridges
+also make every native Runledger and Runlimit library package reachable through
+explicitly native namespaces, so one `batter` dependency needs no direct native
+declaration or `[patch]`; reachability moves no ownership. See the
+[single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe).
 `crates/batter-at-rest` owns synchronous envelope encryption and stable MAC keys.
 It has explicit standalone metadata and carries its own copy of the workspace MIT license; the facade may
 only re-export its types behind the opt-in `at-rest` feature.
@@ -165,16 +169,26 @@ and transaction completion without native replacement; server-session terminatio
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
 process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.
+Its `native` module reexports `runledger-core`, `runledger-postgres`,
+`runledger-runtime` and, behind `test-support`, `runledger-test-support`, as the
+native packages themselves; `register_in` remains the protected path.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
 `http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
 transactions and PostgreSQL initialization/maintenance remain owned by the distinct
-packages under `runlimit/`; see their guide and ADR-012.
+packages under `runlimit/`; see their guide and ADR-012. `src/lib.rs` reexports
+those packages as `native`, `memory`, `postgres` and `native_transport::{http, axum}`;
+`native_transport` is named apart from `http` because the native layer is
+caller-controlled and is not the protected assembly.
 `crates/batter-test-support` contains dependency scripts and error combination.
 [`test-support/process/`](test-support/README.md) contains private std-only Unix
 process machinery included by foundation and Axum integration tests. It is not
 the `batter-test-support` crate or a SQLx feature. Preserve its workspace-relative
 layout when moving consuming crates; suite-specific fixtures and self-tests stay
 with their owning suite.
+[`consumers/`](consumers/README.md) contains the external single-dependency
+consumer and its provisioning harness as standalone sources. They are not
+workspace members; `scripts/check_single_facade_consumer.py` builds them from a
+Git-free source copy in temporary manifests that declare only `batter`.
 `crates/batter/examples` contains the eight facade-owned runnable consumers:
 worker, process ownership, operation budget, finite command, HTTP service,
 owned SQLx pool, SQLx verification, and quota service.

@@ -8,6 +8,26 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Reach Runledger and Runlimit through one `batter` dependency. The facade's
+  feature bridges now expose every native library package as the native package
+  itself: `batter::runledger::native::{core, postgres, runtime}` under
+  `runledger`, `batter::runledger::native::test_support` under the new
+  `runledger-test-support`, `batter::runlimit::memory` under `runlimit-memory`,
+  and `batter::runlimit::native_transport::{http, axum}` under the new
+  `runlimit-native-http` and `runlimit-native-axum`. A consumer needs no direct
+  native-package declaration and no `[patch]` section; facade and direct paths
+  keep one type identity. The default feature set stays empty, each namespace is
+  absent without its feature, and `runlimit-native-axum` selects the Axum crate
+  its native layer needs but never `batter-axum` or `batter::runlimit::http`.
+  Reachability moves no ownership: `batter::runledger::register_in` remains the
+  protected registration path and `batter::runlimit::http` the protected
+  quota-before-body assembly, while each native module documents the obligations
+  its callers take on. `runledger-tui` is binary-only and has no namespace.
+  `consumers/single_facade_consumer.rs` is the executed acceptance consumer, and
+  the [single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
+  documents the selection. Publication order is unchanged and nothing is
+  published.
+
 - Extract the admitted request through one typed extractor. Guarded handlers
   and route layers take `AdmittedRequest`, whose `context()`,
   `correlation_id()` and `interruption_responder()` return the request's
