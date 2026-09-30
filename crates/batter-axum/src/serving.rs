@@ -55,16 +55,12 @@ use std::fmt::Debug;
 /// See the runnable `http_service` example for owned startup and signal composition.
 /// Prefer [`register_http_in`] inside canonical protected startup; this signature
 /// remains for lower-level direct-supervisor composition.
-pub fn register_http<L>(
+pub fn register_http(
     supervisor: &mut Supervisor,
     name: &'static str,
-    listener: L,
+    listener: impl Listener<Addr: Debug>,
     application: Router,
-) -> Result<(), RegistrationError>
-where
-    L: Listener,
-    L::Addr: Debug,
-{
+) -> Result<(), RegistrationError> {
     register_http_impl(supervisor.registration(), name, listener, application)
 }
 
@@ -76,6 +72,8 @@ where
 /// or cleanup-extraction authority.
 /// It does not install connection metadata; use [`register_http_with_connect_info_in`]
 /// for the listener's peer address.
+/// The listener type is inferred, preserving existing explicit target arguments
+/// such as `register_http_in::<Supervisor>(...)`.
 ///
 /// ```no_run
 /// use axum::{Router, routing::get};
@@ -85,7 +83,7 @@ where
 /// async fn register(scope: &mut ProtectedStartupScope) -> Result<(), batter_core::BoxError> {
 ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
 ///     let app = Router::new().route("/live", get(batter_axum::liveness));
-///     register_http_in(scope, "http", listener, app)?;
+///     register_http_in::<ProtectedStartupScope>(scope, "http", listener, app)?;
 ///     Ok(())
 /// }
 ///
@@ -120,17 +118,12 @@ where
 ///     Ok(())
 /// }
 /// ```
-pub fn register_http_in<T, L>(
+pub fn register_http_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,
-    listener: L,
+    listener: impl Listener<Addr: Debug>,
     application: Router,
-) -> Result<(), RegistrationError>
-where
-    T: RegistrationTarget + ?Sized,
-    L: Listener,
-    L::Addr: Debug,
-{
+) -> Result<(), RegistrationError> {
     register_http_impl(target.registration(), name, listener, application)
 }
 
@@ -173,7 +166,7 @@ where
 ///     let router = Router::new().route("/peer", get(
 ///         |ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.to_string() },
 ///     ));
-///     register_http_with_connect_info_in(scope, "http", listener, router)?;
+///     register_http_with_connect_info_in::<T>(scope, "http", listener, router)?;
 ///     Ok(())
 /// }
 /// ```
@@ -199,17 +192,12 @@ where
 ///     Ok(())
 /// }
 /// ```
-pub fn register_http_with_connect_info_in<T, L>(
+pub fn register_http_with_connect_info_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,
-    listener: L,
+    listener: impl Listener<Addr: Clone + Debug + Sync + 'static>,
     application: Router,
-) -> Result<(), RegistrationError>
-where
-    T: RegistrationTarget + ?Sized,
-    L: Listener,
-    L::Addr: Clone + Debug + Sync + 'static,
-{
+) -> Result<(), RegistrationError> {
     register_peer_http_impl(target.registration(), name, listener, application)
 }
 

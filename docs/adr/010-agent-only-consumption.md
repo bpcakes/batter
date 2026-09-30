@@ -494,6 +494,12 @@ that already owns listener transfer, acknowledgement, drain and conservative
 cleanup, and the application keeps only the part it actually owns. Existing
 `TcpListener` call sites keep their signatures and behaviour, so this removes an
 obligation without adding a choice.
+The public listener parameters use argument-position `impl Listener` with
+associated-address bounds. Adding a named listener type parameter would break
+existing explicit registration-target arguments; compilation coverage checks
+those original call forms for the raw helpers and both assembled methods. This
+signature choice preserves the same ownership transfer and address constraints;
+it introduces no additional registration phase or caller obligation.
 
 Peer metadata stays library-owned. Pinned Axum 0.8.9 implements `Connected` for a
 bare listener only for `TcpListener`, and generically only for

@@ -1657,6 +1657,12 @@ extracts it beside `Authenticated<P>`, with the response's generated identity
 
 ## Serving over a generic listener
 
+`operational/tcp_compatibility.rs` checks the original TCP function-pointer
+signatures, including the single explicit registration-target type argument for
+both raw helpers and both `AssembledHttp` methods. Adding a named listener type
+parameter makes all four explicit forms fail to compile with E0107; inferred
+calls alone would miss that source-compatibility regression.
+
 `cargo test -p batter-axum --test tls_serving --locked` runs three real rustls
 cases; the normal workspace all-targets pass includes them. The suite owns the
 certificate, crypto provider, accept loop and handshake, because those are

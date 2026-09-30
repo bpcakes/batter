@@ -1846,6 +1846,10 @@ status-only contracts.
 critical component. The listener is any `axum::serve::Listener` whose address
 type is `Debug`: a `TcpListener`, a Unix listener, or an application-owned
 listener that completes its own TLS handshakes.
+The listener type is inferred without adding an explicit type argument. Existing
+TCP calls, including `register_http_in::<Supervisor>(...)`, its connect-info
+companion and both `AssembledHttp` methods with an explicit registration target,
+retain their source compatibility and TCP function-pointer signatures.
 The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
 remain necessary. Invalid or duplicate registration releases only the rejected

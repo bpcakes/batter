@@ -437,21 +437,16 @@ impl AssembledHttp {
     ///     L: Listener,
     ///     L::Addr: Debug,
     /// {
-    ///     assembled.register_in(scope, "http", listener)?;
+    ///     assembled.register_in::<T>(scope, "http", listener)?;
     ///     Ok(())
     /// }
     /// ```
-    pub fn register_in<T, L>(
+    pub fn register_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: L,
-    ) -> Result<(), RegistrationError>
-    where
-        T: RegistrationTarget + ?Sized,
-        L: Listener,
-        L::Addr: fmt::Debug,
-    {
+        listener: impl Listener<Addr: fmt::Debug>,
+    ) -> Result<(), RegistrationError> {
         serving::register_http_in(target, name, listener, self.router)
     }
 
@@ -463,17 +458,12 @@ impl AssembledHttp {
     /// address type. Forwarded headers are never interpreted.
     /// See [`crate::register_http_with_connect_info_in`] for the contract and
     /// for a worked generic-listener signature.
-    pub fn register_with_connect_info_in<T, L>(
+    pub fn register_with_connect_info_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: L,
-    ) -> Result<(), RegistrationError>
-    where
-        T: RegistrationTarget + ?Sized,
-        L: Listener,
-        L::Addr: Clone + fmt::Debug + Sync + 'static,
-    {
+        listener: impl Listener<Addr: Clone + fmt::Debug + Sync + 'static>,
+    ) -> Result<(), RegistrationError> {
         serving::register_http_with_connect_info_in(target, name, listener, self.router)
     }
 
