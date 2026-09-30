@@ -1,5 +1,6 @@
 """Failure controls for the single-dependency facade consumer check."""
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -110,6 +111,7 @@ class ExecutionTests(unittest.TestCase):
                     self.assertEqual(runner.build(command, directory, directory, 'consumer'),
                                      '/built/consumer')
                     runner.check_completion(command, directory, directory)
+                    runner.check_completion(command, directory, directory, 'single-facade-harness')
                     runner.run_harness(command, directory, directory, '/built/consumer')
 
     def test_each_required_identity_must_be_single_local_and_present(self):
@@ -161,6 +163,71 @@ class ExecutionTests(unittest.TestCase):
             executable("\n".join(lines[:4]), 'consumer')
 
 
+class CompilerGateTests(unittest.TestCase):
+    @staticmethod
+    def execute(command, cwd, **_kwargs):
+        return subprocess.run(command, cwd=cwd, check=True, capture_output=True,
+                              text=True).stdout
+
+    def fixture(self, parent, manifest, source_name):
+        source = parent / 'source'
+        (source / 'consumers').mkdir(parents=True)
+        root = parent / 'package'
+        root.mkdir()
+        text = manifest(source)
+        # Keep the actual generated package, lint and binary tables; substitute
+        # one std-only dependency so this compiler control needs no native build.
+        start, end = text.index('[dependencies]'), text.index('[lints.rust]')
+        text = text[:start] + '[dependencies]\nwarned = { path = "../warned" }\n' + text[end:]
+        (root / 'Cargo.toml').write_text(text)
+        dependency = parent / 'warned'
+        (dependency / 'src').mkdir(parents=True)
+        (dependency / 'Cargo.toml').write_text(
+            '[package]\nname = "warned"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n')
+        (dependency / 'src/lib.rs').write_text(
+            'pub fn dependency_warning() {\n    let unused = 1;\n}\n')
+        entry = source / source_name
+        entry.write_text('fn main() {}\n')
+        cargo = runner.selected_cargo(runner.ROOT)
+        self.execute([*cargo, 'generate-lockfile', '--offline'], root)
+        return cargo, root, entry
+
+    def test_package_warnings_fail_without_promoting_dependency_warnings(self):
+        for manifest, source, name in (
+                (consumer_manifest, CONSUMER_SOURCE, 'single-facade-consumer'),
+                (harness_manifest, HARNESS_SOURCE, 'single-facade-harness')):
+            with self.subTest(package=name), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(runner, 'run', side_effect=self.execute):
+                cargo, root, entry = self.fixture(Path(directory), manifest, source)
+                # A dependency warning remains a warning, and explicit discard
+                # remains permitted; this gate guards accidental unused results.
+                entry.write_text('fn result() -> Result<(), ()> { Ok(()) }\n'
+                                 'fn main() { let _ = result(); }\n')
+                runner.build(cargo, root, root / 'target', name)
+                entry.write_text('fn result() -> Result<(), ()> { Ok(()) }\n'
+                                 'fn main() { result(); }\n')
+                with self.assertRaises(subprocess.CalledProcessError) as failed:
+                    runner.build(cargo, root, root / 'target', name)
+                diagnostics = [json.loads(line) for line in failed.exception.stdout.splitlines()]
+                self.assertTrue(any(
+                    item.get('reason') == 'compiler-message'
+                    and item['message']['level'] == 'error'
+                    and item['message'].get('code', {}).get('code') == 'unused_must_use'
+                    for item in diagnostics))
+
+    def test_formatting_drift_fails_for_both_standalone_packages(self):
+        for manifest, source in ((consumer_manifest, CONSUMER_SOURCE),
+                                 (harness_manifest, HARNESS_SOURCE)):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(runner, 'run', side_effect=self.execute):
+                cargo, root, entry = self.fixture(Path(directory), manifest, source)
+                runner.check_format(cargo, root)
+                entry.write_text('fn main( ) { }\n')
+                with self.assertRaises(subprocess.CalledProcessError) as failed:
+                    runner.check_format(cargo, root)
+                self.assertIn('Diff in', failed.exception.stdout)
+
+
 class SourceCopyTests(unittest.TestCase):
     def test_source_copy_retains_both_consumer_sources_without_git(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -171,6 +238,8 @@ class SourceCopyTests(unittest.TestCase):
                     'consumers/single_facade_completion_tests.rs',
                     'consumers/single_facade_quota.rs',
                     'consumers/single_facade_quota_tests.rs',
+                    'consumers/single_facade_harness_completion.rs',
+                    'consumers/single_facade_harness_tests.rs',
                     'crates/batter/Cargo.toml',
                     'runledger/runledger-test-support/Cargo.toml']
             for name in keep + ['.git/config', 'consumers/.env', 'target/consumer']:

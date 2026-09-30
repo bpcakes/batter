@@ -179,7 +179,12 @@ The source-copy runner also executes completion failure controls and forces
 SQLx offline metadata for every temporary build, even with an ambient database URL.
 `consumers/single_facade_harness.rs` owns the disposable database through
 `batter::runledger::native::test_support` and declares only `batter` as well;
-Docker provisioning and teardown remain Runledger's. `scripts/check_facade_features.py`
+it selects the facade's `test-support` feature to combine child execution and
+teardown outcomes with the existing generic helper. A redacted private report
+retains both failures, including an unsuccessful child exit or signal status.
+Docker provisioning and teardown remain Runledger's. Both temporary packages
+have automated formatting and package-local compiler-warning gates.
+`scripts/check_facade_features.py`
 proves the per-feature reachability, graph isolation and type identity of every
 namespace in the table above, including that each one is absent without its
 feature.

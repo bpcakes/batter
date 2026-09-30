@@ -13,10 +13,14 @@ exist so the manifests those checks generate stay reviewable source in Git.
   Runledger's existing native test support and runs the consumer against it. It
   is built from its own manifest so the consumer keeps proving it needs no test
   support, and it reaches that support through the facade's
-  `runledger-test-support` feature, so it declares only `batter` as well.
+  `runledger-test-support` feature, so it declares only `batter` as well. Its
+  `test-support` feature selects the existing generic result combiner, not
+  database provisioning.
 
 `scripts/check_single_facade_consumer.py` builds both from a Git-free source
 copy, asserts the consumer's resolved graph, and requires each executed marker.
+It checks formatting through each temporary manifest and denies package-local
+compiler warnings in both programs; copied dependencies retain their own policy.
 The consumer's private `single_facade_completion.rs` retains the work result
 while awaiting checked shutdown. Protected startup owns the pool finalizer, so
 failed or uncertain settlement cannot bypass conservative cleanup skipping.
@@ -26,6 +30,12 @@ runner executes it from the same external manifest before the live consumer.
 while retaining every unexpected native outcome in a redacted error. Its tests
 cover native backend causes, consumption certainty, interruption progress and
 a closed-pool failure through checked shutdown, including cleanup failure.
+The harness's private `single_facade_harness_completion.rs` classifies launch
+errors and unsuccessful child status, then uses `batter::test_support::finish`
+to retain execution and teardown outcomes together. Its redacted report keeps
+both causes inspectable and renders exit status without printing error contents.
+`single_facade_harness_tests.rs` covers both dual failures, signal status, single
+failures and success; the runner executes it before provisioning the live database.
 All temporary Cargo builds force `SQLX_OFFLINE=true`, independent of an ambient
 `DATABASE_URL`; runtime database selection still belongs to the harness.
 `scripts/test_single_facade_consumer.py` covers that script's own assertions.

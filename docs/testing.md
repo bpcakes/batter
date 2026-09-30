@@ -2479,6 +2479,12 @@ native test support through the facade's `runledger-test-support` feature. Docke
 and PostgreSQL 18 are required. The harness creates an ephemeral database, runs
 the built consumer binary with `DATABASE_URL`, and drops the database whether or
 not the consumer succeeded; provisioning and teardown remain Runledger's.
+It also selects the facade's generic `test-support` feature: after both operations
+complete, `finish` combines the classified execution result and teardown. The
+private report retains both errors and renders child exit status while redacting
+error contents. Three harness controls cover launch-plus-cleanup failure,
+unsuccessful exit or signal plus cleanup failure, and each single failure/success
+combination. These synthetic outcome controls do not inject a live drop failure.
 
 The consumer must emit each of these exactly once, and each is executed against
 the real database rather than compile-checked:
@@ -2522,6 +2528,14 @@ commit acknowledgement. The live harness still exercises successful admission
 followed by quota denial against PostgreSQL 18.
 
 `scripts/test_single_facade_consumer.py` is the runner's own control suite. It
+also builds tiny packages with the actual generated lint tables to prove that
+an accidental unused must-use result fails in both packages while warnings from
+a dependency and explicit `let _` discards remain allowed. Formatting controls
+execute the runner's Cargo formatting command and prove drift fails for both
+standalone roots. These checks run on the selected toolchain; neither a global
+`RUSTFLAGS` override nor a dependency-wide warning policy is introduced. The live
+runner checks formatting and denies package-local warnings for both generated
+manifests, then runs their Rust controls before the live harness. The suite also
 requires that a declared native-workspace dependency, a `[patch]` table, a facade
 dependency left on default features, a missing or duplicated root package, a
 missing, duplicated, remote or sibling identity, a missing or repeated execution

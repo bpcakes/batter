@@ -19,13 +19,14 @@ ROOT = Path(__file__).resolve().parent.parent
 CONSUMER_SOURCE = "consumers/single_facade_consumer.rs"
 HARNESS_SOURCE = "consumers/single_facade_harness.rs"
 FACADE_FEATURES = ("runledger", "runlimit-postgres", "runlimit-native-http")
-HARNESS_FEATURES = ("runledger-test-support",)
+HARNESS_FEATURES = ("runledger-test-support", "test-support")
+PACKAGE_LINTS = '[lints.rust]\nwarnings = "deny"\n'
 # One source identity for the facade, every adapter it selects, and every native
 # package the consumer reaches without declaring it.
 IDENTITIES = ("batter", "batter-core", "batter-sqlx", "batter-runledger", "batter-runlimit",
               "runledger-core", "runledger-postgres", "runledger-runtime",
               "runlimit-core", "runlimit-postgres", "runlimit-http")
-HARNESS_IDENTITIES = ("batter", "batter-runledger", "runledger-test-support")
+HARNESS_IDENTITIES = ("batter", "batter-runledger", "runledger-test-support", "batter-test-support")
 # Ordinary registry crates. These are not native-workspace side pins.
 ECOSYSTEM = ('tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }',
              'sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }',
@@ -51,7 +52,7 @@ def consumer_manifest(source):
     return ('[package]\nname = "single-facade-consumer"\nversion = "0.0.0"\n'
             'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + dependencies + '\n'
-            '[[bin]]\nname = "single-facade-consumer"\npath = '
+            + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-consumer"\npath = '
             + json.dumps(str(Path(source) / CONSUMER_SOURCE)) + '\n')
 
 
@@ -62,7 +63,7 @@ def harness_manifest(source):
     return ('[package]\nname = "single-facade-harness"\nversion = "0.0.0"\n'
             'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + facade + '\n' + tokio + '\n'
-            '[[bin]]\nname = "single-facade-harness"\npath = '
+            + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-harness"\npath = '
             + json.dumps(str(Path(source) / HARNESS_SOURCE)) + '\n')
 
 
@@ -107,9 +108,13 @@ def build(cargo, directory, target, name):
                            "--message-format", "json", "--target-dir", str(target)], directory), name)
 
 
-def check_completion(cargo, directory, target):
+def check_format(cargo, directory):
+    run([*cargo, "fmt", "--", "--check"], directory, echo=True)
+
+
+def check_completion(cargo, directory, target, name="single-facade-consumer"):
     run(["env", "SQLX_OFFLINE=true", "RUST_TEST_NOCAPTURE=0", *cargo, "test", "--locked", "--offline",
-         "--target-dir", str(target), "--bin", "single-facade-consumer"], directory, echo=True)
+         "--target-dir", str(target), "--bin", name], directory, echo=True)
 
 
 def run_harness(cargo, directory, target, binary):
@@ -137,6 +142,7 @@ def main():
             case.mkdir()
             (case / "Cargo.toml").write_text(text)
             (case / "Cargo.lock").write_bytes(locked)
+            check_format(cargo, case)
         # Cargo may prune the seeded temporary lock; it must retain every selected source.
         resolved = json.loads(run([*cargo, "metadata", "--format-version", "1", "--offline"], consumer))
         validate_consumer(resolved, source, consumer, known, required_identities=IDENTITIES)
@@ -151,6 +157,7 @@ def main():
                                    package="single-facade-harness")
         binary = build(cargo, consumer, target, "single-facade-consumer")
         check_completion(cargo, consumer, target)
+        check_completion(cargo, harness, target, "single-facade-harness")
         require_markers(run_harness(cargo, harness, target, binary))
     if (ROOT / "Cargo.lock").read_bytes() != locked:
         raise RuntimeError("source lockfile changed during single-facade verification")

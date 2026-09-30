@@ -12,6 +12,8 @@
 use batter::runledger::native::test_support::create_ephemeral_database;
 use std::{path::PathBuf, process::Command};
 
+mod single_facade_harness_completion;
+
 type Outcome<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[tokio::main]
@@ -27,12 +29,7 @@ async fn main() -> Outcome {
         .env("FACADE_CONSUMER_SUBJECT", database.name())
         .status();
     let teardown = database.teardown().await;
-    let status = status?;
-    teardown?;
-    if !status.success() {
-        // Only the status reaches diagnostics; the consumer owns its own output.
-        return Err(format!("single-facade consumer exited with {status}").into());
-    }
+    single_facade_harness_completion::finish(status, teardown)?;
     println!("single-facade harness: disposable database created, consumed and dropped");
     Ok(())
 }
