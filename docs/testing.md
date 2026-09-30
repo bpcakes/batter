@@ -1016,7 +1016,15 @@ each of them, that the declaration agrees with the commands actually scheduled
 and that the prior single-batch schedule is rejected. A further control runs that
 prior grouping with the same stand-ins and observes the replaced artifact and the
 failing exit status, so the coverage is sensitive to the defect rather than to
-the current batch shape alone.
+the current batch shape alone. Each stand-in records readiness after its work
+and waits for the participants in the batch actually launched by the matrix.
+These bounded marker handshakes establish overlap without assuming relative
+interpreter startup speeds. In the conflicting batch, the replacement waits
+for the initial write and the owner waits for the replacement's readiness
+before reading. Controls delay individual children beyond the former fixed
+hold windows and require the same outcomes; an absent peer must fail the
+handshake and prevent later batches. The ten-second handshake deadline and
+30-second control watchdog bound failures rather than prescribe scheduling.
 
 The existing `ci.yml` owns the Rust/toolchain/HTTP matrix. `repo-policy.yml`
 checks file budgets and Python script controls. Both reuse only the pinned

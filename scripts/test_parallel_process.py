@@ -431,67 +431,70 @@ class ExclusiveBuildTests(unittest.TestCase):
     stand-in subprocesses that reproduce exactly that replacement.
     """
 
-    owner_hold = 1.0
-    peer_hold = 0.6
+    fixture_timeout = 10
 
     def scheduled(self):
         return {label: command for plan in matrix.parts().values()
                 for labels, batch in plan for label, command in zip(labels, batch)}
 
-    def uplifting_fixture(self, directory):
-        """Stand in for the all-feature run whose tests spawn the executable."""
+    def fixture(self, directory, label, body, observed, expected=None):
+        """Hold every actual batch participant until all have done their work."""
         return python(f"""
 import json, time
 from pathlib import Path
 root = Path({directory!r})
 artifact = root / 'reference-executable'
 started = time.monotonic()
+deadline = started + {self.fixture_timeout}
+expected = {expected!r}
+
+def wait_for(marker):
+    while not marker.exists():
+        if time.monotonic() >= deadline:
+            raise SystemExit('timed out waiting for ' + marker.name)
+        time.sleep(0.01)
+
+{body}
+(root / '{label}.ready').touch()
+for peer in json.loads((root / 'batch-members.json').read_text()):
+    wait_for(root / (peer + '.ready'))
+observed = {observed}
+(root / '{label}.json').write_text(json.dumps(
+    {{'started': started, 'finished': time.monotonic(), 'observed': observed}}))
+raise SystemExit(0 if expected is None or observed == expected else 9)
+""")
+
+    def uplifting_fixture(self, directory):
+        """Stand in for the all-feature run whose tests spawn the executable."""
+        return self.fixture(directory, "workspace-tests", """
 artifact.write_text('all-features')
 (root / 'uplifted').touch()
-deadline = time.monotonic() + {self.owner_hold}
-while time.monotonic() < deadline:
-    time.sleep(0.01)
-observed = artifact.read_text()
-(root / 'workspace-tests.json').write_text(json.dumps(
-    {{'started': started, 'finished': time.monotonic(), 'observed': observed}}))
-raise SystemExit(0 if observed == 'all-features' else 9)
-""")
+""", "artifact.read_text()", expected="all-features")
 
     def replacing_fixture(self, directory):
         """Stand in for the default-feature run that rebuilds the same binary."""
-        return python(f"""
-import json, time
-from pathlib import Path
-root = Path({directory!r})
-artifact = root / 'reference-executable'
-started = time.monotonic()
-deadline = started + 5
-while not (root / 'uplifted').exists() and time.monotonic() < deadline:
-    time.sleep(0.01)
+        return self.fixture(directory, "configuration-hostile-environment", """
+wait_for(root / 'uplifted')
 artifact.write_text('default')
-deadline = time.monotonic() + {self.peer_hold}
-while time.monotonic() < deadline:
-    time.sleep(0.01)
-(root / 'configuration-hostile-environment.json').write_text(json.dumps(
-    {{'started': started, 'finished': time.monotonic(), 'observed': 'default'}}))
-""")
+""", "'default'")
 
     def peer_fixture(self, directory, label):
         """Stand in for an unrelated command that may run beside either build."""
-        return python(f"""
-import json, time
-from pathlib import Path
-started = time.monotonic()
-deadline = started + {self.peer_hold}
-while time.monotonic() < deadline:
-    time.sleep(0.01)
-(Path({directory!r}) / '{label}.json').write_text(json.dumps(
-    {{'started': started, 'finished': time.monotonic(), 'observed': None}}))
-""")
+        return self.fixture(directory, label, "", "None")
 
     def execute_workspace(self, directory, prior=False):
         """Run the real workspace part with stand-in commands and record spans."""
         rendered = {}
+        fixtures = [
+            ("WORKSPACE_TESTS", "workspace-tests", self.uplifting_fixture(directory)),
+            ("HOSTILE_CONFIGURATION", "configuration-hostile-environment",
+             self.replacing_fixture(directory)),
+            ("REFERENCE_RUNNER_TESTS", "reference-runner-controls",
+             self.peer_fixture(directory, "reference-runner-controls")),
+            ("FUTURE_SIZE_RELEASE", "release-future-sizes",
+             self.peer_fixture(directory, "release-future-sizes")),
+        ]
+        labels_by_command = {tuple(command): label for _, label, command in fixtures}
 
         def bounded(commands, **kwargs):
             # The matrix keeps its own bounds; only the watchdog is shortened so a
@@ -499,6 +502,11 @@ while time.monotonic() < deadline:
             self.assertEqual(kwargs["timeout"], 1500)
             self.assertEqual(kwargs["output_limit"], 8 * 1024 * 1024)
             self.assertTrue(kwargs["retain_tail"])
+            # Derive the rendezvous from the batch actually launched by main(),
+            # so the same fixtures work under both the current and prior plans.
+            # The previous batch has settled before this file is replaced.
+            labels = [labels_by_command[tuple(command)] for command in commands]
+            (Path(directory) / "batch-members.json").write_text(json.dumps(labels))
             return parallel.run_parallel(commands, **{**kwargs, "timeout": 30})
 
         def render(labels, outcomes):
@@ -508,13 +516,8 @@ while time.monotonic() < deadline:
             mock.patch.object(sys, "argv", ["test_matrix.py", "workspace"]),
             mock.patch.object(matrix, "run_parallel", bounded),
             mock.patch.object(matrix, "render_outcomes", render),
-            mock.patch.object(matrix, "WORKSPACE_TESTS", self.uplifting_fixture(directory)),
-            mock.patch.object(matrix, "HOSTILE_CONFIGURATION", self.replacing_fixture(directory)),
-            mock.patch.object(matrix, "REFERENCE_RUNNER_TESTS",
-                              self.peer_fixture(directory, "reference-runner-controls")),
-            mock.patch.object(matrix, "FUTURE_SIZE_RELEASE",
-                              self.peer_fixture(directory, "release-future-sizes")),
         ]
+        patches.extend(mock.patch.object(matrix, name, command) for name, _, command in fixtures)
         with ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
@@ -524,7 +527,7 @@ while time.monotonic() < deadline:
                 stack.enter_context(mock.patch.object(matrix, "parts", lambda: planned))
             status = matrix.main()
         spans = {path.stem: json.loads(path.read_text())
-                 for path in Path(directory).glob("*.json")}
+                 for path in Path(directory).glob("*.json") if path.name != "batch-members.json"}
         return status, rendered, spans
 
     def prior_schedule(self):
@@ -611,6 +614,52 @@ while time.monotonic() < deadline:
         self.assertEqual(spans["workspace-tests"]["observed"], "default")
         self.assertTrue(self.overlapping(spans["workspace-tests"],
                                          spans["configuration-hostile-environment"]))
+
+    @staticmethod
+    def delayed(command, seconds):
+        """Perturb startup beyond the old hold windows, without changing work."""
+        return [*command[:2], f"import time; time.sleep({seconds})\n" + command[2]]
+
+    def test_prior_schedule_waits_for_delayed_replacement(self):
+        original = self.replacing_fixture
+        with mock.patch.object(self, "replacing_fixture",
+                               lambda directory: self.delayed(original(directory), 1.5)):
+            self.test_prior_schedule_still_replaces_the_artifact_under_the_same_control()
+
+    def test_current_schedule_waits_for_delayed_peer(self):
+        original = self.peer_fixture
+
+        def delayed_peer(directory, label):
+            command = original(directory, label)
+            return self.delayed(command, 0.9) if label == "release-future-sizes" else command
+
+        with mock.patch.object(self, "peer_fixture", delayed_peer):
+            self.test_scheduled_builds_never_overlap_and_keep_the_uplifted_artifact()
+
+    def test_current_schedule_waits_for_delayed_owner(self):
+        original = self.uplifting_fixture
+        with mock.patch.object(self, "uplifting_fixture",
+                               lambda directory: self.delayed(original(directory), 1.5)):
+            self.test_scheduled_builds_never_overlap_and_keep_the_uplifted_artifact()
+
+    def test_missing_peer_fails_the_handshake_and_stops_later_batches(self):
+        original = self.peer_fixture
+
+        def absent_peer(directory, label):
+            return python("pass") if label == "reference-runner-controls" else original(directory, label)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(self, "fixture_timeout", 0.2), \
+                mock.patch.object(self, "peer_fixture", absent_peer):
+            status, rendered, _ = self.execute_workspace(directory)
+        self.assertEqual(status, 1)
+        self.assertEqual(set(rendered), {"workspace-tests", "reference-runner-controls"})
+        owner = rendered["workspace-tests"]
+        self.assertEqual(owner.status, 1)
+        self.assertIn(b"timed out waiting for reference-runner-controls.ready", owner.stderr)
+        self.assertFalse(owner.watchdog)
+        self.assertTrue(owner.reaped and owner.output_eof)
+        self.assertTrue(rendered["reference-runner-controls"].ok)
 
 
 class MutationCopyTests(unittest.TestCase):

@@ -16,7 +16,10 @@ beside each build. Executed controls schedule stand-in subprocesses that
 reproduce the replacement, require non-overlap and retained artifacts, and fail
 against the prior single-batch schedule. No application or runtime API changed,
 the metrics test was not weakened and no retry was added. Verification details
-belong to the owning Bead.
+belong to the owning Bead. Follow-up regression controls replace fixed-duration
+holds with bounded readiness handshakes among actual batch participants, covering
+delayed owner, replacing child and peer starts plus missing-peer failure without
+changing the production schedule.
 
 2026-09-27 OTLP guard closure repair (`batter-i3ny`): recorder calls now register
 as active before delegation; close stops new calls and waits for active ones.
