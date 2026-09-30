@@ -22,10 +22,38 @@ integration namespaces explicitly:
 | `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
 | `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
-| `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
-| `runlimit` | `batter::runlimit` | `batter-runlimit` |
+| `runledger` | `batter::runledger`, `batter::runledger::native::{core, postgres, runtime}`, `batter::sqlx` | `batter-runledger`, `batter-sqlx`, the three native Runledger libraries |
+| `runledger-test-support` | `batter::runledger::native::test_support` | `runledger`, plus Runledger's own PostgreSQL test support |
+| `runlimit` | `batter::runlimit`, `batter::runlimit::native` | `batter-runlimit`, `runlimit-core` |
+| `runlimit-memory` | `batter::runlimit::memory` | `runlimit`, plus `runlimit-memory` |
+| `runlimit-postgres` | `batter::runlimit::postgres`, `batter::runlimit::attempts` | `runlimit`, plus `runlimit-postgres` and `batter-sqlx` |
+| `runlimit-axum` | `batter::runlimit::http`, `batter::axum` | `runlimit`, `axum`, the protected quota-before-body assembly |
+| `runlimit-native-http` | `batter::runlimit::native_transport::http` | `runlimit`, plus `runlimit-http` |
+| `runlimit-native-axum` | `batter::runlimit::native_transport::axum` | `runlimit`, plus `runlimit-axum` |
 | `test-support` | `batter::test_support` | `batter-test-support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` | SQLx adapter fixture support plus generic support |
+
+Every native namespace above is the native package itself, so a type reached
+through the facade and through a direct dependency are one identity. One `batter`
+dependency therefore needs no direct native-package declaration and no `[patch]`;
+the [single-dependency recipe](reference-compatibility.md#single-dependency-recipe)
+records the executed acceptance evidence. `runledger-tui` is a binary-only
+package and has no namespace.
+
+Reachability is not ownership. Runledger keeps durable job policy, persistence,
+scheduling and descendant supervision; Runlimit keeps policy validation, key
+derivation, storage and migrations. A native namespace is a deliberately weaker,
+low-level path whose caller obligations are documented on the module:
+`batter::runledger::register_in` still owns registering inert preparation,
+observing initialization, requesting shutdown within a budget, classifying the
+settlement and ordering dependency cleanup, and `batter::runlimit::http` still
+owns authenticated quota-before-body assembly. `native_transport::axum` leaves
+subject derivation, rejection mapping and response selection to the application
+and acquires no operation deadline, admission ordering or telemetry from the
+foundation; `native_transport::http` serializes an unstable Internet-Draft header
+set. `runledger::native::test_support` is test-only and must not be selected in a
+deployed graph. These namespaces authorize no change to native runtimes, storage,
+policy or lifecycle ownership.
 
 `at-rest` re-exports the standalone, synchronous `batter-at-rest` package with
 the same type identities. Direct `batter_at_rest` use remains supported and
@@ -36,10 +64,13 @@ resolved graph; facade feature checks do not establish a security boundary.
 See the leaf's [integration obligations](../crates/batter-at-rest/README.md#security-and-lifecycle-boundary)
 for authoritative context, bounded work, and fenced rotation persistence.
 `runlimit-memory` and
-`runlimit-postgres` forward only the existing native
-error bridges through `batter::runlimit`; neither selects the other backend or
-HTTP. `runlimit-axum` enables `batter::axum` and
-`batter::runlimit::http`. `runledger` also enables `batter::sqlx` because its
+`runlimit-postgres` forward the existing native
+error bridges plus their own native backend through `batter::runlimit`; neither
+selects the other backend or HTTP. `runlimit-axum` enables `batter::axum` and
+`batter::runlimit::http`. The two native transport features select neither:
+`runlimit-native-axum` resolves the Axum crate its native layer needs without
+`batter-axum` or the protected assembly, and `runlimit-native-http` resolves no
+transport framework at all. `runledger` also enables `batter::sqlx` because its
 protected transaction bridge requires `PgSession`; native SQLx selected only by
 `runlimit-postgres` does not expose that namespace. `axum+runlimit` does not
 expose the Runlimit HTTP module. Native versions, TLS/runtime settings, storage,
@@ -54,8 +85,13 @@ persist in a compiler-specific `facade-features` subdirectory of Cargo's resolve
 target directory; sharing that cache does not share dependency resolution or
 accept a previous command's result. Disabled imports and rejected completion
 patterns must produce their expected diagnostics on every run, including with
-a warm cache.
-The direct Runlimit runner separately retains its eight native combinations.
+a warm cache. It also proves each native namespace's identity against a direct
+dependency on the same package, and that each namespace is absent without its
+feature.
+The direct Runlimit runner separately enumerates every combination of the
+adapter's five features.
+The direct-package consumer checks are also retained: they prove direct-path and
+cross-path identity, which the single-dependency check deliberately does not.
 
 ## Axum: implemented, with a deliberately small boundary
 

@@ -91,6 +91,19 @@ directory, copy the repository lock, reconcile only their root, and then use
 
 Native Runledger amendment, 2026-09-21 (`batter-biqv.1`): [ADR-011](011-native-runledger-workspace.md) adds four native libraries and the TUI binary under `runledger/`, all unpublished. Native ownership and optional facade adoption remain separate.
 
+Single-dependency amendment, 2026-09-30 (`batter-0jsf`): the facade's feature
+bridges now also expose every native Runledger and Runlimit library package
+through explicitly native namespaces, so one `batter` dependency reaches them
+without a direct native declaration or a `[patch]` section. `batter-runledger`
+declares `runledger-core` directly, which `runledger-postgres` and
+`runledger-runtime` already resolved, and gains an opt-in `test-support` feature;
+`batter-runlimit` gains `native-http` and `native-axum`. This changes no package
+ownership, dependency direction or runtime behaviour, keeps the facade's default
+feature set empty, and keeps each namespace reachable only through its own
+feature. The isolated feature consumers additionally prove each namespace's
+identity against a direct dependency and its absence without its feature. The
+release order is unchanged: the native packages still precede the Batter adapters.
+
 Publication amendment, 2026-09-22 (`batter-ddc`): prepare the eight Batter
 libraries as version 0.0.1 packages restricted to crates.io. Every internal
 path dependency also declares its registry version. The two example packages

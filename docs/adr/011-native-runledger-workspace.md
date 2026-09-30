@@ -46,6 +46,21 @@ Fresh-agent usability evaluation is proposed and unexecuted. Standalone source
 consumer verification and shared-workspace maintenance tools belong to the
 second delivery task. The upstream repository is not archived by this decision.
 
+## Facade reachability amendment
+
+On 2026-09-30, `batter-0jsf` made the four library packages reachable as
+`batter::runledger::native::{core, postgres, runtime}` and, behind an opt-in
+feature, `native::test_support`. `batter-runledger` declares `runledger-core`
+directly, which `runledger-postgres` and `runledger-runtime` already resolved.
+The namespaces are the native packages themselves, so a consumer needs one
+`batter` dependency and cannot end up holding two source identities. Nothing
+depends on the facade in the other direction, and no ownership moves: durable job
+policy, persistence, scheduling, descendant supervision and Docker provisioning
+stay native, and `register_in` remains the protected registration path. These
+packages' public APIs are now consumer-facing through two paths, so a rename or
+removal changes the facade's surface too. `runledger-tui` is binary-only and has
+no namespace.
+
 ## Publication amendment
 
 On 2026-09-22, `batter-ddc` prepared all five native packages as coordinated

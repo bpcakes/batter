@@ -189,8 +189,13 @@ Adapter APIs are also available from their direct packages. The facade exposes
 feature records bounded outcome metrics through `batter::telemetry::metrics`; the
 `otlp` feature selects explicit bounded export through `batter::otlp` and
 `batter::service::start`; `runlimit-memory`,
-`runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
-documented bridges. Each package declares its own version and Rust minimum.
+`runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`,
+`runlimit-native-axum`, `runledger-test-support`, and `sqlx-test-support` select
+only their documented bridges. Those features also reach every native Runledger
+and Runlimit library package through explicitly native namespaces, so one
+`batter` dependency needs no direct native declaration and no `[patch]`; the
+[single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
+records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
 The nine Batter packages are 0.0.1, native Runledger is 0.13.0, and native
 Runlimit is 0.4.0. All retain Rust 1.94 as their minimum.
 The standalone `batter-at-rest` leaf verifies that minimum independently. The

@@ -41,6 +41,12 @@ Fast jump index for agent-facing guidance in this repository.
 
 - [Native Runlimit](./runlimit/AGENTS.md): validated policy, bounded native backends, transport helpers and immutable migrations.
 
+## External consumer sources
+
+- [Single-dependency consumers](./consumers/README.md): the acceptance consumer
+  that declares only `batter`, and its provisioning harness. Standalone sources,
+  not workspace members.
+
 ## Private shared test sources
 
 - [Repository process machinery](./test-support/README.md): std-only Unix launch,

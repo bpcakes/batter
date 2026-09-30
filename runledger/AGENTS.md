@@ -7,6 +7,15 @@ They must not depend on the Batter facade. Preserve package names, native public
 contracts, strict package lint policy, coordinated version 0.13.0, and
 publication restricted to crates.io.
 
+`batter-runledger` reexports the four library packages as
+`batter::runledger::native::{core, postgres, runtime, test_support}`, the last
+behind an opt-in feature. That is reachability for consumers, not a dependency on
+the facade and not a transfer of ownership: durable job policy, persistence,
+scheduling, descendant supervision and Docker provisioning stay here. Renaming or
+removing a public native item still changes the facade's surface, so treat these
+packages' public APIs as consumer-facing. `runledger-tui` is binary-only and has
+no namespace.
+
 PostgreSQL 18 is the authoritative database baseline. Native database tests use
 `runledger-test-support` and Docker's `postgres:18` image by default. Record exact
 server versions with live evidence; other PostgreSQL majors remain unverified.
