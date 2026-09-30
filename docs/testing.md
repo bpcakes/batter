@@ -1662,6 +1662,18 @@ liveness severity, leaving the quota writer on renderer metadata, letting a
 condition replace a dependency reason and letting a condition's answer decide a
 starting lifecycle's decision each made these tests fail.
 
+[`rendered_fallback.rs`](../crates/batter-axum/tests/operational/rendered_fallback.rs)
+covers the optional unmatched-path renderer during Starting, Ready and Draining,
+through native nesting and declared routers: stable 404 envelopes, private
+prefix headers, generated identity, one observation, guarded matched methods,
+probe bypass, and conflicting fallback/probe/group rejection before rendering.
+The renderer-isolation matrix also includes this fallback.
+[`lifecycle_readiness.rs`](../crates/batter-axum/tests/operational/lifecycle_readiness.rs)
+uses no health monitor and checks approval, driver start, component acknowledgement,
+application-condition failure/recovery, drain and stop through both empty and
+rendered probes. A foundation test initiates drain during a successful condition
+check and requires the final lifecycle read to override it.
+
 [`renderer_isolation.rs`](../crates/batter-axum/tests/operational/renderer_isolation.rs)
 redispatches cloned renderer metadata through ordinary and quota operational
 wrappers for liveness, readiness, admission failure, captured interruption and

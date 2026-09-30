@@ -5,7 +5,9 @@ mod operational {
     mod admitted_request;
     mod connect_info;
     mod correlation;
+    mod lifecycle_readiness;
     mod readiness;
+    mod rendered_fallback;
     mod rendered_probes;
     mod renderer_isolation;
     mod serving;

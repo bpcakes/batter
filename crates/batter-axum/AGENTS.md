@@ -21,7 +21,9 @@ Windows support and non-Unix fallbacks are out of scope.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
   composition and `src/boundary/guarded.rs` the `GuardedRouter` builder. Probe
   routes remain outside admission while the guarded router's default, custom,
-  nested, and method fallbacks remain inside it. `src/boundary/assembly.rs`
+  nested, and method fallbacks remain inside it. `src/boundary/fallback.rs`
+  provides the alternative metadata-only unmatched-path renderer outside
+  admission; assembly rejects combining it with guarded root/nested fallbacks. `src/boundary/assembly.rs`
   owns validation order and group composition; `src/boundary/declared.rs` owns
   `RouteInventory`, the inspection copy of a router admitted through
   `GuardedRouter::from_router` and request dispatch to its declared routes.
@@ -157,7 +159,12 @@ reintroduce raw probe patterns. Route groups keep one fixed order: correlation
 and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the
 application's layers. Only the default group owns root or nested fallbacks and
-is merged last. Group routes must not share a request path in any method; keep
+is merged last. A boundary may instead select one rendered fallback outside
+admission, reached only after all native and declared routes fail to match.
+Reject combining it with a declared guarded fallback. Renderers receive no body
+or private ownership state; prefix selection and response headers are application
+policy, using PrivateResponsePolicy::apply when appropriate. Matched method
+fallbacks remain guarded. Group routes must not share a request path in any method; keep
 overlap decisions confirmed by native routing of each pattern alone when its
 witness survives request URI construction unchanged; otherwise reject the
 overlap before native merging. Update
@@ -179,6 +186,8 @@ Readiness defaults: Starting/Draining INFO; dependency failures while Ready and
 Stopped WARN. Existing status-only probes and Problem JSON remain compatible.
 Carry the foundation `ReadinessDecision` in response extensions; do not recreate
 lifecycle/health classification or accept a broad `HealthStatus` as a failure.
+ReadinessPolicy::lifecycle_only uses no dependency monitor; lifecycle and
+application conditions still constrain the foundation decision.
 Application readiness conditions narrow that foundation decision; never evaluate
 them in the adapter. A probe renderer chooses only the body and headers: apply
 the readiness status, decision extension and severity, or the liveness 200

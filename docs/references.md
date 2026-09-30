@@ -4439,3 +4439,19 @@ locked registry, not the `latest` documentation.
   `builder_with_provider`, so feature unification cannot make provider selection
   ambiguous. These crates are dev-dependencies of `batter-axum` only; no
   published package gains a TLS dependency.
+
+
+### Optional rendered fallback (2026-09-30)
+
+The lockfile still resolves Axum 0.8.9 and matchit 0.8.4. Rechecked the pinned
+[Router source](https://docs.rs/axum/0.8.9/src/axum/routing/mod.rs.html) and
+[path router](https://docs.rs/axum/0.8.9/src/axum/routing/path_router.rs.html):
+`reset_fallback` resets root, nested and catch-all fallback routing while keeping
+explicit routes, including their method routers. `fallback_service` installs a
+new root and catch-all fallback. Layers affect routes present when added.
+The optional boundary renderer therefore uses the existing root dispatch after
+native routing; admitted inventories still select declared routes before the
+renderer. The renderer's own router carries correlation/observation because the
+dispatch service is installed after the native route layer. Root/nested guarded
+fallback declarations are rejected with this mode. Local tests cover native and
+declared matched-method dispatch, unmatched paths and probe/group validation.

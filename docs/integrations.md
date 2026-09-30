@@ -114,7 +114,7 @@ composition, then pass the retained witness and the supervisor's
 `OperationAdmission` projection to the infallible policy constructor.
 `HttpBoundary::new(policy)` mounts liveness and readiness probes outside
 admission, applies admission to every guarded route plus its default, custom,
-nested and method fallbacks, and installs server correlation with the single
+nested and method fallbacks by default, and installs server correlation with the single
 HTTP observer outermost; the caller cannot reorder those layers. Build guarded
 routes through `GuardedRouter`, whose route, merge and typed-nesting operations
 retain an inert identity inventory; opaque nested services remain outside this
@@ -136,7 +136,7 @@ they are ordinary replaceable values; applications should not read them.
 
 Declare route sets with a different budget or browser posture as named
 `RouteGroup`s through `with_group`; the routes passed to `assemble` are the
-`default` group and alone own fallbacks. Each group carries a `GroupPolicy`: its
+`default` group and alone own guarded fallbacks. Each group carries a `GroupPolicy`: its
 `RequestPolicy` and an optional `BrowserPolicy` whose `PrivateResponsePolicy`
 headers sit outside the group's admission and whose `MutationPolicy` checks, with
 an application renderer, sit inside it for every method except GET, HEAD,
@@ -157,6 +157,15 @@ send to a declared pattern reach it, inside its group's policy; undeclared
 routes and its own fallbacks never serve. No OpenAPI-builder dependency is
 involved; the application supplies the inventory.
 
+For a stable not-found envelope during startup and drain, use
+`with_rendered_fallback(render)` instead of declaring a guarded fallback. This
+synchronous renderer takes filtered request metadata and returns application
+status, body and headers outside admission, inside correlation and observation.
+Use `PrivateResponsePolicy::apply` when the application's prefix policy calls
+for private headers on unmatched paths. Groups do not select policy for an
+unmatched path. Assembly rejects combining this mode with a guarded root or
+nested fallback; matched routes and their method fallbacks remain guarded.
+
 Serve the application's own probe bodies, for example OpenAPI-documented JSON,
 through `with_rendered_liveness(path, render)` and
 `with_rendered_readiness(path, readiness, render)`. The boundary still owns the
@@ -171,6 +180,10 @@ Add application readiness requirements, such as held key leases, with
 `ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`: a
 synchronous check of state the application already holds that can only turn a
 ready decision into `ReadinessUnreadyReason::Condition(name)`.
+When no continuous dependency probe exists, construct the policy with
+`ReadinessPolicy::lifecycle_only(lifecycle)`; it creates no dummy monitor and
+still requires lifecycle Ready and every application condition. This asserts
+no dependency observation, not healthy remote connectivity.
 
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;

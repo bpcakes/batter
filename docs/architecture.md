@@ -286,7 +286,7 @@ The owner stops on drain, destroys its active future and invalidates readers.
 Probe errors/timeouts are recoverable dependency states, while panics remain
 critical component failures. There is no hidden task or service registry.
 
-The HTTP composition registers a monitor during owned startup and passes only
+A composition with a continuous dependency probe registers a monitor during owned startup and passes only
 its reader to the readiness route. The foundation `ReadinessEvaluator` samples
 the cached dependency observation first, then any application conditions, and
 lifecycle last; it never queries a dependency, and an observed drain overrides
@@ -295,8 +295,12 @@ the earlier samples. A broad
 into `ReadinessDecision::Ready` or `Unready(ReadinessUnreadyReason)`. Dependency reasons
 accept only `DependencyUnreadyReason`, so Healthy cannot be represented as a
 failure. Application conditions are synchronous checks named by a validated
-`ReadinessCondition`; they are asked only while the dependency is ready and can
+`ReadinessCondition`; they are asked only while the configured dependency is ready (or absent) and can
 only narrow a ready decision to `Unready(ReadinessUnreadyReason::Condition)`.
+`ReadinessEvaluator::lifecycle_only` and the adapter's matching
+`ReadinessPolicy::lifecycle_only` constructor represent a process without a
+continuous dependency monitor. They create no writer or task, retain the final
+lifecycle read, and cannot remove a dependency from an existing evaluator.
 The Axum adapter owns only HTTP status, response extensions and severity.
 It exposes those conversions as `readiness_status` and
 `default_readiness_level` so custom rendering and severity policy reuse the same
