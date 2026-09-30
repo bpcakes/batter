@@ -75,8 +75,11 @@ conditions must invent and supervise a no-op dependency monitor to reach the
 canonical readiness probe at all
 (`batter-readiness-without-dependency-monitor-w4hk`). The second is the caller
 obligation [ADR-010](adr/010-agent-only-consumption.md) names; the first made
-three original, unmodified consumer assertions fail. Neither was repaired under
-that evaluation task, which was not authorized to change library code.
+two original lifecycle assertions in consumer A and one original header-policy
+assertion in consumer B fail. B's unknown-route envelope test runs after
+readiness approval and supplies no Starting/Draining fallback evidence.
+Neither gap was repaired under that evaluation task, which was not authorized
+to change library code.
 
 The final evidence review distinguished in-process router checks from socket
 serving. Consumer A's initially skipped database-readiness test and production
