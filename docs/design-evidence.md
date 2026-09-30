@@ -91,12 +91,26 @@ Other gated tests remain unexecuted; the owning Bead records the limits.
 Compatibility acceptance remains incomplete. Consumer A's two fallback tests
 and consumer B's fallback-header test pass only after their original assertions
 were changed to characterize the regressions. Those green reruns do not prove
-the original contracts. Consumer B's database HTTP suite has six failures in
-both the repinned baseline and the characterized port (25 pass in each); their
-cause is unresolved, and the comparison does not exclude a repin-related
-failure. `batter-tc9w.9` remains open: these results establish an executed
-evaluation with gaps, not that all existing surface tests pass. Both gap Beads
-continue to block sealing independently of this task's acceptance.
+the original contracts. Consumer B's database HTTP suite originally reported
+25 passes and six initialization failures in both the repinned baseline and the
+characterized port. Follow-up source inspection and controlled execution traced
+those failures to a consumer test fixture: a process-wide cache shares one
+revocable key lease, an earlier test revokes it, and later scenarios reuse it.
+In both copies, an ordered subset reproduced the revoking test's pass followed
+by five initialization failures; each of the six originally failing cases then
+passed unchanged in its own process and disposable database (12 isolated
+passes total). The sixth uses the same cached-lease initialization path. This
+supports a fixture-isolation diagnosis, not the previously asserted
+environmental cause. No application or test code was repaired, and isolated
+passes do not make the original combined suite green.
+
+These checks used a private, blob-verified archive of Batter revision
+`e24f483c99a6b795fd6f975318fa6de41ab76ead`, preserving the original comparison
+after this branch incorporated newer upstream code. They do not claim consumer
+validation of the merged revision. `batter-tc9w.9` remains open: the evaluation
+has identified gaps, but original fallback compatibility and the unchanged
+all-existing-tests-pass acceptance are not established. Both gap Beads continue
+to block sealing independently of this task's acceptance.
 
 ## What changed in the implemented foundation
 
