@@ -1073,6 +1073,7 @@ excludes archived reviews under `.agent/reviews`.
 | Critical/finite abort, dropped cleanup driver, hook timeout; submitter vs driver diagnostics | [scoped_owned_tasks.rs](../crates/batter-core/tests/scoped_owned_tasks.rs) |
 | Filtered task spans retain enabled application parents during execution and normal/aborted destruction | [filtered.rs](../crates/batter-core/tests/scoped_owned_tasks/filtered.rs): critical components, finite tasks and cleanup hooks under `info,batter=warn`, on current-thread and two-worker runtimes, with a separate ambient subscriber and parent. |
 | Subscriber callbacks precede finite admission locking | [subscriber.rs](../crates/batter-core/src/lifecycle/state/tests/subscriber.rs): actual submission under enabled/filtered task spans; `try_lock` assertions cover `new_span`, `current_span` and `clone_span`, with callback counts rejecting a vacuous pass. The fixture never starts a coordinator or application factory. |
+| Assembled boundary served over a generic listener | [tls_serving.rs](../crates/batter-axum/tests/tls_serving.rs): real rustls with a generated certificate; acknowledgement before readiness, probe outside admission, transport peer against a client-owned oracle, drain waiting for a response still streaming, a pending handshake destroyed at drain, and rejected/abandoned listener release. |
 | Dual body/cleanup failures and deterministic scripted outcomes | [support.rs](../crates/batter-test-support/tests/support.rs) |
 
 Timer tests use Tokio's paused time. This controls the Tokio clock, not system
@@ -1653,6 +1654,39 @@ example's `/work` and `/fail` handlers through the extractor with a matching
 generated envelope identity. A handler behind Runlimit's protected assembly
 extracts it beside `Authenticated<P>`, with the response's generated identity
 ([Runlimit HTTP tests](../crates/batter-runlimit/tests/http/dispatch_and_concurrency.rs)).
+
+## Serving over a generic listener
+
+`cargo test -p batter-axum --test tls_serving --locked` runs three real rustls
+cases; the normal workspace all-targets pass includes them. The suite owns the
+certificate, crypto provider, accept loop and handshake, because those are
+application policy: `tls_serving/support.rs` generates a self-signed certificate
+with rcgen, selects the ring provider explicitly through
+`builder_with_provider`, and implements `axum::serve::Listener` over a loopback
+`TcpListener`, completing each handshake inside `accept` and reporting the
+accepted transport peer.
+
+The canonical case assembles an `HttpBoundary` with a liveness probe and guarded
+routes, registers it with `AssembledHttp::register_with_connect_info_in` inside
+`Startup::scoped`, and requires readiness after acknowledgement, a 200 from the
+probe outside admission, and a completed guarded request whose body equals the
+client's own transport address despite forged `Forwarded`, `X-Forwarded-For` and
+`X-Real-IP` headers. A further connection then holds a streaming response open
+while drain begins: the serving address must stop accepting, the process report
+must still be pending, and dependent cleanup must not have run. Releasing the
+body produces the remaining framing, a successful report with every direct task
+joined, the single `dependency` cleanup record and `Readiness::Stopped`.
+Releasing the body before drain makes the pending assertion fail.
+
+The second case registers through `AssembledHttp::register_in` and opens a
+transport connection that never sends a client hello, parking the listener's own
+handshake inside `accept`. Drain must destroy that pending accept — the listener
+reports it from a drop guard that a resolved attempt disarms — and the report
+must still be successful. Disarming the guard before the handshake makes the
+assertion fail. The third case registers a rejected name and then an accepted
+listener through both canonical methods, requiring the rejected listener's
+address to rebind immediately, the accepted one to stay bound until the
+unstarted supervisor is dropped, and then to rebind.
 
 ## HTTP/1.1 instrumented lifetime observations
 
