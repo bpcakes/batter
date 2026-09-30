@@ -237,17 +237,27 @@ not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
 `AssembledHttp::register_in` registers a boundary-assembled router through
-constrained startup authority; `register_http_in` accepts a plain bound
-`TcpListener` and initialized `Router` for compositions outside the boundary. Its opt-in companion
+constrained startup authority; `register_http_in` accepts a plain bound listener
+and initialized `Router` for compositions outside the boundary. Its opt-in companion
 `register_http_with_connect_info_in` accepts the same arguments and installs native
-`ConnectInfo<SocketAddr>` for direct-peer admission middleware and handlers.
-The address and port come from the accepted TCP socket; forwarded headers do not
+`ConnectInfo` for direct-peer admission middleware and handlers.
+For a `TcpListener`, and for a TLS listener over TCP, that is
+`ConnectInfo<SocketAddr>`: the address and port come from the accepted TCP socket
+and forwarded headers do not
 select identity. Behind a proxy this is the proxy address. Authentication and proxy
 trust remain application-owned. `register_http` retains its exact
-`&mut Supervisor` signature for lower-level compatibility. All three enter one native
-implementation and register a direct critical component. It acknowledges startup on its first task poll; bind
+`&mut Supervisor` signature for lower-level compatibility. All three register a
+direct critical component through the adapter's own serving implementation. It acknowledges startup on its first task poll; bind
 errors remain in owned `Startup`. Registration failure and abandoned startup
 release the listener. Native Axum accept errors are retried internally.
+Every listener helper accepts any `axum::serve::Listener`, so an application-owned
+TLS listener serves the same assembled boundary through the same lifecycle. The
+listener keeps binding, certificates, protocol versions, ALPN, client-certificate
+rules, handshake concurrency and accept retry; Batter adds no TLS dependency and
+no crypto provider. Drain destroys the accept in progress, including a handshake
+awaited inside it, and releases the listener before awaiting connection
+completion. A listener that spawns handshakes instead of polling them inside
+`accept` leaves detached descendants that registration does not join.
 The server uses with_graceful_shutdown and waits for it to finish
 while dependencies remain alive. Aborting that wrapper is not accepted as proof
 of transitive child termination; resource finalizers are conservatively skipped.

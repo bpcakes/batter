@@ -2,11 +2,10 @@
 
 use crate::{ReadinessDecision, ReadinessPolicy, dependency_readiness, liveness, serving};
 use assembly::Assembling;
-use axum::{Router, http::request::Parts, response::Response, routing::get};
+use axum::{Router, http::request::Parts, response::Response, routing::get, serve::Listener};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
 use group::DEFAULT_GROUP;
 use std::{error::Error, fmt, sync::Arc};
-use tokio::net::TcpListener;
 
 mod assembly;
 mod declared;
@@ -416,23 +415,54 @@ pub struct AssembledHttp {
 
 impl AssembledHttp {
     /// Register the assembled server through constrained registration authority.
+    ///
+    /// `listener` is any bound [`axum::serve::Listener`]: a
+    /// [`tokio::net::TcpListener`], a Unix listener, or an application-owned
+    /// listener that completes its own TLS handshakes. Certificates, protocol
+    /// versions and handshake policy stay with that listener; the boundary,
+    /// listener transfer, startup acknowledgement, graceful drain and
+    /// conservative cleanup after wrapper abortion are unchanged.
     /// See [`crate::register_http_in`] for the serving contract.
+    ///
+    /// ```no_run
+    /// use axum::serve::Listener;
+    /// use batter_axum::AssembledHttp;
+    /// use batter_core::registration::RegistrationTarget;
+    /// use std::fmt::Debug;
+    ///
+    /// fn serve<T, L>(assembled: AssembledHttp, scope: &mut T, listener: L)
+    ///     -> Result<(), batter_core::BoxError>
+    /// where
+    ///     T: RegistrationTarget + ?Sized,
+    ///     L: Listener,
+    ///     L::Addr: Debug,
+    /// {
+    ///     assembled.register_in::<T>(scope, "http", listener)?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn register_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: fmt::Debug>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_in(target, name, listener, self.router)
     }
 
-    /// Register with the direct TCP peer available to handlers.
-    /// See [`crate::register_http_with_connect_info_in`] for the contract.
+    /// Register with the listener's own direct peer available to handlers.
+    ///
+    /// A [`tokio::net::TcpListener`] and a TLS listener over TCP both supply
+    /// [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo) holding the
+    /// accepted socket's address and port; another listener supplies its own
+    /// address type. Forwarded headers are never interpreted.
+    /// See [`crate::register_http_with_connect_info_in`] for the contract and
+    /// for a worked generic-listener signature.
     pub fn register_with_connect_info_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: Clone + fmt::Debug + Sync + 'static>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_with_connect_info_in(target, name, listener, self.router)
     }

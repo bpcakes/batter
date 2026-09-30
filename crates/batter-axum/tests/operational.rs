@@ -9,4 +9,5 @@ mod operational {
     mod rendered_probes;
     mod renderer_isolation;
     mod serving;
+    mod tcp_compatibility;
 }

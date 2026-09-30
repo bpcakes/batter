@@ -404,7 +404,11 @@ while opaque nested services remain a documented low-level composition.
 Assembly returns a sanitized error when a guarded route can match a reserved
 probe path by querying only that inert inventory, without polling application
 code. Register the
-`AssembledHttp` with `register_in`. The individual middlewares
+`AssembledHttp` with `register_in`, or with `register_with_connect_info_in` when
+handlers need the accepted peer. Both take any `axum::serve::Listener`, so an
+application-owned TLS listener serves the same boundary through the same
+registration, acknowledgement, drain and cleanup contract while keeping its
+certificates, protocol versions and handshake policy. The individual middlewares
 (`request_admission`, `observe_http`, `request_scope`, `operational_http`)
 remain available for compositions the boundary cannot express and document the
 ordering they leave with the caller. Only the outermost observer emits an HTTP
