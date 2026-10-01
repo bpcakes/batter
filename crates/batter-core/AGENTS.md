@@ -97,8 +97,12 @@ never prolong writer ownership or refresh a successful timestamp.
 Keep `HealthStatus` observation separate from `DependencyReadiness`; classify
 every observation explicitly, with no catch-all. Overall readiness is either
 Ready or Unready with a reason, and dependency reasons cannot contain Healthy.
-Sample dependency before lifecycle so an observed drain overrides cached health.
-Ask application conditions only after a ready dependency sample and before the
+Sample configured dependency before lifecycle so an observed drain overrides cached health.
+The lifecycle_only constructor asserts no continuous dependency observation; it
+creates no monitor, never removes a configured dependency, and retains condition
+narrowing and the final lifecycle read.
+Ask application conditions only after a ready dependency sample (or with no
+configured dependency) and before the
 final lifecycle read; they can only narrow a ready decision to a named
 condition reason.
 Stop admission before cancellation. Harvest ready tasks before escalation;

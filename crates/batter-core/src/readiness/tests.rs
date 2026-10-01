@@ -267,3 +267,34 @@ fn decision_observation_preserves_ready_and_unready_structure() {
         Some(ReadinessUnreadyReason::Condition(condition)),
     );
 }
+
+#[test]
+fn lifecycle_only_conditions_narrow_and_lifecycle_is_sampled_last() {
+    let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    let ready = ReadinessEvaluator::lifecycle_only(control.status());
+    let condition = ReadinessCondition::new("application-state").unwrap();
+    let closed = ready.clone().with_condition(condition, || false);
+    assert_eq!(
+        ready.decision(),
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Starting)
+    );
+    assert_eq!(closed.decision(), ready.decision());
+    approval.approve();
+    assert_eq!(ready.decision(), ReadinessDecision::Ready);
+    assert_eq!(
+        closed.decision(),
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition))
+    );
+    let draining = ready.clone().with_condition(condition, {
+        let control = control.clone();
+        move || {
+            control.request();
+            true
+        }
+    });
+    assert_eq!(
+        draining.decision(),
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Draining)
+    );
+    assert_eq!(closed.decision(), draining.decision());
+}

@@ -1,7 +1,7 @@
 //! Foundation-owned process readiness over lifecycle, dependency and
 //! application-condition observations.
 //!
-//! The evaluator performs no probe I/O. It samples dependency health first,
+//! The evaluator performs no probe I/O. It samples configured dependency health first,
 //! then any application conditions, and lifecycle last, so a lifecycle
 //! transition observed during the decision overrides an earlier dependency or
 //! condition result. Application conditions can only narrow readiness. HTTP
@@ -12,7 +12,7 @@ use crate::{
     lifecycle::{LifecycleStatus, Readiness as LifecycleReadiness},
     validation,
 };
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
 /// A complete point-in-time process-readiness decision.
 ///
@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// API release and review of every adapter's response policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadinessDecision {
-    /// Lifecycle and dependency observations both establish readiness, and
+    /// Lifecycle and any configured dependency establish readiness, and
     /// every application condition is satisfied.
     Ready,
     /// The process is not ready for the contained reason.
@@ -49,7 +49,7 @@ impl ReadinessDecision {
 /// contain only [`DependencyUnreadyReason`]; a healthy observation has no such
 /// representation. A condition reason contains only the validated name of an
 /// application condition, and is decided only while lifecycle and dependency
-/// health are both ready.
+/// health, when configured, are both ready.
 ///
 /// ```compile_fail,E0308
 /// use batter_core::{
@@ -117,10 +117,10 @@ pub enum ReadinessConditionError {
     InvalidName,
 }
 
-/// Read-only lifecycle, dependency and application-condition readiness evaluation.
+/// Read-only lifecycle, optional dependency and application-condition readiness evaluation.
 ///
 /// Reads never invoke the dependency probe, refresh a timestamp, retain writer
-/// ownership, or mutate lifecycle state. Dependency health is sampled first,
+/// ownership, or mutate lifecycle state. Configured dependency health is sampled first,
 /// application conditions next and lifecycle last, so an observed drain
 /// overrides cached success. This is a point-in-time decision, not atomic with
 /// a later transition.
@@ -145,7 +145,7 @@ pub enum ReadinessConditionError {
 /// ```
 pub struct ReadinessEvaluator<E> {
     lifecycle: LifecycleStatus,
-    dependency: HealthReader<E>,
+    dependency: Option<HealthReader<E>>,
     conditions: Arc<[Condition]>,
 }
 
@@ -166,12 +166,39 @@ impl<E> Clone for ReadinessEvaluator<E> {
     }
 }
 
+impl ReadinessEvaluator<Infallible> {
+    /// Observe lifecycle and application conditions without a dependency monitor.
+    ///
+    /// Select this when the application has no continuous dependency probe.
+    /// It makes no claim about remote connectivity. Conditions still only
+    /// narrow readiness and run before the final lifecycle read. No monitor,
+    /// writer, probe task or freshness window is created.
+    ///
+    /// ```
+    /// use batter_core::{lifecycle::ShutdownHandle, readiness::ReadinessEvaluator};
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// let readiness = ReadinessEvaluator::lifecycle_only(control.status());
+    /// assert!(!readiness.decision().is_ready());
+    /// approval.approve();
+    /// assert!(readiness.decision().is_ready());
+    /// control.request();
+    /// assert!(!readiness.decision().is_ready());
+    /// ```
+    pub fn lifecycle_only(lifecycle: LifecycleStatus) -> Self {
+        Self {
+            lifecycle,
+            dependency: None,
+            conditions: Arc::new([]),
+        }
+    }
+}
+
 impl<E> ReadinessEvaluator<E> {
     /// Combine purpose-qualified lifecycle and dependency observers.
     pub fn new(lifecycle: LifecycleStatus, dependency: HealthReader<E>) -> Self {
         Self {
             lifecycle,
-            dependency,
+            dependency: Some(dependency),
             conditions: Arc::new([]),
         }
     }
@@ -180,7 +207,7 @@ impl<E> ReadinessEvaluator<E> {
     ///
     /// `satisfied` returns whether the condition currently holds. It runs
     /// synchronously within [`Self::decision`], only after the dependency sample
-    /// establishes readiness and before the final lifecycle read, so it must
+    /// establishes readiness (or no dependency is configured) and before the final lifecycle read, so it must
     /// read already-available state without blocking or performing I/O. A
     /// condition can only narrow readiness: while it is unsatisfied, a decision
     /// that would otherwise be [`ReadinessDecision::Ready`] is
@@ -263,7 +290,15 @@ impl<E> ReadinessEvaluator<E> {
     /// Obtain a fresh read-only decision without invoking the dependency probe.
     pub fn decision(&self) -> ReadinessDecision {
         sample_and_classify(
-            || observe(self.dependency.snapshot().readiness(), &self.conditions),
+            || {
+                let dependency = self
+                    .dependency
+                    .as_ref()
+                    .map_or(DependencyReadiness::Ready, |reader| {
+                        reader.snapshot().readiness()
+                    });
+                observe(dependency, &self.conditions)
+            },
             || self.lifecycle.readiness(),
         )
     }

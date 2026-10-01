@@ -1345,7 +1345,7 @@ method-fallback and mutation rejections. A mutation rejection is rendered by the
 application's renderer from the sanitized `MutationRejection` and the admitted
 request's metadata, without the body. Only the default group, the routes passed
 to `assemble`, may declare root or nested fallbacks, and it is merged last, so
-every path that no route matches reaches its fallback inside its admission,
+by default every unmatched path reaches its fallback inside its admission,
 including paths under a named group's prefix. `with_group` rejects an invalid or
 reused name (`default` is reserved), a group without routes, and any fallback,
 before routing. Awaited assembly rejects a probe path that any group's route can
@@ -1391,7 +1391,7 @@ no native route matched goes through the inspection copies there, carrying no
 path parameters or matched path, and is forwarded unchanged to an admitted
 router, inside its group's policy and its own outermost correlation and
 observer, only when its copy reaches a declared pattern. Every other request
-continues to the default group's root or nested fallbacks, which sit behind the
+continues to the selected fallback. Guarded root or nested fallbacks sit behind the
 dispatch with their policy and observer, because a nested fallback below a
 capture that matched first would add that capture to the forwarded request.
 Undeclared routes and an admitted router's own fallbacks therefore never serve
@@ -1403,6 +1403,22 @@ preparation. Axum exposes no route enumeration, so the inventory remains
 application input: a route it omits is unreachable rather than verified. Each
 admitted router adds one inspection routing, outside the observer, to each
 request that no native route matches.
+
+`HttpBoundary::with_rendered_fallback` selects a synchronous metadata-only
+renderer outside every group's admission, while retaining server correlation
+and the single observer. It receives only unmatched paths after both native and
+declared-route dispatch. Unsupported methods on a real route remain in that
+route's group; probes and all inventory/collision checks retain their meaning.
+Duplicate renderer declarations and a renderer combined with any declared
+root/nested guarded fallback return `BoundaryAssemblyError::ConflictingFallback`.
+The renderer chooses status, body and headers in every lifecycle state. Group
+browser policies do not apply to it: application prefix policy may use
+`PrivateResponsePolicy::apply` on its response headers. Metadata retains public
+correlation but excludes the body and private admission, quota, observation and
+operational ownership state. Assembly never calls the renderer. Like probe
+renderers it must not block or perform business work, and carries no request
+deadline or body-lifetime guarantee. Existing guarded fallback behavior is
+unchanged when no renderer is selected.
 
 Probes can carry the application's own bodies. `with_rendered_liveness` and
 `with_rendered_readiness` reserve their `ProbePath` exactly as `with_liveness`
@@ -1794,7 +1810,7 @@ Cancellation keeps the request's selected metadata while cancelling its separate
 operation context. No task-local inheritance, arbitrary-spawn propagation,
 inbound trace retention, durable correlation envelope, or quota backend follows.
 
-The foundation `ReadinessEvaluator` stores `LifecycleStatus` and `HealthReader`,
+The foundation `ReadinessEvaluator` stores `LifecycleStatus` and an optional `HealthReader`,
 reads a fresh dependency snapshot, then any application conditions, then
 lifecycle readiness, and invokes no probe or writer-retaining operation. Every
 `HealthStatus` is explicitly classified as
@@ -1802,16 +1818,23 @@ lifecycle readiness, and invokes no probe or writer-retaining operation. Every
 ProbeTimedOut, Stale and WriterStopped carry the corresponding
 `DependencyUnreadyReason`. Overall `ReadinessDecision` is either Ready or
 Unready(ReadinessUnreadyReason), and `ReadinessUnreadyReason::Dependency` cannot contain a
-healthy value. Ready requires both healthy and lifecycle Ready, and every
+healthy value. Ready requires configured dependencies healthy, lifecycle Ready, and every
 application condition satisfied; an observed drain overrides cached health. A
 subsequent transition may immediately obsolete the decision.
+
+`ReadinessEvaluator::lifecycle_only` and `ReadinessPolicy::lifecycle_only`
+construct the no-dependency case with `Infallible`: no monitor, probe task,
+writer or freshness window exists. They assert no continuous dependency
+observation, not healthy remote connectivity. Conditions still run before the
+final lifecycle read. A configured dependency cannot be removed from an
+existing evaluator or policy, and the exhaustive decision types are unchanged.
 
 `ReadinessEvaluator::with_condition`, and `ReadinessPolicy::with_condition` in
 the adapter, add an application condition named by a validated
 `ReadinessCondition` (1–96 ASCII alphanumeric, `.`, `_` or `-` bytes). Its
 synchronous check returns only whether the condition holds. It runs only after
-the dependency sample establishes readiness and before the final lifecycle
-read, in the order conditions were added, and the first unsatisfied condition
+the dependency sample establishes readiness (or no dependency is configured)
+and before the final lifecycle read, in the order conditions were added, and the first unsatisfied condition
 stops the remaining checks. That condition turns a decision that lifecycle and
 dependency health would make Ready into
 `Unready(ReadinessUnreadyReason::Condition(name))`. A condition is never asked
