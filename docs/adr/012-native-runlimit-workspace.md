@@ -39,6 +39,22 @@ Fresh-agent usability assessment remains proposed and unexecuted. Registry relea
 upstream repository archival and unrelated API-hardening work are outside this PR.
 See [provenance](../../runlimit/IMPORT.md).
 
+## Facade reachability amendment
+
+On 2026-09-30, `batter-0jsf` made all five native packages reachable through
+`batter-runlimit`: `native` (`runlimit-core`) and `postgres` already existed,
+`memory` was added, and the two transport packages are reached through
+`native_transport::{http, axum}` behind the new `native-http` and `native-axum`
+features. `native_transport` is named apart from the adapter's own `http` module
+because the native layer is caller-controlled and is not the protected
+quota-before-body assembly; neither feature selects `axum`, `batter-axum` or that
+module. The namespaces are the native packages themselves, so a consumer needs one
+`batter` dependency and cannot hold two source identities. Nothing depends on the
+facade in the other direction and no ownership moves: policy validation, key
+derivation, algorithms, storage and immutable migrations stay native. These
+packages' public APIs are now consumer-facing through two paths, so a rename or
+removal changes the facade's surface too.
+
 ## Publication amendment
 
 On 2026-09-22, `batter-ddc` prepared all five native packages as coordinated

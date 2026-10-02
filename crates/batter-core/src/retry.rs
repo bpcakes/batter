@@ -443,7 +443,7 @@ where
     } = options;
     execute_with_delay(
         ExecutionSettings::new(context, operation, safety, policy, attempt_maximum),
-        |delay| match &mut sample {
+        move |delay| match &mut sample {
             Some(sample) => equal_jitter(delay, sample()),
             None => delay,
         },
@@ -488,7 +488,7 @@ where
 {
     execute_with_delay(
         ExecutionSettings::new(context, operation, safety, policy, None),
-        |delay| equal_jitter(delay, sample()),
+        move |delay| equal_jitter(delay, sample()),
         factory,
         classify,
     )
@@ -574,12 +574,19 @@ where
         .map(|maximum| settings.context.scoped_child_with_maximum(maximum));
     let attempt_context = attempt_context.as_ref().unwrap_or(settings.context);
     let attempt_deadline_is_tighter = attempt_context.deadline() < settings.context.deadline();
-    // Count inside the factory, not before run's cancellation preflight.
-    match attempt_context
-        .run_with_outcome(
+    // Count inside the factory, not before run's cancellation preflight. The
+    // attempt metric is armed at the same point, so an interruption that wins
+    // before the factory runs is not an attempt; a started attempt dropped or
+    // unwound before its result records `dropped` or `panicked`.
+    let mut attempt_metric = None;
+    let result = attempt_context
+        .run_retry_attempt(
             settings.operation,
             |scope| {
                 *attempts += 1;
+                attempt_metric = Some(crate::telemetry::record::AttemptTerminal::new(
+                    settings.operation,
+                ));
                 tracing::debug!(target: "batter", attempt = *attempts, "attempt started");
                 let completion_scope = scope.clone();
                 let future = factory(Attempt {
@@ -599,8 +606,11 @@ where
             },
             attempt_outcome,
         )
-        .await
-    {
+        .await;
+    if let Some(metric) = &mut attempt_metric {
+        metric.finish(attempt_outcome(&result));
+    }
+    match result {
         Ok(AttemptCompletion::Returned(Ok(value))) => Ok(value),
         Ok(AttemptCompletion::Returned(Err(error))) => Err(AttemptFailure::Application(error)),
         Ok(AttemptCompletion::Cancelled(returned_error)) => Err(AttemptFailure::Interrupted {
@@ -622,6 +632,26 @@ where
 
 async fn execute_with_delay<T, E, F, Fut, C, D>(
     settings: ExecutionSettings<'_>,
+    delay_for: D,
+    factory: F,
+    classify: C,
+) -> Result<T, RetryExecutionError<E>>
+where
+    F: FnMut(Attempt) -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    C: FnMut(&E) -> RetryDecision,
+    D: FnMut(Duration) -> Duration,
+{
+    // Keep the guard outside the future that owns retained errors and callbacks.
+    // Await destroys that future before finish, including on cancellation/unwind.
+    let mut terminal = crate::telemetry::record::RetryTerminal::new(settings.operation);
+    let result = execute_loop(settings, delay_for, factory, classify).await;
+    terminal.finish(&result);
+    result
+}
+
+async fn execute_loop<T, E, F, Fut, C, D>(
+    settings: ExecutionSettings<'_>,
     mut delay_for: D,
     mut factory: F,
     mut classify: C,
@@ -636,16 +666,16 @@ where
     let mut last_error = None;
     loop {
         if let Err(reason) = settings.context.check() {
-            return Err(RetryExecutionError::Interrupted {
+            break Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error,
             });
         }
         let error = match run_attempt(&settings, &mut attempts, &mut factory).await {
-            Ok(value) => return Ok(value),
+            Ok(value) => break Ok(value),
             Err(AttemptFailure::DeadlineExceeded) => {
-                return Err(RetryExecutionError::AttemptDeadlineExceeded {
+                break Err(RetryExecutionError::AttemptDeadlineExceeded {
                     attempts,
                     last_error,
                 });
@@ -654,7 +684,7 @@ where
                 reason,
                 returned_error,
             }) => {
-                return Err(RetryExecutionError::Interrupted {
+                break Err(RetryExecutionError::Interrupted {
                     attempts,
                     reason,
                     last_error: returned_error.or(last_error),
@@ -663,7 +693,7 @@ where
             Err(AttemptFailure::Application(error)) => error,
         };
         if settings.safety == ReplaySafety::Never {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::ReplayForbidden,
                 error,
@@ -671,21 +701,21 @@ where
         }
         let decision = classify(&error);
         if decision == RetryDecision::Stop {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::NotRetryable,
                 error,
             });
         }
         if attempts >= settings.policy.max_attempts {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::AttemptsExhausted,
                 error,
             });
         }
         if let Err(reason) = settings.context.check() {
-            return Err(RetryExecutionError::Interrupted {
+            break Err(RetryExecutionError::Interrupted {
                 attempts,
                 reason,
                 last_error: Some(error),
@@ -697,7 +727,7 @@ where
             _ => backoff,
         };
         if delay >= settings.context.remaining() {
-            return Err(RetryExecutionError::Stopped {
+            break Err(RetryExecutionError::Stopped {
                 attempts,
                 reason: StopReason::InsufficientBudget,
                 error,
@@ -707,7 +737,7 @@ where
         tracing::debug!(target: "batter", attempt = attempts, delay_ms = delay.as_secs_f64() * 1_000.0, "retry scheduled");
         match settings
             .context
-            .run("batter.retry.backoff", |_| async {
+            .run_internal("batter.retry.backoff", |_| async {
                 tokio::time::sleep(delay).await;
                 Ok::<(), Infallible>(())
             })
@@ -715,7 +745,7 @@ where
         {
             Ok(()) => {}
             Err(OperationError::Interrupted(reason)) => {
-                return Err(RetryExecutionError::Interrupted {
+                break Err(RetryExecutionError::Interrupted {
                     attempts,
                     reason,
                     last_error,

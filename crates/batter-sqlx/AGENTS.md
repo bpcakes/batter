@@ -74,6 +74,14 @@ Never equate retirement, commit cancellation or an unconfirmed commit with rollb
 Public lease closures never receive a native connection or transaction and the
 opaque wrappers never implement native `DerefMut`/`AsMut`; disposition must apply
 to the same physical connection that was acquired.
+Canonical entry points (`PgLease::acquire`, `PgQueryHandle` helpers, every
+`run_atomic*`) heap-allocate their whole operation exactly once on first poll;
+public variants share private unboxed workflows instead of boxing each other.
+Transaction birth is one `dyn Send` erasure, and futures generic over consumer
+types acquire through `crate::acquire`. Construct adapter futures inside their
+operation boundary (`retain*` take constructors); never pass one by value
+through nested layers. `tests/future_size.rs` and the facade composed-handler
+consumer guard these sizes and the consumer's default recursion limit.
 Never log native error contents automatically. Core and generic support remain
 independent of SQLx. Never provision PostgreSQL in this package. Verifier discovery preserves selected
 object identities separately from effective ACL sources. Evaluation shares one
@@ -104,7 +112,7 @@ Run `cargo test -p batter-sqlx --features test-support --locked` for offline con
 `bash scripts/test_sqlx_live.sh` with `DATABASE_URL` plus a known-good password
 endpoint in `BATTER_SQLX_AUTH_ACCEPT_URL` for the ignored live cases. The explicit
 invocation must fail when prerequisites are missing. Also run the root
-pinned-toolchain verification, HTTP smoke profiles and required Jig gates locally;
+complete pinned-toolchain verification, including HTTP smoke profiles, locally;
 MSRV verification belongs in CI.
 
 ## Optional fixture support

@@ -6,6 +6,125 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## Metrics facade 0.24.6: reviewed 2026-09-25
+
+For `batter-6vn`, checked the locked `metrics` 0.24.6 source (`src/recorder/mod.rs`,
+`src/handles.rs`, `src/key.rs`) and its
+[crate documentation](https://docs.rs/metrics/0.24.6/metrics/). Without an
+installed recorder, macros use a no-op recorder. `set_global_recorder` is
+one-time application setup; `set_default_local_recorder` scopes a recorder to
+the current thread, which the tests use with current-thread runtimes. Counter and
+histogram handles are infallible: a recorder cannot return a recording error to
+the caller, so dropping or coalescing is recorder policy. The crate declares
+Rust 1.71.1, below this repository's 1.94 minimum. Its normal dependencies
+are `rapidhash` and, only on `cfg(target_pointer_width = "32")` targets,
+`portable-atomic` with its `fallback` feature. Metric names follow
+[Prometheus naming practice](https://prometheus.io/docs/practices/naming/)
+(`_total` counters, base-unit `_seconds`) and its
+[cardinality guidance](https://prometheus.io/docs/practices/instrumentation/#do-not-overuse-labels).
+Recorder aggregation and exporter buffering were not reviewed for `batter-6vn`;
+the selected exporter and its flush order are recorded below for `batter-8jr`.
+
+Rechecked the locked recorder implementation on 2026-09-26: `with_recorder`
+prefers a thread-local recorder, including for description macros. There is no
+public global-recorder getter. Global installation requires `Sync`, without
+`Send`, and returns the rejected recorder through `SetRecorderError<R>`. Batter
+therefore retains a shared reference to the accepted recorder for direct catalog
+publication; ordinary observations still use the facade's scoped dispatch.
+
+## Reference metrics export: reviewed 2026-09-26
+
+For `batter-8jr`, resolved with Cargo and read the locked sources of
+`metrics-exporter-otel` 0.3.1, `opentelemetry` and `opentelemetry_sdk` 0.31.0,
+`opentelemetry-otlp` 0.31.1, `opentelemetry-http` 0.31.0 and
+`opentelemetry-proto` 0.31.0. Newer 0.33 OpenTelemetry releases exist, but the
+exporter bridge requires `opentelemetry` 0.31.
+
+- [metrics-exporter-otel source](https://docs.rs/crate/metrics-exporter-otel/0.3.1/source/):
+  `storage.rs` creates one observable counter with its own callback and
+  attribute vector per complete key and one histogram per key; `lib.rs` keeps a
+  registry entry per key and `metadata.rs` one description per name/kind, with
+  no bound. `metadata.rs::set_description` retains caller text, and `storage.rs`
+  applies it when creating an instrument, so the adapter checks the exact
+  catalog description before delegation. Histogram boundaries must be set
+  before first creation.
+- [SDK `ManualReader`](https://docs.rs/opentelemetry_sdk/0.31.0/opentelemetry_sdk/metrics/struct.ManualReader.html)
+  and `metrics/mod.rs` export the reader, `MetricReader` and `Pipeline` only under
+  `experimental_metrics_custom_reader`. `manual_reader.rs::force_flush` is a
+  no-op and `shutdown_with_timeout` only detaches the producer; collection after
+  shutdown fails. `meter_provider.rs` ignores shutdown timeouts.
+  `pipeline.rs` applies a default 2,000-stream cardinality limit per instrument;
+  the largest foundation instrument has 792 series.
+  `Resource::builder()` reads `OTEL_*` resource detectors;
+  `Resource::builder_empty()` does not.
+- [OTLP HTTP metrics source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/metrics.rs)
+  treats every 2xx as success without decoding the response and formats a
+  non-success body and custom client errors into `InternalFailure` strings.
+  The [HTTP builder source](https://docs.rs/crate/opentelemetry-otlp/0.31.1/source/src/exporter/http/mod.rs)
+  merges `OTEL_EXPORTER_OTLP_*HEADERS` even with explicit
+  configuration, and reads endpoint, timeout and compression variables when not
+  set explicitly. With a caller-supplied HTTP client, its selected timeout is
+  retained in `_timeout` but not applied to the request; Batter's separate
+  attempt and final deadlines bound yielding transport work. The exporter
+  performs no retry.
+- [`opentelemetry-http` `HttpClient`](https://docs.rs/opentelemetry-http/0.31.0/opentelemetry_http/trait.HttpClient.html)
+  receives the encoded `Request<Bytes>`, which permits a payload ceiling before
+  dispatch and a fixed, body-free response.
+- [OTLP partial success](https://opentelemetry.io/docs/specs/otlp/#partial-success)
+  requires distinguishing rejected points from full acceptance and forbids
+  automatic retry of partially accepted requests; a message without rejected
+  points is a warning. [OTLP/HTTP responses](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+  require HTTP 200 for both full and partial success, and carry a protobuf
+  `ExportMetricsServiceResponse` for protobuf requests. The adapter treats
+  every other HTTP status as a typed failure, including other 2xx responses;
+  the upstream client accepts any 2xx, so this is an adapter-owned check.
+  [Binary Protobuf encoding](https://opentelemetry.io/docs/specs/otlp/#binary-protobuf-encoding)
+  requires the collector response to declare `Content-Type: application/x-protobuf`.
+
+The resolved graph was checked with `cargo tree -e features`: no
+`internal-logs`, `reqwest-blocking-client` or `experimental_async_runtime`.
+`http-proto` enables the exporter's trace feature and tonic-generated message
+types. These are source facts, not proof of collector durability.
+
+Extraction amendment, 2026-09-26 (`batter-i3ny`): the same Cargo-resolved bridge,
+SDK and OTLP versions now live in optional `batter-otlp`. Rechecked the published
+SDK 0.31.0 ManualReader documentation and OTLP response specification; the native
+force-flush and response semantics above are unchanged. Core now owns service
+completion and catalog definitions; adapter configuration remains explicit.
+Synchronous SDK collection/closure is not made preemptible by async deadlines.
+
+Review repair, 2026-09-26 (`batter-i3ny`): rechecked locked reqwest 0.12.28
+`src/retry.rs` and `src/async_impl/client.rs` against its
+[`ClientBuilder::retry` contract](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.retry).
+The default permits two extra dispatches for protocol NACKs, including HTTP/2
+`REFUSED_STREAM` and remote graceful `GOAWAY`. Another consumer can enable HTTP/2
+through Cargo feature unification. The adapter therefore selects
+`reqwest::retry::never()` explicitly. A native h2c `REFUSED_STREAM` regression
+compares the default policy with the production policy; it does not exercise TLS
+certificate validation or ALPN negotiation.
+
+Branch review repair, 2026-09-27 (`batter-i3ny`): rechecked the primary
+[OTLP/HTTP response contract](https://opentelemetry.io/docs/specs/otlp/#otlphttp-response)
+and locked Tokio 1.53.1
+[`Instant::checked_add`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.checked_add).
+OTLP requires HTTP 200 for full and partial success, so the adapter rejects
+other 2xx statuses before decoding. `checked_add` returns `None` if a later
+deadline no longer fits; schedule validation checks representability only at
+construction, so the serial owner clamps an extreme allowance at each use.
+
+## Native PostgreSQL container mapping: reviewed 2026-09-27
+
+In locked testcontainers 0.28.0,
+[`RawContainer::get_host_port_ipv4`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/containers/async_container/raw.rs)
+reads the container's ports and reports an error while the requested mapping is
+absent. [`Client::ports`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3/testcontainers/src/core/client.rs)
+inspects Docker on each call. A full local workspace run observed the mapping
+absent through ten 250 ms attempts, while a focused rerun of the same native
+test passed. Runledger test support now waits under its existing 30-second
+PostgreSQL bootstrap allowance before failing that prerequisite; this is a
+bounded fixture readiness policy, not evidence that Docker always publishes a
+mapping or that the database is ready.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,
@@ -203,7 +322,7 @@ historical sibling-source and Git-pin/view evidence below describes earlier impl
 The new strong path does not retain those views as a compatibility bridge.
 PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
 
-## Facade feature and resolver semantics: reviewed 2026-09-18
+## Facade feature and resolver semantics: reviewed 2026-09-18; resolver rechecked 2026-09-30
 
 - Cargo's [feature reference](https://doc.rust-lang.org/cargo/reference/features.html)
   defines optional dependency features, `dep:` names, additive feature
@@ -213,6 +332,13 @@ PostgreSQL tests use 18.6 (Debian 18.6-1.pgdg13+2).
   explains why a workspace `--all-features` build cannot prove an isolated
   consumer graph. The facade runner therefore gives each temporary consumer an
   external workspace boundary and checks normal dependency reachability.
+- Rechecked the [resolver 2 feature rules](https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2)
+  and [virtual workspace rules](https://doc.rust-lang.org/cargo/reference/workspaces.html#virtual-workspace)
+  for `batter-0jsf`: resolver 2/3 separates dev-dependency features from ordinary
+  builds when development targets are not built. Resolver 1 unifies them; a
+  virtual workspace needs an explicit resolver because it has no root package
+  edition. The recipe now records that precondition. This is an enabled build
+  graph claim, not a claim about unused code surviving final binary linking.
 - Cargo's [target reference](https://doc.rust-lang.org/cargo/reference/cargo-targets.html)
   defines `required-features` for the runnable consumer moves scheduled in the
   next delivery. This B delivery leaves those example roots in their current
@@ -1374,6 +1500,140 @@ application handlers, fallbacks or middleware.
 Protected Router layering remains necessary for application root, nested and
 method fallbacks.
 
+## Admitted request extraction reviewed: 2026-09-29
+
+`Cargo.lock` still resolves Axum 0.8.9, axum-core 0.5.6 and http 1.5.0, reviewed
+from their published crate sources. In http 1.5.0,
+[`Extensions::insert`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.insert)
+and the `get_or_insert` family require `T: Clone + Send + Sync + 'static`,
+while `get`, `get_mut` and `remove` name the type without requiring `Clone`.
+`Extensions` itself derives `Clone`, and `extend` merges another whole map. A
+value that is not `Clone` therefore cannot be stored in request extensions, and
+a stored type that callers cannot name cannot be read, replaced or removed by
+type, although cloning or extending a whole map copies every stored value. The
+[Axum 0.8.9 `Extension` extractor](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/extension.rs)
+rejects a missing value with `MissingExtension`. axum-core 0.5.6's rejection
+macro renders that as status 500 with a `text/plain` body naming the type:
+``Extension of type `T` was not found. Perhaps you forgot to add it? See
+`axum::Extension`.`` An extractor's own `FromRequestParts::Rejection` chooses
+its response instead, and axum-core implements `FromRequestParts` for
+`Result<T, T::Rejection>`, so a handler can receive the rejection value and
+render it itself. `AdmittedRequest` relies on these rules: admission stores a
+private `Clone` record that only Batter can name, the public value is not
+`Clone`, and its rejection renders `HttpFailure::Internal`. No new upstream
+runtime behaviour is claimed.
+
+## Rendered probe outcome reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9 and http 1.5.0, reviewed from their
+published crate sources. In http 1.5.0,
+[`Response::status_mut`](https://docs.rs/http/1.5.0/http/response/struct.Response.html#method.status_mut)
+replaces the status of an already-built response, and
+[`Extensions::insert`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.insert)
+returns and replaces an existing value of the same type, while
+[`Extensions::remove`](https://docs.rs/http/1.5.0/http/struct.Extensions.html#method.remove)
+drops it. The boundary's rendered probes therefore apply the status and the
+`ReadinessDecision` and `HttpObservationLevel` extensions after the application
+renderer returns, and remove a liveness renderer's `HttpObservationLevel`, so
+whatever the renderer set is replaced or dropped rather than kept. The
+[Axum 0.8.9 method router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/method_routing.rs)
+documents that `get` routes also serve HEAD requests with the response body
+removed, so a HEAD probe keeps the rendered probe's status and headers without
+its body. No new upstream runtime behaviour is claimed.
+
+## Admitted router inspection reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9, matchit 0.8.4 and http 1.5.0, reviewed
+from their published crate sources. The
+[Axum 0.8.9 router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs)
+has no method that lists a router's routes, so a router built by another
+builder needs an application-supplied inventory. `Router::layer` maps every
+path route, fallback route and the catch-all fallback, and the
+[path router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/path_router.rs)
+layers each endpoint through `Endpoint::layer`, which applies
+[`MethodRouter::layer`](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/method_routing.rs)
+to every method endpoint and the method fallback. `Router::route_layer` takes
+the same path for path routes only and panics on a router without routes, which
+`has_routes` reports. A layer that returns its own service therefore replaces
+every application service while Axum still matches the path. Path-route
+matching records `MatchedPath` before calling the endpoint; fallback routes
+record none, and a `nest_service` tail records the private `MatchedNestedPath`
+instead. Matching also extends path parameters already present,
+`append_nested_matched_path` prefixes an existing `MatchedPath`, and
+`Router::route_service` refuses a `Router`, so forwarding from a registered
+outer route into a converted router would duplicate its parameters and prefix
+its matched path. The fallback router's `insert_url_params` drops only the
+private fallback parameter, so a nested fallback below a capture also adds that
+capture before its endpoint runs. The boundary therefore makes a library
+dispatch the native router's root fallback, whose routes capture nothing,
+consults inspection copies only there, forwards the request unchanged, and
+moves the default group's fallbacks behind the dispatch. `into_make_service`,
+`into_make_service_with_connect_info` and the `axum::serve` stream service each
+call `with_state(())` on the router they serve, which turns every boxed handler
+into a route once; a router called from inside another service is never
+prepared that way and rebuilds lazily applied layers on every request. Assembly
+therefore prepares each admitted router, inspection copy and moved fallback
+router itself. Preparation turns a boxed handler into a route through
+`into_route`, which applies each lazily mapped layer by calling its
+`Layer::layer`, so preparing an inspection copy runs those application
+constructors once, even when assembly is then rejected, although the services
+they build are replaced and never called.
+`Router::nest` re-registers nested routes under the outer router's 0.7 syntax
+checks, so admitted routers are nested into a router without them. The
+[http 1.5.0 path parser](https://docs.rs/http/1.5.0/src/http/uri/path.rs.html)
+accepts `{` and `}` in request paths for compatibility, so inventory paths can
+use `{}` as filler that ordinary literal routes cannot spell unescaped.
+Registering a capture beside a catch-all in the same position fails with a
+matchit insertion conflict under these versions, as an admitted-router test
+fixture observed on 2026-09-28.
+
+matchit 0.8.4's `find_wildcard` in
+[`tree.rs`](https://docs.rs/matchit/0.8.4/src/matchit/tree.rs.html) rejects a
+parameter name that is empty or whose first byte is `}`, a check made before
+unescaping; a catch-all named only `*`; and `*` or `/` after a name's first
+byte. It never tests the first byte for `/`, so `/items/{/id}` registers a
+capture named `/id` that matches `/items/7`, and that `/` does not split the
+segment. `normalize_params` names captures from `a` and panics while naming a
+26th. The route pattern parser mirrors these rules, so `RouteInventory::new`
+rejects such patterns as `InvalidPattern` and accepts `/items/{/id}`, and a unit
+test compares the parser with Axum's own registration for each rule and at the
+25-capture limit.
+
+## HTTP route group matching reviewed: 2026-09-28
+
+`Cargo.lock` still resolves Axum 0.8.9, whose router delegates path matching to
+matchit 0.8.4; both were reviewed from their published crate sources. In the
+[Axum 0.8.9 router](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/routing/mod.rs),
+`Router::layer` wraps path routes, the fallback router and the catch-all
+fallback; `merge` keeps the second router's fallback when both are defaults,
+prefers a custom fallback over a default one and panics on two custom ones; and
+`nest` adds the nested router's fallback entries only when that router has a
+custom fallback. Path routes are tried before fallback routes, and
+`path_for_nested_route` joins prefixes exactly as `GuardedRouter::nest` records
+them. Route groups therefore reject named-group fallbacks and merge the default
+group last.
+
+The [matchit 0.8.4 documentation](https://docs.rs/matchit/0.8.4/matchit/) and
+its `tree.rs` and `escape.rs` sources define the pattern grammar the overlap
+analysis mirrors: `{{` and `}}` are literal braces, one parameter per segment
+may follow a literal prefix but must end the segment, a catch-all must end the
+route, parameter names are normalized, and literals take priority over
+parameters with backtracking. A parameter matches up to the next `/`; the
+exact-prefix comparison at the end of a path means a final parameter needs at
+least one byte, while an earlier one may be empty. A catch-all needs at least
+one byte. The pinned [route documentation](https://github.com/tokio-rs/axum/blob/axum-v0.8.9/axum/src/docs/routing/route.md)
+states that `/{*key}` does not match `/`. An isolated Axum 0.8.9 reproduction
+on 2026-09-28 confirmed that `/users/{id}` rejects `/users/`, `/users/{id}/x`
+accepts `/users//x`, `/a{x}` rejects `/a`, `/x/{*rest}` rejects `/x/` but
+accepts `/x//`, and `/{{x}}` matches the literal path `/{x}`. The repository's
+pattern unit test repeats this comparison against native routing for every
+pattern pair it covers.
+
+[RFC 9110 section 9.2.1](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.1)
+defines GET, HEAD, OPTIONS and TRACE as the safe methods. Route-group mutation
+checks skip exactly those and check every other method, including extension
+methods.
+
 ## HTTP observation severity reviewed: 2026-09-09
 
 Resolved Axum 0.8.9 and tracing 0.1.44 remain unchanged in Cargo.lock.
@@ -1496,6 +1756,11 @@ maps each matched path endpoint through `layer`, including its method fallback.
 This differs from `MethodRouter::route_layer`, which wraps only registered methods.
 The tested router therefore rejects a matched unsupported method through admission
 while unavailable, and returns 405 while Ready. No package version changed.
+On 2026-09-28 (`batter-tc9w.4`) the same locked 0.8.9 source was rechecked for
+the reference service, whose trusted-metadata and authentication middleware are
+`GuardedRouter` route layers inside `HttpBoundary` admission: an unsupported
+method on a matched reference route is admitted and authenticated before its
+405, while the router's catch-all 404 fallback receives admission only.
 
 ## HTTP, SQL, and observability
 
@@ -2116,7 +2381,9 @@ re-export is deliberately removed because preserving that type path would let a
 pre-cutover response-extension lookup compile while missing the new decision
 extension. Adapter-owned `readiness_status` and `default_readiness_level` replace
 the former associated helpers without moving HTTP or tracing types into the
-foundation.
+foundation. On 2026-09-28 `batter-tc9w.5` added
+`ReadinessUnreadyReason::Condition` under this policy: exhaustive consumer
+matches must add the application-condition case, which the changelog records.
 
 ### Direct TCP peer registration: rechecked 2026-09-16
 
@@ -2571,7 +2838,7 @@ predicate; a notification alone never proves the required event occurred.
 
 Planning evidence for `batter-5pm`, inspected against worktree baseline
 `0e47f7dbd5d0c04d878d290c5d8c9181d1162b18`. This section records native
-semantics used by the [implementation plan](../.agent/plans/batter-5pm.md);
+semantics used by the [implementation plan](https://github.com/bpcakes/batter/blob/7878d245ad998f1b752bfdaff5577c8656a00450/.agent/plans/batter-5pm.md);
 it is not execution evidence for the planned settings API.
 
 [dotenvy 0.15.7 source reading](https://docs.rs/dotenvy/0.15.7/src/dotenvy/lib.rs.html)
@@ -4058,6 +4325,137 @@ MIT/Apache-2.0 licensing. Its CI runs default/all-feature native checks, the
 release-mode fail-closed invariant, an external consumer, and ignored PostgreSQL
 tests against PostgreSQL 16. The import preserves those native source contracts;
 [provenance](../runlimit/IMPORT.md) records adapted workspace administration.
+
+## Private-response referrer choice, 2026-09-27
+
+Rechecked for `batter-lto` against the living specifications.
+
+- The [Referrer Policy editor's draft](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-no-referrer)
+  defines `no-referrer` as sending no referrer information to any origin,
+  including same-origin navigations, and
+  [`same-origin`](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-same-origin)
+  as sending the full referrer URL only on same-origin requests. Its
+  [delivery section](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-delivery)
+  also lists the `meta` element, `referrerpolicy` attributes, the `noreferrer`
+  link relation and inheritance, so a response field cannot constrain page
+  content. [Header parsing](https://w3c.github.io/webappsec-referrer-policy/#parse-referrer-policy-from-header)
+  keeps the last recognized token across fields, and a redirect response
+  [replaces](https://w3c.github.io/webappsec-referrer-policy/#set-requests-referrer-policy-on-redirect)
+  the next request's policy. Batter emits one field with one recognized token.
+- The HTML Standard [creates a document or worker policy
+  container](https://html.spec.whatwg.org/multipage/browsers.html#creating-a-policy-container-from-a-fetch-response)
+  whose referrer policy comes from the response's `Referrer-Policy` field.
+- The Fetch Standard [Origin-header algorithm](https://fetch.spec.whatwg.org/#append-a-request-origin-header)
+  consults the referrer policy only when response tainting is not `cors`, the
+  method is neither `GET` nor `HEAD`, and the
+  [request mode](https://fetch.spec.whatwg.org/#concept-request-mode) is not
+  `cors`. There `no-referrer` always serializes `null`, and `same-origin`
+  serializes `null` only for a cross-origin URL. Navigations, including HTML
+  form submissions, use `navigate` mode, while a
+  [`Request`](https://fetch.spec.whatwg.org/#dom-request) built from a URL
+  string falls back to `cors` mode. `NoReferrer` therefore breaks exact-origin
+  HTML form mutations but not CORS-mode script mutations.
+- The [Fetch Metadata editor's draft](https://w3c.github.io/webappsec-fetch-metadata/#abstract-opdef-set-site)
+  derives `Sec-Fetch-Site` from the request origin, its URL list and direct user
+  navigation, not from the referrer policy, so strict custom-marker policies are
+  unaffected by `NoReferrer`.
+
+## Canonical adapter future size and depth, 2026-09-28
+
+Rechecked for `batter-3q3` against the selected sources.
+
+- SQLx 0.9.0 [`Pool::acquire`](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/mod.rs)
+  returns an unerased `impl Future + 'static`, while the pool
+  [`Executor` implementation](https://github.com/launchbadge/sqlx/blob/v0.9.0/sqlx-core/src/pool/executor.rs)
+  erases acquisition plus the query as one `BoxFuture`. Batter mirrors that:
+  one erasure per operation, never one per internal layer. The unerased
+  acquisition measured 2,528 bytes unoptimized and 8,608 optimized on Rust
+  1.98.1 (macOS arm64), and was copied through every enclosing boundary.
+- `AsyncFnOnce` is [stable since 1.85.0](https://github.com/rust-lang/rust/blob/1.98.1/library/core/src/ops/async_function.rs),
+  but its `CallOnceFuture` and `Output` associated types remain unstable
+  (`async_fn_traits`). Stable code cannot name or bound a callback's future, so a
+  generic runner cannot coerce it into `dyn Future + Send`; a concretely typed
+  `Pin<Box<F>>` keeps inferred auto traits. Nameable futures (native checks,
+  quota work, native admission, pooled queries) use `dyn Future + Send`.
+- The Reference's [`recursion_limit`](https://doc.rust-lang.org/reference/attributes/limits.html#the-recursion_limit-attribute)
+  default in rustc is 128. Rust 1.98.1 reports `queries overflow the depth limit`
+  with the query depth reached while computing a coroutine layout, and E0275 for
+  auto-trait proofs, both against that limit. A heap pointer ends the layout
+  query; only `dyn` erasure ends an auto-trait proof. At the pinned base the
+  committed composed-handler consumer reached layout depth 130; it now compiles
+  at limit 64 (probed in steps of 8), unoptimized and optimized.
+- [`std::thread`](https://doc.rust-lang.org/std/thread/#stack-size) documents a
+  2 MiB default for spawned threads on Tier-1 platforms, overridden by
+  `RUST_MIN_STACK`; libtest runs each test on such a thread. A bare
+  [`#[tokio::test]`](https://docs.rs/tokio-macros/2.7.2/tokio_macros/attr.test.html)
+  builds a current-thread runtime whose `block_on` polls on that test thread.
+  That consumer, compiled at the pinned base with a raised limit, needed more
+  than 1 MiB of this stack unoptimized; it now runs in at most 320 KiB
+  unoptimized and 96 KiB optimized, including the complete HTTP boundary.
+
+## Generic serving listeners and connection metadata, 2026-09-30
+
+Rechecked for `batter-tc9w.7` against the resolved Axum 0.8.9 sources in the
+locked registry, not the `latest` documentation.
+
+- [`axum::serve::Listener`](https://docs.rs/axum/0.8.9/axum/serve/trait.Listener.html)
+  (`src/serve/listener.rs`) requires `Send + 'static`, an
+  `Io: AsyncRead + AsyncWrite + Unpin + Send + 'static`, an `Addr: Send`, and
+  `accept(&mut self) -> impl Future<Output = (Io, Addr)> + Send`. Accept returns
+  no error, so the trait's own text requires an implementation to log and retry
+  instead; the pinned `TcpListener` and `UnixListener` implementations loop over
+  `handle_accept_error`, which returns immediately for connection errors and
+  otherwise logs and sleeps one second. A listener therefore cannot report an
+  accept failure to Batter's component exit.
+- `serve(listener, make_service)` (`src/serve/mod.rs`) accepts any such listener,
+  and `Router<()>` implements `Service<IncomingStream<'_, L>>` for every
+  `L: Listener` (`src/routing/mod.rs`). `WithGracefulShutdown` additionally
+  requires `L::Addr: Debug`, which the adapter's public bounds pass through.
+- `WithGracefulShutdown::run` selects between `listener.accept()` and the signal.
+  When the signal wins it breaks the loop, so the accept future in progress —
+  including a handshake awaited inside it — is dropped without being awaited,
+  then the listener itself is dropped, and only afterwards does it wait for the
+  spawned connection tasks to finish. Batter's registered task therefore releases
+  a pending accept and the listener before it awaits connection completion, and
+  still cannot claim that connection tasks or a listener's own spawned work
+  terminated.
+- [`Connected`](https://docs.rs/axum/0.8.9/axum/extract/connect_info/trait.Connected.html)
+  (`src/extract/connect_info.rs`) is implemented for `IncomingStream<'_, L>` in
+  exactly two shapes: `SocketAddr` for the concrete `TcpListener`, and `L::Addr`
+  for `TapIo<L, F>` where `L: Listener`, `L::Addr: Clone + Sync + 'static` and
+  `F: FnMut(&mut L::Io) + Send + 'static`. There is no blanket implementation for
+  a bare custom listener, so `ListenerExt::tap_io` is the pinned route to connect
+  info for one. `TapIo` keeps `Io` and `Addr` and runs its closure on each
+  accepted `Io` after `accept` returns; an empty closure changes nothing
+  observable, and the two `Connected` implementations produce the same
+  `SocketAddr` for a `TcpListener`.
+- Test-only transport material resolved with Cargo at the same date:
+  `rcgen` 0.14.10, whose `generate_simple_self_signed` returns a
+  `CertifiedKey { cert, signing_key }` and whose default features select `ring`,
+  `rustls` 0.23.44 and `tokio-rustls` 0.26.5, all taken with `default-features =
+  false` and the `ring` provider so no `aws-lc-rs` toolchain enters the graph.
+  `rustls` 0.23.44 was already resolved for the workspace through SQLx's
+  `tls-rustls-ring`. The suite selects the provider explicitly with
+  `builder_with_provider`, so feature unification cannot make provider selection
+  ambiguous. These crates are dev-dependencies of `batter-axum` only; no
+  published package gains a TLS dependency.
+
+
+### Optional rendered fallback (2026-09-30)
+
+The lockfile still resolves Axum 0.8.9 and matchit 0.8.4. Rechecked the pinned
+[Router source](https://docs.rs/axum/0.8.9/src/axum/routing/mod.rs.html) and
+[path router](https://docs.rs/axum/0.8.9/src/axum/routing/path_router.rs.html):
+`reset_fallback` resets root, nested and catch-all fallback routing while keeping
+explicit routes, including their method routers. `fallback_service` installs a
+new root and catch-all fallback. Layers affect routes present when added.
+The optional boundary renderer therefore uses the existing root dispatch after
+native routing; admitted inventories still select declared routes before the
+renderer. The renderer's own router carries correlation/observation because the
+dispatch service is installed after the native route layer. Root/nested guarded
+fallback declarations are rejected with this mode. Local tests cover native and
+declared matched-method dispatch, unmatched paths and probe/group validation.
+
 
 ## Test runner and disposable PostgreSQL storage, 2026-09-24
 

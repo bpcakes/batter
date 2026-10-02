@@ -1,1 +1,0 @@
-Use one complete Jig verification profile for test receipts, both lint configurations, rustdoc and HTTP smokes; verify once on the pinned local compiler, then open a PR for all approved session improvements.

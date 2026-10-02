@@ -9,6 +9,7 @@ use axum::{
 };
 use batter::{
     cleanup::CleanupBudget,
+    health::{HealthMonitor, HealthPolicy},
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
     operation::OperationContext,
     settings::SettingsSource,
@@ -64,35 +65,52 @@ fn settings() -> ServingSettings {
     .unwrap()
 }
 
-fn production_app() -> Router {
+// Isolated business-route tests deliberately have no published health.
+fn unpublished_health() -> HealthReader<Infallible> {
+    let second = Duration::from_secs(1);
+    HealthMonitor::new(
+        HealthPolicy::new(second, second, Duration::from_secs(3), second).unwrap(),
+        || async { Ok::<_, Infallible>(()) },
+    )
+    .reader()
+}
+
+async fn production_app_with(handle: &ShutdownHandle) -> Router {
     let settings = settings();
-    let prepared_http = settings.prepare_http();
-    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
-    approval.approve();
     let pool = crate::database::configured(
         settings.connect_options_from_process().unwrap(),
         settings.pool_options(),
     )
     .unwrap();
-    // Isolated business-route tests deliberately have no published health.
-    let second = Duration::from_secs(1);
-    let monitor = batter::health::HealthMonitor::new(
-        batter::health::HealthPolicy::new(second, second, Duration::from_secs(3), second).unwrap(),
-        || async { Ok::<_, Infallible>(()) },
-    );
-    router(
-        prepared_http,
+    assemble(
+        settings.prepare_http(),
         handle.status(),
         handle.operation_admission(),
         pool,
-        monitor.reader(),
+        unpublished_health(),
     )
+    .await
+    .unwrap()
+    .into_router()
 }
 
-fn boundary_app(routes: Router, handle: &ShutdownHandle) -> Router {
-    let prepared = settings().prepare_http();
-    business_boundary(routes, &prepared, handle.operation_admission())
-        .layer(middleware::from_fn(operational_http))
+async fn production_app() -> Router {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    production_app_with(&handle).await
+}
+
+/// Serve deterministic handlers behind the same layers and boundary as production.
+async fn boundary_app(routes: GuardedRouter, handle: &ShutdownHandle) -> Router {
+    assemble_routes(
+        routes,
+        settings().prepare_http(),
+        handle.operation_admission(),
+        ReadinessPolicy::new(handle.status(), unpublished_health()),
+    )
+    .await
+    .unwrap()
+    .into_router()
 }
 
 fn direct_request(
@@ -164,6 +182,7 @@ async fn assert_native_rejection(response: Response, expected_status: StatusCode
 #[tokio::test]
 async fn probes_do_not_require_business_peer_metadata() {
     let response = production_app()
+        .await
         .oneshot(
             HttpRequest::builder()
                 .uri("/live")
@@ -180,6 +199,7 @@ async fn probes_do_not_require_business_peer_metadata() {
 #[tokio::test]
 async fn native_json_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
+        .await
         .oneshot(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
@@ -197,6 +217,7 @@ async fn native_json_rejection_stays_outside_the_application_problem_envelope() 
 #[tokio::test]
 async fn native_path_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
+        .await
         .oneshot(direct_request(
             "GET",
             "/deliveries/not-a-uuid",
@@ -214,6 +235,7 @@ async fn native_path_rejection_stays_outside_the_application_problem_envelope() 
 #[tokio::test]
 async fn native_body_limit_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
+        .await
         .oneshot(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
@@ -233,6 +255,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
     let peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 90));
     for authorization in [None, Some("Bearer wrong")] {
         let response = production_app()
+            .await
             .oneshot(direct_request(
                 "POST",
                 "/records/00000000-0000-0000-0000-000000000002/deliveries",
@@ -252,6 +275,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
     }
 
     let response = production_app()
+        .await
         .oneshot(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
@@ -297,6 +321,7 @@ async fn canonical_registration_supplies_native_peer_to_the_business_boundary() 
         pool,
         monitor.reader(),
     )
+    .await
     .unwrap();
     let handle = supervisor.handle();
     let running = supervisor.start();
@@ -345,7 +370,7 @@ async fn canonical_registration_supplies_native_peer_to_the_business_boundary() 
 async fn trusted_metadata_debug_redacts_peer_and_correlation() {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
-    let routes = Router::new().route(
+    let routes = GuardedRouter::new().route(
         "/debug",
         get(
             |Extension(metadata): Extension<TrustedRequestMetadata>| async move {
@@ -354,6 +379,7 @@ async fn trusted_metadata_debug_redacts_peer_and_correlation() {
         ),
     );
     let response = boundary_app(routes, &handle)
+        .await
         .oneshot(direct_request(
             "GET",
             "/debug",
@@ -377,7 +403,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let barrier = Arc::new(Barrier::new(REQUESTS));
-    let routes = Router::new().route(
+    let routes = GuardedRouter::new().route(
         "/inspect",
         get(
             move |Extension(owner): Extension<OwnerId>,
@@ -407,7 +433,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
             },
         ),
     );
-    let app = boundary_app(routes, &handle);
+    let app = boundary_app(routes, &handle).await;
     let mut tasks = tokio::task::JoinSet::new();
     for index in 0..REQUESTS {
         let peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, index as u8 + 1));
@@ -465,7 +491,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
 async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
-    let routes = Router::new().route(
+    let routes = GuardedRouter::new().route(
         "/inspect",
         get(
             |Extension(metadata): Extension<TrustedRequestMetadata>| async move {
@@ -476,7 +502,7 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
             },
         ),
     );
-    let app = boundary_app(routes, &handle);
+    let app = boundary_app(routes, &handle).await;
     let response = app
         .clone()
         .oneshot(direct_request(
@@ -535,7 +561,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
     type Seen = (String, IpAddr, OwnerId, OperationContext);
     let seen: Arc<Mutex<Option<Seen>>> = Arc::new(Mutex::new(None));
     let saved = seen.clone();
-    let routes = Router::new()
+    let routes = GuardedRouter::new()
         .route(
             "/pending",
             get(
@@ -574,7 +600,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
                 },
             ),
         );
-    let app = boundary_app(routes, &handle);
+    let app = boundary_app(routes, &handle).await;
     let pending_peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80));
     let mut pending = Box::pin(app.clone().oneshot(direct_request(
         "GET",
@@ -619,3 +645,5 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
     assert!(pending_context.check().is_err());
     assert!(running.wait().await.unwrap().is_success());
 }
+
+mod admission_order;

@@ -85,8 +85,20 @@ Scoped subscribers remain attached through future destruction as well as polling
 including task abort. No extra application-side cancellation wrapper is needed.
 Each skipped finalizer produces one warning, including the first hook skipped
 when the shared work budget is exhausted.
-No metrics backend, OpenTelemetry propagation, or exporter shutdown adapter is
-included. Implement those as explicit optional integrations.
+The opt-in `metrics` feature records bounded foundation outcome metrics through
+the `metrics` 0.24 facade, re-exported as `batter::telemetry::metrics::facade`;
+see that module for names, units, label domains and the series bound. For protected OTLP export, select facade feature `otlp`, prepare the endpoint,
+service identity and schedule explicitly, then pass the prepared exporter with
+`ScopedStartup` to `batter::service::start`. Core owns startup through cleanup
+and final diagnostic settlement; application and diagnostic outcomes remain
+separate. The reference application's `metrics-export` feature selects this
+adapter using its own settings schema and deployment policy.
+
+Other recorders can use the lower-level `batter::telemetry::metrics::install`
+path. That path leaves aggregation bounds and final export ordering to the
+application: flush only after awaiting driver completion, not readiness
+`Stopped`. Neither recorder installation nor collector acknowledgement proves
+remote durable storage. See the [adapter guide](../crates/batter-otlp/README.md).
 
 Task/cleanup reports retain original errors. Use Display for aggregate counts;
 Debug or source inspection may expose secrets. Route detailed diagnostics to a

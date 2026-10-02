@@ -13,6 +13,14 @@ cannot depend on Batter or introduce its facade into native consumption.
 transactions, migration families and bounded cleanup; `runlimit-http` owns response
 metadata; `runlimit-axum` owns the explicitly caller-controlled native layer.
 
+`batter-runlimit` reexports all five as `batter::runlimit::native`, `::memory`,
+`::postgres` and `::native_transport::{http, axum}`, each behind its own feature.
+That is reachability for consumers, not a dependency on the facade and not a
+transfer of ownership. Renaming or removing a public native item changes the
+facade's surface, so treat these packages' public APIs as consumer-facing. The
+transport packages are reached through `native_transport` precisely because they
+are caller-controlled and are not the adapter's protected assembly.
+
 ## Edit here for X
 Native algorithms and persistence belong here. Operational factory execution and
 protected authenticated assembly belong in `crates/batter-runlimit`. Applications
@@ -134,7 +142,7 @@ Run from the repository root:
 
 ```sh
 bash scripts/verify.sh
-scripts/jig check api:runlimit
+python3 scripts/test_matrix.py runlimit
 python3 scripts/check_runlimit_workspace.py
 RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-postgres --tests --all-features --locked -- --ignored --test-threads=1
 ```

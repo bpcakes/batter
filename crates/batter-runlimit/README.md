@@ -1,7 +1,17 @@
 # batter-runlimit
 
 Optional native atomic quota-before-work execution for Batter. No default
-features; `memory`, `postgres` and `axum` can be selected independently.
+features; `memory`, `postgres`, `axum`, `native-http` and `native-axum` can be
+selected independently.
+
+Each feature also re-exports the native package it selects, so one `batter`
+dependency reaches all five: `native` (`runlimit-core`), `memory`, `postgres` and
+`native_transport::{http, axum}`. These are the native packages themselves, not
+wrappers, so facade and direct paths keep one type identity. `native_transport` is
+named apart from `http` on purpose — `http` is this adapter's protected
+quota-before-body assembly, while the native layer leaves subject derivation,
+rejection mapping and response selection to the caller; see its module rustdoc
+for the full obligations.
 
 ```sh
 cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked
@@ -19,6 +29,16 @@ Allowed batches yield native validated `Allowance` values. Enforced and shadow
 denials retain the native index and nonzero evaluated batch size as well as the
 typed denial details.
 
+The native check and the admitted work future are each heap-allocated once when
+they start, so neither a PostgreSQL limiter's acquisition nor the work's nested
+adapters enter the caller's future: `Quota::run` stays near 1.1 KB in unoptimized
+and optimized builds, and a handler's layout and `Send` proof stop at it. The
+work future must therefore be `Send`, as handler and spawned-task futures already
+are; its own `Send` proof runs where it is created. `AttemptRunner::run` likewise
+erases native admission, and its completion uses the erased SQLx runner.
+`tests/future_size.rs` bounds these futures, and a composition of quota, pooled
+query and atomic workflow, at 4 KiB in both profiles.
+
 `HttpQuota::new(quota, policies, authenticate, subject)?.prepare(policy, routes)`
 guards every supplied route. It rejects empty and mixed-mode policy sets at
 construction. Call `.with_public_probes(PublicProbes::new().get("/live", handler)?)`
@@ -30,7 +50,8 @@ arbitrary Router or fallback. A public and protected GET at the same path
 panic during `prepare`, before serving. Use distinct GET paths.
 Handler principals arrive through the
 `Authenticated<P>` extractor, not `Extension<P>`; its value cannot be constructed
-outside the adapter. Authentication receives no request body, and subject
+outside the adapter. The admitted request's context and generated correlation
+arrive through `batter_axum::AdmittedRequest` in the same way. Authentication receives no request body, and subject
 selection uses its result and the actual peer, not forwarded headers. Closure
 signatures are checked at `new`. Prepared serving installs peer metadata and one
 retained HTTP observer; the alternative test transport requires an explicit

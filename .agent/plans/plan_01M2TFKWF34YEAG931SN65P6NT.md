@@ -1,1 +1,0 @@
-Bead batter-jqg. Constrain public probe construction, reject mixed modes at HttpQuota construction, prove memory error classifications and no-probe protected fallbacks, correct rustdoc. Controller owns review/repair; validate exact tests, both toolchains, HTTP smokes, and Jig gates.

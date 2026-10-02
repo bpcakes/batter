@@ -1,1 +1,0 @@
-Address review findings at the owning observation capability, preserve native Runlimit semantics, strengthen regression tests and contract documentation. Validate through the bounded comprehensive repair controller, both Rust matrices and HTTP smokes, then record final Jig receipts.

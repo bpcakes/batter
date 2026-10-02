@@ -37,6 +37,7 @@ pub mod operation;
 pub mod readiness;
 pub mod registration;
 pub mod retry;
+pub mod service;
 pub mod settings;
 pub mod startup;
 pub mod telemetry;

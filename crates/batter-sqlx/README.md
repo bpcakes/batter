@@ -101,6 +101,29 @@ atomic runners for multi-query transaction disposition. See `PgQueryHandle`
 rustdoc for a complete example; native macro cases live in
 `tests/atomic_live/{query_helpers,query_pool}.rs`.
 
+### Future size and composition depth
+
+`PgLease::acquire`, the four `PgQueryHandle` helpers and all twelve `run_atomic*`
+runners heap-allocate their complete operation once, on first poll. The returned
+future holds only its arguments and one pointer, so Axum handlers, finite tasks
+and tests compose them at rustc's default recursion limit and test-thread stack
+without a crate `recursion_limit`, `RUST_MIN_STACK` or consumer `Box::pin`. On
+Rust 1.98.1 (macOS arm64) runners measure 24-64 bytes and a pooled eight-bind
+query 376 bytes, unoptimized and optimized alike. Before, SQLx's unerased pool
+acquisition, copied through each nested boundary, made them 2.6-79 KB and a
+quota-protected handler exceeded the default layout-query depth.
+
+Lease acquisition and pooled queries are erased as `dyn Future + Send`. Runners
+erase their workflow with its concrete type because stable Rust cannot bound an
+`AsyncFnOnce` callback's future by `Send`; `Send` is inferred from the callback as
+before. Transaction birth (acquisition, reset, profile and `BEGIN`), shared with
+`low_level::PgAtomicTransaction::begin`, is a separate `dyn Send` erasure, so SQLx
+acquisition never enters consumer layout or `Send` proofs. Scope helpers and the
+manual operation/completion methods stay direct because they run inside an erased
+runner or an explicitly manual composition. `probe` and `PgReadOnlySnapshot` are
+readiness and inspection paths outside this bound. `tests/future_size.rs` bounds
+every canonical future at 1 KiB in both profiles.
+
 Each recoverable application operation owns a private savepoint and validates the original
 XID, isolation and access mode. Recoverable errors roll back their savepoint;
 terminal failure or cancellation consumes the usable owner even when the body

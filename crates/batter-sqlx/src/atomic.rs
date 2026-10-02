@@ -87,7 +87,18 @@ impl PgAtomicTransaction {
         Self::begin_with_profile(pool, Some(profile)).await
     }
 
-    async fn begin_with_profile(
+    // Every atomic runner starts here. Birth is not generic, so erasing it once
+    // keeps SQLx acquisition, reset and BEGIN out of the runners' futures, which
+    // are laid out and proven `Send` in the consumer's crate.
+    pub(crate) async fn begin_with_profile(
+        pool: &PgPool,
+        profile: Option<&crate::PgSessionProfile>,
+    ) -> Result<Self, PgTransactionError> {
+        let birth: crate::SendFuture<'_, _> = Box::pin(Self::birth(pool, profile));
+        birth.await
+    }
+
+    async fn birth(
         pool: &PgPool,
         profile: Option<&crate::PgSessionProfile>,
     ) -> Result<Self, PgTransactionError> {

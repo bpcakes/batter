@@ -6,6 +6,7 @@
 //! reusable active keys, execution-resource keys, and the explicit
 //! handler-continuation opt-in consumed by `runledger-postgres`.
 
+mod dead_letter;
 mod execution;
 mod handler;
 mod identifier_macros;
@@ -17,6 +18,7 @@ mod submission;
 mod typed_handler;
 mod workflow_enqueue;
 
+pub use dead_letter::{JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason};
 pub use execution::{JobExecution, JobExecutionError, JobExecutionServices, JobExecutionUpdate};
 pub use handler::{ExecutionHandlerAdapter, JobExecutionHandler, JobHandler, JobHandlerRegistry};
 pub use identifiers::{
@@ -24,8 +26,8 @@ pub use identifiers::{
     WorkflowTypeName,
 };
 pub use runtime_types::{
-    JobCompletion, JobCompletionDisposition, JobContext, JobDeadLetterInfo, JobDeadLetterReason,
-    JobFailure, JobProgressValidationError, JobRetryTiming, validate_job_progress,
+    JobCompletion, JobCompletionDisposition, JobContext, JobFailure, JobProgressValidationError,
+    JobRetryTiming, validate_job_progress,
 };
 pub use status::{
     JobEventType, JobFailureKind, JobStage, JobStatus, WorkflowRunStatus, WorkflowStepStatus,

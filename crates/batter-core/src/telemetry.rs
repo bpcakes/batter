@@ -8,6 +8,31 @@ use std::future::Future;
 use tokio::time::Instant;
 use tracing::Span;
 
+/// Define a closed label vocabulary once: an exhaustive `const fn` mapping and
+/// its published value list are generated from the same arms, so a new enum
+/// variant cannot compile without a label that is also in the list.
+macro_rules! closed_domain {
+    (
+        $(#[$attr:meta])*
+        $vis:vis $values:ident, fn $label:ident $(<$generic:ident>)? ($value:ident: $input:ty) {
+            $($pattern:pat => $text:literal,)+
+        }
+    ) => {
+        $(#[$attr])*
+        $vis const $values: &[&str] = &[$($text),+];
+
+        pub(crate) const fn $label $(<$generic>)? ($value: $input) -> &'static str {
+            match $value {
+                $($pattern => $text,)+
+            }
+        }
+    };
+}
+
+#[cfg(feature = "metrics")]
+pub mod metrics;
+pub(crate) mod record;
+
 /// Retain the current tracing subscriber while polling and destroying a future.
 ///
 /// The subscriber is captured when this function is called, even if the returned
@@ -59,20 +84,40 @@ pub enum Outcome {
     Dropped,
 }
 
-impl Outcome {
-    /// Stable, low-cardinality spelling for telemetry adapters.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::DeadlineExceeded => "deadline_exceeded",
-            Self::Dropped => "dropped",
-        }
+closed_domain! {
+    #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+    pub(crate) OUTCOME_LABELS, fn outcome_label(value: Outcome) {
+        Outcome::Succeeded => "succeeded",
+        Outcome::Failed => "failed",
+        Outcome::Cancelled => "cancelled",
+        Outcome::DeadlineExceeded => "deadline_exceeded",
+        Outcome::Dropped => "dropped",
     }
 }
 
+impl Outcome {
+    /// Stable, low-cardinality spelling for telemetry adapters.
+    pub const fn as_str(self) -> &'static str {
+        outcome_label(self)
+    }
+}
+
+/// Whether a finished operation boundary is an application operation for
+/// metrics. Tracing observes both kinds identically.
+#[derive(Clone, Copy)]
+pub(crate) enum Boundary {
+    /// An application operation.
+    Operation,
+    /// A foundation-owned wait (admission, backoff) or a retry attempt, whose
+    /// owning boundary records its own metric.
+    Internal,
+}
+
 pub(crate) struct Observation {
+    #[cfg(feature = "metrics")]
+    operation: &'static str,
+    #[cfg(feature = "metrics")]
+    boundary: Boundary,
     span: Span,
     context: Span,
     started: Instant,
@@ -80,7 +125,8 @@ pub(crate) struct Observation {
 }
 
 impl Observation {
-    pub(crate) fn new(operation: &'static str) -> Self {
+    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
+    pub(crate) fn new(operation: &'static str, boundary: Boundary) -> Self {
         let span = tracing::info_span!(
             target: "batter",
             "batter.operation",
@@ -92,6 +138,10 @@ impl Observation {
         // enabled. Capture once; a later poll/drop must not adopt another parent.
         let context = span.clone().or_current();
         Self {
+            #[cfg(feature = "metrics")]
+            operation,
+            #[cfg(feature = "metrics")]
+            boundary,
             span,
             context,
             started: Instant::now(),
@@ -110,7 +160,8 @@ impl Observation {
 
 impl Drop for Observation {
     fn drop(&mut self) {
-        let elapsed_ms = self.started.elapsed().as_secs_f64() * 1_000.0;
+        let elapsed = self.started.elapsed();
+        let elapsed_ms = elapsed.as_secs_f64() * 1_000.0;
         self.span.record("outcome", self.outcome.as_str());
         self.span.record("elapsed_ms", elapsed_ms);
         if matches!(self.outcome, Outcome::Succeeded | Outcome::Cancelled) {
@@ -130,5 +181,9 @@ impl Drop for Observation {
                 "operation boundary finished"
             );
         }
+        // Tracing diagnostics are emitted first so a faulty recorder cannot
+        // suppress them.
+        #[cfg(feature = "metrics")]
+        metrics::operation(self.boundary, self.operation, self.outcome, elapsed);
     }
 }

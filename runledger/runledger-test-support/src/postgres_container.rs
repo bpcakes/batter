@@ -20,7 +20,6 @@ const TEST_PG_IMAGE_ENV: &str = "RUNLEDGER_TEST_PG_IMAGE";
 const POSTGRES_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(30);
 const POSTGRES_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const POSTGRES_RETRY_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_PORT_RESOLVE_ATTEMPTS: u8 = 10;
 
 static SHARED_POSTGRES: tokio::sync::OnceCell<SharedPostgres> = tokio::sync::OnceCell::const_new();
 
@@ -111,20 +110,22 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
 }
 
 async fn resolve_host_port(container: &ContainerAsync<GenericImage>, internal_port: u16) -> u16 {
-    for attempt in 1..=MAX_PORT_RESOLVE_ATTEMPTS {
-        match container.get_host_port_ipv4(internal_port).await {
-            Ok(port) => return port,
-            Err(err) => {
-                if attempt == MAX_PORT_RESOLVE_ATTEMPTS {
-                    panic!(
-                        "resolve mapped postgres port after {MAX_PORT_RESOLVE_ATTEMPTS} attempts: {err}"
-                    );
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
+    // Docker can report a started container before its published mapping is visible.
+    tokio::time::timeout(POSTGRES_BOOTSTRAP_TIMEOUT, async {
+        loop {
+            if let Ok(port) = container.get_host_port_ipv4(internal_port).await {
+                return port;
             }
+            tokio::time::sleep(POSTGRES_RETRY_INTERVAL).await;
         }
-    }
-    unreachable!()
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "container '{}' did not expose mapped port {internal_port} within {POSTGRES_BOOTSTRAP_TIMEOUT:?}",
+            container.id()
+        )
+    })
 }
 
 fn parse_image_ref(image_ref: &str) -> (String, String) {

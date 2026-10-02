@@ -1,1 +1,0 @@
-Owning Bead batter-a8t. Inspect upstream b2e61516..f147fb7b, update the exact Cargo pin and lock, adapt only changed native contracts, refresh tests and references, then verify on Rust 1.98.1 and 1.94.0 with HTTP smoke.

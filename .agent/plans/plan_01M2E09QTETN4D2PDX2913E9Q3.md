@@ -1,1 +1,0 @@
-Implement Milestone 2 of .agent/plans/batter-7r3.6-compact-verification-adoption.md for Bead batter-9jh: pure validated manifest compilation, deterministic role-targeted GRANT rendering, generic example/docs, focused and repository verification, then the requested comprehensive low-severity all-reviewer fix loop.

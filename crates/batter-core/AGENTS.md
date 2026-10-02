@@ -31,18 +31,25 @@ Windows support and non-Unix fallbacks are out of scope.
   primitive constructor paths or merge the two capabilities.
 - `src/health.rs` and `src/health/` own dependency sampling, read-only observations,
   and the exhaustive observation-to-dependency-readiness projection.
-- `src/readiness.rs` owns sampling order and the pure lifecycle-plus-dependency
-  decision; adapters translate its valid result.
+- `src/readiness.rs` owns sampling order and the pure lifecycle, dependency and
+  application-condition decision; adapters translate its valid result.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
 - `src/command.rs` and `command/` own finite callbacks and independently retained
   LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
+- `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
 - `src/completion.rs` privately owns the snapshot-before-wait mechanism shared by
   command, startup and process completion observers; their public policies stay separate.
 - `tests/component_ownership.rs` compares acknowledged initialization and joined
   children with a nonconforming wrapper whose hidden child survives cleanup.
   `tests/non_yielding/` owns the fixture, timing policy and watchdog self-tests;
   private std-only mechanics live in workspace `test-support/process/`.
+- `src/telemetry/metrics.rs` owns the opt-in bounded metric catalog; shared schema/validation in `metrics/catalog.rs`, closed
+  label vocabularies are defined once in `metrics/vocabulary.rs`, name
+  tables in `metrics/names.rs`, bounded key caches in `metrics/keys.rs` and
+  the shared record-once guard in `metrics/terminal.rs`. Call sites use the
+  always-compiled `telemetry/record.rs` shim, never feature attributes. Emit only after results are known
+  and outside admission locks; never add a buffer, retry or log for metrics.
 - `src/telemetry.rs` exposes observations and the adapter dispatch seam;
   `src/scoped_dispatch.rs` owns its private pin/drop implementation.
 
@@ -90,7 +97,14 @@ never prolong writer ownership or refresh a successful timestamp.
 Keep `HealthStatus` observation separate from `DependencyReadiness`; classify
 every observation explicitly, with no catch-all. Overall readiness is either
 Ready or Unready with a reason, and dependency reasons cannot contain Healthy.
-Sample dependency before lifecycle so an observed drain overrides cached health.
+Sample configured dependency before lifecycle so an observed drain overrides cached health.
+The lifecycle_only constructor asserts no continuous dependency observation; it
+creates no monitor, never removes a configured dependency, and retains condition
+narrowing and the final lifecycle read.
+Ask application conditions only after a ready dependency sample (or with no
+configured dependency) and before the
+final lifecycle read; they can only narrow a ready decision to a named
+condition reason.
 Stop admission before cancellation. Harvest ready tasks before escalation;
 do not equate aborted wrappers with stopped detached work. Keep conservative
 cleanup skipping after uncertain termination. Never print cause contents or
@@ -106,8 +120,9 @@ Run from the workspace root:
 
 ```sh
 cargo test -p batter-core --locked
+cargo test -p batter-core --features metrics --locked
 cargo test -p batter-core --doc --locked
 cargo clippy -p batter-core --all-targets --locked -- -D warnings
-scripts/jig check test
-scripts/jig check api:no-default-features
+python3 scripts/test_matrix.py workspace
+python3 scripts/test_matrix.py no-default-features
 ```

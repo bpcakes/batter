@@ -1,341 +1,121 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
-use crate::{
-    ReadinessPolicy, RequestPolicy, dependency_readiness, liveness, operational_http,
-    request_admission, serving,
-};
-use axum::{
-    Router,
-    body::Body,
-    extract::Request,
-    handler::Handler,
-    http::{Method, StatusCode},
-    middleware,
-    response::{IntoResponse, Response},
-    routing::{MethodRouter, Route, any, get},
-};
+use crate::{ReadinessDecision, ReadinessPolicy, dependency_readiness, liveness, serving};
+use assembly::Assembling;
+use axum::{Router, http::request::Parts, response::Response, routing::get, serve::Listener};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
-use std::{convert::Infallible, error::Error, fmt};
-use tokio::net::TcpListener;
-use tower::{Layer, Service, ServiceExt};
+use group::DEFAULT_GROUP;
+use std::{error::Error, fmt, sync::Arc};
 
-/// A validated, literal route for a process probe.
-///
-/// Probe paths deliberately accept only absolute ASCII paths made from
-/// unreserved URI characters. Axum capture, wildcard and legacy pattern syntax
-/// cannot be represented, so a probe cannot become a public fallback for
-/// guarded application routes.
-///
-/// ```
-/// use batter_axum::ProbePath;
-///
-/// let path = ProbePath::new("/health/live")?;
-/// assert_eq!(path.as_str(), "/health/live");
-/// # Ok::<(), batter_axum::ProbePathError>(())
-/// ```
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[must_use = "retain the validated probe path"]
-pub struct ProbePath(&'static str);
+mod assembly;
+mod declared;
+mod fallback;
+mod group;
+mod guarded;
+mod inventory;
+mod pattern;
+mod probe;
+#[cfg(test)]
+mod tests;
 
-impl ProbePath {
-    /// Validate one absolute, literal probe path.
-    ///
-    /// Each non-empty segment may contain only ASCII letters, digits, `-`,
-    /// `.`, `_`, or `~`. Empty, dot, capture, wildcard, query, fragment and
-    /// percent-encoded segments are rejected. `/` is accepted as the root
-    /// literal. The input is retained only after validation and is never
-    /// included in the sanitized error.
-    pub fn new(path: &'static str) -> Result<Self, ProbePathError> {
-        validate_probe_path(path)?;
-        Ok(Self(path))
-    }
-
-    /// Return the exact validated route handed to Axum.
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-fn validate_probe_path(path: &str) -> Result<(), ProbePathError> {
-    if !path.starts_with('/') {
-        return Err(ProbePathError::NotAbsolute);
-    }
-    if path == "/" {
-        return Ok(());
-    }
-    if path.len() > 256 {
-        return Err(ProbePathError::TooLong);
-    }
-    for segment in path[1..].split('/') {
-        if segment.is_empty() {
-            return Err(ProbePathError::EmptySegment);
-        }
-        if segment == "." || segment == ".." {
-            return Err(ProbePathError::DotSegment);
-        }
-        if segment
-            .bytes()
-            .any(|byte| !byte.is_ascii_alphanumeric() && !b"-._~".contains(&byte))
-        {
-            return Err(ProbePathError::NonLiteralSegment);
-        }
-    }
-    Ok(())
-}
-
-/// Sanitized failure to construct a literal [`ProbePath`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ProbePathError {
-    /// The path is empty or does not begin with `/`.
-    NotAbsolute,
-    /// The path is longer than the boundary's fixed configuration limit.
-    TooLong,
-    /// The path contains a repeated separator or trailing slash.
-    EmptySegment,
-    /// The path contains `.` or `..` as a complete segment.
-    DotSegment,
-    /// A segment contains route syntax or a non-unreserved character.
-    NonLiteralSegment,
-}
-
-impl fmt::Display for ProbePathError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::NotAbsolute => "probe path must be absolute",
-            Self::TooLong => "probe path is too long",
-            Self::EmptySegment => "probe path contains an empty segment",
-            Self::DotSegment => "probe path contains a dot segment",
-            Self::NonLiteralSegment => "probe path contains non-literal route syntax",
-        })
-    }
-}
-
-impl Error for ProbePathError {}
-
-/// Sanitized failure to register a probe in an [`HttpBoundary`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum ProbeRegistrationError {
-    /// The same literal path was already assigned to another probe.
-    DuplicatePath,
-}
-
-impl fmt::Display for ProbeRegistrationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::DuplicatePath => "probe path is already registered",
-        })
-    }
-}
-
-impl Error for ProbeRegistrationError {}
+pub use declared::{RouteInventory, RouteInventoryError};
+pub use group::{BrowserPolicy, GroupPolicy, RouteGroup, RouteGroupError};
+pub use guarded::GuardedRouter;
+pub use probe::{ProbePath, ProbePathError, ProbeRegistrationError};
 
 /// Sanitized failure to combine probes with guarded application routes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BoundaryAssemblyError {
-    /// A guarded route can match a path reserved for a public probe.
+    /// A guarded route in any route group can match a path reserved for a
+    /// public probe.
     GuardedProbePath,
+    /// A rendered fallback was declared twice, or combined with a guarded
+    /// root or nested fallback. Choose exactly one fallback mode.
+    ConflictingFallback,
+    /// Routes of two route groups, named in declaration order, can match the
+    /// same request path. The routes passed to `assemble` are named `default`.
+    OverlappingGroupPaths {
+        /// The group declared first.
+        first: &'static str,
+        /// The group declared later.
+        second: &'static str,
+    },
+    /// A router admitted with [`GuardedRouter::from_router`] does not serve a
+    /// pattern of its [`RouteInventory`]: no path of the pattern reaches the
+    /// route registered with exactly that pattern.
+    RouteInventoryMismatch {
+        /// The group containing the admitted router.
+        group: &'static str,
+    },
+    /// Declared routes of a router admitted with [`GuardedRouter::from_router`]
+    /// can match the same request path as other routes of the same group.
+    OverlappingRouteInventory {
+        /// The group containing the overlapping routes.
+        group: &'static str,
+    },
 }
 
 impl fmt::Display for BoundaryAssemblyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::GuardedProbePath => "guarded route conflicts with a probe path",
-        })
+        match self {
+            Self::GuardedProbePath => {
+                formatter.write_str("guarded route conflicts with a probe path")
+            }
+            Self::ConflictingFallback => {
+                formatter.write_str("rendered fallback conflicts with another fallback")
+            }
+            Self::OverlappingGroupPaths { first, second } => write!(
+                formatter,
+                "route groups {first} and {second} can match the same path"
+            ),
+            Self::RouteInventoryMismatch { group } => write!(
+                formatter,
+                "route inventory in group {group} does not match its router"
+            ),
+            Self::OverlappingRouteInventory { group } => write!(
+                formatter,
+                "route inventory in group {group} can match the same path as other routes of that group"
+            ),
+        }
     }
 }
 
 impl Error for BoundaryAssemblyError {}
 
-/// Guarded application routes whose identities remain visible to [`HttpBoundary`].
-///
-/// This is the canonical application-router builder. It mirrors the Axum
-/// operations that preserve route identity while retaining every declared path
-/// separately from the native router. That retained inventory lets boundary
-/// assembly reject probe collisions without executing application services.
-/// Arbitrary [`Router::nest_service`] input is deliberately absent because an
-/// opaque service exposes no route inventory; use [`Self::nest`] with another
-/// `GuardedRouter` instead.
-///
-/// ```
-/// use axum::{http::StatusCode, routing::get};
-/// use batter_axum::GuardedRouter;
-///
-/// let nested: GuardedRouter =
-///     GuardedRouter::new().route("/work", get(|| async { "ok" }));
-/// let guarded = GuardedRouter::new()
-///     .nest("/api", nested)
-///     .fallback(|| async { StatusCode::NOT_FOUND });
-/// # let _ = guarded;
-/// ```
-///
-/// Opaque nested services cannot enter the protected path:
-///
-/// ```compile_fail,E0599
-/// use axum::Router;
-/// use batter_axum::GuardedRouter;
-///
-/// let guarded = GuardedRouter::new().nest_service("/api", Router::new());
-/// ```
-#[must_use = "pass the guarded routes to HttpBoundary::assemble"]
-pub struct GuardedRouter<S = ()> {
-    router: Router<S>,
-    route_patterns: Vec<String>,
-}
-
-impl<S> GuardedRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    /// Start an empty guarded application router.
-    pub fn new() -> Self {
-        Self {
-            router: Router::new(),
-            route_patterns: Vec::new(),
-        }
-    }
-
-    /// Add an Axum method router and retain its route pattern for assembly validation.
-    pub fn route(mut self, path: &str, method_router: MethodRouter<S>) -> Self {
-        self.router = self.router.route(path, method_router);
-        if !self.route_patterns.iter().any(|known| known == path) {
-            self.route_patterns.push(path.to_owned());
-        }
-        self
-    }
-
-    /// Add an infallible service at one guarded route and retain its pattern.
-    pub fn route_service<T>(mut self, path: &str, service: T) -> Self
-    where
-        T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
-        T::Response: IntoResponse,
-        T::Future: Send + 'static,
-    {
-        self.router = self.router.route_service(path, service);
-        if !self.route_patterns.iter().any(|known| known == path) {
-            self.route_patterns.push(path.to_owned());
-        }
-        self
-    }
-
-    /// Nest guarded routes while retaining their fully qualified route patterns.
-    pub fn nest(mut self, path: &str, nested: GuardedRouter<S>) -> Self {
-        self.router = self.router.nest(path, nested.router);
-        for nested_path in nested.route_patterns {
-            let full_path = if path.ends_with('/') {
-                format!("{path}{}", nested_path.trim_start_matches('/'))
-            } else if nested_path == "/" {
-                path.to_owned()
-            } else {
-                format!("{path}{nested_path}")
-            };
-            if !self.route_patterns.contains(&full_path) {
-                self.route_patterns.push(full_path);
-            }
-        }
-        self
-    }
-
-    /// Merge another guarded router and retain both route inventories.
-    pub fn merge(mut self, other: GuardedRouter<S>) -> Self {
-        self.router = self.router.merge(other.router);
-        for path in other.route_patterns {
-            if !self.route_patterns.contains(&path) {
-                self.route_patterns.push(path);
-            }
-        }
-        self
-    }
-
-    /// Set the guarded fallback without treating it as an explicit route identity.
-    pub fn fallback<H, T>(mut self, handler: H) -> Self
-    where
-        H: Handler<T, S>,
-        T: 'static,
-    {
-        self.router = self.router.fallback(handler);
-        self
-    }
-
-    /// Set an infallible guarded fallback service.
-    pub fn fallback_service<T>(mut self, service: T) -> Self
-    where
-        T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
-        T::Response: IntoResponse,
-        T::Future: Send + 'static,
-    {
-        self.router = self.router.fallback_service(service);
-        self
-    }
-
-    /// Apply a native Axum layer to every current guarded route and fallback.
-    pub fn layer<L>(mut self, layer: L) -> Self
-    where
-        L: Layer<Route> + Clone + Send + Sync + 'static,
-        L::Service: Service<Request> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
-        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
-        <L::Service as Service<Request>>::Future: Send + 'static,
-    {
-        self.router = self.router.layer(layer);
-        self
-    }
-
-    /// Apply a native Axum layer to every current explicit guarded route.
-    pub fn route_layer<L>(mut self, layer: L) -> Self
-    where
-        L: Layer<Route> + Clone + Send + Sync + 'static,
-        L::Service: Service<Request> + Clone + Send + Sync + 'static,
-        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
-        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
-        <L::Service as Service<Request>>::Future: Send + 'static,
-    {
-        self.router = self.router.route_layer(layer);
-        self
-    }
-
-    /// Supply native Axum state while retaining the guarded route inventory.
-    pub fn with_state<S2>(self, state: S) -> GuardedRouter<S2> {
-        GuardedRouter {
-            router: self.router.with_state(state),
-            route_patterns: self.route_patterns,
-        }
-    }
-}
-
-impl<S> Default for GuardedRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Library-owned HTTP composition.
 ///
-/// The assembled router has one fixed shape: server correlation and the single
-/// HTTP observer outermost, probes mounted outside admission, and lifecycle
-/// admission with the response-construction deadline around every guarded
-/// route, including nested fallbacks. The caller supplies only the policy, the
-/// probe paths and the guarded application; the order cannot be changed and no
-/// probe can end up inside the admission gate. This is the canonical path.
+/// The assembled router has one fixed shape. Server correlation and the single
+/// HTTP observer are outermost; probes sit outside every route group; and each
+/// route group receives, from outside in, its private-response headers when it
+/// has a [`BrowserPolicy`], its lifecycle admission and response-construction
+/// deadline, its mutation checks when configured, and then the application's
+/// own layers and routes. The routes passed to [`Self::assemble`] form the
+/// `default` group, whose policy is given to [`Self::new`] and which owns every
+/// guarded root and nested fallback. [`Self::with_rendered_fallback`] instead
+/// selects metadata-only rendering outside admission for unmatched paths.
+/// [`Self::with_group`] adds named groups with their
+/// own [`GroupPolicy`]. The caller supplies only policies, probe paths, optional
+/// renderers and guarded routes; the order cannot be changed, no probe
+/// can end up inside an admission gate, and no request path can reach routes
+/// of two groups. A probe renderer chooses the probe's body and headers, never
+/// its status or readiness decision. Guarded handlers extract the
+/// [`AdmittedRequest`](crate::AdmittedRequest) that their group's admission
+/// recorded. This is the canonical path.
 /// [`crate::observe_http`], [`crate::request_admission`],
 /// [`crate::request_scope`] and [`crate::operational_http`] remain available for
 /// compositions the boundary cannot express; each documents the ordering it
 /// then leaves with the caller.
 ///
 /// ```
-/// use axum::{Extension, Router, routing::get};
+/// use axum::routing::get;
 /// use batter_core::{
 ///     health::{HealthMonitor, HealthPolicy},
 ///     lifecycle::ShutdownHandle,
-///     operation::OperationContext,
 /// };
 /// use batter_axum::{
-///     HttpBoundary, ProbePath, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+///     AdmittedRequest, HttpBoundary, ProbePath, ReadinessPolicy, RequestPolicy,
+///     ResponseConstructionBudget,
 /// };
 /// use std::{convert::Infallible, time::Duration};
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -346,8 +126,8 @@ where
 /// let monitor = HealthMonitor::new(policy, || async { Ok::<_, Infallible>(()) });
 /// let guarded = batter_axum::GuardedRouter::new().route(
 ///     "/work",
-///     get(|Extension(context): Extension<OperationContext>| async move {
-///         context.check().expect("admitted context");
+///     get(|admitted: AdmittedRequest| async move {
+///         admitted.context().check().expect("admitted context");
 ///         "ok"
 ///     }),
 /// );
@@ -367,22 +147,48 @@ where
 /// ```
 #[must_use = "assemble the boundary into a router and register it"]
 pub struct HttpBoundary {
-    policy: RequestPolicy,
+    policy: GroupPolicy,
+    groups: Vec<RouteGroup>,
     probes: Router,
     probe_paths: Vec<ProbePath>,
+    fallback: Option<fallback::RenderedFallback>,
 }
 
 impl HttpBoundary {
-    /// Start a boundary with the admission policy for guarded routes and no probes.
-    pub fn new(policy: RequestPolicy) -> Self {
+    /// Start a boundary whose default route group uses `policy`, with no named
+    /// groups and no probes.
+    ///
+    /// A [`RequestPolicy`](crate::RequestPolicy) is a policy without browser
+    /// policy; pass [`GroupPolicy::browser`] to give the default group one.
+    pub fn new(policy: impl Into<GroupPolicy>) -> Self {
         Self {
-            policy,
+            policy: policy.into(),
+            groups: Vec::new(),
             probes: Router::new(),
             probe_paths: Vec::new(),
+            fallback: None,
         }
     }
 
-    /// Mount the process liveness probe at a validated literal path outside admission.
+    /// Add a named route group with its own request and browser policy.
+    ///
+    /// The group is rejected before any routing when its name is invalid or
+    /// already used (the routes passed to [`Self::assemble`] are `default`),
+    /// when it declares no route, or when it declares a root or nested
+    /// fallback. [`Self::assemble`] rejects groups that can match the same
+    /// request path. See [`RouteGroup`] for a complete composition.
+    pub fn with_group(mut self, group: RouteGroup) -> Result<Self, RouteGroupError> {
+        group.validate()?;
+        if group.name == DEFAULT_GROUP || self.groups.iter().any(|known| known.name == group.name) {
+            return Err(RouteGroupError::DuplicateName(group.name));
+        }
+        self.groups.push(group);
+        Ok(self)
+    }
+
+    /// Mount the process liveness probe at a validated literal path outside
+    /// admission, answering an empty 200. [`Self::with_rendered_liveness`]
+    /// answers with the application's body instead.
     ///
     /// Raw strings cannot cross this boundary:
     ///
@@ -398,7 +204,39 @@ impl HttpBoundary {
         Ok(self)
     }
 
-    /// Mount lifecycle-plus-dependency readiness at a validated literal path.
+    /// Mount the process liveness probe at a validated literal path outside
+    /// admission, with the application's response.
+    ///
+    /// `render` receives the request metadata, including the generated
+    /// [`CorrelationId`](crate::CorrelationId) but not the body or private
+    /// quota/observation/operational ownership state, and returns
+    /// the application's response, for example a documented JSON body and its
+    /// headers. Answering at all is the liveness signal, so the boundary then
+    /// sets status 200, replacing any status the renderer chose, and removes
+    /// any [`HttpObservationLevel`](crate::HttpObservationLevel) override, so
+    /// the completion event keeps the empty-body probe's default INFO. The
+    /// path is reserved and checked exactly as for [`Self::with_liveness`].
+    /// `render` runs synchronously for every probe request and must not block
+    /// the runtime. See [`Self::with_rendered_readiness`] for an example.
+    pub fn with_rendered_liveness<F>(
+        mut self,
+        path: ProbePath,
+        render: F,
+    ) -> Result<Self, ProbeRegistrationError>
+    where
+        F: Fn(&Parts) -> Response + Send + Sync + 'static,
+    {
+        self.reserve_probe(path)?;
+        self.probes = self
+            .probes
+            .route(path.as_str(), probe::rendered_liveness(Arc::new(render)));
+        Ok(self)
+    }
+
+    /// Mount the configured readiness policy at a validated literal path
+    /// outside admission, answering an empty 200 or 503.
+    /// [`Self::with_rendered_readiness`] answers with the application's body
+    /// instead.
     pub fn with_readiness<E: Send + Sync + 'static>(
         mut self,
         path: ProbePath,
@@ -412,6 +250,112 @@ impl HttpBoundary {
         Ok(self)
     }
 
+    /// Mount the configured readiness policy at a validated literal path
+    /// outside admission, with the application's response.
+    ///
+    /// Each request takes one fresh decision from `policy`, including any
+    /// application conditions added with [`ReadinessPolicy::with_condition`],
+    /// and passes it to `render` with the request metadata, including the
+    /// generated [`CorrelationId`](crate::CorrelationId) but not the body or
+    /// private quota/observation/operational ownership state. Cloned renderer
+    /// metadata cannot rewrite the original request's observation on redispatch.
+    /// `render` chooses the body and headers, for example an
+    /// OpenAPI-documented JSON document, and cannot alter the decision: the
+    /// boundary then sets the status from [`crate::readiness_status`], 200 only
+    /// for [`ReadinessDecision::Ready`] and 503 otherwise, and replaces the
+    /// [`ReadinessDecision`] and [`HttpObservationLevel`](crate::HttpObservationLevel)
+    /// response extensions with the decision and the policy's severity,
+    /// whatever the renderer set. The path is reserved and checked exactly as
+    /// for [`Self::with_readiness`]. `render` runs synchronously for every probe
+    /// request and must not block the runtime.
+    ///
+    /// ```
+    /// use axum::{
+    ///     Json,
+    ///     http::request::Parts,
+    ///     response::{IntoResponse, Response},
+    ///     routing::get,
+    /// };
+    /// use batter_axum::{
+    ///     CorrelationId, GuardedRouter, HttpBoundary, ProbePath, ReadinessDecision,
+    ///     ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+    /// };
+    /// use batter_core::{
+    ///     health::{HealthMonitor, HealthPolicy},
+    ///     lifecycle::ShutdownHandle,
+    ///     readiness::{ReadinessCondition, ReadinessUnreadyReason},
+    /// };
+    /// use serde::Serialize;
+    /// use std::{
+    ///     convert::Infallible,
+    ///     sync::{Arc, atomic::{AtomicBool, Ordering}},
+    ///     time::Duration,
+    /// };
+    ///
+    /// /// The application's documented probe body.
+    /// #[derive(Serialize)]
+    /// struct ProbeBody {
+    ///     status: &'static str,
+    ///     request_id: Option<String>,
+    /// }
+    ///
+    /// fn probe_body(status: &'static str, parts: &Parts) -> Response {
+    ///     let request_id = parts.extensions.get::<CorrelationId>().map(|id| id.to_string());
+    ///     Json(ProbeBody { status, request_id }).into_response()
+    /// }
+    ///
+    /// fn readiness_body(decision: ReadinessDecision, parts: &Parts) -> Response {
+    ///     let status = match decision {
+    ///         ReadinessDecision::Ready => "ready",
+    ///         ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition)) => {
+    ///             condition.as_str()
+    ///         }
+    ///         ReadinessDecision::Unready(_) => "unavailable",
+    ///     };
+    ///     probe_body(status, parts)
+    /// }
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// approval.approve();
+    /// let second = Duration::from_secs(1);
+    /// let health = HealthPolicy::new(second, second, second * 3, second)?;
+    /// let monitor = HealthMonitor::new(health, || async { Ok::<_, Infallible>(()) });
+    /// // Application state that the application's own tasks keep current.
+    /// let leases_valid = Arc::new(AtomicBool::new(false));
+    /// let leases = leases_valid.clone();
+    /// let readiness = ReadinessPolicy::new(control.status(), monitor.reader())
+    ///     .with_condition(ReadinessCondition::new("key-leases")?, move || {
+    ///         leases.load(Ordering::Acquire)
+    ///     });
+    /// let budget = ResponseConstructionBudget::new(second)?;
+    /// let assembled = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+    ///     .with_rendered_liveness(ProbePath::new("/live")?, |parts| probe_body("live", parts))?
+    ///     .with_rendered_readiness(ProbePath::new("/ready")?, readiness, readiness_body)?
+    ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+    ///     .await?;
+    /// // Inside protected startup: assembled.register_in(scope, "http", listener)?;
+    /// # let _ = (assembled.into_router(), leases_valid);
+    /// # drop(monitor);
+    /// # Ok(()) }
+    /// ```
+    pub fn with_rendered_readiness<E, F>(
+        mut self,
+        path: ProbePath,
+        policy: ReadinessPolicy<E>,
+        render: F,
+    ) -> Result<Self, ProbeRegistrationError>
+    where
+        E: Send + Sync + 'static,
+        F: Fn(ReadinessDecision, &Parts) -> Response + Send + Sync + 'static,
+    {
+        self.reserve_probe(path)?;
+        self.probes = self.probes.route(
+            path.as_str(),
+            probe::rendered_readiness(policy, Arc::new(render)),
+        );
+        Ok(self)
+    }
+
     fn reserve_probe(&mut self, path: ProbePath) -> Result<(), ProbeRegistrationError> {
         if self.probe_paths.contains(&path) {
             return Err(ProbeRegistrationError::DuplicatePath);
@@ -420,63 +364,54 @@ impl HttpBoundary {
         Ok(())
     }
 
-    /// Validate that guarded routes do not occupy probe paths, apply admission
-    /// to every guarded route, merge the probes outside it, and install
-    /// correlation with the single HTTP observer outermost.
+    /// Validate probes and route groups, install each group's policy around its
+    /// routes, merge the probes outside every group, and install correlation
+    /// with the single HTTP observer outermost.
     ///
-    /// Unmatched paths inside `guarded`, including nested fallbacks, receive
-    /// the admission gate. Routes added to the result afterward would sit
-    /// outside the boundary, so the result is not a bare [`Router`].
-    /// Route validation polls only a library-owned inert inventory. It does not
-    /// poll guarded handlers, fallbacks, or their middleware. A probe path
-    /// reserves the complete route identity, so even a different guarded
-    /// method at that path is rejected before Axum merge can panic.
+    /// `guarded` is the default route group. Unmatched paths, including those
+    /// under a nested fallback, reach its fallback inside its admission unless
+    /// [`Self::with_rendered_fallback`] selects a renderer outside admission.
+    /// A rendered fallback cannot coexist with a guarded fallback. Named
+    /// groups keep unsupported methods on their routes inside their own
+    /// policy. Routes added to the result afterward would sit outside the
+    /// boundary, so the result is not a bare [`Router`].
+    /// Route validation polls only library-owned inert inventories and
+    /// inspection copies. It does not poll guarded handlers, fallbacks, or
+    /// their middleware. A probe path reserves the complete route identity in
+    /// every group, so even a different guarded method at that path is
+    /// rejected before Axum merge can panic.
+    /// Routes of different groups may not match one request path, even with
+    /// different methods; overlap is decided from the retained patterns and
+    /// confirmed by routing a shared path through each pattern alone. If a
+    /// request URI cannot preserve that path verbatim, assembly conservatively
+    /// rejects the overlap before native merging. Routers admitted with
+    /// [`GuardedRouter::from_router`] are checked against their
+    /// [`RouteInventory`] first, their declared patterns take part in the
+    /// overlap decision, and they are never merged into the native router.
     pub async fn assemble(
         self,
         guarded: GuardedRouter,
     ) -> Result<AssembledHttp, BoundaryAssemblyError> {
-        let mut inspection = Router::new();
-        for path in &guarded.route_patterns {
-            inspection = inspection.route(path, any(report_guarded_route_match));
+        let Self {
+            policy,
+            groups,
+            probes,
+            probe_paths,
+            fallback,
+        } = self;
+        if fallback.is_some() && guarded.declares_fallback {
+            return Err(BoundaryAssemblyError::ConflictingFallback);
         }
-        for path in &self.probe_paths {
-            let request = Request::builder()
-                .method(Method::OPTIONS)
-                .uri(path.as_str())
-                .body(Body::empty())
-                .expect("validated probe path forms an HTTP request");
-            let response = inspection
-                .clone()
-                .oneshot(request)
-                .await
-                .expect("Axum routers are infallible services");
-            if response.extensions().get::<GuardedRouteMatch>().is_some() {
-                return Err(BoundaryAssemblyError::GuardedProbePath);
-            }
-        }
-        let guarded = guarded.router.layer(middleware::from_fn_with_state(
-            self.policy,
-            request_admission,
-        ));
-        Ok(AssembledHttp {
-            // With two default fallbacks Axum retains the second router's;
-            // a second custom fallback also supersedes a first default. Keep
-            // the guarded router second so its layered fallback is retained.
-            router: self
-                .probes
-                .merge(guarded)
-                .layer(middleware::from_fn(operational_http)),
-        })
+        let groups = std::iter::once(Assembling::new(DEFAULT_GROUP, policy, guarded))
+            .chain(
+                groups
+                    .into_iter()
+                    .map(|group| Assembling::new(group.name, group.policy, group.routes)),
+            )
+            .collect();
+        let router = assembly::assemble(probes, &probe_paths, groups, fallback).await?;
+        Ok(AssembledHttp { router })
     }
-}
-
-#[derive(Clone, Copy)]
-struct GuardedRouteMatch;
-
-async fn report_guarded_route_match() -> Response {
-    let mut response = StatusCode::NO_CONTENT.into_response();
-    response.extensions_mut().insert(GuardedRouteMatch);
-    response
 }
 
 /// A router with the boundary applied.
@@ -497,23 +432,54 @@ pub struct AssembledHttp {
 
 impl AssembledHttp {
     /// Register the assembled server through constrained registration authority.
+    ///
+    /// `listener` is any bound [`axum::serve::Listener`]: a
+    /// [`tokio::net::TcpListener`], a Unix listener, or an application-owned
+    /// listener that completes its own TLS handshakes. Certificates, protocol
+    /// versions and handshake policy stay with that listener; the boundary,
+    /// listener transfer, startup acknowledgement, graceful drain and
+    /// conservative cleanup after wrapper abortion are unchanged.
     /// See [`crate::register_http_in`] for the serving contract.
+    ///
+    /// ```no_run
+    /// use axum::serve::Listener;
+    /// use batter_axum::AssembledHttp;
+    /// use batter_core::registration::RegistrationTarget;
+    /// use std::fmt::Debug;
+    ///
+    /// fn serve<T, L>(assembled: AssembledHttp, scope: &mut T, listener: L)
+    ///     -> Result<(), batter_core::BoxError>
+    /// where
+    ///     T: RegistrationTarget + ?Sized,
+    ///     L: Listener,
+    ///     L::Addr: Debug,
+    /// {
+    ///     assembled.register_in::<T>(scope, "http", listener)?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn register_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: fmt::Debug>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_in(target, name, listener, self.router)
     }
 
-    /// Register with the direct TCP peer available to handlers.
-    /// See [`crate::register_http_with_connect_info_in`] for the contract.
+    /// Register with the listener's own direct peer available to handlers.
+    ///
+    /// A [`tokio::net::TcpListener`] and a TLS listener over TCP both supply
+    /// [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo) holding the
+    /// accepted socket's address and port; another listener supplies its own
+    /// address type. Forwarded headers are never interpreted.
+    /// See [`crate::register_http_with_connect_info_in`] for the contract and
+    /// for a worked generic-listener signature.
     pub fn register_with_connect_info_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: Clone + fmt::Debug + Sync + 'static>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_with_connect_info_in(target, name, listener, self.router)
     }
@@ -525,157 +491,5 @@ impl AssembledHttp {
     /// already owns the request.
     pub fn into_router(self) -> Router {
         self.router
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        BoundaryAssemblyError, GuardedRouter, HttpBoundary, ProbePath, ProbePathError,
-        ProbeRegistrationError,
-    };
-    use crate::{ReadinessPolicy, RequestPolicy, ResponseConstructionBudget};
-    use batter_core::{
-        health::{HealthMonitor, HealthPolicy},
-        lifecycle::ShutdownHandle,
-    };
-    use std::{convert::Infallible, time::Duration};
-
-    #[test]
-    fn probe_path_accepts_only_static_absolute_routes() {
-        for valid in ["/", "/live", "/health/ready-v2", "/_internal/~probe"] {
-            assert_eq!(ProbePath::new(valid).unwrap().as_str(), valid);
-        }
-        for (invalid, expected) in [
-            ("", ProbePathError::NotAbsolute),
-            ("live", ProbePathError::NotAbsolute),
-            ("/live/", ProbePathError::EmptySegment),
-            ("/health//live", ProbePathError::EmptySegment),
-            ("/./live", ProbePathError::DotSegment),
-            ("/../live", ProbePathError::DotSegment),
-            ("/{probe}", ProbePathError::NonLiteralSegment),
-            ("/{*path}", ProbePathError::NonLiteralSegment),
-            ("/:probe", ProbePathError::NonLiteralSegment),
-            ("/*path", ProbePathError::NonLiteralSegment),
-            ("/live?full=1", ProbePathError::NonLiteralSegment),
-            ("/live#details", ProbePathError::NonLiteralSegment),
-            ("/health%2Flive", ProbePathError::NonLiteralSegment),
-        ] {
-            assert_eq!(ProbePath::new(invalid), Err(expected), "{invalid}");
-        }
-        let long = format!("/{}", "a".repeat(256));
-        let leaked = Box::leak(long.into_boxed_str());
-        assert_eq!(ProbePath::new(leaked), Err(ProbePathError::TooLong));
-    }
-
-    #[test]
-    fn boundary_rejects_duplicate_probe_paths_before_axum_routing() {
-        let second = Duration::from_secs(1);
-        let request_policy = || {
-            RequestPolicy::new(
-                ShutdownHandle::new_unapproved().operation_admission(),
-                ResponseConstructionBudget::new(second).unwrap(),
-            )
-        };
-        let path = ProbePath::new("/health").unwrap();
-        let duplicate_liveness = HttpBoundary::new(request_policy())
-            .with_liveness(path)
-            .unwrap()
-            .with_liveness(path);
-        assert!(matches!(
-            duplicate_liveness,
-            Err(ProbeRegistrationError::DuplicatePath)
-        ));
-
-        let health_policy = HealthPolicy::new(second, second, second * 3, second).unwrap();
-        let monitor = HealthMonitor::new(health_policy, || async { Ok::<_, Infallible>(()) });
-        let duplicate_cross_kind = HttpBoundary::new(request_policy())
-            .with_liveness(path)
-            .unwrap()
-            .with_readiness(
-                path,
-                ReadinessPolicy::new(ShutdownHandle::new_unapproved().status(), monitor.reader()),
-            );
-        assert!(matches!(
-            duplicate_cross_kind,
-            Err(ProbeRegistrationError::DuplicatePath)
-        ));
-    }
-
-    #[tokio::test]
-    async fn boundary_rejects_guarded_probe_paths_without_polling_application_code() {
-        use axum::routing::post;
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-
-        let second = Duration::from_secs(1);
-        let path = ProbePath::new("/health").unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let route_calls = calls.clone();
-        let fallback_calls = calls.clone();
-        let guarded = GuardedRouter::new()
-            .route(
-                "/health",
-                post(move || {
-                    route_calls.fetch_add(1, Ordering::SeqCst);
-                    async { "guarded" }
-                }),
-            )
-            .fallback(move || {
-                fallback_calls.fetch_add(1, Ordering::SeqCst);
-                async { "fallback" }
-            });
-        let result = HttpBoundary::new(RequestPolicy::new(
-            ShutdownHandle::new_unapproved().operation_admission(),
-            ResponseConstructionBudget::new(second).unwrap(),
-        ))
-        .with_liveness(path)
-        .unwrap()
-        .assemble(guarded)
-        .await;
-
-        assert!(matches!(
-            result,
-            Err(BoundaryAssemblyError::GuardedProbePath)
-        ));
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn boundary_rejects_nested_guarded_probe_paths_without_polling_application_code() {
-        use axum::routing::post;
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-
-        let second = Duration::from_secs(1);
-        let path = ProbePath::new("/api/health").unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let route_calls = calls.clone();
-        let nested = GuardedRouter::new().route(
-            "/health",
-            post(move || {
-                route_calls.fetch_add(1, Ordering::SeqCst);
-                async { "guarded" }
-            }),
-        );
-        let guarded = GuardedRouter::new().nest("/api", nested);
-        let result = HttpBoundary::new(RequestPolicy::new(
-            ShutdownHandle::new_unapproved().operation_admission(),
-            ResponseConstructionBudget::new(second).unwrap(),
-        ))
-        .with_liveness(path)
-        .unwrap()
-        .assemble(guarded)
-        .await;
-
-        assert!(matches!(
-            result,
-            Err(BoundaryAssemblyError::GuardedProbePath)
-        ));
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

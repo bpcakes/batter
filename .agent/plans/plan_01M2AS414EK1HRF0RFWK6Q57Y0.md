@@ -1,1 +1,0 @@
-Documentation-only correction grounded in Startup, check_shutdown, HTTP and managed Runledger source. Update usage, architecture and status; verify links and repository policy.

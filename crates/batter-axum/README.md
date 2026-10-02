@@ -62,16 +62,28 @@ supported browsers must emit `Sec-Fetch-Site`. The optional JSON check parses
 the complete RFC 9110 media type and parameter byte grammar, not merely an
 `application/json` prefix.
 
-Wrap assembled private routes and their fallback with
-`middleware::from_fn(browser::private_response)`. Put mutation rejection inside
-that layer so rejection responses receive the headers, and put `observe_http`
-outside it to observe the final application-selected status once. An outer
-short-circuit that does not call the private layer cannot receive its headers.
-The layer selects `Referrer-Policy: same-origin`: cross-origin destinations do
-not receive referrer information, while same-origin HTML form mutations retain
-the `Origin` value required by `MutationPolicy::exact_origin`. A non-CORS form
-post to a different origin instead carries `Origin: null`; that page/target
-layout needs a deliberately different response policy and composition.
+On the canonical path, a route group's `BrowserPolicy` installs the private
+headers and mutation checks; see [route groups](#http-boundary-and-route-groups).
+In a manual composition, wrap assembled private routes and their fallback with one
+`.layer(browser::PrivateResponsePolicy::...)`, choosing the referrer policy
+deliberately for that route group. Every policy overwrites
+`Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; only the two
+referrer policies that never send referrer information cross-origin are
+representable. `SameOriginReferrer`, the default, keeps the serialized `Origin`
+on same-origin HTML form posts, as `MutationPolicy::exact_origin` requires; a
+non-CORS form post to a different origin carries `Origin: null`. `NoReferrer`
+also withholds same-origin referrers, so every HTML form post, even a
+same-origin one, carries `Origin: null` and fails an exact-origin check; use
+CORS-mode `fetch` mutations or a custom-marker policy on those pages.
+`Sec-Fetch-Site` is unaffected. The field only sets the document's initial
+policy; page markup and `fetch` options can still change it. Applying either
+policy keeps an existing all-`no-referrer` field, so an outer layer cannot
+weaken an inner `NoReferrer` choice. The compatibility
+`middleware::from_fn(browser::private_response)` applies `SameOriginReferrer`.
+Put mutation rejection inside the layer so rejection responses receive the
+headers, and put `observe_http` outside it to observe the final
+application-selected status once. An outer short-circuit that does not call the
+private layer cannot receive its headers.
 
 These helpers do not authenticate a caller, distinguish a browser from a
 non-browser client, select routes, configure CORS or
@@ -80,9 +92,12 @@ server state, or define response bodies. SameSite and Fetch Metadata remain
 defense-in-depth signals; `Cache-Control: no-store` is not a complete privacy
 guarantee.
 
+## HTTP boundary and route groups
+
 Construct each configured route with `ProbePath::new`, then use
-`HttpBoundary::new(RequestPolicy)` with `with_liveness`, `with_readiness` and
-build application routes with `GuardedRouter`, and call `assemble(guarded)`.
+`HttpBoundary::new(RequestPolicy)` with `with_liveness` and `with_readiness`, or
+their rendered variants for application probe bodies, build application routes
+with `GuardedRouter`, and call `assemble(guarded)`.
 `ProbePath` rejects captures, wildcards and other
 non-literal route syntax before Axum can mount it. The fallible probe-registration
 methods reject a repeated path across all probe kinds before Axum routing can
@@ -101,8 +116,253 @@ policy. Guarded fallbacks and rejected requests are observed too, but the
 fallback remains inside admission and is rejected while the process is not
 accepting work.
 
+`HttpBoundary::new` also accepts a `GroupPolicy`, and `with_group` adds named
+`RouteGroup`s. The routes passed to `assemble` are the group named `default`.
+Each group has its own `RequestPolicy`, for example a longer upload budget, and
+an optional `BrowserPolicy`. From the outside in, the boundary installs server
+correlation with the single HTTP observer, then for each group its
+`PrivateResponsePolicy` headers when it has a browser policy, lifecycle
+admission with the group's response-construction deadline, `MutationPolicy`
+checks on every method other than GET, HEAD, OPTIONS and TRACE when configured,
+and finally the application's own layers and handlers. The private headers
+therefore cover the group's admission, deadline, method and mutation
+rejections, and the mutation renderer receives the admitted request's
+metadata. `BrowserPolicy::with_mutation_checks` takes the application's
+renderer for the sanitized `MutationRejection`;
+`BrowserPolicy::without_mutation_checks` states that the group's mutating
+routes rely on other authentication. There is no empty browser policy.
+
+Only the default group may declare a root or nested fallback, so every
+unmatched path reaches the default fallback inside the default group's
+admission, even under a named group's route prefix. A named group needs at
+least one route and a unique name of 1–96 ASCII alphanumeric, `.`, `_` or `-`
+bytes; `with_group` rejects other groups before routing. Assembly rejects a
+probe path that any group's route can match, and two groups whose routes can
+match the same request path, even with different methods. The sanitized
+`BoundaryAssemblyError::OverlappingGroupPaths` names both groups. Overlap is
+decided from the retained route patterns and confirmed by routing the shared
+path through each pattern alone; no application code runs. If a request URI
+cannot preserve that shared path verbatim, assembly conservatively rejects the
+overlap before native merging, where even unreachable route literals can collide.
+
+```rust
+use axum::{response::IntoResponse, routing::{get, put}};
+use batter_axum::{
+    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, RequestPolicy, RouteGroup,
+    browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
+};
+
+async fn assemble(
+    ordinary: RequestPolicy,
+    uploads: RequestPolicy,
+    account: RequestPolicy,
+) -> Result<batter_axum::AssembledHttp, Box<dyn std::error::Error>> {
+    let browser = BrowserPolicy::with_mutation_checks(
+        PrivateResponsePolicy::SameOriginReferrer,
+        MutationPolicy::exact_origin(BrowserOrigin::https("https://app.example")?),
+        |rejection, _parts| (rejection.status(), rejection.code()).into_response(),
+    );
+    let upload_routes = GuardedRouter::new().route("/uploads/{name}", put(|| async { "stored" }));
+    let account_routes = GuardedRouter::new().route("/account", get(|| async { "profile" }));
+    Ok(HttpBoundary::new(ordinary)
+        .with_group(RouteGroup::new("uploads", uploads, upload_routes))?
+        .with_group(RouteGroup::new(
+            "account",
+            GroupPolicy::browser(account, browser),
+            account_routes,
+        ))?
+        .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+        .await?)
+}
+```
+
+### Admitted request context
+
+Guarded handlers and route layers extract `AdmittedRequest`, one value with the
+request's `OperationContext`, the `CorrelationId` its operational wrapper
+generated and the admission policy's `RequestInterruptionResponder`:
+
+```rust
+use axum::response::{IntoResponse, Response};
+use batter_axum::AdmittedRequest;
+use batter_core::operation::OperationError;
+use std::convert::Infallible;
+
+async fn work(admitted: AdmittedRequest) -> Response {
+    let request_id = admitted.correlation_id().to_string();
+    match admitted
+        .context()
+        .run("demo.read", |_scope| async { Ok::<_, Infallible>("ok") })
+        .await
+    {
+        Ok(body) => ([("x-demo-request", request_id)], body).into_response(),
+        Err(OperationError::Interrupted(reason)) => {
+            admitted.interruption_responder().render(reason)
+        }
+        Err(OperationError::Failed(never)) => match never {},
+    }
+}
+```
+
+Only admission creates the value, and only inside the `operational_http`
+wrapper that generated the request's correlation, which the boundary always
+installs. Its type is not `Clone` and has no public constructor, so no
+application layer can construct it or insert it into request extensions. The
+extractor reads admission's private record, so layers that insert, replace or
+remove the native `OperationContext`, `CorrelationId` or
+`RequestInterruptionResponder` extensions cannot change it. A handler reached
+without admission, such as a route added to the assembled router, answers
+`AdmittedRequestRejection`: the fixed 500 Problem JSON of
+`HttpFailure::Internal`, instead of Axum's missing-extension text, which names
+the missing type. To migrate, replace `Extension<OperationContext>`,
+`Extension<CorrelationId>` and `Extension<RequestInterruptionResponder>`
+handler arguments with one `AdmittedRequest` and its three accessors. The raw
+extensions remain for Batter's adapters and existing handlers.
+
+### Routers built by another router builder
+
+A router built by another router builder, for example an OpenAPI router
+converted with `Router::from`, discloses no route inventory, so it cannot be
+declared through `GuardedRouter::route`. Admit it with
+`GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`, listing
+every route pattern it should serve exactly as the router registered it. The
+result is an ordinary `GuardedRouter`: it can form a named group or join the
+default group, and `nest`, `merge`, `layer`, `route_layer` and `with_state`
+carry the admitted router and its inventory along.
+
+Awaited assembly checks the inventory before anything is served. For each
+declared pattern it routes a path of that pattern through a library-owned
+inspection copy of the router, whose every route, method fallback and fallback
+only reports what matched, and returns
+`BoundaryAssemblyError::RouteInventoryMismatch` unless the path reaches the
+route registered with exactly that pattern. The same copy rejects any route of
+the router, declared or not, that matches a probe path. Declared patterns take
+part in the group overlap check and must not share a request path with the
+other routes of their own group (`OverlappingRouteInventory`). No application
+handler, fallback or middleware service is called or polled. Preparing the
+inspection copy does run, once, the constructors of application layers that
+Axum applies lazily to handlers, even when assembly is then rejected.
+
+When serving, a request reaches the admitted router only if that router would
+route it to a declared pattern; every other request is routed as though the
+router were absent. An undeclared route therefore answers with the default
+group's fallback, and the admitted router's own fallback never runs, so declare
+fallbacks on the default `GuardedRouter`. Declared routes run inside their
+group's policy with native Axum routing, path parameters and `MatchedPath`, and
+each request still has one completion event. Only a request that no native
+route matches consults each admitted router's inspection copy, at the root
+fallback where it carries no path captures; the default group's root and nested
+fallbacks then answer the requests no admitted router serves. Assembly prepares
+an admitted router, and when there are any the default group's fallbacks, once,
+as `into_make_service` prepares a served router, so their layers are built once
+and their state is shared by all of their requests.
+
+```rust
+use axum::Router;
+use batter_axum::{GuardedRouter, RouteInventory, RouteInventoryError};
+
+fn items(converted: Router) -> Result<GuardedRouter, RouteInventoryError> {
+    // An OpenAPI document's paths are one source for the inventory; list
+    // routes added without documentation too, or they stay unreachable.
+    let inventory = RouteInventory::new(["/items", "/items/{id}"])?;
+    Ok(GuardedRouter::from_router(converted, inventory))
+}
+```
+
+### Application probe bodies and readiness conditions
+
+`with_liveness` and `with_readiness` answer with empty bodies. When the
+application documents its probe bodies, for example as OpenAPI JSON, use
+`with_rendered_liveness(path, render)` and
+`with_rendered_readiness(path, readiness, render)` instead of mounting probe
+handlers beside the boundary. They take the same `ProbePath`, reserve it in the
+same duplicate and guarded-route checks and mount the probe in the same place,
+outside every group's admission and inside correlation and the observer. The
+renderer receives the request metadata, including the generated
+`CorrelationId`, and for readiness one fresh `ReadinessDecision`, and returns
+the body and headers. After it returns, the boundary sets liveness to 200 and
+removes any `HttpObservationLevel` override, so its completion keeps the
+default INFO, and sets readiness to `readiness_status(decision)` and replaces
+the `ReadinessDecision` and `HttpObservationLevel` extensions with the decision
+and the policy's severity. A renderer therefore chooses what the probe says,
+never whether the process is ready or how the completion event is logged.
+
+All application renderers (probes, admission/interruption and browser rejection)
+receive metadata without Batter's private quota writer, shared observation
+state or operational ownership marker. Public correlation and application
+extensions remain available. If a renderer redispatches cloned metadata through
+an operational wrapper, that request gets its own correlation and completion;
+its quota facts cannot replace the original request's facts.
+
+Add application readiness requirements, such as held key leases, with
+`ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`. The
+check synchronously reads state the application already maintains; it is asked
+only after the dependency is ready and before the final lifecycle read, and
+while it returns `false` a decision that would be Ready becomes
+`Unready(ReadinessUnreadyReason::Condition(name))`, rendered 503 and WARN by
+default. It cannot make an unready lifecycle or dependency ready or replace its
+reason. Renderers and checks run inside the probe request, which has no
+response-construction deadline, so they must not block.
+
+```rust
+use axum::{
+    Json,
+    http::request::Parts,
+    response::{IntoResponse, Response},
+};
+use batter_axum::{CorrelationId, ReadinessDecision};
+use batter_core::readiness::ReadinessUnreadyReason;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct ProbeBody {
+    status: &'static str,
+    request_id: Option<String>,
+}
+
+fn readiness_body(decision: ReadinessDecision, parts: &Parts) -> Response {
+    let status = match decision {
+        ReadinessDecision::Ready => "ready",
+        ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition)) => {
+            condition.as_str()
+        }
+        ReadinessDecision::Unready(_) => "unavailable",
+    };
+    let request_id = parts.extensions.get::<CorrelationId>().map(|id| id.to_string());
+    Json(ProbeBody { status, request_id }).into_response()
+}
+
+// HttpBoundary::new(policy)
+//     .with_rendered_readiness(ProbePath::new("/ready")?, readiness, readiness_body)?
+```
+
+### Migrating manual compositions to route groups
+
+Existing `HttpBoundary::new(RequestPolicy)` and `assemble(guarded)` calls keep
+their meaning; route groups are additive.
+
+- Replace per-handler Origin, Fetch Metadata or custom-marker checks with one
+  `BrowserPolicy::with_mutation_checks` on the group that owns those routes, and
+  move the rejection envelope into its renderer. Handlers no longer call
+  `MutationPolicy::check`.
+- Replace hand-written private-response middleware, or `private_response`
+  layered around a route group, with `GroupPolicy::browser` and the chosen
+  `PrivateResponsePolicy`. The boundary places the headers outside the group's
+  admission, so admission and deadline rejections receive them too.
+- Replace separately layered `request_admission` routers that differ only in
+  their budget with one `RouteGroup` per `RequestPolicy`.
+- Drop prose ordering rules such as "add admission before merging probes" or
+  "keep exactly one HTTP observer": the boundary installs that order.
+- Move a fallback from a named group into the default group, and split routes
+  that two groups would share, including one path served with different
+  methods, into a single group.
+
+## Low-level composition and observation
+
 For compositions the boundary cannot express, `request_admission`, `observe_http`
-and `operational_http` remain available. `observe_http` requires no lifecycle
+and `operational_http` remain available. Admission records an `AdmittedRequest`
+only with `operational_http` outside it; otherwise its handlers receive the
+sanitized rejection. `observe_http` requires no lifecycle
 state and adds no deadline or operation context. `RequestPolicy` keeps readiness
 and deadlines combined. The existing `request_scope` remains the combined
 observation/admission compatibility entry point. Only the outermost observer
@@ -136,8 +396,8 @@ still one event.
 Set overrides in handlers, failure renderers or middleware inside observation.
 Middleware changing a response must retain, replace or remove the override to
 match its own policy. Status-only probes retain default severity.
-`ReadinessPolicy` selects INFO for Starting/Draining and WARN for Stopped and
-unhealthy dependencies while Ready. Their status remains 503 and outcome remains `server_error`, so
+`ReadinessPolicy` selects INFO for Starting/Draining and WARN for Stopped,
+unhealthy dependencies and unsatisfied application conditions while Ready. Their status remains 503 and outcome remains `server_error`, so
 status/outcome alerts still need application-owned probe filtering.
 
 Axum's `Router::layer` runs after routing and covers only routes/fallback already
@@ -188,8 +448,9 @@ HTTP traffic; application probe and timing policy remain explicit.
 
 Use `operational_http` instead of outer `observe_http` to generate a UUID, replace
 incoming x-request-id and Tower/adapter identity extensions, observe once, and
-replace the response ID header. Extract `Extension<CorrelationId>` and propagate
-its string explicitly to nested application metadata. It carries no authority.
+replace the response ID header. Admitted handlers read it with
+`AdmittedRequest::correlation_id` and propagate its string explicitly to nested
+application metadata. It carries no authority.
 The HTTP completion event has its own `request_id` even with all INFO spans
 disabled, including on drop under another dispatch. Native nested tracing still
 requires enabled spans; no tenant/principal or inbound trace context is inferred.
@@ -204,9 +465,11 @@ the last renderer selection wins. Domain error mappings remain application-owned
 
 Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
 outside admission. Its response has an empty body and 200 only when lifecycle is
-Ready and the latest read-only health snapshot is healthy. The response extension
+Ready, the latest read-only health snapshot is healthy and every application
+condition added with `with_condition` is satisfied. The response extension
 carries the foundation's `ReadinessDecision`: either Ready or Unready with a
-Starting/Draining/Stopped or typed dependency-unready reason. Healthy has no
+Starting/Draining/Stopped, typed dependency-unready or named application-condition
+reason. Healthy has no
 dependency-unready representation. `readiness_status` exposes the adapter's
 200/503 mapping and `default_readiness_level` exposes its INFO/WARN mapping;
 `with_level` receives the valid decision and can delegate unmatched cases to that

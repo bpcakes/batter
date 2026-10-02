@@ -1,1 +1,0 @@
-Implement ready Bead batter-t2uq: additive rewrap_envelope API, preserved low-level compatibility, failure-contract and public-consumer evidence, documentation and full verification.

@@ -9,6 +9,7 @@ Fast jump index for agent-facing guidance in this repository.
 ## Nested guides
 
 - [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
+- [OTLP metrics](./crates/batter-otlp/AGENTS.md): explicit bounded export through protected service completion.
 - [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.94 portability, and detached MIT license metadata.
 - [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
   cleanup, admission, dependency health, settings, and telemetry.
@@ -39,6 +40,12 @@ Fast jump index for agent-facing guidance in this repository.
 - [Operator TUI](./runledger/runledger-tui/AGENTS.md).
 
 - [Native Runlimit](./runlimit/AGENTS.md): validated policy, bounded native backends, transport helpers and immutable migrations.
+
+## External consumer sources
+
+- [Single-dependency consumers](./consumers/README.md): the acceptance consumer
+  that declares only `batter`, and its provisioning harness. Standalone sources,
+  not workspace members.
 
 ## Private shared test sources
 

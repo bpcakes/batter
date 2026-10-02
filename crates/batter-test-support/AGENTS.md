@@ -34,5 +34,5 @@ Run from the workspace root:
 ```sh
 cargo test -p batter-test-support --locked
 cargo clippy -p batter-test-support --all-targets --locked -- -D warnings
-scripts/jig check test
+python3 scripts/test_matrix.py workspace
 ```

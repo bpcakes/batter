@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Own quota-to-work execution and optional authenticated HTTP assembly. Native
+Own quota-to-work execution and optional authenticated HTTP assembly, and make
+the native Runlimit packages reachable through one facade dependency. Native
 Runlimit retains policy validation, hashing, atomic storage and transaction
 disposition. This is a Unix-only adapter, not a limiter or authentication service.
 
 ## Key entrypoints
 
-- `src/lib.rs`: public quota exports and optional HTTP module selection.
+- `src/lib.rs`: public quota exports, optional HTTP module selection, and the
+  `native`/`memory`/`postgres`/`native_transport` reexports of the native packages.
 - `src/quota.rs`: nonempty native checks, typed consumption bridge and factory execution.
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
 - `src/attempts.rs`: native pre-authentication reserve, verification, receipt claim,
@@ -21,13 +23,30 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 
 Native backend algorithms belong in `runlimit/`. This package only classifies
 native failures and composes operational ownership. Keep optional memory,
-PostgreSQL and HTTP features independent; tests must not hide graph leakage via
-workspace feature unification. Future facade imports must follow actual layout.
+PostgreSQL, HTTP and the two native transport features independent; tests must
+not hide graph leakage via workspace feature unification. A new feature needs a
+`scripts/check_runlimit_features.py` graph expectation and a reachability import;
+that runner enumerates every subset and fails on a declared feature it does not
+map. Future facade imports must follow actual layout.
 
 ## Invariants
 
+The reexported namespaces are the native packages themselves, never wrappers, so
+facade and direct paths keep one type identity. Keep `native_transport` named
+apart from `http`: `http` is this adapter's protected quota-before-body assembly,
+while `native_transport::axum` leaves subject derivation, rejection mapping and
+response selection to the caller and acquires no operation deadline, admission
+ordering or telemetry, and `native_transport::http` serializes an unstable
+Internet-Draft header set. `native-http` and `native-axum` must never select
+`axum`, `batter-axum` or the `http` module, and the module documentation's caller
+obligations stay current when a native transport API changes.
+
 One native atomic batch precedes work. Never split it into sequential checks or
 automatically retry/refund. Same parent deadline bounds admission and work.
+`Quota::run` erases the native check and the admitted `Send` work future once
+each, and `AttemptRunner::run` erases native admission, so consumer work and
+native acquisition never enter the caller's future; `tests/future_size.rs`
+bounds them. The internal HTTP seam keeps its direct work path.
 An admitted quota does not establish factory invocation or application success.
 Take the observation writer before calling application authentication/handlers;
 forwarded headers and prior principal extensions are not subject authority.
@@ -40,7 +59,8 @@ Only declared GET/HEAD probe handlers may bypass admission, authentication and
 quota; unsupported methods use Axum's default 405 without a custom handler.
 Preserve a protected root fallback when provided, and the default unmatched
 404 otherwise.
-Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority.
+Handlers extract `Authenticated<P>`, never raw `Extension<P>` for authority,
+and `batter_axum::AdmittedRequest` for the admitted context and correlation.
 The allowed result retains native scalar decision metadata without exposing a
 denial arm. Match every native `DenialView` reason explicitly; a future reason
 must force an adapter and contract update when the native contract changes.

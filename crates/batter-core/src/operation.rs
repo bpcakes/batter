@@ -11,7 +11,7 @@ use tracing::Instrument;
 
 use crate::{
     ConfigurationError,
-    telemetry::{Observation, Outcome},
+    telemetry::{Boundary, Observation, Outcome},
     validation,
 };
 
@@ -227,15 +227,34 @@ impl OperationContext {
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        // Keep the ordinary boundary direct: routing it through the composite
-        // boundary adds another generic async state machine to every caller.
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             |result| result,
             operation_outcome,
-        ))
+            Boundary::Operation,
+        )
         .await
+    }
+
+    /// Run a foundation-owned wait whose caller records its own decision.
+    /// Captures the dispatcher when called; await it immediately.
+    pub(crate) fn run_internal<T, E, F, Fut>(
+        &self,
+        operation: &'static str,
+        factory: F,
+    ) -> impl Future<Output = Result<T, OperationError<E>>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+    {
+        self.observed(
+            operation,
+            factory,
+            |result| result,
+            operation_outcome,
+            Boundary::Internal,
+        )
     }
 
     /// Resolve retained application evidence before recording the operation outcome.
@@ -290,30 +309,59 @@ impl OperationContext {
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        crate::scoped_dispatch::scope(self.run_inner(
+        self.observed(
             operation,
             factory,
             resolve,
             operation_outcome,
-        ))
+            Boundary::Operation,
+        )
         .await
     }
 
-    /// Run with an outcome mapper owned by a composite foundation boundary.
-    pub(crate) async fn run_with_outcome<T, E, F, Fut>(
+    /// Run one traced retry attempt with an outcome mapper owned by the retry
+    /// boundary, which also records the attempt metric. Captures the
+    /// dispatcher when called; await it immediately.
+    pub(crate) fn run_retry_attempt<T, E, F, Fut>(
         &self,
         operation: &'static str,
         factory: F,
         outcome: fn(&Result<T, OperationError<E>>) -> Outcome,
-    ) -> Result<T, OperationError<E>>
+    ) -> impl Future<Output = Result<T, OperationError<E>>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        // Capture on first poll, as with ordinary async instrumentation. The
-        // inner future owns the factory, work, and observation during drop too.
-        crate::scoped_dispatch::scope(self.run_inner(operation, factory, |result| result, outcome))
-            .await
+        self.observed(
+            operation,
+            factory,
+            |result| result,
+            outcome,
+            Boundary::Internal,
+        )
+    }
+
+    /// The one observed boundary behind every `run` variant. It captures the
+    /// current dispatcher when called, and the returned future owns the
+    /// factory, work and observation during drop too. The public variants are
+    /// `async fn`s, so for them the call, and the capture, happens on first
+    /// poll; crate-internal callers must await the result immediately.
+    fn observed<T, E, U, R, F, Fut, Resolve>(
+        &self,
+        operation: &'static str,
+        factory: F,
+        resolve: Resolve,
+        outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+        boundary: Boundary,
+    ) -> impl Future<Output = Result<U, OperationError<R>>>
+    where
+        F: FnOnce(OperationContext) -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+        Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
+    {
+        crate::scoped_dispatch::scope(
+            self.run_inner(operation, factory, resolve, outcome, boundary),
+        )
     }
 
     async fn run_inner<T, E, U, R, F, Fut, Resolve>(
@@ -322,13 +370,14 @@ impl OperationContext {
         factory: F,
         resolve: Resolve,
         outcome: fn(&Result<U, OperationError<R>>) -> Outcome,
+        boundary: Boundary,
     ) -> Result<U, OperationError<R>>
     where
         F: FnOnce(OperationContext) -> Fut,
         Fut: Future<Output = Result<T, E>>,
         Resolve: FnOnce(Result<T, OperationError<E>>) -> Result<U, OperationError<R>>,
     {
-        let mut observation = Observation::new(operation);
+        let mut observation = Observation::new(operation, boundary);
         let span = observation.context();
         let scope = Self::under(self.deadline, &self.cancellation);
         let cancellation = scope.cancellation.clone();

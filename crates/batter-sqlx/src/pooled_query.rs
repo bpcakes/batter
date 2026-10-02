@@ -1,9 +1,12 @@
-use crate::{PgLease, PgNativeQuery, atomic_context::retain_with_fallback};
+use crate::{
+    PgLease, PgNativeQuery, SendFuture, atomic_context::retain_with_fallback,
+    native_query::QueryFuture,
+};
 use batter_core::{
     ConfigurationError,
     operation::{OperationContext, OperationError},
 };
-use sqlx::{PgPool, postgres::PgQueryResult};
+use sqlx::{PgConnection, PgPool, postgres::PgQueryResult};
 use std::{sync::Mutex, time::Duration};
 
 /// Native queries with one total operation budget and one consumer error mapping.
@@ -19,6 +22,8 @@ use std::{sync::Mutex, time::Duration};
 /// This is single-query execution. Use atomic runners for multi-query transactions.
 /// Cleanup resets transaction state, not arbitrary session settings or locks.
 /// A profile-owned pool applies its existing native hooks at acquisition/return.
+/// Each call allocates its bounded operation once, on first poll, so the
+/// returned future stays small and shallow inside consumer handlers.
 ///
 /// ```no_run
 /// # async fn example(pool: &sqlx::PgPool, parent: &batter_core::operation::OperationContext)
@@ -62,56 +67,133 @@ where
 
     /// Fetch one native mapped row; absence returns SQLx's `RowNotFound`.
     pub async fn fetch_one<Q: PgNativeQuery>(&self, query: Q) -> Result<Q::Output, E> {
-        self.run(async move |session| query.fetch_one_on(session).await)
-            .await
+        self.run(query, FetchOne).await
     }
 
     /// Fetch one optional native mapped row.
     pub async fn fetch_optional<Q: PgNativeQuery>(&self, query: Q) -> Result<Option<Q::Output>, E> {
-        self.run(async move |session| query.fetch_optional_on(session).await)
-            .await
+        self.run(query, FetchOptional).await
     }
 
     /// Fetch all native mapped rows into SQLx's ordinary in-memory vector.
     pub async fn fetch_all<Q: PgNativeQuery>(&self, query: Q) -> Result<Vec<Q::Output>, E> {
-        self.run(async move |session| query.fetch_all_on(session).await)
-            .await
+        self.run(query, FetchAll).await
     }
 
     /// Execute and return affected-row information, discarding rows and mappers
     /// as native `Executor::execute` does, including for mapped/scalar queries.
     pub async fn execute<Q: PgNativeQuery>(&self, query: Q) -> Result<PgQueryResult, E> {
-        self.run(async move |session| query.execute_on(session).await)
-            .await
+        self.run(query, Execute).await
     }
 
-    async fn run<T>(
+    async fn run<Q: PgNativeQuery, C: NativeCall<Q>>(
         &self,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, sqlx::Error>,
-    ) -> Result<T, E> {
-        let observed = Mutex::new(None);
-        let result = retain_with_fallback(
+        query: Q,
+        call: C,
+    ) -> Result<C::Output, E> {
+        // Only Send library values enter the erased operation. The consumer's
+        // mapper runs after it completes, so its bounds are unchanged.
+        let operation: SendFuture<'_, _> = Box::pin(pooled(
+            self.pool,
             &self.context,
             self.operation,
-            async {
-                let connection = self.pool.acquire().await?;
-                let mut lease = PgLease {
-                    connection: Some(connection),
-                };
-                let outcome = work(lease.connection_mut()).await;
-                let success = outcome.is_ok();
-                *observed.lock().expect("private query outcome slot") = Some(outcome);
-                lease.finish_query(success).await;
-                observed
-                    .lock()
-                    .expect("private query outcome slot")
-                    .take()
-                    .expect("completed query retained its outcome")
-            },
-            || observed.lock().expect("private query outcome slot").take(),
-        )
-        .await;
-        result.map_err(&self.map_error)
+            query,
+            call,
+        ));
+        operation.await.map_err(&self.map_error)
+    }
+}
+
+async fn pooled<Q: PgNativeQuery, C: NativeCall<Q>>(
+    pool: &PgPool,
+    context: &OperationContext,
+    operation: &'static str,
+    query: Q,
+    call: C,
+) -> Result<C::Output, OperationError<sqlx::Error>> {
+    let observed = &Mutex::new(None);
+    retain_with_fallback(
+        context,
+        operation,
+        move || async move {
+            let connection = crate::acquire(pool).await?;
+            let mut lease = PgLease {
+                connection: Some(connection),
+            };
+            let outcome = call.call(query, lease.connection_mut()).await;
+            let success = outcome.is_ok();
+            *observed.lock().expect("private query outcome slot") = Some(outcome);
+            lease.finish_query(success).await;
+            observed
+                .lock()
+                .expect("private query outcome slot")
+                .take()
+                .expect("completed query retained its outcome")
+        },
+        || observed.lock().expect("private query outcome slot").take(),
+    )
+    .await
+}
+
+// Selects the native helper without an async closure: the erased operation must
+// prove `Send`, which cannot be expressed for the future of an `AsyncFnOnce`.
+trait NativeCall<Q: PgNativeQuery>: Send {
+    type Output: Send;
+    fn call<'e>(self, query: Q, connection: &'e mut PgConnection) -> QueryFuture<'e, Self::Output>
+    where
+        Q: 'e,
+        Self::Output: 'e;
+}
+
+struct FetchOne;
+struct FetchOptional;
+struct FetchAll;
+struct Execute;
+
+impl<Q: PgNativeQuery> NativeCall<Q> for FetchOne {
+    type Output = Q::Output;
+    fn call<'e>(self, query: Q, connection: &'e mut PgConnection) -> QueryFuture<'e, Q::Output>
+    where
+        Q: 'e,
+        Q::Output: 'e,
+    {
+        query.fetch_one_on(connection)
+    }
+}
+
+impl<Q: PgNativeQuery> NativeCall<Q> for FetchOptional {
+    type Output = Option<Q::Output>;
+    fn call<'e>(
+        self,
+        query: Q,
+        connection: &'e mut PgConnection,
+    ) -> QueryFuture<'e, Option<Q::Output>>
+    where
+        Q: 'e,
+        Q::Output: 'e,
+    {
+        query.fetch_optional_on(connection)
+    }
+}
+
+impl<Q: PgNativeQuery> NativeCall<Q> for FetchAll {
+    type Output = Vec<Q::Output>;
+    fn call<'e>(self, query: Q, connection: &'e mut PgConnection) -> QueryFuture<'e, Vec<Q::Output>>
+    where
+        Q: 'e,
+        Q::Output: 'e,
+    {
+        query.fetch_all_on(connection)
+    }
+}
+
+impl<Q: PgNativeQuery> NativeCall<Q> for Execute {
+    type Output = PgQueryResult;
+    fn call<'e>(self, query: Q, connection: &'e mut PgConnection) -> QueryFuture<'e, PgQueryResult>
+    where
+        Q: 'e,
+    {
+        query.execute_on(connection)
     }
 }
 

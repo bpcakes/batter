@@ -9,7 +9,7 @@ import stat
 import zipfile
 
 EXCLUDED_PARTS = {".git", "target", "__pycache__", ".venv"}
-AGENT_TRANSIENT = {".cache", "runtime", "tmp"}
+AGENT_TRANSIENT = {".cache", "runtime", "tmp", "state", "plans"}
 
 
 def eligible(path: Path, root: Path) -> bool:
@@ -17,7 +17,7 @@ def eligible(path: Path, root: Path) -> bool:
     if EXCLUDED_PARTS.intersection(relative.parts) or path.is_symlink() or not path.is_file():
         return False
     if len(relative.parts) > 1 and relative.parts[0] == ".agent":
-        if relative.parts[1] in AGENT_TRANSIENT or relative.as_posix() == ".agent/state/adopt-last.json":
+        if relative.parts[1] in AGENT_TRANSIENT:
             return False
     if "validation/local" in relative.as_posix():
         return False

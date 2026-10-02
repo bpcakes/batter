@@ -85,7 +85,7 @@ pub async fn run_atomic_fail_fast_with<T, P: PgFailurePolicy<T>>(
 where
     P::Error: From<PgScopeRolledBack>,
 {
-    run(pool, None, policy, work, RollbackSlot::default()).await
+    Box::pin(run(pool, None, policy, work, RollbackSlot::default())).await
 }
 
 /// Profiled fail-fast workflow. Profiled calls retain the opening catalog check:
@@ -99,9 +99,17 @@ pub async fn run_atomic_profiled_fail_fast_with<T, P: PgFailurePolicy<T>>(
 where
     P::Error: From<PgScopeRolledBack>,
 {
-    run(pool, Some(profile), policy, work, RollbackSlot::default()).await
+    Box::pin(run(
+        pool,
+        Some(profile),
+        policy,
+        work,
+        RollbackSlot::default(),
+    ))
+    .await
 }
 
+// Unboxed fail-fast workflow; each public entry point erases it exactly once.
 pub(super) async fn run<T, P: PgFailurePolicy<T>>(
     pool: &PgPool,
     profile: Option<&PgSessionProfile>,
@@ -112,11 +120,9 @@ pub(super) async fn run<T, P: PgFailurePolicy<T>>(
 where
     P::Error: From<PgScopeRolledBack>,
 {
-    let mut owner = match profile {
-        Some(profile) => PgAtomicTransaction::begin_profiled(pool, profile).await,
-        None => PgAtomicTransaction::begin(pool).await,
-    }
-    .map_err(|cause| policy.begin_failed(cause))?;
+    let mut owner = PgAtomicTransaction::begin_with_profile(pool, profile)
+        .await
+        .map_err(|cause| policy.begin_failed(cause))?;
     let guard = owner
         .begin_fast_guard()
         .await

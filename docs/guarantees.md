@@ -54,7 +54,12 @@ timeout/drop and are separate from the final status. The record owns one
 irreversible writer claim shared by every clone of request metadata; neither
 handlers nor a timeout renderer can reclaim it after admission or writer drop.
 The admission failure renderer receives ordinary request metadata without the
-private writer, including when admission fails before the quota boundary runs.
+private writer, shared observation state or operational ownership marker,
+including when admission fails before the quota boundary runs. The same filter
+protects captured interruption metadata, probe renderers and browser rejection
+renderers. Public correlation and application extensions remain available;
+redispatch through an operational wrapper owns a separate correlation and
+completion and cannot replace the original observation's quota facts.
 The non-cloneable writer moves from unstarted to started to consumed terminal
 publication. Dropping it before a check leaves `NotChecked`; dropping it during
 a check leaves `Unresolved`. A published terminal fact cannot be replaced with a
@@ -118,6 +123,64 @@ destruction. It returns a future and adds no task, heap allocation, or `Send` /
 `'static` requirement to the wrapped future. Keep observations and nested spans
 inside it. It does not capture or enter the current span, drive a dropped future
 to completion, or supervise work.
+
+The opt-in `metrics` feature records each polled operation, started retry
+attempt, whole retry execution, bulkhead, process or root lifecycle admission
+decision, observed task exit, cleanup hook and supervisor shutdown exactly once,
+after the result is known and outside admission locks. The canonical setup is
+`telemetry::metrics::install(recorder)`: it accepts only a recorder on the
+re-exported `metrics` 0.24 facade, so another major version fails to compile,
+and it publishes descriptions to that recorder only after installing it, even
+inside a local recorder scope. Rejected recorders receive no catalog descriptions
+and are returned to the caller. Polled but dropped
+operations, retry attempts and executions, admission waits and supervisor
+drives record `dropped`, or `panicked` when destroyed during unwinding, through
+one shared guard. Retry execution recording follows destruction of discarded
+errors and owned callbacks, including jitter samplers. A panic during that
+destruction propagates and records `panicked`; values and errors transferred to
+the caller are outside the completed execution. A cleanup hook taken by a destroyed close driver records
+`abandoned`; hooks of an unclosed stack record `dropped`. Skipped hooks leave
+the stack before being counted, so a capture destructor panic cannot count them
+again as dropped. Every skip warning is emitted before metrics and captured-value
+destruction; a captured destructor panic still propagates and prevents report
+return. Other futures dropped before their first poll record nothing. A retry attempt counts only once its
+factory is invoked. Foundation-owned waits (admission, backoff) are not counted
+as operations, while adapter boundaries such as `http.response_construction`
+are. Tracing diagnostics are emitted before a boundary's metric, and
+publishing `Stopped` never waits for recorder code: shutdown is recorded after
+`Stopped` and destruction of the owned shutdown future, before the report is
+returned, so flush after awaiting the driver's completion. A shutdown-future
+destructor panic records `panicked` without a completed-duration sample.
+Its duration is measured from the final canonical lifecycle
+stop instant, including earlier native timestamps learned after drain begins;
+abandoned drivers record no duration and record their shutdown after the
+supervisor's own queued work and cleanup, and a startup that fails before its
+running driver records only its cleanup hooks. Process admission decisions are
+recorded when the submitter's decision completes, before an accepted task can
+start. Once queued, an accepted task receives its lease even if admission
+recording unwinds, so recorder failure cannot strand its active count or create
+a missing-lease task panic. The recorder panic still propagates to the submitter.
+Root-admitted work is unsupervised and not ordered with shutdown. Without the
+metrics feature, shutdown does not read the shared clock for metric recording.
+Batter retains at most `MAX_SERIES` pre-built keys, so recording allocates only
+on a series' first observation. Labels come
+only from closed foundation vocabularies or a fixed-capacity, write-once table
+of operation/task names using the component-registration vocabulary; other
+names or names beyond capacity record `<invalid>` or `<overflow>` and increment
+a separate coalescing counter for each affected observation, without logging.
+Retry attempts and their enclosing execution are separate observations.
+The vocabulary rejects URLs,
+e-mail addresses and error text, but not identifiers embedded in otherwise valid
+names; leaked names can occupy slots first-come, never evicted. The catalog
+therefore has at most `MAX_SERIES` series regardless of traffic. Batter
+owns no metric buffer, queue, flush, retry or database write, so a slow,
+unavailable or saturated collector cannot change returned results or admission
+decisions. Durations come from monotonic `Duration` values and are finite and
+nonnegative. Recorder code runs synchronously, including in destructors; a
+blocking, panicking or unboundedly buffering recorder, runtime death and
+non-yielding destructors are outside this guarantee, as for tracing subscribers.
+Nested recorder panics during unwinding can abort the process.
+These metrics are best-effort diagnostics, not authoritative audit records.
 
 `reserve_finalization` divides an existing context into sibling work/finalization
 contexts. Work ends at the original deadline minus the positive reserve;
@@ -765,8 +828,8 @@ the application root requires its named `postgres.pool` cleanup record;
 checked completion separately requires that hook to have succeeded.
 Cleanup registration rejects duplicate names, so if the otherwise successful
 report does not contain that record,
-`runtime::run` returns the public fixed-diagnostic
-`RuntimePoolCleanupFailure`; its `report` accessor retains typed inspection without
+the retained `ServiceCompletion` from `runtime::run` or `runtime::start` carries the public fixed-diagnostic
+`RuntimePoolCleanupFailure` as its service failure; its `report` accessor retains typed inspection without
 formatting application errors.
 A signal observed during acquisition
 or schema initialization yields `StartupCause::Draining` inside
@@ -1247,7 +1310,8 @@ Neither operation interruption nor native failure classification authorizes repl
 ## HTTP boundary
 
 `request_admission` applies the combined readiness/deadline `RequestPolicy` and
-inserts `OperationContext`. `observe_http` independently observes response
+records the admitted request that handlers extract as `AdmittedRequest`,
+described below. `observe_http` independently observes response
 construction without lifecycle state, a deadline or a context extension. The
 existing `request_scope` combines those behaviors for compatibility, and
 `HttpBoundary` assembles probes, admission, correlation and the observer in one
@@ -1267,6 +1331,145 @@ nested Batter middleware contributes retained adapter facts to that shared
 observer state, so stacked wrappers cannot duplicate observations or hide inner
 quota facts. Operation events remain separate. Subscriber filtering and
 transport delivery are application-owned.
+
+Named route groups extend that order without changing it. `HttpBoundary::new`
+takes the default group's `GroupPolicy`, into which a `RequestPolicy` converts,
+and `with_group` adds a `RouteGroup` with its own `RequestPolicy` and optional
+`BrowserPolicy`. Correlation and the single observer stay outermost. Each group's
+routes then receive, from the outside in, the group's `PrivateResponsePolicy`
+headers when it has a browser policy, lifecycle admission with the group's
+response-construction deadline, `MutationPolicy` checks on every method except
+GET, HEAD, OPTIONS and TRACE when configured, and the application's own layers.
+The private headers therefore cover that group's admission, deadline,
+method-fallback and mutation rejections. A mutation rejection is rendered by the
+application's renderer from the sanitized `MutationRejection` and the admitted
+request's metadata, without the body. Only the default group, the routes passed
+to `assemble`, may declare root or nested fallbacks, and it is merged last, so
+by default every unmatched path reaches its fallback inside its admission,
+including paths under a named group's prefix. `with_group` rejects an invalid or
+reused name (`default` is reserved), a group without routes, and any fallback,
+before routing. Awaited assembly rejects a probe path that any group's route can
+match (`GuardedProbePath`) and two groups whose route patterns can match one
+request path with any methods (`OverlappingGroupPaths`, naming both groups). The
+overlap decision constructs a shared path under the pinned matchit 0.8.4 rules:
+a capture may be empty except in the final segment, a wildcard needs a
+non-empty tail, and `{{`/`}}` are literal braces. Assembly confirms that path by
+routing it through an inert router for each pattern alone, without polling
+application handlers, fallbacks or middleware. If a request URI cannot preserve
+the shared path verbatim, assembly conservatively rejects the overlap before
+native merging; unreachable route literals can still collide during that merge.
+These are local routing and
+header mechanics: browser signals are not authentication, authorization, CORS
+or complete CSRF protection, and a group budget bounds response construction
+only.
+
+Routers built outside `GuardedRouter` join the canonical path only through
+`GuardedRouter::from_router` with a `RouteInventory` of the route patterns they
+may serve. Construction rejects an empty inventory and any pattern outside the
+Axum 0.8 syntax that the overlap analysis parses. Before anything is served,
+awaited assembly builds an inspection copy of each admitted router:
+`Router::layer` replaces every path route, including its method fallback, every
+fallback route and the catch-all fallback with a library-owned reporter, and
+`route_layer` then marks the path routes outermost. Routing a request through
+that copy runs Axum's matcher, which records `MatchedPath`, but calls or polls
+no application handler, fallback or middleware service. Preparing the copy, like
+Axum's preparation of a served router, runs the constructors of application
+layers that Axum applies lazily to handlers, once, even when assembly is then
+rejected. For each declared
+pattern, assembly routes one path of it, with `{}` filling every capture and
+wildcard, and returns `RouteInventoryMismatch` naming the group unless that path
+reaches the route registered with exactly that pattern. A pattern whose path no
+request URI can carry verbatim, a route inside an opaque nested service and a
+pattern whose path another route takes all fail closed. Any route of the copy,
+declared or not, that matches a probe path returns `GuardedProbePath`. Declared
+patterns join the cross-group overlap check and must not share a request path
+with the group's native routes or another admitted router
+(`OverlappingRouteInventory`). An admitted router is never merged into the
+native router. Instead the native router's only fallback is a library dispatch,
+reached through its root fallback routes, which capture nothing: a request that
+no native route matched goes through the inspection copies there, carrying no
+path parameters or matched path, and is forwarded unchanged to an admitted
+router, inside its group's policy and its own outermost correlation and
+observer, only when its copy reaches a declared pattern. Every other request
+continues to the selected fallback. Guarded root or nested fallbacks sit behind the
+dispatch with their policy and observer, because a nested fallback below a
+capture that matched first would add that capture to the forwarded request.
+Undeclared routes and an admitted router's own fallbacks therefore never serve
+a request. Assembly prepares each admitted router, its inspection copy and the
+moved default fallbacks once, as Axum's make-service conversion prepares a
+served router, so no request rebuilds their layers and state held by those
+layers is shared by all of their requests; native routes keep Axum's own
+preparation. Axum exposes no route enumeration, so the inventory remains
+application input: a route it omits is unreachable rather than verified. Each
+admitted router adds one inspection routing, outside the observer, to each
+request that no native route matches.
+
+`HttpBoundary::with_rendered_fallback` selects a synchronous metadata-only
+renderer outside every group's admission, while retaining server correlation
+and the single observer. It receives only unmatched paths after both native and
+declared-route dispatch. Unsupported methods on a real route remain in that
+route's group; probes and all inventory/collision checks retain their meaning.
+Duplicate renderer declarations and a renderer combined with any declared
+root/nested guarded fallback return `BoundaryAssemblyError::ConflictingFallback`.
+The renderer chooses status, body and headers in every lifecycle state. Group
+browser policies do not apply to it: application prefix policy may use
+`PrivateResponsePolicy::apply` on its response headers. Metadata retains public
+correlation but excludes the body and private admission, quota, observation and
+operational ownership state. Assembly never calls the renderer. Like probe
+renderers it must not block or perform business work, and carries no request
+deadline or body-lifetime guarantee. Existing guarded fallback behavior is
+unchanged when no renderer is selected.
+
+Probes can carry the application's own bodies. `with_rendered_liveness` and
+`with_rendered_readiness` reserve their `ProbePath` exactly as `with_liveness`
+and `with_readiness` do: the path joins the same duplicate-path rejection and
+the same assembly check against every group's routes, and the probe is mounted
+outside every group's admission, inside correlation and the single observer.
+The application renderer runs synchronously for each probe request with the
+request metadata, including the generated `CorrelationId`, but without the
+body or Batter's private quota writer, observation state or operational ownership
+marker; a probe is never admitted, so no
+`OperationContext` or `RequestInterruptionResponder` is present. The renderer
+returns the response body and headers, for example an OpenAPI-documented JSON
+document, but not the probe's outcome. The boundary then sets liveness to 200
+and removes any `HttpObservationLevel` override from it, so its completion
+keeps the empty-body probe's default INFO. It sets readiness to
+`readiness_status` of the one fresh decision it passed to the renderer and
+replaces the `ReadinessDecision` and `HttpObservationLevel` response extensions
+with that decision and the policy's severity. A renderer therefore cannot
+report an unready process as ready, forge the decision extension or change the
+completion event's severity. Assembly never calls a
+renderer. A renderer that blocks or panics does so inside the probe request
+like any handler; probes carry no response-construction deadline.
+
+Guarded handlers and route layers extract `AdmittedRequest`: one value holding
+the admitted request's `OperationContext`, the `CorrelationId` that its
+operational wrapper generated and its `RequestInterruptionResponder`. Admission
+records it privately after the readiness read, and only inside the
+`operational_http` wrapper that owns the request's correlation, as
+`HttpBoundary` and the protected `HttpQuota` assembly install it. The recorded
+identity is the one on the response header and the completion event, even when
+an application layer between that wrapper and admission removes the public
+`CorrelationId` extension. The record's type is private, so no application
+layer can insert, replace or remove it by type. The public value has a private
+field and no constructor, and it is not `Clone`, so it can be neither
+constructed nor inserted into request extensions (compile-fail rustdocs).
+Extracting it where admission recorded nothing answers
+`AdmittedRequestRejection`. That covers a route outside admission, a
+lower-level `request_admission` or `request_scope` without `operational_http`
+outside it, and that wrapper placed inside admission. The rejection is the
+fixed 500 Problem JSON of `HttpFailure::Internal` with `no-store`, naming no
+type, where Axum's missing-extension rejection answers text naming the missing
+type; its completion keeps the WARN default for 5xx. Admission still inserts
+the native `OperationContext` and `RequestInterruptionResponder` extensions, and
+`operational_http` the public `CorrelationId`, for Batter's adapters and
+existing handlers. They are ordinary extensions that any layer can insert,
+replace or remove; raw values neither make the extractor succeed nor change
+what it returns. The shared renderer filter also removes the admission record,
+so a request redispatched from renderer metadata is admitted only by admission
+of its own. Copying a whole extension map from an admitted request into another
+request copies the record with every other value: a transplant of values that
+admission created, not a construction.
 
 Observation alone does not short-circuit and may sit outside operational
 correlation. Admission, deadlines and authentication can return without polling
@@ -1358,8 +1561,8 @@ panic, cancels admitted context, and emits one WARN `dropped` HTTP event without
 a status or panic payload. This covers Rust unwinding, not aborting panics.
 
 The admission point is the readiness read. A request racing drain may be admitted
-when that read sees Ready. It receives an OperationContext extension tied to
-forced process cancellation, not immediate drain. Server-side duration is fixed
+when that read sees Ready. Its admitted `OperationContext` is tied to forced
+process cancellation, not immediate drain. Server-side duration is fixed
 by RequestPolicy; the middleware trusts no client deadline or proxy metadata.
 With the documented `Router::layer` composition, admission wraps guarded routes
 and their default, custom, nested and method fallbacks: unsupported methods and
@@ -1489,17 +1692,30 @@ replacing siblings. Before mutation they reject an existing field with the same
 case-sensitive cookie name, preventing ambiguous set/set, set/removal, and
 removal/set responses. The error is typed and contains no cookie name or value.
 
-Private-response mutation overwrites exactly `Cache-Control: no-store`,
-`Referrer-Policy: same-origin`, and `X-Content-Type-Options: nosniff`, preserving
-status, body, extensions and unrelated headers. The referrer policy withholds
-referrer information from cross-origin requests while preserving the serialized
-origin on same-origin non-CORS mutations such as HTML form submissions. A
-non-CORS form post to another origin carries `Origin: null` and cannot satisfy
-that target's exact-origin policy; such a page/target layout requires a
-different response policy and composition. The
-middleware covers inner success, error, rejection and fallback responses; it
-cannot affect an outer short-circuit that never calls it and creates no
-observation of its own.
+Private-response mutation overwrites `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff` and sets one `Referrer-Policy` field selected
+by the exhaustive `PrivateResponsePolicy`: `same-origin` (`SameOriginReferrer`,
+the default and the compatibility `private_response` value) or `no-referrer`
+(`NoReferrer`). Weaker, raw and comma-listed referrer policies are
+unrepresentable. Status, body, extensions and unrelated headers are preserved.
+Existing fields of all three names are replaced, except that an existing
+`Referrer-Policy` made only of exact `no-referrer` fields stays `no-referrer`
+under `SameOriginReferrer`. Nested private-response layers therefore never
+weaken an inner `NoReferrer` choice unless intermediate middleware rewrites the
+field.
+
+The selected value is the document's initial referrer policy. Under
+`SameOriginReferrer`, same-origin non-CORS mutations such as HTML form posts keep
+the serialized origin, while a non-CORS form post to another origin carries
+`Origin: null` and cannot satisfy that target's exact-origin policy. Under
+`NoReferrer`, every non-CORS mutation, including a same-origin form post, carries
+`Origin: null`, and same-origin navigations send no `Referer`. The `Origin` of
+CORS-mode requests, the default for script `fetch`, and `Sec-Fetch-Site` are
+unaffected. Page markup and `fetch` options can still change the policy; Batter
+does not control page content. The layer and compatibility middleware cover
+inner success, error, rejection and fallback responses; they cannot affect an
+outer short-circuit that never calls them and create no observation of their
+own.
 
 These are bounded header/cookie mechanics, not authentication, authorization,
 CORS, proxy trust, token generation/comparison, a complete CSRF proof, browser
@@ -1537,13 +1753,24 @@ never formats causes. Legacy Problem JSON is unchanged; explicitly selecting a
 custom renderer afterward replaces this policy. Domain responses remain owned
 by their handler.
 
-The reference application's canonical `http::register_in` operation constructs
-the trusted-peer router and selects native `ConnectInfo<SocketAddr>` registration
-at one application-owned boundary. This prevents the production root from
-choosing direct-peer policy and transport metadata independently; the generic
-adapter cannot infer an arbitrary router's extension requirements. The
-application installs `TrustedRequestMetadata` after `operational_http` and before
-authentication/admission. It accepts only `ConnectInfo<SocketAddr>` supplied by
+The reference application's canonical `http::register_in` operation assembles
+its routes through `HttpBoundary` and registers the result with
+`AssembledHttp::register_with_connect_info_in` at one application-owned
+boundary. This prevents the production root from choosing direct-peer policy
+and transport metadata independently; the generic adapter cannot infer an
+arbitrary router's extension requirements. The boundary owns correlation, the
+single observer, probes outside admission, and lifecycle admission with the
+request deadline around every business route and the unmatched-path fallback.
+The application installs `TrustedRequestMetadata` after admission and before
+authentication, as route layers of its `GuardedRouter`; the body limit is a
+guarded layer inside them. A draining or not-yet-ready process therefore returns
+the admission rejection (503 `service_unavailable` in the infrastructure
+envelope) before installing metadata or authenticating, including to requests
+without credentials that an admitted process would answer with 401.
+Authentication runs within the request's operation deadline. Unmatched paths
+reach the 404 fallback only after admission, and an unsupported method on a
+matched route reaches its 405 after admission, metadata and authentication.
+Metadata installation accepts only `ConnectInfo<SocketAddr>` supplied by
 that production native serving path or explicitly asserted by the opaque
 in-process request client. It retains the IP as an opaque `TrustedPeer`; the source port is not a stable
 admission identity. `Forwarded`, `X-Forwarded-For`, `X-Real-IP`, `traceparent`,
@@ -1552,9 +1779,9 @@ direct peer is therefore the proxy. No trusted-proxy mode is implemented.
 Missing native peer metadata fails closed with the shared sanitized internal
 response and generated correlation.
 
-Liveness and readiness remain outside the peer-, authentication- and
-admission-gated business router, so an in-process probe needs no synthetic peer
-extension. Axum extractor rejections also remain native responses: malformed
+Liveness and readiness are `HttpBoundary` probes outside the admission-,
+peer- and authentication-gated business routes, so an in-process probe needs no
+synthetic peer extension. Axum extractor rejections also remain native responses: malformed
 JSON, invalid paths and body-limit failures are not promised the application's
 JSON problem envelope. The outer operational middleware still supplies its
 generated response ID header. Tests and callers must distinguish raw HTTP
@@ -1562,17 +1789,20 @@ responses from routes whose contract promises an envelope.
 
 `TrustedRequestMetadata` has no public or test constructor. Production combines
 the adapter-owned correlation with native `ConnectInfo` inside the application
-middleware. The lower-level `http::in_process_client` returns an opaque
-`InProcessRequestClient` that neither implements a serving service nor exposes
-its inner router. Each request requires a caller-selected synthetic peer, and
+middleware. The lower-level `http::in_process_client` awaits the same boundary
+assembly and returns an opaque `InProcessRequestClient` that neither implements
+a serving service nor exposes its inner router. A rejected assembly is returned
+as the sanitized `BoundaryAssemblyError`, wrapped in `HttpRegistrationError` by
+`register_in`. Each request requires a caller-selected synthetic peer, and
 the client replaces the exact `ConnectInfo<SocketAddr>` extension itself. Axum's
 extractor-only `MockConnectInfo` fallback is not observed by
 middleware that reads request extensions directly.
 
 The bearer credential remains the only reference authority input and replaces a
 preexisting `OwnerId` extension before a handler runs. `TrustedRequestMetadata`
-contains neither owner authority nor `OperationContext`; handlers extract and
-pass all three separately. Application success/domain/authentication bodies and
+contains neither owner authority nor `OperationContext`; handlers extract the
+owner, the metadata and the `AdmittedRequest` that carries the context
+separately and pass each explicitly. Application success/domain/authentication bodies and
 shared infrastructure bodies use the typed `CorrelationId`, so any body
 `request_id` agrees with the outer generated response header. Correlation never
 grants access, selects the durable owner, or extends request lifetime.
@@ -1580,22 +1810,48 @@ Cancellation keeps the request's selected metadata while cancelling its separate
 operation context. No task-local inheritance, arbitrary-spawn propagation,
 inbound trace retention, durable correlation envelope, or quota backend follows.
 
-The foundation `ReadinessEvaluator` stores `LifecycleStatus` and `HealthReader`,
-reads a fresh dependency snapshot then lifecycle readiness, and invokes no probe
-or writer-retaining operation. Every `HealthStatus` is explicitly classified as
+The foundation `ReadinessEvaluator` stores `LifecycleStatus` and an optional `HealthReader`,
+reads a fresh dependency snapshot, then any application conditions, then
+lifecycle readiness, and invokes no probe or writer-retaining operation. Every
+`HealthStatus` is explicitly classified as
 `DependencyReadiness`; Healthy is Ready, while Unknown, ProbeFailed,
 ProbeTimedOut, Stale and WriterStopped carry the corresponding
 `DependencyUnreadyReason`. Overall `ReadinessDecision` is either Ready or
 Unready(ReadinessUnreadyReason), and `ReadinessUnreadyReason::Dependency` cannot contain a
-healthy value. Ready requires both healthy and lifecycle Ready; an observed drain
-overrides cached health. A subsequent transition may immediately obsolete the
-decision.
+healthy value. Ready requires configured dependencies healthy, lifecycle Ready, and every
+application condition satisfied; an observed drain overrides cached health. A
+subsequent transition may immediately obsolete the decision.
+
+`ReadinessEvaluator::lifecycle_only` and `ReadinessPolicy::lifecycle_only`
+construct the no-dependency case with `Infallible`: no monitor, probe task,
+writer or freshness window exists. They assert no continuous dependency
+observation, not healthy remote connectivity. Conditions still run before the
+final lifecycle read. A configured dependency cannot be removed from an
+existing evaluator or policy, and the exhaustive decision types are unchanged.
+
+`ReadinessEvaluator::with_condition`, and `ReadinessPolicy::with_condition` in
+the adapter, add an application condition named by a validated
+`ReadinessCondition` (1–96 ASCII alphanumeric, `.`, `_` or `-` bytes). Its
+synchronous check returns only whether the condition holds. It runs only after
+the dependency sample establishes readiness (or no dependency is configured)
+and before the final lifecycle read, in the order conditions were added, and the first unsatisfied condition
+stops the remaining checks. That condition turns a decision that lifecycle and
+dependency health would make Ready into
+`Unready(ReadinessUnreadyReason::Condition(name))`. A condition is never asked
+while the dependency is unready, and its answer is discarded when the final
+lifecycle read is not Ready, so no condition can make an unready lifecycle or
+dependency ready or replace its reason. Checks added under one name report the
+same condition; clones of an evaluator or policy share its conditions. The
+check must read state the application already holds, without blocking or I/O:
+the evaluator adds no timeout, and a blocking check stalls the probe request
+that asked it.
 
 `ReadinessPolicy` translates that valid foundation decision. Responses have empty
-bodies, 200 for Ready and 503 for Unready, and retain `ReadinessDecision` in
-extensions. Starting/Draining default INFO; Stopped and every dependency-unready
-reason default WARN. `readiness_status` and `default_readiness_level` expose those
-adapter mappings; explicit level policy receives the complete decision, can
+bodies unless a rendered `HttpBoundary` probe supplies one, 200 for Ready and
+503 for Unready, and retain `ReadinessDecision` in extensions. Starting/Draining
+default INFO; Stopped, every dependency-unready reason and an unsatisfied
+application condition default WARN. `readiness_status` and
+`default_readiness_level` expose those adapter mappings; explicit level policy receives the complete decision, can
 delegate unmatched cases to the default, and alters neither status, decision,
 body nor outcome. The old `ReadinessReason` name is absent from both Axum and
 the foundation so stale extension lookups fail at compilation even after an
@@ -1605,10 +1861,19 @@ stopped health writer still yields Draining/INFO; after process completion it
 yields Stopped/WARN. Reading either state creates no probes. `ReadinessDecision`,
 `ReadinessUnreadyReason` and `DependencyUnreadyReason` are intentionally exhaustive:
 new semantic states require the corresponding API compatibility and consumer
-policy review. Old `readiness` and `liveness` keep their status-only contracts.
+policy review; `ReadinessUnreadyReason::Condition` is such a state, so an
+exhaustive match must now handle it. Old `readiness` and `liveness` keep their
+status-only contracts.
 
-`register_http` transfers a bound TcpListener and initialized Router into a
-critical component. The factory does no work before supervision starts and
+`register_http` transfers a bound listener and initialized Router into a
+critical component. The listener is any `axum::serve::Listener` whose address
+type is `Debug`: a `TcpListener`, a Unix listener, or an application-owned
+listener that completes its own TLS handshakes.
+The listener type is inferred without adding an explicit type argument. Existing
+TCP calls, including `register_http_in::<Supervisor>(...)`, its connect-info
+companion and both `AssembledHttp` methods with an explicit registration target,
+retain their source compatibility and TCP function-pointer signatures.
+The factory does no work before supervision starts and
 acknowledges on its task's first poll; application approval and a running driver
 remain necessary. Invalid or duplicate registration releases only the rejected
 listener. Cancelling a borrowed StartingSupervisor waiter leaves the listener
@@ -1625,13 +1890,36 @@ though every direct task was joined. The test separately releases the body.
 There is no new async-drop, response-stream, WebSocket or disconnect guarantee.
 `register_http` and `register_http_in` accept a plain Router and supply no
 ConnectInfo extension. Their opt-in companion `register_http_with_connect_info_in`
-uses native `into_make_service_with_connect_info::<SocketAddr>` so middleware and
-handlers can extract the accepted TCP socket's remote address and port. Forwarded,
+uses native `into_make_service_with_connect_info::<L::Addr>` so middleware and
+handlers can extract the listener's own accepted peer. For a TcpListener, and for
+a TLS listener over TCP, that remains `ConnectInfo<SocketAddr>` with the accepted
+socket's remote address and port. Forwarded,
 X-Forwarded-For and X-Real-IP headers are not interpreted; behind a proxy the peer
 is the proxy. Authentication, proxy trust and application extension replacement
 remain application-owned. The companion shares the registration, acknowledgement,
 listener-release, graceful-drain and conservative wrapper-abort contracts above.
-It accepts no arbitrary make-service, custom metadata type or alternate listener.
+It accepts no arbitrary make-service or custom metadata type. Pinned Axum 0.8.9
+implements `Connected` for a bare listener only for TcpListener and generically
+only for `ListenerExt::tap_io`, so the companion applies an empty tap itself; it
+changes no accepted connection and no reported address, and its extra `Clone`,
+`Sync` and `'static` address bounds are Axum's `Connected` requirements.
+
+Accepting any listener moves no policy into Batter. The listener owns binding,
+certificates, private keys, protocol versions, ALPN, client-certificate rules,
+handshake concurrency and accept retry; Axum's trait cannot return an accept
+error, so accept failures never reach the component exit. When drain arrives the
+accept in progress, including a handshake awaited inside it, is dropped without
+being awaited, and the listener is released before connection completion is
+awaited. Work a listener spawns onto the runtime instead of polling inside
+`accept` is a detached descendant with exactly the standing of Axum's own
+connection tasks: registration proves nothing about its termination, and wrapper
+abortion still conservatively skips cleanup. A real rustls regression serves the
+canonical assembled boundary with a generated certificate and asserts startup
+acknowledgement before readiness, a probe answered outside admission, the
+transport peer against a client-owned oracle, a drain that waits for a response
+still streaming on an open connection, the destruction of an accept parked in its
+handshake, and release of rejected and abandoned listeners. TLS crates are
+`batter-axum` dev-dependencies only; no published package gains a TLS dependency.
 
 ## Optional database fixture finish
 
@@ -1781,10 +2069,49 @@ serving. Dedicated maintenance files and overrides reject serving-only fields.
 Known serving fields may coexist in captured process environment and are ignored
 by maintenance without parsing; unknown reserved names and every PG* name fail.
 `runtime::prepare` consumes serving settings into a must-use non-cloneable inert
-owner; only that owner can enter `runtime::run`, while canonical
+owner; only that owner can enter `runtime::run` or `runtime::start`, while canonical
 `http::register_in` or explicit `http::in_process_client` consumes its
 narrower opaque `PreparedHttp`. These local types cannot prove remote database
 authentication or availability.
+
+With the opt-in `metrics-export` feature and an explicit loopback collector, the
+reference selects `batter-otlp` through `batter::service::start`, which owns
+installation before protected startup and releases the final flush. The
+reference calls the selected adapter's installation synchronously, then maps
+its eventual report; an immediate competing recorder cannot take its slot.
+The guard rejects names, label shapes, descriptions and keys outside the
+foundation catalog and its `MAX_SERIES` bound before the bridge allocates. One serial owner
+exports manual-reader snapshots under fixed deadlines and payload/response
+ceilings, with no queue or retry. The adapter explicitly disables native HTTP protocol
+retries even when consumer dependencies enable HTTP/2. Service startup rejects
+a missing Tokio runtime before installing diagnostics or beginning startup.
+The final snapshot is collected only after the service result is retained
+(startup-failure cleanup, or complete driver
+settlement including the shutdown metric after `Stopped`), exported under a
+separate allowance and followed by exactly-once exporter/provider closure; no
+readiness event, drain or cleanup hook can start it, and no service cleanup
+budget waits on the collector. `ServiceCompletion` keeps the original service
+result, report and exit classification beside application-owned `MetricsExport`
+outcomes. The adapter's completed report contains only export and
+rejected-installation outcomes; disabled configuration and abandoned diagnostic
+execution are classified by the application.
+`Acknowledged` means one decoded HTTP 200 collector response with the Protobuf
+media type and without rejected points, even when the encoded response body is empty.
+Wrong or missing media types cannot acknowledge an export. It does not prove
+durable storage; a timed-out or cancelled request is neither delivery nor
+remote rollback. `FinalCoverage::Incomplete` reports unjoined tasks, uncertain
+native settlement and skipped or unjoined cleanup; `Reported` describes the
+report, not unsupervised producers. Owner drop requests drain and waiter
+cancellation requests nothing. Core retains the native service outcome independently
+of diagnostic installation, periodic work and finalization, including diagnostic
+panics. The reference retains that evidence through `ServiceCompletion::foundation`.
+If an extreme schedule allowance ceases to fit in a monotonic instant after
+validation, the export owner shortens that allowance until its deadline is
+representable; this cannot lengthen an attempt or bypass final closure.
+A diagnostic panic does not guarantee resource closure; synchronous collection,
+closure and recorder calls cannot be preempted by async deadlines. Runtime death,
+SIGKILL and blocking or panicking recorders inside application work remain outside
+this isolation boundary.
 
 The supported TCP URL subset requires explicit host, username, database and
 sslmode; only password, sslmode and application_name query settings are accepted,

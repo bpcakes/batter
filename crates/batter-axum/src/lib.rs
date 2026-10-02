@@ -10,14 +10,20 @@
 //!
 //! [`HttpBoundary`] is the canonical composition: it keeps probes outside
 //! admission and installs correlation with the single HTTP observer outermost,
-//! so the layer order is library-owned. Only the outermost observer emits a
+//! so the layer order is library-owned. Named [`RouteGroup`]s give sets of
+//! guarded routes their own [`RequestPolicy`] and optional [`BrowserPolicy`]
+//! inside that same fixed order. A router built by another router builder joins
+//! through [`GuardedRouter::from_router`] and serves only its declared routes. Only the outermost observer emits a
 //! completion event; nested Batter middleware contributes adapter facts to
-//! that observer's shared retained state. The individual middlewares remain
+//! that observer's shared retained state. Guarded handlers extract the admitted
+//! request's context, correlation and interruption responder as one
+//! [`AdmittedRequest`]. The individual middlewares remain
 //! available for compositions the boundary cannot express and document the
 //! ordering they leave with the caller.
 
 #![forbid(unsafe_code)]
 
+mod admitted;
 mod boundary;
 mod correlation;
 mod observation;
@@ -29,9 +35,11 @@ pub mod quota_observation;
 /// Browser-carried opaque credential transport primitives.
 pub mod browser;
 
+pub use admitted::{AdmittedRequest, AdmittedRequestRejection};
 pub use boundary::{
-    AssembledHttp, BoundaryAssemblyError, GuardedRouter, HttpBoundary, ProbePath, ProbePathError,
-    ProbeRegistrationError,
+    AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
+    ProbePath, ProbePathError, ProbeRegistrationError, RouteGroup, RouteGroupError, RouteInventory,
+    RouteInventoryError,
 };
 pub use correlation::{
     CorrelationId, operational_http, operational_http_with_quota, render_infrastructure_failure,
@@ -123,20 +131,24 @@ pub struct RequestPolicy {
 
 /// Renders an interruption using the request's admission policy and original metadata.
 ///
-/// [`request_admission`] installs this opaque capability on admitted requests.
-/// A nested adapter can use it when its own operation observes cancellation or
-/// deadline expiry before the outer admission operation is polled again. The
-/// application cannot construct one with a different request or policy. The
-/// captured metadata excludes Batter's private quota observation writer.
+/// [`request_admission`] creates this opaque capability for each admitted
+/// request. Handlers and application layers take it from
+/// [`AdmittedRequest::interruption_responder`] when their own operation observes
+/// cancellation or deadline expiry before the outer admission operation is
+/// polled again; Batter's nested adapters read the same value from the request
+/// extensions. The application cannot construct one with a different request
+/// or policy. The captured metadata excludes Batter's private quota writer,
+/// shared observation state, operational ownership marker and admission record.
+/// Public correlation and application extensions remain available; redispatch
+/// cannot mutate the original observer or admit the new request.
 ///
 /// ```
-/// use axum::{extract::Request, response::Response};
+/// use axum::response::Response;
 /// use batter_core::operation::Interruption;
-/// use batter_axum::RequestInterruptionResponder;
+/// use batter_axum::AdmittedRequest;
 ///
-/// fn nested_interruption(request: &Request, reason: Interruption) -> Option<Response> {
-///     request.extensions().get::<RequestInterruptionResponder>()
-///         .map(|responder| responder.render(reason))
+/// fn nested_interruption(admitted: &AdmittedRequest, reason: Interruption) -> Response {
+///     admitted.interruption_responder().render(reason)
 /// }
 /// ```
 #[derive(Clone)]
@@ -151,21 +163,12 @@ enum InterruptionRendering {
     },
 }
 
-fn renderer_parts(parts: &Parts) -> Parts {
-    let mut snapshot = parts.clone();
-    // The renderer needs request metadata, never the observer's private writer.
-    snapshot
-        .extensions
-        .remove::<quota_observation::QuotaObservation>();
-    snapshot
-}
-
 impl RequestInterruptionResponder {
     fn from_policy(policy: &RequestPolicy, original_parts: &Parts) -> Self {
         match &policy.failure_renderer {
             Some(renderer) => Self(InterruptionRendering::Custom {
                 renderer: renderer.clone(),
-                original_parts: Arc::new(renderer_parts(original_parts)),
+                original_parts: Arc::new(correlation::renderer_parts(original_parts.clone())),
             }),
             None => Self(InterruptionRendering::Default),
         }
@@ -174,8 +177,8 @@ impl RequestInterruptionResponder {
     /// Render cancellation or deadline expiry with the admission policy's envelope.
     ///
     /// The custom renderer receives the original request metadata captured
-    /// before inner adapter extensions were inserted, without the private
-    /// quota observation writer.
+    /// before inner adapter extensions were inserted, without private quota,
+    /// observation or operational ownership state.
     pub fn render(&self, reason: Interruption) -> Response {
         let failure = match reason {
             Interruption::Cancelled => HttpFailure::Cancelled,
@@ -268,7 +271,10 @@ impl RequestPolicy {
     ///
     /// The callback receives a snapshot of the original request parts at entry
     /// to this middleware, including application extensions but excluding
-    /// Batter's private quota observation writer. Install trusted
+    /// Batter's private quota writer, shared observation state, operational
+    /// ownership marker and admission record. Redispatching cloned metadata
+    /// creates independent observation and correlation under an operational
+    /// wrapper and is admitted only by admission of its own. Install trusted
     /// correlation/identity extensions in an outer layer before this boundary;
     /// Batter does not authenticate header values or log these parts. Handler
     /// changes to extensions are not included. The callback owns its response
@@ -297,7 +303,7 @@ impl RequestPolicy {
 
     fn render_failure(&self, failure: HttpFailure, parts: &Parts) -> Response {
         match &self.failure_renderer {
-            Some(renderer) => renderer(failure, &renderer_parts(parts)),
+            Some(renderer) => renderer(failure, &correlation::renderer_parts(parts.clone())),
             None => failure.into_response(),
         }
     }
@@ -405,8 +411,8 @@ impl IntoResponse for HttpFailure {
 /// [`HttpBoundary`], which makes this order unchangeable.
 ///
 /// ```
-/// use axum::{Extension, Router, http::StatusCode, middleware, routing::get};
-/// use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
+/// use axum::{Router, http::StatusCode, middleware, routing::get};
+/// use batter_core::lifecycle::ShutdownHandle;
 /// use batter_axum::{
 ///     RequestPolicy, ResponseConstructionBudget, liveness, observe_http,
 ///     readiness, request_admission,
@@ -418,10 +424,7 @@ impl IntoResponse for HttpFailure {
 /// let status = control.status();
 /// let budget = ResponseConstructionBudget::new(Duration::from_secs(2))?;
 /// let guarded = Router::new()
-///     .route("/work", get(|Extension(context): Extension<OperationContext>| async move {
-///         context.check().expect("admitted context");
-///         "ok"
-///     }))
+///     .route("/work", get(|| async { "ok" }))
 ///     .fallback(|| async { StatusCode::NOT_FOUND })
 ///     .layer(middleware::from_fn_with_state(
 ///         RequestPolicy::new(control.operation_admission(), budget),
@@ -450,10 +453,15 @@ pub async fn observe_http(request: Request, next: Next) -> Response {
 /// for a manual composition example that observes probes, guarded fallbacks and
 /// admission rejections.
 ///
-/// Inserts a native `Extension<OperationContext>` for admitted handlers. A Ready
-/// state read is the admission point; a request racing shutdown may enter if
-/// that read occurred first. Existing admitted work is not cancelled by drain.
-/// The child context is cancelled on completion/drop of the response future.
+/// Inside [`operational_http`], as correlation requires, admitted handlers
+/// extract [`AdmittedRequest`]; without that wrapper outside this layer no
+/// admitted request is recorded and the extractor rejects. The native
+/// `OperationContext` and [`RequestInterruptionResponder`] extensions are also
+/// inserted for adapters and existing handlers; inner layers can replace them.
+/// A Ready state read is the admission point; a request racing shutdown may
+/// enter if that read occurred first. Existing admitted work is not cancelled
+/// by drain. The child context is cancelled on completion/drop of the response
+/// future.
 /// The deadline ends at response construction, not body streaming or WebSockets.
 /// Infrastructure timeouts use 503, not 408 (client upload timeout) or an
 /// invented guarantee that retrying a write is safe. No Retry-After is added.
@@ -518,8 +526,10 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
     let responder = RequestInterruptionResponder::from_policy(&policy, &parts);
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(responder.clone());
+    let interruption = responder.clone();
     match context
         .run("http.response_construction", |scope| async move {
+            admitted::record(request.extensions_mut(), scope.clone(), interruption);
             request.extensions_mut().insert(scope);
             Ok::<_, Infallible>(next.run(request).await)
         })

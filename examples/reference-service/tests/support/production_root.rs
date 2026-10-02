@@ -92,6 +92,16 @@ async fn served_until(
             }
         })
         .await?;
+        tokio::time::timeout(INITIAL_OBSERVATION_LIMIT, async {
+            loop {
+                if matches!(status(address, "/ready").await, Ok(200)) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        // Admission precedes authentication, so only a ready process authenticates.
         let response = response(address, "/delivery-commands/transport-probe").await?;
         assert_eq!(
             response.status, 401,
@@ -104,15 +114,6 @@ async fn served_until(
         let body: Value = serde_json::from_slice(&response.body)?;
         assert_eq!(body["code"], "authentication_required");
         assert_eq!(body["request_id"].as_str(), Some(request_id));
-        tokio::time::timeout(INITIAL_OBSERVATION_LIMIT, async {
-            loop {
-                if matches!(status(address, "/ready").await, Ok(200)) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await?;
         assert_eq!(
             controls(&observer).await?,
             0,

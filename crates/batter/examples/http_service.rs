@@ -16,13 +16,12 @@ mod support;
 mod tests;
 
 use axum::{
-    Extension,
     extract::State,
     response::{IntoResponse, Response},
     routing::get,
 };
 use batter::axum::{
-    AssembledHttp, CorrelationId, GuardedRouter, HttpBoundary, HttpFailure, ProbePath,
+    AdmittedRequest, AssembledHttp, GuardedRouter, HttpBoundary, HttpFailure, ProbePath,
     ReadinessPolicy, RequestPolicy, ResponseConstructionBudget, render_infrastructure_failure,
 };
 use batter::{
@@ -30,13 +29,13 @@ use batter::{
     admission::{Admission, AdmissionError, Bulkhead, BulkheadCapacity},
     health::{HealthMonitor, HealthPolicy, HealthReader},
     lifecycle::Supervisor,
-    operation::{Interruption, OperationContext, OperationError},
+    operation::OperationError,
     registration::Registration,
 };
 use std::{convert::Infallible, time::Duration};
 
-async fn fail(Extension(id): Extension<CorrelationId>) -> Response {
-    render_infrastructure_failure(HttpFailure::Internal, Some(&id))
+async fn fail(admitted: AdmittedRequest) -> Response {
+    render_infrastructure_failure(HttpFailure::Internal, Some(admitted.correlation_id()))
 }
 
 fn register_dependency_health(
@@ -63,28 +62,29 @@ struct AppState {
     outbound: Bulkhead,
 }
 
-async fn work(
-    State(state): State<AppState>,
-    Extension(context): Extension<OperationContext>,
-    Extension(id): Extension<CorrelationId>,
-) -> Response {
-    let _permit = match state.outbound.enter(&context, Admission::Reject).await {
+/// The admitted request carries the boundary's operation context, the generated
+/// request ID and the admission policy's interruption envelope.
+async fn work(State(state): State<AppState>, admitted: AdmittedRequest) -> Response {
+    let id = admitted.correlation_id();
+    let _permit = match state
+        .outbound
+        .enter(admitted.context(), Admission::Reject)
+        .await
+    {
         Ok(permit) => permit,
         Err(AdmissionError::Overloaded) => {
-            return render_infrastructure_failure(HttpFailure::Overloaded, Some(&id));
+            return render_infrastructure_failure(HttpFailure::Overloaded, Some(id));
         }
         Err(AdmissionError::Closed) => {
-            return render_infrastructure_failure(HttpFailure::Unavailable, Some(&id));
+            return render_infrastructure_failure(HttpFailure::Unavailable, Some(id));
         }
-        Err(AdmissionError::Interrupted(Interruption::Cancelled)) => {
-            return render_infrastructure_failure(HttpFailure::Cancelled, Some(&id));
-        }
-        Err(AdmissionError::Interrupted(Interruption::DeadlineExceeded)) => {
-            return render_infrastructure_failure(HttpFailure::DeadlineExceeded, Some(&id));
+        Err(AdmissionError::Interrupted(reason)) => {
+            return admitted.interruption_responder().render(reason);
         }
     };
     // Demonstration only: replace this read with a real dependency call.
-    match context
+    match admitted
+        .context()
         .run("demo.read", |_scope| async {
             tokio::time::sleep(Duration::from_millis(25)).await;
             Ok::<_, Infallible>("ok\n")
@@ -92,11 +92,8 @@ async fn work(
         .await
     {
         Ok(body) => body.into_response(),
-        Err(OperationError::Interrupted(Interruption::Cancelled)) => {
-            render_infrastructure_failure(HttpFailure::Cancelled, Some(&id))
-        }
-        Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
-            render_infrastructure_failure(HttpFailure::DeadlineExceeded, Some(&id))
+        Err(OperationError::Interrupted(reason)) => {
+            admitted.interruption_responder().render(reason)
         }
         Err(OperationError::Failed(never)) => match never {},
     }
@@ -118,6 +115,7 @@ async fn router(
         });
     // The boundary owns the layer order: probes outside admission, one
     // observer with correlation outermost, admission around every guarded route.
+    // Guarded handlers extract the request that admission recorded.
     HttpBoundary::new(policy)
         .with_liveness(ProbePath::new("/live").expect("static liveness path is valid"))
         .expect("liveness path is unique")

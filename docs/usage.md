@@ -65,7 +65,14 @@ Use `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`,
 feature-gated surfaces. `runlimit-memory`, `runlimit-postgres`, and
 `runlimit-axum` forward the existing native adapter capabilities;
 `sqlx-test-support` additionally exposes `batter::sqlx::test_support` and
-generic test support. Direct adapter packages remain supported when an
+generic test support. The same features also reach the native packages
+themselves — `batter::runledger::native::{core, postgres, runtime}`,
+`batter::runlimit::{native, memory, postgres}` and
+`batter::runlimit::native_transport::{http, axum}`, plus the test-only
+`batter::runledger::native::test_support` — so one `batter` dependency needs no
+direct native declaration and no `[patch]`; see the
+[single-dependency recipe](reference-compatibility.md#single-dependency-recipe).
+Those namespaces are deliberately low-level and move no ownership. Direct adapter packages remain supported when an
 application needs their native package boundary. In particular,
 `batter-at-rest` supports direct runtime-free use as `batter_at_rest`; the
 facade feature re-exports the same types and is not required for encryption.
@@ -215,8 +222,14 @@ For Runledger workers, select the implemented
 [`batter-runledger` managed adapter](../crates/batter-runledger/src/lib.rs).
 During owned startup, complete dependency/schema initialization, create native
 inert preparation with
-`runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`,
-and pass it to `batter_runledger::register_in(scope, name, context, prepared)`.
+`runledger_runtime::Supervisor::builder(...).with_registry(...).prepare()`
+(or `batter::runledger::native::runtime::Supervisor::builder(...)` through the
+facade), and pass it to
+`batter_runledger::register_in(scope, name, context, prepared)`. Reaching the
+native builder through the facade does not change that `register_in` is the
+protected path: building a live supervisor instead moves initialization
+observation, the stop budget, settlement classification and cleanup ordering to
+the caller.
 The adapter translates native initialization, stop clocks and retained descendant
 settlement into Batter ownership; Runledger retains its internal supervisor and
 durable work policy. Follow the [reference composition root](../examples/reference-service/src/runtime.rs)
@@ -391,7 +404,11 @@ while opaque nested services remain a documented low-level composition.
 Assembly returns a sanitized error when a guarded route can match a reserved
 probe path by querying only that inert inventory, without polling application
 code. Register the
-`AssembledHttp` with `register_in`. The individual middlewares
+`AssembledHttp` with `register_in`, or with `register_with_connect_info_in` when
+handlers need the accepted peer. Both take any `axum::serve::Listener`, so an
+application-owned TLS listener serves the same boundary through the same
+registration, acknowledgement, drain and cleanup contract while keeping its
+certificates, protocol versions and handshake policy. The individual middlewares
 (`request_admission`, `observe_http`, `request_scope`, `operational_http`)
 remain available for compositions the boundary cannot express and document the
 ordering they leave with the caller. Only the outermost observer emits an HTTP
@@ -400,17 +417,77 @@ to its shared private state. A plain observer may wrap `operational_http`, but
 admission, `request_scope`, deadlines and other rejecting middleware must remain
 inside it to retain generated correlation on every outcome. Routes added after
 assembly sit outside the boundary.
+Guarded handlers and route layers take one `admitted: AdmittedRequest`
+extractor: `admitted.context()` is the request's `OperationContext` for nested
+operations and admission waits, `admitted.correlation_id()` the generated
+`CorrelationId` for metadata and envelopes, and
+`admitted.interruption_responder().render(reason)` answers a nested
+interruption in the admission policy's envelope. It replaces
+`Extension<OperationContext>`, `Extension<CorrelationId>` and
+`Extension<RequestInterruptionResponder>` in handlers; those raw extensions
+remain for Batter's adapters but any layer can replace them, and outside
+admission they answer Axum's missing-extension text. A handler that the
+boundary did not admit, such as a route added after assembly, answers the
+sanitized 500 `AdmittedRequestRejection` instead. Extract
+`Result<AdmittedRequest, AdmittedRequestRejection>` to render that case in the
+application's own envelope.
+Give routes their own budget or browser posture with a named `RouteGroup`:
+`with_group(RouteGroup::new("uploads", upload_policy, routes))` before
+`assemble`. A `GroupPolicy::browser(policy, BrowserPolicy::with_mutation_checks(...))`
+group receives its `PrivateResponsePolicy` headers on every response, including
+admission, deadline and mutation rejections, and checks its `MutationPolicy`
+inside admission on every method except GET, HEAD, OPTIONS and TRACE, rendering
+rejections through the application's renderer.
+`BrowserPolicy::without_mutation_checks` names the header-only choice. The routes
+passed to `assemble` form the `default` group, which alone declares fallbacks.
+Assembly rejects groups whose routes can match one request path, even with
+different methods, and probe paths that any group can match. To migrate a manual
+composition, move per-handler Origin/CSRF checks into a group's mutation policy
+and renderer, hand-written private-response middleware into its
+`PrivateResponsePolicy`, and each separately layered budget into its own group;
+see the [adapter migration notes](../crates/batter-axum/README.md#migrating-manual-compositions-to-route-groups).
+
+Admit a router built by another router builder, such as an OpenAPI router
+converted with `Router::from`, with
+`GuardedRouter::from_router(router, RouteInventory::new(patterns)?)`, and pass
+the result as a route group or merge it into the default routes. List every
+route pattern the router should serve exactly as registered: an OpenAPI
+document's paths are one source, and routes added without documentation must
+be listed too, because undeclared routes are never served. Assembly returns
+`RouteInventoryMismatch` for a declared pattern the router does not serve and
+`OverlappingRouteInventory` for declared routes that share a path with other
+routes of their group. Declare fallbacks on the default `GuardedRouter`; an
+admitted router's own fallback never runs.
+
+Keep documented probe bodies on the boundary instead of hand-mounting probe
+handlers. `.with_rendered_liveness(path, |parts| ...)` and
+`.with_rendered_readiness(path, readiness, |decision, parts| ...)` take the same
+validated `ProbePath` and collision checks as the empty-body probes; the
+renderer returns the application's body and headers, and the boundary then sets
+the status and completion severity itself: 200 with the default INFO for
+liveness, and the decision's status, decision extension and policy severity for
+readiness.
+Map every `ReadinessDecision` your documentation promises, including
+`ReadinessUnreadyReason::Condition`, in the renderer, and read the generated
+`CorrelationId` from `parts` when the envelope reports a request ID. When
+readiness also depends on application state, such as held key leases, add
+`readiness.with_condition(ReadinessCondition::new("key-leases")?, check)` to
+the `ReadinessPolicy`; `check` synchronously reads state the application
+already maintains and can only turn a ready decision unready.
 The facade's `axum` feature selects the HTTP adapter; direct `batter-axum` use
 remains available for adapter-owned tests and applications that need that package
 boundary.
 `RequestPolicy::with_failure_renderer` receives a `HttpFailure` and a snapshot of
 request parts. Use `failure.code()`/`status()` and a trusted private extension to
-render your envelope. Install trusted metadata middleware outside the policy so
-it is available even for readiness/deadline failures. `HttpBoundary` installs
+render your envelope. In a manual composition, install trusted metadata
+middleware outside the policy so it is available even for readiness/deadline
+failures. `HttpBoundary` runs application layers inside admission, so its
+renderer receives the adapter's `CorrelationId` and request parts but no
+application metadata. `HttpBoundary` installs
 `operational_http`, which generates a UUID and replaces incoming header/Tower/
 adapter identities; it emits one HTTP completion with an event-local ID even
-when INFO spans are disabled. Extract `Extension<CorrelationId>` for explicit
-metadata propagation.
+when INFO spans are disabled. Read `AdmittedRequest::correlation_id` for
+explicit metadata propagation.
 Applications remain responsible for durable uniqueness requirements and trust policy.
 The example selects `with_infrastructure_json()` and uses
 `render_infrastructure_failure` in handlers; legacy Problem JSON and custom
@@ -421,13 +498,16 @@ binding the native listener. Construct both projections at the composition root 
 supervisor or its shutdown handle. These helpers cannot request shutdown or
 approve readiness and do not own domain errors, body streaming or authentication.
 
-The reference application demonstrates the application-owned next layer. Its
-canonical `http::register_in` builds the router and selects
-`register_http_with_connect_info_in` as one operation, then builds `TrustedRequestMetadata`
-from only the accepted socket peer plus `CorrelationId`, then authenticates
-`OwnerId` before request admission. It ignores forwarding, trace and client-ID
-headers and implements no proxy mode. Handlers extract metadata, authority and
-`OperationContext` separately; correlation is never a grant.
+The reference application demonstrates the application-owned next layer inside
+the boundary. Its canonical `http::register_in` assembles its `GuardedRouter`
+through `HttpBoundary` and registers it with
+`AssembledHttp::register_with_connect_info_in` as one operation. Each admitted
+request then builds `TrustedRequestMetadata` from only the accepted socket peer
+plus `CorrelationId` and authenticates `OwnerId`, both within the request
+deadline; a draining or not-yet-ready process rejects the request before either
+runs. It ignores forwarding, trace and client-ID headers and implements no proxy
+mode. Handlers extract metadata, authority and the `AdmittedRequest` carrying
+the `OperationContext` separately; correlation is never a grant.
 
 The callback controls only middleware-generated failures. Handlers should reuse
 the application's renderer for a consistent envelope; health probes have their
@@ -575,7 +655,10 @@ readiness request. This performs no dependency I/O. It samples the dependency
 first and lifecycle second, returning only `ReadinessDecision::Ready` or
 `Unready(ReadinessUnreadyReason)`, so an observed drain wins and a healthy dependency
 cannot appear as an unready reason. `HealthStatus::readiness()` separately
-exposes the exhaustive dependency-only classification.
+exposes the exhaustive dependency-only classification. Add application
+conditions with `with_condition`; they are asked between the dependency and
+lifecycle reads, only while the dependency is ready, and an unsatisfied one
+reports `Unready(ReadinessUnreadyReason::Condition(name))`.
 
 To inspect why a probe failed, call `reader.snapshot()` and inspect `status()` and
 `last_probe()`; original errors require deliberate trusted access through

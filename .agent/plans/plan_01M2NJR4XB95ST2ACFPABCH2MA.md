@@ -1,1 +1,0 @@
-Replace the stale statement that a comprehensive review found no defect with the actual follow-up result and verified composition repair; refresh policy gates only, with prior Rust and live receipts unchanged.

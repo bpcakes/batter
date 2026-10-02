@@ -18,16 +18,35 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FEATURES = {
     "at-rest",
     "axum",
+    "metrics",
+    "otlp",
     "sqlx",
     "runledger",
+    "runledger-test-support",
     "runlimit",
     "runlimit-memory",
     "runlimit-postgres",
     "runlimit-axum",
+    "runlimit-native-http",
+    "runlimit-native-axum",
     "test-support",
     "sqlx-test-support",
 }
-RUNLIMIT_BRIDGES = ("runlimit-memory", "runlimit-postgres", "runlimit-axum")
+# Every facade feature that selects a Runlimit bridge. The last two reach the
+# native transport packages without the Batter Axum adapter or this facade's
+# protected quota-before-body assembly.
+RUNLIMIT_BRIDGES = ("runlimit-memory", "runlimit-postgres", "runlimit-axum",
+                    "runlimit-native-http", "runlimit-native-axum")
+# Facade features that select the Runledger adapter and its native packages.
+RUNLEDGER_SELECTORS = {"runledger", "runledger-test-support"}
+# Native Runlimit packages each bridge additionally declares in the identity
+# fixture, so a facade path is compared against a direct dependency.
+BRIDGE_NATIVES = {
+    "runlimit-memory": ("runlimit-memory", "runlimit-core"),
+    "runlimit-postgres": ("runlimit-postgres",),
+    "runlimit-native-http": ("runlimit-http", "runlimit-core"),
+    "runlimit-native-axum": ("runlimit-axum", "runlimit-core"),
+}
 
 
 def execute(command: list[str], cwd: Path, *, timeout: float = 600,
@@ -89,12 +108,17 @@ def feature_cases() -> list[tuple[str, ...]]:
         (),
         ("at-rest",),
         ("axum",),
+        ("metrics",),
+        ("otlp",),
         ("sqlx",),
         ("runledger",),
+        ("runledger-test-support",),
         ("runlimit",),
         ("runlimit-memory",),
         ("runlimit-postgres",),
         ("runlimit-axum",),
+        ("runlimit-native-http",),
+        ("runlimit-native-axum",),
         ("test-support",),
         ("sqlx-test-support",),
         ("axum", "sqlx"),
@@ -107,8 +131,13 @@ def feature_cases() -> list[tuple[str, ...]]:
 def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
     chosen = set(selected)
     at_rest = "at-rest" in chosen
+    # The Batter Axum adapter. Native runlimit-axum deliberately does not select it.
     axum = "axum" in chosen or "runlimit-axum" in chosen
-    sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runledger", "runlimit-postgres"})
+    # The Axum crate itself. The native transport layer needs it, and Runledger's
+    # test support drags testcontainers' Docker client HTTP stack in with it.
+    axum_crate = axum or bool(chosen & {"runlimit-native-axum", "runledger-test-support"})
+    runledger = bool(chosen & {"runledger", "runledger-test-support"})
+    sqlx = bool(chosen & {"sqlx", "sqlx-test-support", "runlimit-postgres"}) or runledger
     batter_sqlx = sqlx
     runlimit = bool(chosen & {"runlimit", *RUNLIMIT_BRIDGES})
     return {
@@ -120,17 +149,26 @@ def expected_graph(selected: tuple[str, ...]) -> dict[str, bool]:
         "polyval": at_rest,
         "ctr": at_rest,
         "batter-axum": axum,
+        "metrics": bool(chosen & {"metrics", "otlp"}),
+        "batter-otlp": "otlp" in chosen,
+        "opentelemetry_sdk": "otlp" in chosen,
+        "opentelemetry-otlp": "otlp" in chosen,
         "batter-sqlx": batter_sqlx,
-        "batter-runledger": "runledger" in chosen,
+        "batter-runledger": runledger,
         "batter-runlimit": runlimit,
         "batter-test-support": "test-support" in chosen or "sqlx-test-support" in chosen,
-        "axum": axum,
+        "axum": axum_crate,
         "sqlx": sqlx,
-        "runledger-postgres": "runledger" in chosen,
-        "runledger-runtime": "runledger" in chosen,
+        "runledger-core": runledger,
+        "runledger-postgres": runledger,
+        "runledger-runtime": runledger,
+        "runledger-test-support": "runledger-test-support" in chosen,
+        "testcontainers": "runledger-test-support" in chosen,
         "runlimit-core": runlimit,
         "runlimit-memory": "runlimit-memory" in chosen,
         "runlimit-postgres": "runlimit-postgres" in chosen,
+        "runlimit-http": "runlimit-native-http" in chosen,
+        "runlimit-axum": "runlimit-native-axum" in chosen,
         "postgres-test-harness": "sqlx-test-support" in chosen,
     }
 
@@ -142,20 +180,38 @@ def facade_source(selected: tuple[str, ...]) -> str:
         "use batter::operation::OperationContext;",
         "fn main() {}",
     ]
+    if chosen & {"metrics", "otlp"}:
+        lines.insert(1, "use batter::telemetry::metrics::{MAX_SERIES, install};")
+    if "otlp" in chosen:
+        lines.insert(1, "use batter::otlp::{prepare, Schedule};")
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
         lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
-    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
+    if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
-    if "runledger" in chosen:
+    if chosen & RUNLEDGER_SELECTORS:
         lines.insert(1, "use batter::runledger::{NativeReport, register_in, PgIntentScope, PgQueueScope, run_atomic as run_runledger_atomic};")
+        lines.insert(1, "use batter::runledger::native::core::jobs::{JobHandler, JobType};")
+        lines.insert(1, "use batter::runledger::native::postgres::jobs::{JobEnqueue, JobEnqueueIntent};")
+        lines.insert(1, "use batter::runledger::native::postgres::{MIGRATOR, migrate_after_idempotency_cutover};")
+        lines.insert(1, "use batter::runledger::native::runtime::{PreparedSupervisor, Supervisor, catalog::JobCatalog, config::JobsConfig, registry::JobRegistry};")
+    if "runledger-test-support" in chosen:
+        lines.insert(1, "use batter::runledger::native::test_support::{EphemeralDatabase, create_ephemeral_database};")
     if "runlimit" in chosen or chosen & set(RUNLIMIT_BRIDGES):
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
+        lines.insert(1, "use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};")
     if "runlimit-axum" in chosen:
         lines.insert(1, "use batter::runlimit::http::{PreparedHttp, TestClient};")
+    if "runlimit-memory" in chosen:
+        lines.insert(1, "use batter::runlimit::memory::{GcraStore, MemoryStore, MemoryStoreConfig};")
     if "runlimit-postgres" in chosen:
         lines.insert(1, "use batter::runlimit::attempts::{AttemptRunner, Authentication};")
+        lines.insert(1, "use batter::runlimit::postgres::{MIGRATOR as RUNLIMIT_MIGRATOR, PostgresLimiter};")
+    if "runlimit-native-http" in chosen:
+        lines.insert(1, "use batter::runlimit::native_transport::http::draft_11::{QuotaState, quota_policy, service_limit};")
+    if "runlimit-native-axum" in chosen:
+        lines.insert(1, "use batter::runlimit::native_transport::axum::{Admissions, ExtractSubjectKey, RateLimitLayer, RateLimitRejection};")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
         lines.insert(1, "use batter::test_support::{Script, finish};")
     if "sqlx-test-support" in chosen:
@@ -239,21 +295,28 @@ def identity_dependencies(selected: tuple[str, ...]) -> list[str]:
         deps.append("batter-at-rest = { path = " + json.dumps(str(ROOT / "crates/batter-at-rest")) + " }")
     if "axum" in chosen or "runlimit-axum" in chosen:
         deps.append("batter-axum = { path = " + json.dumps(str(ROOT / "crates/batter-axum")) + " }")
-    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
+    if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         sqlx_features = ", features = [\"test-support\"]" if "sqlx-test-support" in chosen else ""
         deps.append("batter-sqlx = { path = " + json.dumps(str(ROOT / "crates/batter-sqlx")) + sqlx_features + " }")
-    if "runledger" in chosen:
-        deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + " }")
-        deps.append("runledger-runtime = { path = " + json.dumps(str(ROOT / "runledger/runledger-runtime")) + " }")
+    if chosen & RUNLEDGER_SELECTORS:
+        runledger_features = ", features = [\"test-support\"]" if "runledger-test-support" in chosen else ""
+        deps.append("batter-runledger = { path = " + json.dumps(str(ROOT / "crates/batter-runledger")) + runledger_features + " }")
+        for native in ("core", "postgres", "runtime"):
+            deps.append("runledger-" + native + " = { path = "
+                        + json.dumps(str(ROOT / "runledger" / ("runledger-" + native))) + " }")
+    if "runledger-test-support" in chosen:
+        deps.append("runledger-test-support = { path = "
+                    + json.dumps(str(ROOT / "runledger/runledger-test-support")) + " }")
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         native_features = [feature.removeprefix("runlimit-") for feature in RUNLIMIT_BRIDGES if feature in chosen]
         features = ", features = " + json.dumps(native_features) if native_features else ""
         deps.append("batter-runlimit = { path = " + json.dumps(str(ROOT / "crates/batter-runlimit")) + features + " }")
-        if "runlimit-memory" in chosen:
-            deps.append('runlimit-memory = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + ' }')
-            deps.append('runlimit-core = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-core")) + ' }')
-        if "runlimit-postgres" in chosen:
-            deps.append('runlimit-postgres = { path = ' + json.dumps(str(ROOT / "runlimit/runlimit-postgres")) + ' }')
+        # Bridges share native packages, and a dependency table cannot repeat a key.
+        natives = {native for bridge, packages in BRIDGE_NATIVES.items() if bridge in chosen
+                   for native in packages}
+        for native in sorted(natives):
+            deps.append(native + ' = { path = '
+                        + json.dumps(str(ROOT / "runlimit" / native)) + ' }')
     if "runlimit-axum" in chosen:
         deps.append("tokio = { version = \"1.53.1\", default-features = false, features = [\"net\"] }")
     if "test-support" in chosen or "sqlx-test-support" in chosen:
@@ -286,7 +349,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "fn axum_identity(_: DirectRequestPolicy) {}",
             "const _: fn(RequestPolicy) = axum_identity;",
         ]
-    if chosen & {"sqlx", "sqlx-test-support", "runledger"}:
+    if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines += [
             "use batter::sqlx::PgLease;",
             "use batter_sqlx::PgLease as DirectPgLease;",
@@ -301,13 +364,22 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "fn fixture_identity(_: DirectConnectionPlan) {}",
             "const _: fn(ConnectionPlan) = fixture_identity;",
         ]
-    if "runledger" in chosen:
+    if chosen & RUNLEDGER_SELECTORS:
         lines += [
             "use batter::runledger::NativeReport;",
             "use batter_runledger::NativeReport as DirectNativeReport;",
             "fn runledger_identity(_: DirectNativeReport) {}",
             "const _: fn(NativeReport) = runledger_identity;",
             "fn protected_registration(target: &mut batter::startup::ProtectedStartupScope, context: OperationContext, prepared: runledger_runtime::PreparedSupervisor) -> Result<(), batter::RegistrationError> { batter::runledger::register_in(target, \"worker\", context, prepared) }",
+            # The native namespaces must be the native packages, not copies.
+            "const _: fn(batter::runledger::native::core::jobs::JobType<'static>) = |_: runledger_core::jobs::JobType<'static>| {};",
+            "const _: fn(batter::runledger::native::postgres::SchemaCompatibilitySnapshot) = |_: runledger_postgres::SchemaCompatibilitySnapshot| {};",
+            "const _: fn(batter::runledger::native::runtime::config::JobsConfig) = |_: runledger_runtime::config::JobsConfig| {};",
+            "fn native_preparation(pool: &runledger_postgres::DbPool, config: batter::runledger::native::runtime::config::JobsConfig, registry: batter::runledger::native::runtime::registry::JobRegistry) -> Result<batter::runledger::native::runtime::PreparedSupervisor, batter::runledger::native::runtime::RuntimeError> { batter::runledger::native::runtime::Supervisor::builder(pool, config)?.with_registry(registry).prepare() }",
+        ]
+    if "runledger-test-support" in chosen:
+        lines += [
+            "const _: fn(batter::runledger::native::test_support::EphemeralDatabase) = |_: runledger_test_support::EphemeralDatabase| {};",
         ]
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         lines += [
@@ -323,11 +395,26 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "const _: fn() = memory_bridge::<runlimit_memory::MemoryBatchError>;",
             "const _: fn() = memory_bridge::<runlimit_memory::GcraBatchError>;",
         ]
+    if "runlimit-memory" in chosen:
+        lines += [
+            "const _: fn(batter::runlimit::memory::MemoryStore) = |_: runlimit_memory::MemoryStore| {};",
+        ]
     if "runlimit-postgres" in chosen:
         lines += [
             "fn postgres_bridge<E: batter::runlimit::ConsumptionError>() {}",
             "const _: fn() = postgres_bridge::<runlimit_postgres::BatchCheckError>;",
             "const _: fn(batter::runlimit::attempts::AttemptRunner) = |_: batter_runlimit::attempts::AttemptRunner| {};",
+            "const _: fn(batter::runlimit::postgres::PostgresLimiter) = |_: runlimit_postgres::PostgresLimiter| {};",
+        ]
+    if "runlimit-native-http" in chosen:
+        lines += [
+            "const _: fn(batter::runlimit::native_transport::http::draft_11::QuotaState) = |_: runlimit_http::draft_11::QuotaState| {};",
+            "fn native_field(name: &str, state: runlimit_core::Allowance) -> Result<batter::runlimit::native_transport::http::draft_11::HeaderField, runlimit_http::draft_11::EncodingError> { batter::runlimit::native_transport::http::draft_11::service_limit(name, state) }",
+        ]
+    if "runlimit-native-axum" in chosen:
+        lines += [
+            "const _: fn(batter::runlimit::native_transport::axum::RejectionKind) = |_: runlimit_axum::RejectionKind| {};",
+            "fn native_layer<L: runlimit_core::Limiter, K, R>(layer: batter::runlimit::native_transport::axum::RateLimitLayer<L, K, R>) -> runlimit_axum::RateLimitLayer<L, K, R> { layer }",
         ]
     if "runlimit-axum" in chosen:
         lines += [
@@ -423,10 +510,62 @@ def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
     print(f"facade checked completion: {result.group(1)} external runtime tests and two negative controls passed", flush=True)
 
 
+COMPOSED_FEATURES = ("axum", "runlimit-memory", "sqlx")
+# The canonical composition must not need consumer depth, stack or erasure workarounds.
+COMPOSED_WORKAROUNDS = ("recursion_limit", "RUST_MIN_STACK", "stack_size", "Box::pin",
+                        "BoxFuture", ".boxed(", "Pin<Box")
+
+
+def run_composed_handler_case(cargo: list[str], host: str, root_lock: bytes,
+                              known: set[tuple[str, str, str | None]], parent: Path,
+                              target: Path) -> None:
+    """Run quota, pooled-query and atomic composition in one external Axum handler.
+
+    The independent crate keeps rustc's default recursion limit and runs the
+    handler on the default test-thread stack, unoptimized and optimized; the
+    original consumer failures were layout-query depth and stack overflow.
+    """
+    source = (ROOT / "crates/batter/tests/composed_handler_consumer.rs").read_text()
+    found = [token for token in COMPOSED_WORKAROUNDS if token in source]
+    if found:
+        raise RuntimeError(f"composed handler fixture contains consumer workarounds: {found}")
+    case = parent / "composed-handler"
+    (case / "src").mkdir(parents=True)
+    (case / "tests").mkdir()
+    dependencies = [
+        facade_dependency(COMPOSED_FEATURES),
+        'axum = "0.8.9"',
+        "runlimit-core = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-core")) + " }",
+        "runlimit-memory = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + " }",
+        'sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres"] }',
+        'tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }',
+        'tower = { version = "0.5.3", features = ["util"] }',
+    ]
+    (case / "Cargo.toml").write_text(
+        manifest("facade-composed-consumer", dependencies, COMPOSED_FEATURES))
+    (case / "Cargo.lock").write_bytes(root_lock)
+    (case / "src/main.rs").write_text("fn main() {}\n")
+    (case / "tests/composed_handler.rs").write_text(source)
+    check_graph(run_metadata(cargo, host, case), COMPOSED_FEATURES, known)
+    for profile in ([], ["--release"]):
+        output = execute(
+            ["env", "-u", "RUST_MIN_STACK", *cargo, "test", *profile, "--locked", "--offline",
+             "--test", "composed_handler", "--target-dir", str(target)], case, timeout=900,
+        )
+        if not re.search(r"(?m)^test result: ok\. 1 passed; 0 failed; 0 ignored;", output):
+            raise RuntimeError(f"composed handler consumer did not pass {profile or ['--debug']}")
+    if (ROOT / "Cargo.lock").read_bytes() != root_lock:
+        raise RuntimeError("repository Cargo.lock changed during composed handler checks")
+    print("facade composed handler: quota, pooled query and atomic workflow ran at the default "
+          "recursion limit and test-thread stack, unoptimized and optimized", flush=True)
+
+
 def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
     return [
         ((), "at-rest", "batter::at_rest"),
         ((), "axum", "batter::axum"),
+        ((), "metrics", "batter::telemetry::metrics"),
+        ((), "otlp", "batter::otlp"),
         ((), "sqlx", "batter::sqlx"),
         ((), "runledger", "batter::runledger"),
         ((), "runlimit", "batter::runlimit"),
@@ -434,6 +573,14 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
         (("sqlx",), "sqlx-test-support", "batter::sqlx::test_support"),
         (("runlimit",), "runlimit-axum", "batter::runlimit::http"),
         (("axum", "runlimit"), "runlimit-axum", "batter::runlimit::http"),
+        (("runledger",), "runledger-test-support", "batter::runledger::native::test_support"),
+        (("runlimit",), "runlimit-memory", "batter::runlimit::memory"),
+        (("runlimit",), "runlimit-postgres", "batter::runlimit::postgres"),
+        (("runlimit",), "runlimit-native-http", "batter::runlimit::native_transport"),
+        (("runlimit-native-http",), "runlimit-native-axum",
+         "batter::runlimit::native_transport::axum"),
+        (("runlimit-native-axum",), "runlimit-native-http",
+         "batter::runlimit::native_transport::http"),
     ]
 
 
@@ -446,11 +593,21 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
     (case / "Cargo.lock").write_bytes(root_lock)
     (case / "src/main.rs").write_text(f"use {symbol};\nfn main() {{}}\n")
     metadata = run_metadata(cargo, host, case)
-    if (disabled == "runlimit-axum"
-            and "axum" in resolved_features(metadata, "batter-runlimit")):
-        raise RuntimeError(
-            f"{selected}: disabled {disabled} activated batter-runlimit/axum"
-        )
+    # A disabled facade bridge must not reach its adapter feature through another.
+    adapter_features = {
+        "runlimit-axum": ("batter-runlimit", "axum"),
+        "runlimit-memory": ("batter-runlimit", "memory"),
+        "runlimit-postgres": ("batter-runlimit", "postgres"),
+        "runlimit-native-http": ("batter-runlimit", "native-http"),
+        "runlimit-native-axum": ("batter-runlimit", "native-axum"),
+        "runledger-test-support": ("batter-runledger", "test-support"),
+    }
+    if disabled in adapter_features:
+        package, feature = adapter_features[disabled]
+        if package in normal_names(metadata) and feature in resolved_features(metadata, package):
+            raise RuntimeError(
+                f"{selected}: disabled {disabled} activated {package}/{feature}"
+            )
     outcome = run_parallel(
         [cargo + ["check", "--locked", "--offline", "--target-dir", str(target)]],
         timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
@@ -569,6 +726,7 @@ def main() -> int:
         run_identity_case(cargo, host, root_lock, parent, target, selected)
         print("facade identity all-features: compatibility passed", flush=True)
         run_checked_completion_case(cargo, host, root_lock, known, parent, target)
+        run_composed_handler_case(cargo, host, root_lock, known, parent, target)
     if (ROOT / "Cargo.lock").read_bytes() != root_lock:
         raise RuntimeError("repository Cargo.lock changed during facade feature checks")
     print("facade feature isolation, negative gating, and identity checks passed", flush=True)

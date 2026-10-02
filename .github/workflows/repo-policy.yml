@@ -1,4 +1,4 @@
-name: Jig integration
+name: Repository policy
 
 on:
   pull_request:
@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  jig:
-    name: Verify Jig contract, guides, and file budgets
+  file-budget:
+    name: Verify file budgets and script controls
     runs-on: "ubuntu-latest"
     defaults:
       run:
@@ -36,13 +36,9 @@ jobs:
         with:
           path: .git/jig-tools/*-runtime
           key: ${{ runner.os }}-${{ runner.arch }}-jig-runtime-${{ hashFiles('.jig.toml', '.agent/jig-contract.json', 'rust-toolchain.toml', 'scripts/jig', 'scripts/install-jig.sh', '.github/workflows/repo-policy.yml') }}
-      - name: Check Jig installation and wiring
-        run: |
-          scripts/jig doctor
-          scripts/jig check contract
-          scripts/jig check agent-map
-          scripts/jig check agent-guides
-      - name: Test Jig integration and source packaging
+      - name: Prepare file-budget checker
+        run: scripts/jig file-budget validate
+      - name: Test script controls and source packaging
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: Check repository file-budget policy
         env:

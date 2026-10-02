@@ -4,11 +4,10 @@ mod scope;
 use sqlx::postgres::{PgQueryResult, PgRow};
 use sqlx::query::{Map, Query, QueryScalar};
 use sqlx::{Executor, IntoArguments, PgConnection, Postgres};
-use std::{future::Future, pin::Pin};
 
 // SQLx also returns boxed executor futures. Keep Send explicit through lending
 // scope callbacks; opaque futures hit the Rust limitation reported as #100013.
-type QueryFuture<'e, T> = Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + Send + 'e>>;
+pub(crate) type QueryFuture<'e, T> = crate::SendFuture<'e, Result<T, sqlx::Error>>;
 mod sealed {
     pub trait Sealed {}
     impl<A> Sealed for sqlx::query::Query<'_, sqlx::Postgres, A> {}

@@ -740,42 +740,16 @@ impl JobFailure {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum JobDeadLetterReason {
-    FailureKindNonRetryable,
-    AttemptsExhausted,
-    LeaseExpired,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct JobDeadLetterInfo {
-    pub failure: JobFailure,
-    pub reason: JobDeadLetterReason,
-    pub max_attempts: Option<i32>,
-}
-
-impl JobDeadLetterInfo {
-    #[must_use]
-    pub fn new(
-        failure: JobFailure,
-        reason: JobDeadLetterReason,
-        max_attempts: Option<i32>,
-    ) -> Self {
-        Self {
-            failure,
-            reason,
-            max_attempts,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobContext {
     pub job_id: Uuid,
     pub run_number: i32,
     pub attempt: i32,
     pub organization_id: Option<Uuid>,
+    /// Lease owner recorded on both `job_queue` and `job_attempts` for this
+    /// attempt. Native handler execution and both dead-letter delivery paths
+    /// use this identity; [`JobDeadLetterOrigin`](crate::jobs::JobDeadLetterOrigin)
+    /// separately identifies the component delivering a dead-letter hook.
     pub worker_id: String,
     /// Durable resume checkpoint captured for this run. Handler execution
     /// receives the checkpoint stored before execution; dead-letter hooks

@@ -499,7 +499,34 @@ impl Supervisor {
             .into_driver(async move { scoped_dispatch::scope(self.drive_until(shutdown)).await })
     }
 
-    async fn drive_until<F>(mut self, shutdown: F) -> ShutdownReport
+    async fn drive_until<F>(self, shutdown: F) -> ShutdownReport
+    where
+        F: Future<Output = ()>,
+    {
+        // Armed before any work so an abandoned or unwinding driver still
+        // records exactly one shutdown. Declared before the drive future,
+        // which owns the supervisor, so on abandonment the supervisor's queued
+        // work and cleanup are destroyed (and recorded) first.
+        let mut terminal = crate::telemetry::record::ShutdownTerminal::new();
+        let (report, coordinator) = self.drive(shutdown, &mut terminal).await;
+        // The drive future and its owned shutdown future are now destroyed.
+        // Record before returning the report, after Stopped was published.
+        // Native settlement may have tightened the clock after drain began;
+        // the disabled shim leaves this supplier unevaluated.
+        terminal.finish(report.is_success(), || {
+            coordinator
+                .shared
+                .stop_started()
+                .expect("completed shutdown follows drain")
+        });
+        report
+    }
+
+    async fn drive<F>(
+        mut self,
+        shutdown: F,
+        terminal: &mut crate::telemetry::record::ShutdownTerminal,
+    ) -> (ShutdownReport, LifecycleCoordinator)
     where
         F: Future<Output = ()>,
     {
@@ -522,6 +549,7 @@ impl Supervisor {
         let cancel = drain + self.budget.cancel;
         let reap = cancel + self.budget.abort_reap;
         tracing::info!(target: "batter", "shutdown drain started");
+        terminal.draining(cause);
         tasks
             .collect_until(&mut self.queued, &self.coordinator, drain)
             .await;
@@ -558,8 +586,7 @@ impl Supervisor {
         } else {
             self.cleanup.close(self.budget.cleanup).await
         };
-        self.coordinator.shared.stop_driver();
-        ShutdownReport {
+        let report = ShutdownReport {
             cause,
             tasks: summary.records,
             managed: managed_records,
@@ -568,7 +595,12 @@ impl Supervisor {
             abort_requested,
             unjoined: summary.unjoined,
             cleanup,
-        }
+        };
+        // Publishing Stopped never depends on recorder code. Transfer the
+        // coordinator so the outer guard can read the canonical clock after
+        // this future's remaining owned state is destroyed.
+        self.coordinator.shared.stop_driver();
+        (report, self.coordinator)
     }
 
     async fn wait_for_shutdown<F>(&mut self, shutdown: F, tasks: &mut TaskSet) -> ShutdownCause

@@ -1,1 +1,0 @@
-Prepare Batter 0.0.1, Runledger 0.13.0, and Runlimit 0.4.0 manifests for crates.io. Enable publication for releasable packages only, add registry versions to internal path dependencies, update release assertions/changelogs/docs/lockfile, and validate package artifacts in dependency order. Do not publish any crate whose dependency chain is unresolved or unverified.

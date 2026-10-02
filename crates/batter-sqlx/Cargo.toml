@@ -62,3 +62,6 @@ name = "atomic_live"
 
 [[test]]
 name = "profile"
+
+[[test]]
+name = "future_size"

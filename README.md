@@ -185,10 +185,18 @@ batter-test-support = { path = "../batter/crates/batter-test-support" }
 The default `batter` graph does not bring in encryption, Axum, SQLx, or test utilities.
 Adapter APIs are also available from their direct packages. The facade exposes
 `batter::at_rest`, `batter::axum`, `batter::sqlx`, `batter::runledger`, `batter::runlimit`, and
-`batter::test_support` through additive opt-in features; `runlimit-memory`,
-`runlimit-postgres`, `runlimit-axum`, and `sqlx-test-support` select only their
-documented bridges. Each package declares its own version and Rust minimum.
-The eight Batter packages are 0.0.1, native Runledger is 0.13.0, and native
+`batter::test_support` through additive opt-in features, and the `metrics`
+feature records bounded outcome metrics through `batter::telemetry::metrics`; the
+`otlp` feature selects explicit bounded export through `batter::otlp` and
+`batter::service::start`; `runlimit-memory`,
+`runlimit-postgres`, `runlimit-axum`, `runlimit-native-http`,
+`runlimit-native-axum`, `runledger-test-support`, and `sqlx-test-support` select
+only their documented bridges. Those features also reach every native Runledger
+and Runlimit library package through explicitly native namespaces, so one
+`batter` dependency needs no direct native declaration and no `[patch]`; the
+[single-dependency recipe](docs/reference-compatibility.md#single-dependency-recipe)
+records the executed evidence and the caller obligations those namespaces carry. Each package declares its own version and Rust minimum.
+The nine Batter packages are 0.0.1, native Runledger is 0.13.0, and native
 Runlimit is 0.4.0. All retain Rust 1.94 as their minimum.
 The standalone `batter-at-rest` leaf verifies that minimum independently. The
 default toolchain is 1.98.1. SQLx 0.9.0 sets that floor in the adapter and
@@ -197,6 +205,7 @@ examples; extracting it does not establish a lower library minimum.
 | Package | Location | Job |
 | --- | --- | --- |
 | `batter` | [crates/batter](crates/batter/README.md) | Source-compatible public facade and runnable foundation consumers. |
+| `batter-otlp` | [crates/batter-otlp](crates/batter-otlp/README.md) | Optional bounded OTLP metrics exporter through protected service completion. |
 | `batter-at-rest` | [crates/batter-at-rest](crates/batter-at-rest/README.md) | MIT-licensed synchronous standalone envelope encryption and stable MAC keys. |
 | `batter-core` | [crates/batter-core](crates/batter-core/README.md) | Single native implementation for process ownership, deadlines, retry, admission, cleanup, health/readiness, startup, settings, and telemetry. |
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
@@ -275,13 +284,11 @@ verification, and change rules; [status](docs/status.md) and
 
 ```sh
 bash scripts/verify.sh
-# For planned work, reuse passing checks and attach receipts to the plan:
-bash scripts/verify.sh --plan-id <id>
 ```
 
-Both forms use Jig's complete verification profile: tests, both Clippy feature
-configurations, formatting, rustdoc, five built HTTP smokes and repository policy.
-Choose one form; a successful profile does not need a second full test run.
+The script directly runs tests, all three Clippy feature configurations, formatting,
+rustdoc, five built HTTP smokes and the file-budget check. Verification creates
+no Jig plans, receipts or gates. A successful run needs no second full test run.
 
 Local verification uses the pinned current release once. CI verifies both that
 release and exact Rust 1.94.0; a weekly CI run checks floating `stable`. Update

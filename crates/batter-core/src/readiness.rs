@@ -1,14 +1,18 @@
-//! Foundation-owned process readiness over lifecycle and dependency observations.
+//! Foundation-owned process readiness over lifecycle, dependency and
+//! application-condition observations.
 //!
-//! The evaluator performs no probe I/O. It samples dependency health first and
-//! lifecycle second, so a lifecycle transition observed during the decision
-//! overrides an earlier dependency result. HTTP status and telemetry severity
-//! remain adapter policy.
+//! The evaluator performs no probe I/O. It samples configured dependency health first,
+//! then any application conditions, and lifecycle last, so a lifecycle
+//! transition observed during the decision overrides an earlier dependency or
+//! condition result. Application conditions can only narrow readiness. HTTP
+//! status and telemetry severity remain adapter policy.
 
 use crate::{
     health::{DependencyReadiness, DependencyUnreadyReason, HealthReader},
     lifecycle::{LifecycleStatus, Readiness as LifecycleReadiness},
+    validation,
 };
+use std::{convert::Infallible, sync::Arc};
 
 /// A complete point-in-time process-readiness decision.
 ///
@@ -16,7 +20,8 @@ use crate::{
 /// API release and review of every adapter's response policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadinessDecision {
-    /// Lifecycle and dependency observations both establish readiness.
+    /// Lifecycle and any configured dependency establish readiness, and
+    /// every application condition is satisfied.
     Ready,
     /// The process is not ready for the contained reason.
     Unready(ReadinessUnreadyReason),
@@ -42,7 +47,9 @@ impl ReadinessDecision {
 /// Intentionally exhaustive: new reason variants require a compatible API
 /// release and review of consumers' readiness policy. A dependency reason can
 /// contain only [`DependencyUnreadyReason`]; a healthy observation has no such
-/// representation.
+/// representation. A condition reason contains only the validated name of an
+/// application condition, and is decided only while lifecycle and dependency
+/// health, when configured, are both ready.
 ///
 /// ```compile_fail,E0308
 /// use batter_core::{
@@ -62,14 +69,61 @@ pub enum ReadinessUnreadyReason {
     Stopped,
     /// Lifecycle is Ready, but dependency health does not establish readiness.
     Dependency(DependencyUnreadyReason),
+    /// Lifecycle and dependency health are Ready, but this application
+    /// condition is not satisfied.
+    Condition(ReadinessCondition),
 }
 
-/// Read-only lifecycle and dependency readiness evaluation.
+/// Validated name of an application readiness condition.
 ///
-/// Reads never invoke the probe, refresh a timestamp, retain writer ownership,
-/// or mutate lifecycle state. Dependency health is sampled before lifecycle so
-/// an observed drain overrides cached success. This is a point-in-time decision,
-/// not atomic with a later transition.
+/// A name is 1–96 ASCII alphanumeric, `.`, `_` or `-` bytes, like a registered
+/// component name, so an unsatisfied condition can be matched and rendered
+/// without cause data. [`ReadinessEvaluator::with_condition`] attaches its
+/// check, and an unsatisfied check reports the name in
+/// [`ReadinessUnreadyReason::Condition`].
+///
+/// ```
+/// use batter_core::readiness::{ReadinessCondition, ReadinessConditionError};
+///
+/// let leases = ReadinessCondition::new("key-leases")?;
+/// assert_eq!(leases.as_str(), "key-leases");
+/// assert_eq!(
+///     ReadinessCondition::new("key leases"),
+///     Err(ReadinessConditionError::InvalidName),
+/// );
+/// # Ok::<(), ReadinessConditionError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadinessCondition(&'static str);
+
+impl ReadinessCondition {
+    /// Validate a condition name. A rejected name is not retained.
+    pub fn new(name: &'static str) -> Result<Self, ReadinessConditionError> {
+        validation::name(name).map_err(|_| ReadinessConditionError::InvalidName)?;
+        Ok(Self(name))
+    }
+
+    /// Return the validated name.
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// Sanitized failure to name a [`ReadinessCondition`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ReadinessConditionError {
+    /// Names must be 1–96 ASCII alphanumeric, dot, underscore, or hyphen bytes.
+    #[error("invalid readiness condition name")]
+    InvalidName,
+}
+
+/// Read-only lifecycle, optional dependency and application-condition readiness evaluation.
+///
+/// Reads never invoke the dependency probe, refresh a timestamp, retain writer
+/// ownership, or mutate lifecycle state. Configured dependency health is sampled first,
+/// application conditions next and lifecycle last, so an observed drain
+/// overrides cached success. This is a point-in-time decision, not atomic with
+/// a later transition.
 ///
 /// ```
 /// use batter_core::{
@@ -91,7 +145,15 @@ pub enum ReadinessUnreadyReason {
 /// ```
 pub struct ReadinessEvaluator<E> {
     lifecycle: LifecycleStatus,
-    dependency: HealthReader<E>,
+    dependency: Option<HealthReader<E>>,
+    conditions: Arc<[Condition]>,
+}
+
+/// One application check and the name that reports it.
+#[derive(Clone)]
+struct Condition {
+    name: ReadinessCondition,
+    satisfied: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl<E> Clone for ReadinessEvaluator<E> {
@@ -99,6 +161,34 @@ impl<E> Clone for ReadinessEvaluator<E> {
         Self {
             lifecycle: self.lifecycle.clone(),
             dependency: self.dependency.clone(),
+            conditions: self.conditions.clone(),
+        }
+    }
+}
+
+impl ReadinessEvaluator<Infallible> {
+    /// Observe lifecycle and application conditions without a dependency monitor.
+    ///
+    /// Select this when the application has no continuous dependency probe.
+    /// It makes no claim about remote connectivity. Conditions still only
+    /// narrow readiness and run before the final lifecycle read. No monitor,
+    /// writer, probe task or freshness window is created.
+    ///
+    /// ```
+    /// use batter_core::{lifecycle::ShutdownHandle, readiness::ReadinessEvaluator};
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// let readiness = ReadinessEvaluator::lifecycle_only(control.status());
+    /// assert!(!readiness.decision().is_ready());
+    /// approval.approve();
+    /// assert!(readiness.decision().is_ready());
+    /// control.request();
+    /// assert!(!readiness.decision().is_ready());
+    /// ```
+    pub fn lifecycle_only(lifecycle: LifecycleStatus) -> Self {
+        Self {
+            lifecycle,
+            dependency: None,
+            conditions: Arc::new([]),
         }
     }
 }
@@ -108,40 +198,155 @@ impl<E> ReadinessEvaluator<E> {
     pub fn new(lifecycle: LifecycleStatus, dependency: HealthReader<E>) -> Self {
         Self {
             lifecycle,
+            dependency: Some(dependency),
+            conditions: Arc::new([]),
+        }
+    }
+
+    /// Narrow readiness with an application condition.
+    ///
+    /// `satisfied` returns whether the condition currently holds. It runs
+    /// synchronously within [`Self::decision`], only after the dependency sample
+    /// establishes readiness (or no dependency is configured) and before the final lifecycle read, so it must
+    /// read already-available state without blocking or performing I/O. A
+    /// condition can only narrow readiness: while it is unsatisfied, a decision
+    /// that would otherwise be [`ReadinessDecision::Ready`] is
+    /// `Unready(ReadinessUnreadyReason::Condition(condition))`. It is not asked
+    /// while the dependency is unready, cannot replace a lifecycle or dependency
+    /// reason, and returns nothing that could establish readiness. Conditions
+    /// accumulate and are checked in the order added; the first unsatisfied one
+    /// is reported and later checks do not run. Checks added under one name
+    /// report the same condition.
+    ///
+    /// ```
+    /// use batter_core::{
+    ///     health::{HealthMonitor, HealthPolicy},
+    ///     lifecycle::ShutdownHandle,
+    ///     readiness::{
+    ///         ReadinessCondition, ReadinessDecision, ReadinessEvaluator, ReadinessUnreadyReason,
+    ///     },
+    /// };
+    /// use std::{
+    ///     convert::Infallible,
+    ///     sync::{Arc, atomic::{AtomicBool, Ordering}},
+    ///     time::Duration,
+    /// };
+    ///
+    /// let second = Duration::from_secs(1);
+    /// let policy = HealthPolicy::new(second, second, second * 3, second).unwrap();
+    /// let monitor = HealthMonitor::new(policy, || async { Ok::<_, Infallible>(()) });
+    /// let control = ShutdownHandle::new_unapproved();
+    /// let leases_valid = Arc::new(AtomicBool::new(false));
+    /// let checked = leases_valid.clone();
+    /// let evaluator = ReadinessEvaluator::new(control.status(), monitor.reader())
+    ///     .with_condition(ReadinessCondition::new("key-leases")?, move || {
+    ///         checked.load(Ordering::Acquire)
+    ///     });
+    /// // A condition cannot replace a lifecycle reason, whether or not it holds.
+    /// for valid in [false, true] {
+    ///     leases_valid.store(valid, Ordering::Release);
+    ///     assert_eq!(
+    ///         evaluator.decision(),
+    ///         ReadinessDecision::Unready(ReadinessUnreadyReason::Starting),
+    ///     );
+    /// }
+    /// # Ok::<(), batter_core::readiness::ReadinessConditionError>(())
+    /// ```
+    ///
+    /// A check reports only whether its condition holds; it cannot return a
+    /// decision:
+    ///
+    /// ```compile_fail,E0308
+    /// use batter_core::readiness::{ReadinessCondition, ReadinessDecision, ReadinessEvaluator};
+    ///
+    /// fn forced(evaluator: ReadinessEvaluator<std::io::Error>, name: ReadinessCondition) {
+    ///     let _ = evaluator.with_condition(name, || ReadinessDecision::Ready);
+    /// }
+    /// ```
+    pub fn with_condition<F>(self, condition: ReadinessCondition, satisfied: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        let Self {
+            lifecycle,
             dependency,
+            conditions,
+        } = self;
+        let conditions = conditions
+            .iter()
+            .cloned()
+            .chain([Condition {
+                name: condition,
+                satisfied: Arc::new(satisfied),
+            }])
+            .collect();
+        Self {
+            lifecycle,
+            dependency,
+            conditions,
         }
     }
 
     /// Obtain a fresh read-only decision without invoking the dependency probe.
     pub fn decision(&self) -> ReadinessDecision {
         sample_and_classify(
-            || self.dependency.snapshot().readiness(),
+            || {
+                let dependency = self
+                    .dependency
+                    .as_ref()
+                    .map_or(DependencyReadiness::Ready, |reader| {
+                        reader.snapshot().readiness()
+                    });
+                observe(dependency, &self.conditions)
+            },
             || self.lifecycle.readiness(),
         )
     }
 }
 
-fn sample_and_classify<D, L>(dependency: D, lifecycle: L) -> ReadinessDecision
-where
-    D: FnOnce() -> DependencyReadiness,
-    L: FnOnce() -> LifecycleReadiness,
-{
-    let dependency = dependency();
-    classify(lifecycle(), dependency)
+/// What dependency health and application conditions establish before the
+/// final lifecycle read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Observed {
+    Ready,
+    Dependency(DependencyUnreadyReason),
+    Condition(ReadinessCondition),
 }
 
-const fn classify(
-    lifecycle: LifecycleReadiness,
-    dependency: DependencyReadiness,
-) -> ReadinessDecision {
+/// Ask application conditions, in order, only when the dependency is ready.
+fn observe(dependency: DependencyReadiness, conditions: &[Condition]) -> Observed {
+    match dependency {
+        DependencyReadiness::Unready(reason) => Observed::Dependency(reason),
+        DependencyReadiness::Ready => conditions
+            .iter()
+            .find(|condition| !(condition.satisfied)())
+            .map_or(Observed::Ready, |condition| {
+                Observed::Condition(condition.name)
+            }),
+    }
+}
+
+fn sample_and_classify<O, L>(observe: O, lifecycle: L) -> ReadinessDecision
+where
+    O: FnOnce() -> Observed,
+    L: FnOnce() -> LifecycleReadiness,
+{
+    let observed = observe();
+    classify(lifecycle(), observed)
+}
+
+const fn classify(lifecycle: LifecycleReadiness, observed: Observed) -> ReadinessDecision {
     match lifecycle {
         LifecycleReadiness::Starting => {
             ReadinessDecision::Unready(ReadinessUnreadyReason::Starting)
         }
-        LifecycleReadiness::Ready => match dependency {
-            DependencyReadiness::Ready => ReadinessDecision::Ready,
-            DependencyReadiness::Unready(reason) => {
+        LifecycleReadiness::Ready => match observed {
+            Observed::Ready => ReadinessDecision::Ready,
+            Observed::Dependency(reason) => {
                 ReadinessDecision::Unready(ReadinessUnreadyReason::Dependency(reason))
+            }
+            Observed::Condition(condition) => {
+                ReadinessDecision::Unready(ReadinessUnreadyReason::Condition(condition))
             }
         },
         LifecycleReadiness::Draining => {
@@ -152,99 +357,4 @@ const fn classify(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::health::HealthStatus;
-    use std::cell::Cell;
-
-    #[test]
-    fn dependency_is_sampled_before_lifecycle_and_lifecycle_wins() {
-        let next = Cell::new(0);
-        let decision = sample_and_classify(
-            || {
-                assert_eq!(next.get(), 0);
-                next.set(1);
-                DependencyReadiness::Ready
-            },
-            || {
-                assert_eq!(next.get(), 1);
-                next.set(2);
-                LifecycleReadiness::Draining
-            },
-        );
-
-        assert_eq!(next.get(), 2);
-        assert_eq!(
-            decision,
-            ReadinessDecision::Unready(ReadinessUnreadyReason::Draining)
-        );
-    }
-
-    #[test]
-    fn every_lifecycle_and_health_state_has_an_explicit_decision() {
-        let dependencies = [
-            (
-                HealthStatus::Unknown,
-                DependencyReadiness::Unready(DependencyUnreadyReason::Unknown),
-            ),
-            (HealthStatus::Healthy, DependencyReadiness::Ready),
-            (
-                HealthStatus::Failed,
-                DependencyReadiness::Unready(DependencyUnreadyReason::ProbeFailed),
-            ),
-            (
-                HealthStatus::TimedOut,
-                DependencyReadiness::Unready(DependencyUnreadyReason::ProbeTimedOut),
-            ),
-            (
-                HealthStatus::Stale,
-                DependencyReadiness::Unready(DependencyUnreadyReason::Stale),
-            ),
-            (
-                HealthStatus::Stopped,
-                DependencyReadiness::Unready(DependencyUnreadyReason::WriterStopped),
-            ),
-        ];
-
-        for (status, dependency) in dependencies {
-            assert_eq!(status.readiness(), dependency);
-            assert_eq!(
-                classify(LifecycleReadiness::Starting, dependency),
-                ReadinessDecision::Unready(ReadinessUnreadyReason::Starting),
-            );
-            assert_eq!(
-                classify(LifecycleReadiness::Draining, dependency),
-                ReadinessDecision::Unready(ReadinessUnreadyReason::Draining),
-            );
-            assert_eq!(
-                classify(LifecycleReadiness::Stopped, dependency),
-                ReadinessDecision::Unready(ReadinessUnreadyReason::Stopped),
-            );
-
-            let expected = match dependency {
-                DependencyReadiness::Ready => ReadinessDecision::Ready,
-                DependencyReadiness::Unready(reason) => {
-                    ReadinessDecision::Unready(ReadinessUnreadyReason::Dependency(reason))
-                }
-            };
-            assert_eq!(classify(LifecycleReadiness::Ready, dependency), expected);
-        }
-    }
-
-    #[test]
-    fn decision_observation_preserves_ready_and_unready_structure() {
-        assert!(ReadinessDecision::Ready.is_ready());
-        assert_eq!(ReadinessDecision::Ready.unready_reason(), None);
-
-        let decision = ReadinessDecision::Unready(ReadinessUnreadyReason::Dependency(
-            DependencyUnreadyReason::ProbeFailed,
-        ));
-        assert!(!decision.is_ready());
-        assert_eq!(
-            decision.unready_reason(),
-            Some(ReadinessUnreadyReason::Dependency(
-                DependencyUnreadyReason::ProbeFailed
-            )),
-        );
-    }
-}
+mod tests;

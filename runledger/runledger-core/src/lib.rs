@@ -93,11 +93,11 @@ pub mod prelude {
 
     pub use crate::jobs::{
         ExecutionHandlerAdapter, IdentifierValidationError, JobCompletion,
-        JobCompletionDisposition, JobContext, JobDeadLetterInfo, JobDeadLetterReason, JobEventType,
-        JobExecution, JobExecutionError, JobExecutionHandler, JobExecutionServices,
-        JobExecutionUpdate, JobFailure, JobFailureKind, JobHandler, JobHandlerRegistry,
-        JobProgressValidationError, JobRetryTiming, JobStage, JobStatus, JobType, JobTypeName,
-        StepKey, StepKeyName, WorkflowBuildError, WorkflowDagBuilder,
+        JobCompletionDisposition, JobContext, JobDeadLetterInfo, JobDeadLetterOrigin,
+        JobDeadLetterReason, JobEventType, JobExecution, JobExecutionError, JobExecutionHandler,
+        JobExecutionServices, JobExecutionUpdate, JobFailure, JobFailureKind, JobHandler,
+        JobHandlerRegistry, JobProgressValidationError, JobRetryTiming, JobStage, JobStatus,
+        JobType, JobTypeName, StepKey, StepKeyName, WorkflowBuildError, WorkflowDagBuilder,
         WorkflowDagDependencyValidationInput, WorkflowDagStepValidationInput,
         WorkflowDagValidationError, WorkflowDependencyReleaseMode, WorkflowJobStepExecution,
         WorkflowRunEnqueue, WorkflowRunEnqueueBuilder, WorkflowRunStatus,

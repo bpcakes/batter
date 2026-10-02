@@ -55,10 +55,10 @@ fn settings(owner: &str, token: &str, extra: &[(&str, &str)]) -> ServingSettings
     .expect("live settings are valid")
 }
 
-fn app(
+async fn app(
     settings: &ServingSettings,
     pool: runledger_postgres::RunledgerDatabase,
-) -> InProcessRequestClient {
+) -> TestResult<InProcessRequestClient> {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let second = std::time::Duration::from_secs(1);
@@ -72,13 +72,14 @@ fn app(
         .unwrap(),
         || async { Ok::<_, std::convert::Infallible>(()) },
     );
-    in_process_client(
+    Ok(in_process_client(
         settings.prepare_http(),
         handle.status(),
         handle.operation_admission(),
         pool,
         monitor.reader(),
     )
+    .await?)
 }
 
 struct RawResponse {
@@ -175,8 +176,8 @@ async fn prepare_commands(pool: PgPool) -> TestResult<CommandFixture> {
     .bind(owner_b)
     .execute(&pool)
     .await?;
-    let app_a = app(&settings(OWNER_A, TOKEN_A, &[]), database.clone());
-    let app_b = app(&settings(OWNER_B, TOKEN_B, &[]), database);
+    let app_a = app(&settings(OWNER_A, TOKEN_A, &[]), database.clone()).await?;
+    let app_b = app(&settings(OWNER_B, TOKEN_B, &[]), database).await?;
     Ok(CommandFixture {
         pool,
         app_a,
@@ -528,7 +529,7 @@ async fn assert_pool_timeout(options: PgConnectOptions, missing: &str) -> TestRe
     )?;
     let pool_timeout = database.pool();
     let held = pool_timeout.acquire().await?;
-    let pool_timeout_app = app(&pool_timeout_settings, database.clone());
+    let pool_timeout_app = app(&pool_timeout_settings, database.clone()).await?;
     let outcome = failure_code(&pool_timeout_app, missing, TOKEN_A).await?;
     assert_eq!(
         outcome,
@@ -558,7 +559,7 @@ async fn assert_request_deadline(options: PgConnectOptions, missing: &str) -> Te
     )?;
     let deadline_pool = database.pool();
     let held = deadline_pool.acquire().await?;
-    let deadline_app = app(&deadline_settings, database.clone());
+    let deadline_app = app(&deadline_settings, database.clone()).await?;
     let outcome = failure_code(&deadline_app, missing, TOKEN_A).await?;
     assert_eq!(
         outcome,
@@ -589,7 +590,7 @@ async fn assert_bulkhead(options: PgConnectOptions, missing: &str) -> TestResult
     )?;
     let bulkhead_pool = database.pool();
     let held = bulkhead_pool.acquire().await?;
-    let bulkhead_app = app(&bulkhead_settings, database.clone());
+    let bulkhead_app = app(&bulkhead_settings, database.clone()).await?;
     let mut first = Box::pin(envelope_request(
         &bulkhead_app,
         Method::GET,

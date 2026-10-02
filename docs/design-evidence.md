@@ -30,6 +30,120 @@ not test an application's behavior; a passing test with a lossy oracle cannot
 establish a contract it never asserted. A matching revision/fingerprint improves
 attribution, but does not turn a reviewer concern into a reproduced failure.
 
+## Executed downstream consumer evidence for the canonical HTTP path
+
+On 2026-09-30 a fresh implementation agent ported one real HTTP surface from each
+of two independent downstream consumers onto `HttpBoundary` at the revision then
+under review, before `batter-tc9w.2` seals public composition (`batter-tc9w.9`).
+The work happened only in disposable copies made from each consumer's
+committed revision and then modified for the port; neither consumer repository
+was modified. Their identities, paths and patches stay outside this repository,
+as for the 2026-09-08 retrospective above.
+
+Both surfaces are real application boundaries, not invented examples: generated
+OpenAPI routers, application-rendered probe bodies, operator-configured browser
+response policy, shared error envelopes, per-process client admission, direct-peer
+metadata and, in one consumer, native TLS serving. Both ports used only the
+canonical API — route groups, probe renderers, the typed extractor, generic
+listeners and admitted routers — and both ended with no direct
+`operational_http`, `request_admission` or `register_http_*` use in the ported
+surface. Each consumer's separately deployed second surface was left un-ported
+and keeps those calls; that is task scope, not a library gap.
+
+Two results are worth keeping as design evidence rather than as delivery notes.
+
+The generic-listener registration removed a whole hand-written component. One
+consumer had rebuilt registration, startup acknowledgement, graceful drain and
+cleanup around `axum::serve` because the adapter accepted only a TCP listener;
+after the port its listener passes straight to
+`AssembledHttp::register_with_connect_info_in`, and its own TLS test — verified
+peer, an idle half-open handshake that does not block drain, plaintext refused,
+checked shutdown — still passes. Deriving each admitted router's `RouteInventory`
+from the document its generated router produces also kept the declared inventory
+from drifting from the generated composition, and left both generated public
+OpenAPI documents unchanged. This does not establish behavioral compatibility.
+
+At that revision, two gaps were found and filed, each blocking `batter-tc9w.2`
+with a reproducer: the canonical boundary kept the default route group's fallback inside that
+group's admission and offered no renderer for it outside admission the way it does
+for probes, so an unmatched path could not keep the application's status, envelope or
+group response policy in every lifecycle state
+(`batter-http-boundary-fallback-placement-4oxv`); and `ReadinessPolicy` could not be
+constructed without a dependency `HealthReader`, which had no constructor outside
+`HealthMonitor`, so a process whose readiness is the lifecycle plus its own
+conditions had to invent and supervise a no-op dependency monitor to reach the
+canonical readiness probe at all
+(`batter-readiness-without-dependency-monitor-w4hk`). The second is the caller
+obligation [ADR-010](adr/010-agent-only-consumption.md) names; the first made
+two original lifecycle assertions in consumer A and one original header-policy
+assertion in consumer B fail. B's unknown-route envelope test runs after
+readiness approval and supplies no Starting/Draining fallback evidence.
+The initial evaluation was not authorized to repair either API gap. The user
+subsequently expanded scope to implement both and repair the disposable
+consumer fixture, while keeping the original acceptance criteria.
+
+The final evidence review distinguished in-process router checks from socket
+serving. Consumer A's initially skipped database-readiness test and production
+socket/signal-shutdown test were then executed in its disposable copy; both
+passed, including pool saturation/recovery and explicit cleanup. The earlier
+73-test credential/project suite and consumer B's TLS test also passed.
+Other gated tests remain unexecuted; the owning Bead records the limits.
+
+At the end of the initial evaluation, consumer A's two fallback tests and
+consumer B's fallback-header test passed only after their original assertions
+were changed to characterize the regressions. Those green reruns did not prove
+the original contracts. Consumer B's database HTTP suite originally reported
+25 passes and six initialization failures in both the repinned baseline and the
+characterized port. Follow-up source inspection and controlled execution traced
+those failures to a consumer test fixture: a process-wide cache shares one
+revocable key lease, an earlier test revokes it, and later scenarios reuse it.
+In both copies, an ordered subset reproduced the revoking test's pass followed
+by five initialization failures; each of the six originally failing cases then
+passed unchanged in its own process and disposable database (12 isolated
+passes total). The sixth uses the same cached-lease initialization path. This
+supports a fixture-isolation diagnosis, not the previously asserted
+environmental cause. No application or test code was repaired during that diagnosis, and isolated
+passes did not make the original combined suite green.
+
+Those diagnostic checks used a private, blob-verified archive of Batter revision
+`e24f483c99a6b795fd6f975318fa6de41ab76ead`, preserving the original comparison
+after this branch incorporated newer upstream code.
+
+The authorized repair adds `HttpBoundary::with_rendered_fallback`, which renders
+only unmatched paths outside admission and inside correlation/observation.
+It rejects a second renderer or combination with a guarded root/nested fallback;
+matched routes, method fallbacks and inventory/probe/group validation retain
+their protection. The application selects its envelope and prefix headers with
+`PrivateResponsePolicy::apply`. `ReadinessEvaluator::lifecycle_only` and
+`ReadinessPolicy::lifecycle_only` create no monitor, retain narrowing conditions
+and sample lifecycle last. Selecting whether a continuous dependency exists is
+application policy, not a claim of remote health.
+
+The repair agent updated the existing disposable ports to consume those APIs,
+removed consumer B's inert monitor and restored the original fallback
+assertions. Consumer B's fixture now loads stable synthetic material into a
+fresh revocable capability per scenario. Its revocation test is unchanged;
+mutable authority is no longer shared between scenarios. This repairs the
+consumer test fixture, not its production key policy. The original repositories
+remain outside the mutation scope. No new independent fresh-agent port of the
+repaired API is claimed.
+
+The repaired source has passed consumer A's 63 ordinary HTTP/common/process/test
+support checks (220 ignored there), its database-readiness test, and its real
+production socket/signal cleanup test. Consumer B's normal workspace checks
+passed 230 tests (277 ignored), including canonical TLS serving and the new
+fixture-isolation regression; all 31 original database HTTP tests then passed
+together, unchanged apart from boundary assembly and the fixture setup. The
+fallback-header assertion again runs through the original asserting helper,
+and all six formerly failing cases pass in that combined run. Its owned
+PostgreSQL 18 container was checked removed. These runs use the repaired
+Batter source including the upstream merge, not the earlier pinned archive.
+Consumer A's 73-test credential/project suite also passed and its owned
+fixture cleanup completed. The complete pinned `bash scripts/verify.sh` passed on Rust 1.98.1/Linux
+x86_64, including all six matrix parts, rustdoc and five HTTP smoke profiles.
+The owning Bead records exact review/source revisions. Other gated consumer tests remain unexecuted. No
+claim of complete downstream compatibility or hosted CI execution follows.
+
 ## What changed in the implemented foundation
 
 The re-audit inspected the four commits after `e5f2f04`, including the actual
@@ -59,11 +173,14 @@ and live PostgreSQL execution remain unverified in that record. The re-audit
 conclusions use inspected source and recorded evidence; checks for this planning
 change are recorded separately in its Jig session.
 
-Core operation, retry and semaphore admission production files are unchanged in
-this commit range. The SQLx demonstration still acquires a pool, probes it and
+Core operation, retry and semaphore admission production files were unchanged in
+the re-audited range; the later opt-in metrics work added observation hooks to
+them without changing their results. The SQLx demonstration still acquires a pool, probes it and
 explicitly tears it down. Runledger, Runlimit, typed application config, generated
-contracts, durable correlation and a metrics/exporter recipe remain outside the
-implemented capabilities. See [status](status.md) and [integrations](integrations.md).
+contracts, durable correlation and an exporter setup/flush recipe remained outside
+the implemented capabilities in that audit; bounded outcome metrics are an opt-in foundation
+feature. The reference application later added an opt-in exporter setup and
+ordered-flush recipe (`batter-8jr`). See [status](status.md) and [integrations](integrations.md).
 
 ## Failure mechanisms and ownership decisions
 

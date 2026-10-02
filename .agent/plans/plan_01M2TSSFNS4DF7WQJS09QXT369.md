@@ -1,1 +1,0 @@
-Owning Bead: latest Runlimit adapter pin task. Adapt native denial and retry handling, keep public result metadata, verify focused failure paths and both toolchains, then update source-backed contracts and validation evidence.

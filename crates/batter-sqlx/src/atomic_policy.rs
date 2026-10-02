@@ -3,7 +3,7 @@ mod context;
 mod fast;
 use crate::{
     PgAtomicError, PgAtomicScope, PgAtomicUncertainty, PgScopeError, PgScopeFailure, PgScopeLoss,
-    PgScopedSql, PgSessionProfile, PgTransactionError, run_atomic, run_atomic_profiled,
+    PgScopedSql, PgSessionProfile, PgTransactionError, atomic_runner::atomic,
 };
 pub use context::{
     run_atomic_fail_fast_with_in, run_atomic_profiled_fail_fast_with_in,
@@ -74,7 +74,7 @@ pub trait PgFailurePolicy<T> {
 
 /// Run an atomic workflow with its consumer error type selected by `policy`.
 ///
-/// Uses the same state machine and disposition guarantees as [`run_atomic`].
+/// Uses the same state machine and disposition guarantees as [`crate::run_atomic`].
 /// The policy cannot restore a poisoned owner or release uncommitted output as
 /// success. Scope closures infer `P::Error`, including with native SQLx `?`.
 /// See [`PgFailurePolicy`] for required uncertainty handling.
@@ -111,17 +111,11 @@ pub async fn run_atomic_with<T, P: PgFailurePolicy<T>>(
     policy: &P,
     work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
 ) -> Result<T, P::Error> {
-    resolve(
-        policy,
-        run_atomic(pool, async |inner| {
-            work(PgPolicyScope::new(inner, policy)).await
-        })
-        .await,
-    )
+    Box::pin(with(pool, None, policy, work)).await
 }
 
 /// Profiled counterpart of [`run_atomic_with`]. Setup and revalidation use the
-/// declared profile, with the same guarantees as [`run_atomic_profiled`].
+/// declared profile, with the same guarantees as [`crate::run_atomic_profiled`].
 ///
 /// ```no_run
 /// async fn append<P: batter_sqlx::PgFailurePolicy<i64>>(
@@ -145,9 +139,19 @@ pub async fn run_atomic_profiled_with<T, P: PgFailurePolicy<T>>(
     policy: &P,
     work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
 ) -> Result<T, P::Error> {
+    Box::pin(with(pool, Some(profile), policy, work)).await
+}
+
+// Unboxed policy workflow; each public entry point erases it exactly once.
+async fn with<T, P: PgFailurePolicy<T>>(
+    pool: &PgPool,
+    profile: Option<&PgSessionProfile>,
+    policy: &P,
+    work: impl AsyncFnOnce(PgPolicyScope<'_, T, P>) -> Result<T, P::Error>,
+) -> Result<T, P::Error> {
     resolve(
         policy,
-        run_atomic_profiled(pool, profile, async |inner| {
+        atomic(pool, profile, async |inner| {
             work(PgPolicyScope::new(inner, policy)).await
         })
         .await,

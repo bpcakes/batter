@@ -19,6 +19,7 @@ workspace = true
 batter-core.workspace = true
 axum.workspace = true
 cookie.workspace = true
+pin-project-lite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["time", "net"] }
 tracing.workspace = true
@@ -28,5 +29,10 @@ url.workspace = true
 
 [dev-dependencies]
 http-body.workspace = true
+# Test-only TLS material and transport. Batter owns no certificate, provider or
+# handshake policy; these prove the generic listener contract end to end.
+rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros", "signal", "net", "io-util"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
