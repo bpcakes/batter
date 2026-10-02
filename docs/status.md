@@ -1,5 +1,11 @@
 # Implementation status
 
+PR #21 refresh (`batter-r5yi`): the minimal-feature core pass uses nextest
+0.9.130 or newer with 16 workers and no retries. Native PostgreSQL fixtures
+use bounded 2 GiB tmpfs with unchanged durability settings and lifecycle
+controls. Verification uses the current direct `scripts/verify.sh` workflow;
+the previous Jig plan and receipt evidence remains historical.
+
 2026-09-30 reference executable build race repair (`batter-oq21`): the `workspace`
 matrix part no longer runs the all-feature workspace tests in the same batch as
 the default-feature reference configuration tests. Both uplift

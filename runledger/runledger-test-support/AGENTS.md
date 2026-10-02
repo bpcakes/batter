@@ -17,6 +17,10 @@ Preserve Unix process semantics, optional reaper failure behavior, awaited nativ
 cleanup, migration-copy equality and PostgreSQL 18 prerequisites. Missing Docker
 is a test failure. This package must not become a production dependency of the
 Batter foundation or facade.
+Owned disposable PostgreSQL data lives on a bounded 2 GiB tmpfs mount under
+`/var/lib/postgresql`; normal WAL/fsync settings remain enabled. Preserve the
+mount/settings assertions and process-exit controls. External servers are
+unmodified. These fixtures provide no disk-durability or restart-persistence evidence.
 
 ## Common commands
 From the root: `cargo test -p runledger-test-support --locked` and

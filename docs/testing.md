@@ -2649,3 +2649,38 @@ only prune unused packages. `python3 -m unittest discover -s scripts -p
 test_runlimit_consumer.py -v` executes independent graph, completion and asset-copy
 failure controls. Both commands are part of the bounded root test matrix. The same
 checker can run from an extracted source ZIP; it does not inspect Git history.
+
+## Core runner and disposable PostgreSQL storage
+
+The test matrix requires cargo-nextest 0.9.130 or newer. Install the verified
+release with `cargo install cargo-nextest --locked --version 0.9.130`; Linux CI
+downloads that exact release with a pinned, checksum-verifying installer,
+avoiding an extra tool compilation. The no-default-feature target checks the
+prerequisite before launching its batch. Its core pass uses nextest's `gate` profile:
+16 workers, no retries, and all selected tests run even after a failure. Doctests
+remain on Cargo. The full all-feature workspace pass also retains Cargo because
+native Runledger tests share a PostgreSQL server and connection budget within
+each test binary. Nextest's per-test processes would defeat that sharing.
+
+Native disposable PostgreSQL containers now put `/var/lib/postgresql` on a
+2 GiB tmpfs mount. Each test still creates its own database and executes its
+migrations; server ownership and the process-death reaper are unchanged.
+PostgreSQL's fsync, synchronous commit and full-page writes remain enabled.
+Lifecycle probes check those settings, the data path, the mount limit and cleanup
+after normal and forced process exit. External administrative URLs are unchanged;
+they do not get this storage optimization. The separate delayed-startup probe
+retains ordinary storage. Tmpfs is ephemeral across container stops and uses
+memory in the Docker Linux host/VM; these tests do not establish disk durability.
+
+On the 64-CPU Linux development host with Rust 1.98.1, the same 372 core tests
+took 29.06 s with Cargo and 13.59 s with nextest (16 workers). Against PostgreSQL
+18.6, identical prebuilt binaries on ordinary storage versus tmpfs took 7.17/3.60 s
+for migrations, 17.96/7.27 s for enqueue intents, and 15.22/2.49 s for catalog
+tests. These are single-run measurements on a shared development host, excluding
+compilation for the database samples; macOS performance remains unverified.
+The complete seven-target Jig profile subsequently passed in 366.74 s, with
+350.30 s spent in the test matrix. The preceding round's complete profile took
+812.94 s; these end-to-end observations include different rebuild costs and
+shared-host activity, so they are not a controlled estimate of storage speedup.
+See [primary sources](references.md#test-runner-and-disposable-postgresql-storage-2026-09-24).
+

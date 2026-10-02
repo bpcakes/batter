@@ -123,6 +123,11 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-jig-runtime-${{ hashFiles('.jig.toml', '.agent/jig-contract.json', 'rust-toolchain.toml', 'scripts/jig', 'scripts/install-jig.sh', '.github/workflows/repo-policy.yml') }}
       - name: Verify Docker prerequisite for native PostgreSQL 18 tests
         run: docker info
+      - name: Install the verified nextest release
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        with:
+          tool: nextest@0.9.130
+          fallback: none
       - name: Verify locked workspace
         shell: bash
         run: bash scripts/verify.sh
