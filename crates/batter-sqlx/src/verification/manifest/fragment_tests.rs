@@ -1,5 +1,7 @@
 use super::*;
-use crate::verification::{DiscoveryScope, FragmentObjectPolicy, PublicObject};
+use crate::verification::{
+    DiscoveryScope, FragmentObjectPolicy, PublicObject, RoutineSignature, RoutineType,
+};
 
 fn identifier(value: impl Into<String>) -> Identifier {
     Identifier::new(value).unwrap()
@@ -273,4 +275,48 @@ fn permitted_public_delivery_never_widens_another_schema_privilege() {
         .flat_map(|allowance| allowance.privileges.iter().map(|allowed| allowed.privilege))
         .collect::<Vec<_>>();
     assert_eq!(allowances, vec![ObjectPrivilege::Usage]);
+}
+
+#[test]
+fn a_fragment_routine_reaches_the_compiled_policy_and_the_grant_plan() {
+    let signature = RoutineSignature::new(
+        "service",
+        "normalize",
+        [RoutineType::new("pg_catalog", "text").unwrap()],
+    )
+    .unwrap();
+    let compiled = manifest()
+        .with_fragment(
+            GrantFragment::new()
+                .with_routine(
+                    RoutineGrantSpec::new(
+                        signature.clone(),
+                        [ObjectPrivilege::Execute],
+                        DeclarationPurpose::RequiredAndProvisioned,
+                    )
+                    .unwrap()
+                    .allow_security_definer(true),
+                )
+                .unwrap(),
+        )
+        .unwrap()
+        .compile()
+        .unwrap();
+
+    // The declaration has to survive the transfer into the manifest, the
+    // compiler and the renderer, with its exact overload identity and its
+    // definer allowance.
+    let routines = &compiled.authority_policy().routines;
+    assert_eq!(routines.len(), 1);
+    assert_eq!(routines[0].routine, signature);
+    assert!(routines[0].allow_security_definer);
+    assert!(!routines[0].allow_owner);
+    assert_eq!(
+        compiled
+            .grant_plan()
+            .render(&identifier("service_reader"), None)
+            .unwrap(),
+        "GRANT EXECUTE ON ROUTINE \"service\".\"normalize\"(\"pg_catalog\".\"text\") \
+         TO \"service_reader\";\n",
+    );
 }
