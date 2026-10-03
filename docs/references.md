@@ -6,6 +6,53 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL 18 grant semantics for native requirement fragments, 2026-10-03
+
+For `batter-qjxi`, checked the privilege rules that decide what a native
+Runledger or Runlimit operation really needs, then executed each one against
+PostgreSQL **18.6** (`postgres:18` container, Linux x86-64) before encoding it.
+
+Primary sources, rechecked on 2026-10-03:
+
+* [`SELECT`](https://www.postgresql.org/docs/18/sql-select.html) and
+  [`privileges`](https://www.postgresql.org/docs/18/ddl-priv.html): a locking
+  `SELECT` requires `UPDATE` in addition to the `SELECT` requirements. Executed
+  check: with `SELECT (id, tag)` and `UPDATE (tag)` on one relation, both
+  `FOR UPDATE` and `FOR KEY SHARE` succeeded; after revoking `UPDATE (tag)` the
+  same `FOR KEY SHARE` read failed with `42501`. One column is enough, and the
+  column is the implementer's choice, so `UPDATE(id)` on `job_enqueue_intents`
+  and `UPDATE(capacity_shard)` on `runlimit_capacity_shards` are ordinary
+  mutation authority rather than an ACL-enforced lock-only capability.
+* [`LOCK`](https://www.postgresql.org/docs/18/sql-lock.html): lock privileges are
+  relation level. Executed check: `LOCK TABLE ... IN ACCESS SHARE MODE` failed
+  with `42501` under column-level `SELECT` only and succeeded after a
+  relation-level `GRANT SELECT`; `SHARE ROW EXCLUSIVE` and `ROW EXCLUSIVE` both
+  succeeded under relation-level `MAINTAIN` alone. Runledger's full-schema
+  snapshot therefore needs relation-level `SELECT`, and catalog synchronization
+  and scheduled dispatch need relation-level `MAINTAIN` on `job_definitions` and
+  `job_schedules`.
+* [`INSERT`](https://www.postgresql.org/docs/18/sql-insert.html): `ON CONFLICT DO
+  UPDATE` needs `SELECT` on the arbiter columns and on any column read in its
+  expressions. Executed check: `INSERT ... ON CONFLICT (k) DO UPDATE SET a =
+  EXCLUDED.a` failed with `42501` under `SELECT (k)` alone and under `SELECT (a)`
+  alone, and succeeded with both, so `EXCLUDED` references count as reads of the
+  target relation's columns.
+* System columns are not column-ACL addressable. Executed check: `SELECT ctid,
+  tag` failed with `42501` under column-level `SELECT` and succeeded after a
+  relation-level `GRANT SELECT`. Runlimit's bounded fixed-window expiry delete
+  selects `ctid`, so that selection reads every counter column.
+* [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html):
+  creating a trigger needs `EXECUTE` on its function; firing an installed trigger
+  through ordinary DML does not. Executed check: the grant suite revokes all
+  routine privileges from PUBLIC in the native schemas and asserts no serving
+  login or PUBLIC role holds `EXECUTE` on any routine there, while the installed
+  resource-claim and capacity triggers still run.
+
+These are implementation-specific semantics of PostgreSQL 18.6 on Linux. No other
+server version or platform was executed for this task, and a trigger function's
+owner, body safety and application-added trigger dependencies remain explicit
+application prerequisites.
+
 ## Metrics facade 0.24.6: reviewed 2026-09-25
 
 For `batter-6vn`, checked the locked `metrics` 0.24.6 source (`src/recorder/mod.rs`,

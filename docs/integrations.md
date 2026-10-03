@@ -515,6 +515,26 @@ credentials and transaction control. The application supplies the target role,
 the database name only when needed, surrounding transaction text and any global
 PUBLIC-schema policy.
 
+Compose the native Runledger and Runlimit requirements into that manifest with
+`GrantFragment` instead of hand-maintaining their relation, column and privilege
+lists. Build one `FragmentObjectPolicy` per native schema with the application's
+own PUBLIC-delivery, row-type and ownership choices, call
+`batter::runledger::grants::grant_fragment` and
+`batter::runlimit::grants::grant_fragment` with an explicit, non-empty operation
+selection, and add each fragment with `ExactRoleManifest::with_fragment`. The
+manifest keeps every policy a fragment cannot carry: the current-database
+declaration, discovery scope and defaults, role ceilings and the ownership guard.
+Appending consumes the manifest, so a rejected fragment leaves nothing partial to
+compile, and composing overlapping selections renders one deterministic plan.
+Select only the operations the deployment actually invokes: the privileged
+full-schema snapshot, durable intent promotion, catalog synchronization and
+scheduled dispatch are separate selections, and requeue, replay and recovery
+administration, arbitrary reader APIs and history pruning are outside the
+supported contract. Adoption is grant-only: rendered statements cannot remove
+privileges a provisioned role already holds, including any it reaches through
+PUBLIC, so reconcile the existing role separately. See the
+[composition example](../crates/batter/examples/grant_composition.rs).
+
 Use `SqlxMigrationManifest` for an exact or installed-subset SQLx 0.9 ledger and
 `SchemaInspectionPolicy` for the exact stored `search_path` on every definer in
 explicit existing schemas. Unrelated stored settings are accepted only within

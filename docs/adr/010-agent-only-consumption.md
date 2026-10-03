@@ -590,6 +590,72 @@ streaming on an open connection, release of an accept parked in its handshake,
 and release of rejected and abandoned listeners. Fresh-agent usability evaluation
 is proposed and unexecuted.
 
+### Native grant fragment assessment (`batter-qjxi`)
+
+Before this change, an application that wanted least-authority roles for the
+native Runledger and Runlimit stores had to hand-maintain their relation, column
+and privilege lists beside its own declarations. Nothing in the API could reject a
+stale or over-broad list, and two audited consumer shapes had already drifted
+apart. `GrantFragment` moves that knowledge to the library that owns the SQL.
+
+Construction answers the first two questions. `grant_fragment` takes a non-empty
+operation selection and rejects an empty one before any declaration exists, so a
+selection that could never authorize work is not representable as a compiled
+value. A fragment's column group requires that fragment to already declare the
+parent relation, so an application never attaches a parent declaration for a
+native relation and discovery defaults never silently choose that relation's
+ownership, row-type or PUBLIC behavior. Relation and column names are validated
+inside `FragmentObjectPolicy` and always qualified by its schema, so a fragment
+cannot reach an object outside the schema the application named.
+
+Partial state is unrepresentable rather than documented. Every fragment builder
+and `ExactRoleManifest::with_fragment` consume their value and return
+`Result<Self, _>`, so a rejected declaration or a declaration-bound overflow
+yields no partially extended fragment and no manifest to compile. There is no
+`&mut` append that could leave an executable partial grant set, and no second
+compiler or renderer: a fragment reaches the one existing
+`ExactRoleManifest::compile` and `GrantPlan::render`, which already normalize
+duplicate and reordered declarations and reject contradictory purposes, PUBLIC
+choices, row-type options and object/privilege pairs.
+
+Authority is named by behavior, not by role. `RunledgerOperation` and
+`RunlimitOperation` are non-exhaustive enums of operation groups, with no
+administrator preset and no application role name, so a caller cannot ask for
+"all privileges" and cannot accidentally select the privileged full-schema
+snapshot, durable promotion, catalog synchronization or scheduled dispatch while
+asking for intent submission. Every declaration `FragmentObjectPolicy` emits is
+required and provisioned, never permits a grant option, and derives its PUBLIC
+delivery from the exact privileges the application named, so a native producer
+cannot smuggle in an allowance the application did not ask for.
+
+That narrower contract is the policy type's, not the fragment type's. The raw
+`GrantFragment` builders accept any declaration the manifest accepts, including an
+allowed-only ceiling or a permitted grant option, because a library may
+legitimately publish one. Enforcing the stricter shape in `GrantFragment` would
+remove a legitimate use without removing a caller-memory obligation, since the
+declaration a library publishes is already visible in its own source and in the
+frozen privilege oracles. The boundary is therefore documented rather than
+type-enforced: a library that bypasses `FragmentObjectPolicy` keeps whatever
+purpose and grant option it declares, and the native producers do not bypass it.
+
+What remains with the application is explicit and deliberately not implied to be
+stronger. A fragment cannot carry the current-database declaration, discovery
+scope or defaults, role-attribute ceilings or the current-database ownership
+guard, and `FragmentObjectPolicy` makes the application state its PUBLIC
+delivery, row-type and ownership choices rather than inheriting a library
+default. Which operations a deployment runs is application policy; selecting one
+it never invokes provisions authority it does not need, and no local type can
+detect that. The requirements describe this source version's statements: they are
+not evidence that the schema is installed, that a remote effect occurred, or that
+an application's authorization model is correct, and rendering grants cannot
+remove privileges a provisioned role already holds. Required `UPDATE` and
+`DELETE` privileges, including row-locking `UPDATE` columns, remain arbitrary SQL
+authority over those rows, so no payload-secrecy, tenant-isolation, immutable
+identity or history-protection guarantee follows from a narrower column list.
+Installed trigger ownership, routine bodies and application-added trigger
+dependencies stay explicit prerequisites. Fresh agent implementation and
+modification evaluations remain proposed and unexecuted for this API.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

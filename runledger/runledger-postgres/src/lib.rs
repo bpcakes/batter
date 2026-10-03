@@ -335,6 +335,7 @@
 use std::fmt;
 
 mod error;
+pub mod grants;
 pub mod jobs;
 mod migration_identity;
 mod migrations;
