@@ -335,7 +335,6 @@
 use std::fmt;
 
 mod error;
-/// Exact-role grant requirements for this schema version.
 pub mod grants;
 pub mod jobs;
 mod migration_identity;

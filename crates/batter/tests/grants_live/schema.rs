@@ -5,7 +5,6 @@ use super::support::{Fixture, Result, exec, quote};
 use batter::runledger::{PgSessionProfile, RunledgerDatabase};
 use batter::runlimit::postgres::attempts::PostgresAttemptLimiter;
 use batter::runlimit::postgres::{PostgresGcraLimiter, PostgresLimiter};
-use sqlx::PgPool;
 use std::time::Duration;
 
 /// Apply the native schemas as their owner and create the application objects.
@@ -118,14 +117,4 @@ pub(crate) async fn permit_public_application_delivery(fixture: &mut Fixture) ->
         exec(&mut fixture.admin, statement).await?;
     }
     Ok(())
-}
-
-/// Count the rows a privileged owner connection can see, for oracle assertions.
-pub(crate) async fn scalar<T>(pool: &PgPool, sql: String) -> Result<T>
-where
-    T: for<'a> sqlx::Decode<'a, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Send + Unpin,
-{
-    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-        .fetch_one(pool)
-        .await?)
 }

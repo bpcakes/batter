@@ -12,6 +12,7 @@ use batter::runledger::{PgAtomicError, run_atomic};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_scopes() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;

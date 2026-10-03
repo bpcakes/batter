@@ -47,6 +47,7 @@ batter-test-support = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 axum.workspace = true
 runlimit-core = { workspace = true }
 runlimit-memory = { workspace = true }
@@ -88,6 +89,11 @@ required-features = ["sqlx"]
 [[example]]
 name = "verification"
 required-features = ["sqlx"]
+
+[[example]]
+name = "grant_composition"
+test = true
+required-features = ["runledger", "runlimit-postgres"]
 
 [[example]]
 name = "quota_service"

@@ -8,6 +8,25 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Compose native Runledger and Runlimit grant requirements into one exact-role
+  manifest. `batter::sqlx::verification::GrantFragment` carries only object
+  declarations, and `FragmentObjectPolicy` carries the application's explicit
+  schema, PUBLIC-delivery, row-type and ownership choices for the objects a
+  fragment declares; the current-database declaration, discovery scope and
+  defaults, role ceilings and the ownership guard stay on the manifest.
+  `ExactRoleManifest::with_fragment` consumes the manifest, so a rejected
+  fragment or a capacity overflow leaves no partial grant set, and overlapping or
+  reordered selections reach the one existing compiler and renderer as one
+  deterministic plan. `runledger_postgres::grants` and `batter_runlimit::grants`
+  publish this source version's operation-to-object inventory through it, reached
+  as `batter::runledger::grants` and `batter::runlimit::grants`. Selections name
+  operations, never role names, and there is no administrator preset. The
+  inventories are frozen in offline oracles beside pinned native migration
+  identities, and PostgreSQL 18.6 cases provision non-owner, non-superuser logins
+  from the fragments and run both the real native operations and the real
+  forbidden operations under them. Adoption is grant-only: rendered statements
+  cannot remove privileges a provisioned role already holds.
+
 - Reach Runledger and Runlimit through one `batter` dependency. The facade's
   feature bridges now expose every native library package as the native package
   itself: `batter::runledger::native::{core, postgres, runtime}` under

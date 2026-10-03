@@ -63,118 +63,10 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
         require_within_policy(&fixed_pool, &fixed_role).await?;
         require_within_policy(&gcra_pool, &gcra_role).await?;
 
-        // Fixed-window: first insert, counter update, denial, then real expiry
-        // deletion through the capacity ledger's definer triggers.
-        let policy = FixedWindowPolicy::new(
-            PolicyId::new("batter.grants.fixed")?,
-            ScopeId::new("subject")?,
-            2,
-            Duration::from_millis(400),
-        )?;
-        let subject = hasher().hash_for(&policy, "grants-subject");
-        let limiter = PostgresLimiter::new(fixed_pool.clone());
-        for expected in [true, true, false] {
-            let decision = limiter.check(&Check::new(subject.clone())).await?;
-            require(
-                decision.permits_request() == expected,
-                &format!("fixed-window admission returned {decision:?}, expected {expected}"),
-            )?;
-        }
-        require(
-            counter_rows(&fixed_pool, &quotas, "runlimit_fixed_windows").await? == 1,
-            "the fixed-window counter row was not stored",
-        )?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let deleted = limiter.cleanup_expired(16).await?;
-        require(
-            deleted == 1,
-            &format!("fixed-window cleanup deleted {deleted} rows, expected 1"),
-        )?;
+        exercise_fixed_window(&fixed_pool, &quotas).await?;
+        exercise_gcra(&gcra_pool, &quotas).await?;
 
-        // GCRA: first insert, replenishment denial and its own expiry deletion.
-        let gcra_policy = GcraPolicy::new(
-            PolicyId::new("batter.grants.gcra")?,
-            ScopeId::new("subject")?,
-            1,
-            Duration::from_millis(400),
-            1,
-        )?;
-        let gcra_subject = hasher().hash_for(&gcra_policy, "grants-subject");
-        let gcra = PostgresGcraLimiter::new(gcra_pool.clone());
-        require(
-            gcra.check(&Check::new(gcra_subject.clone()))
-                .await?
-                .permits_request(),
-            "the first GCRA request was denied",
-        )?;
-        require(
-            !gcra
-                .check(&Check::new(gcra_subject.clone()))
-                .await?
-                .permits_request(),
-            "an immediate second GCRA request was admitted",
-        )?;
-        require(
-            counter_rows(&gcra_pool, &quotas, "runlimit_gcra").await? == 1,
-            "the GCRA counter row was not stored",
-        )?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let removed = gcra.cleanup_expired(16).await?;
-        require(
-            removed == 1,
-            &format!("GCRA cleanup deleted {removed} rows, expected 1"),
-        )?;
-
-        // Neither family reaches the other's store, the capacity ledgers'
-        // row_count, or the counter-key columns.
-        for (pool, forbidden) in [
-            (
-                &fixed_pool,
-                format!("SELECT 1 FROM {}.runlimit_gcra", quote(&quotas)),
-            ),
-            (
-                &fixed_pool,
-                format!("SELECT 1 FROM {}.runlimit_attempts", quote(&quotas)),
-            ),
-            (
-                &fixed_pool,
-                format!(
-                    "UPDATE {}.runlimit_capacity_shards SET row_count = 0",
-                    quote(&quotas)
-                ),
-            ),
-            (
-                &fixed_pool,
-                format!(
-                    "UPDATE {}.runlimit_fixed_windows SET config_fingerprint = subject_key",
-                    quote(&quotas)
-                ),
-            ),
-            (
-                &fixed_pool,
-                format!("DELETE FROM {}.runlimit_capacity_shards", quote(&quotas)),
-            ),
-            (
-                &gcra_pool,
-                format!("SELECT 1 FROM {}.runlimit_fixed_windows", quote(&quotas)),
-            ),
-            (
-                &gcra_pool,
-                format!(
-                    "UPDATE {}.runlimit_gcra_shards SET row_count = 0",
-                    quote(&quotas)
-                ),
-            ),
-            (
-                &gcra_pool,
-                format!(
-                    "UPDATE {}.runlimit_gcra SET subject_key = config_fingerprint",
-                    quote(&quotas)
-                ),
-            ),
-        ] {
-            require_denied(pool, &forbidden).await?;
-        }
+        require_separated_families(&fixed_pool, &gcra_pool, &quotas).await?;
         Ok(())
     })
     .await
@@ -182,6 +74,7 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;
@@ -208,7 +101,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         // Admission, failure settlement with an incremented retry delay, and the
         // denial that the resulting quiet period produces.
         let subject = hasher.hash_attempt_for(&policy, "grants-identifier");
-        let AttemptAdmission::Admitted(held) = limiter.admit(subject.clone()).await? else {
+        let AttemptAdmission::Admitted(held) = limiter.admit(subject).await? else {
             return Err(super::support::fail("the first attempt was not admitted"));
         };
         let AttemptCompletionResult::Applied(first) =
@@ -222,7 +115,7 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             first.consecutive_failures() == 1,
             &format!("failure settlement reported {first:?}"),
         )?;
-        let AttemptAdmission::Admitted(held) = limiter.admit(subject.clone()).await? else {
+        let AttemptAdmission::Admitted(held) = limiter.admit(subject).await? else {
             return Err(super::support::fail("the retry was not admitted"));
         };
         let AttemptCompletionResult::Applied(second) =
@@ -237,17 +130,14 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             &format!("the retry delay did not increase: {first:?} then {second:?}"),
         )?;
         require(
-            matches!(
-                limiter.admit(subject.clone()).await?,
-                AttemptAdmission::Denied(_)
-            ),
+            matches!(limiter.admit(subject).await?, AttemptAdmission::Denied(_)),
             "the quiet period did not deny the next attempt",
         )?;
 
         // Transactional claim and finish in the caller's own transaction.
         tokio::time::sleep(Duration::from_millis(400)).await;
         let claimant = hasher.hash_attempt_for(&policy, "grants-transaction");
-        let AttemptAdmission::Admitted(held) = limiter.admit(claimant.clone()).await? else {
+        let AttemptAdmission::Admitted(held) = limiter.admit(claimant).await? else {
             return Err(super::support::fail(
                 "the transactional attempt was not admitted",
             ));
@@ -304,4 +194,121 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         Ok(())
     })
     .await
+}
+
+/// Fixed-window first insert, counter update, denial and real expiry deletion.
+async fn exercise_fixed_window(pool: &PgPool, quotas: &str) -> Result {
+    // Fixed-window: first insert, counter update, denial, then real expiry
+    // deletion through the capacity ledger's definer triggers.
+    let policy = FixedWindowPolicy::new(
+        PolicyId::new("batter.grants.fixed")?,
+        ScopeId::new("subject")?,
+        2,
+        Duration::from_millis(400),
+    )?;
+    let subject = hasher().hash_for(&policy, "grants-subject");
+    let limiter = PostgresLimiter::new(pool.clone());
+    for expected in [true, true, false] {
+        let decision = limiter.check(&Check::new(subject)).await?;
+        require(
+            decision.permits_request() == expected,
+            &format!("fixed-window admission returned {decision:?}, expected {expected}"),
+        )?;
+    }
+    require(
+        counter_rows(pool, quotas, "runlimit_fixed_windows").await? == 1,
+        "the fixed-window counter row was not stored",
+    )?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let deleted = limiter.cleanup_expired(16).await?;
+    require(
+        deleted == 1,
+        &format!("fixed-window cleanup deleted {deleted} rows, expected 1"),
+    )?;
+
+    Ok(())
+}
+
+/// GCRA first insert, replenishment denial and its own expiry deletion.
+async fn exercise_gcra(pool: &PgPool, quotas: &str) -> Result {
+    // GCRA: first insert, replenishment denial and its own expiry deletion.
+
+    let gcra_policy = GcraPolicy::new(
+        PolicyId::new("batter.grants.gcra")?,
+        ScopeId::new("subject")?,
+        1,
+        Duration::from_millis(400),
+        1,
+    )?;
+    let gcra_subject = hasher().hash_for(&gcra_policy, "grants-subject");
+    let gcra = PostgresGcraLimiter::new(pool.clone());
+    require(
+        gcra.check(&Check::new(gcra_subject))
+            .await?
+            .permits_request(),
+        "the first GCRA request was denied",
+    )?;
+    require(
+        !gcra
+            .check(&Check::new(gcra_subject))
+            .await?
+            .permits_request(),
+        "an immediate second GCRA request was admitted",
+    )?;
+    require(
+        counter_rows(pool, quotas, "runlimit_gcra").await? == 1,
+        "the GCRA counter row was not stored",
+    )?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let removed = gcra.cleanup_expired(16).await?;
+    require(
+        removed == 1,
+        &format!("GCRA cleanup deleted {removed} rows, expected 1"),
+    )?;
+
+    Ok(())
+}
+
+/// Neither family reaches the other's store, the capacity ledgers' row_count,
+/// or the counter-key columns.
+async fn require_separated_families(
+    fixed_pool: &PgPool,
+    gcra_pool: &PgPool,
+    quotas: &str,
+) -> Result {
+    let quotas = quote(quotas);
+    for (pool, forbidden) in [
+        (fixed_pool, format!("SELECT 1 FROM {quotas}.runlimit_gcra")),
+        (
+            fixed_pool,
+            format!("SELECT 1 FROM {quotas}.runlimit_attempts"),
+        ),
+        (
+            fixed_pool,
+            format!("UPDATE {quotas}.runlimit_capacity_shards SET row_count = 0"),
+        ),
+        (
+            fixed_pool,
+            format!("UPDATE {quotas}.runlimit_fixed_windows SET config_fingerprint = subject_key"),
+        ),
+        (
+            fixed_pool,
+            format!("DELETE FROM {quotas}.runlimit_capacity_shards"),
+        ),
+        (
+            gcra_pool,
+            format!("SELECT 1 FROM {quotas}.runlimit_fixed_windows"),
+        ),
+        (
+            gcra_pool,
+            format!("UPDATE {quotas}.runlimit_gcra_shards SET row_count = 0"),
+        ),
+        (
+            gcra_pool,
+            format!("UPDATE {quotas}.runlimit_gcra SET subject_key = config_fingerprint"),
+        ),
+    ] {
+        require_denied(pool, &forbidden).await?;
+    }
+    Ok(())
 }

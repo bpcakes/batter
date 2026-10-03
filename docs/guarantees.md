@@ -1229,6 +1229,42 @@ relation grant already reaches the column. Rendering rejects PUBLIC/NONE and the
 reserved `pg_` role namespace; arbitrary application role membership remains
 caller-owned policy.
 
+`GrantFragment` is the additive, object-only half of that manifest. A library that
+owns PostgreSQL relations publishes the schema, relation, column and routine
+declarations its own statements need; it cannot carry or replace the
+current-database declaration, the discovery scope or its defaults, role-attribute
+ceilings or the current-database ownership guard. Those stay application-owned,
+and `FragmentObjectPolicy` carries the application's explicit choices for the
+fragment's own objects: the schema privileges, whether a reachable role may own
+the schema or its relations, exactly which privileges PUBLIC may deliver, and
+whether PostgreSQL's default PUBLIC USAGE on composite row types is retained.
+Every builder consumes its value, and `ExactRoleManifest::with_fragment` consumes
+the manifest, so a rejected declaration or a capacity overflow leaves no partially
+extended value and no executable partial grant set. Fragments reach the one
+existing compiler and renderer: overlapping and reordered selections normalize to
+one deterministic plan, and contradictory purposes, PUBLIC choices or row-type
+options are rejected before any policy or grant plan exists. Grant options are
+never declared and every fragment declaration is required and provisioned.
+
+`runledger_postgres::grants` and `batter_runlimit::grants` publish the
+operation-to-object inventory of their own source version through that fragment.
+Selections name operations, never application role names, and there is no
+administrator preset. The inventories describe this version's statements; they are
+not evidence that the native schema is installed, that a remote effect occurred,
+or that an application's authorization policy is correct, and rendering grants
+cannot remove privileges a role already holds. Required `UPDATE` and `DELETE`
+privileges remain arbitrary SQL authority over those rows: row-locking `UPDATE`
+columns are ordinary mutation authority, `job_enqueue_intents.enqueue_request`
+holds submitted request data, releasing an unstarted claim deletes its
+`job_attempts` row, and `MAINTAIN` on the catalog relations also permits
+`VACUUM`, `ANALYZE`, `REINDEX` and `CLUSTER`. A column-restricted fragment bounds
+which columns a login reads; it is not a payload-secrecy, row-level, tenant
+isolation or history-protection claim. Runledger's full-schema snapshot is a
+separate relation-level selection because PostgreSQL checks `LOCK TABLE` against
+relation privileges, and the direct-job requirements support a direct-only
+workload: workflow-linked rows reach the same hooks and reaper, so they establish
+neither workflow isolation nor mixed-workload support.
+
 The 10,000-entry bounds apply independently to retained manifest input, raw
 group expansion and the generated low-level policy. Each generated exact PUBLIC
 override and required-privilege row is charged before policy construction, so a

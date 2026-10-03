@@ -53,6 +53,7 @@ async fn register_definitions(owner: &RunledgerDatabase) -> Result {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;
@@ -297,6 +298,7 @@ where
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_selections() -> Result
 {
     Fixture::run(async |fixture| {
@@ -356,7 +358,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             &payload,
             "promoted-by-grants",
         );
-        jobs::record_job_enqueue_intent_tx(&mut owner_transaction, &intent).await?;
+        let _recorded = jobs::record_job_enqueue_intent_tx(&mut owner_transaction, &intent).await?;
         owner_transaction.commit().await?;
         let promotion = jobs::promote_job_enqueue_intents_for_types(
             database.pool(),

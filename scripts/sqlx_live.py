@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Require and execute every external PostgreSQL adapter contract."""
+"""Require and execute every external PostgreSQL adapter contract.
+
+This covers the owned-PostgreSQL adapter targets and the facade's cross-adapter
+exact-role grant composition suite. Every case is named here, so a renamed,
+deleted or silently ignored case fails the run instead of reducing the evidence.
+"""
 
 import os
 from pathlib import Path
@@ -104,6 +109,18 @@ TARGETS = {
         "work_and_cleanup_failures_are_both_retained",
         "ownership_oracles_reject_missing_and_premature_cleanup",
     },
+    "grants_live": {
+        "excessive_table_update_grant_options_and_shadow_schemas_are_rejected",
+        "one_login_composes_both_adapters_with_its_own_application_objects",
+        "removing_a_required_privilege_fails_the_native_operation_and_the_verifier",
+        "authentication_attempts_admit_settle_and_clean_up_under_one_selection",
+        "fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_stores",
+        "intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_scopes",
+        "the_full_schema_snapshot_is_never_a_prerequisite_of_intent_submission",
+        "scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload",
+        "promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_selections",
+        "the_direct_job_worker_runs_every_selected_lifecycle_path",
+    },
     "verification_live": {
         "verification_temporary_namespace_requests_are_incomplete",
         "verification_public_relation_overrides_control_column_defaults",
@@ -145,8 +162,13 @@ TARGETS = {
 }
 
 
+# Targets outside the owned-PostgreSQL adapter and the exact features they need.
+PACKAGES = {"grants_live": ("batter", ["--features", "runledger,runlimit-postgres"])}
+
+
 def command(target):
-    command = ["cargo", "test", "-p", "batter-sqlx"]
+    package, features = PACKAGES.get(target, ("batter-sqlx", []))
+    command = ["cargo", "test", "-p", package, *features]
     if target == "verification_live":
         command += ["--features", "test-support"]
     return command + ["--test", target, "--locked", "--"]

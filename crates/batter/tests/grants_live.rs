@@ -12,6 +12,8 @@
 //!   --test grants_live -- --ignored --test-threads=1
 //! ```
 
+#[path = "grants_live/control_cases.rs"]
+mod control_cases;
 #[path = "grants_live/policy.rs"]
 mod policy;
 #[path = "grants_live/quota_cases.rs"]
@@ -20,6 +22,8 @@ mod quota_cases;
 mod runledger_cases;
 #[path = "grants_live/schema.rs"]
 mod schema;
+#[path = "grants_live/supervisor_cases.rs"]
+mod supervisor_cases;
 #[path = "grants_live/support.rs"]
 mod support;
 #[path = "grants_live/worker_cases.rs"]
