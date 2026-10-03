@@ -2,6 +2,7 @@
 GRANT USAGE ON SCHEMA "jobs" TO "jobs_service";
 GRANT DELETE ON TABLE "jobs"."job_attempts" TO "jobs_service";
 GRANT DELETE ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
+GRANT DELETE ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
 GRANT SELECT ("attempt"), INSERT ("attempt") ON TABLE "jobs"."job_attempts" TO "jobs_service";
 GRANT SELECT ("claim_origin"), INSERT ("claim_origin") ON TABLE "jobs"."job_attempts" TO "jobs_service";
 GRANT UPDATE ("effective_next_run_at") ON TABLE "jobs"."job_attempts" TO "jobs_service";
@@ -74,6 +75,11 @@ GRANT SELECT ("status_reason"), UPDATE ("status_reason") ON TABLE "jobs"."job_qu
 GRANT SELECT ("timeout_seconds") ON TABLE "jobs"."job_queue" TO "jobs_service";
 GRANT SELECT ("updated_at"), UPDATE ("updated_at") ON TABLE "jobs"."job_queue" TO "jobs_service";
 GRANT SELECT ("worker_id"), UPDATE ("worker_id") ON TABLE "jobs"."job_queue" TO "jobs_service";
+GRANT SELECT ("active_key") ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
+GRANT SELECT ("release_pending") ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
+GRANT SELECT ("scope") ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
+GRANT SELECT ("updated_at"), UPDATE ("updated_at") ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
+GRANT SELECT ("workflow_run_id") ON TABLE "jobs"."workflow_active_claims" TO "jobs_service";
 GRANT UPDATE ("finished_at") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
 GRANT SELECT ("job_id") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
 GRANT UPDATE ("last_error_code") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
@@ -83,3 +89,4 @@ GRANT SELECT ("started_at"), UPDATE ("started_at") ON TABLE "jobs"."workflow_ste
 GRANT SELECT ("status"), UPDATE ("status") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
 GRANT UPDATE ("status_reason") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
 GRANT UPDATE ("updated_at") ON TABLE "jobs"."workflow_steps" TO "jobs_service";
+GRANT SELECT ("workflow_run_id") ON TABLE "jobs"."workflow_steps" TO "jobs_service";

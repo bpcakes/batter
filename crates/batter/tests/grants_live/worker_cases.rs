@@ -239,8 +239,21 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             "the reapable job was not claimable",
         )?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
-        let processed = jobs::reap_expired_leases(worker, 10, 1).await?;
-        require(processed >= 1, "the reaper processed no expired lease")?;
+        // Reaping always runs its bounded coordination cleanup, whose failures are
+        // diagnostics rather than errors, so assert on the detailed result.
+        let reaped = jobs::reap_expired_leases_with_diagnostics(worker, 10, 1).await?;
+        require(
+            reaped.summary.processed >= 1,
+            "the reaper processed no expired lease",
+        )?;
+        require(
+            reaped.cleanup_errors.is_empty(),
+            &format!("the reaper retained cleanup errors: {:?}", reaped.cleanup_errors),
+        )?;
+        require(
+            reaped.deferred_row_errors.is_empty(),
+            &format!("the reaper deferred rows: {:?}", reaped.deferred_row_errors),
+        )?;
 
         // Authority the reviewed worker inventory excludes.
         for forbidden in [

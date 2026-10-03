@@ -1,5 +1,5 @@
 use super::*;
-use crate::verification::DiscoveryScope;
+use crate::verification::{DiscoveryScope, FragmentObjectPolicy, PublicObject};
 
 fn identifier(value: impl Into<String>) -> Identifier {
     Identifier::new(value).unwrap()
@@ -247,4 +247,30 @@ fn fragment_capacity_overflow_retains_no_partial_declaration() {
         populated.with_fragment(large).unwrap_err(),
         ManifestError::Policy(PolicyError::AuthorityCapacity),
     );
+}
+
+#[test]
+fn permitted_public_delivery_never_widens_another_schema_privilege() {
+    let policy = FragmentObjectPolicy::new(identifier("service"))
+        .with_schema_privileges([ObjectPrivilege::Create])
+        .unwrap()
+        .with_public_delivered_privileges([ObjectPrivilege::Usage])
+        .unwrap();
+    let compiled = manifest()
+        .with_fragment(policy.declare_schema(GrantFragment::new()).unwrap())
+        .unwrap()
+        .compile()
+        .unwrap();
+
+    // PUBLIC may deliver only the privilege the application named. The schema's
+    // CREATE declaration keeps its deny, so an observed PUBLIC CREATE grant stays
+    // a violation.
+    let allowances = compiled
+        .authority_policy()
+        .public_overrides
+        .iter()
+        .filter(|allowance| allowance.object == PublicObject::Schema(identifier("service")))
+        .flat_map(|allowance| allowance.privileges.iter().map(|allowed| allowed.privilege))
+        .collect::<Vec<_>>();
+    assert_eq!(allowances, vec![ObjectPrivilege::Usage]);
 }

@@ -4,7 +4,8 @@
 use super::Requirement;
 use super::{
     ATTEMPTS, DEAD_LETTERS, DEFINITIONS, EVENTS, INTENTS, QUEUE, RESOURCE_CLAIMS,
-    RUNLEDGER_HISTORY, SCHEDULES, SQLX_HISTORY, WORKFLOW_RUNS, WORKFLOW_STEPS, read_only,
+    RUNLEDGER_HISTORY, SCHEDULES, SQLX_HISTORY, WORKFLOW_ACTIVE_CLAIMS, WORKFLOW_RUNS,
+    WORKFLOW_STEPS, read_only,
 };
 use batter_sqlx::verification::ObjectPrivilege;
 
@@ -218,11 +219,28 @@ pub(super) const DIRECT_JOB_EXECUTION: &[Requirement] = &[
         ],
     },
     Requirement {
+        // Lease reaping always runs its bounded quiesced-claim cleanup, which
+        // reads, row-locks and deletes this relation whatever the workload is.
+        // `UPDATE(updated_at)` exists only to take that row lock.
+        relation: WORKFLOW_ACTIVE_CLAIMS,
+        relation_privileges: &[ObjectPrivilege::Delete],
+        select: &[
+            "active_key",
+            "release_pending",
+            "scope",
+            "updated_at",
+            "workflow_run_id",
+        ],
+        insert: &[],
+        update: &["updated_at"],
+    },
+    Requirement {
         relation: WORKFLOW_STEPS,
         relation_privileges: &[],
         // `started_at` is read by the claim and claim-release hooks' own SET
-        // expressions, so it needs SELECT alongside UPDATE.
-        select: &["job_id", "started_at", "status"],
+        // expressions, so it needs SELECT alongside UPDATE. `workflow_run_id` is
+        // read by the reaper's quiesced-claim cleanup.
+        select: &["job_id", "started_at", "status", "workflow_run_id"],
         insert: &[],
         update: &[
             "finished_at",

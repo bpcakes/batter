@@ -152,10 +152,22 @@ fn the_direct_worker_composition_excludes_history_and_workflow_authorship() {
             "unexpected authority: {forbidden}"
         );
     }
-    // Releasing an unstarted claim deletes its attempt row, which is relation
-    // wide authority over attempt history for those rows.
-    assert!(worker.contains("GRANT DELETE ON TABLE \"jobs\".\"job_attempts\""));
-    assert_eq!(worker.matches("GRANT DELETE ON TABLE").count(), 2);
+    // The only relation-wide DELETE authority is what the selected operations
+    // really perform: releasing an unstarted claim deletes its attempt row,
+    // finishing a resource-keyed lease deletes its claim, and lease reaping
+    // always runs its bounded quiesced workflow-claim cleanup.
+    let deletes: Vec<&str> = worker
+        .lines()
+        .filter(|statement| statement.starts_with("GRANT DELETE ON TABLE"))
+        .collect();
+    assert_eq!(
+        deletes,
+        [
+            "GRANT DELETE ON TABLE \"jobs\".\"job_attempts\" TO \"jobs_service\";",
+            "GRANT DELETE ON TABLE \"jobs\".\"job_execution_resource_claims\" TO \"jobs_service\";",
+            "GRANT DELETE ON TABLE \"jobs\".\"workflow_active_claims\" TO \"jobs_service\";",
+        ],
+    );
 }
 
 #[test]

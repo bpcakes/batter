@@ -279,19 +279,22 @@ impl FragmentObjectPolicy {
 
     /// Add this policy's schema declaration to a fragment.
     ///
+    /// Schema privileges are split by their individual PUBLIC-delivery choice, so
+    /// permitting PUBLIC to deliver `USAGE` never also permits it to deliver a
+    /// further schema privilege the application declared.
+    ///
     /// # Errors
     /// Returns [`ManifestError`] when the declaration is invalid or the
     /// fragment's declaration bound would be exceeded.
     pub fn declare_schema(&self, fragment: GrantFragment) -> Result<GrantFragment, ManifestError> {
-        fragment.with_schema(
-            SchemaGrantSpec::new(
-                self.schema.clone(),
-                self.schema_privileges.iter().copied(),
-                DeclarationPurpose::RequiredAndProvisioned,
-            )?
-            .public_delivery(self.public_delivery(ObjectPrivilege::Usage))
-            .allow_owner(self.schema_owner),
-        )
+        let (denied, delivered) = self.split(self.schema_privileges.iter().copied())?;
+        let mut fragment =
+            fragment.with_schema(self.schema_group(denied, PublicDelivery::Deny)?)?;
+        if !delivered.is_empty() {
+            fragment = fragment
+                .with_schema(self.schema_group(delivered, PublicDelivery::AllowDeclared)?)?;
+        }
+        Ok(fragment)
     }
 
     /// Declare relation-level privileges for named relations in this schema.
@@ -368,6 +371,20 @@ impl FragmentObjectPolicy {
         Ok(fragment)
     }
 
+    fn schema_group(
+        &self,
+        privileges: Vec<ObjectPrivilege>,
+        delivery: PublicDelivery,
+    ) -> Result<SchemaGrantSpec, ManifestError> {
+        Ok(SchemaGrantSpec::new(
+            self.schema.clone(),
+            privileges,
+            DeclarationPurpose::RequiredAndProvisioned,
+        )?
+        .public_delivery(delivery)
+        .allow_owner(self.schema_owner))
+    }
+
     fn relation_group(
         &self,
         relations: &[QualifiedName],
@@ -403,13 +420,5 @@ impl FragmentObjectPolicy {
         Ok(collect_bounded(privileges)?
             .into_iter()
             .partition(|privilege| !self.public_delivered.contains(privilege)))
-    }
-
-    fn public_delivery(&self, privilege: ObjectPrivilege) -> PublicDelivery {
-        if self.public_delivered.contains(&privilege) {
-            PublicDelivery::AllowDeclared
-        } else {
-            PublicDelivery::Deny
-        }
     }
 }

@@ -15,6 +15,7 @@ pub(super) const RESOURCE_CLAIMS: &str = "job_execution_resource_claims";
 pub(super) const DEFINITIONS: &str = "job_definitions";
 pub(super) const SCHEDULES: &str = "job_schedules";
 pub(super) const WORKFLOW_STEPS: &str = "workflow_steps";
+pub(super) const WORKFLOW_ACTIVE_CLAIMS: &str = "workflow_active_claims";
 pub(super) const WORKFLOW_RUNS: &str = "workflow_runs";
 pub(super) const SQLX_HISTORY: &str = "_sqlx_migrations";
 pub(super) const RUNLEDGER_HISTORY: &str = "runledger_migration_history";

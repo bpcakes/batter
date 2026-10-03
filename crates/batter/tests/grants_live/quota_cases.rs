@@ -86,14 +86,17 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         let pool = fixture.pool(&login, &[&quotas]).await?;
         require_within_policy(&pool, &role).await?;
 
+        // The backoffs are long enough that a denial window cannot close during a
+        // database round trip, and every wait below uses a settlement's own
+        // returned delay rather than a guessed interval.
         let period = |millis| QuotaPeriod::new(Duration::from_millis(millis));
         let policy = AttemptPolicy::new(
             PolicyId::new("batter.grants.attempts")?,
             ScopeId::new("identifier")?,
-            period(5)?,
-            period(100)?,
-            period(300)?,
-            period(1_000)?,
+            period(250)?,
+            period(500)?,
+            period(600)?,
+            period(2_000)?,
         )?;
         let hasher = hasher();
         let limiter = PostgresAttemptLimiter::new(pool.clone());
@@ -115,6 +118,9 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             first.consecutive_failures() == 1,
             &format!("failure settlement reported {first:?}"),
         )?;
+        // The first failure's own backoff has to expire before a retry is
+        // admissible; waiting for a fixed interval would race the backoff.
+        tokio::time::sleep(first.retry_after().duration() + Duration::from_millis(50)).await;
         let AttemptAdmission::Admitted(held) = limiter.admit(subject).await? else {
             return Err(super::support::fail("the retry was not admitted"));
         };
@@ -131,11 +137,11 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         )?;
         require(
             matches!(limiter.admit(subject).await?, AttemptAdmission::Denied(_)),
-            "the quiet period did not deny the next attempt",
+            "the second failure's backoff did not deny the next attempt",
         )?;
 
-        // Transactional claim and finish in the caller's own transaction.
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        // Transactional claim and finish in the caller's own transaction, under a
+        // subject whose record the previous backoff does not govern.
         let claimant = hasher.hash_attempt_for(&policy, "grants-transaction");
         let AttemptAdmission::Admitted(held) = limiter.admit(claimant).await? else {
             return Err(super::support::fail(
@@ -163,13 +169,14 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             &format!("success settlement reported {settled:?}"),
         )?;
 
-        // Success resets the record, so the stored row stays usable. Internal
-        // expiry cleanup is the same login's own DELETE authority.
+        // Success resets the record, so the stored row stays usable. Waiting past
+        // the quiet period also makes it eligible for the bounded internal expiry
+        // deletion, which is the same login's own DELETE authority.
         require(
             counter_rows(&pool, &quotas, "runlimit_attempts").await? >= 1,
             "no attempt record was stored",
         )?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(policy.quiet_period().duration() + Duration::from_millis(100)).await;
         let AttemptAdmission::Admitted(held) = limiter.admit(claimant).await? else {
             return Err(super::support::fail(
                 "a settled subject could not be readmitted",
