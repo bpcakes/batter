@@ -32,7 +32,7 @@ use batter::sqlx::verification::{
     ColumnGrantGroup, CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, DiscoveryDefaults,
     DiscoveryScope, ExactRoleManifest, FragmentObjectPolicy, Identifier, ObjectDefaults,
     ObjectPrivilege, PublicDelivery, QualifiedName, RelationGrantGroup, RolePolicy,
-    SchemaGrantSpec,
+    RoutineGrantSpec, RoutineSignature, RoutineType, SchemaGrantSpec,
 };
 use std::process::ExitCode;
 
@@ -84,8 +84,11 @@ fn main() -> ExitCode {
         &[RunledgerOperation::SchemaSnapshot],
         &[],
     );
-    // Consumer shape B submits intents, runs direct-job workers with durable
-    // promotion, uses GCRA quotas and attempts, and denies PUBLIC delivery.
+    // Consumer shape B submits intents, runs direct-job workers under the native
+    // supervisor's default loops, uses GCRA quotas and attempts, and denies
+    // PUBLIC delivery. The default supervisor enables the scheduler loop, so
+    // scheduled dispatch is part of this role; a deployment that calls
+    // `SupervisorBuilder::disable_scheduler` drops that selection instead.
     let shape_b = compose(
         "worker_service",
         PublicPolicy::Deny,
@@ -94,6 +97,7 @@ fn main() -> ExitCode {
             RunledgerOperation::DirectJobExecution,
             RunledgerOperation::IntentPromotion,
             RunledgerOperation::IntentSubmission,
+            RunledgerOperation::ScheduledDispatch,
         ],
         &[
             RunlimitOperation::GcraAdmission,
@@ -232,6 +236,21 @@ fn compose(
         [ObjectPrivilege::Insert],
         DeclarationPurpose::RequiredAndProvisioned,
     )?)?;
+    // The application's own routine carries the same explicit PUBLIC choice as
+    // its columns. Its overload identity is structural, so no SQL type
+    // expression is parsed.
+    manifest.add_routine(
+        RoutineGrantSpec::new(
+            RoutineSignature::new(
+                application.as_str(),
+                "normalize_note",
+                [RoutineType::new("pg_catalog", "text")?],
+            )?,
+            [ObjectPrivilege::Execute],
+            DeclarationPurpose::RequiredAndProvisioned,
+        )?
+        .public_delivery(deliveries),
+    )?;
     render(role, &manifest.compile()?)
 }
 
@@ -306,10 +325,47 @@ mod tests {
             assert!(rendered.contains("ON TABLE \"jobs\".\"job_enqueue_intents\""));
             assert!(rendered.contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
             assert!(rendered.contains("ON TABLE \"service\".\"delivery_notes\""));
+            // The application's own routine is part of the composition, so the
+            // inspector's exclusion of it below is a real check.
+            assert!(rendered.contains(
+                "GRANT EXECUTE ON ROUTINE \"service\".\"normalize_note\"(\"pg_catalog\".\"text\")",
+            ));
             // Intent submission is column scoped, so the relation-wide reads the
             // full-schema snapshot needs cannot appear in a serving role.
             assert!(!rendered.contains("GRANT SELECT ON TABLE"));
         }
+    }
+
+    #[test]
+    fn the_default_loop_worker_role_carries_its_scheduler_authority() {
+        let default_loops = compose(
+            "worker_service",
+            PublicPolicy::Deny,
+            ApplicationObjects::None,
+            &[
+                RunledgerOperation::DirectJobExecution,
+                RunledgerOperation::ScheduledDispatch,
+            ],
+            &[],
+        )
+        .expect("the composed exact role is valid");
+        // The native supervisor enables the scheduler by default, so a role for
+        // it needs the schedule claim's table lock and its fire-recording writes.
+        assert!(default_loops.contains("GRANT MAINTAIN ON TABLE \"jobs\".\"job_schedules\""));
+        assert!(default_loops.contains("UPDATE (\"last_fired_at\")"));
+        assert!(default_loops.contains("UPDATE (\"next_fire_at\")"));
+
+        // A deployment that calls `SupervisorBuilder::disable_scheduler` drops
+        // the selection, and with it every schedule grant.
+        let scheduler_disabled = compose(
+            "worker_service",
+            PublicPolicy::Deny,
+            ApplicationObjects::None,
+            &[RunledgerOperation::DirectJobExecution],
+            &[],
+        )
+        .expect("the composed exact role is valid");
+        assert!(!scheduler_disabled.contains("job_schedules"));
     }
 
     #[test]

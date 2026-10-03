@@ -320,3 +320,47 @@ fn a_fragment_routine_reaches_the_compiled_policy_and_the_grant_plan() {
          TO \"service_reader\";\n",
     );
 }
+
+#[test]
+fn schema_and_relation_ownership_choices_propagate_independently() {
+    let policy = |schema_owner, relation_owner| {
+        FragmentObjectPolicy::new(identifier("service"))
+            .allow_schema_owner(schema_owner)
+            .allow_relation_owner(relation_owner)
+    };
+    let compiled = |schema_owner, relation_owner| {
+        let policy = policy(schema_owner, relation_owner);
+        let fragment = policy
+            .declare_relations(
+                policy.declare_schema(GrantFragment::new()).unwrap(),
+                ["ledger"],
+                [ObjectPrivilege::Select],
+            )
+            .unwrap();
+        manifest()
+            .with_fragment(fragment)
+            .unwrap()
+            .compile()
+            .unwrap()
+    };
+
+    // The application's two ownership choices are separate: neither implies the
+    // other, and verification must accept an owner-reachable login only where
+    // the application said so.
+    for (schema_owner, relation_owner) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let compiled = compiled(schema_owner, relation_owner);
+        let policy = compiled.authority_policy();
+        assert_eq!(policy.schemas.len(), 1);
+        assert_eq!(policy.relations.len(), 1);
+        assert_eq!(
+            policy.schemas[0].allow_owner, schema_owner,
+            "schema ownership choice {schema_owner} did not reach the policy",
+        );
+        assert_eq!(
+            policy.relations[0].allow_owner, relation_owner,
+            "relation ownership choice {relation_owner} did not reach the policy",
+        );
+    }
+}
