@@ -7,8 +7,8 @@ use batter::runledger::RunledgerDatabase;
 use batter::runledger::grants::RunledgerOperation;
 use batter::runledger::native::core::jobs::{JobFailureKind, JobType, JobTypeName};
 use batter::runledger::native::postgres::jobs::{
-    self, JobCompletionUpdate, JobDefinitionUpsert, JobEnqueue, JobFailureUpdate, JobLeaseIdentity,
-    JobOrdinaryProgressUpdate, JobRunningUpdate,
+    self, JobCompletionUpdate, JobContinuationUpdate, JobDefinitionUpsert, JobEnqueue,
+    JobFailureUpdate, JobLeaseIdentity, JobOrdinaryProgressUpdate, JobRunningUpdate,
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -123,6 +123,50 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         )
         .await?;
         require_status(&probe, &jobs_schema, success_id, "SUCCEEDED").await?;
+
+        // A handler continuation is an ordinary completion: it closes the live
+        // lease and advances the job to a further run that the same login claims.
+        let continued_id =
+            jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload)).await?;
+        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
+        let claim = claimed
+            .iter()
+            .find(|record| record.id == continued_id)
+            .ok_or_else(|| super::support::fail("the continuing job was not claimable"))?;
+        let outcome = jobs::complete_job_continuation_with_outcome(
+            worker,
+            claim.id,
+            claim.run_number,
+            claim.attempt,
+            "grants-worker",
+            &JobContinuationUpdate {
+                delay: Duration::ZERO,
+                progress_done: Some(1),
+                progress_total: Some(3),
+                checkpoint: Some(&payload),
+            },
+        )
+        .await?;
+        require(
+            outcome.next_run_number == claim.run_number + 1,
+            &format!("continuation did not advance the run: {outcome:?}"),
+        )?;
+        require_status(&probe, &jobs_schema, continued_id, "PENDING").await?;
+        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
+        let claim = claimed
+            .iter()
+            .find(|record| record.id == continued_id)
+            .ok_or_else(|| super::support::fail("the continued run was not claimable"))?;
+        jobs::complete_job_success(
+            worker,
+            claim.id,
+            claim.run_number,
+            claim.attempt,
+            "grants-worker",
+            None,
+        )
+        .await?;
+        require_status(&probe, &jobs_schema, continued_id, "SUCCEEDED").await?;
 
         // Retry then terminal failure with its dead-letter write.
         let failing_id = jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload))

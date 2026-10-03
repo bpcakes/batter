@@ -198,6 +198,10 @@ pub(super) const DIRECT_JOB_EXECUTION: &[Requirement] = &[
             "worker_id",
         ],
         insert: &[],
+        // `run_number` is advanced when a handler returns a continuation, which
+        // is an ordinary direct-job completion rather than an administrative
+        // requeue. Granting it is run-identity mutation authority for arbitrary
+        // SQL, not only for the continuation path.
         update: &[
             "attempt",
             "checkpoint",
@@ -210,6 +214,7 @@ pub(super) const DIRECT_JOB_EXECUTION: &[Requirement] = &[
             "output",
             "progress_done",
             "progress_total",
+            "run_number",
             "stage",
             "started_at",
             "status",
@@ -239,8 +244,17 @@ pub(super) const DIRECT_JOB_EXECUTION: &[Requirement] = &[
         relation_privileges: &[],
         // `started_at` is read by the claim and claim-release hooks' own SET
         // expressions, so it needs SELECT alongside UPDATE. `workflow_run_id` is
-        // read by the reaper's quiesced-claim cleanup.
-        select: &["job_id", "started_at", "status", "workflow_run_id"],
+        // read by the reaper's quiesced-claim cleanup, and `id`, `execution_kind`
+        // and `allow_handler_continuation` by the handler-continuation hook.
+        select: &[
+            "allow_handler_continuation",
+            "execution_kind",
+            "id",
+            "job_id",
+            "started_at",
+            "status",
+            "workflow_run_id",
+        ],
         insert: &[],
         update: &[
             "finished_at",

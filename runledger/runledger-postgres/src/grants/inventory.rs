@@ -48,9 +48,10 @@ pub enum RunledgerOperation {
     SchemaSnapshot,
     /// Direct-job worker execution: claiming, release of an unstarted claim
     /// after failed `RUNNING` persistence, heartbeat, progress and checkpoint
-    /// writes, success, retry, terminal failure, dead-letter writes, execution
-    /// resource claims with their expiry reaping, lease reaping, and the
-    /// workflow-step hooks every claim and settlement runs.
+    /// writes, success, handler continuation to a further run, retry, terminal
+    /// failure, dead-letter writes, execution resource claims with their expiry
+    /// reaping, lease reaping, and the workflow-step hooks every claim,
+    /// continuation and settlement runs.
     ///
     /// This supports a direct-only workload. Workflow-linked rows reach the same
     /// hooks and reaper, so it establishes neither workflow isolation nor
