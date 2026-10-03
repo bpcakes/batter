@@ -41,6 +41,9 @@
 /// Outcome-aware PostgreSQL attempts under one operation and transaction owner.
 #[cfg(feature = "postgres")]
 pub mod attempts;
+/// Exact-role grant requirements for the native PostgreSQL stores.
+#[cfg(feature = "postgres")]
+pub mod grants;
 pub mod quota;
 
 /// The exact native policy and decision types used by this adapter.

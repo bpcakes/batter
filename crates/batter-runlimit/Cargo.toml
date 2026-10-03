@@ -57,6 +57,10 @@ name = "attempts_live"
 required-features = ["postgres"]
 
 [[test]]
+name = "grants"
+required-features = ["postgres"]
+
+[[test]]
 name = "future_size"
 required-features = ["memory", "postgres"]
 

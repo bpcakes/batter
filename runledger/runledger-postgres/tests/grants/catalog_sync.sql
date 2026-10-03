@@ -1,0 +1,23 @@
+-- Frozen expected grants for RunledgerOperation::CatalogSync.
+GRANT USAGE ON SCHEMA "jobs" TO "jobs_service";
+GRANT MAINTAIN ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT MAINTAIN ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("created_at") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("default_priority"), INSERT ("default_priority"), UPDATE ("default_priority") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("default_timeout_seconds"), INSERT ("default_timeout_seconds"), UPDATE ("default_timeout_seconds") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("is_enabled"), INSERT ("is_enabled"), UPDATE ("is_enabled") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("job_type"), INSERT ("job_type") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("max_attempts"), INSERT ("max_attempts"), UPDATE ("max_attempts") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("updated_at"), UPDATE ("updated_at") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("version"), INSERT ("version"), UPDATE ("version") ON TABLE "jobs"."job_definitions" TO "jobs_service";
+GRANT SELECT ("cron_expr"), INSERT ("cron_expr"), UPDATE ("cron_expr") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("id") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("is_active"), INSERT ("is_active"), UPDATE ("is_active") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("job_type"), INSERT ("job_type"), UPDATE ("job_type") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("max_jitter_seconds"), INSERT ("max_jitter_seconds"), UPDATE ("max_jitter_seconds") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("name"), INSERT ("name") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("next_fire_at"), INSERT ("next_fire_at"), UPDATE ("next_fire_at") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("organization_id"), INSERT ("organization_id") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("payload_template"), INSERT ("payload_template"), UPDATE ("payload_template") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT SELECT ("timezone"), INSERT ("timezone"), UPDATE ("timezone") ON TABLE "jobs"."job_schedules" TO "jobs_service";
+GRANT UPDATE ("updated_at") ON TABLE "jobs"."job_schedules" TO "jobs_service";

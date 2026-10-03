@@ -314,16 +314,19 @@ dependencies = [
  "batter-runlimit",
  "batter-sqlx",
  "batter-test-support",
+ "chrono",
  "runlimit-axum",
  "runlimit-core",
  "runlimit-http",
  "runlimit-memory",
+ "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

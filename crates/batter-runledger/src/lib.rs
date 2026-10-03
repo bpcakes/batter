@@ -63,6 +63,13 @@ use std::{
     task::{Context, Poll},
 };
 
+/// Exact-role grant requirements for this Runledger schema version.
+///
+/// This is the native `runledger_postgres::grants` module itself, so one
+/// `batter` dependency reaches the same operation selections and the same
+/// `batter_sqlx::verification::GrantFragment` identity as a direct consumer.
+pub use runledger_postgres::grants;
+
 pub use runledger_postgres::{
     AcceptedIntentOutcome, AcceptedIntentState, PgAtomicError, PgAtomicUncertainty,
     PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,

@@ -18,8 +18,8 @@ mod work;
 
 pub use manifest::{
     ColumnGrantGroup, CompiledExactRole, DatabaseGrantSpec, DeclarationPurpose, ExactRoleManifest,
-    GrantPlan, GrantRenderError, ManifestError, PublicDelivery, RelationGrantGroup,
-    RoutineGrantSpec, SchemaGrantSpec,
+    FragmentObjectPolicy, GrantFragment, GrantPlan, GrantRenderError, ManifestError,
+    PublicDelivery, RelationGrantGroup, RoutineGrantSpec, SchemaGrantSpec,
 };
 pub use policy::{
     AdditionalMigrations, AllowedPrivilege, AuthorityPolicy, AuthorityPolicyBuilder, ColumnPolicy,
