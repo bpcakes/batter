@@ -294,3 +294,79 @@ async fn current_database(pool: &sqlx::PgPool) -> Result<String> {
         .fetch_one(pool)
         .await?)
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+async fn native_public_delivery_is_accepted_only_where_the_application_permits_it() -> Result {
+    Fixture::run(async |fixture| {
+        schema::install(fixture).await?;
+        let quotas = fixture.names.quotas.clone();
+        let selection = [RunlimitOperation::GcraAdmission];
+
+        // Two roles over the same native objects, differing only in whether the
+        // application permits PUBLIC to deliver SELECT.
+        let strict = Composition::new(PublicPolicy::Deny)
+            .with_quotas(&quotas, &selection)
+            .compile()?;
+        let permissive = Composition::new(PublicPolicy::PermitSelectedDelivery)
+            .with_quotas(&quotas, &selection)
+            .compile()?;
+        let login = fixture.login("delivery", &strict).await?;
+        let probe = fixture.pool(&login, &[&quotas]).await?;
+        require_within_policy(&probe, &strict).await?;
+        require_within_policy(&probe, &permissive).await?;
+
+        // The permitted set is per privilege and per declared object. A
+        // column-level PUBLIC grant on a column the fragment declares SELECT on
+        // is accepted under the permitting policy and a violation under the
+        // denying one. Rendering cannot distinguish the two policies, because a
+        // PUBLIC allowance never becomes a grant.
+        let relation = format!("{}.runlimit_gcra", quote(&quotas));
+        exec(
+            &mut fixture.admin,
+            format!("GRANT SELECT (tat_scaled) ON {relation} TO PUBLIC"),
+        )
+        .await?;
+        require_violation(&probe, &strict).await?;
+        require_within_policy(&probe, &permissive).await?;
+        exec(
+            &mut fixture.admin,
+            format!("REVOKE SELECT (tat_scaled) ON {relation} FROM PUBLIC"),
+        )
+        .await?;
+
+        // A whole-relation PUBLIC grant reaches columns the fragment never
+        // declared, so permitting PUBLIC delivery of SELECT does not accept it.
+        exec(
+            &mut fixture.admin,
+            format!("GRANT SELECT ON {relation} TO PUBLIC"),
+        )
+        .await?;
+        require_violation(&probe, &strict).await?;
+        require_violation(&probe, &permissive).await?;
+        exec(
+            &mut fixture.admin,
+            format!("REVOKE SELECT ON {relation} FROM PUBLIC"),
+        )
+        .await?;
+
+        // A column outside the selection, and a privilege outside the permitted
+        // set, both stay violations under either policy.
+        for grant in [
+            format!("GRANT SELECT (capacity_shard) ON {relation} TO PUBLIC"),
+            format!("GRANT DELETE ON {relation} TO PUBLIC"),
+        ] {
+            let revoke = grant
+                .replacen("GRANT", "REVOKE", 1)
+                .replacen("TO", "FROM", 1);
+            exec(&mut fixture.admin, grant).await?;
+            require_violation(&probe, &strict).await?;
+            require_violation(&probe, &permissive).await?;
+            exec(&mut fixture.admin, revoke).await?;
+        }
+        require_within_policy(&probe, &strict).await?;
+        require_within_policy(&probe, &permissive).await?;
+        Ok(())
+    })
+    .await
+}

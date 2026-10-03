@@ -15,6 +15,8 @@ use std::time::Duration;
 
 const JOB_TYPE: &str = "batter.grants.direct";
 const RESOURCE_JOB_TYPE: &str = "batter.grants.resource";
+const SCHEDULE: &str = "grants-schedule";
+const RETIRED_SCHEDULE: &str = "grants-retired";
 
 fn definition(job_type: &str) -> JobDefinitionUpsert<'_> {
     JobDefinitionUpsert {
@@ -428,22 +430,68 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
             &format!("promotion did not enqueue the intent: {promotion:?}"),
         )?;
 
-        // A due schedule is claimed, materialized and recorded as fired.
+        // Schedule catalog synchronization under the same restricted login:
+        // creation, the conflict-update path and the exact deactivation of a
+        // schedule absent from the catalog.
         let now = chrono_now(&probe).await?;
-        let schedule = jobs::upsert_job_schedule(
-            owner_database.pool(),
-            &jobs::JobScheduleUpsert {
-                name: "grants-schedule",
-                job_type: JobType::new(JOB_TYPE),
-                organization_id: None,
-                payload_template: &payload,
-                cron_expr: "0 * * * * *",
-                is_active: true,
-                next_fire_at: now,
-                max_jitter_seconds: 0,
-            },
+        let upsert = |name, cron| jobs::JobScheduleUpsert {
+            name,
+            job_type: JobType::new(JOB_TYPE),
+            organization_id: None,
+            payload_template: &payload,
+            cron_expr: cron,
+            is_active: true,
+            next_fire_at: now,
+            max_jitter_seconds: 0,
+        };
+        let schedule =
+            jobs::upsert_job_schedule(database.pool(), &upsert(SCHEDULE, "0 * * * * *")).await?;
+        let _retired =
+            jobs::upsert_job_schedule(database.pool(), &upsert(RETIRED_SCHEDULE, "0 * * * * *"))
+                .await?;
+        let mut transaction = database.pool().begin().await?;
+        jobs::prepare_schedule_exact_sync_critical_section_tx(&mut transaction).await?;
+        let synced = jobs::sync_catalog_job_schedules_tx(
+            &mut transaction,
+            &[jobs::JobScheduleCatalogSyncEntry {
+                // A different cron expression exercises the upsert's conflict
+                // update rather than only its insert.
+                upsert: upsert(SCHEDULE, "30 * * * * *"),
+            }],
         )
         .await?;
+        let deactivated = jobs::deactivate_schedules_absent_from_names_tx(
+            &mut transaction,
+            &[SCHEDULE.to_owned(), RETIRED_SCHEDULE.to_owned()],
+            &[SCHEDULE.to_owned()],
+        )
+        .await?;
+        transaction.commit().await?;
+        require(
+            synced.synced_schedule_names == [SCHEDULE.to_owned()],
+            &format!("schedule sync reported {synced:?}"),
+        )?;
+        require(
+            deactivated == [RETIRED_SCHEDULE.to_owned()],
+            &format!("exact schedule deactivation reported {deactivated:?}"),
+        )?;
+        let active: Vec<(String, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT name, is_active FROM {}.job_schedules ORDER BY name",
+            quote(&jobs_schema)
+        )))
+        .fetch_all(&probe)
+        .await?;
+        require(
+            active
+                == [
+                    (RETIRED_SCHEDULE.to_owned(), false),
+                    (SCHEDULE.to_owned(), true),
+                ],
+            &format!("schedule active state is {active:?}"),
+        )?;
+
+        // The synchronized schedule is still due, so the same login claims it,
+        // materializes its job and records the fire.
         let mut transaction = database.pool().begin().await?;
         let due = jobs::claim_due_schedules_tx(&mut transaction, now, 10).await?;
         require(

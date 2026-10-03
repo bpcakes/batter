@@ -623,9 +623,20 @@ Authority is named by behavior, not by role. `RunledgerOperation` and
 administrator preset and no application role name, so a caller cannot ask for
 "all privileges" and cannot accidentally select the privileged full-schema
 snapshot, durable promotion, catalog synchronization or scheduled dispatch while
-asking for intent submission. Grant options are never declared and every
-declaration is required and provisioned, so a fragment cannot smuggle in an
-allowance the application did not ask for.
+asking for intent submission. Every declaration `FragmentObjectPolicy` emits is
+required and provisioned, never permits a grant option, and derives its PUBLIC
+delivery from the exact privileges the application named, so a native producer
+cannot smuggle in an allowance the application did not ask for.
+
+That narrower contract is the policy type's, not the fragment type's. The raw
+`GrantFragment` builders accept any declaration the manifest accepts, including an
+allowed-only ceiling or a permitted grant option, because a library may
+legitimately publish one. Enforcing the stricter shape in `GrantFragment` would
+remove a legitimate use without removing a caller-memory obligation, since the
+declaration a library publishes is already visible in its own source and in the
+frozen privilege oracles. The boundary is therefore documented rather than
+type-enforced: a library that bypasses `FragmentObjectPolicy` keeps whatever
+purpose and grant option it declares, and the native producers do not bypass it.
 
 What remains with the application is explicit and deliberately not implied to be
 stronger. A fragment cannot carry the current-database declaration, discovery

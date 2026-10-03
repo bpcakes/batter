@@ -46,21 +46,28 @@ enum PublicPolicy {
 }
 
 fn main() -> ExitCode {
-    // Consumer shape A submits enqueue intents with narrow column grants, keeps
-    // the privileged full-schema snapshot as a separate login, runs fixed-window
-    // quotas and authentication attempts, and permits selected PUBLIC delivery.
+    // Consumer shape A submits enqueue intents with narrow column grants, runs
+    // fixed-window quotas and authentication attempts, and permits selected
+    // PUBLIC delivery. It deliberately does not select the privileged
+    // full-schema snapshot: that selection needs relation-level SELECT on five
+    // relations, so it belongs to a separate login below.
     let shape_a = compose(
         "intent_writer",
         PublicPolicy::PermitSelectedDelivery,
-        &[
-            RunledgerOperation::IntentSubmission,
-            RunledgerOperation::SchemaSnapshot,
-        ],
+        &[RunledgerOperation::IntentSubmission],
         &[
             RunlimitOperation::FixedWindowAdmission,
             RunlimitOperation::FixedWindowExpiryCleanup,
             RunlimitOperation::AuthenticationAttempts,
         ],
+    );
+    // Shape A's startup inspection login. Selecting the snapshot alone keeps the
+    // relation-wide reads it needs away from the serving login.
+    let inspector = compose(
+        "schema_inspector",
+        PublicPolicy::Deny,
+        &[RunledgerOperation::SchemaSnapshot],
+        &[],
     );
     // Consumer shape B submits intents, runs direct-job workers with durable
     // promotion, uses GCRA quotas and attempts, and denies PUBLIC delivery.
@@ -78,12 +85,12 @@ fn main() -> ExitCode {
             RunlimitOperation::AuthenticationAttempts,
         ],
     );
-    match (shape_a, shape_b) {
-        (Ok(first), Ok(second)) => {
-            print!("{first}\n{second}");
+    match (shape_a, inspector, shape_b) {
+        (Ok(first), Ok(second), Ok(third)) => {
+            print!("{first}\n{second}\n{third}");
             ExitCode::SUCCESS
         }
-        (Err(error), _) | (_, Err(error)) => {
+        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
             eprintln!("the composed exact role is invalid: {error}");
             ExitCode::FAILURE
         }
@@ -114,11 +121,18 @@ fn compose(
     let quotas = Identifier::new("quotas")?;
     let application = Identifier::new("service")?;
 
+    // Discovery covers exactly the schemas this role declares objects in, so an
+    // unselected native store is neither audited nor reachable.
+    let mut scope = vec![application.clone()];
+    if !runledger.is_empty() {
+        scope.push(jobs.clone());
+    }
+    if !runlimit.is_empty() {
+        scope.push(quotas.clone());
+    }
+
     // The application owns every policy a fragment cannot carry.
-    let mut manifest = ExactRoleManifest::new(
-        application.clone(),
-        DiscoveryScope::Schemas(vec![application.clone(), jobs.clone(), quotas.clone()]),
-    )?;
+    let mut manifest = ExactRoleManifest::new(application.clone(), DiscoveryScope::Schemas(scope))?;
     manifest.set_role_policy(RolePolicy::default())?;
     manifest.deny_current_database_ownership(true);
     manifest.set_discovery_defaults(defaults())?;
@@ -138,15 +152,20 @@ fn compose(
     )?;
 
     // The native requirements arrive as fragments; no native relation, column or
-    // privilege list is written here.
-    manifest = manifest.with_fragment(batter::runledger::grants::grant_fragment(
-        &objects(jobs, public)?,
-        runledger.iter().copied(),
-    )?)?;
-    manifest = manifest.with_fragment(batter::runlimit::grants::grant_fragment(
-        &objects(quotas, public)?,
-        runlimit.iter().copied(),
-    )?)?;
+    // privilege list is written here. An empty selection is deliberately not
+    // composed: the producers reject one rather than contributing nothing.
+    if !runledger.is_empty() {
+        manifest = manifest.with_fragment(batter::runledger::grants::grant_fragment(
+            &objects(jobs, public)?,
+            runledger.iter().copied(),
+        )?)?;
+    }
+    if !runlimit.is_empty() {
+        manifest = manifest.with_fragment(batter::runlimit::grants::grant_fragment(
+            &objects(quotas, public)?,
+            runlimit.iter().copied(),
+        )?)?;
+    }
 
     // The application's own relation, columns and routine stay ordinary manifest
     // inputs beside them.
@@ -255,6 +274,25 @@ mod tests {
             assert!(rendered.contains("ON TABLE \"jobs\".\"job_enqueue_intents\""));
             assert!(rendered.contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
             assert!(rendered.contains("ON TABLE \"service\".\"delivery_notes\""));
+            // Intent submission is column scoped, so the relation-wide reads the
+            // full-schema snapshot needs cannot appear in a serving role.
+            assert!(!rendered.contains("GRANT SELECT ON TABLE"));
         }
+    }
+
+    #[test]
+    fn the_inspection_role_selects_only_the_snapshot() {
+        let rendered = compose(
+            "schema_inspector",
+            PublicPolicy::Deny,
+            &[RunledgerOperation::SchemaSnapshot],
+            &[],
+        )
+        .expect("the composed exact role is valid");
+        // The snapshot is relation wide, which is exactly why it is a separate
+        // login rather than part of a serving role.
+        assert_eq!(rendered.matches("GRANT SELECT ON TABLE").count(), 5);
+        assert!(!rendered.contains("\"quotas\""));
+        assert!(!rendered.contains("job_enqueue_intents"));
     }
 }

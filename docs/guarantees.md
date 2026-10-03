@@ -1243,8 +1243,20 @@ the manifest, so a rejected declaration or a capacity overflow leaves no partial
 extended value and no executable partial grant set. Fragments reach the one
 existing compiler and renderer: overlapping and reordered selections normalize to
 one deterministic plan, and contradictory purposes, PUBLIC choices or row-type
-options are rejected before any policy or grant plan exists. Grant options are
-never declared and every fragment declaration is required and provisioned.
+options are rejected before any policy or grant plan exists.
+
+`GrantFragment` itself constrains which policy a declaration may carry, not which
+purpose or grant option it names: its builders accept any declaration the manifest
+accepts, including an allowed-only ceiling or a permitted grant option, because a
+library may legitimately publish one. The narrower contract belongs to
+`FragmentObjectPolicy`, which is the only way the native producers build their
+declarations: every declaration it emits is required and provisioned, never
+permits a grant option, and takes its PUBLIC delivery from the exact privileges
+the application named, so permitting PUBLIC to deliver one privilege never widens
+another. That allowance is also per declared object: where a fragment declares a
+privilege only on exact columns, a whole-relation PUBLIC grant reaches columns it
+never declared and stays excess authority. A library that bypasses it and calls the fragment builders directly keeps
+whatever purpose and grant option it declares.
 
 `runledger_postgres::grants` and `batter_runlimit::grants` publish the
 operation-to-object inventory of their own source version through that fragment.

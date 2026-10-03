@@ -63,7 +63,29 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
         require_within_policy(&fixed_pool, &fixed_role).await?;
         require_within_policy(&gcra_pool, &gcra_role).await?;
 
-        exercise_fixed_window(&fixed_pool, &quotas).await?;
+        // Admission alone is a narrower selection than admission plus cleanup: it
+        // needs no relation-level SELECT and no read of the generated
+        // `capacity_shard`, so a login that only admits proves the cleanup
+        // selection's wider reads are not an admission requirement.
+        let admitting_role = Composition::new(PublicPolicy::Deny)
+            .with_quotas(&quotas, &[RunlimitOperation::FixedWindowAdmission])
+            .compile()?;
+        let admitting_login = fixture.login("admitting", &admitting_role).await?;
+        let admitting_pool = fixture.pool(&admitting_login, &[&quotas]).await?;
+        require_within_policy(&admitting_pool, &admitting_role).await?;
+        exercise_fixed_window(&admitting_pool, &quotas, ExpiryPass::Skip).await?;
+        for forbidden in [
+            format!(
+                "SELECT capacity_shard FROM {}.runlimit_fixed_windows",
+                quote(&quotas)
+            ),
+            format!("SELECT ctid FROM {}.runlimit_fixed_windows", quote(&quotas)),
+            format!("DELETE FROM {}.runlimit_fixed_windows", quote(&quotas)),
+        ] {
+            require_denied(&admitting_pool, &forbidden).await?;
+        }
+
+        exercise_fixed_window(&fixed_pool, &quotas, ExpiryPass::Run).await?;
         exercise_gcra(&gcra_pool, &quotas).await?;
 
         require_separated_families(&fixed_pool, &gcra_pool, &quotas).await?;
@@ -203,18 +225,31 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
     .await
 }
 
-/// Fixed-window first insert, counter update, denial and real expiry deletion.
-async fn exercise_fixed_window(pool: &PgPool, quotas: &str) -> Result {
+/// Whether a login's selection includes the bounded expiry deletion.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ExpiryPass {
+    Skip,
+    Run,
+}
+
+/// Fixed-window first insert, counter update, denial and, when the login selected
+/// it, the real expiry deletion.
+async fn exercise_fixed_window(pool: &PgPool, quotas: &str, expiry: ExpiryPass) -> Result {
     // Fixed-window: first insert, counter update, denial, then real expiry
-    // deletion through the capacity ledger's definer triggers.
+    // deletion through the capacity ledger's definer triggers. The subject is
+    // unique per login so two selections never share one counter row.
+    let subject_label: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
+        .fetch_one(pool)
+        .await?;
     let policy = FixedWindowPolicy::new(
         PolicyId::new("batter.grants.fixed")?,
         ScopeId::new("subject")?,
         2,
         Duration::from_millis(400),
     )?;
-    let subject = hasher().hash_for(&policy, "grants-subject");
+    let subject = hasher().hash_for(&policy, subject_label.as_str());
     let limiter = PostgresLimiter::new(pool.clone());
+    let before = counter_rows(pool, quotas, "runlimit_fixed_windows").await?;
     for expected in [true, true, false] {
         let decision = limiter.check(&Check::new(subject)).await?;
         require(
@@ -223,15 +258,21 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str) -> Result {
         )?;
     }
     require(
-        counter_rows(pool, quotas, "runlimit_fixed_windows").await? == 1,
+        counter_rows(pool, quotas, "runlimit_fixed_windows").await? == before + 1,
         "the fixed-window counter row was not stored",
     )?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let deleted = limiter.cleanup_expired(16).await?;
-    require(
-        deleted == 1,
-        &format!("fixed-window cleanup deleted {deleted} rows, expected 1"),
-    )?;
+    if expiry == ExpiryPass::Run {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let deleted = limiter.cleanup_expired(16).await?;
+        require(
+            deleted >= 1,
+            &format!("fixed-window cleanup deleted {deleted} rows, expected at least 1"),
+        )?;
+        require(
+            counter_rows(pool, quotas, "runlimit_fixed_windows").await? == 0,
+            "an expired fixed-window counter survived its cleanup",
+        )?;
+    }
 
     Ok(())
 }

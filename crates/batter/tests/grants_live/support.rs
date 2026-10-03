@@ -324,7 +324,10 @@ pub(crate) async fn require_within_policy(pool: &PgPool, role: &CompiledExactRol
     let report = verification(pool, role).await?;
     require(
         report.status() == batter::sqlx::verification::VerificationStatus::WithinDeclaredPolicy,
-        &format!("a composed role was not satisfied exactly: {report:?}"),
+        &format!(
+            "a composed role was not satisfied exactly: {report:?} findings {:?}",
+            report.findings()
+        ),
     )
 }
 

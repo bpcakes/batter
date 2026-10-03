@@ -252,6 +252,11 @@ impl FragmentObjectPolicy {
     /// Permit PUBLIC to deliver exactly these privileges on the fragment's
     /// relations and columns.
     ///
+    /// The allowance is per privilege and per declared object. A fragment that
+    /// declares a privilege only on exact columns permits PUBLIC to deliver it
+    /// only on those columns; a whole-relation PUBLIC grant reaches columns the
+    /// fragment never declared and remains excess authority.
+    ///
     /// # Errors
     /// Returns [`ManifestError::Policy`] with [`PolicyError::AuthorityCapacity`]
     /// when the declaration bound would be exceeded.

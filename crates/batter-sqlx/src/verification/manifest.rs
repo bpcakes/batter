@@ -193,31 +193,6 @@ impl SchemaGrantSpec {
         self.allow_owner = allow;
         self
     }
-
-    /// Return the declared schema identifier.
-    pub const fn schema(&self) -> &Identifier {
-        &self.schema
-    }
-
-    /// Return the declared schema privileges in caller order.
-    pub fn privileges(&self) -> &[ObjectPrivilege] {
-        &self.privileges
-    }
-
-    /// Return whether these privileges are required and provisioned.
-    pub const fn purpose(&self) -> DeclarationPurpose {
-        self.options.purpose
-    }
-
-    /// Return the declared PUBLIC delivery choice.
-    pub const fn declared_public_delivery(&self) -> PublicDelivery {
-        self.options.public_delivery
-    }
-
-    /// Return whether ownership of this schema is permitted.
-    pub const fn allows_owner(&self) -> bool {
-        self.allow_owner
-    }
 }
 
 /// One privilege declaration expanded over one or more exact relations.

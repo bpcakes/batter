@@ -90,7 +90,6 @@ fn fixed_window_admission_grants_exactly_the_upsert_and_shard_lock_authority() {
             "GRANT USAGE ON SCHEMA \"quotas\" TO \"quota_service\";\n",
             "GRANT SELECT (\"capacity_shard\"), UPDATE (\"capacity_shard\") ON TABLE \"quotas\".\"runlimit_capacity_shards\" TO \"quota_service\";\n",
             "GRANT SELECT (\"row_count\") ON TABLE \"quotas\".\"runlimit_capacity_shards\" TO \"quota_service\";\n",
-            "GRANT SELECT (\"capacity_shard\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
             "GRANT SELECT (\"config_fingerprint\"), INSERT (\"config_fingerprint\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
             "GRANT SELECT (\"policy_id\"), INSERT (\"policy_id\"), UPDATE (\"policy_id\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
             "GRANT SELECT (\"scope_id\"), INSERT (\"scope_id\"), UPDATE (\"scope_id\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",

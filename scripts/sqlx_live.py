@@ -112,6 +112,7 @@ TARGETS = {
     "grants_live": {
         "excessive_table_update_grant_options_and_shadow_schemas_are_rejected",
         "one_login_composes_both_adapters_with_its_own_application_objects",
+        "native_public_delivery_is_accepted_only_where_the_application_permits_it",
         "removing_a_required_privilege_fails_the_native_operation_and_the_verifier",
         "authentication_attempts_admit_settle_and_clean_up_under_one_selection",
         "fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_stores",

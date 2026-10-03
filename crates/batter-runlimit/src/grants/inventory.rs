@@ -61,9 +61,11 @@ const FIXED_WINDOW_ADMISSION: &[Requirement] = &[
         relation_privileges: &[],
         // The admission upsert arbitrates on the counter key and reads
         // every column it refreshes through `EXCLUDED`, which
-        // PostgreSQL treats as reading the target relation's columns.
+        // PostgreSQL treats as reading the target relation's columns. The
+        // generated `capacity_shard` is read from the caller's own shard input
+        // and from the capacity ledger, never from this relation, so admission
+        // alone does not select it.
         select: &[
-            "capacity_shard",
             "config_fingerprint",
             "policy_id",
             "scope_id",
