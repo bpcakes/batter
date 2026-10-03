@@ -410,6 +410,26 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         .await?;
         require(!enabled, "the absent definition was not disabled")?;
 
+        // The single-definition catalog upsert is the same selection's work, so
+        // its conflict-update path runs under the restricted login too.
+        let mut transaction = database.pool().begin().await?;
+        let mut revised = definition(JOB_TYPE);
+        revised.version = 2;
+        jobs::upsert_job_definition_tx(&mut transaction, &revised).await?;
+        transaction.commit().await?;
+        let version: i32 = scalar(
+            &probe,
+            format!(
+                "SELECT version FROM {}.job_definitions WHERE job_type = '{JOB_TYPE}'",
+                quote(&jobs_schema)
+            ),
+        )
+        .await?;
+        require(
+            version == 2,
+            &format!("the definition version is {version}"),
+        )?;
+
         // Durable promotion of an intent recorded by another login.
         let mut owner_transaction = owner_database.pool().begin().await?;
         let intent = batter::runledger::native::postgres::jobs::JobEnqueueIntent::new(

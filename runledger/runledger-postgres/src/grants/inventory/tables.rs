@@ -358,14 +358,17 @@ pub(super) const CATALOG_SYNC: &[Requirement] = &[
     Requirement {
         relation: DEFINITIONS,
         relation_privileges: &[ObjectPrivilege::Maintain],
+        // The catalog upserts arbitrate on `job_type` and read through
+        // `EXCLUDED` every column they compare or refresh. `updated_at` is
+        // assigned `now()` without reading its previous value, and the
+        // timestamps are returned only by the excluded reader and
+        // administrative-update APIs, so neither needs SELECT here.
         select: &[
-            "created_at",
             "default_priority",
             "default_timeout_seconds",
             "is_enabled",
             "job_type",
             "max_attempts",
-            "updated_at",
             "version",
         ],
         insert: &[
