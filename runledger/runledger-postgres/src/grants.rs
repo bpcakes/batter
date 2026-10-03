@@ -37,6 +37,10 @@
 //!   `MAINTAIN`: it admits the lock without widening data mutation to every
 //!   column. `MAINTAIN` is still real authority, including `VACUUM`, `ANALYZE`,
 //!   `REINDEX` and `CLUSTER` on those relations.
+//! * Job cancellation is outside the supported direct-job contract. The
+//!   installed release trigger's cancellation branch marks a resource claim with
+//!   `release_after` instead of deleting it, and that write is deliberately not
+//!   required here.
 //! * Installed trigger ownership and body safety stay application prerequisites.
 //!   Native trigger functions need no serving `EXECUTE`, so none is declared.
 

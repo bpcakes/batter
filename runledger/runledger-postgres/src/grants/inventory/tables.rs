@@ -161,7 +161,11 @@ pub(super) const DIRECT_JOB_EXECUTION: &[Requirement] = &[
             "run_number",
             "worker_id",
         ],
-        update: &["lease_expires_at", "release_after"],
+        // `release_after` is read by the expired-claim reaping predicate but
+        // written only by the installed release trigger's cancellation branch,
+        // which a direct-worker lifecycle never reaches. The heartbeat branch's
+        // `lease_expires_at` also carries the row lock this selection needs.
+        update: &["lease_expires_at"],
     },
     Requirement {
         relation: QUEUE,

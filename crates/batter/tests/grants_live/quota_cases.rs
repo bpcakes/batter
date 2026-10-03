@@ -56,6 +56,10 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
                 ],
             )
             .compile()?;
+        // Expiry is driven by the owner so no admission decision depends on how
+        // fast the connection answers.
+        let owner = fixture.names.owner.clone();
+        let owner_pool = fixture.pool(&owner, &[&quotas]).await?;
         let fixed_login = fixture.login("fixed", &fixed_role).await?;
         let gcra_login = fixture.login("gcra", &gcra_role).await?;
         let fixed_pool = fixture.pool(&fixed_login, &[&quotas]).await?;
@@ -73,7 +77,7 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
         let admitting_login = fixture.login("admitting", &admitting_role).await?;
         let admitting_pool = fixture.pool(&admitting_login, &[&quotas]).await?;
         require_within_policy(&admitting_pool, &admitting_role).await?;
-        exercise_fixed_window(&admitting_pool, &quotas, ExpiryPass::Skip).await?;
+        exercise_fixed_window(&admitting_pool, &quotas, None).await?;
         for forbidden in [
             format!(
                 "SELECT capacity_shard FROM {}.runlimit_fixed_windows",
@@ -85,8 +89,8 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
             require_denied(&admitting_pool, &forbidden).await?;
         }
 
-        exercise_fixed_window(&fixed_pool, &quotas, ExpiryPass::Run).await?;
-        exercise_gcra(&gcra_pool, &quotas).await?;
+        exercise_fixed_window(&fixed_pool, &quotas, Some(&owner_pool)).await?;
+        exercise_gcra(&gcra_pool, &quotas, &owner_pool).await?;
 
         require_separated_families(&fixed_pool, &gcra_pool, &quotas).await?;
         Ok(())
@@ -108,17 +112,18 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         let pool = fixture.pool(&login, &[&quotas]).await?;
         require_within_policy(&pool, &role).await?;
 
-        // The backoffs are long enough that a denial window cannot close during a
-        // database round trip, and every wait below uses a settlement's own
-        // returned delay rather than a guessed interval.
+        // The backoffs are seconds, so a denial window cannot close during a
+        // database round trip however slow the connection is, and every wait
+        // below uses a settlement's own returned delay or the policy's own quiet
+        // period rather than a guessed interval.
         let period = |millis| QuotaPeriod::new(Duration::from_millis(millis));
         let policy = AttemptPolicy::new(
             PolicyId::new("batter.grants.attempts")?,
             ScopeId::new("identifier")?,
-            period(250)?,
-            period(500)?,
-            period(600)?,
+            period(1_000)?,
             period(2_000)?,
+            period(2_500)?,
+            period(5_000)?,
         )?;
         let hasher = hasher();
         let limiter = PostgresAttemptLimiter::new(pool.clone());
@@ -225,19 +230,16 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
     .await
 }
 
-/// Whether a login's selection includes the bounded expiry deletion.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum ExpiryPass {
-    Skip,
-    Run,
-}
+/// Quota windows long enough that no admission decision depends on how fast the
+/// connection answers. Expiry is driven by the owner rewriting the stored
+/// timestamp, so the restricted login's own DELETE authority is still what
+/// removes the row.
+const LONG_WINDOW: Duration = Duration::from_secs(3_600);
 
-/// Fixed-window first insert, counter update, denial and, when the login selected
-/// it, the real expiry deletion.
-async fn exercise_fixed_window(pool: &PgPool, quotas: &str, expiry: ExpiryPass) -> Result {
-    // Fixed-window: first insert, counter update, denial, then real expiry
-    // deletion through the capacity ledger's definer triggers. The subject is
-    // unique per login so two selections never share one counter row.
+/// Fixed-window first insert, counter update, denial and, when the owner expires
+/// the stored window, the selected login's real expiry deletion.
+async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> Result {
+    // The subject is unique per login so two selections never share one counter.
     let subject_label: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
         .fetch_one(pool)
         .await?;
@@ -245,11 +247,13 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, expiry: ExpiryPass) 
         PolicyId::new("batter.grants.fixed")?,
         ScopeId::new("subject")?,
         2,
-        Duration::from_millis(400),
+        LONG_WINDOW,
     )?;
     let subject = hasher().hash_for(&policy, subject_label.as_str());
     let limiter = PostgresLimiter::new(pool.clone());
     let before = counter_rows(pool, quotas, "runlimit_fixed_windows").await?;
+    // Two admissions then a denial, decided by the stored counter rather than by
+    // elapsed time.
     for expected in [true, true, false] {
         let decision = limiter.check(&Check::new(subject)).await?;
         require(
@@ -261,8 +265,19 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, expiry: ExpiryPass) 
         counter_rows(pool, quotas, "runlimit_fixed_windows").await? == before + 1,
         "the fixed-window counter row was not stored",
     )?;
-    if expiry == ExpiryPass::Run {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    if let Some(owner) = owner {
+        exec_owned(
+            owner,
+            format!(
+                // The stored window keeps its validity check: the start moves
+                // back with the expiry so the row is expired, not malformed.
+                "UPDATE {}.runlimit_fixed_windows \
+                 SET window_started_at = now() - interval '2 seconds', \
+                     window_expires_at = now() - interval '1 second'",
+                quote(quotas)
+            ),
+        )
+        .await?;
         let deleted = limiter.cleanup_expired(16).await?;
         require(
             deleted >= 1,
@@ -277,15 +292,14 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, expiry: ExpiryPass) 
     Ok(())
 }
 
-/// GCRA first insert, replenishment denial and its own expiry deletion.
-async fn exercise_gcra(pool: &PgPool, quotas: &str) -> Result {
-    // GCRA: first insert, replenishment denial and its own expiry deletion.
-
+/// GCRA first insert, replenishment denial and, after the owner expires the
+/// stored counter, the selected login's own expiry deletion.
+async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: &PgPool) -> Result {
     let gcra_policy = GcraPolicy::new(
         PolicyId::new("batter.grants.gcra")?,
         ScopeId::new("subject")?,
         1,
-        Duration::from_millis(400),
+        LONG_WINDOW,
         1,
     )?;
     let gcra_subject = hasher().hash_for(&gcra_policy, "grants-subject");
@@ -296,25 +310,46 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str) -> Result {
             .permits_request(),
         "the first GCRA request was denied",
     )?;
+    // One hour of replenishment is far beyond any connection latency, so the
+    // second request is denied by the stored arrival time, not by timing.
     require(
         !gcra
             .check(&Check::new(gcra_subject))
             .await?
             .permits_request(),
-        "an immediate second GCRA request was admitted",
+        "a second GCRA request inside the replenishment window was admitted",
     )?;
     require(
         counter_rows(pool, quotas, "runlimit_gcra").await? == 1,
         "the GCRA counter row was not stored",
     )?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    exec_owned(
+        owner,
+        format!(
+            "UPDATE {}.runlimit_gcra SET expires_at_ms = 0",
+            quote(quotas)
+        ),
+    )
+    .await?;
     let removed = gcra.cleanup_expired(16).await?;
     require(
         removed == 1,
         &format!("GCRA cleanup deleted {removed} rows, expected 1"),
     )?;
-
+    require(
+        counter_rows(pool, quotas, "runlimit_gcra").await? == 0,
+        "an expired GCRA counter survived its cleanup",
+    )?;
     Ok(())
+}
+
+/// Run one owner-driven statement that makes a stored counter expired.
+async fn exec_owned(pool: &PgPool, statement: String) -> Result {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 /// Neither family reaches the other's store, the capacity ledgers' row_count,

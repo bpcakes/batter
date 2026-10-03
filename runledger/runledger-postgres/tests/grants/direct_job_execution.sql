@@ -42,7 +42,7 @@ GRANT SELECT ("stage"), INSERT ("stage") ON TABLE "jobs"."job_events" TO "jobs_s
 GRANT SELECT ("attempt"), INSERT ("attempt") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
 GRANT SELECT ("job_id"), INSERT ("job_id") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
 GRANT SELECT ("lease_expires_at"), INSERT ("lease_expires_at"), UPDATE ("lease_expires_at") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
-GRANT SELECT ("release_after"), UPDATE ("release_after") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
+GRANT SELECT ("release_after") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
 GRANT SELECT ("resource_key"), INSERT ("resource_key") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
 GRANT SELECT ("run_number"), INSERT ("run_number") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
 GRANT SELECT ("worker_id"), INSERT ("worker_id") ON TABLE "jobs"."job_execution_resource_claims" TO "jobs_service";
