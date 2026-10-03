@@ -36,6 +36,19 @@ use batter::sqlx::verification::{
 };
 use std::process::ExitCode;
 
+/// Whether a role touches the application's own objects at all.
+///
+/// This is as explicit as the native selections. A login that exists only to run
+/// one native operation must not receive application read or write authority
+/// just because the same `compose` helper builds it.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ApplicationObjects {
+    /// The role reads and writes the application's delivery notes.
+    DeliveryNotes,
+    /// The role declares no application object.
+    None,
+}
+
 /// Whether the application's provisioned roles use PostgreSQL's PUBLIC role.
 #[derive(Clone, Copy)]
 enum PublicPolicy {
@@ -54,6 +67,7 @@ fn main() -> ExitCode {
     let shape_a = compose(
         "intent_writer",
         PublicPolicy::PermitSelectedDelivery,
+        ApplicationObjects::DeliveryNotes,
         &[RunledgerOperation::IntentSubmission],
         &[
             RunlimitOperation::FixedWindowAdmission,
@@ -66,6 +80,7 @@ fn main() -> ExitCode {
     let inspector = compose(
         "schema_inspector",
         PublicPolicy::Deny,
+        ApplicationObjects::None,
         &[RunledgerOperation::SchemaSnapshot],
         &[],
     );
@@ -74,6 +89,7 @@ fn main() -> ExitCode {
     let shape_b = compose(
         "worker_service",
         PublicPolicy::Deny,
+        ApplicationObjects::DeliveryNotes,
         &[
             RunledgerOperation::DirectJobExecution,
             RunledgerOperation::IntentPromotion,
@@ -114,25 +130,35 @@ fn render(
 fn compose(
     role: &str,
     public: PublicPolicy,
+    application_objects: ApplicationObjects,
     runledger: &[RunledgerOperation],
     runlimit: &[RunlimitOperation],
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let jobs = Identifier::new("jobs")?;
     let quotas = Identifier::new("quotas")?;
     let application = Identifier::new("service")?;
+    let owns_application = application_objects == ApplicationObjects::DeliveryNotes;
 
     // Discovery covers exactly the schemas this role declares objects in, so an
-    // unselected native store is neither audited nor reachable.
-    let mut scope = vec![application.clone()];
+    // unselected native store or application schema is neither audited nor
+    // reachable.
+    let mut scope = Vec::new();
+    if owns_application {
+        scope.push(application.clone());
+    }
     if !runledger.is_empty() {
         scope.push(jobs.clone());
     }
     if !runlimit.is_empty() {
         scope.push(quotas.clone());
     }
+    let primary = scope
+        .first()
+        .ok_or("a composed role needs at least one schema")?
+        .clone();
 
     // The application owns every policy a fragment cannot carry.
-    let mut manifest = ExactRoleManifest::new(application.clone(), DiscoveryScope::Schemas(scope))?;
+    let mut manifest = ExactRoleManifest::new(primary, DiscoveryScope::Schemas(scope))?;
     manifest.set_role_policy(RolePolicy::default())?;
     manifest.deny_current_database_ownership(true);
     manifest.set_discovery_defaults(defaults())?;
@@ -167,8 +193,12 @@ fn compose(
         )?)?;
     }
 
-    // The application's own relation, columns and routine stay ordinary manifest
-    // inputs beside them.
+    if !owns_application {
+        return render(role, &manifest.compile()?);
+    }
+
+    // The application's own schema, relation and columns stay ordinary manifest
+    // inputs beside the fragments, and only for a role that declares them.
     manifest.add_schema(SchemaGrantSpec::new(
         application.clone(),
         [ObjectPrivilege::Usage],
@@ -238,7 +268,7 @@ fn defaults() -> DiscoveryDefaults {
 
 #[cfg(test)]
 mod tests {
-    use super::{PublicPolicy, compose};
+    use super::{ApplicationObjects, PublicPolicy, compose};
     use batter::runledger::grants::RunledgerOperation;
     use batter::runlimit::grants::RunlimitOperation;
 
@@ -248,6 +278,7 @@ mod tests {
             let rendered = compose(
                 "service_login",
                 public,
+                ApplicationObjects::DeliveryNotes,
                 &[
                     RunledgerOperation::DirectJobExecution,
                     RunledgerOperation::IntentSubmission,
@@ -260,6 +291,7 @@ mod tests {
                 compose(
                     "service_login",
                     public,
+                    ApplicationObjects::DeliveryNotes,
                     &[
                         RunledgerOperation::IntentSubmission,
                         RunledgerOperation::DirectJobExecution,
@@ -285,6 +317,7 @@ mod tests {
         let rendered = compose(
             "schema_inspector",
             PublicPolicy::Deny,
+            ApplicationObjects::None,
             &[RunledgerOperation::SchemaSnapshot],
             &[],
         )
@@ -292,7 +325,16 @@ mod tests {
         // The snapshot is relation wide, which is exactly why it is a separate
         // login rather than part of a serving role.
         assert_eq!(rendered.matches("GRANT SELECT ON TABLE").count(), 5);
-        assert!(!rendered.contains("\"quotas\""));
-        assert!(!rendered.contains("job_enqueue_intents"));
+        // An inspection login declares no quota store and no application object,
+        // so it receives neither.
+        for absent in [
+            "\"quotas\"",
+            "\"service\"",
+            "job_enqueue_intents",
+            "delivery_notes",
+            "normalize_note",
+        ] {
+            assert!(!rendered.contains(absent), "unexpected grant for {absent}");
+        }
     }
 }
