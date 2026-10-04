@@ -188,8 +188,10 @@ fn compose(consumer: &ConsumerRole) -> Result<String, Box<dyn std::error::Error 
     let owns_application = application_objects == ApplicationObjects::DeliveryNotes;
 
     // Discovery covers exactly the schemas this role declares objects in, so an
-    // unselected native store or application schema is neither audited nor
-    // reachable.
+    // unselected native store or application schema falls outside what
+    // verification audits. That is an audit boundary and not a confinement:
+    // rendering grants cannot revoke anything, so a privilege this role already
+    // holds in such a schema stays in place, unreported and unrevoked.
     let mut scope = Vec::new();
     if owns_application {
         scope.push(application.clone());
@@ -362,6 +364,44 @@ mod tests {
         }
     }
 
+    /// The relations this plan grants relation-level `SELECT` on, sorted.
+    ///
+    /// A column grant renders as `SELECT ("column")`, so a bare `SELECT` in a
+    /// statement's privilege list is the relation-wide form. Reading each
+    /// statement separately catches it inside a combined grant such as
+    /// `GRANT SELECT, DELETE ON TABLE ...`, which a substring search for
+    /// `GRANT SELECT ON TABLE` silently misses.
+    fn relation_wide_select_targets(rendered: &str) -> Vec<String> {
+        let mut targets: Vec<String> = Vec::new();
+        for statement in rendered.split(';') {
+            let Some((head, target)) = statement.split_once(" ON TABLE ") else {
+                continue;
+            };
+            let Some((_, privileges)) = head.split_once("GRANT ") else {
+                continue;
+            };
+            if grants_relation_wide_select(privileges) {
+                let target = target.split_once(" TO ").map_or(target, |(name, _)| name);
+                targets.push(target.trim().to_owned());
+            }
+        }
+        targets.sort();
+        targets
+    }
+
+    /// Whether a statement's privilege list names `SELECT` without a column
+    /// list, which is the relation-wide grant.
+    fn grants_relation_wide_select(privileges: &str) -> bool {
+        let mut rest = privileges;
+        while let Some(position) = rest.find("SELECT") {
+            rest = &rest[position + "SELECT".len()..];
+            if !rest.trim_start().starts_with('(') {
+                return true;
+            }
+        }
+        false
+    }
+
     #[test]
     fn the_serving_shapes_compose_both_adapters_with_their_own_objects() {
         for consumer in [&INTENT_WRITER, &WORKER_SERVICE] {
@@ -371,11 +411,28 @@ mod tests {
             assert!(rendered.contains(
                 "GRANT EXECUTE ON ROUTINE \"service\".\"normalize_note\"(\"pg_catalog\".\"text\")",
             ));
-            // Intent submission is column scoped, so the relation-wide reads the
-            // full-schema snapshot needs cannot appear in a serving role.
-            assert!(!rendered.contains("GRANT SELECT ON TABLE"));
+            // Intent submission is column scoped, so no Runledger relation may
+            // carry the relation-wide read the full-schema snapshot needs. The
+            // check is scoped to the jobs schema because fixed-window cleanup
+            // legitimately holds relation-level `SELECT` on its own counter
+            // table, which it reads by `ctid`.
+            let relation_wide = relation_wide_select_targets(&rendered);
+            assert!(
+                !relation_wide
+                    .iter()
+                    .any(|target| target.starts_with("\"jobs\".")),
+                "a serving role received a relation-wide read on a Runledger relation: {relation_wide:?}",
+            );
         }
         assert!(render(&INTENT_WRITER).contains("ON TABLE \"quotas\".\"runlimit_fixed_windows\""));
+        // The check above is only worth anything if it sees combined statements,
+        // which is exactly what a substring search for `GRANT SELECT ON TABLE`
+        // missed: fixed-window cleanup renders `GRANT SELECT, DELETE ON TABLE`
+        // on its own counter table, and that read is legitimate.
+        assert!(
+            relation_wide_select_targets(&render(&INTENT_WRITER))
+                .contains(&"\"quotas\".\"runlimit_fixed_windows\"".to_owned()),
+        );
         assert!(render(&WORKER_SERVICE).contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
     }
 
@@ -383,8 +440,18 @@ mod tests {
     fn the_inspection_role_selects_only_the_snapshot() {
         let rendered = render(&SCHEMA_INSPECTOR);
         // The snapshot is relation wide, which is exactly why it is a separate
-        // login rather than part of a serving role.
-        assert_eq!(rendered.matches("GRANT SELECT ON TABLE").count(), 5);
+        // login rather than part of a serving role. Naming the relations states
+        // which reads that costs, where a count alone would accept any five.
+        assert_eq!(
+            relation_wide_select_targets(&rendered),
+            [
+                "\"jobs\".\"_sqlx_migrations\"",
+                "\"jobs\".\"job_queue\"",
+                "\"jobs\".\"runledger_migration_history\"",
+                "\"jobs\".\"workflow_runs\"",
+                "\"jobs\".\"workflow_steps\"",
+            ],
+        );
         // An inspection login declares no quota store and no application object,
         // so it receives neither.
         for absent in [
