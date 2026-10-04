@@ -295,6 +295,12 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
         let due: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT now()")
             .fetch_one(&wide_probe)
             .await?;
+        // Derive the cadence from the captured start so the case never depends on
+        // the calendar date. A fixed annual boundary sits minutes away when the
+        // run begins late on December 31; half a year ahead of `due` is far from
+        // it whatever today is.
+        let distant_month = (chrono::Datelike::month(&due) + 5) % 12 + 1;
+        let cron = format!("0 0 0 1 {distant_month} *");
         jobs::upsert_job_schedule(
             owner_database.pool(),
             &jobs::JobScheduleUpsert {
@@ -302,12 +308,12 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
                 job_type: JobType::new(DIRECT_TYPE),
                 organization_id: None,
                 payload_template: &payload,
-                // The first fire is due because next_fire_at is now, not
-                // because of this cadence. A yearly occurrence keeps the second
-                // fire beyond any test window: a per-minute schedule crossing a
+                // The first fire is due because next_fire_at is `due`, not
+                // because of this cadence, which only has to keep the second
+                // fire beyond the test window: a per-minute schedule crossing a
                 // UTC minute boundary can enqueue a job after the worker stops
                 // admitting work, which later observations would then inherit.
-                cron_expr: "0 0 0 1 1 *",
+                cron_expr: &cron,
                 is_active: true,
                 next_fire_at: due,
                 max_jitter_seconds: 0,
@@ -357,7 +363,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             .fetch_one(owner_database.pool())
             .await?;
         require(
-            next_fire > due + chrono::Duration::hours(1),
+            next_fire > due + chrono::Duration::days(28),
             &format!("the schedule fires again at {next_fire}, inside the test window"),
         )?;
         await_count(&wide_probe, succeeded, 3, "default-loop scheduled dispatch").await?;
