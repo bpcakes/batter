@@ -262,10 +262,14 @@ full-schema snapshot, the direct-job lifecycle including handler continuation,
 unstarted-claim release, resource claims and lease reaping with no retained
 cleanup error, promotion, exact definition and schedule catalog synchronization,
 due scheduled dispatch, scheduler-disabled and default-loop supervisors,
-fixed-window and GCRA admission with real expiry deletion, an admission-only
-login that needs neither the cleanup selection's relation-wide read nor the
-generated shard column, authentication attempts with transactional claim and
-finish, and the forbidden operations each selection must refuse. Removing a
+fixed-window and GCRA admission including a multi-item batch, with real expiry
+deletion, an admission-only login that needs neither the cleanup selection's
+relation-wide read nor the generated shard column, a cleanup-only login per
+family that deletes an owner-seeded expired counter while refused the admission
+insert and the capacity ledger's `row_count`, authentication attempts with
+transactional claim and finish, refused stale completion, and a directly
+observed expiry deletion of an owner-planted record in the admitted subject's
+capacity shard, and the forbidden operations each selection must refuse. Removing a
 required privilege fails both the native operation and the verifier; added
 table-level `UPDATE` or grant-option authority is rejected; and a restricted
 control separates permitted from denied PUBLIC delivery on native objects, which

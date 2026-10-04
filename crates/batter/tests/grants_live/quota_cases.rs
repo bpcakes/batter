@@ -23,7 +23,7 @@ fn hasher() -> KeyHasher {
     KeyHasher::new([19; 32]).expect("a 32-byte key is valid")
 }
 
-async fn counter_rows(pool: &PgPool, schema: &str, relation: &str) -> Result<i64> {
+pub(crate) async fn counter_rows(pool: &PgPool, schema: &str, relation: &str) -> Result<i64> {
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM {}.{relation}",
         quote(schema)
@@ -110,6 +110,13 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
 
         exercise_fixed_window(&fixed_pool, &quotas, Some(&owner_pool)).await?;
         exercise_gcra(&gcra_pool, &quotas, Some(&owner_pool)).await?;
+
+        // Cleanup is independently selectable, so it needs its own login too.
+        // Under the combined roles above an admission grant can satisfy a
+        // cleanup statement: admission reads the capacity ledger's row_count and
+        // cleanup never does, so a cleanup query that acquired that dependency
+        // would pass and still break a cleanup-only consumer.
+        super::quota_cleanup::exercise_cleanup_only(fixture, &quotas, &owner_pool).await?;
 
         require_separated_families(&fixed_pool, &gcra_pool, &quotas).await?;
         Ok(())

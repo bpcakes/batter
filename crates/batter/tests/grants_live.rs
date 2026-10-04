@@ -18,6 +18,8 @@ mod control_cases;
 mod policy;
 #[path = "grants_live/quota_cases.rs"]
 mod quota_cases;
+#[path = "grants_live/quota_cleanup.rs"]
+mod quota_cleanup;
 #[path = "grants_live/runledger_cases.rs"]
 mod runledger_cases;
 #[path = "grants_live/schema.rs"]
