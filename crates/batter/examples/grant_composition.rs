@@ -58,63 +58,84 @@ enum PublicPolicy {
     PermitSelectedDelivery,
 }
 
+/// One consumer-shaped role this example renders.
+///
+/// The three roles are defined once here so the tests below assert on the same
+/// values `main` prints. A selection removed from a role is therefore a failing
+/// test, not a silently narrower example.
+struct ConsumerRole {
+    role: &'static str,
+    public: PublicPolicy,
+    application: ApplicationObjects,
+    runledger: &'static [RunledgerOperation],
+    runlimit: &'static [RunlimitOperation],
+}
+
+/// Consumer shape A submits enqueue intents with narrow column grants, runs
+/// fixed-window quotas and authentication attempts, and permits selected PUBLIC
+/// delivery. It deliberately does not select the privileged full-schema
+/// snapshot: that selection needs relation-level `SELECT` on five relations, so
+/// it belongs to the separate inspection login below.
+const INTENT_WRITER: ConsumerRole = ConsumerRole {
+    role: "intent_writer",
+    public: PublicPolicy::PermitSelectedDelivery,
+    application: ApplicationObjects::DeliveryNotes,
+    runledger: &[RunledgerOperation::IntentSubmission],
+    runlimit: &[
+        RunlimitOperation::FixedWindowAdmission,
+        RunlimitOperation::FixedWindowExpiryCleanup,
+        RunlimitOperation::AuthenticationAttempts,
+    ],
+};
+
+/// Shape A's startup inspection login. Selecting the snapshot alone keeps the
+/// relation-wide reads it needs away from every serving login.
+const SCHEMA_INSPECTOR: ConsumerRole = ConsumerRole {
+    role: "schema_inspector",
+    public: PublicPolicy::Deny,
+    application: ApplicationObjects::None,
+    runledger: &[RunledgerOperation::SchemaSnapshot],
+    runlimit: &[],
+};
+
+/// Consumer shape B submits intents and runs direct-job workers under the native
+/// supervisor's default loops, uses GCRA quotas and attempts, and denies PUBLIC
+/// delivery. The default supervisor enables the scheduler loop, so scheduled
+/// dispatch is part of this role; a deployment that calls
+/// `SupervisorBuilder::disable_scheduler` drops that selection instead.
+const WORKER_SERVICE: ConsumerRole = ConsumerRole {
+    role: "worker_service",
+    public: PublicPolicy::Deny,
+    application: ApplicationObjects::DeliveryNotes,
+    runledger: &[
+        RunledgerOperation::DirectJobExecution,
+        RunledgerOperation::IntentPromotion,
+        RunledgerOperation::IntentSubmission,
+        RunledgerOperation::ScheduledDispatch,
+    ],
+    runlimit: &[
+        RunlimitOperation::GcraAdmission,
+        RunlimitOperation::GcraExpiryCleanup,
+        RunlimitOperation::AuthenticationAttempts,
+    ],
+};
+
+/// Every role this example renders, in output order.
+const CONSUMER_ROLES: [&ConsumerRole; 3] = [&INTENT_WRITER, &SCHEMA_INSPECTOR, &WORKER_SERVICE];
+
 fn main() -> ExitCode {
-    // Consumer shape A submits enqueue intents with narrow column grants, runs
-    // fixed-window quotas and authentication attempts, and permits selected
-    // PUBLIC delivery. It deliberately does not select the privileged
-    // full-schema snapshot: that selection needs relation-level SELECT on five
-    // relations, so it belongs to a separate login below.
-    let shape_a = compose(
-        "intent_writer",
-        PublicPolicy::PermitSelectedDelivery,
-        ApplicationObjects::DeliveryNotes,
-        &[RunledgerOperation::IntentSubmission],
-        &[
-            RunlimitOperation::FixedWindowAdmission,
-            RunlimitOperation::FixedWindowExpiryCleanup,
-            RunlimitOperation::AuthenticationAttempts,
-        ],
-    );
-    // Shape A's startup inspection login. Selecting the snapshot alone keeps the
-    // relation-wide reads it needs away from the serving login.
-    let inspector = compose(
-        "schema_inspector",
-        PublicPolicy::Deny,
-        ApplicationObjects::None,
-        &[RunledgerOperation::SchemaSnapshot],
-        &[],
-    );
-    // Consumer shape B submits intents, runs direct-job workers under the native
-    // supervisor's default loops, uses GCRA quotas and attempts, and denies
-    // PUBLIC delivery. The default supervisor enables the scheduler loop, so
-    // scheduled dispatch is part of this role; a deployment that calls
-    // `SupervisorBuilder::disable_scheduler` drops that selection instead.
-    let shape_b = compose(
-        "worker_service",
-        PublicPolicy::Deny,
-        ApplicationObjects::DeliveryNotes,
-        &[
-            RunledgerOperation::DirectJobExecution,
-            RunledgerOperation::IntentPromotion,
-            RunledgerOperation::IntentSubmission,
-            RunledgerOperation::ScheduledDispatch,
-        ],
-        &[
-            RunlimitOperation::GcraAdmission,
-            RunlimitOperation::GcraExpiryCleanup,
-            RunlimitOperation::AuthenticationAttempts,
-        ],
-    );
-    match (shape_a, inspector, shape_b) {
-        (Ok(first), Ok(second), Ok(third)) => {
-            print!("{first}\n{second}\n{third}");
-            ExitCode::SUCCESS
-        }
-        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
-            eprintln!("the composed exact role is invalid: {error}");
-            ExitCode::FAILURE
+    let mut rendered = String::new();
+    for consumer in CONSUMER_ROLES {
+        match compose(consumer) {
+            Ok(role) => rendered.push_str(&role),
+            Err(error) => {
+                eprintln!("the composed exact role is invalid: {error}");
+                return ExitCode::FAILURE;
+            }
         }
     }
+    print!("{rendered}");
+    ExitCode::SUCCESS
 }
 
 /// Compile one role and render its inert grant plan.
@@ -131,13 +152,14 @@ fn render(
     ))
 }
 
-fn compose(
-    role: &str,
-    public: PublicPolicy,
-    application_objects: ApplicationObjects,
-    runledger: &[RunledgerOperation],
-    runlimit: &[RunlimitOperation],
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn compose(consumer: &ConsumerRole) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let ConsumerRole {
+        role,
+        public,
+        application: application_objects,
+        runledger,
+        runlimit,
+    } = *consumer;
     let jobs = Identifier::new("jobs")?;
     let quotas = Identifier::new("quotas")?;
     let application = Identifier::new("service")?;
@@ -197,10 +219,20 @@ fn compose(
         )?)?;
     }
 
-    if !owns_application {
-        return render(role, &manifest.compile()?);
+    if owns_application {
+        manifest = declare_application_objects(manifest, &application, public)?;
     }
+    render(role, &manifest.compile()?)
+}
 
+/// The application's own schema, relation, columns and routine. These are
+/// ordinary manifest inputs beside the fragments, declared only for a role that
+/// selected them.
+fn declare_application_objects(
+    mut manifest: ExactRoleManifest,
+    application: &Identifier,
+    public: PublicPolicy,
+) -> Result<ExactRoleManifest, Box<dyn std::error::Error + Send + Sync>> {
     // The application's own schema, relation and columns stay ordinary manifest
     // inputs beside the fragments, and only for a role that declares them.
     manifest.add_schema(SchemaGrantSpec::new(
@@ -251,7 +283,7 @@ fn compose(
         )?
         .public_delivery(deliveries),
     )?;
-    render(role, &manifest.compile()?)
+    Ok(manifest)
 }
 
 /// The application's choices for the native objects a fragment declares.
@@ -287,46 +319,33 @@ fn defaults() -> DiscoveryDefaults {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApplicationObjects, PublicPolicy, compose};
+    use super::{
+        ApplicationObjects, CONSUMER_ROLES, ConsumerRole, INTENT_WRITER, PublicPolicy,
+        SCHEMA_INSPECTOR, WORKER_SERVICE, compose,
+    };
     use batter::runledger::grants::RunledgerOperation;
-    use batter::runlimit::grants::RunlimitOperation;
+
+    fn render(consumer: &ConsumerRole) -> String {
+        compose(consumer).expect("the composed exact role is valid")
+    }
 
     #[test]
-    fn both_consumer_shapes_render_deterministically_without_grant_options() {
-        for public in [PublicPolicy::Deny, PublicPolicy::PermitSelectedDelivery] {
-            let rendered = compose(
-                "service_login",
-                public,
-                ApplicationObjects::DeliveryNotes,
-                &[
-                    RunledgerOperation::DirectJobExecution,
-                    RunledgerOperation::IntentSubmission,
-                ],
-                &[RunlimitOperation::GcraAdmission],
-            )
-            .expect("the composed exact role is valid");
-            assert_eq!(
-                rendered,
-                compose(
-                    "service_login",
-                    public,
-                    ApplicationObjects::DeliveryNotes,
-                    &[
-                        RunledgerOperation::IntentSubmission,
-                        RunledgerOperation::DirectJobExecution,
-                    ],
-                    &[RunlimitOperation::GcraAdmission],
-                )
-                .expect("the composed exact role is valid"),
-            );
+    fn every_rendered_role_is_deterministic_and_grants_no_options() {
+        for consumer in CONSUMER_ROLES {
+            let rendered = render(consumer);
+            assert_eq!(rendered, render(consumer));
             assert!(!rendered.contains("WITH GRANT OPTION"));
             assert!(!rendered.contains("ALL PRIVILEGES"));
             assert!(rendered.contains("GRANT CONNECT ON DATABASE \"service_database\""));
+        }
+    }
+
+    #[test]
+    fn the_serving_shapes_compose_both_adapters_with_their_own_objects() {
+        for consumer in [&INTENT_WRITER, &WORKER_SERVICE] {
+            let rendered = render(consumer);
             assert!(rendered.contains("ON TABLE \"jobs\".\"job_enqueue_intents\""));
-            assert!(rendered.contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
             assert!(rendered.contains("ON TABLE \"service\".\"delivery_notes\""));
-            // The application's own routine is part of the composition, so the
-            // inspector's exclusion of it below is a real check.
             assert!(rendered.contains(
                 "GRANT EXECUTE ON ROUTINE \"service\".\"normalize_note\"(\"pg_catalog\".\"text\")",
             ));
@@ -334,50 +353,13 @@ mod tests {
             // full-schema snapshot needs cannot appear in a serving role.
             assert!(!rendered.contains("GRANT SELECT ON TABLE"));
         }
-    }
-
-    #[test]
-    fn the_default_loop_worker_role_carries_its_scheduler_authority() {
-        let default_loops = compose(
-            "worker_service",
-            PublicPolicy::Deny,
-            ApplicationObjects::None,
-            &[
-                RunledgerOperation::DirectJobExecution,
-                RunledgerOperation::ScheduledDispatch,
-            ],
-            &[],
-        )
-        .expect("the composed exact role is valid");
-        // The native supervisor enables the scheduler by default, so a role for
-        // it needs the schedule claim's table lock and its fire-recording writes.
-        assert!(default_loops.contains("GRANT MAINTAIN ON TABLE \"jobs\".\"job_schedules\""));
-        assert!(default_loops.contains("UPDATE (\"last_fired_at\")"));
-        assert!(default_loops.contains("UPDATE (\"next_fire_at\")"));
-
-        // A deployment that calls `SupervisorBuilder::disable_scheduler` drops
-        // the selection, and with it every schedule grant.
-        let scheduler_disabled = compose(
-            "worker_service",
-            PublicPolicy::Deny,
-            ApplicationObjects::None,
-            &[RunledgerOperation::DirectJobExecution],
-            &[],
-        )
-        .expect("the composed exact role is valid");
-        assert!(!scheduler_disabled.contains("job_schedules"));
+        assert!(render(&INTENT_WRITER).contains("ON TABLE \"quotas\".\"runlimit_fixed_windows\""));
+        assert!(render(&WORKER_SERVICE).contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
     }
 
     #[test]
     fn the_inspection_role_selects_only_the_snapshot() {
-        let rendered = compose(
-            "schema_inspector",
-            PublicPolicy::Deny,
-            ApplicationObjects::None,
-            &[RunledgerOperation::SchemaSnapshot],
-            &[],
-        )
-        .expect("the composed exact role is valid");
+        let rendered = render(&SCHEMA_INSPECTOR);
         // The snapshot is relation wide, which is exactly why it is a separate
         // login rather than part of a serving role.
         assert_eq!(rendered.matches("GRANT SELECT ON TABLE").count(), 5);
@@ -392,5 +374,46 @@ mod tests {
         ] {
             assert!(!rendered.contains(absent), "unexpected grant for {absent}");
         }
+    }
+
+    #[test]
+    fn the_default_loop_worker_role_carries_its_scheduler_authority() {
+        // The native supervisor enables the scheduler by default, so the role
+        // this example actually renders for shape B needs the schedule claim's
+        // table lock and its fire-recording writes. Dropping the selection from
+        // `WORKER_SERVICE` fails here rather than quietly narrowing the example.
+        let rendered = render(&WORKER_SERVICE);
+        assert!(rendered.contains("GRANT MAINTAIN ON TABLE \"jobs\".\"job_schedules\""));
+        assert!(rendered.contains("UPDATE (\"last_fired_at\")"));
+        assert!(rendered.contains("UPDATE (\"next_fire_at\")"));
+
+        // A deployment that calls `SupervisorBuilder::disable_scheduler` drops
+        // the selection, and with it every schedule grant.
+        let scheduler_disabled = ConsumerRole {
+            runledger: &[
+                RunledgerOperation::DirectJobExecution,
+                RunledgerOperation::IntentPromotion,
+                RunledgerOperation::IntentSubmission,
+            ],
+            ..WORKER_SERVICE
+        };
+        assert!(!render(&scheduler_disabled).contains("job_schedules"));
+    }
+
+    #[test]
+    fn a_permitted_public_delivery_does_not_change_the_rendered_grants() {
+        // PUBLIC delivery changes what verification accepts, never the
+        // role-targeted plan, so the two policies render identically.
+        let denied = ConsumerRole {
+            public: PublicPolicy::Deny,
+            ..INTENT_WRITER
+        };
+        assert_eq!(render(&INTENT_WRITER), render(&denied));
+        // The application-object choice does change the plan.
+        let without_application = ConsumerRole {
+            application: ApplicationObjects::None,
+            ..INTENT_WRITER
+        };
+        assert_ne!(render(&INTENT_WRITER), render(&without_application));
     }
 }

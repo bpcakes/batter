@@ -3,11 +3,21 @@
 use super::policy::{APPLICATION_RELATION, APPLICATION_ROUTINE, Composition, PublicPolicy};
 use super::schema;
 use super::support::{
-    Fixture, Result, exec, quote, require, require_denied, require_permitted, require_violation,
-    require_within_policy,
+    Fixture, PgAtomicFailure, Result, exec, quote, require, require_denied, require_permitted,
+    require_violation, require_within_policy,
 };
 use batter::runledger::grants::RunledgerOperation;
+use batter::runledger::native::core::jobs::JobType;
+use batter::runledger::native::postgres::jobs::{
+    self, JobDefinitionUpsert, JobEnqueue, JobEnqueueIntent, JobEnqueueIntentDisposition,
+};
+use batter::runledger::run_atomic;
 use batter::runlimit::grants::RunlimitOperation;
+use batter::runlimit::native::{
+    Check, FixedWindowPolicy, GcraPolicy, KeyHasher, PolicyId, ScopeId,
+};
+use batter::runlimit::postgres::{PostgresGcraLimiter, PostgresLimiter};
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
@@ -176,25 +186,24 @@ async fn excessive_table_update_grant_options_and_shadow_schemas_are_rejected() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn one_login_composes_both_adapters_with_its_own_application_objects() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;
         let jobs = fixture.names.jobs.clone();
         let quotas = fixture.names.quotas.clone();
         let application = fixture.names.application.clone();
+        let owner = fixture.names.owner.clone();
+        let owner_database = schema::runledger_database(fixture, &owner, &jobs, 2)?;
+        let payload = serde_json::json!({"composed": true});
 
-        // Consumer shape A: narrow intent submission, a separately selected full
-        // schema snapshot, fixed-window quotas, attempts, and a policy that
-        // explicitly permits PUBLIC delivery of SELECT and routine EXECUTE.
+        // Consumer shape A: narrow intent submission, fixed-window quotas,
+        // attempts, its own application objects, and a policy that explicitly
+        // permits PUBLIC delivery of SELECT and routine EXECUTE. The privileged
+        // full-schema snapshot is a separate login, as in the audited shape.
         schema::permit_public_application_delivery(fixture).await?;
         let shape_a = Composition::new(PublicPolicy::PermitSelectedDelivery)
-            .with_jobs(
-                &jobs,
-                &[
-                    RunledgerOperation::IntentSubmission,
-                    RunledgerOperation::SchemaSnapshot,
-                ],
-            )
+            .with_jobs(&jobs, &[RunledgerOperation::IntentSubmission])
             .with_quotas(
                 &quotas,
                 &[
@@ -205,42 +214,13 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
             )
             .with_application(&application)
             .compile()?;
-        let login_a = fixture.login("shape_a", &shape_a).await?;
-        let pool_a = fixture
-            .pool(&login_a, &[&jobs, &quotas, &application])
-            .await?;
-        require_within_policy(&pool_a, &shape_a).await?;
+        let inspector_role = Composition::new(PublicPolicy::Deny)
+            .with_jobs(&jobs, &[RunledgerOperation::SchemaSnapshot])
+            .compile()?;
 
-        // The application's own relation and routine are reachable through the
-        // same compiled role that carries the native requirements.
-        require_permitted(
-            &pool_a,
-            &format!(
-                "INSERT INTO {}.{} (note) VALUES ({}.{}('Composed'))",
-                quote(&application),
-                quote(APPLICATION_RELATION),
-                quote(&application),
-                quote(APPLICATION_ROUTINE)
-            ),
-        )
-        .await?;
-        require_denied(
-            &pool_a,
-            &format!(
-                "DELETE FROM {}.{}",
-                quote(&application),
-                quote(APPLICATION_RELATION)
-            ),
-        )
-        .await?;
-        require_denied(
-            &pool_a,
-            &format!("SELECT 1 FROM {}.runlimit_gcra", quote(&quotas)),
-        )
-        .await?;
-
-        // Consumer shape B: intent submission, direct workers with promotion,
-        // GCRA quotas, attempts, and a policy that denies every PUBLIC delivery.
+        // Consumer shape B: intent submission and direct workers under the
+        // native supervisor's default loops, which include the scheduler, with
+        // GCRA quotas, attempts, and every PUBLIC delivery denied.
         let shape_b = Composition::new(PublicPolicy::Deny)
             .with_jobs(
                 &jobs,
@@ -248,6 +228,7 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
                     RunledgerOperation::DirectJobExecution,
                     RunledgerOperation::IntentPromotion,
                     RunledgerOperation::IntentSubmission,
+                    RunledgerOperation::ScheduledDispatch,
                 ],
             )
             .with_quotas(
@@ -259,19 +240,164 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
                 ],
             )
             .compile()?;
+
+        let login_a = fixture.login("shape_a", &shape_a).await?;
+        let inspector = fixture.login("shape_a_inspector", &inspector_role).await?;
         let login_b = fixture.login("shape_b", &shape_b).await?;
+        let pool_a = fixture
+            .pool(&login_a, &[&jobs, &quotas, &application])
+            .await?;
         let pool_b = fixture.pool(&login_b, &[&jobs, &quotas]).await?;
+        require_within_policy(&pool_a, &shape_a).await?;
+        require_within_policy(&fixture.pool(&inspector, &[&jobs]).await?, &inspector_role).await?;
         require_within_policy(&pool_b, &shape_b).await?;
-        require_denied(
-            &pool_b,
-            &format!("SELECT 1 FROM {}.runlimit_fixed_windows", quote(&quotas)),
+
+        // Each composed login executes the native work its own shape selected.
+        let shape_a_database = schema::runledger_database(fixture, &login_a, &jobs, 2)?;
+        let recorded = run_atomic(&shape_a_database, async |mut scope| {
+            let intent = JobEnqueueIntent::new(
+                JobType::new(COMPOSED_JOB_TYPE),
+                &payload,
+                "composed-shape-a",
+            );
+            scope
+                .record_required_job_enqueue_intent(&intent)
+                .await
+                .map_err(|error| format!("{error:?}"))
+        })
+        .await
+        .map_err(PgAtomicFailure::into_error)?;
+        require(
+            recorded.disposition() == JobEnqueueIntentDisposition::Inserted,
+            &format!("shape A did not record a new intent: {recorded:?}"),
+        )?;
+        require(
+            PostgresLimiter::new(pool_a.clone())
+                .check(&Check::new(
+                    KeyHasher::new([23; 32])?.hash_for(&fixed_window_policy()?, "shape-a"),
+                ))
+                .await?
+                .permits_request(),
+            "shape A was denied its own fixed-window admission",
+        )?;
+
+        let inspection = schema::runledger_database(fixture, &inspector, &jobs, 1)?;
+        let snapshot = batter::runledger::verify_schema(&inspection).await?;
+        require(
+            snapshot.schema() == jobs,
+            "the inspector read another schema",
+        )?;
+        fixture.track(inspection.pool().clone());
+
+        // Shape B claims and completes a direct job the owner enqueued, and
+        // admits its own GCRA quota.
+        let mut transaction = owner_database.pool().begin().await?;
+        jobs::upsert_job_definition_tx(
+            &mut transaction,
+            &JobDefinitionUpsert {
+                job_type: JobType::new(COMPOSED_JOB_TYPE),
+                version: 1,
+                max_attempts: 2,
+                default_timeout_seconds: 60,
+                default_priority: 100,
+                is_enabled: true,
+            },
         )
         .await?;
-        require_denied(
-            &pool_b,
-            &format!("SELECT 1 FROM {}.{}", quote(&jobs), "_sqlx_migrations"),
+        transaction.commit().await?;
+        let job = jobs::enqueue_job(
+            owner_database.pool(),
+            &JobEnqueue {
+                job_type: JobType::new(COMPOSED_JOB_TYPE),
+                organization_id: None,
+                payload: &payload,
+                priority: None,
+                max_attempts: None,
+                timeout_seconds: None,
+                next_run_at: None,
+                idempotency_key: None,
+                stage: None,
+            },
         )
         .await?;
+        let shape_b_database = schema::runledger_database(fixture, &login_b, &jobs, 2)?;
+        let claimed = jobs::claim_jobs(shape_b_database.pool(), "shape-b", 60, 10).await?;
+        let claim = claimed
+            .iter()
+            .find(|record| record.id == job)
+            .ok_or_else(|| super::support::fail("shape B could not claim the enqueued job"))?;
+        jobs::complete_job_success(
+            shape_b_database.pool(),
+            claim.id,
+            claim.run_number,
+            claim.attempt,
+            "shape-b",
+            None,
+        )
+        .await?;
+        require(
+            PostgresGcraLimiter::new(pool_b.clone())
+                .check(&Check::new(
+                    KeyHasher::new([29; 32])?.hash_for(&gcra_policy()?, "shape-b"),
+                ))
+                .await?
+                .permits_request(),
+            "shape B was denied its own GCRA admission",
+        )?;
+
+        // The application's own relation and routine are reachable through the
+        // same compiled role that carries shape A's native requirements.
+        require_permitted(
+            &pool_a,
+            &format!(
+                "INSERT INTO {}.{} (note) VALUES ({}.{}('Composed'))",
+                quote(&application),
+                quote(APPLICATION_RELATION),
+                quote(&application),
+                quote(APPLICATION_ROUTINE)
+            ),
+        )
+        .await?;
+
+        // Neither serving shape reaches the other's store, the privileged
+        // snapshot, or authority its own selection excluded.
+        for (pool, forbidden) in [
+            (
+                &pool_a,
+                format!(
+                    "DELETE FROM {}.{}",
+                    quote(&application),
+                    quote(APPLICATION_RELATION)
+                ),
+            ),
+            (
+                &pool_a,
+                format!("SELECT 1 FROM {}.runlimit_gcra", quote(&quotas)),
+            ),
+            (
+                &pool_a,
+                format!("SELECT 1 FROM {}._sqlx_migrations", quote(&jobs)),
+            ),
+            (&pool_a, format!("SELECT 1 FROM {}.job_queue", quote(&jobs))),
+            (
+                &pool_b,
+                format!("SELECT 1 FROM {}.runlimit_fixed_windows", quote(&quotas)),
+            ),
+            (
+                &pool_b,
+                format!("SELECT 1 FROM {}._sqlx_migrations", quote(&jobs)),
+            ),
+            (
+                &pool_b,
+                format!(
+                    "SELECT 1 FROM {}.{}",
+                    quote(&application),
+                    quote(APPLICATION_RELATION)
+                ),
+            ),
+        ] {
+            require_denied(pool, &forbidden).await?;
+        }
         require(
             !shape_a
                 .grant_plan()
@@ -284,15 +410,34 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
                 .contains("WITH GRANT OPTION"),
             "a rendered composition provisioned grant options",
         )?;
+        fixture.track(owner_database.pool().clone());
+        fixture.track(shape_a_database.pool().clone());
+        fixture.track(shape_b_database.pool().clone());
         Ok(())
     })
     .await
 }
 
-async fn current_database(pool: &sqlx::PgPool) -> Result<String> {
-    Ok(sqlx::query_scalar("SELECT pg_catalog.current_database()")
-        .fetch_one(pool)
-        .await?)
+/// The job type both composed shapes use.
+const COMPOSED_JOB_TYPE: &str = "batter.grants.composed";
+
+fn fixed_window_policy() -> Result<FixedWindowPolicy> {
+    Ok(FixedWindowPolicy::new(
+        PolicyId::new("batter.grants.composed.fixed")?,
+        ScopeId::new("subject")?,
+        4,
+        Duration::from_secs(3_600),
+    )?)
+}
+
+fn gcra_policy() -> Result<GcraPolicy> {
+    Ok(GcraPolicy::new(
+        PolicyId::new("batter.grants.composed.gcra")?,
+        ScopeId::new("subject")?,
+        4,
+        Duration::from_secs(3_600),
+        4,
+    )?)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -369,4 +514,10 @@ async fn native_public_delivery_is_accepted_only_where_the_application_permits_i
         Ok(())
     })
     .await
+}
+
+async fn current_database(pool: &sqlx::PgPool) -> Result<String> {
+    Ok(sqlx::query_scalar("SELECT pg_catalog.current_database()")
+        .fetch_one(pool)
+        .await?)
 }
