@@ -1,5 +1,6 @@
-# Pinned Jig runtime used only for the standalone file-budget checker.
-_commit = "a328c17910c40603327c73329e5158a42c37417d"
+# Jig 0.7.1 template provenance; .jig/runtime-version selects the runtime.
+# Batter retains its project-authored file-budget-only launcher and catalog.
+_commit = "e1f60d1ce6c49c4a64b9c091972a2596ef47b78e"
 _src_path = "https://github.com/bpcakes/jig-sh.git"
 repo_name = "batter"
 default_branch = "master"

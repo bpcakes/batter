@@ -34,8 +34,10 @@ jobs:
       - name: Cache Jig runtime
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: .git/jig-tools/*-runtime
-          key: ${{ runner.os }}-${{ runner.arch }}-jig-runtime-${{ hashFiles('.jig.toml', '.agent/jig-contract.json', 'rust-toolchain.toml', 'scripts/jig', 'scripts/install-jig.sh', '.github/workflows/repo-policy.yml') }}
+          path: |
+            .git/jig-tools/release-*-contract-*-runtime/bin/jig
+            .agent/.cache/jig/release-*-contract-*-runtime/bin/jig
+          key: ${{ runner.os }}-${{ runner.arch }}-jig-release-${{ hashFiles('.jig/runtime-version', '.jig.toml', '.agent/jig-contract.json', 'scripts/jig', 'scripts/install-jig.sh') }}
       - name: Prepare file-budget checker
         run: scripts/jig file-budget validate
       - name: Test script controls and source packaging

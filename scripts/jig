@@ -1,4 +1,5 @@
 #!/bin/sh
+# jig-release-runtime-pin:v1
 # The repository uses Jig only for receipt-free file-budget diagnostics.
 set -eu
 ROOT_DIR="$(CDPATH= cd "$(dirname "$0")/.." && pwd -P)"
@@ -8,8 +9,8 @@ if [ "${1:-}" = "--json" ]; then
 else
   json=false
 fi
-if [ "${1:-}" != "file-budget" ]; then
-  printf '%s\n' 'Usage: scripts/jig [--json] file-budget {check|audit|explain|validate} [OPTIONS]' >&2
+if [ "${1:-}" != "file-budget" ] && [ "${1:-}" != "--version" ]; then
+  printf '%s\n' 'Usage: scripts/jig --version | [--json] file-budget {check|audit|explain|validate} [OPTIONS]' >&2
   exit 2
 fi
 bin_path="$("$ROOT_DIR/scripts/install-jig.sh" --contract-version 8 --repository-scope --profile runtime)"

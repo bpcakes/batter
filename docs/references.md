@@ -2005,8 +2005,28 @@ supports path globs and explicit keys. The v4.3.0 tag was verified against the
 remote before adding it. GitHub's
 [cache reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)
 describes key matching, branch scope, and eviction; a configured cache does not
-guarantee a hit. This repository caches `.git/jig-tools/*-runtime` only and
-continues to run Jig's normal source/profile compatibility checks after restore.
+guarantee a hit. The original setup cached `.git/jig-tools/*-runtime` and ran
+source/profile compatibility checks after restore; the release cache below
+supersedes that layout.
+
+## Jig prebuilt release runtime: 2026-10-04
+
+The [Jig 0.7.1 release](https://github.com/bpcakes/jig-sh/releases/tag/v0.7.1)
+publishes x86_64 and ARM64 archives for Linux and macOS, each with a SHA-256 file.
+The tagged [runtime pin documentation](https://github.com/bpcakes/jig-sh/blob/v0.7.1/docs/configuration.md#runtime-release-pins)
+and [generated installer](https://github.com/bpcakes/jig-sh/blob/v0.7.1/templates/project/scripts/install-jig.sh.jinja)
+define `.jig/runtime-version` independently of template provenance. Batter copies
+that installer from commit `e1f60d1ce6c49c4a64b9c091972a2596ef47b78e` while
+keeping its project-authored file-budget-only launcher and catalogs.
+
+The installer reuses an exact-version, contract-compatible executable or downloads
+the official archive and checksum over HTTPS. It verifies SHA-256, a single regular
+native executable, version and contract/profile support before publication under
+the cache lock. Linux assets require glibc 2.35 or newer; macOS assets target macOS
+13 or newer. Unsupported targets, missing curl and missing archives retain the
+upstream crates.io source fallback; download, checksum and compatibility failures
+do not fall back. CI caches only the executable in ordinary-checkout and linked-
+worktree cache locations. No Cargo metadata, source stamps or lock files are cached.
 
 ## Jig receipt metadata: 2026-09-24
 

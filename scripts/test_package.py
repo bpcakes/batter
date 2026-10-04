@@ -35,7 +35,7 @@ class ArchiveTests(unittest.TestCase):
             (repo / "scripts").mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/package.py", repo / "scripts/package.py")
             included = ["Cargo.toml", "Cargo.lock", "scripts/jig", "scripts/install-jig.sh", ".jig.toml",
-                        ".agent/jig-contract.json", ".jig/file-budget.toml",
+                        ".agent/jig-contract.json", ".jig/file-budget.toml", ".jig/runtime-version",
                         "crates/batter/Cargo.toml", "crates/batter/src/lib.rs",
                         "crates/batter/examples/worker.rs",
                         "crates/batter-core/Cargo.toml", "crates/batter-core/src/lib.rs",
