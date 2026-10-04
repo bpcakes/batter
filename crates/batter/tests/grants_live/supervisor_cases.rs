@@ -92,6 +92,7 @@ fn submission<'a>(payload: &'a Value) -> JobEnqueue<'a> {
 async fn require_coordination_cleanup(
     login: &sqlx::PgPool,
     owner: &sqlx::PgPool,
+    jobs_schema: &str,
     payload: &Value,
 ) -> Result {
     let expiring = jobs::enqueue_job(owner, &submission(payload)).await?;
@@ -118,6 +119,31 @@ async fn require_coordination_cleanup(
     require(
         reaped.deferred_row_errors.is_empty(),
         &format!("the reaper deferred rows: {:?}", reaped.deferred_row_errors),
+    )?;
+    // Reaping returns the probe to PENDING with its remaining attempts, so the
+    // owner parks it out of reach. A later phase must not have its own
+    // observations satisfied by this leftover, and the next probe has to be the
+    // only claimable job when it runs.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {}.job_queue SET next_run_at = now() + interval '1 hour' WHERE id = $1",
+        quote(jobs_schema)
+    )))
+    .bind(expiring)
+    .execute(owner)
+    .await?;
+    // State the invariant the next phase depends on rather than assuming it: no
+    // job is claimable right now, so nothing a later observation counts can come
+    // from a leftover of this one.
+    let claimable: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {}.job_queue \
+         WHERE status = 'PENDING' AND next_run_at <= now()",
+        quote(jobs_schema)
+    )))
+    .fetch_one(owner)
+    .await?;
+    require(
+        claimable == 0,
+        &format!("{claimable} jobs were still claimable after the cleanup probe"),
     )?;
     Ok(())
 }
@@ -246,7 +272,8 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             executed.load(Ordering::Relaxed) >= 2,
             "the scheduler-disabled worker executed no handler",
         )?;
-        require_coordination_cleanup(&narrow_probe, owner_database.pool(), &payload).await?;
+        require_coordination_cleanup(&narrow_probe, owner_database.pool(), &jobs_schema, &payload)
+            .await?;
         fixture.track(narrow_database.pool().clone());
 
         // The default-loop composition additionally selects scheduled dispatch
@@ -329,7 +356,8 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             scheduled_executed.load(Ordering::Relaxed) >= 1,
             "the default-loop worker executed no scheduled handler",
         )?;
-        require_coordination_cleanup(&wide_probe, owner_database.pool(), &payload).await?;
+        require_coordination_cleanup(&wide_probe, owner_database.pool(), &jobs_schema, &payload)
+            .await?;
 
         // Every installed native trigger stayed trusted while no serving login
         // and no PUBLIC role held EXECUTE on its function.
