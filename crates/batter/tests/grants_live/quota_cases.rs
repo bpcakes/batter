@@ -135,18 +135,18 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         let owner = fixture.names.owner.clone();
         let owner_pool = fixture.pool(&owner, &[&quotas]).await?;
 
-        // The backoffs are seconds, so a denial window cannot close during a
-        // database round trip however slow the connection is, and every wait
-        // below uses a settlement's own returned delay or the policy's own quiet
-        // period rather than a guessed interval.
+        // Every backoff, quiet period and lease is hours long, so none of them can
+        // close during the test however slow the connection is. Eligibility is
+        // produced by the owner rewriting the stored timestamps, never by
+        // waiting, so no assertion below depends on elapsed wall-clock time.
         let period = |millis| QuotaPeriod::new(Duration::from_millis(millis));
         let policy = AttemptPolicy::new(
             PolicyId::new("batter.grants.attempts")?,
             ScopeId::new("identifier")?,
-            period(1_000)?,
-            period(2_000)?,
-            period(2_500)?,
-            period(5_000)?,
+            period(3_600_000)?,
+            period(7_200_000)?,
+            period(7_200_000)?,
+            period(3_600_000)?,
         )?;
         let hasher = hasher();
         let limiter = PostgresAttemptLimiter::new(pool.clone());
@@ -168,9 +168,11 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             first.consecutive_failures() == 1,
             &format!("failure settlement reported {first:?}"),
         )?;
-        // The first failure's own backoff has to expire before a retry is
-        // admissible; waiting for a fixed interval would race the backoff.
-        tokio::time::sleep(first.retry_after().duration() + Duration::from_millis(50)).await;
+        // The first failure's backoff has to be over before a retry is
+        // admissible. The owner retires it rather than the test waiting out an
+        // hour, and the quiet period is untouched, so the retained failure count
+        // is what the next admission carries forward.
+        clear_backoff(&owner_pool, &quotas, subject).await?;
         let AttemptAdmission::Admitted(held) = limiter.admit(subject).await? else {
             return Err(super::support::fail("the retry was not admitted"));
         };
@@ -188,6 +190,27 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         require(
             matches!(limiter.admit(subject).await?, AttemptAdmission::Denied(_)),
             "the second failure's backoff did not deny the next attempt",
+        )?;
+        // A record the owner has placed outside its quiet period no longer
+        // governs the next attempt: the admission admits despite the stored
+        // backoff and starts the failure count again, whether the login's own
+        // bounded cleanup removed the record first or the admission reset it.
+        retire_quiet_period(&owner_pool, &quotas, subject).await?;
+        let AttemptAdmission::Admitted(held) = limiter.admit(subject).await? else {
+            return Err(super::support::fail(
+                "a record outside its quiet period still denied the next attempt",
+            ));
+        };
+        let AttemptCompletionResult::Applied(reset) =
+            limiter.complete(held, AttemptOutcome::Failure).await?
+        else {
+            return Err(super::support::fail(
+                "the settlement after the quiet period was reported stale",
+            ));
+        };
+        require(
+            reset.consecutive_failures() == 1,
+            &format!("the quiet period did not clear the failure history: {reset:?}"),
         )?;
 
         // Transactional claim and finish in the caller's own transaction, under a
@@ -288,14 +311,13 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             "the expired neighbouring attempt record survived the admission's cleanup",
         )?;
 
-        // Success resets the record, so the stored row stays usable. Waiting past
-        // the quiet period also makes it eligible for the bounded internal expiry
-        // deletion, which is the same login's own DELETE authority.
+        // Success resets the record rather than removing it, so the stored row
+        // stays inside its quiet period and the same login readmits the subject
+        // through the record it already has.
         require(
             counter_rows(&pool, &quotas, "runlimit_attempts").await? >= 1,
             "no attempt record was stored",
         )?;
-        tokio::time::sleep(policy.quiet_period().duration() + Duration::from_millis(100)).await;
         let AttemptAdmission::Admitted(held) = limiter.admit(claimant).await? else {
             return Err(super::support::fail(
                 "a settled subject could not be readmitted",
@@ -326,11 +348,40 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
 /// the owner-planted expired record so it is identifiable and cannot collide.
 const PLANTED_SLOT: i32 = 65_535;
 
+/// Retire a stored backoff from the owner so a retry is admissible at once,
+/// leaving `last_failure_ms` alone so the quiet period still has hours to run
+/// and the retained failure count carries into the next admission.
+async fn clear_backoff(owner: &PgPool, quotas: &str, subject: AttemptSubject<'_>) -> Result {
+    rewrite_record(owner, quotas, subject, "retry_at_ms = 0").await
+}
+
+/// Place a settled record's last failure outside its quiet period from the
+/// owner, so readmission follows the stored record rather than elapsed time.
+async fn retire_quiet_period(owner: &PgPool, quotas: &str, subject: AttemptSubject<'_>) -> Result {
+    rewrite_record(
+        owner,
+        quotas,
+        subject,
+        "last_failure_ms = 0, retry_at_ms = 0",
+    )
+    .await
+}
+
 /// Expire a held lease from the owner so a completion has to report staleness.
 async fn expire_lease(owner: &PgPool, quotas: &str, subject: AttemptSubject<'_>) -> Result {
+    rewrite_record(owner, quotas, subject, "lease_until_ms = 0").await
+}
+
+/// Apply one owner-written assignment to exactly one subject's attempt record.
+async fn rewrite_record(
+    owner: &PgPool,
+    quotas: &str,
+    subject: AttemptSubject<'_>,
+    assignment: &str,
+) -> Result {
     let key = subject.into_unbound_subject_key().into_bytes();
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE {}.runlimit_attempts SET lease_until_ms = 0 WHERE subject_key = $1",
+        "UPDATE {}.runlimit_attempts SET {assignment} WHERE subject_key = $1",
         quote(quotas)
     )))
     .bind(key.as_slice())

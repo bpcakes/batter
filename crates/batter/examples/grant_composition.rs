@@ -13,16 +13,25 @@
 //!
 //! PostgreSQL grants `EXECUTE` on a newly created function to PUBLIC, and these
 //! roles deny PUBLIC delivery of any privilege they do not name, so verification
-//! reports that default as excess authority. Reconcile it before verifying, as
-//! the suite's own fixture does:
+//! reports that default as excess authority. Every discovered schema needs it
+//! reconciled, the two native schemas included: their migrations install trigger
+//! functions that no role here declares. Do this before verifying, as the live
+//! suite's own fixture does:
 //!
 //! ```text
+//! REVOKE ALL ON ALL ROUTINES IN SCHEMA "jobs" FROM PUBLIC;
+//! REVOKE ALL ON ALL ROUTINES IN SCHEMA "quotas" FROM PUBLIC;
 //! REVOKE ALL ON ALL ROUTINES IN SCHEMA "service" FROM PUBLIC;
 //! ```
 //!
-//! A deployment that keeps the default instead should name
-//! [`ObjectPrivilege::Execute`] in the role's permitted PUBLIC delivery rather
-//! than leave the mismatch unexplained.
+//! The installed triggers keep running. Creating a trigger needs `EXECUTE` on
+//! its function; firing an installed one through ordinary DML does not, which
+//! the live suite executes against PostgreSQL 18.6.
+//!
+//! Naming [`ObjectPrivilege::Execute`] in a role's permitted PUBLIC delivery is
+//! not an alternative here. A permitted delivery covers only the objects the
+//! policy declares, so it reaches the application's own routine and never the
+//! undeclared native trigger functions.
 //!
 //! # Limitations
 //!
