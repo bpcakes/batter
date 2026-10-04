@@ -53,6 +53,20 @@ pub(crate) fn require(condition: bool, message: &str) -> Result {
     }
 }
 
+/// Report both failures when one run fails twice, so neither hides the other.
+///
+/// A supervisor case can fail its observations and then fail to settle, and the
+/// two explain different things: the observation says what the run was doing,
+/// while the settlement carries the native tasks' own diagnostics. Returning
+/// only the first discards the second.
+pub(crate) fn both(first: Result, second: Result) -> Result {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(fail(&format!("{first} (and then: {second})"))),
+    }
+}
+
 pub(crate) fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }

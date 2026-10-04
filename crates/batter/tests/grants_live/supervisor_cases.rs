@@ -12,7 +12,7 @@
 
 use super::policy::{Composition, PublicPolicy};
 use super::schema;
-use super::support::{Fixture, Result, quote, require, require_within_policy};
+use super::support::{Fixture, Result, both, quote, require, require_within_policy};
 use async_trait::async_trait;
 use batter::runledger::grants::RunledgerOperation;
 use batter::runledger::native::core::jobs::{
@@ -274,12 +274,18 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
                 Duration::from_secs(2),
             )?)
             .await;
+        // Neither failure may hide the other: a failed observation and an
+        // unclean settlement explain different parts of the same run, and the
+        // settlement is where the native tasks' own diagnostics are.
         let settlement = report.classify();
-        observed?;
-        require(
-            matches!(settlement, RuntimeSettlement::Clean(_)),
-            &format!("the scheduler-disabled supervisor did not settle cleanly: {settlement:?}"),
-        )?;
+        let settled = if matches!(settlement, RuntimeSettlement::Clean(_)) {
+            Ok(())
+        } else {
+            Err(super::support::fail(&format!(
+                "the scheduler-disabled supervisor did not settle cleanly: {settlement:?}"
+            )))
+        };
+        both(observed, settled)?;
         require(
             executed.load(Ordering::Relaxed) >= 2,
             "the scheduler-disabled worker executed no handler",
@@ -396,12 +402,18 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
                 Duration::from_secs(2),
             )?)
             .await;
+        // Neither failure may hide the other: a failed observation and an
+        // unclean settlement explain different parts of the same run, and the
+        // settlement is where the native tasks' own diagnostics are.
         let settlement = report.classify();
-        observed?;
-        require(
-            matches!(settlement, RuntimeSettlement::Clean(_)),
-            &format!("the default-loop supervisor did not settle cleanly: {settlement:?}"),
-        )?;
+        let settled = if matches!(settlement, RuntimeSettlement::Clean(_)) {
+            Ok(())
+        } else {
+            Err(super::support::fail(&format!(
+                "the default-loop supervisor did not settle cleanly: {settlement:?}"
+            )))
+        };
+        both(observed, settled)?;
         require(
             scheduled_executed.load(Ordering::Relaxed) >= 1,
             "the default-loop worker executed no scheduled handler",

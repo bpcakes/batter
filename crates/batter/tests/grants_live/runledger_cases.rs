@@ -9,7 +9,28 @@ use super::support::{
 use batter::runledger::grants::RunledgerOperation;
 use batter::runledger::native::core::jobs::JobType;
 use batter::runledger::native::postgres::jobs::JobEnqueueIntent;
+use batter::runledger::native::postgres::{Error as NativeError, RequiredIntentError};
 use batter::runledger::{PgAtomicError, run_atomic};
+use batter::sqlx::PgScopeError;
+
+/// The native stable code for a differing request under an existing key.
+const INTENT_CONFLICT_CODE: &str = "job.intent_idempotency_conflict";
+
+/// The classified code a rejected required-intent recording carries, if any.
+///
+/// Matching the stable code rather than the message keeps the assertion
+/// independent of wording, and distinguishes the conflict this case stages from
+/// a permission refusal that arrives through the same variant.
+fn conflict_code<T>(
+    outcome: &std::result::Result<T, PgAtomicError<T, PgScopeError<RequiredIntentError>>>,
+) -> Option<&'static str> {
+    match outcome {
+        Err(PgAtomicError::Rejected(PgScopeError::Application(RequiredIntentError::Storage(
+            NativeError::QueryError(query),
+        )))) => Some(query.code()),
+        _ => None,
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
@@ -79,9 +100,19 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                 scope.record_required_job_enqueue_intent(&intent).await
             })
             .await;
+            // The rejection has to be the idempotency conflict itself. A bare
+            // `Rejected` also covers a permission refusal, which would make a
+            // missing privilege read as correct conflict handling, so this
+            // asserts the native error's own stable code. The native layer
+            // reports a differing request under an existing key as a storage
+            // error carrying that classified conflict, not as
+            // `RequiredIntentError::Conflict`, which is reserved for an
+            // already-conflicted outcome the call returned successfully.
             require(
-                matches!(conflict, Err(PgAtomicError::Rejected(_))),
-                &format!("a conflicting request under one key was accepted: {conflict:?}"),
+                conflict_code(&conflict) == Some(INTENT_CONFLICT_CODE),
+                &format!(
+                    "a conflicting request under one key was not rejected as {INTENT_CONFLICT_CODE}: {conflict:?}"
+                ),
             )?;
 
             // A rejected scope rolls back both the application write and the intent.
@@ -104,9 +135,16 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                 Err::<(), CaseRejection>(CaseRejection::Application("application rejected"))
             })
             .await;
+            // Only the case's own rejection proves the rollback path. A native
+            // failure recording the probe also arrives as `Rejected`, and the
+            // absence check below would then pass because nothing was ever
+            // inserted, reporting rollback evidence the run never reached.
             require(
-                matches!(rolled_back, Err(PgAtomicError::Rejected(_))),
-                "an application rejection was reported as success",
+                matches!(
+                    rolled_back,
+                    Err(PgAtomicError::Rejected(CaseRejection::Application(_)))
+                ),
+                &format!("the deliberate application rejection was not what rolled back: {rolled_back:?}"),
             )?;
             let retained: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT EXISTS(SELECT 1 FROM {}.job_enqueue_intents WHERE idempotency_key = $1)",
