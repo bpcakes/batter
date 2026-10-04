@@ -89,8 +89,26 @@ async fn fixed_window_and_gcra_families_admit_deny_and_delete_only_their_own_sto
             require_denied(&admitting_pool, &forbidden).await?;
         }
 
+        // GCRA admission alone, for the same reason as the fixed-window case: a
+        // combined role would let the cleanup selection's grants satisfy an
+        // admission statement.
+        let gcra_admitting_role = Composition::new(PublicPolicy::Deny)
+            .with_quotas(&quotas, &[RunlimitOperation::GcraAdmission])
+            .compile()?;
+        let gcra_admitting_login = fixture
+            .login("gcra_admitting", &gcra_admitting_role)
+            .await?;
+        let gcra_admitting_pool = fixture.pool(&gcra_admitting_login, &[&quotas]).await?;
+        require_within_policy(&gcra_admitting_pool, &gcra_admitting_role).await?;
+        exercise_gcra(&gcra_admitting_pool, &quotas, None).await?;
+        require_denied(
+            &gcra_admitting_pool,
+            &format!("DELETE FROM {}.runlimit_gcra", quote(&quotas)),
+        )
+        .await?;
+
         exercise_fixed_window(&fixed_pool, &quotas, Some(&owner_pool)).await?;
-        exercise_gcra(&gcra_pool, &quotas, &owner_pool).await?;
+        exercise_gcra(&gcra_pool, &quotas, Some(&owner_pool)).await?;
 
         require_separated_families(&fixed_pool, &gcra_pool, &quotas).await?;
         Ok(())
@@ -294,7 +312,7 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
 
 /// GCRA first insert, replenishment denial and, after the owner expires the
 /// stored counter, the selected login's own expiry deletion.
-async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: &PgPool) -> Result {
+async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> Result {
     let gcra_policy = GcraPolicy::new(
         PolicyId::new("batter.grants.gcra")?,
         ScopeId::new("subject")?,
@@ -302,8 +320,13 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: &PgPool) -> Result {
         LONG_WINDOW,
         1,
     )?;
-    let gcra_subject = hasher().hash_for(&gcra_policy, "grants-subject");
+    // The subject is unique per login so two selections never share one counter.
+    let subject_label: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
+        .fetch_one(pool)
+        .await?;
+    let gcra_subject = hasher().hash_for(&gcra_policy, subject_label.as_str());
     let gcra = PostgresGcraLimiter::new(pool.clone());
+    let before = counter_rows(pool, quotas, "runlimit_gcra").await?;
     require(
         gcra.check(&Check::new(gcra_subject))
             .await?
@@ -320,9 +343,12 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: &PgPool) -> Result {
         "a second GCRA request inside the replenishment window was admitted",
     )?;
     require(
-        counter_rows(pool, quotas, "runlimit_gcra").await? == 1,
+        counter_rows(pool, quotas, "runlimit_gcra").await? == before + 1,
         "the GCRA counter row was not stored",
     )?;
+    let Some(owner) = owner else {
+        return Ok(());
+    };
     exec_owned(
         owner,
         format!(
@@ -333,8 +359,8 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: &PgPool) -> Result {
     .await?;
     let removed = gcra.cleanup_expired(16).await?;
     require(
-        removed == 1,
-        &format!("GCRA cleanup deleted {removed} rows, expected 1"),
+        removed >= 1,
+        &format!("GCRA cleanup deleted {removed} rows, expected at least 1"),
     )?;
     require(
         counter_rows(pool, quotas, "runlimit_gcra").await? == 0,

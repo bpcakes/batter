@@ -246,8 +246,13 @@ through it, reachable as `batter::runledger::grants` and
 `batter::runlimit::grants`, and a facade example composes both adapters with an
 application's own relation, columns and routine under both a strict PUBLIC-denial
 and an explicitly permitted PUBLIC-delivery policy. Both inventories are frozen in
-offline oracles beside pinned native migration identities, so a native query or
-migration change forces a grant-coverage review. Eleven PostgreSQL 18.6 cases
+offline oracles beside pinned native migration identities. A native migration
+change therefore cannot land without updating a pinned identity, and a change to
+an exported requirement cannot land without a reviewable diff of exact relations,
+columns and privileges. Neither control detects a native query change that alters
+the privileges a statement needs without touching a migration or an inventory;
+that gap is covered only by the live cases, and only for the paths and privilege
+combinations they execute. Eleven PostgreSQL 18.6 cases
 (`cargo test -p batter --features runledger,runlimit-postgres --test grants_live
 -- --ignored --test-threads=1`, Linux x86-64, Rust 1.98.1, 2026-10-03), each named
 in the bounded inventory-checked runner, provision non-owner, non-superuser

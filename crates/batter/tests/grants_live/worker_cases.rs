@@ -383,20 +383,31 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         let owner_database = schema::runledger_database(fixture, &owner, &jobs_schema, 2)?;
         register_definitions(&owner_database).await?;
 
-        let role = Composition::new(PublicPolicy::Deny)
-            .with_jobs(
-                &jobs_schema,
-                &[
-                    RunledgerOperation::CatalogSync,
-                    RunledgerOperation::IntentPromotion,
-                    RunledgerOperation::ScheduledDispatch,
-                ],
-            )
-            .compile()?;
-        let login = fixture.login("orchestrator", &role).await?;
-        let probe = fixture.pool(&login, &[&jobs_schema]).await?;
-        require_within_policy(&probe, &role).await?;
-        let database = schema::runledger_database(fixture, &login, &jobs_schema, 2)?;
+        // Each group gets its own login. A combined role would let one
+        // selection's grants satisfy another's statements, so a missing
+        // requirement in the narrower selection would not surface here.
+        let group = |operation| {
+            Composition::new(PublicPolicy::Deny)
+                .with_jobs(&jobs_schema, std::slice::from_ref(&operation))
+                .compile()
+        };
+        let catalog_role = group(RunledgerOperation::CatalogSync)?;
+        let promotion_role = group(RunledgerOperation::IntentPromotion)?;
+        let dispatch_role = group(RunledgerOperation::ScheduledDispatch)?;
+        let catalog_login = fixture.login("catalog", &catalog_role).await?;
+        let promotion_login = fixture.login("promoter", &promotion_role).await?;
+        let dispatch_login = fixture.login("dispatcher", &dispatch_role).await?;
+        let probe = fixture.pool(&catalog_login, &[&jobs_schema]).await?;
+        let promotion_probe = fixture.pool(&promotion_login, &[&jobs_schema]).await?;
+        let dispatch_probe = fixture.pool(&dispatch_login, &[&jobs_schema]).await?;
+        require_within_policy(&probe, &catalog_role).await?;
+        require_within_policy(&promotion_probe, &promotion_role).await?;
+        require_within_policy(&dispatch_probe, &dispatch_role).await?;
+        let database = schema::runledger_database(fixture, &catalog_login, &jobs_schema, 2)?;
+        let promotion_database =
+            schema::runledger_database(fixture, &promotion_login, &jobs_schema, 2)?;
+        let dispatch_database =
+            schema::runledger_database(fixture, &dispatch_login, &jobs_schema, 2)?;
         let payload = serde_json::json!({"orchestrated": true});
 
         // Catalog synchronization registers the catalog and disables exactly the
@@ -456,7 +467,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         let _recorded = jobs::record_job_enqueue_intent_tx(&mut owner_transaction, &intent).await?;
         owner_transaction.commit().await?;
         let promotion = jobs::promote_job_enqueue_intents_for_types(
-            database.pool(),
+            promotion_database.pool(),
             &[JobType::new(JOB_TYPE)],
             10,
         )
@@ -528,7 +539,7 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
 
         // The synchronized schedule is still due, so the same login claims it,
         // materializes its job and records the fire.
-        let mut transaction = database.pool().begin().await?;
+        let mut transaction = dispatch_database.pool().begin().await?;
         let due = jobs::claim_due_schedules_tx(&mut transaction, now, 10).await?;
         require(
             due.iter().any(|record| record.id == schedule.id),
@@ -545,18 +556,62 @@ async fn promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_se
         transaction.commit().await?;
         require(marked, "the fired schedule was not recorded")?;
 
-        // Authority outside the reviewed orchestration inventory.
-        for forbidden in [
-            format!("DELETE FROM {}.job_queue", quote(&jobs_schema)),
-            format!("DELETE FROM {}.job_definitions", quote(&jobs_schema)),
-            format!("DELETE FROM {}.job_schedules", quote(&jobs_schema)),
-            format!("SELECT 1 FROM {}.job_attempts", quote(&jobs_schema)),
-            format!("SELECT 1 FROM {}.job_dead_letters", quote(&jobs_schema)),
+        // Each selection is refused the others' authority, so the three logins
+        // are genuinely narrower than their union.
+        for (pool, forbidden) in [
+            (
+                &probe,
+                format!("DELETE FROM {}.job_definitions", quote(&jobs_schema)),
+            ),
+            (
+                &probe,
+                format!("DELETE FROM {}.job_schedules", quote(&jobs_schema)),
+            ),
+            (
+                &probe,
+                format!("SELECT 1 FROM {}.job_enqueue_intents", quote(&jobs_schema)),
+            ),
+            (
+                &probe,
+                format!("SELECT 1 FROM {}.job_queue", quote(&jobs_schema)),
+            ),
+            (
+                &promotion_probe,
+                format!("SELECT 1 FROM {}.job_schedules", quote(&jobs_schema)),
+            ),
+            (
+                &promotion_probe,
+                format!(
+                    "INSERT INTO {}.job_definitions (job_type) VALUES ('x')",
+                    quote(&jobs_schema)
+                ),
+            ),
+            (
+                &dispatch_probe,
+                format!("SELECT 1 FROM {}.job_enqueue_intents", quote(&jobs_schema)),
+            ),
+            (
+                &dispatch_probe,
+                format!(
+                    "INSERT INTO {}.job_definitions (job_type) VALUES ('x')",
+                    quote(&jobs_schema)
+                ),
+            ),
+            (
+                &dispatch_probe,
+                format!("SELECT 1 FROM {}.job_attempts", quote(&jobs_schema)),
+            ),
+            (
+                &dispatch_probe,
+                format!("SELECT 1 FROM {}.job_dead_letters", quote(&jobs_schema)),
+            ),
         ] {
-            require_denied(&probe, &forbidden).await?;
+            require_denied(pool, &forbidden).await?;
         }
         fixture.track(owner_database.pool().clone());
         fixture.track(database.pool().clone());
+        fixture.track(promotion_database.pool().clone());
+        fixture.track(dispatch_database.pool().clone());
         Ok(())
     })
     .await
