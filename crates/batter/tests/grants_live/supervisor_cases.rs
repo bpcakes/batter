@@ -276,13 +276,16 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             .await?;
         fixture.track(narrow_database.pool().clone());
 
-        // The default-loop composition additionally selects scheduled dispatch
-        // and catalog synchronization.
+        // The default-loop composition adds exactly one selection to the narrow
+        // one: scheduled dispatch, the only group the extra enabled loop needs.
+        // Catalog synchronization is an explicit API no supervisor loop calls, so
+        // selecting it here would give this login authority the published worker
+        // role does not carry and let it mask a future dispatch requirement. The
+        // catalog groups run under their own logins in `worker_cases`.
         let wide_role = Composition::new(PublicPolicy::Deny)
             .with_jobs(
                 &jobs_schema,
                 &[
-                    RunledgerOperation::CatalogSync,
                     RunledgerOperation::DirectJobExecution,
                     RunledgerOperation::IntentPromotion,
                     RunledgerOperation::ScheduledDispatch,

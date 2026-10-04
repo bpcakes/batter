@@ -26,6 +26,25 @@ pub(crate) fn fail(message: &str) -> Box<dyn std::error::Error + Send + Sync> {
     Box::new(std::io::Error::other(message.to_owned()))
 }
 
+/// Report the failure that started the teardown, keeping any cleanup failure as
+/// trailing diagnostics.
+///
+/// A cleanup failure must never replace the error that caused the cleanup: that
+/// first error is the one explaining the run, and a dropped schema that will not
+/// drop is a second symptom rather than the cause. Both are retained because a
+/// leaked role or schema changes how the next run behaves.
+fn with_cleanup_diagnostics(
+    error: Box<dyn std::error::Error + Send + Sync>,
+    cleanup: Result,
+) -> Box<dyn std::error::Error + Send + Sync> {
+    match cleanup {
+        Ok(()) => error,
+        Err(cleanup) => fail(&format!(
+            "{error} (the fixture cleanup that followed also failed: {cleanup})"
+        )),
+    }
+}
+
 pub(crate) fn require(condition: bool, message: &str) -> Result {
     if condition {
         Ok(())
@@ -121,7 +140,7 @@ impl Fixture {
         };
         if let Err(error) = fixture.provision().await {
             let cleanup = fixture.cleanup().await;
-            return Err(cleanup.err().unwrap_or(error));
+            return Err(with_cleanup_diagnostics(error, cleanup));
         }
         Ok(fixture)
     }
@@ -257,7 +276,7 @@ impl Fixture {
         let cleanup = fixture.cleanup().await;
         match (outcome, cleanup) {
             (Ok(()), cleanup) => cleanup,
-            (Err(error), _) => Err(error),
+            (Err(error), cleanup) => Err(with_cleanup_diagnostics(error, cleanup)),
         }
     }
 }

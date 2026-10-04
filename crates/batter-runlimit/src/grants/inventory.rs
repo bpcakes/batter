@@ -13,21 +13,44 @@ use batter_sqlx::verification::ObjectPrivilege;
 /// Selections are operations, never application role names, and there is no
 /// administrator preset. Selecting an operation an application never invokes
 /// provisions authority it does not need.
+///
+/// Each variant names the entrypoints of this source version it covers. These
+/// are the entrypoints, not the privileges; the exact relations, columns and
+/// privileges each group requires are the `Requirement` tables below.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum RunlimitOperation {
     /// Fixed-window quota admission, including first insert, renewal, counter
     /// increment, batch admission and denial.
+    ///
+    /// Covers `PostgresLimiter::check` and `PostgresLimiter::check_all`.
     FixedWindowAdmission,
     /// Bounded deletion of expired fixed-window counters.
+    ///
+    /// Covers `PostgresLimiter::cleanup_expired`. This is independently
+    /// selectable: it needs neither the admission statements' read of the
+    /// capacity ledger's `row_count` nor anything else admission carries.
     FixedWindowExpiryCleanup,
     /// GCRA quota admission, including shard locking and counter upsert.
+    ///
+    /// Covers `PostgresGcraLimiter::check` and
+    /// `PostgresGcraLimiter::check_all`.
     GcraAdmission,
     /// Bounded deletion of expired GCRA counters.
+    ///
+    /// Covers `PostgresGcraLimiter::cleanup_expired`, independently selectable
+    /// for the same reason as [`Self::FixedWindowExpiryCleanup`].
     GcraExpiryCleanup,
     /// Authentication-attempt admission, settlement, transactional
     /// claim/finish, and the bounded expiry deletion those paths perform
     /// internally. Native Runlimit exposes no separate attempts cleanup call.
+    ///
+    /// Covers `PostgresAttemptLimiter::admit` and
+    /// `PostgresAttemptLimiter::complete`, and the transactional seam
+    /// `attempts::low_level::claim_in`, `finish_in` and `complete_in`. The
+    /// expiry deletion is reached through `admit`, which runs it for the
+    /// subject's capacity shard before looking the subject up, so `DELETE` is
+    /// required even by a caller that never cleans up deliberately.
     AuthenticationAttempts,
 }
 

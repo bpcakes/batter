@@ -21,6 +21,7 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a dedicated disposable PostgreSQL 18 cluster through BATTER_SQLX_ADMIN_URL"]
+#[allow(clippy::too_many_lines)]
 async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifier() -> Result {
     Fixture::run(async |fixture| {
         schema::install(fixture).await?;
@@ -32,25 +33,37 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         let probe = fixture.pool(&login, &[&jobs]).await?;
         require_within_policy(&probe, &role).await?;
 
-        let insert = format!(
-            "INSERT INTO {}.job_enqueue_intents \
-             (job_type, payload, idempotency_key, stage, enqueue_request_version, enqueue_request) \
-             VALUES ('batter.grants.control', '{{}}'::jsonb, 'control-key', 'queued', 1, '{{}}'::jsonb)",
-            quote(&jobs)
-        );
-        require_permitted(&probe, &insert).await?;
+        // The controls drive the native API, not a copy of its SQL. A copied
+        // statement would keep passing after a native query change that altered
+        // the privileges the real entrypoint needs, which is the drift these
+        // controls exist to catch. The raw statements below stay only as the
+        // narrower evidence of which privilege PostgreSQL refused.
+        let database = schema::runledger_database(fixture, &login, &jobs, 2)?;
+        let payload = serde_json::json!({"control": true});
+        require(
+            record_intent(&database, &payload, "control-first").await.is_ok(),
+            "the native intent recording was refused under its own selection",
+        )?;
 
         // Revoking one required column privilege must fail both the native
         // operation and verification of the same compiled role.
-        exec(
-            &mut fixture.admin,
-            format!(
-                "REVOKE INSERT (enqueue_request) ON {}.job_enqueue_intents FROM {}",
-                quote(&jobs),
-                quote(&login)
-            ),
-        )
-        .await?;
+        let revoke_insert = format!(
+            "REVOKE INSERT (enqueue_request) ON {}.job_enqueue_intents FROM {}",
+            quote(&jobs),
+            quote(&login)
+        );
+        exec(&mut fixture.admin, revoke_insert).await?;
+        let refused = record_intent(&database, &payload, "control-revoked").await;
+        require(
+            refused.is_err(),
+            &format!("the native intent recording survived a revoked column: {refused:?}"),
+        )?;
+        let insert = format!(
+            "INSERT INTO {}.job_enqueue_intents \
+             (job_type, payload, idempotency_key, stage, enqueue_request_version, enqueue_request) \
+             VALUES ('batter.grants.control', '{{}}'::jsonb, 'control-raw', 'queued', 1, '{{}}'::jsonb)",
+            quote(&jobs)
+        );
         require_denied(&probe, &insert).await?;
         require_violation(&probe, &role).await?;
         exec(
@@ -63,15 +76,18 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
         )
         .await?;
         require_within_policy(&probe, &role).await?;
+        require_permitted(&probe, &insert).await?;
 
         // Revoking the row-lock UPDATE breaks duplicate resolution's FOR KEY
         // SHARE read, which PostgreSQL refuses without UPDATE on some column.
-        let locking_read = format!(
-            "SELECT id FROM {}.job_enqueue_intents WHERE idempotency_key = 'control-key' \
-             LIMIT 1 FOR KEY SHARE",
-            quote(&jobs)
-        );
-        require_permitted(&probe, &locking_read).await?;
+        // An exact duplicate is what reaches that read, so the first recording
+        // has to succeed before the revocation.
+        require(
+            record_intent(&database, &payload, "control-duplicate")
+                .await
+                .is_ok(),
+            "the native recording that sets up duplicate resolution was refused",
+        )?;
         exec(
             &mut fixture.admin,
             format!(
@@ -81,11 +97,43 @@ async fn removing_a_required_privilege_fails_the_native_operation_and_the_verifi
             ),
         )
         .await?;
+        let duplicate = record_intent(&database, &payload, "control-duplicate").await;
+        require(
+            duplicate.is_err(),
+            &format!("native duplicate resolution survived a revoked row lock: {duplicate:?}"),
+        )?;
+        let locking_read = format!(
+            "SELECT id FROM {}.job_enqueue_intents WHERE idempotency_key = 'control-duplicate' \
+             LIMIT 1 FOR KEY SHARE",
+            quote(&jobs)
+        );
         require_denied(&probe, &locking_read).await?;
         require_violation(&probe, &role).await?;
         Ok(())
     })
     .await
+}
+
+/// Record one required intent through the native entrypoint under this login.
+///
+/// The error is flattened to a string because these controls only distinguish
+/// acceptance from refusal; which privilege PostgreSQL named is established by
+/// the raw statement beside each revocation.
+async fn record_intent(
+    database: &batter::runledger::RunledgerDatabase,
+    payload: &serde_json::Value,
+    key: &str,
+) -> Result {
+    run_atomic(database, async |mut scope| {
+        let intent = JobEnqueueIntent::new(JobType::new("batter.grants.control"), payload, key);
+        scope
+            .record_required_job_enqueue_intent(&intent)
+            .await
+            .map(|_| ())
+            .map_err(|error| format!("{error:?}"))
+    })
+    .await
+    .map_err(PgAtomicFailure::into_error)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
