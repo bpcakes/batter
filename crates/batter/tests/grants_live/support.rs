@@ -360,12 +360,103 @@ pub(crate) async fn require_violation(pool: &PgPool, role: &CompiledExactRole) -
 }
 
 /// Keep the concrete native atomic failure in the reported cause.
+///
+/// `PgAtomicError`'s own `Debug` and `Display` are deliberately redacted to a
+/// single phrase such as "PostgreSQL atomic workflow rejected and rolled back",
+/// and its real causes are reachable only through [`std::error::Error::source`].
+/// Flattening it with `{:?}` therefore reported that phrase and destroyed the
+/// storage error, its SQLSTATE and any completion cause, which is exactly what a
+/// failing grant case needs. This walks the source chain into the reported
+/// message and retains the typed error as the reported source, leaving the
+/// library's redacted default formatting untouched.
 pub(crate) trait PgAtomicFailure {
     fn into_error(self) -> Box<dyn std::error::Error + Send + Sync>;
 }
 
-impl<T: std::fmt::Debug> PgAtomicFailure for batter::runledger::PgAtomicError<T, String> {
+impl<T, E> PgAtomicFailure for batter::runledger::PgAtomicError<T, E>
+where
+    T: Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
     fn into_error(self) -> Box<dyn std::error::Error + Send + Sync> {
-        fail(&format!("{self:?}"))
+        Box::new(AtomicFailure {
+            chain: chain(&self),
+            source: Box::new(self),
+        })
     }
+}
+
+/// What a grant case's atomic callback can fail with.
+///
+/// A case that stages an application rejection deliberately still has to report
+/// a native failure from the same callback with its cause intact, so the two are
+/// distinct variants rather than one flattened string.
+#[derive(Debug)]
+pub(crate) enum CaseRejection {
+    /// The case's own application-policy rejection.
+    Application(&'static str),
+    /// A native failure from the operation under test.
+    Native(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl std::fmt::Display for CaseRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Application(reason) => write!(formatter, "the case rejected: {reason}"),
+            Self::Native(error) => write!(formatter, "the operation under test failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CaseRejection {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Application(_) => None,
+            Self::Native(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+/// One atomic failure reported with its whole source chain.
+pub(crate) struct AtomicFailure {
+    chain: String,
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl std::fmt::Display for AtomicFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.chain)
+    }
+}
+
+/// The test runner prints the returned error with `{:?}`, so the chain has to be
+/// what `Debug` shows rather than a struct dump.
+impl std::fmt::Debug for AtomicFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.chain)
+    }
+}
+
+impl std::error::Error for AtomicFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// Render an error and every cause below it.
+///
+/// Some native errors already include their own cause in `Display`, so a cause
+/// whose text the message already ends with is skipped rather than repeated.
+fn chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut rendered = error.to_string();
+    let mut cause = error.source();
+    while let Some(current) = cause {
+        let text = current.to_string();
+        if !rendered.ends_with(&text) {
+            rendered.push_str(": ");
+            rendered.push_str(&text);
+        }
+        cause = current.source();
+    }
+    rendered
 }

@@ -237,26 +237,37 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             .with_registry(registry)
             .disable_scheduler()
             .build()?;
-        supervisor
-            .startup_observer()
-            .wait_initialized()
-            .await
-            .map_err(|error| super::support::fail(&format!("{error:?}")))?;
-
         let succeeded = format!(
             "SELECT count(*) FROM {}.job_queue WHERE status = 'SUCCEEDED'",
             quote(&jobs_schema)
         );
+        // Startup and the observations run inside a block whose failure is held,
+        // never returned: dropping a supervisor only requests shutdown, so an
+        // early return would leave native tasks running into the fixture's own
+        // teardown and lose whatever they failed with. Settlement is always
+        // awaited, and the held observation error is reported first because it
+        // is the one that explains the run.
+        //
         // The worker, promoter and reaper loops each have to do real work: the
-        // reapable job, the promoted intent and nothing else can reach SUCCEEDED.
-        await_count(
-            &narrow_probe,
-            succeeded.clone(),
-            2,
-            "scheduler-disabled loops",
-        )
-        .await?;
-        // The scheduler loop is disabled, so no schedule may be claimed here.
+        // reapable job, the promoted intent and nothing else can reach
+        // SUCCEEDED. The scheduler loop is disabled, so no schedule may be
+        // claimed here.
+        let observed = async {
+            supervisor
+                .startup_observer()
+                .wait_initialized()
+                .await
+                .map_err(|error| super::support::fail(&format!("{error:?}")))?;
+            await_count(
+                &narrow_probe,
+                succeeded.clone(),
+                2,
+                "scheduler-disabled loops",
+            )
+            .await
+            .map(|_| ())
+        }
+        .await;
         let report = supervisor
             .shutdown_report(RuntimeShutdownBudget::new(
                 Duration::from_secs(10),
@@ -264,6 +275,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             )?)
             .await;
         let settlement = report.classify();
+        observed?;
         require(
             matches!(settlement, RuntimeSettlement::Clean(_)),
             &format!("the scheduler-disabled supervisor did not settle cleanly: {settlement:?}"),
@@ -333,43 +345,51 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
         let supervisor = Supervisor::builder(wide_database.pool(), config("grants-default"))?
             .with_registry(registry)
             .build()?;
-        supervisor
-            .startup_observer()
-            .wait_initialized()
-            .await
-            .map_err(|error| super::support::fail(&format!("{error:?}")))?;
+        // Held and reported after settlement, for the same reason as the
+        // scheduler-disabled composition above.
+        //
         // The scheduler loop materializes the due schedule and records the fire;
-        // the worker loop then executes the job the scheduler created.
-        // The scheduler needs no read of `last_fired_at`, so this observation
+        // the worker loop then executes the job the scheduler created. The
+        // scheduler needs no read of `last_fired_at`, so that observation
         // deliberately uses the owning connection rather than widening the
         // serving login's reviewed inventory.
-        await_count(
-            owner_database.pool(),
-            format!(
-                "SELECT count(*) FROM {}.job_schedules \
-                 WHERE name = 'grants-supervised-schedule' AND last_fired_at IS NOT NULL",
-                quote(&jobs_schema)
-            ),
-            1,
-            "default-loop schedule fire",
-        )
-        .await?;
-        // State it rather than trusting the expression: the recomputed next
-        // occurrence is outside this test's window, so the scheduler cannot
-        // enqueue a second job that a later observation would inherit.
-        let next_fire: chrono::DateTime<chrono::Utc> =
-            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT next_fire_at FROM {}.job_schedules \
-                 WHERE name = 'grants-supervised-schedule'",
-                quote(&jobs_schema)
-            )))
-            .fetch_one(owner_database.pool())
+        let observed = async {
+            supervisor
+                .startup_observer()
+                .wait_initialized()
+                .await
+                .map_err(|error| super::support::fail(&format!("{error:?}")))?;
+            await_count(
+                owner_database.pool(),
+                format!(
+                    "SELECT count(*) FROM {}.job_schedules \
+                     WHERE name = 'grants-supervised-schedule' AND last_fired_at IS NOT NULL",
+                    quote(&jobs_schema)
+                ),
+                1,
+                "default-loop schedule fire",
+            )
             .await?;
-        require(
-            next_fire > due + chrono::Duration::days(28),
-            &format!("the schedule fires again at {next_fire}, inside the test window"),
-        )?;
-        await_count(&wide_probe, succeeded, 3, "default-loop scheduled dispatch").await?;
+            // State it rather than trusting the expression: the recomputed next
+            // occurrence is outside this test's window, so the scheduler cannot
+            // enqueue a second job that a later observation would inherit.
+            let next_fire: chrono::DateTime<chrono::Utc> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT next_fire_at FROM {}.job_schedules \
+                     WHERE name = 'grants-supervised-schedule'",
+                    quote(&jobs_schema)
+                )))
+                .fetch_one(owner_database.pool())
+                .await?;
+            require(
+                next_fire > due + chrono::Duration::days(28),
+                &format!("the schedule fires again at {next_fire}, inside the test window"),
+            )?;
+            await_count(&wide_probe, succeeded, 3, "default-loop scheduled dispatch")
+                .await
+                .map(|_| ())
+        }
+        .await;
         let report = supervisor
             .shutdown_report(RuntimeShutdownBudget::new(
                 Duration::from_secs(10),
@@ -377,6 +397,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             )?)
             .await;
         let settlement = report.classify();
+        observed?;
         require(
             matches!(settlement, RuntimeSettlement::Clean(_)),
             &format!("the default-loop supervisor did not settle cleanly: {settlement:?}"),

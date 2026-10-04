@@ -3,7 +3,8 @@
 use super::policy::{Composition, PublicPolicy};
 use super::schema;
 use super::support::{
-    Fixture, PgAtomicFailure, Result, quote, require, require_denied, require_within_policy,
+    CaseRejection, Fixture, PgAtomicFailure, Result, quote, require, require_denied,
+    require_within_policy,
 };
 use batter::runledger::grants::RunledgerOperation;
 use batter::runledger::native::core::jobs::JobType;
@@ -47,19 +48,13 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
             // transaction that also writes an application relation.
             let first = run_atomic(&database, async |mut scope| {
                 let intent = build();
-                scope
-                    .record_required_job_enqueue_intent(&intent)
-                    .await
-                    .map_err(|error| format!("{error:?}"))
+                scope.record_required_job_enqueue_intent(&intent).await
             })
             .await
             .map_err(PgAtomicFailure::into_error)?;
             let repeated = run_atomic(&database, async |mut scope| {
                 let intent = build();
-                scope
-                    .record_required_job_enqueue_intent(&intent)
-                    .await
-                    .map_err(|error| format!("{error:?}"))
+                scope.record_required_job_enqueue_intent(&intent).await
             })
             .await
             .map_err(PgAtomicFailure::into_error)?;
@@ -81,10 +76,7 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                 } else {
                     intent
                 };
-                scope
-                    .record_required_job_enqueue_intent(&intent)
-                    .await
-                    .map_err(|error| format!("{error:?}"))
+                scope.record_required_job_enqueue_intent(&intent).await
             })
             .await;
             require(
@@ -108,8 +100,8 @@ async fn intent_submission_records_duplicates_conflicts_and_rolls_back_in_both_s
                 scope
                     .record_required_job_enqueue_intent(&intent)
                     .await
-                    .map_err(|error| format!("{error:?}"))?;
-                Err::<(), String>("application rejected".to_owned())
+                    .map_err(|error| CaseRejection::Native(Box::new(error)))?;
+                Err::<(), CaseRejection>(CaseRejection::Application("application rejected"))
             })
             .await;
             require(

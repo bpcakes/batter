@@ -255,7 +255,7 @@ that gap is covered only by the live cases, and only for the paths and privilege
 combinations they execute. Eleven PostgreSQL 18.6 cases
 (`cargo test -p batter --features runledger,runlimit-postgres --test grants_live
 -- --ignored --test-threads=1`, Linux x86-64, Rust 1.98.1, last executed
-2026-10-04 at `8fb65d7`), each named
+2026-10-04 at `d7e2294`), each named
 in the bounded inventory-checked runner, provision non-owner, non-superuser
 `NOINHERIT` logins from the fragments and execute intent submission with
 duplicate, conflict and rollback handling in both scopes, the separately selected

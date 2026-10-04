@@ -58,7 +58,16 @@ pub enum RunledgerOperation {
     /// takes the row lock its duplicate resolution needs; it carries no queue
     /// authority and cannot promote an intent.
     ///
-    /// Covers `record_job_enqueue_intent` and `record_job_enqueue_intent_tx`.
+    /// Covers `record_job_enqueue_intent` and `record_job_enqueue_intent_tx`,
+    /// the shared `record_job_enqueue_intent_in_transaction` they and the atomic
+    /// scopes route through, and both scope methods built on it:
+    /// `record_required_job_enqueue_intent`, which requires an accepted handoff
+    /// and reports a known conflict as a rejection, and
+    /// `observe_job_enqueue_intent`, which deliberately permits a conflicted
+    /// outcome for a caller whose policy is to commit despite it. The two differ
+    /// in what they accept, not in the privileges they need, so one selection
+    /// covers both.
+    ///
     /// Excludes every intent reader and
     /// `delete_promoted_job_enqueue_intents_before`.
     IntentSubmission,

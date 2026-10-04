@@ -130,7 +130,6 @@ async fn record_intent(
             .record_required_job_enqueue_intent(&intent)
             .await
             .map(|_| ())
-            .map_err(|error| format!("{error:?}"))
     })
     .await
     .map_err(PgAtomicFailure::into_error)
@@ -308,10 +307,7 @@ async fn one_login_composes_both_adapters_with_its_own_application_objects() -> 
                 &payload,
                 "composed-shape-a",
             );
-            scope
-                .record_required_job_enqueue_intent(&intent)
-                .await
-                .map_err(|error| format!("{error:?}"))
+            scope.record_required_job_enqueue_intent(&intent).await
         })
         .await
         .map_err(PgAtomicFailure::into_error)?;
