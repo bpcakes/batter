@@ -938,12 +938,27 @@ The six test parts retain their existing command selections:
 - `runlimit`: native default-feature tests, the release regression and graph checks.
 - `scripts`: subprocess, smoke, SQLx and Runlimit runner controls.
 
-Jig remains pinned to commit `a328c17910c40603327c73329e5158a42c37417d` solely
-for `scripts/jig file-budget`. The small `.jig.toml` and `.agent/jig-contract.json`
+Jig is pinned to release `0.7.1` in `.jig/runtime-version` solely
+for `scripts/jig file-budget`; `scripts/jig --version` reports the selected release.
+The small `.jig.toml` and `.agent/jig-contract.json`
 catalogs are runtime prerequisites for that command. They contain only the
 file-budget action; the wrapper rejects work, check and MCP commands. There is
-no MCP registration. The first budget invocation installs the pinned runtime;
-subsequent invocations reuse its binary cache without creating work state.
+no MCP registration. The installer comes from the official `v0.7.1` template;
+the launcher retains Batter's command restriction. The first budget invocation
+downloads the official release archive and verifies its SHA-256, version and
+contract/profile compatibility before publishing the executable. Subsequent
+invocations reuse it without downloading or compiling Jig or creating work state.
+
+Both Jig-using CI jobs cache only `bin/jig`, under
+`.git/jig-tools/release-*-contract-*-runtime/` for ordinary checkouts or
+`.agent/.cache/jig/release-*-contract-*-runtime/` for linked worktrees and source
+archives. Keys include runner OS/architecture, the version pin, catalog, contract
+and launcher/installer contents. Neither workflow filters paths, so pin changes
+trigger both checks. Rust remains installed for the application checks.
+Linux release binaries require glibc 2.35 or newer; macOS binaries target macOS
+13 or newer. The upstream installer retains source fallback for unsupported
+targets or missing release archives; transport, checksum and compatibility errors
+fail without a source build. Current `ubuntu-latest` Jig jobs use Linux x86_64.
 
 `bash scripts/check_file_budget.sh` compares local changes with the merge base
 of `origin/master`. CI uses the exact event base for pull requests, pushes and
@@ -958,6 +973,9 @@ The unchanged `.jig/file-budget.toml` policy retains the 800-line Rust ceiling,
 regressions run the actual pinned checker in disposable repositories, covering
 all CI comparisons, unavailable bases, new untracked files and imported growth.
 Every invocation must leave plans and receipt state absent.
+Runtime regressions restore only the executable in an ordinary checkout and a
+real linked worktree with downloads and compilers blocked. They also reject
+malformed pins, checksum mismatches and download errors without compiling Jig.
 
 On the 2026-09-25 tree, a strict inventory of all 798 Rust files reports inherited
 overages in `crates/batter-core/tests/startup_signals.rs` (804 lines) and

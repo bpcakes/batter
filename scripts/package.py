@@ -25,7 +25,7 @@ def eligible(path: Path, root: Path) -> bool:
         return False
     allowed = {".rs", ".md", ".toml", ".py", ".sh", ".yml", ".yaml", ".json", ".jsonl", ".sql", ".txt", ".patch"}
     named = {"LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "Cargo.lock", ".gitignore", ".gitattributes", ".gitkeep"}
-    if relative.as_posix() == "scripts/jig":
+    if relative.as_posix() in {"scripts/jig", ".jig/runtime-version"}:
         return True
     return path.name != "SHA256SUMS" and (path.suffix in allowed or path.name in named)
 

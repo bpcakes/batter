@@ -1,5 +1,20 @@
 # Implementation status
 
+2026-10-04 Jig release runtime (`batter-xiu`): `.jig/runtime-version` selects
+0.7.1 and the installer is copied from the official tagged template. Batter's
+file-budget-only catalog and launcher restriction remain; `--version` is allowed.
+Both Jig-using CI jobs cache only the executable, including the linked-worktree
+fallback location, with version/contract/script and runner OS/architecture keys.
+Cold installs downloaded and verified the official macOS arm64 and Linux x86_64
+archives with Cargo and rustc blocked; Linux ran in an emulated Ubuntu 24.04
+container. Warm installs made no network or compiler calls. Executable-only
+restores passed in ordinary and linked worktrees; malformed pins, failed
+downloads and mismatched checksums failed without compiling Jig. All 137 script
+tests passed with one opt-in live check skipped. Actionlint, shell syntax, static
+package/link inspection and the change-based file-budget check passed. Source
+archives retain the version pin. Hosted CI and its cache action remain unverified
+for this change; no complete Rust matrix was run for these tooling-only edits.
+
 2026-09-30 reference executable build race repair (`batter-oq21`): the `workspace`
 matrix part no longer runs the all-feature workspace tests in the same batch as
 the default-feature reference configuration tests. Both uplift

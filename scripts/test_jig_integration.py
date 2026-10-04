@@ -29,13 +29,13 @@ class JigIntegrationTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="batter-jig-test-")
         self.addCleanup(temporary.cleanup)
         self.repo = Path(temporary.name)
-        for name in [".jig.toml", ".agent/jig-contract.json",
+        for name in [".jig.toml", ".jig/runtime-version", ".agent/jig-contract.json",
                      "scripts/jig", "scripts/install-jig.sh", "scripts/check_file_budget.sh",
                      "scripts/verify.sh"]:
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, path)
-        (self.repo / ".jig").mkdir()
+        (self.repo / ".jig").mkdir(exist_ok=True)
         (self.repo / ".jig/file-budget.toml").write_text(
             'version = 1\n[[rules]]\nid = "rust"\ncategory = "source"\n'
             'include = ["**/*.rs"]\nexclude = []\nnotice_lines = 5\nwarn_lines = 10\nmax_lines = 20\n'
