@@ -8,7 +8,8 @@ use batter::runledger::grants::RunledgerOperation;
 use batter::runledger::native::core::jobs::{JobFailureKind, JobType, JobTypeName};
 use batter::runledger::native::postgres::jobs::{
     self, JobCompletionUpdate, JobContinuationUpdate, JobDefinitionUpsert, JobEnqueue,
-    JobFailureUpdate, JobLeaseIdentity, JobOrdinaryProgressUpdate, JobRunningUpdate,
+    JobFailureUpdate, JobLeaseIdentity, JobOrdinaryProgressUpdate, JobQueueRecord,
+    JobRunningUpdate,
 };
 use serde_json::Value;
 use std::time::Duration;
@@ -17,6 +18,43 @@ const JOB_TYPE: &str = "batter.grants.direct";
 const RESOURCE_JOB_TYPE: &str = "batter.grants.resource";
 const SCHEDULE: &str = "grants-schedule";
 const RETIRED_SCHEDULE: &str = "grants-retired";
+
+/// Which native claim path a case exercises.
+#[derive(Clone, Copy)]
+enum ClaimKind {
+    Direct,
+    Prestart,
+}
+
+/// Claim one exact job, waiting for the scheduled eligibility the previous
+/// transition set rather than assuming the job is claimable the instant its
+/// status becomes `PENDING`. A retry's `next_run_at` is its completion time plus
+/// the policy delay, and the native claim excludes future-dated jobs, so only a
+/// bounded wait makes this independent of how fast the connection answers.
+/// Privilege failures still surface immediately, because the claim itself errors.
+async fn claim_job(
+    pool: &sqlx::PgPool,
+    kind: ClaimKind,
+    job: uuid::Uuid,
+    lease_seconds: i32,
+    worker_id: &str,
+) -> Result<JobQueueRecord> {
+    for _ in 0..100 {
+        let claimed = match kind {
+            ClaimKind::Direct => jobs::claim_jobs(pool, worker_id, lease_seconds, 10).await?,
+            ClaimKind::Prestart => {
+                jobs::claim_prestart_jobs(pool, worker_id, lease_seconds, 10).await?
+            }
+        };
+        if let Some(record) = claimed.into_iter().find(|record| record.id == job) {
+            return Ok(record);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Err(super::support::fail(&format!(
+        "job {job} never became claimable"
+    )))
+}
 
 fn definition(job_type: &str) -> JobDefinitionUpsert<'_> {
     JobDefinitionUpsert {
@@ -77,11 +115,7 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         // Success: claim, start, heartbeat, progress, checkpoint, finish.
         let success_id = jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload))
             .await?;
-        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
-        let claim = claimed
-            .iter()
-            .find(|record| record.id == success_id)
-            .ok_or_else(|| super::support::fail("the worker could not claim its own job"))?;
+        let claim = claim_job(worker, ClaimKind::Direct, success_id, 60, "grants-worker").await?;
         jobs::mark_job_running(
             worker,
             claim.id,
@@ -130,11 +164,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         // lease and advances the job to a further run that the same login claims.
         let continued_id =
             jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload)).await?;
-        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
-        let claim = claimed
-            .iter()
-            .find(|record| record.id == continued_id)
-            .ok_or_else(|| super::support::fail("the continuing job was not claimable"))?;
+        let claim =
+            claim_job(worker, ClaimKind::Direct, continued_id, 60, "grants-worker").await?;
         let outcome = jobs::complete_job_continuation_with_outcome(
             worker,
             claim.id,
@@ -154,11 +185,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             &format!("continuation did not advance the run: {outcome:?}"),
         )?;
         require_status(&probe, &jobs_schema, continued_id, "PENDING").await?;
-        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
-        let claim = claimed
-            .iter()
-            .find(|record| record.id == continued_id)
-            .ok_or_else(|| super::support::fail("the continued run was not claimable"))?;
+        let claim =
+            claim_job(worker, ClaimKind::Direct, continued_id, 60, "grants-worker").await?;
         jobs::complete_job_success(
             worker,
             claim.id,
@@ -174,11 +202,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         let failing_id = jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload))
             .await?;
         for expected in ["PENDING", "DEAD_LETTERED"] {
-            let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
-            let claim = claimed
-                .iter()
-                .find(|record| record.id == failing_id)
-                .ok_or_else(|| super::support::fail("the failing job was not claimable"))?;
+            let claim =
+                claim_job(worker, ClaimKind::Direct, failing_id, 60, "grants-worker").await?;
             jobs::complete_job_failure(
                 worker,
                 claim.id,
@@ -210,11 +235,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
             .await?;
         // Only a worker prestart claim can be released as unstarted, which is the
         // path that follows a failed RUNNING persistence.
-        let claimed = jobs::claim_prestart_jobs(worker, "grants-worker", 60, 10).await?;
-        let claim = claimed
-            .iter()
-            .find(|record| record.id == released_id)
-            .ok_or_else(|| super::support::fail("the releasable job was not claimable"))?;
+        let claim =
+            claim_job(worker, ClaimKind::Prestart, released_id, 60, "grants-worker").await?;
         jobs::release_unstarted_job_claim(
             worker,
             JobLeaseIdentity::new(claim.id, claim.run_number, claim.attempt, "grants-worker"),
@@ -240,11 +262,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         )
         .await?
         .job_id;
-        let claimed = jobs::claim_jobs(worker, "grants-worker", 60, 10).await?;
-        let claim = claimed
-            .iter()
-            .find(|record| record.id == resource_id)
-            .ok_or_else(|| super::support::fail("the resource job was not claimable"))?;
+        let claim =
+            claim_job(worker, ClaimKind::Direct, resource_id, 60, "grants-worker").await?;
         let held: i64 = scalar(
             &probe,
             format!(
@@ -279,11 +298,8 @@ async fn the_direct_job_worker_runs_every_selected_lifecycle_path() -> Result {
         // Reaping an expired lease is the worker's own authority.
         let reaped_id = jobs::enqueue_job(owner_database.pool(), &submission(JOB_TYPE, &payload))
             .await?;
-        let claimed = jobs::claim_jobs(worker, "grants-reaper", 1, 10).await?;
-        require(
-            claimed.iter().any(|record| record.id == reaped_id),
-            "the reapable job was not claimable",
-        )?;
+        let _reaping_claim =
+            claim_job(worker, ClaimKind::Direct, reaped_id, 1, "grants-reaper").await?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         // Reaping always runs its bounded coordination cleanup, whose failures are
         // diagnostics rather than errors, so assert on the detailed result.
