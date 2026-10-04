@@ -9,6 +9,7 @@ use batter_core::{
     lifecycle::LifecycleStatus,
     readiness::{ReadinessCondition, ReadinessEvaluator, ReadinessUnreadyReason},
 };
+use std::convert::Infallible;
 use tracing::Level;
 
 pub use batter_core::readiness::ReadinessDecision;
@@ -137,6 +138,31 @@ impl<E> Clone for ReadinessPolicy<E> {
     }
 }
 
+impl ReadinessPolicy<Infallible> {
+    /// Use lifecycle and application conditions without creating a dependency monitor.
+    ///
+    /// This asserts no continuous dependency observation, not healthy remote
+    /// connectivity. Conditions run before the final lifecycle read and can
+    /// only narrow readiness. The ordinary status and severity mappings apply.
+    ///
+    /// ```
+    /// use batter_axum::ReadinessPolicy;
+    /// use batter_core::{lifecycle::ShutdownHandle, readiness::ReadinessCondition};
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// let policy = ReadinessPolicy::lifecycle_only(control.status())
+    ///     .with_condition(ReadinessCondition::new("application-state")?, || true);
+    /// approval.approve();
+    /// assert!(policy.decision().is_ready());
+    /// # Ok::<(), batter_core::readiness::ReadinessConditionError>(())
+    /// ```
+    pub fn lifecycle_only(lifecycle: LifecycleStatus) -> Self {
+        Self {
+            evaluator: ReadinessEvaluator::lifecycle_only(lifecycle),
+            level: default_readiness_level,
+        }
+    }
+}
+
 impl<E> ReadinessPolicy<E> {
     /// Select INFO for expected Starting/Draining, WARN for dependency,
     /// application-condition and Stopped failures.
@@ -161,7 +187,7 @@ impl<E> ReadinessPolicy<E> {
     /// While `satisfied` returns `false`, a decision that would otherwise be
     /// Ready is `Unready(ReadinessUnreadyReason::Condition(condition))`, which
     /// renders 503 and defaults to WARN. The condition is asked only when the
-    /// dependency is ready and cannot make an unready lifecycle or dependency
+    /// dependency is ready or absent and cannot make an unready lifecycle or dependency
     /// ready; see [`ReadinessEvaluator::with_condition`] for when it runs.
     /// Conditions accumulate in the order added. Condition names are validated
     /// [`ReadinessCondition`]s, never raw strings:

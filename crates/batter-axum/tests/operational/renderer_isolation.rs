@@ -44,6 +44,7 @@ enum Surface {
     Admission,
     Interruption,
     Browser,
+    Fallback,
 }
 
 impl Surface {
@@ -54,6 +55,7 @@ impl Surface {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             Self::Browser => StatusCode::FORBIDDEN,
+            Self::Fallback => StatusCode::NOT_FOUND,
         }
     }
 }
@@ -187,8 +189,20 @@ async fn app(surface: Surface, quota: bool) -> Router {
             boundary = HttpBoundary::new(GroupPolicy::browser(policy, browser));
         }
         Surface::Admission | Surface::Interruption => {}
+        Surface::Fallback => {
+            boundary = boundary
+                .with_rendered_fallback(move |parts| {
+                    let mut response = redispatch(parts, quota);
+                    *response.status_mut() = StatusCode::NOT_FOUND;
+                    response
+                })
+                .unwrap();
+        }
     }
-    let guarded = if matches!(surface, Surface::Liveness | Surface::Readiness) {
+    let guarded = if matches!(
+        surface,
+        Surface::Liveness | Surface::Readiness | Surface::Fallback
+    ) {
         GuardedRouter::new()
     } else {
         GuardedRouter::new().route(
@@ -277,7 +291,12 @@ fn check(surface: Surface) {
             .iter()
             .find(|event| event.contains(&format!("request_id=\"{child_id}\"")))
             .unwrap();
-        assert!(parent.contains("route=\"/parent\""), "{text}");
+        let route = if matches!(surface, Surface::Fallback) {
+            "<unmatched>"
+        } else {
+            "/parent"
+        };
+        assert!(parent.contains(&format!("route=\"{route}\"")), "{text}");
         assert!(parent.contains("quota_outcome=\"not_checked\""), "{text}");
         if quota {
             assert!(child.contains("quota_outcome=\"quota_denied\""), "{text}");
@@ -310,4 +329,9 @@ fn interruption_renderer_redispatch_cannot_rewrite_original_observation() {
 #[test]
 fn browser_renderer_redispatch_cannot_rewrite_original_observation() {
     check(Surface::Browser);
+}
+
+#[test]
+fn fallback_renderer_redispatch_cannot_rewrite_original_observation() {
+    check(Surface::Fallback);
 }

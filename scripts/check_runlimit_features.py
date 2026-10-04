@@ -13,9 +13,16 @@ from parallel_process import render_outcomes, run_parallel
 from consumer_manifest import consumer_patches
 
 ROOT = Path(__file__).resolve().parent.parent
+# Packages exactly one feature selects.
 FEATURE_PACKAGES = {"memory": ("runlimit-memory",),
                     "postgres": ("runlimit-postgres", "sqlx", "batter-sqlx"),
-                    "axum": ("batter-axum", "axum")}
+                    "axum": ("batter-axum",),
+                    "native-http": ("runlimit-http",),
+                    "native-axum": ("runlimit-axum",)}
+# Packages more than one feature can select. The protected assembly and the
+# native transport layer both need the Axum crate; only the former adds the
+# Batter Axum adapter.
+SHARED_PACKAGES = {"axum": ("axum", "native-axum")}
 
 
 def execute(command, cwd):
@@ -80,15 +87,25 @@ def main():
                             '[dependencies]\nbatter-runlimit={path=' + json.dumps(str(ROOT / "crates/batter-runlimit")) +
                             ', default-features=false, features=' + json.dumps(selected) + '}\n'
                             + consumer_patches({"runlimit-core"} | {
-                                "runlimit-" + feature for feature in selected
-                                if feature in {"memory", "postgres"}
+                                package for feature in selected
+                                for package in FEATURE_PACKAGES[feature]
+                                if package.startswith("runlimit-")
                             }))
                 (fixture / "Cargo.toml").write_text(manifest)
                 shutil.copyfile(ROOT / "Cargo.lock", fixture / "Cargo.lock")
                 source = "use batter_runlimit::{Checks, Quota, RunResult};\n"
                 if "axum" in selected:
                     source += "use batter_runlimit::http::{HttpQuota, PreparedHttp, TestClient};\n"
-                (fixture / "src/main.rs").write_text(source + "fn main() {}\n")
+                if "memory" in selected:
+                    source += "use batter_runlimit::memory::MemoryStore;\n"
+                if "postgres" in selected:
+                    source += "use batter_runlimit::postgres::PostgresLimiter;\n"
+                if "native-http" in selected:
+                    source += "use batter_runlimit::native_transport::http::draft_11;\n"
+                if "native-axum" in selected:
+                    source += "use batter_runlimit::native_transport::axum::RateLimitLayer;\n"
+                (fixture / "src/main.rs").write_text("#![allow(unused_imports)]\n" + source
+                                                     + "fn main() {}\n")
                 # The disposable root must reconcile its own package in the copied lock.
                 metadata = json.loads(execute(cargo + metadata_args + ["--offline"], fixture))
                 drift = {(p["name"], p["version"], p["source"]) for p in metadata["packages"] if p["source"]} - known
@@ -99,17 +116,26 @@ def main():
                     for package in packages:
                         if (package in names) != (feature in selected):
                             raise RuntimeError(f"{selected}: unexpected graph membership for {package}")
+                for package, selectors in SHARED_PACKAGES.items():
+                    if (package in names) != bool(set(selectors) & set(selected)):
+                        raise RuntimeError(f"{selected}: unexpected graph membership for {package}")
                 check = cargo + ["check", "--locked", "--offline", "--target-dir", str(ROOT / "target/runlimit-features")]
                 execute(check, fixture)
-                if "axum" not in selected:
-                    (fixture / "src/main.rs").write_text("use batter_runlimit::http;\nfn main() {}\n")
+                # A module must be unresolved unless one of its features is selected.
+                for module, selectors in (("http", ("axum",)),
+                                          ("native_transport", ("native-http", "native-axum"))):
+                    if set(selectors) & set(selected):
+                        continue
+                    (fixture / "src/main.rs").write_text(
+                        f"use batter_runlimit::{module};\nfn main() {{}}\n")
                     outcome = run_parallel([check], timeout=600, output_limit=1024 * 1024, cwd=fixture)[0]
                     error = outcome.stderr.decode()
+                    expected = f"unresolved import `batter_runlimit::{module}`"
                     if (outcome.status != 101 or outcome.watchdog or outcome.overflow or outcome.errors
                             or not outcome.reaped or not outcome.output_eof
-                            or "error[E0432]" not in error or "unresolved import `batter_runlimit::http`" not in error):
-                        render_outcomes(["disabled-http-negative-control"], [outcome])
-                        raise RuntimeError("expected specifically the disabled HTTP import failure")
+                            or "error[E0432]" not in error or expected not in error):
+                        render_outcomes([f"disabled-{module}-negative-control"], [outcome])
+                        raise RuntimeError(f"expected specifically the disabled {module} import failure")
                 print(f"isolated features {','.join(selected) or 'none'}: graph and compilation passed", flush=True)
     return 0
 

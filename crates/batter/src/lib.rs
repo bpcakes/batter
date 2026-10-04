@@ -7,7 +7,8 @@
 //! The default feature set is empty. Enable only the namespaces an application
 //! uses: `at-rest`, `axum`, `metrics`, `otlp`, `sqlx`, `runledger`, `runlimit`,
 //! `test-support`, or the narrower bridge features `runlimit-memory`, `runlimit-postgres`,
-//! `runlimit-axum`, and `sqlx-test-support`.
+//! `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
+//! `runledger-test-support`, and `sqlx-test-support`.
 //!
 //! # Important limits
 //!
@@ -102,9 +103,21 @@ pub mod sqlx {
 /// owned PostgreSQL scopes and [`crate::runledger::run_atomic`]. Durable policy and native
 /// supervision remain owned by Runledger.
 ///
+/// `runledger::native::{core, postgres, runtime}` are the native packages
+/// themselves, so one `batter` dependency reaches worker preparation, the job
+/// catalog, durable intents and the migrators without a second declaration of a
+/// native package. `runledger-test-support` additionally exposes
+/// `runledger::native::test_support` for a consumer's own tests. They are
+/// low-level: `register_in` remains the protected composition, and reaching a
+/// native namespace does not move ownership of durable policy, storage or
+/// supervision into the facade.
+///
 /// ```
 /// let _: Option<batter::runledger::NativeReport> = None;
 /// let _: Option<batter::sqlx::PgSession<'_>> = None;
+/// let _: Option<batter::runledger::native::core::jobs::JobType<'static>> = None;
+/// let _: Option<batter::runledger::native::postgres::SchemaCompatibilityError> = None;
+/// let _: Option<batter::runledger::native::runtime::config::JobsConfig> = None;
 /// ```
 #[cfg(feature = "runledger")]
 pub mod runledger {
@@ -114,11 +127,24 @@ pub mod runledger {
 /// Runlimit quota admission and its selected HTTP/error bridges.
 ///
 /// Enabled by `runlimit` or one of its bridge features. The `http` module is
-/// present only with `runlimit-axum`; memory and PostgreSQL bridge features do
-/// not select a storage backend in the facade.
+/// present only with `runlimit-axum`; the bare `runlimit` feature selects no
+/// storage backend, so `runlimit::memory` requires `runlimit-memory` and
+/// `runlimit::postgres` requires `runlimit-postgres`.
+///
+/// `runlimit::native`, `runlimit::memory`, `runlimit::postgres` and
+/// `runlimit::native_transport::{http, axum}` are the native packages
+/// themselves, so one `batter` dependency reaches validated policies, key
+/// derivation, both backends with their migrations, and both native transport
+/// contracts. `native_transport` needs `runlimit-native-http` or
+/// `runlimit-native-axum`; neither selects `axum`, the Batter Axum adapter or
+/// `runlimit::http`. It is deliberately named apart from `runlimit::http`: that
+/// module is the protected quota-before-body assembly, while the native layer
+/// leaves subject derivation, rejection mapping, status codes and header
+/// stability to the caller.
 ///
 /// ```
 /// let _: Option<batter::runlimit::EmptyChecks> = None;
+/// let _: Option<batter::runlimit::native::PolicyId> = None;
 /// ```
 #[cfg(feature = "runlimit")]
 pub mod runlimit {

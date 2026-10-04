@@ -475,6 +475,121 @@ known outside admission; an application that needs its envelope extracts
 evaluation is proposed and unexecuted; the downstream ports belong to
 `batter-tc9w.9`.
 
+### Native package reachability assessment (`batter-0jsf`)
+
+The facade exposed `batter::runledger` and `batter::runlimit` but not the native
+packages they translate. `batter-runledger` re-exported selected
+`runledger_postgres` items and held `runledger-core` only as a dev-dependency, so
+worker preparation, `JobsConfig`, `JobCatalog`, durable intents and the migrator
+were unreachable; `batter-runlimit` re-exported `runlimit-core` and, behind
+`postgres`, `runlimit-postgres`, but not `runlimit-memory`, `runlimit-http` or
+`runlimit-axum`. Both surveyed consumers therefore declared the same workspace
+revision two to eight times, and the cost was structural: every new capability
+added another declaration to keep in step, and one consumer fell 139 commits
+behind. Repeated declarations a consumer must keep consistent are the same signal
+this ADR names for repeated coordination instructions.
+
+Each native library package is now reachable through a feature-gated namespace
+that is the native package itself, so facade and direct paths cannot diverge into
+two identities. The invalid state this removes is a consumer holding two source
+identities for one workspace; it is now unrepresentable through the documented
+recipe because there is nothing left to declare separately.
+
+The namespaces are deliberately weaker than the protected path, and the review
+question is whether they make a known-invalid composition look equivalent to it.
+They do not, and the naming carries that:
+
+- `runledger::native::{core, postgres, runtime}` is reached through a segment
+  named `native`, and its module documentation states the obligations a caller
+  takes on by building a live native supervisor instead of handing inert
+  preparation to `register_in`: observing initialization, requesting shutdown
+  within a budget, classifying the settlement and ordering dependency cleanup.
+  `register_in` still accepts only a `PreparedSupervisor`, and the existing
+  compile-fail rustdocs still reject a live supervisor and a closure hiding one.
+  Reachability adds no way to pass a live supervisor through the protected
+  boundary.
+- `runlimit::native_transport::{http, axum}` is named apart from
+  `runlimit::http`, which remains the protected quota-before-body assembly. The
+  native layer's documentation states that subject derivation, rejection mapping,
+  status and body selection stay with the caller and that it acquires no operation
+  deadline, admission ordering or telemetry from the foundation. Its features
+  select neither `batter-axum` nor `runlimit::http`, so the two never appear as
+  interchangeable spellings of one capability.
+- `runledger::native::test_support` is documented as test-only and must not be
+  selected in a deployed graph. This is application policy: Cargo cannot express
+  "development graphs only" for a feature, and the facade cannot detect the
+  caller's profile. The recipe requires resolver 2 or 3 for dev-dependency
+  feature separation and an explicit resolver at a virtual workspace root;
+  resolver 1 also enables these features in ordinary dependency builds.
+
+What types cannot express here is deliberate. These are the native packages'
+own APIs; Batter does not narrow them, and narrowing them would create the second
+identity the task exists to remove. The remaining boundary is that a consumer can
+reach a low-level native path where a protected one exists. That is the standing
+escape-hatch position of this ADR, not a new weakening, and the documented
+canonical path is unchanged. Fresh-agent usability evaluation of the recipe is
+proposed and unexecuted.
+
+### Generic serving listener assessment (`batter-tc9w.7`)
+
+Owned serving accepted only `tokio::net::TcpListener`. A read-only survey of two
+downstream consumers found one of them rebuilding TLS serving as its own managed
+component of about two hundred lines. It owned a rustls listener and its
+handshakes, which is application policy, but it also repeated Batter's
+registration, startup acknowledgement, graceful-drain signal and stopped-proof
+assembly, which is not. Those repeated lines are the caller-memory obligation:
+copied lifecycle wiring can acknowledge startup at the wrong moment, omit the
+graceful-shutdown signal, or discard the `ComponentExit` proof, and nothing in
+the adapter's shape prevented it.
+
+`register_http`, `register_http_in`, `register_http_with_connect_info_in` and
+both `AssembledHttp` registration methods now accept any `axum::serve::Listener`.
+The canonical assembled boundary therefore serves TLS through exactly the path
+that already owns listener transfer, acknowledgement, drain and conservative
+cleanup, and the application keeps only the part it actually owns. Existing
+`TcpListener` call sites keep their signatures and behaviour, so this removes an
+obligation without adding a choice.
+The public listener parameters use argument-position `impl Listener` with
+associated-address bounds. Adding a named listener type parameter would break
+existing explicit registration-target arguments; compilation coverage checks
+those original call forms for the raw helpers and both assembled methods. This
+signature choice preserves the same ownership transfer and address constraints;
+it introduces no additional registration phase or caller obligation.
+
+Peer metadata stays library-owned. Pinned Axum 0.8.9 implements `Connected` for a
+bare listener only for `TcpListener`, and generically only for
+`ListenerExt::tap_io`, so a consumer reaching connect info for its own listener
+had to know that and wrap it. `register_http_with_connect_info_in` now applies
+that empty tap itself, and `ConnectInfo<L::Addr>` follows from the registration
+choice rather than from an upstream implementation detail. The address bounds in
+the signature are Axum's own `Connected` and `Debug` requirements, so a listener
+whose address cannot supply connect info fails to compile at registration instead
+of answering Axum's missing-extension 500 on every request.
+
+What remains with the application is explicit and could not be narrowed locally.
+`Listener::accept` cannot return an error, so retry and backoff after a failed
+accept, certificate and key selection, protocol versions, ALPN,
+client-certificate rules and handshake concurrency are the listener's own policy;
+Batter installs no crypto provider and takes no TLS dependency outside test
+material. A listener that spawns handshakes onto the runtime instead of polling
+them inside `accept` creates detached descendants, exactly like Axum's own
+connection tasks: registration proves nothing about their termination, and a
+wrapper abort or panic still conservatively skips cleanup. Rust cannot express
+"this trait implementation detaches nothing", so that stays a disclosed caller
+obligation rather than an invented guarantee. Drain destroys the accept in
+progress without awaiting it, which the suite asserts directly.
+
+The pre-existing mismatch between a handler extracting `ConnectInfo` and a
+registration that installs none is unchanged: `Router` carries no connect-info
+type, so the two registration methods remain the only place that choice is
+visible. `batter-tc9w.9` owns porting the surveyed consumers. Tests serve an
+assembled boundary over a real generated-certificate rustls listener and cover
+startup acknowledgement before readiness, a probe outside admission, the
+transport peer against a client-owned oracle, drain while a response is still
+streaming on an open connection, release of an accept parked in its handshake,
+and release of rejected and abandoned listeners. Fresh-agent usability evaluation
+is proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

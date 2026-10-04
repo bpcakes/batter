@@ -1,7 +1,17 @@
 # batter-runlimit
 
 Optional native atomic quota-before-work execution for Batter. No default
-features; `memory`, `postgres` and `axum` can be selected independently.
+features; `memory`, `postgres`, `axum`, `native-http` and `native-axum` can be
+selected independently.
+
+Each feature also re-exports the native package it selects, so one `batter`
+dependency reaches all five: `native` (`runlimit-core`), `memory`, `postgres` and
+`native_transport::{http, axum}`. These are the native packages themselves, not
+wrappers, so facade and direct paths keep one type identity. `native_transport` is
+named apart from `http` on purpose — `http` is this adapter's protected
+quota-before-body assembly, while the native layer leaves subject derivation,
+rejection mapping and response selection to the caller; see its module rustdoc
+for the full obligations.
 
 ```sh
 cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked

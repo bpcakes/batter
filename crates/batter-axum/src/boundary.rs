@@ -2,14 +2,14 @@
 
 use crate::{ReadinessDecision, ReadinessPolicy, dependency_readiness, liveness, serving};
 use assembly::Assembling;
-use axum::{Router, http::request::Parts, response::Response, routing::get};
+use axum::{Router, http::request::Parts, response::Response, routing::get, serve::Listener};
 use batter_core::{RegistrationError, registration::RegistrationTarget};
 use group::DEFAULT_GROUP;
 use std::{error::Error, fmt, sync::Arc};
-use tokio::net::TcpListener;
 
 mod assembly;
 mod declared;
+mod fallback;
 mod group;
 mod guarded;
 mod inventory;
@@ -30,6 +30,9 @@ pub enum BoundaryAssemblyError {
     /// A guarded route in any route group can match a path reserved for a
     /// public probe.
     GuardedProbePath,
+    /// A rendered fallback was declared twice, or combined with a guarded
+    /// root or nested fallback. Choose exactly one fallback mode.
+    ConflictingFallback,
     /// Routes of two route groups, named in declaration order, can match the
     /// same request path. The routes passed to `assemble` are named `default`.
     OverlappingGroupPaths {
@@ -59,6 +62,9 @@ impl fmt::Display for BoundaryAssemblyError {
             Self::GuardedProbePath => {
                 formatter.write_str("guarded route conflicts with a probe path")
             }
+            Self::ConflictingFallback => {
+                formatter.write_str("rendered fallback conflicts with another fallback")
+            }
             Self::OverlappingGroupPaths { first, second } => write!(
                 formatter,
                 "route groups {first} and {second} can match the same path"
@@ -86,9 +92,11 @@ impl Error for BoundaryAssemblyError {}
 /// deadline, its mutation checks when configured, and then the application's
 /// own layers and routes. The routes passed to [`Self::assemble`] form the
 /// `default` group, whose policy is given to [`Self::new`] and which owns every
-/// root and nested fallback; [`Self::with_group`] adds named groups with their
+/// guarded root and nested fallback. [`Self::with_rendered_fallback`] instead
+/// selects metadata-only rendering outside admission for unmatched paths.
+/// [`Self::with_group`] adds named groups with their
 /// own [`GroupPolicy`]. The caller supplies only policies, probe paths, optional
-/// probe renderers and guarded routes; the order cannot be changed, no probe
+/// renderers and guarded routes; the order cannot be changed, no probe
 /// can end up inside an admission gate, and no request path can reach routes
 /// of two groups. A probe renderer chooses the probe's body and headers, never
 /// its status or readiness decision. Guarded handlers extract the
@@ -143,6 +151,7 @@ pub struct HttpBoundary {
     groups: Vec<RouteGroup>,
     probes: Router,
     probe_paths: Vec<ProbePath>,
+    fallback: Option<fallback::RenderedFallback>,
 }
 
 impl HttpBoundary {
@@ -157,6 +166,7 @@ impl HttpBoundary {
             groups: Vec::new(),
             probes: Router::new(),
             probe_paths: Vec::new(),
+            fallback: None,
         }
     }
 
@@ -223,7 +233,7 @@ impl HttpBoundary {
         Ok(self)
     }
 
-    /// Mount lifecycle-plus-dependency readiness at a validated literal path
+    /// Mount the configured readiness policy at a validated literal path
     /// outside admission, answering an empty 200 or 503.
     /// [`Self::with_rendered_readiness`] answers with the application's body
     /// instead.
@@ -240,7 +250,7 @@ impl HttpBoundary {
         Ok(self)
     }
 
-    /// Mount lifecycle-plus-dependency readiness at a validated literal path
+    /// Mount the configured readiness policy at a validated literal path
     /// outside admission, with the application's response.
     ///
     /// Each request takes one fresh decision from `policy`, including any
@@ -359,7 +369,9 @@ impl HttpBoundary {
     /// with the single HTTP observer outermost.
     ///
     /// `guarded` is the default route group. Unmatched paths, including those
-    /// under a nested fallback, reach its fallback inside its admission; named
+    /// under a nested fallback, reach its fallback inside its admission unless
+    /// [`Self::with_rendered_fallback`] selects a renderer outside admission.
+    /// A rendered fallback cannot coexist with a guarded fallback. Named
     /// groups keep unsupported methods on their routes inside their own
     /// policy. Routes added to the result afterward would sit outside the
     /// boundary, so the result is not a bare [`Router`].
@@ -385,7 +397,11 @@ impl HttpBoundary {
             groups,
             probes,
             probe_paths,
+            fallback,
         } = self;
+        if fallback.is_some() && guarded.declares_fallback {
+            return Err(BoundaryAssemblyError::ConflictingFallback);
+        }
         let groups = std::iter::once(Assembling::new(DEFAULT_GROUP, policy, guarded))
             .chain(
                 groups
@@ -393,7 +409,7 @@ impl HttpBoundary {
                     .map(|group| Assembling::new(group.name, group.policy, group.routes)),
             )
             .collect();
-        let router = assembly::assemble(probes, &probe_paths, groups).await?;
+        let router = assembly::assemble(probes, &probe_paths, groups, fallback).await?;
         Ok(AssembledHttp { router })
     }
 }
@@ -416,23 +432,54 @@ pub struct AssembledHttp {
 
 impl AssembledHttp {
     /// Register the assembled server through constrained registration authority.
+    ///
+    /// `listener` is any bound [`axum::serve::Listener`]: a
+    /// [`tokio::net::TcpListener`], a Unix listener, or an application-owned
+    /// listener that completes its own TLS handshakes. Certificates, protocol
+    /// versions and handshake policy stay with that listener; the boundary,
+    /// listener transfer, startup acknowledgement, graceful drain and
+    /// conservative cleanup after wrapper abortion are unchanged.
     /// See [`crate::register_http_in`] for the serving contract.
+    ///
+    /// ```no_run
+    /// use axum::serve::Listener;
+    /// use batter_axum::AssembledHttp;
+    /// use batter_core::registration::RegistrationTarget;
+    /// use std::fmt::Debug;
+    ///
+    /// fn serve<T, L>(assembled: AssembledHttp, scope: &mut T, listener: L)
+    ///     -> Result<(), batter_core::BoxError>
+    /// where
+    ///     T: RegistrationTarget + ?Sized,
+    ///     L: Listener,
+    ///     L::Addr: Debug,
+    /// {
+    ///     assembled.register_in::<T>(scope, "http", listener)?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn register_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: fmt::Debug>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_in(target, name, listener, self.router)
     }
 
-    /// Register with the direct TCP peer available to handlers.
-    /// See [`crate::register_http_with_connect_info_in`] for the contract.
+    /// Register with the listener's own direct peer available to handlers.
+    ///
+    /// A [`tokio::net::TcpListener`] and a TLS listener over TCP both supply
+    /// [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo) holding the
+    /// accepted socket's address and port; another listener supplies its own
+    /// address type. Forwarded headers are never interpreted.
+    /// See [`crate::register_http_with_connect_info_in`] for the contract and
+    /// for a worked generic-listener signature.
     pub fn register_with_connect_info_in<T: RegistrationTarget + ?Sized>(
         self,
         target: &mut T,
         name: &'static str,
-        listener: TcpListener,
+        listener: impl Listener<Addr: Clone + fmt::Debug + Sync + 'static>,
     ) -> Result<(), RegistrationError> {
         serving::register_http_with_connect_info_in(target, name, listener, self.router)
     }

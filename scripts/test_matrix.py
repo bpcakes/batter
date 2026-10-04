@@ -36,6 +36,9 @@ RUNLEDGER_CONSUMER = [sys.executable, "scripts/check_runledger_consumer.py"]
 RUNLEDGER_TOOL_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_runledger_tools.py", "-v"]
 RUNLIMIT_CONSUMER = [sys.executable, "scripts/check_runlimit_consumer.py"]
+SINGLE_FACADE_CONSUMER = [sys.executable, "scripts/check_single_facade_consumer.py"]
+SINGLE_FACADE_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                          "-p", "test_single_facade_consumer.py", "-v"]
 RUNLIMIT_CONSUMER_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                               "-p", "test_runlimit_consumer.py", "-v"]
 RUNLIMIT_GRAPH = [sys.executable, "scripts/check_runlimit_workspace.py"]
@@ -48,33 +51,85 @@ RUNLIMIT_RELEASE = ["cargo", "test", "-p", "runlimit-memory", "--release", "--lo
 FACADE_FEATURES = [sys.executable, "scripts/check_facade_features.py"]
 FACADE_CACHE_CONTROLS = [sys.executable, "scripts/test_facade_features.py", "-v"]
 
+# Cargo uplifts one debug executable per binary target, and reference-service
+# integration tests spawn it through CARGO_BIN_EXE_*. Cargo releases the build
+# directory lock once linking finishes, so a peer command that rebuilds the same
+# binary under a different feature selection replaces that file while an earlier
+# command is still running the tests that spawn it. Declare the selection each
+# labelled command uplifts; a batch may not mix selections for one binary.
+REFERENCE_BINARY = "batter-example-reference-service"
+UPLIFTED_BINARIES = {
+    "workspace-tests": ((REFERENCE_BINARY, "all-features"),),
+    "configuration-hostile-environment": ((REFERENCE_BINARY, "default"),),
+}
+
+
+def conflicting_binaries(labels):
+    """Return the binaries this batch would uplift under more than one selection."""
+    selections = {}
+    for label in labels:
+        for binary, selection in UPLIFTED_BINARIES.get(label, ()):
+            selections.setdefault(binary, set()).add(selection)
+    return tuple(sorted(binary for binary, chosen in selections.items() if len(chosen) > 1))
+
+
+def _scheduled(planned):
+    """Return the plan after rejecting schedules that reintroduce a replaced binary.
+
+    A renamed or dropped label would silently disable the declaration above, so
+    every declared label must still be scheduled exactly once.
+    """
+    labels = [label for batches in planned.values() for batch, _ in batches for label in batch]
+    if len(set(labels)) != len(labels):
+        raise ValueError("matrix labels must be unique")
+    missing = sorted(set(UPLIFTED_BINARIES) - set(labels))
+    if missing:
+        raise ValueError(f"declared uplifted builds are unscheduled: {missing}")
+    for part, batches in planned.items():
+        for batch, commands in batches:
+            if len(batch) != len(commands):
+                raise ValueError(f"{part}: every batch command needs exactly one label")
+            shared = conflicting_binaries(batch)
+            if shared:
+                raise ValueError(f"{part}: one batch would rebuild {list(shared)} under "
+                                 "conflicting feature selections")
+    return planned
+
 
 def parts():
     """Map each part to ordered batches; a failed batch stops only its own part.
 
     verify.sh invokes each part directly. Each batch uses the bounded process
-    runner so sibling outcomes are retained before the part returns.
+    runner so sibling outcomes are retained before the part returns. Commands
+    that uplift one binary under different feature selections are kept in
+    different batches; `_scheduled` refuses a plan that pairs them again.
     """
-    return {
-        "workspace": [(["workspace-tests", "configuration-hostile-environment", "reference-runner-controls",
-                        "release-future-sizes"],
-                       [WORKSPACE_TESTS, HOSTILE_CONFIGURATION, REFERENCE_RUNNER_TESTS,
-                        FUTURE_SIZE_RELEASE])],
+    return _scheduled({
+        # The all-feature workspace run and the default-feature reference tests
+        # both uplift the reference executable, so they never share a batch.
+        "workspace": [(["workspace-tests", "reference-runner-controls"],
+                       [WORKSPACE_TESTS, REFERENCE_RUNNER_TESTS]),
+                      (["configuration-hostile-environment", "release-future-sizes"],
+                       [HOSTILE_CONFIGURATION, FUTURE_SIZE_RELEASE])],
         "no-default-features": [(["core-library", "facade-library", "core-tests"],
                                  [CORE_CHECK, FACADE_CHECK, CORE_TESTS])],
         "doctests": [(["doctests"], [DOC_TESTS])],
-        # Consumer builds use private target directories. Two batches bound the
-        # concurrent builds and keep the shared facade cache users apart.
+        # Consumer builds use private target directories. The first two batches
+        # bound concurrent builds and keep shared facade cache users apart.
         "consumers": [(["facade-feature-controls", "runledger-consumer", "runledger-workspace", "runledger-graph-controls"],
                        [FACADE_FEATURES, RUNLEDGER_CONSUMER, RUNLEDGER_GRAPH, RUNLEDGER_CONTROLS]),
                       (["facade-cache-controls", "runlimit-consumer", "runlimit-isolated-features", "runledger-tool-controls"],
-                       [FACADE_CACHE_CONTROLS, RUNLIMIT_CONSUMER, RUNLIMIT_FEATURES, RUNLEDGER_TOOL_CONTROLS])],
+                       [FACADE_CACHE_CONTROLS, RUNLIMIT_CONSUMER, RUNLIMIT_FEATURES, RUNLEDGER_TOOL_CONTROLS]),
+                      # The single-facade consumer owns a PostgreSQL container and
+                      # a full facade build; keep it in its own batch.
+                      (["single-facade-consumer"], [SINGLE_FACADE_CONSUMER])],
         "runlimit": [(["runlimit-default", "runlimit-release", "runlimit-workspace"],
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls"], [RUNLIMIT_CONSUMER_CONTROLS])],
-    }
+                    (["runlimit-consumer-controls", "single-facade-controls"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS])],
+    })
 
 
 def main():

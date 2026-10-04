@@ -3,6 +3,7 @@
 use super::{
     BoundaryAssemblyError, GroupPolicy, GuardedRouter, ProbePath,
     declared::{Admitted, DeclaredRouter, Dispatch, Inspection},
+    fallback::RenderedFallback,
     inventory,
 };
 use crate::operational_http;
@@ -97,6 +98,7 @@ pub(super) async fn assemble(
     probes: Router,
     probe_paths: &[ProbePath],
     groups: Vec<Assembling>,
+    fallback: Option<RenderedFallback>,
 ) -> Result<Router, BoundaryAssemblyError> {
     validate(&groups, probe_paths).await?;
     let mut groups = groups.into_iter();
@@ -107,6 +109,19 @@ pub(super) async fn assemble(
         router = router.merge(group.install(&mut admitted));
     }
     let default = default.install(&mut admitted);
+    if let Some(fallback) = fallback {
+        // Root dispatch starts without native path captures. Declared routes
+        // still receive their group's policy; only a genuinely unmatched path
+        // reaches the metadata renderer outside admission.
+        let fallbacks = fallback
+            .into_router()
+            .layer(middleware::from_fn(operational_http));
+        return Ok(router
+            .merge(default.reset_fallback())
+            .reset_fallback()
+            .layer(middleware::from_fn(operational_http))
+            .fallback_service(Dispatch::new(admitted, fallbacks)));
+    }
     if admitted.is_empty() {
         // With two default fallbacks Axum retains the second router's; a second
         // custom fallback also supersedes a first default. Named groups declare

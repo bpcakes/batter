@@ -22,10 +22,38 @@ integration namespaces explicitly:
 | `metrics` | `batter::telemetry::metrics` | Core bounded metric recording |
 | `otlp` | `batter::otlp` | `batter-otlp`, `metrics`; export through protected service completion |
 | `sqlx` | `batter::sqlx` | `batter-sqlx` |
-| `runledger` | `batter::runledger`, `batter::sqlx` | `batter-runledger`, `batter-sqlx` |
-| `runlimit` | `batter::runlimit` | `batter-runlimit` |
+| `runledger` | `batter::runledger`, `batter::runledger::native::{core, postgres, runtime}`, `batter::sqlx` | `batter-runledger`, `batter-sqlx`, the three native Runledger libraries |
+| `runledger-test-support` | `batter::runledger::native::test_support` | `runledger`, plus Runledger's own PostgreSQL test support |
+| `runlimit` | `batter::runlimit`, `batter::runlimit::native` | `batter-runlimit`, `runlimit-core` |
+| `runlimit-memory` | `batter::runlimit::memory` | `runlimit`, plus `runlimit-memory` |
+| `runlimit-postgres` | `batter::runlimit::postgres`, `batter::runlimit::attempts` | `runlimit`, plus `runlimit-postgres` and `batter-sqlx` |
+| `runlimit-axum` | `batter::runlimit::http`, `batter::axum` | `runlimit`, `axum`, the protected quota-before-body assembly |
+| `runlimit-native-http` | `batter::runlimit::native_transport::http` | `runlimit`, plus `runlimit-http` |
+| `runlimit-native-axum` | `batter::runlimit::native_transport::axum` | `runlimit`, plus `runlimit-axum` |
 | `test-support` | `batter::test_support` | `batter-test-support` |
 | `sqlx-test-support` | `batter::sqlx::test_support` | SQLx adapter fixture support plus generic support |
+
+Every native namespace above is the native package itself, so a type reached
+through the facade and through a direct dependency are one identity. One `batter`
+dependency therefore needs no direct native-package declaration and no `[patch]`;
+the [single-dependency recipe](reference-compatibility.md#single-dependency-recipe)
+records the executed acceptance evidence. `runledger-tui` is a binary-only
+package and has no namespace.
+
+Reachability is not ownership. Runledger keeps durable job policy, persistence,
+scheduling and descendant supervision; Runlimit keeps policy validation, key
+derivation, storage and migrations. A native namespace is a deliberately weaker,
+low-level path whose caller obligations are documented on the module:
+`batter::runledger::register_in` still owns registering inert preparation,
+observing initialization, requesting shutdown within a budget, classifying the
+settlement and ordering dependency cleanup, and `batter::runlimit::http` still
+owns authenticated quota-before-body assembly. `native_transport::axum` leaves
+subject derivation, rejection mapping and response selection to the application
+and acquires no operation deadline, admission ordering or telemetry from the
+foundation; `native_transport::http` serializes an unstable Internet-Draft header
+set. `runledger::native::test_support` is test-only and must not be selected in a
+deployed graph. These namespaces authorize no change to native runtimes, storage,
+policy or lifecycle ownership.
 
 `at-rest` re-exports the standalone, synchronous `batter-at-rest` package with
 the same type identities. Direct `batter_at_rest` use remains supported and
@@ -36,10 +64,13 @@ resolved graph; facade feature checks do not establish a security boundary.
 See the leaf's [integration obligations](../crates/batter-at-rest/README.md#security-and-lifecycle-boundary)
 for authoritative context, bounded work, and fenced rotation persistence.
 `runlimit-memory` and
-`runlimit-postgres` forward only the existing native
-error bridges through `batter::runlimit`; neither selects the other backend or
-HTTP. `runlimit-axum` enables `batter::axum` and
-`batter::runlimit::http`. `runledger` also enables `batter::sqlx` because its
+`runlimit-postgres` forward the existing native
+error bridges plus their own native backend through `batter::runlimit`; neither
+selects the other backend or HTTP. `runlimit-axum` enables `batter::axum` and
+`batter::runlimit::http`. The two native transport features select neither:
+`runlimit-native-axum` resolves the Axum crate its native layer needs without
+`batter-axum` or the protected assembly, and `runlimit-native-http` resolves no
+transport framework at all. `runledger` also enables `batter::sqlx` because its
 protected transaction bridge requires `PgSession`; native SQLx selected only by
 `runlimit-postgres` does not expose that namespace. `axum+runlimit` does not
 expose the Runlimit HTTP module. Native versions, TLS/runtime settings, storage,
@@ -54,8 +85,13 @@ persist in a compiler-specific `facade-features` subdirectory of Cargo's resolve
 target directory; sharing that cache does not share dependency resolution or
 accept a previous command's result. Disabled imports and rejected completion
 patterns must produce their expected diagnostics on every run, including with
-a warm cache.
-The direct Runlimit runner separately retains its eight native combinations.
+a warm cache. It also proves each native namespace's identity against a direct
+dependency on the same package, and that each namespace is absent without its
+feature.
+The direct Runlimit runner separately enumerates every combination of the
+adapter's five features.
+The direct-package consumer checks are also retained: they prove direct-path and
+cross-path identity, which the single-dependency check deliberately does not.
 
 ## Axum: implemented, with a deliberately small boundary
 
@@ -78,7 +114,7 @@ composition, then pass the retained witness and the supervisor's
 `OperationAdmission` projection to the infallible policy constructor.
 `HttpBoundary::new(policy)` mounts liveness and readiness probes outside
 admission, applies admission to every guarded route plus its default, custom,
-nested and method fallbacks, and installs server correlation with the single
+nested and method fallbacks by default, and installs server correlation with the single
 HTTP observer outermost; the caller cannot reorder those layers. Build guarded
 routes through `GuardedRouter`, whose route, merge and typed-nesting operations
 retain an inert identity inventory; opaque nested services remain outside this
@@ -100,7 +136,7 @@ they are ordinary replaceable values; applications should not read them.
 
 Declare route sets with a different budget or browser posture as named
 `RouteGroup`s through `with_group`; the routes passed to `assemble` are the
-`default` group and alone own fallbacks. Each group carries a `GroupPolicy`: its
+`default` group and alone own guarded fallbacks. Each group carries a `GroupPolicy`: its
 `RequestPolicy` and an optional `BrowserPolicy` whose `PrivateResponsePolicy`
 headers sit outside the group's admission and whose `MutationPolicy` checks, with
 an application renderer, sit inside it for every method except GET, HEAD,
@@ -121,6 +157,15 @@ send to a declared pattern reach it, inside its group's policy; undeclared
 routes and its own fallbacks never serve. No OpenAPI-builder dependency is
 involved; the application supplies the inventory.
 
+For a stable not-found envelope during startup and drain, use
+`with_rendered_fallback(render)` instead of declaring a guarded fallback. This
+synchronous renderer takes filtered request metadata and returns application
+status, body and headers outside admission, inside correlation and observation.
+Use `PrivateResponsePolicy::apply` when the application's prefix policy calls
+for private headers on unmatched paths. Groups do not select policy for an
+unmatched path. Assembly rejects combining this mode with a guarded root or
+nested fallback; matched routes and their method fallbacks remain guarded.
+
 Serve the application's own probe bodies, for example OpenAPI-documented JSON,
 through `with_rendered_liveness(path, render)` and
 `with_rendered_readiness(path, readiness, render)`. The boundary still owns the
@@ -135,6 +180,10 @@ Add application readiness requirements, such as held key leases, with
 `ReadinessPolicy::with_condition(ReadinessCondition::new(name)?, check)`: a
 synchronous check of state the application already holds that can only turn a
 ready decision into `ReadinessUnreadyReason::Condition(name)`.
+When no continuous dependency probe exists, construct the policy with
+`ReadinessPolicy::lifecycle_only(lifecycle)`; it creates no dummy monitor and
+still requires lifecycle Ready and every application condition. This asserts
+no dependency observation, not healthy remote connectivity.
 
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
@@ -201,17 +250,27 @@ not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
 `AssembledHttp::register_in` registers a boundary-assembled router through
-constrained startup authority; `register_http_in` accepts a plain bound
-`TcpListener` and initialized `Router` for compositions outside the boundary. Its opt-in companion
+constrained startup authority; `register_http_in` accepts a plain bound listener
+and initialized `Router` for compositions outside the boundary. Its opt-in companion
 `register_http_with_connect_info_in` accepts the same arguments and installs native
-`ConnectInfo<SocketAddr>` for direct-peer admission middleware and handlers.
-The address and port come from the accepted TCP socket; forwarded headers do not
+`ConnectInfo` for direct-peer admission middleware and handlers.
+For a `TcpListener`, and for a TLS listener over TCP, that is
+`ConnectInfo<SocketAddr>`: the address and port come from the accepted TCP socket
+and forwarded headers do not
 select identity. Behind a proxy this is the proxy address. Authentication and proxy
 trust remain application-owned. `register_http` retains its exact
-`&mut Supervisor` signature for lower-level compatibility. All three enter one native
-implementation and register a direct critical component. It acknowledges startup on its first task poll; bind
+`&mut Supervisor` signature for lower-level compatibility. All three register a
+direct critical component through the adapter's own serving implementation. It acknowledges startup on its first task poll; bind
 errors remain in owned `Startup`. Registration failure and abandoned startup
 release the listener. Native Axum accept errors are retried internally.
+Every listener helper accepts any `axum::serve::Listener`, so an application-owned
+TLS listener serves the same assembled boundary through the same lifecycle. The
+listener keeps binding, certificates, protocol versions, ALPN, client-certificate
+rules, handshake concurrency and accept retry; Batter adds no TLS dependency and
+no crypto provider. Drain destroys the accept in progress, including a handshake
+awaited inside it, and releases the listener before awaiting connection
+completion. A listener that spawns handshakes instead of polling them inside
+`accept` leaves detached descendants that registration does not join.
 The server uses with_graceful_shutdown and waits for it to finish
 while dependencies remain alive. Aborting that wrapper is not accepted as proof
 of transitive child termination; resource finalizers are conservatively skipped.
