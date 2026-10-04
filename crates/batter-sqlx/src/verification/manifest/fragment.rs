@@ -249,8 +249,12 @@ impl FragmentObjectPolicy {
         self
     }
 
-    /// Permit PUBLIC to deliver exactly these privileges on the fragment's
-    /// relations and columns.
+    /// Permit PUBLIC to deliver exactly these privileges on every object this
+    /// policy declares: its schema as well as the fragment's relations and
+    /// columns. Naming [`ObjectPrivilege::Usage`] therefore permits PUBLIC to
+    /// deliver the schema `USAGE` the fragment requires, which is the usual
+    /// choice where a deployment keeps PostgreSQL's default PUBLIC schema
+    /// grants.
     ///
     /// The allowance is per privilege and per declared object. A fragment that
     /// declares a privilege only on exact columns permits PUBLIC to deliver it

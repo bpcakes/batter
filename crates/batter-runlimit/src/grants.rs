@@ -21,9 +21,11 @@
 //!   mutation authority usable by arbitrary SQL.
 //! * Fixed-window `policy_id` and `scope_id` updates are intentional metadata
 //!   refreshes performed by the admission upsert.
-//! * Capacity `row_count` is never granted to a serving login. The native
-//!   `SECURITY DEFINER` capacity triggers maintain it, and the counter-key
-//!   columns `config_fingerprint` and `subject_key` are never updatable.
+//! * Capacity `row_count` is readable by an admitting login, which compares it
+//!   against the configured per-shard ceiling, but it receives no `UPDATE`
+//!   authority on it: the native `SECURITY DEFINER` capacity triggers are the
+//!   only writers. The counter-key columns `config_fingerprint` and
+//!   `subject_key` are never updatable.
 //! * `DELETE` on an expiry-cleanup store is relation-wide authority over those
 //!   rows. No history-protection, tenant-isolation or secrecy claim follows.
 //! * Fixed-window expiry cleanup additionally needs relation-level `SELECT`,

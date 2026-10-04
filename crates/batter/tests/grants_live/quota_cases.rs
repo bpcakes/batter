@@ -5,11 +5,12 @@ use super::schema;
 use super::support::{Fixture, Result, quote, require, require_denied, require_within_policy};
 use batter::runlimit::grants::RunlimitOperation;
 use batter::runlimit::native::attempts::{
-    AttemptAdmission, AttemptCompletionResult, AttemptOutcome, AttemptPolicy,
+    AttemptAdmission, AttemptCompletionResult, AttemptOutcome, AttemptPolicy, AttemptSubject,
     StagedAttemptCompletion,
 };
 use batter::runlimit::native::{
-    Check, FixedWindowPolicy, GcraPolicy, KeyHasher, PolicyId, QuotaPeriod, ScopeId,
+    BatchDecisionView, Check, FixedWindowPolicy, GcraPolicy, KeyHasher, PolicyId, QuotaPeriod,
+    ScopeId,
 };
 use batter::runlimit::postgres::attempts::{
     PgAttemptClaimResult, PostgresAttemptLimiter, low_level,
@@ -129,6 +130,10 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
         let login = fixture.login("attempts", &role).await?;
         let pool = fixture.pool(&login, &[&quotas]).await?;
         require_within_policy(&pool, &role).await?;
+        // Leases are expired and expired neighbours planted by the owner, so no
+        // assertion below depends on how fast the connection answers.
+        let owner = fixture.names.owner.clone();
+        let owner_pool = fixture.pool(&owner, &[&quotas]).await?;
 
         // The backoffs are seconds, so a denial window cannot close during a
         // database round trip however slow the connection is, and every wait
@@ -214,6 +219,75 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
             &format!("success settlement reported {settled:?}"),
         )?;
 
+        // A completion whose lease no longer holds is refused without changing
+        // the record. The owner expires the lease rather than the test waiting
+        // for it, so the refusal is the fencing check and never a slow clock.
+        let stale = hasher.hash_attempt_for(&policy, "grants-stale");
+        let AttemptAdmission::Admitted(held) = limiter.admit(stale).await? else {
+            return Err(super::support::fail(
+                "the stale-completion subject was not admitted",
+            ));
+        };
+        expire_lease(&owner_pool, &quotas, stale).await?;
+        require(
+            matches!(
+                limiter.complete(held, AttemptOutcome::Failure).await?,
+                AttemptCompletionResult::Stale
+            ),
+            "completing an expired lease was applied instead of refused",
+        )?;
+
+        // A claim that escapes its own transaction is refused the same way: the
+        // rollback reverts the claim's private token rotation, so finishing it
+        // outside that transaction stages nothing.
+        let escaped = hasher.hash_attempt_for(&policy, "grants-escaped-claim");
+        let AttemptAdmission::Admitted(held) = limiter.admit(escaped).await? else {
+            return Err(super::support::fail(
+                "the escaped-claim subject was not admitted",
+            ));
+        };
+        let mut transaction = pool.begin().await?;
+        let PgAttemptClaimResult::Claimed(claimed) =
+            low_level::claim_in(&mut *transaction, held).await?
+        else {
+            return Err(super::support::fail(
+                "the escaped-claim reservation could not be claimed",
+            ));
+        };
+        transaction.rollback().await?;
+        require(
+            matches!(
+                low_level::finish_in(&pool, claimed, AttemptOutcome::Failure).await?,
+                StagedAttemptCompletion::Stale
+            ),
+            "a claim finished outside its transaction was staged instead of refused",
+        )?;
+
+        // The bounded internal expiry runs for the admitted subject's capacity
+        // shard on every admission. The owner plants an already-expired row in
+        // that same shard, which the login's own DELETE authority then removes;
+        // readmission alone would not distinguish deletion from an update.
+        let neighbour = hasher.hash_attempt_for(&policy, "grants-expiry");
+        let AttemptAdmission::Admitted(held) = limiter.admit(neighbour).await? else {
+            return Err(super::support::fail("the expiry subject was not admitted"));
+        };
+        let _ = limiter.complete(held, AttemptOutcome::Success).await?;
+        plant_expired_neighbour(&owner_pool, &quotas, neighbour).await?;
+        require(
+            planted_rows(&owner_pool, &quotas).await? == 1,
+            "the owner could not plant an expired attempt record",
+        )?;
+        let AttemptAdmission::Admitted(held) = limiter.admit(neighbour).await? else {
+            return Err(super::support::fail(
+                "the expiry subject was not readmitted",
+            ));
+        };
+        let _ = limiter.complete(held, AttemptOutcome::Success).await?;
+        require(
+            planted_rows(&owner_pool, &quotas).await? == 0,
+            "the expired neighbouring attempt record survived the admission's cleanup",
+        )?;
+
         // Success resets the record, so the stored row stays usable. Waiting past
         // the quiet period also makes it eligible for the bounded internal expiry
         // deletion, which is the same login's own DELETE authority.
@@ -248,6 +322,62 @@ async fn authentication_attempts_admit_settle_and_clean_up_under_one_selection()
     .await
 }
 
+/// A capacity slot the admission protocol never assigns on its own, reserved for
+/// the owner-planted expired record so it is identifiable and cannot collide.
+const PLANTED_SLOT: i32 = 65_535;
+
+/// Expire a held lease from the owner so a completion has to report staleness.
+async fn expire_lease(owner: &PgPool, quotas: &str, subject: AttemptSubject<'_>) -> Result {
+    let key = subject.into_unbound_subject_key().into_bytes();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {}.runlimit_attempts SET lease_until_ms = 0 WHERE subject_key = $1",
+        quote(quotas)
+    )))
+    .bind(key.as_slice())
+    .execute(owner)
+    .await?;
+    Ok(())
+}
+
+/// Plant an already-expired record that shares the subject's capacity shard.
+///
+/// `capacity_shard` is generated from the first byte of the fingerprint and of
+/// the subject key, so changing only the last byte keeps the planted record in
+/// the shard the next admission cleans up. A one-millisecond quiet period with a
+/// zero last failure makes it expired against any server clock.
+async fn plant_expired_neighbour(
+    owner: &PgPool,
+    quotas: &str,
+    subject: AttemptSubject<'_>,
+) -> Result {
+    let key = subject.into_unbound_subject_key().into_bytes();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {quotas}.runlimit_attempts \
+         (config_fingerprint, subject_key, capacity_slot, failures, \
+          last_failure_ms, retry_at_ms, quiet_ms) \
+         SELECT config_fingerprint, \
+             set_byte(subject_key, 31, (get_byte(subject_key, 31) + 1) % 256), \
+             $2, 0, 0, 0, 1 \
+         FROM {quotas}.runlimit_attempts WHERE subject_key = $1",
+        quotas = quote(quotas)
+    )))
+    .bind(key.as_slice())
+    .bind(PLANTED_SLOT)
+    .execute(owner)
+    .await?;
+    Ok(())
+}
+
+/// Count the owner-planted expired records, identified by their quiet period.
+async fn planted_rows(owner: &PgPool, quotas: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {}.runlimit_attempts WHERE quiet_ms = 1",
+        quote(quotas)
+    )))
+    .fetch_one(owner)
+    .await?)
+}
+
 /// Quota windows long enough that no admission decision depends on how fast the
 /// connection answers. Expiry is driven by the owner rewriting the stored
 /// timestamp, so the restricted login's own DELETE authority is still what
@@ -279,9 +409,20 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
             &format!("fixed-window admission returned {decision:?}, expected {expected}"),
         )?;
     }
+    // A batch admission takes the multi-item row-lock, capacity-lock and upsert
+    // path, which a single check never reaches.
+    let batch_subjects = [
+        hasher().hash_for(&policy, format!("{subject_label}-batch-a").as_str()),
+        hasher().hash_for(&policy, format!("{subject_label}-batch-b").as_str()),
+    ];
+    let batch = limiter.check_all(&batch_subjects.map(Check::new)).await?;
     require(
-        counter_rows(pool, quotas, "runlimit_fixed_windows").await? == before + 1,
-        "the fixed-window counter row was not stored",
+        matches!(batch.view(), BatchDecisionView::Allowed { allowances } if allowances.len() == 2),
+        &format!("the fixed-window batch admission was not allowed: {batch:?}"),
+    )?;
+    require(
+        counter_rows(pool, quotas, "runlimit_fixed_windows").await? == before + 3,
+        "the fixed-window counter rows were not stored",
     )?;
     if let Some(owner) = owner {
         exec_owned(
@@ -313,12 +454,14 @@ async fn exercise_fixed_window(pool: &PgPool, quotas: &str, owner: Option<&PgPoo
 /// GCRA first insert, replenishment denial and, after the owner expires the
 /// stored counter, the selected login's own expiry deletion.
 async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> Result {
+    // Two admissions then a denial: the second request has to be allowed so the
+    // upsert's existing-counter UPDATE path executes, not only its insert.
     let gcra_policy = GcraPolicy::new(
         PolicyId::new("batter.grants.gcra")?,
         ScopeId::new("subject")?,
-        1,
+        2,
         LONG_WINDOW,
-        1,
+        2,
     )?;
     // The subject is unique per login so two selections never share one counter.
     let subject_label: String = sqlx::query_scalar("SELECT gen_random_uuid()::text")
@@ -333,17 +476,34 @@ async fn exercise_gcra(pool: &PgPool, quotas: &str, owner: Option<&PgPool>) -> R
             .permits_request(),
         "the first GCRA request was denied",
     )?;
+    require(
+        gcra.check(&Check::new(gcra_subject))
+            .await?
+            .permits_request(),
+        "the second GCRA request did not update the stored counter",
+    )?;
     // One hour of replenishment is far beyond any connection latency, so the
-    // second request is denied by the stored arrival time, not by timing.
+    // third request is denied by the stored arrival time, not by timing.
     require(
         !gcra
             .check(&Check::new(gcra_subject))
             .await?
             .permits_request(),
-        "a second GCRA request inside the replenishment window was admitted",
+        "a third GCRA request inside the replenishment window was admitted",
+    )?;
+    // A batch admission takes the multi-item locking and upsert path, which a
+    // single check never reaches.
+    let batch_subjects = [
+        hasher().hash_for(&gcra_policy, format!("{subject_label}-batch-a").as_str()),
+        hasher().hash_for(&gcra_policy, format!("{subject_label}-batch-b").as_str()),
+    ];
+    let batch = gcra.check_all(&batch_subjects.map(Check::new)).await?;
+    require(
+        matches!(batch.view(), BatchDecisionView::Allowed { allowances } if allowances.len() == 2),
+        &format!("the GCRA batch admission was not allowed: {batch:?}"),
     )?;
     require(
-        counter_rows(pool, quotas, "runlimit_gcra").await? == before + 1,
+        counter_rows(pool, quotas, "runlimit_gcra").await? == before + 3,
         "the GCRA counter row was not stored",
     )?;
     let Some(owner) = owner else {

@@ -11,6 +11,19 @@
 //! cargo run --example grant_composition --features runledger,runlimit-postgres
 //! ```
 //!
+//! PostgreSQL grants `EXECUTE` on a newly created function to PUBLIC, and these
+//! roles deny PUBLIC delivery of any privilege they do not name, so verification
+//! reports that default as excess authority. Reconcile it before verifying, as
+//! the suite's own fixture does:
+//!
+//! ```text
+//! REVOKE ALL ON ALL ROUTINES IN SCHEMA "service" FROM PUBLIC;
+//! ```
+//!
+//! A deployment that keeps the default instead should name
+//! [`ObjectPrivilege::Execute`] in the role's permitted PUBLIC delivery rather
+//! than leave the mismatch unexplained.
+//!
 //! # Limitations
 //!
 //! * Rendering grants cannot remove privileges a role already holds. Adopting
