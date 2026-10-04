@@ -261,7 +261,9 @@ duplicate, conflict and rollback handling in both scopes, the separately selecte
 full-schema snapshot, the direct-job lifecycle including handler continuation,
 unstarted-claim release, resource claims and lease reaping with no retained
 cleanup error, promotion, exact definition and schedule catalog synchronization,
-due scheduled dispatch, scheduler-disabled and default-loop supervisors,
+due scheduled dispatch, scheduler-disabled and default-loop supervisors each
+asserting the reaper's detailed coordination-cleanup result under its own login
+because shutdown settlement does not reflect those failures,
 fixed-window and GCRA admission including a multi-item batch, with real expiry
 deletion, an admission-only login that needs neither the cleanup selection's
 relation-wide read nor the generated shard column, a cleanup-only login per

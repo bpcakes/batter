@@ -1,8 +1,14 @@
 //! Supported supervisor configurations over a direct-only workload.
 //!
 //! Both configurations are judged by the effects of every enabled loop, not by
-//! readiness or an empty poll: a retained native permission or cleanup error
-//! would leave one of these observations missing or the settlement unclean.
+//! readiness or an empty poll: a retained native permission error would leave
+//! one of these observations missing or the settlement unclean.
+//!
+//! Shutdown settlement is not operation health. The reaper always runs a bounded
+//! quiesced coordination cleanup whose failures it only logs, so revoking its
+//! `DELETE` would leave both supervisors settling cleanly with every job still
+//! succeeding. Each composition therefore asserts the reaper's detailed result
+//! under its own login once its supervisor has stopped.
 
 use super::policy::{Composition, PublicPolicy};
 use super::schema;
@@ -73,6 +79,47 @@ fn submission<'a>(payload: &'a Value) -> JobEnqueue<'a> {
         idempotency_key: None,
         stage: None,
     }
+}
+
+/// Assert the reaper's coordination cleanup under one composition's own login.
+///
+/// Lease reaping always runs its bounded quiesced coordination cleanup, and a
+/// permission failure there is a logged diagnostic that no `RuntimeSettlement`
+/// reflects, so the detailed result is the only executable evidence that this
+/// composition really holds that authority. Run it after the composition's
+/// supervisor has stopped, so its own reaper loop is not competing for the
+/// lease.
+async fn require_coordination_cleanup(
+    login: &sqlx::PgPool,
+    owner: &sqlx::PgPool,
+    payload: &Value,
+) -> Result {
+    let expiring = jobs::enqueue_job(owner, &submission(payload)).await?;
+    let claimed = jobs::claim_jobs(login, "grants-cleanup", 1, 1).await?;
+    require(
+        claimed.iter().any(|record| record.id == expiring),
+        "the coordination-cleanup job was not claimable under this composition",
+    )?;
+    // Waiting past a one-second lease is robust in the direction this needs: a
+    // slower connection only leaves the lease further expired.
+    tokio::time::sleep(Duration::from_millis(1_300)).await;
+    let reaped = jobs::reap_expired_leases_with_diagnostics(login, 10, 1).await?;
+    require(
+        reaped.summary.processed >= 1,
+        "the reaper processed no expired lease under this composition",
+    )?;
+    require(
+        reaped.cleanup_errors.is_empty(),
+        &format!(
+            "the reaper retained coordination-cleanup errors: {:?}",
+            reaped.cleanup_errors
+        ),
+    )?;
+    require(
+        reaped.deferred_row_errors.is_empty(),
+        &format!("the reaper deferred rows: {:?}", reaped.deferred_row_errors),
+    )?;
+    Ok(())
 }
 
 /// Wait until `probe` observes `expected`, or report the last observation.
@@ -199,6 +246,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             executed.load(Ordering::Relaxed) >= 2,
             "the scheduler-disabled worker executed no handler",
         )?;
+        require_coordination_cleanup(&narrow_probe, owner_database.pool(), &payload).await?;
         fixture.track(narrow_database.pool().clone());
 
         // The default-loop composition additionally selects scheduled dispatch
@@ -281,6 +329,7 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             scheduled_executed.load(Ordering::Relaxed) >= 1,
             "the default-loop worker executed no scheduled handler",
         )?;
+        require_coordination_cleanup(&wide_probe, owner_database.pool(), &payload).await?;
 
         // Every installed native trigger stayed trusted while no serving login
         // and no PUBLIC role held EXECUTE on its function.
