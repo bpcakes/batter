@@ -302,7 +302,12 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
                 job_type: JobType::new(DIRECT_TYPE),
                 organization_id: None,
                 payload_template: &payload,
-                cron_expr: "0 * * * * *",
+                // The first fire is due because next_fire_at is now, not
+                // because of this cadence. A yearly occurrence keeps the second
+                // fire beyond any test window: a per-minute schedule crossing a
+                // UTC minute boundary can enqueue a job after the worker stops
+                // admitting work, which later observations would then inherit.
+                cron_expr: "0 0 0 1 1 *",
                 is_active: true,
                 next_fire_at: due,
                 max_jitter_seconds: 0,
@@ -340,6 +345,21 @@ async fn scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload()
             "default-loop schedule fire",
         )
         .await?;
+        // State it rather than trusting the expression: the recomputed next
+        // occurrence is outside this test's window, so the scheduler cannot
+        // enqueue a second job that a later observation would inherit.
+        let next_fire: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT next_fire_at FROM {}.job_schedules \
+                 WHERE name = 'grants-supervised-schedule'",
+                quote(&jobs_schema)
+            )))
+            .fetch_one(owner_database.pool())
+            .await?;
+        require(
+            next_fire > due + chrono::Duration::hours(1),
+            &format!("the schedule fires again at {next_fire}, inside the test window"),
+        )?;
         await_count(&wide_probe, succeeded, 3, "default-loop scheduled dispatch").await?;
         let report = supervisor
             .shutdown_report(RuntimeShutdownBudget::new(
