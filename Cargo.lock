@@ -305,6 +305,7 @@ name = "batter"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "batter-at-rest",
  "batter-axum",
@@ -314,16 +315,19 @@ dependencies = [
  "batter-runlimit",
  "batter-sqlx",
  "batter-test-support",
+ "chrono",
  "runlimit-axum",
  "runlimit-core",
  "runlimit-http",
  "runlimit-memory",
+ "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

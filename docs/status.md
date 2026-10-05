@@ -251,6 +251,49 @@ relation, column and composite row-type policy. Its remaining low regression
 gaps are tracked by `batter-h2r`; live grant application remains with the pinned
 consumer task.
 
+That compiler now also accepts additive, object-only grant fragments.
+`GrantFragment` and `FragmentObjectPolicy` let a library publish the objects,
+columns and privileges its own statements need while the application keeps its
+database, discovery, role and ownership policy; appending consumes the manifest so
+a rejected fragment leaves no partial grant set. `runledger_postgres::grants` and
+`batter_runlimit::grants` publish this source version's operation inventory
+through it, reachable as `batter::runledger::grants` and
+`batter::runlimit::grants`, and a facade example composes both adapters with an
+application's own relation, columns and routine under both a strict PUBLIC-denial
+and an explicitly permitted PUBLIC-delivery policy. Both inventories are frozen in
+offline oracles beside pinned native migration identities. A native migration
+change therefore cannot land without updating a pinned identity, and a change to
+an exported requirement cannot land without a reviewable diff of exact relations,
+columns and privileges. Neither control detects a native query change that alters
+the privileges a statement needs without touching a migration or an inventory;
+that gap is covered only by the live cases, and only for the paths and privilege
+combinations they execute. Eleven PostgreSQL 18.6 cases
+(`cargo test -p batter --features runledger,runlimit-postgres --test grants_live
+-- --ignored --test-threads=1`, Linux x86-64, Rust 1.98.1, last executed
+2026-10-04 at `96a5cb9`, the newest commit changing the suite), each named
+in the bounded inventory-checked runner, provision non-owner, non-superuser
+`NOINHERIT` logins from the fragments and execute intent submission with
+duplicate, conflict and rollback handling in both scopes, the separately selected
+full-schema snapshot, the direct-job lifecycle including handler continuation,
+unstarted-claim release, resource claims and lease reaping with no retained
+cleanup error, promotion, exact definition and schedule catalog synchronization,
+due scheduled dispatch, scheduler-disabled and default-loop supervisors each
+asserting the reaper's detailed coordination-cleanup result under its own login
+because shutdown settlement does not reflect those failures,
+fixed-window and GCRA admission including a multi-item batch, with real expiry
+deletion, an admission-only login that needs neither the cleanup selection's
+relation-wide read nor the generated shard column, a cleanup-only login per
+family that deletes an owner-seeded expired counter while refused the admission
+insert and the capacity ledger's `row_count`, authentication attempts with
+transactional claim and finish, refused stale completion, and a directly
+observed expiry deletion of an owner-planted record in the admitted subject's
+capacity shard, and the forbidden operations each selection must refuse. Removing a
+required privilege fails both the native operation and the verifier; added
+table-level `UPDATE` or grant-option authority is rejected; and a restricted
+control separates permitted from denied PUBLIC delivery on native objects, which
+rendering cannot. Adoption remains grant-only and no downstream rollout is
+claimed.
+
 CI now configures adapter runtime tests and all five HTTP process smoke profiles
 on macOS, and includes both WARN-filtered profiles on Linux. The added filtering,
 middleware-order and readiness-phase regressions have Linux and local macOS

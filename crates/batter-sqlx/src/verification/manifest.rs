@@ -6,12 +6,14 @@
 //! database or executes SQL.
 
 mod compile;
+mod fragment;
 mod render;
 
 use super::{
     AuthorityPolicy, AuthorityPolicyBuilder, DiscoveryDefaults, DiscoveryScope, Identifier,
     ObjectPrivilege, PolicyError, QualifiedName, RolePolicy, RoutineSignature,
 };
+pub use fragment::{FragmentObjectPolicy, GrantFragment};
 pub use render::GrantRenderError;
 use std::fmt;
 
@@ -680,6 +682,8 @@ impl RoutineGrantSpec {
     }
 }
 
+#[cfg(test)]
+mod fragment_tests;
 #[cfg(test)]
 mod render_tests;
 #[cfg(test)]
