@@ -1,5 +1,14 @@
 # Implementation status
 
+2026-10-05 health-check repairs (`batter-r3sn`): the canonical verification adds
+non-HTTP `batter-runlimit` Clippy with memory and PostgreSQL enabled and warnings
+denied. Internal quota snapshot fields explicitly expect dead code only without
+the HTTP recorder feature; HTTP builds retain ordinary unused-field diagnostics.
+Provider-effect crash/restart scenarios now live in a dedicated support module,
+with the same public probe entry point, assertions, clocks and cleanup paths.
+File-budget ceilings and public APIs are unchanged. Executed verification results
+belong to the owning Bead.
+
 2026-10-04 Jig release runtime (`batter-xiu`): `.jig/runtime-version` selects
 0.7.1 and the installer is copied from the official tagged template. Batter's
 file-budget-only catalog and launcher restriction remain; `--version` is allowed.
