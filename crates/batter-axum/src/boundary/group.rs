@@ -4,7 +4,8 @@ use super::GuardedRouter;
 use crate::{
     RequestPolicy,
     browser::{MutationPolicy, MutationRejection, PrivateResponsePolicy},
-    correlation, request_admission,
+    correlation,
+    low_level::request_admission,
 };
 use axum::{
     Router,
@@ -246,7 +247,7 @@ fn is_safe(method: &Method) -> bool {
 ///     ))?
 ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
 ///     .await?;
-/// # let _ = assembled.into_router();
+/// # let _ = assembled.in_process();
 /// # Ok(()) }
 /// ```
 ///

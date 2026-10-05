@@ -88,12 +88,12 @@ pub const fn default_readiness_level(decision: ReadinessDecision) -> Level {
 /// point-in-time decision, not atomic with later drain. Mount outside
 /// admission, as [`crate::HttpBoundary::with_readiness`] and
 /// [`crate::HttpBoundary::with_rendered_readiness`] do. Existing
-/// [`crate::readiness`] remains status-only.
+/// [`crate::low_level::readiness`] remains status-only.
 ///
 /// ```
 /// use axum::{Router, routing::get};
 /// use batter_core::{health::HealthReader, lifecycle::ShutdownHandle};
-/// use batter_axum::{ReadinessPolicy, dependency_readiness};
+/// use batter_axum::{ReadinessPolicy, low_level::dependency_readiness};
 /// fn probes(control: ShutdownHandle, health: HealthReader<std::io::Error>) -> Router {
 ///     Router::new().route("/ready", get(dependency_readiness::<std::io::Error>))
 ///         .with_state(ReadinessPolicy::new(control.status(), health))

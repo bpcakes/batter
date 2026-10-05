@@ -6,7 +6,7 @@ use super::{
     fallback::RenderedFallback,
     inventory,
 };
-use crate::operational_http;
+use crate::low_level::operational_http;
 use axum::{Router, middleware};
 
 /// One route group's native routes and admitted routers during assembly.

@@ -27,7 +27,7 @@ const SAME_ORIGIN: &str = "same-origin";
 ///
 /// ```
 /// use axum::{Router, middleware, routing::get};
-/// use batter_axum::{browser::PrivateResponsePolicy, observe_http};
+/// use batter_axum::{browser::PrivateResponsePolicy, low_level::observe_http};
 ///
 /// // These pages submit same-origin HTML forms to an exact-origin mutation check.
 /// let forms = Router::new()
@@ -44,7 +44,7 @@ const SAME_ORIGIN: &str = "same-origin";
 ///
 /// Apply the layer after assembling the private routes and fallback. Put
 /// application mutation-rejection middleware inside it so rejections receive
-/// the headers; put [`crate::observe_http`] outside it if those statuses should
+/// the headers; put [`crate::low_level::observe_http`] outside it if those statuses should
 /// be observed. An outer middleware that short-circuits without calling the
 /// inner service cannot be changed by this layer. Inner service errors pass
 /// through without headers; Axum routers are infallible.
@@ -256,7 +256,7 @@ pub fn apply_private_response_headers(headers: &mut HeaderMap) {
 ///
 /// ```
 /// use axum::{Router, middleware, routing::get};
-/// use batter_axum::{browser::private_response, observe_http};
+/// use batter_axum::{browser::private_response, low_level::observe_http};
 ///
 /// // Existing composition that deliberately keeps the same-origin default.
 /// let private = Router::new()

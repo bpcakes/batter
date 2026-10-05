@@ -111,7 +111,7 @@ pub(crate) fn record(
 ///
 /// The extractor reads admission's private record, never the native
 /// `OperationContext`, [`CorrelationId`] or [`RequestInterruptionResponder`]
-/// extensions. Admission and [`operational_http`] still insert those for
+/// extensions. Admission and [`crate::low_level::operational_http`] still insert those for
 /// Batter's adapters and existing handlers, but they are ordinary extensions:
 /// any layer can insert or replace them, and reading one where it is absent
 /// fails with Axum's missing-extension text. Inserting them cannot make this
@@ -127,9 +127,9 @@ pub(crate) fn record(
 /// Copying a whole extension map from an admitted request into another
 /// request carries the record too, like every other value in the map.
 ///
-/// [`operational_http`]: crate::operational_http
-/// [`request_admission`]: crate::request_admission
-/// [`request_scope`]: crate::request_scope
+/// [`operational_http`]: crate::low_level::operational_http
+/// [`request_admission`]: crate::low_level::request_admission
+/// [`request_scope`]: crate::low_level::request_scope
 pub struct AdmittedRequest(Admission);
 
 impl AdmittedRequest {

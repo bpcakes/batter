@@ -1,13 +1,16 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
-use crate::{ReadinessDecision, ReadinessPolicy, dependency_readiness, liveness, serving};
+use crate::{
+    ReadinessDecision, ReadinessPolicy, low_level::liveness, readiness::dependency_readiness,
+};
 use assembly::Assembling;
-use axum::{Router, http::request::Parts, response::Response, routing::get, serve::Listener};
-use batter_core::{RegistrationError, registration::RegistrationTarget};
+use axum::{Router, http::request::Parts, response::Response, routing::get};
 use group::DEFAULT_GROUP;
 use std::{error::Error, fmt, sync::Arc};
 
+mod assembled;
 mod assembly;
+mod client;
 mod declared;
 mod fallback;
 mod group;
@@ -18,6 +21,8 @@ mod probe;
 #[cfg(test)]
 mod tests;
 
+pub use assembled::AssembledHttp;
+pub use client::InProcessClient;
 pub use declared::{RouteInventory, RouteInventoryError};
 pub use group::{BrowserPolicy, GroupPolicy, RouteGroup, RouteGroupError};
 pub use guarded::GuardedRouter;
@@ -102,10 +107,10 @@ impl Error for BoundaryAssemblyError {}
 /// its status or readiness decision. Guarded handlers extract the
 /// [`AdmittedRequest`](crate::AdmittedRequest) that their group's admission
 /// recorded. This is the canonical path.
-/// [`crate::observe_http`], [`crate::request_admission`],
-/// [`crate::request_scope`] and [`crate::operational_http`] remain available for
-/// compositions the boundary cannot express; each documents the ordering it
-/// then leaves with the caller.
+/// [`crate::low_level`] keeps `observe_http`, `request_admission`,
+/// `request_scope` and `operational_http` available for compositions the
+/// boundary cannot express; each documents the ordering it then leaves with the
+/// caller.
 ///
 /// ```
 /// use axum::routing::get;
@@ -141,7 +146,7 @@ impl Error for BoundaryAssemblyError {}
 ///     .assemble(guarded)
 ///     .await?;
 /// // Inside protected startup: assembled.register_in(scope, "http", listener)?;
-/// # let _ = assembled.into_router();
+/// # let _ = assembled.in_process();
 /// # drop(monitor);
 /// # Ok(()) }
 /// ```
@@ -334,7 +339,7 @@ impl HttpBoundary {
     ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
     ///     .await?;
     /// // Inside protected startup: assembled.register_in(scope, "http", listener)?;
-    /// # let _ = (assembled.into_router(), leases_valid);
+    /// # let _ = (assembled.in_process(), leases_valid);
     /// # drop(monitor);
     /// # Ok(()) }
     /// ```
@@ -411,85 +416,5 @@ impl HttpBoundary {
             .collect();
         let router = assembly::assemble(probes, &probe_paths, groups, fallback).await?;
         Ok(AssembledHttp { router })
-    }
-}
-
-/// A router with the boundary applied.
-///
-/// It is served only through Batter's registration helpers, so no layer can be
-/// added outside the observer by accident. A bare [`Router`] cannot be passed
-/// where this is expected:
-///
-/// ```compile_fail,E0308
-/// fn serve(assembled: batter_axum::AssembledHttp) -> axum::Router {
-///     assembled
-/// }
-/// ```
-#[must_use = "register the assembled boundary or take its router explicitly"]
-pub struct AssembledHttp {
-    router: Router,
-}
-
-impl AssembledHttp {
-    /// Register the assembled server through constrained registration authority.
-    ///
-    /// `listener` is any bound [`axum::serve::Listener`]: a
-    /// [`tokio::net::TcpListener`], a Unix listener, or an application-owned
-    /// listener that completes its own TLS handshakes. Certificates, protocol
-    /// versions and handshake policy stay with that listener; the boundary,
-    /// listener transfer, startup acknowledgement, graceful drain and
-    /// conservative cleanup after wrapper abortion are unchanged.
-    /// See [`crate::register_http_in`] for the serving contract.
-    ///
-    /// ```no_run
-    /// use axum::serve::Listener;
-    /// use batter_axum::AssembledHttp;
-    /// use batter_core::registration::RegistrationTarget;
-    /// use std::fmt::Debug;
-    ///
-    /// fn serve<T, L>(assembled: AssembledHttp, scope: &mut T, listener: L)
-    ///     -> Result<(), batter_core::BoxError>
-    /// where
-    ///     T: RegistrationTarget + ?Sized,
-    ///     L: Listener,
-    ///     L::Addr: Debug,
-    /// {
-    ///     assembled.register_in::<T>(scope, "http", listener)?;
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn register_in<T: RegistrationTarget + ?Sized>(
-        self,
-        target: &mut T,
-        name: &'static str,
-        listener: impl Listener<Addr: fmt::Debug>,
-    ) -> Result<(), RegistrationError> {
-        serving::register_http_in(target, name, listener, self.router)
-    }
-
-    /// Register with the listener's own direct peer available to handlers.
-    ///
-    /// A [`tokio::net::TcpListener`] and a TLS listener over TCP both supply
-    /// [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo) holding the
-    /// accepted socket's address and port; another listener supplies its own
-    /// address type. Forwarded headers are never interpreted.
-    /// See [`crate::register_http_with_connect_info_in`] for the contract and
-    /// for a worked generic-listener signature.
-    pub fn register_with_connect_info_in<T: RegistrationTarget + ?Sized>(
-        self,
-        target: &mut T,
-        name: &'static str,
-        listener: impl Listener<Addr: Clone + fmt::Debug + Sync + 'static>,
-    ) -> Result<(), RegistrationError> {
-        serving::register_http_with_connect_info_in(target, name, listener, self.router)
-    }
-
-    /// Take the router for in-process tests with `tower::ServiceExt::oneshot`.
-    ///
-    /// Layers or routes added afterward sit outside the boundary; a nested
-    /// observer added this way observes nothing because the outermost observer
-    /// already owns the request.
-    pub fn into_router(self) -> Router {
-        self.router
     }
 }

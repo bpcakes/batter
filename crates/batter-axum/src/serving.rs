@@ -78,11 +78,11 @@ pub fn register_http(
 /// ```no_run
 /// use axum::{Router, routing::get};
 /// use batter_core::startup::ProtectedStartupScope;
-/// use batter_axum::register_http_in;
+/// use batter_axum::low_level::register_http_in;
 ///
 /// async fn register(scope: &mut ProtectedStartupScope) -> Result<(), batter_core::BoxError> {
 ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-///     let app = Router::new().route("/live", get(batter_axum::liveness));
+///     let app = Router::new().route("/live", get(batter_axum::low_level::liveness));
 ///     register_http_in::<ProtectedStartupScope>(scope, "http", listener, app)?;
 ///     Ok(())
 /// }
@@ -102,7 +102,7 @@ pub fn register_http(
 /// ```no_run
 /// use axum::{Router, routing::get, serve::Listener};
 /// use batter_core::registration::RegistrationTarget;
-/// use batter_axum::register_http_in;
+/// use batter_axum::low_level::register_http_in;
 /// use std::fmt::Debug;
 ///
 /// // `listener` may be a TcpListener, a UnixListener, or an application-owned
@@ -113,7 +113,7 @@ pub fn register_http(
 ///     L: Listener,
 ///     L::Addr: Debug,
 /// {
-///     let app = Router::new().route("/live", get(batter_axum::liveness));
+///     let app = Router::new().route("/live", get(batter_axum::low_level::liveness));
 ///     register_http_in(scope, "http", listener, app)?;
 ///     Ok(())
 /// }
@@ -155,7 +155,7 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 /// ```no_run
 /// use axum::{Router, extract::ConnectInfo, routing::get};
 /// use batter_core::registration::RegistrationTarget;
-/// use batter_axum::register_http_with_connect_info_in;
+/// use batter_axum::low_level::register_http_with_connect_info_in;
 /// use std::net::SocketAddr;
 ///
 /// // Call from Startup::scoped after application resources are initialized.
@@ -177,7 +177,7 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 /// ```no_run
 /// use axum::{Router, extract::ConnectInfo, routing::get, serve::Listener};
 /// use batter_core::registration::RegistrationTarget;
-/// use batter_axum::register_http_with_connect_info_in;
+/// use batter_axum::low_level::register_http_with_connect_info_in;
 /// use std::net::SocketAddr;
 ///
 /// fn register<T, L>(scope: &mut T, listener: L) -> Result<(), batter_core::BoxError>
