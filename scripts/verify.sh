@@ -36,6 +36,8 @@ cargo fmt --all -- --check
 bash scripts/check_file_budget.sh
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files
 cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimit-http -p runlimit-axum --all-targets --locked -- -D warnings
+# The quota recorder is optional when using native backends without HTTP.
+cargo clippy -p batter-runlimit --all-targets --no-default-features --features memory,postgres --locked -- -D warnings -D clippy::mod_module_files
 # The reference package's default build excludes its opt-in metrics exporter.
 cargo clippy -p batter-example-reference-service --all-targets --locked -- -D warnings -D clippy::mod_module_files
 for part in workspace no-default-features doctests consumers runlimit scripts; do
