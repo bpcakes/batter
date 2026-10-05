@@ -210,20 +210,30 @@ impl PgSessionProfile {
         .map_err(|error| sqlx::Error::Configuration(Box::new(crate::SqlxFailure::from(error))))
     }
 
+    /// Verify an idle session against the declared policy without resetting
+    /// it, with the same redacted failure shape as [`Self::reset_and_apply`].
+    pub(crate) async fn verify_idle(
+        &self,
+        connection: &mut PgConnection,
+    ) -> Result<(), sqlx::Error> {
+        self.verify(connection)
+            .await
+            .map_err(|error| sqlx::Error::Configuration(Box::new(crate::SqlxFailure::from(error))))
+    }
+
     pub(crate) async fn apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-        let login: String = sqlx::query_scalar("SELECT session_user::text")
-            .fetch_one(&mut *connection)
-            .await?;
-        if login != self.login_role {
-            return Err(mismatch());
-        }
-        let role = format!("SET ROLE {}", quote(&self.effective_role));
-        sqlx::raw_sql(sqlx::AssertSqlSafe(role))
-            .execute(&mut *connection)
-            .await?;
-        set(connection, "search_path", &self.search_path).await?;
+        // One statement establishes the whole policy: the effective role through
+        // the `role` parameter (what SET ROLE assigns), the trusted search path,
+        // the declared timeouts, the transaction defaults and every custom
+        // setting, each name and value a bound parameter. No assignment depends
+        // on another, so their evaluation order inside the statement is
+        // immaterial. Verification then reads the session back, login included,
+        // so a session that is not the declared login fails before any work.
+        let mut assignments: Vec<(&str, String)> = Vec::with_capacity(8 + self.settings.len());
+        assignments.push(("role", self.effective_role.clone()));
+        assignments.push(("search_path", self.search_path.clone()));
         for (key, value) in self.timeouts() {
-            set(connection, key, &format!("{value}ms")).await?;
+            assignments.push((key, format!("{value}ms")));
         }
         for (key, value) in [
             ("default_transaction_isolation", "read committed"),
@@ -231,11 +241,25 @@ impl PgSessionProfile {
             ("default_transaction_deferrable", "off"),
             ("row_security", "on"),
         ] {
-            set(connection, key, value).await?;
+            assignments.push((key, value.to_owned()));
         }
         for (key, value) in &self.settings {
-            set(connection, key, value).await?;
+            assignments.push((key.as_str(), value.clone()));
         }
+        let calls: Vec<String> = (0..assignments.len())
+            .map(|index| {
+                format!(
+                    "pg_catalog.set_config(${}, ${}, false)",
+                    2 * index + 1,
+                    2 * index + 2
+                )
+            })
+            .collect();
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {}", calls.join(", "))));
+        for (key, value) in &assignments {
+            query = query.bind(*key).bind(value.as_str());
+        }
+        query.execute(&mut *connection).await?;
         self.verify(connection).await
     }
 
@@ -274,13 +298,4 @@ fn timeout_ms(value: Duration) -> Result<u32, PgProfileError> {
         ));
     }
     Ok(ms as u32)
-}
-
-async fn set(connection: &mut PgConnection, key: &str, value: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT pg_catalog.set_config($1, $2, false)")
-        .bind(key)
-        .bind(value)
-        .execute(connection)
-        .await?;
-    Ok(())
 }

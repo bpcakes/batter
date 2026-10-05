@@ -186,7 +186,10 @@ The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
 declares only statement/lock timeouts and neither sets nor verifies transaction
 timeouts. Their PostgreSQL reset defaults, including connection startup options,
 remain in effect. `DISCARD ALL` removes later session `SET` customizations; it does
-not erase startup defaults. All three pool hooks remain library-owned.
+not erase startup defaults. All three pool hooks remain library-owned: a
+session is reset and verified when it connects and before it is admitted idle,
+and acquisition verifies that idle session against the policy without resetting
+it again.
 
 Complete profiles require PostgreSQL 17 or later because `transaction_timeout`
 was introduced in 17, even when the declared value is zero. Unsupported settings

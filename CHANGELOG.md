@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Apply a session profile in one statement and verify idle pooled sessions at
+  acquisition instead of resetting them a second time. A pooled lease now pays
+  four policy round trips (ROLLBACK, DISCARD ALL, one `set_config` statement,
+  one verification) instead of about twenty-five; guarantees are unchanged.
 - Give probe responses a selected private-response policy.
   `HttpBoundary::with_probe_response_policy(PrivateResponsePolicy)` applies that
   policy to every probe response, including the method rejection that answers an
