@@ -19,7 +19,7 @@ use tracing::{Instrument, Level};
 /// Shared facts owned by the outermost HTTP observer.
 ///
 /// Its presence is only the single-observer marker. Operational ownership uses
-/// a distinct extension, so an observer outside [`crate::operational_http`]
+/// a distinct extension, so an observer outside [`crate::low_level::operational_http`]
 /// cannot suppress correlation setup. Nested Batter middleware publishes facts
 /// here without taking ownership of a second completion event.
 #[derive(Clone, Default)]

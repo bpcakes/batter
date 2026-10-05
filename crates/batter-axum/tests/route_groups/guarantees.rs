@@ -8,25 +8,26 @@ use super::{
     },
 };
 use axum::{
-    Extension, Router,
+    Extension,
     http::{Method, StatusCode},
     routing::{get, put},
 };
-use batter_axum::{GuardedRouter, HttpBoundary, RouteGroup, browser::PrivateResponsePolicy};
+use batter_axum::{
+    GuardedRouter, HttpBoundary, InProcessClient, RouteGroup, browser::PrivateResponsePolicy,
+};
 use batter_core::{
     lifecycle::ShutdownHandle,
     operation::{Interruption, OperationContext},
 };
 use std::sync::{Arc, Mutex};
 use tokio::time::Instant;
-use tower::ServiceExt;
 use tracing::instrument::WithSubscriber;
 
 async fn grouped(
     handle: &ShutdownHandle,
     uploads: GuardedRouter,
     account: GuardedRouter,
-) -> Router {
+) -> InProcessClient {
     HttpBoundary::new(request_policy(handle, SECOND))
         .with_group(RouteGroup::new(
             "uploads",
@@ -52,7 +53,7 @@ async fn grouped(
         )
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
 fn completions(text: &str) -> Vec<&str> {
@@ -77,7 +78,7 @@ fn every_group_response_has_one_correlated_completion() {
             from_origin(Method::PUT, "/account", ORIGIN),
             request(Method::GET, "/missing"),
         ] {
-            let response = app.clone().oneshot(request).await.unwrap();
+            let response = app.request(request).await;
             let id = response.headers()["x-request-id"]
                 .to_str()
                 .unwrap()
@@ -85,10 +86,7 @@ fn every_group_response_has_one_correlated_completion() {
             responses.push((id, response.status().as_u16()));
         }
         handle.request();
-        let draining = app
-            .oneshot(request(Method::PUT, "/uploads/a.csv"))
-            .await
-            .unwrap();
+        let draining = app.request(request(Method::PUT, "/uploads/a.csv")).await;
         let id = draining.headers()["x-request-id"]
             .to_str()
             .unwrap()
@@ -124,11 +122,7 @@ async fn each_group_expires_at_its_own_budget() {
         ("/account", 2 * SECOND, true),
     ] {
         let started = Instant::now();
-        let response = app
-            .clone()
-            .oneshot(request(Method::GET, path))
-            .await
-            .unwrap();
+        let response = app.clone().request(request(Method::GET, path)).await;
         assert_eq!(started.elapsed(), budget, "{path}");
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
         if private {
@@ -156,10 +150,7 @@ async fn escaped_group_context_is_cancelled_after_response_construction() {
     );
     let account = GuardedRouter::new().route("/account", get(|| async { "account" }));
     let app = grouped(&ready_handle(), uploads, account).await;
-    let response = app
-        .oneshot(request(Method::PUT, "/uploads/a.csv"))
-        .await
-        .unwrap();
+    let response = app.request(request(Method::PUT, "/uploads/a.csv")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let context = escaped.lock().unwrap().take().unwrap();
     assert_eq!(context.check(), Err(Interruption::Cancelled));
@@ -194,8 +185,11 @@ fn aborted_group_request_is_destroyed_under_its_first_poll_dispatch() {
         let uploads = GuardedRouter::new().route("/uploads", put(|| async { "stored" }));
         let app = grouped(&ready_handle(), uploads, account).await;
         let task = tokio::spawn(
-            app.oneshot(from_origin(Method::PUT, "/account", ORIGIN))
-                .with_subscriber(scoped.dispatch.clone()),
+            async move {
+                app.request(from_origin(Method::PUT, "/account", ORIGIN))
+                    .await
+            }
+            .with_subscriber(scoped.dispatch.clone()),
         );
         started_rx.await.unwrap();
         task.abort();

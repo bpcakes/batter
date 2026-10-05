@@ -47,7 +47,7 @@ metadata and, in one consumer, native TLS serving. Both ports used only the
 canonical API — route groups, probe renderers, the typed extractor, generic
 listeners and admitted routers — and both ended with no direct
 `operational_http`, `request_admission` or `register_http_*` use in the ported
-surface. Each consumer's separately deployed second surface was left un-ported
+surface, which `batter-tc9w.2` has since moved into `batter_axum::low_level`. Each consumer's separately deployed second surface was left un-ported
 and keeps those calls; that is task scope, not a library gap.
 
 Two results are worth keeping as design evidence rather than as delivery notes.

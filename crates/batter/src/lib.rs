@@ -72,6 +72,47 @@ pub mod at_rest {
 /// ```
 /// let _: Option<batter::axum::RequestPolicy> = None;
 /// ```
+///
+/// `HttpBoundary` is the canonical composition and its assembly is sealed: it
+/// is consumed into protected serving or into an opaque request client, with
+/// one `batter` dependency and no direct adapter declaration.
+///
+/// ```
+/// use axum::{body::Body, extract::Request, http::StatusCode, routing::get};
+/// use batter::{
+///     axum::{GuardedRouter, HttpBoundary, RequestPolicy, ResponseConstructionBudget},
+///     lifecycle::ShutdownHandle,
+/// };
+/// use std::time::Duration;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+/// approval.approve();
+/// let budget = ResponseConstructionBudget::new(Duration::from_secs(1))?;
+/// let client = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+///     .await?
+///     .in_process();
+/// let request = Request::builder().uri("/work").body(Body::empty())?;
+/// assert_eq!(client.request(request).await.status(), StatusCode::OK);
+/// # Ok(()) }
+/// ```
+///
+/// The deliberately caller-ordered middleware and registration helpers are
+/// reachable only through the adapter's own `low_level` namespace, with no
+/// aliases at this module's root:
+///
+/// ```
+/// let _: fn(
+///     &mut batter::lifecycle::Supervisor,
+///     &'static str,
+///     tokio::net::TcpListener,
+///     ::axum::Router,
+/// ) -> Result<(), batter::RegistrationError> = batter::axum::low_level::register_http;
+/// ```
+///
+/// ```compile_fail,E0432
+/// use batter::axum::register_http;
+/// ```
 #[cfg(feature = "axum")]
 pub mod axum {
     pub use batter_axum::*;

@@ -10,7 +10,7 @@ use crate::{
     request::{TrustedRequestMetadata, install_trusted_request_metadata},
 };
 use axum::{
-    Extension, Json, Router,
+    Extension, Json,
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
     http::{StatusCode, header},
@@ -20,7 +20,8 @@ use axum::{
 };
 use batter::axum::{
     AdmittedRequest, AssembledHttp, BoundaryAssemblyError, GuardedRouter, HttpBoundary,
-    HttpFailure, ProbePath, ReadinessPolicy, RequestPolicy, render_infrastructure_failure,
+    HttpFailure, InProcessClient, ProbePath, ReadinessPolicy, RequestPolicy,
+    render_infrastructure_failure,
 };
 use batter::{
     RegistrationError,
@@ -34,7 +35,6 @@ use runledger_postgres::RunledgerDatabase;
 use serde::Serialize;
 use std::{net::SocketAddr, time::Duration};
 use tokio::net::TcpListener;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const REQUEST_BODY_MAX_BYTES: usize = crate::delivery::PAYLOAD_MAX_BYTES + 2 * 1024;
@@ -130,9 +130,10 @@ where
 
 /// In-process request client that always supplies an explicitly selected peer.
 ///
-/// This application-local test seam deliberately does not implement Tower's
-/// `Service` traits and does not expose its inner [`Router`], so it cannot be
-/// passed to [`axum::serve()`] or Batter's HTTP registration operations. Use
+/// This application-local test seam wraps the adapter's own opaque
+/// [`InProcessClient`]. It deliberately does not implement Tower's `Service`
+/// traits and exposes no [`Router`](axum::Router), so it cannot be passed to
+/// [`axum::serve()`] or Batter's HTTP registration operations. Use
 /// [`register_in`] for production serving.
 ///
 /// ```compile_fail,E0308
@@ -142,9 +143,20 @@ where
 ///     let _: axum::Router = client;
 /// }
 /// ```
+///
+/// The wrapped adapter client cannot be taken out of it either, so no caller
+/// can reach the assembly without this application's peer policy:
+///
+/// ```compile_fail,E0616
+/// use batter_example_reference_service::http::InProcessRequestClient;
+///
+/// fn cannot_take_the_adapter_client(client: InProcessRequestClient) {
+///     let _ = client.application;
+/// }
+/// ```
 #[derive(Clone)]
 pub struct InProcessRequestClient {
-    application: Router,
+    application: InProcessClient,
 }
 
 impl InProcessRequestClient {
@@ -152,14 +164,13 @@ impl InProcessRequestClient {
     ///
     /// Any existing `ConnectInfo<SocketAddr>` value is replaced. The caller is
     /// responsible for choosing a peer that represents the intended scenario.
+    /// A synthetic peer is not evidence of a remote client: production serving
+    /// takes the accepted socket's own address through [`register_in`].
     pub async fn request(&self, mut request: Request<Body>, peer: SocketAddr) -> Response {
         request
             .extensions_mut()
             .insert(ConnectInfo::<SocketAddr>(peer));
-        match self.application.clone().oneshot(request).await {
-            Ok(response) => response,
-            Err(error) => match error {},
-        }
+        self.application.request(request).await
     }
 }
 
@@ -234,10 +245,10 @@ pub async fn in_process_client<E: Send + Sync + 'static>(
     health: HealthReader<E>,
 ) -> Result<InProcessRequestClient, BoundaryAssemblyError> {
     let assembled = assemble(prepared, lifecycle, admission, pool, health).await?;
-    // The adapter has no request-only client yet; this type keeps the
-    // assembled router private and unservable.
+    // The adapter's request-only client keeps the assembled router private and
+    // unservable; this wrapper adds the application's explicit peer policy.
     Ok(InProcessRequestClient {
-        application: assembled.into_router(),
+        application: assembled.in_process(),
     })
 }
 

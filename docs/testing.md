@@ -1549,7 +1549,8 @@ field to prove that the marker alone and a cross-site value both fail closed.
 Real Axum Router cases run the compatibility middleware and both
 `PrivateResponsePolicy` layers. They prove private headers cover inner success,
 application errors, rejection middleware and fallback, preserve response data,
-do not cover an outer short-circuit, and compose inside one `observe_http` event
+do not cover an outer short-circuit, and compose inside one
+`low_level::observe_http` event
 without request-header leakage. Direct and layered cases pin both exact
 referrer values, replacement of weaker handler fields, retention of an
 all-`no-referrer` field, nesting in either order, the documented
@@ -1679,9 +1680,14 @@ guarded work is rejected before its handler, liveness answers 200 although its
 renderer returns 503, and neither renderer sees an `OperationContext` or
 interruption responder. Under INFO filtering, a liveness renderer returning
 503 with a TRACE override still produces exactly one INFO completion with
-status 200. With an application's `operational_http_with_quota` outside the
-assembled router, both renderers fail to claim the quota observer's writer from
-cloned metadata and the completions keep `quota_outcome="not_checked"`.
+status 200. Sealed assembly admits no outer quota observer, so a boundary probe
+request carries no quota writer at all: both renderers fail to claim one from
+cloned metadata and the completions record no quota outcome. The reachable case,
+where an explicitly low-level outer `operational_http_with_quota` does hold the
+writer while an admission renderer runs, is covered by the renderer-isolation
+target, which asserts that the shared filter still removes it and that the
+original record stays `quota_outcome="not_checked"` while only the renderer's
+own child records a denial.
 Adapter unit tests reject a rendered probe path reused by any probe kind and
 guarded routes matching a rendered probe path, without calling a renderer or
 application code. Foundation unit tests cover every lifecycle, dependency and
@@ -1722,7 +1728,7 @@ covers the typed extractor. Handlers in the default group, its fallback and a
 native context's deadline and is cancelled once the response is built, and the
 generated identity on the response header and the single completion event. The
 extracted responder renders cancellation in the policy's JSON envelope. A route
-added to the assembled router, a correlated route without admission, admission
+outside every Batter layer, a correlated route without admission, admission
 without `operational_http` and `operational_http` inside admission all answer
 the exact Problem JSON 500 with `no-store`, at WARN when observed, while
 `Extension<OperationContext>` in the same position answers Axum's text naming
@@ -1739,6 +1745,90 @@ example's `/work` and `/fail` handlers through the extractor with a matching
 generated envelope identity. A handler behind Runlimit's protected assembly
 extracts it beside `Authenticated<P>`, with the response's generated identity
 ([Runlimit HTTP tests](../crates/batter-runlimit/tests/http/dispatch_and_concurrency.rs)).
+
+## Sealed HTTP assembly and the in-process client
+
+Separate compile-fail rustdocs on `AssembledHttp` reject, one each, an identity
+`Router` return, the removed `into_router`, appending a route to the assembly,
+wrapping it in a layer, handing it to `axum::serve` and satisfying
+`tower::Service<Request>`, plus one control per conversion or accessor trait
+that would reintroduce the router — `Into<Router>`, `AsRef<Router>` and
+`Deref` — and one for reading the private router field. Matching per-escape
+controls on `InProcessClient` reject an identity `Router` return, taking its
+router, adding a route, adding a layer, serving it, satisfying
+`tower::Service<Request>`, the same three conversion and accessor bounds, and
+reading its private field. The trait controls assert the bound rather than a
+use, because an identity-return control rejects only an identity return; their
+`E0277` diagnostics name the unsatisfied bound, which is how the bounds are
+known to resolve rather than the controls passing on an unresolved path. One control per
+escape is deliberate: a chained control, such as `into_router().route(...)`,
+would keep failing on the first missing item and so could not detect the second
+one returning, and the `axum::serve` control alone exercises the make-service
+conversion rather than a request service. For the same reason the `low_level`
+module carries one control per relocated helper name, eleven in all, rather
+than one per group; a facade control rejects `batter::axum::register_http`
+while a positive case pins `batter::axum::low_level::register_http`'s
+signature. These controls assert only that the code does not compile — rustdoc
+accepts a `compile_fail` block whose emitted error code differs from the
+annotation, verified by deliberately mis-annotating one — so the annotated
+codes document the expected cause rather than carrying the assertion. The
+status-only probe handler's control expects `E0603` because the adapter's
+private `readiness` module shares that name at the root; a returning public
+function alias would still make the import resolve. A positive facade example
+assembles a boundary, consumes it with `in_process()` and asserts a 200 from the
+client using only `batter::axum` paths; the adapter's own `in_process` rustdoc
+does the same through `batter_axum`.
+
+`route_groups::admitted::served_requests_reuse_layers_built_before_serving`
+counts `tower::Layer::layer` calls for a lazily layered handler fallback, a
+converted admitted router and its group, dispatches five requests through the
+client and requires the count not to change. That is the same assertion the
+previously exposed make-service carried, and it holds because
+`InProcessClient::new` performs the one-time `Router::with_state(())`
+preparation pinned Axum performs for a served router.
+
+Runtime coverage of the canonical path runs entirely through the client: probes
+outside admission, guarded and rendered-outside-admission fallbacks, method
+fallbacks, per-group request and browser policy, admission rejection and
+deadline expiry, generated correlation with exactly one completion event per
+request, and destruction of an aborted request under its first-poll dispatch.
+Real socket coverage is deliberately separate, because an in-process response
+establishes response construction only: the operational serving target, the
+`tls_serving` target and the facade example's loopback readiness tests keep
+listener transfer, acknowledgement, drain, peer provenance and TLS handshakes.
+The facade example's phase test serves the actual example router through
+`AssembledHttp::register_in` in a separately owned harness supervisor, so the
+socket still answers in the probed process's Starting, Ready, Draining and
+Stopped phases.
+
+The one composition that still reaches an application renderer while an outer
+quota wrapper holds the request's writer is an explicitly low-level assembly, as
+Runlimit's protected boundary builds; `operational/renderer_isolation.rs` covers
+it beside the six boundary-owned renderer surfaces.
+
+## Probe response policy
+
+`operational/probe_policy.rs` covers
+`HttpBoundary::with_probe_response_policy`. One case drives GET, HEAD, POST and
+OPTIONS against both `/live` and `/ready`, with empty-body and with rendered
+probes, in the starting, ready and draining phases — 48 requests — and for each
+one requires the probe's own status (200 or 503 for GET and HEAD by phase and
+probe, 405 otherwise), a 36-character generated correlation header, and the
+selected policy's `no-store`, referrer and `nosniff` values each present exactly
+once, so a renderer applying the same policy cannot duplicate them. Every method
+rejection must also keep Axum's own `Allow: GET,HEAD` and empty body, which is
+how the layer is known not to change method or status semantics. The capture
+requires exactly one completion event per request.
+
+The remaining cases pin the boundaries of the selection. Probes stay outside
+admission: while unapproved, `/ready` answers its own empty-bodied 503 while a
+guarded route receives the admission envelope. Without the selection, probe
+responses carry none of those headers. With the selection but a group that has
+no browser policy, a probe method rejection is private while `/work` and an
+unmatched path are not, so the policy cannot leak out of the probe routers into
+guarded routes or the fallback. Selecting twice keeps the last policy. The filed
+consumer reproduction was also run against this API and passes with no router
+escape.
 
 ## Serving over a generic listener
 
@@ -2005,9 +2095,16 @@ deterministic handler only after applying the same production boundary and need
 no PostgreSQL. Adapter real-socket tests independently establish ConnectInfo
 provenance by comparing the observed value with each client's own socket address;
 the reference policy tests establish the exact SocketAddr-to-IP step. The database-backed live delivery helper uses the opaque
-`InProcessRequestClient`, which cannot be served or expose its inner router and
-requires the helper to select a synthetic peer for every request. It requires every parsed JSON
-`request_id` to equal the generated response header.
+`InProcessRequestClient`, which wraps the adapter's `InProcessClient`, cannot be
+served, exposes neither that client nor a router, and requires the helper to
+select a synthetic peer for every request. It requires every parsed JSON
+`request_id` to equal the generated response header. The other ordinary cases
+dispatch straight to the adapter client, so one case drives a request through
+the reference wrapper itself: it hands the wrapper a request that already
+carries a different `ConnectInfo<SocketAddr>` and requires the reported trusted
+peer to be the selected one, then repeats with a request carrying none. That
+pins unconditional replacement rather than insert-when-absent; weakening the
+wrapper to insert only when absent makes the first assertion fail.
 
 The application-owned `http::register_in` function fuses boundary assembly
 with native peer-aware registration. An ordinary non-database real-socket case

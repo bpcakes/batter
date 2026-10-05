@@ -11,7 +11,10 @@ use axum::{
     response::Response,
     routing::get,
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
+use batter_axum::{
+    RequestPolicy, ResponseConstructionBudget,
+    low_level::{observe_http, request_admission},
+};
 use batter_core::{
     BoxError,
     lifecycle::{

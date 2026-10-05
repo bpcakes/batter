@@ -4,7 +4,8 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    ResponseConstructionBudget, register_http, register_http_in, register_http_with_connect_info_in,
+    ResponseConstructionBudget,
+    low_level::{register_http, register_http_in, register_http_with_connect_info_in},
 };
 use batter_core::{
     cleanup::{CleanupBudget, SkipReason},
@@ -253,9 +254,11 @@ async fn streaming_abort(register: RegisterHttp) {
         )
         .route_layer(axum::middleware::from_fn_with_state(
             policy,
-            batter_axum::request_admission,
+            batter_axum::low_level::request_admission,
         ))
-        .layer(axum::middleware::from_fn(batter_axum::operational_http));
+        .layer(axum::middleware::from_fn(
+            batter_axum::low_level::operational_http,
+        ));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     register(&mut supervisor, "http", listener, app).unwrap();

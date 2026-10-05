@@ -97,10 +97,12 @@ without credentials; only an admitted request can receive 401. Authentication
 runs within the request's operation deadline, and unmatched paths receive the
 404 only after admission. The repository owner selected this order on
 2026-09-28; authentication before admission is not a canonical composition.
-The separate `http::in_process_client` test seam awaits the same assembly and
-returns an opaque request client rather than a `Router`; it cannot enter a
-production serving operation and requires an explicit synthetic peer for every
-request.
+The separate `http::in_process_client` test seam awaits the same assembly,
+consumes it with `AssembledHttp::in_process` and wraps the adapter's opaque
+`InProcessClient`; it returns a request client rather than a `Router`, cannot
+enter a production serving operation, and requires an explicit synthetic peer
+for every request. That peer is not evidence of a remote client, and an
+in-process response is not evidence of serving.
 `TrustedRequestMetadata` combines that direct peer IP
 with Batter's server-generated `CorrelationId`, which its middleware takes from
 the `AdmittedRequest`, separately from the authenticated `OwnerId` and the

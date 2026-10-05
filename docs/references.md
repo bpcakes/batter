@@ -1506,9 +1506,9 @@ The current primary documentation also identifies 0.8.9:
   establish that a service wrapper outside routing has no matched template at
   observer entry. It records `<unmatched>` without substituting a raw URI.
 
-These semantics determine the assembled-router observer placement. Public
-`observe_http` and `request_admission` are additive; `request_scope` remains a
-combined wrapper. Batter's private shared observation state makes nested
+These semantics determine the assembled-router observer placement. The public
+`low_level::observe_http` and `low_level::request_admission` are additive;
+`low_level::request_scope` remains a combined wrapper. Batter's private shared observation state makes nested
 observers emit once while allowing adapter facts to reach that outer event. No
 upstream version or Cargo.lock change is required.
 
@@ -2396,7 +2396,7 @@ limited register_http helper and the executed streaming-abort regression.
 
 The [Axum routing source](https://docs.rs/crate/axum/0.8.9/source/src/routing/mod.rs)
 applies layers to already assembled route/fallback services. That determines
-operational_http placement, retained MatchedPath templates and 405/fallback
+`low_level::operational_http` placement, retained MatchedPath templates and 405/fallback
 coverage. Versioned docs.rs web requests failed in this environment; exact local
 Cargo source inspection, compilation and runtime tests supplied API evidence.
 
@@ -2429,8 +2429,8 @@ discards the retained HTTP parent.
 Axum 0.8.9 [ConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/struct.ConnectInfo.html)
 and [ServiceExt](https://docs.rs/axum/0.8.9/axum/trait.ServiceExt.html) require the
 make-service conversion to supply connection metadata. A plain Router does not
-install that extension. `register_http` intentionally retains its narrow Router
-contract. The later opt-in companion below replaces the previously documented
+install that extension. `low_level::register_http` intentionally retains its
+narrow Router contract. The later opt-in companion below replaces the previously documented
 application-owned supervised native serve closure for direct TCP peer metadata.
 
 ### Exhaustive readiness decision types: 2026-09-15
@@ -2461,7 +2461,7 @@ stream's `remote_addr`. Its native make-service wraps each cloned router in
 `Extension(ConnectInfo(...))` before request middleware runs.
 [ConnectInfo](https://docs.rs/axum/0.8.9/axum/extract/struct.ConnectInfo.html)
 requires that make-service conversion. Batter's fixed
-`register_http_with_connect_info_in` uses it without parsing forwarding headers
+`low_level::register_http_with_connect_info_in` uses it without parsing forwarding headers
 or replacing application authentication/proxy policy. Locked Tokio is 1.53.1;
 no dependency change was needed. The reference consumer's canonical
 `http::register_in` operation now constructs its direct-peer router and selects
@@ -4522,3 +4522,40 @@ renderer. The renderer's own router carries correlation/observation because the
 dispatch service is installed after the native route layer. Root/nested guarded
 fallback declarations are rejected with this mode. Local tests cover native and
 declared matched-method dispatch, unmatched paths and probe/group validation.
+
+
+### Sealed assembly and one-time client preparation (2026-10-05)
+
+The lockfile still resolves Axum 0.8.9. Rechecked the pinned
+[Router source](https://docs.rs/axum/0.8.9/src/axum/routing/mod.rs.html) for the
+preparation an `AssembledHttp` consumed into `InProcessClient` must reproduce.
+`Router::into_make_service` and `Router::into_make_service_with_connect_info`
+both call `Router::with_state(())` before wrapping, with the comment that this
+turns everything into a `Route` eagerly "rather than doing that per request";
+the `Service<IncomingStream<'_, L>>` implementation that `axum::serve` uses
+clones the router and calls `with_state(())` per accepted connection for the
+same reason. `PathRouter::with_state` converts each `Endpoint::MethodRouter`
+into a state-applied method router and leaves an `Endpoint::Route` alone, so a
+layer that Axum applies lazily to a handler is constructed during preparation
+rather than on every request. `Router<()>`'s `Service<Request<B>>`
+implementation is always ready and dispatches through `call_with_state(req, ())`.
+
+Rechecked at the same date, for the probe response policy, the pinned
+[method routing source](https://docs.rs/axum/0.8.9/src/axum/routing/method_routing.rs.html):
+`MethodRouter::layer` maps the layer over every method handler *and* over
+`fallback`, and carries `allow_header` through unchanged, while
+`MethodRouter::route_layer` deliberately leaves the fallback alone. A probe is
+registered as `get(...)`, so the implicit `405` for an unsupported method comes
+from that fallback. `HttpBoundary::with_probe_response_policy` therefore layers
+the probes with `layer`, not `route_layer`, which is what lets the rejection
+gain the policy headers while keeping its status and `Allow` header. Recheck
+this when the Axum pin changes.
+
+`InProcessClient::new` therefore calls `with_state(())` once and clones that
+prepared router per request, which reproduces the served router's layer
+construction count exactly; the layer-count regression in
+[route group tests](../crates/batter-axum/tests/route_groups/admitted.rs)
+asserts it through the client instead of the previously exposed make-service.
+Make-service stays unexposed, so no caller can serve the client. Recheck these
+semantics whenever the Axum pin changes. No dependency or `Cargo.lock` change
+was required.

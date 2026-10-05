@@ -1,5 +1,6 @@
 use super::{Config, router};
 use batter::{
+    axum::InProcessClient,
     health::{HealthMonitor, HealthPolicy},
     lifecycle::ShutdownHandle,
     settings::{SettingsSource, read_literal},
@@ -12,7 +13,7 @@ fn source(pairs: &[(&str, &str)]) -> SettingsSource {
 fn config(pairs: &[(&str, &str)]) -> Config {
     Config::from_sources(None, SettingsSource::default(), source(pairs)).unwrap()
 }
-async fn app(config: &Config) -> axum::Router {
+async fn app(config: &Config) -> InProcessClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     let monitor = HealthMonitor::new(
@@ -34,7 +35,7 @@ async fn app(config: &Config) -> axum::Router {
     )
     .await
     .unwrap()
-    .into_router()
+    .in_process()
 }
 
 #[test]
@@ -101,7 +102,6 @@ async fn file_and_environment_deadline_change_actual_work_response() {
         body::Body,
         http::{Request, StatusCode},
     };
-    use tower::ServiceExt;
     for (env, expected) in [
         (SettingsSource::default(), StatusCode::SERVICE_UNAVAILABLE),
         (
@@ -113,9 +113,8 @@ async fn file_and_environment_deadline_change_actual_work_response() {
         let configured = Config::from_sources(Some(file), env, SettingsSource::default()).unwrap();
         let response = app(&configured)
             .await
-            .oneshot(Request::builder().uri("/work").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+            .request(Request::builder().uri("/work").body(Body::empty()).unwrap())
+            .await;
         assert_eq!(response.status(), expected);
     }
 }
@@ -130,14 +129,13 @@ async fn actual_router_uses_configured_bulkhead_with_held_work() {
         future::{Future, poll_fn},
         task::Poll,
     };
-    use tower::ServiceExt;
     for limit in [1, 3] {
         let configured = config(&[("BATTER_BULKHEAD_CAPACITY", &limit.to_string())]);
         let application = app(&configured).await;
         let request = || Request::builder().uri("/work").body(Body::empty()).unwrap();
         let mut held = Vec::new();
         for _ in 0..limit {
-            let mut work = Box::pin(application.clone().oneshot(request()));
+            let mut work = Box::pin(application.request(request()));
             assert!(
                 poll_fn(|cx| Poll::Ready(work.as_mut().poll(cx)))
                     .await
@@ -145,7 +143,7 @@ async fn actual_router_uses_configured_bulkhead_with_held_work() {
             );
             held.push(work);
         }
-        let rejected = application.clone().oneshot(request()).await.unwrap();
+        let rejected = application.request(request()).await;
         assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = axum::body::to_bytes(rejected.into_body(), 1024)
             .await
@@ -153,10 +151,10 @@ async fn actual_router_uses_configured_bulkhead_with_held_work() {
         assert!(std::str::from_utf8(&body).unwrap().contains("overloaded"));
         tokio::time::advance(Duration::from_millis(25)).await;
         for work in held {
-            assert_eq!(work.await.unwrap().status(), StatusCode::OK);
+            assert_eq!(work.await.status(), StatusCode::OK);
         }
         assert_eq!(
-            application.oneshot(request()).await.unwrap().status(),
+            application.request(request()).await.status(),
             StatusCode::OK
         );
     }

@@ -78,11 +78,11 @@ impl std::fmt::Display for CorrelationId {
 ///
 /// Apply with `middleware::from_fn(operational_http)` **after** assembling all
 /// routes, probes and fallback; [`crate::HttpBoundary`] does this. A plain
-/// [`crate::observe_http`] may be inside or outside this wrapper because it
+/// [`crate::low_level::observe_http`] may be inside or outside this wrapper because it
 /// never short-circuits. Admission, deadlines, authentication and other
 /// rejecting middleware must be inside this wrapper if their responses and
 /// dropped futures require generated correlation. In particular,
-/// [`crate::request_scope`] is supported only inside `operational_http`.
+/// [`crate::low_level::request_scope`] is supported only inside `operational_http`.
 /// Observation ownership is distinct from operational ownership, so a manually
 /// placed outer plain observer cannot suppress correlation setup. Later-added
 /// routes bypass this wrapper, as with native `Router::layer`.
@@ -97,7 +97,7 @@ impl std::fmt::Display for CorrelationId {
 ///
 /// ```
 /// use axum::{Extension, Router, middleware, routing::get};
-/// use batter_axum::{CorrelationId, operational_http};
+/// use batter_axum::{CorrelationId, low_level::operational_http};
 /// let app: Router = Router::new()
 ///     .route("/", get(|Extension(id): Extension<CorrelationId>| async move {
 ///         id.as_str().to_owned()
@@ -125,7 +125,7 @@ pub async fn operational_http(request: Request, next: Next) -> Response {
 ///
 /// ```
 /// use axum::{Router, middleware, routing::get};
-/// use batter_axum::operational_http_with_quota;
+/// use batter_axum::low_level::operational_http_with_quota;
 /// let app: Router = Router::new().route("/live", get(|| async { "live" }))
 ///     .layer(middleware::from_fn(operational_http_with_quota));
 /// ```

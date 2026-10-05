@@ -1,4 +1,5 @@
-//! Adapter-facing retained quota facts for [`crate::operational_http_with_quota`].
+//! Adapter-facing retained quota facts for
+//! [`crate::low_level::operational_http_with_quota`].
 //!
 //! This is an observation capability, never authentication or quota authority.
 //! The quota operational middleware creates a fresh private record, replacing
@@ -7,7 +8,8 @@
 //! retains its own reader through response construction or drop even when the
 //! quota wrapper is nested inside another supported Batter HTTP wrapper.
 //! No caller callback runs from a destructor and no subject or error text fits
-//! this interface. Ordinary [`crate::operational_http`] allocates no quota record.
+//! this interface. Ordinary [`crate::low_level::operational_http`] allocates no quota
+//! record.
 
 use axum::extract::Request;
 use std::sync::{Arc, Mutex};
@@ -312,7 +314,9 @@ mod tests {
                     StatusCode::OK
                 }),
             )
-            .layer(middleware::from_fn(crate::operational_http_with_quota));
+            .layer(middleware::from_fn(
+                crate::low_level::operational_http_with_quota,
+            ));
         let mut request = Request::new(Body::empty());
         request.extensions_mut().insert(previous.clone());
         assert_eq!(
@@ -332,7 +336,7 @@ mod tests {
                     StatusCode::OK
                 }),
             )
-            .layer(middleware::from_fn(crate::operational_http));
+            .layer(middleware::from_fn(crate::low_level::operational_http));
         let mut request = Request::new(Body::empty());
         request.extensions_mut().insert(QuotaObservation::default());
         assert_eq!(

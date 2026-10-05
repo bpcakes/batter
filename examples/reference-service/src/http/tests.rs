@@ -1,13 +1,14 @@
 use super::*;
 use crate::config::ServingSettings;
 use axum::{
-    Extension, Router,
+    Extension,
     body::{Body, to_bytes},
     extract::ConnectInfo,
     http::{HeaderValue, Request as HttpRequest, header},
     routing::get,
 };
 use batter::{
+    axum::InProcessClient,
     cleanup::CleanupBudget,
     health::{HealthMonitor, HealthPolicy},
     lifecycle::{ShutdownBudget, ShutdownHandle, Supervisor},
@@ -30,7 +31,6 @@ use tokio::{
     sync::Barrier,
     time::timeout,
 };
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const AUTHENTICATED_OWNER: u128 = 1;
@@ -75,7 +75,7 @@ fn unpublished_health() -> HealthReader<Infallible> {
     .reader()
 }
 
-async fn production_app_with(handle: &ShutdownHandle) -> Router {
+async fn production_app_with(handle: &ShutdownHandle) -> InProcessClient {
     let settings = settings();
     let pool = crate::database::configured(
         settings.connect_options_from_process().unwrap(),
@@ -91,17 +91,17 @@ async fn production_app_with(handle: &ShutdownHandle) -> Router {
     )
     .await
     .unwrap()
-    .into_router()
+    .in_process()
 }
 
-async fn production_app() -> Router {
+async fn production_app() -> InProcessClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     approval.approve();
     production_app_with(&handle).await
 }
 
 /// Serve deterministic handlers behind the same layers and boundary as production.
-async fn boundary_app(routes: GuardedRouter, handle: &ShutdownHandle) -> Router {
+async fn boundary_app(routes: GuardedRouter, handle: &ShutdownHandle) -> InProcessClient {
     assemble_routes(
         routes,
         settings().prepare_http(),
@@ -110,7 +110,7 @@ async fn boundary_app(routes: GuardedRouter, handle: &ShutdownHandle) -> Router 
     )
     .await
     .unwrap()
-    .into_router()
+    .in_process()
 }
 
 fn direct_request(
@@ -183,14 +183,13 @@ async fn assert_native_rejection(response: Response, expected_status: StatusCode
 async fn probes_do_not_require_business_peer_metadata() {
     let response = production_app()
         .await
-        .oneshot(
+        .request(
             HttpRequest::builder()
                 .uri("/live")
                 .body(Body::empty())
                 .unwrap(),
         )
-        .await
-        .unwrap();
+        .await;
 
     assert_eq!(response.status(), StatusCode::OK);
     assert!(response.headers().contains_key("x-request-id"));
@@ -200,7 +199,7 @@ async fn probes_do_not_require_business_peer_metadata() {
 async fn native_json_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
         .await
-        .oneshot(direct_request(
+        .request(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
             Body::from("{"),
@@ -208,8 +207,7 @@ async fn native_json_rejection_stays_outside_the_application_problem_envelope() 
             Some("Bearer fake-token"),
             false,
         ))
-        .await
-        .unwrap();
+        .await;
 
     assert_native_rejection(response, StatusCode::BAD_REQUEST).await;
 }
@@ -218,7 +216,7 @@ async fn native_json_rejection_stays_outside_the_application_problem_envelope() 
 async fn native_path_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
         .await
-        .oneshot(direct_request(
+        .request(direct_request(
             "GET",
             "/deliveries/not-a-uuid",
             Body::empty(),
@@ -226,8 +224,7 @@ async fn native_path_rejection_stays_outside_the_application_problem_envelope() 
             Some("Bearer fake-token"),
             false,
         ))
-        .await
-        .unwrap();
+        .await;
 
     assert_native_rejection(response, StatusCode::BAD_REQUEST).await;
 }
@@ -236,7 +233,7 @@ async fn native_path_rejection_stays_outside_the_application_problem_envelope() 
 async fn native_body_limit_rejection_stays_outside_the_application_problem_envelope() {
     let response = production_app()
         .await
-        .oneshot(direct_request(
+        .request(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
             Body::from(vec![b' '; REQUEST_BODY_MAX_BYTES + 1]),
@@ -244,8 +241,7 @@ async fn native_body_limit_rejection_stays_outside_the_application_problem_envel
             Some("Bearer fake-token"),
             false,
         ))
-        .await
-        .unwrap();
+        .await;
 
     assert_native_rejection(response, StatusCode::PAYLOAD_TOO_LARGE).await;
 }
@@ -256,7 +252,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
     for authorization in [None, Some("Bearer wrong")] {
         let response = production_app()
             .await
-            .oneshot(direct_request(
+            .request(direct_request(
                 "POST",
                 "/records/00000000-0000-0000-0000-000000000002/deliveries",
                 Body::from("{}"),
@@ -264,8 +260,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
                 authorization,
                 true,
             ))
-            .await
-            .unwrap();
+            .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let (request_id, body) = json_response(response).await;
         assert_ne!(request_id, "forged-request-id");
@@ -276,7 +271,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
 
     let response = production_app()
         .await
-        .oneshot(direct_request(
+        .request(direct_request(
             "POST",
             "/records/00000000-0000-0000-0000-000000000002/deliveries",
             Body::from(r#"{"expected_generation":0,"idempotency_key":"key","payload":{}}"#),
@@ -284,8 +279,7 @@ async fn production_routes_require_auth_and_share_generated_identity_on_failures
             Some("Bearer fake-token"),
             true,
         ))
-        .await
-        .unwrap();
+        .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let (request_id, body) = json_response(response).await;
     assert_ne!(request_id, "forged-request-id");
@@ -380,7 +374,7 @@ async fn trusted_metadata_debug_redacts_peer_and_correlation() {
     );
     let response = boundary_app(routes, &handle)
         .await
-        .oneshot(direct_request(
+        .request(direct_request(
             "GET",
             "/debug",
             Body::empty(),
@@ -388,8 +382,7 @@ async fn trusted_metadata_debug_redacts_peer_and_correlation() {
             Some("Bearer fake-token"),
             false,
         ))
-        .await
-        .unwrap();
+        .await;
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
     assert_eq!(
         body,
@@ -440,7 +433,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
         let app = app.clone();
         tasks.spawn(async move {
             let response = app
-                .oneshot(direct_request(
+                .request(direct_request(
                     "GET",
                     "/inspect",
                     Body::empty(),
@@ -448,8 +441,7 @@ async fn concurrent_forged_metadata_cannot_replace_authority_peer_or_correlation
                     Some("Bearer fake-token"),
                     true,
                 ))
-                .await
-                .unwrap();
+                .await;
             assert_eq!(response.status(), StatusCode::OK);
             let (request_id, body) = json_response(response).await;
             (peer, request_id, body)
@@ -505,7 +497,7 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
     let app = boundary_app(routes, &handle).await;
     let response = app
         .clone()
-        .oneshot(direct_request(
+        .request(direct_request(
             "GET",
             "/inspect",
             Body::empty(),
@@ -513,14 +505,13 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
             Some("Bearer fake-token"),
             false,
         ))
-        .await
-        .unwrap();
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
     let (_, body) = json_response(response).await;
     assert_eq!(body["peer_ip"], Ipv4Addr::LOCALHOST.to_string());
 
     let response = app
-        .oneshot(
+        .request(
             HttpRequest::builder()
                 .uri("/inspect")
                 .header(header::AUTHORIZATION, "Bearer fake-token")
@@ -528,12 +519,81 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
                 .body(Body::empty())
                 .unwrap(),
         )
-        .await
-        .unwrap();
+        .await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let (_, body) = json_response(response).await;
     assert_eq!(body["code"], "internal_error");
     assert!(!body.to_string().contains("198.51.100.50"));
+}
+
+/// Wrap the same deterministic boundary in the application's own request
+/// client, so its explicit synthetic-peer policy is exercised rather than
+/// bypassed by dispatching straight to the adapter client.
+async fn wrapped_boundary_app(
+    routes: GuardedRouter,
+    handle: &ShutdownHandle,
+) -> InProcessRequestClient {
+    InProcessRequestClient {
+        application: boundary_app(routes, handle).await,
+    }
+}
+
+#[tokio::test]
+async fn the_request_client_replaces_a_peer_the_caller_already_supplied() {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let routes = GuardedRouter::new().route(
+        "/inspect",
+        get(
+            |Extension(metadata): Extension<TrustedRequestMetadata>| async move {
+                Json(json!({
+                    "request_id": metadata.correlation_id().as_str(),
+                    "peer_ip": metadata.peer().ip(),
+                }))
+            },
+        ),
+    );
+    let client = wrapped_boundary_app(routes, &handle).await;
+    let supplied = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
+    let selected = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 9)), 41_000);
+    assert_ne!(supplied, selected.ip());
+
+    // The request already carries a different peer. Each call owns the
+    // synthetic transport assertion, so the client must replace that value
+    // rather than defer to whatever it was handed.
+    let response = client
+        .request(
+            direct_request(
+                "GET",
+                "/inspect",
+                Body::empty(),
+                supplied,
+                Some("Bearer fake-token"),
+                true,
+            ),
+            selected,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, body) = json_response(response).await;
+    assert_eq!(body["peer_ip"], selected.ip().to_string());
+    assert_ne!(body["peer_ip"], supplied.to_string());
+
+    // A request carrying no peer of its own receives the selected one too, so
+    // the replacement is unconditional rather than insert-when-absent.
+    let response = client
+        .request(
+            HttpRequest::builder()
+                .uri("/inspect")
+                .header(header::AUTHORIZATION, "Bearer fake-token")
+                .body(Body::empty())
+                .unwrap(),
+            selected,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, body) = json_response(response).await;
+    assert_eq!(body["peer_ip"], selected.ip().to_string());
 }
 
 fn supervisor() -> Supervisor {
@@ -602,7 +662,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
         );
     let app = boundary_app(routes, &handle).await;
     let pending_peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 80));
-    let mut pending = Box::pin(app.clone().oneshot(direct_request(
+    let mut pending = Box::pin(app.request(direct_request(
         "GET",
         "/pending",
         Body::empty(),
@@ -621,7 +681,7 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
     assert!(pending_context.check().is_ok());
 
     let complete = app
-        .oneshot(direct_request(
+        .request(direct_request(
             "GET",
             "/complete",
             Body::empty(),
@@ -629,15 +689,14 @@ async fn cancellation_keeps_each_request_identity_and_authority_is_separate() {
             Some("Bearer fake-token"),
             true,
         ))
-        .await
-        .unwrap();
+        .await;
     assert_eq!(complete.status(), StatusCode::OK);
     let (complete_id, complete_body) = json_response(complete).await;
     assert_ne!(pending_id, complete_id);
     assert_eq!(complete_body["nested_request_id"], complete_id);
 
     handle.request();
-    let cancelled = pending.await.unwrap();
+    let cancelled = pending.await;
     assert_eq!(cancelled.status(), StatusCode::SERVICE_UNAVAILABLE);
     let (cancelled_id, body) = json_response(cancelled).await;
     assert_eq!(cancelled_id, pending_id);

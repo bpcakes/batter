@@ -14,8 +14,8 @@ use axum::{
 };
 use batter_axum::{
     AdmittedRequest, AdmittedRequestRejection, CorrelationId, GuardedRouter, HttpBoundary,
-    RequestPolicy, ResponseConstructionBudget, RouteGroup, operational_http, request_admission,
-    request_scope,
+    RequestPolicy, ResponseConstructionBudget, RouteGroup,
+    low_level::{operational_http, request_admission, request_scope},
 };
 use batter_core::{
     lifecycle::ShutdownHandle,
@@ -128,10 +128,10 @@ fn boundary_handlers_extract_their_groups_admission_and_generated_identity() {
                 .assemble(default)
                 .await
                 .unwrap()
-                .into_router();
+                .in_process();
             let mut responses = Vec::new();
             for path in ["/work", "/missing", "/uploads", "/interrupt"] {
-                responses.push(app.clone().oneshot(get_request(path)).await.unwrap());
+                responses.push(app.request(get_request(path)).await);
             }
             responses
         }
@@ -190,15 +190,14 @@ fn boundary_handlers_extract_their_groups_admission_and_generated_identity() {
 fn handlers_outside_admission_receive_the_sanitized_rejection() {
     let capture = Capture::new();
     let (late, correlated, (native_status, native_body), typed) = capture.block_on(async {
-        let handle = ready();
         let unreachable = |_: AdmittedRequest| async { StatusCode::IM_A_TEAPOT };
-        let boundary = HttpBoundary::new(policy(&handle, SECOND))
-            .assemble(GuardedRouter::new().route("/work", get(|| async { "admitted" })))
-            .await
-            .unwrap()
-            .into_router()
-            // Routes added to the assembled router sit outside the boundary.
-            .route("/late", get(unreachable));
+        // Appending a route to an assembled boundary is no longer expressible:
+        // `AssembledHttp` has no router conversion, and its compile-fail
+        // controls reject `into_router`, a late route, a wrapping layer and
+        // direct serving. An explicitly raw router keeps the independent
+        // runtime check that an extracting handler outside every Batter layer
+        // is rejected without correlation.
+        let uncorrelated = Router::new().route("/late", get(unreachable));
         let correlated = Router::new()
             .route("/correlated", get(unreachable))
             .route(
@@ -214,7 +213,7 @@ fn handlers_outside_admission_receive_the_sanitized_rejection() {
                 ),
             )
             .layer(middleware::from_fn(operational_http));
-        let late = boundary.oneshot(get_request("/late")).await.unwrap();
+        let late = uncorrelated.oneshot(get_request("/late")).await.unwrap();
         let mut responses = Vec::new();
         for path in ["/correlated", "/native", "/typed"] {
             responses.push(correlated.clone().oneshot(get_request(path)).await.unwrap());
@@ -369,10 +368,9 @@ async fn raw_extensions_cannot_supply_or_replace_the_admitted_request() {
         .assemble(guarded)
         .await
         .unwrap()
-        .into_router()
-        .oneshot(get_request("/work"))
-        .await
-        .unwrap();
+        .in_process()
+        .request(get_request("/work"))
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         header_text(&response, "x-admitted-id"),

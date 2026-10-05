@@ -75,9 +75,13 @@ conversion from maintenance into serving. `runtime::run` and `runtime::start`
 accept only the inert, non-cloneable `PreparedServing` owner, and canonical `http::register_in` consumes
 only `PreparedHttp` while inseparably selecting native peer registration for the
 assembled boundary.
-`http::in_process_client` is the lower-level test seam over the same assembly. Its opaque
-`InProcessRequestClient` cannot be served or expose the inner router, and each
-request requires an exact synthetic peer. Maintenance ignores known serving-only names from captured
+`http::in_process_client` is the lower-level test seam over the same assembly.
+It consumes that assembly with `AssembledHttp::in_process` and wraps the
+adapter's opaque `InProcessClient`; the resulting `InProcessRequestClient`
+cannot be served and exposes neither the adapter client nor a router, and each
+request requires an exact synthetic peer. A synthetic peer is not evidence of a
+remote client, and an in-process response is not evidence of serving: keep the
+real-socket cases for that. Maintenance ignores known serving-only names from captured
 environment without parsing them, but dedicated files/overrides reject those
 names and unknown reserved or PG* names still fail. Use shared `batter::settings` mechanics, retain concrete causes
 behind static diagnostics, and pass validated outputs to native constructors
@@ -199,7 +203,8 @@ may populate `TrustedPeer`. Ignore forwarding, trace and client request-ID
 headers until a separately validated proxy policy is implemented. The bearer
 credential alone selects `OwnerId`, replacing any prior extension. Assemble the
 router only through `HttpBoundary`, which owns correlation, the single observer,
-probes and lifecycle admission; do not call `operational_http`,
+probes and lifecycle admission. Import nothing from
+`batter::axum::low_level`: this root must not call `operational_http`,
 `request_admission`, `register_http_*`, `liveness` or `dependency_readiness`
 directly. Keep admission outside trusted metadata and authentication: install
 both as `GuardedRouter` route layers (metadata outside authentication), keep the

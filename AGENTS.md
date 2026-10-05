@@ -160,7 +160,11 @@ routers admitted through a declared `RouteInventory`, and the library-ordered
 request and browser policy and whose probes may render application bodies
 without choosing their status; its optional metadata-only fallback renderer
 bypasses admission after every route fails to match, and is mutually exclusive
-with guarded root/nested fallbacks; `admitted.rs` owns the privately recorded
+with guarded root/nested fallbacks; assembly is sealed, so `AssembledHttp` is
+consumed only into protected registration or `boundary/client.rs`'s opaque
+`InProcessClient`; `low_level.rs` is the only path to the deliberately
+caller-ordered middleware and registration helpers, which have no crate-root
+alias; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
 cookie, mutation-signal and private-response header mechanics without owning

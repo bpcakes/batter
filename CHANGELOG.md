@@ -8,6 +8,133 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Give probe responses a selected private-response policy.
+  `HttpBoundary::with_probe_response_policy(PrivateResponsePolicy)` applies that
+  policy to every probe response, including the method rejection that answers an
+  unsupported method on a probe path before any renderer runs. A probe sits
+  outside every route group, so a group's `BrowserPolicy` never reached it, and
+  those `405` responses previously carried no `Cache-Control`,
+  `Referrer-Policy` or `X-Content-Type-Options`. A private administrative
+  surface had to keep a post-assembly `PrivateResponsePolicy` layer over a taken
+  router; the boundary now installs the policy around the probe routers during
+  assembly, so that surface keeps the sealed `AssembledHttp` through
+  registration instead. This is the capability `batter-probe-response-policy-2wz4`
+  required before sealing.
+
+  The selection changes response headers only. Probe status, the readiness
+  decision, the rejection's `Allow` header, correlation, the single observation
+  and probes staying outside application admission are unchanged; it applies to
+  empty-body and application-rendered probes alike, and header values are set
+  rather than appended, so a renderer applying the same policy leaves them
+  single-valued. It is opt-in and scoped to probes: a boundary without it keeps
+  probe responses exactly as before, unmatched paths remain the guarded or
+  rendered fallback's concern, and guarded routes keep their own group's policy.
+  Selecting twice keeps the last policy.
+
+- Breaking: seal HTTP assembly and move deliberately caller-ordered composition
+  into `batter_axum::low_level` (also `batter::axum::low_level`).
+  `AssembledHttp::into_router` is removed. Assembly now has exactly two
+  outcomes: `register_in`/`register_with_connect_info_in` for protected
+  serving, and the new consuming `AssembledHttp::in_process`, which returns an
+  opaque cloneable `InProcessClient` with
+  `request(&self, Request<Body>) -> Response`. The client keeps its router
+  private: it has no router conversion or accessor, no `Deref`/`AsRef`, no
+  public field, no route or layer method, no Tower `Service`/`MakeService`
+  implementation and no serving conversion, so no layer or route can be added
+  outside the observer and nothing can be handed to `axum::serve`. Each of
+  those escapes, and each relocated helper name at the crate root, has its own
+  compile-fail control rather than sharing a grouped one, including bound
+  controls for `Into<Router>`, `AsRef<Router>` and `Deref` and a control over
+  the private router field. It prepares
+  the router once, with the same `Router::with_state(())` preparation pinned
+  Axum 0.8.9 performs in `into_make_service` and
+  `into_make_service_with_connect_info`, then clones that prepared router per
+  request; make-service stays unexposed. A request is polled, and its future
+  destroyed, inside the caller's task under the boundary's existing dispatch
+  and observation ownership, with no detached spawn. An in-process response
+  establishes response construction only, never serving, connections, peers,
+  body streaming or detached descendants.
+
+  Eleven public helpers move to `low_level` with no crate-root aliases:
+  `observe_http`, `request_admission`, `request_scope`, `operational_http`,
+  `operational_http_with_quota`, `readiness`, `liveness`,
+  `dependency_readiness`, `register_http`, `register_http_in` and
+  `register_http_with_connect_info_in`. Their behavior and caller-obligation
+  documentation are unchanged. Everything else keeps its existing supported
+  path, including `RequestPolicy`, `ResponseConstructionBudget`,
+  `HttpObservationLevel`, `HttpFailure`, `RequestInterruptionResponder`,
+  `ReadinessPolicy`, `ReadinessDecision`, `AdmittedRequest`,
+  `AdmittedRequestRejection`, `CorrelationId`,
+  `render_infrastructure_failure`, `readiness_status`,
+  `default_readiness_level`, the `browser` transport primitives and
+  `quota_observation`.
+
+  This is a hard cut with no deprecated root aliases and no `into_router` shim,
+  so an invalid API path cannot be restored as a rollback mechanism. Migrate as
+  follows.
+
+  Taking the router for in-process requests:
+
+  ```rust
+  // Before
+  let app: axum::Router = boundary.assemble(guarded).await?.into_router();
+  let response = app.clone().oneshot(request).await.unwrap();
+
+  // After
+  let client = boundary.assemble(guarded).await?.in_process();
+  let response = client.request(request).await;
+  ```
+
+  Importing a raw middleware or registration helper:
+
+  ```rust
+  // Before
+  use batter_axum::{observe_http, operational_http, request_admission, request_scope};
+  use batter_axum::{dependency_readiness, liveness, readiness};
+  use batter_axum::{register_http, register_http_in, register_http_with_connect_info_in};
+  use batter_axum::operational_http_with_quota;
+
+  // After
+  use batter_axum::low_level::{
+      dependency_readiness, liveness, observe_http, operational_http,
+      operational_http_with_quota, readiness, register_http, register_http_in,
+      register_http_with_connect_info_in, request_admission, request_scope,
+  };
+  ```
+
+  Through the facade, `batter::axum::register_http_in` becomes
+  `batter::axum::low_level::register_http_in`; the same move applies to every
+  helper above.
+
+  A direct-peer composition that registered a taken router keeps the peer
+  choice fused to assembly:
+
+  ```rust
+  // Before
+  let router = boundary.assemble(guarded).await?.into_router();
+  batter_axum::register_http_with_connect_info_in(scope, "http", listener, router)?;
+
+  // After
+  boundary
+      .assemble(guarded)
+      .await?
+      .register_with_connect_info_in(scope, "http", listener)?;
+  ```
+
+  Runlimit's protected assembly is the one production adapter composition that
+  deliberately orders this middleware itself, because authenticated quota
+  checking has to sit between admission and body extraction. It now reaches
+  `operational_http_with_quota`, `request_admission` and
+  `register_http_with_connect_info_in` through `low_level`; its public
+  `PreparedHttp`/`TestClient` surface, native quotas and
+  `quota_observation` are unchanged.
+
+  A composition that wrapped a taken router with an outer
+  `operational_http_with_quota` has no sealed equivalent: the boundary's own
+  observer is outermost and allocates no quota record, so a boundary request
+  carries no quota writer at all. Build such a composition entirely from
+  `low_level`, as Runlimit's assembly does.
+
 - Compose native Runledger and Runlimit grant requirements into one exact-role
   manifest. `batter::sqlx::verification::GrantFragment` carries only object
   declarations, and `FragmentObjectPolicy` carries the application's explicit

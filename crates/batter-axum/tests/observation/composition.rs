@@ -11,7 +11,8 @@ use axum::{
     routing::{any, get},
 };
 use batter_axum::{
-    RequestPolicy, ResponseConstructionBudget, liveness, observe_http, readiness, request_admission,
+    RequestPolicy, ResponseConstructionBudget,
+    low_level::{liveness, observe_http, readiness, request_admission},
 };
 use batter_core::{
     lifecycle::ShutdownHandle, operation::OperationContext, telemetry::with_current_dispatch,

@@ -4,17 +4,16 @@
 
 use crate::capture::Capture;
 use axum::{
-    Extension, Router,
+    Extension,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header, request::Parts},
-    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
 use batter_axum::{
-    CorrelationId, GuardedRouter, HttpBoundary, HttpObservationLevel, ProbePath, ReadinessDecision,
-    ReadinessPolicy, RequestInterruptionResponder, RequestPolicy, ResponseConstructionBudget,
-    default_readiness_level, operational_http_with_quota,
+    CorrelationId, GuardedRouter, HttpBoundary, HttpObservationLevel, InProcessClient, ProbePath,
+    ReadinessDecision, ReadinessPolicy, RequestInterruptionResponder, RequestPolicy,
+    ResponseConstructionBudget, default_readiness_level,
     quota_observation::{QuotaRecorder, QuotaTerminalFacts},
     readiness_status,
 };
@@ -35,7 +34,6 @@ use std::{
     task::Poll,
     time::Duration,
 };
-use tower::ServiceExt;
 use tracing::{Level, instrument::WithSubscriber};
 
 const SECOND: Duration = Duration::from_secs(1);
@@ -109,7 +107,7 @@ async fn rendered_app(
     admission: &ShutdownHandle,
     policy: ReadinessPolicy<io::Error>,
     rendered: &Rendered,
-) -> Router {
+) -> InProcessClient {
     let budget = ResponseConstructionBudget::new(SECOND).unwrap();
     HttpBoundary::new(RequestPolicy::new(admission.operation_admission(), budget))
         .with_rendered_readiness(
@@ -121,7 +119,7 @@ async fn rendered_app(
         .assemble(GuardedRouter::new().route("/work", get(|| async { "work" })))
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
 fn get_request(path: &str) -> Request<Body> {
@@ -139,13 +137,13 @@ async fn text(response: Response) -> String {
 /// Probe readiness and check that the renderer received `expected` and chose
 /// the body, while the boundary chose the status, decision and severity.
 async fn assert_rendered(
-    app: &Router,
+    app: &InProcessClient,
     policy: &ReadinessPolicy<io::Error>,
     rendered: &Rendered,
     expected: ReadinessDecision,
 ) {
     assert_eq!(policy.decision(), expected);
-    let response = app.clone().oneshot(get_request("/ready")).await.unwrap();
+    let response = app.request(get_request("/ready")).await;
     assert_eq!(rendered.lock().unwrap().last(), Some(&expected));
     assert_eq!(response.status(), readiness_status(expected));
     assert_eq!(
@@ -171,7 +169,7 @@ async fn assert_rendered(
 /// Neither answer of the application condition changes an unready lifecycle
 /// or dependency decision.
 async fn assert_unready_either_way(
-    app: &Router,
+    app: &InProcessClient,
     policy: &ReadinessPolicy<io::Error>,
     rendered: &Rendered,
     leases: &Leases,
@@ -381,11 +379,11 @@ async fn rendered_probes_answer_outside_admission_with_application_bodies() {
         ))
         .await
         .unwrap()
-        .into_router();
+        .in_process();
     let call = |path: &'static str| {
         let app = app.clone();
         async move {
-            let response = app.oneshot(get_request(path)).await.unwrap();
+            let response = app.request(get_request(path)).await;
             assert!(response.headers().contains_key("x-request-id"));
             (response.status(), text(response).await)
         }
@@ -434,8 +432,8 @@ fn rendered_liveness_completion_keeps_the_default_severity_under_info_filtering(
             .assemble(GuardedRouter::new().route("/work", get(|| async { "work" })))
             .await
             .unwrap()
-            .into_router();
-        let response = app.oneshot(get_request("/live")).await.unwrap();
+            .in_process();
+        let response = app.request(get_request("/live")).await;
         (response.status(), text(response).await)
     });
 
@@ -447,7 +445,7 @@ fn rendered_liveness_completion_keeps_the_default_severity_under_info_filtering(
     assert!(events[0].contains("status=200"), "{text}");
 }
 
-/// Try to claim the quota observer's private writer from cloned request
+/// Try to claim a quota observer's private writer from cloned request
 /// metadata, forging a denial with it when that succeeds.
 fn claims_quota_writer(parts: &Parts) -> String {
     let mut request = Request::from_parts(parts.clone(), Body::empty());
@@ -457,8 +455,14 @@ fn claims_quota_writer(parts: &Parts) -> String {
     format!("claimed={claimed}")
 }
 
+/// A boundary probe request carries no quota writer at all: the sealed
+/// assembly installs the plain observer outermost and nothing can wrap it with
+/// a quota observer, so a probe renderer has nothing to claim and the
+/// completion records no quota outcome. The reachable case, where an
+/// explicitly low-level outer quota wrapper does hold the writer while a
+/// renderer runs, is covered in `renderer_isolation`.
 #[test]
-fn rendered_probe_renderers_cannot_claim_the_quota_writer() {
+fn rendered_probe_renderers_cannot_claim_a_quota_writer() {
     let capture = Capture::new();
     let bodies = capture.block_on(async {
         let handle = ShutdownHandle::new_unapproved();
@@ -481,12 +485,10 @@ fn rendered_probe_renderers_cannot_claim_the_quota_writer() {
             .assemble(GuardedRouter::new().route("/work", get(|| async { "work" })))
             .await
             .unwrap()
-            .into_router()
-            // An application's outer quota observer puts the writer on every request.
-            .layer(middleware::from_fn(operational_http_with_quota));
+            .in_process();
         let mut bodies = Vec::new();
         for path in ["/live", "/ready"] {
-            bodies.push(text(app.clone().oneshot(get_request(path)).await.unwrap()).await);
+            bodies.push(text(app.request(get_request(path)).await).await);
         }
         bodies
     });
@@ -495,6 +497,6 @@ fn rendered_probe_renderers_cannot_claim_the_quota_writer() {
     let text = capture.text();
     let events = completions(&text);
     assert_eq!(events.len(), 2, "{text}");
-    let unchecked = |event: &&str| event.contains("quota_outcome=\"not_checked\"");
-    assert!(events.iter().all(unchecked), "{text}");
+    let unrecorded = |event: &&str| !event.contains("quota_outcome=");
+    assert!(events.iter().all(unrecorded), "{text}");
 }

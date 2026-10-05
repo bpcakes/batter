@@ -126,7 +126,7 @@ where
     ///     .with_group(RouteGroup::new("items", policy, items))?
     ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
     ///     .await?;
-    /// # let _ = assembled.into_router();
+    /// # let _ = assembled.in_process();
     /// # Ok(()) }
     /// ```
     ///

@@ -6,7 +6,7 @@ Status: accepted, 2026-09-10. Owning Bead: `batter-u0m`.
 
 A returned Axum `Response`, a finished HTTP message, a destroyed body, a closed
 socket, and a joined serving wrapper are different observations. Router-only
-tests cannot establish their relationship. `register_http` supervises the native
+tests cannot establish their relationship. `low_level::register_http` supervises the native
 `axum::serve(...).with_graceful_shutdown(...)` wrapper. Axum itself spawns
 connection tasks; Batter does not receive their join handles or individual errors.
 

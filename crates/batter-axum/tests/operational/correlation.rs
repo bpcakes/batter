@@ -9,10 +9,13 @@ use axum::{
 };
 use batter_axum::{
     CorrelationId, GuardedRouter, HttpBoundary, HttpFailure, ProbePath, RequestPolicy,
-    ResponseConstructionBudget, liveness, observe_http, operational_http,
-    operational_http_with_quota,
+    ResponseConstructionBudget,
+    low_level::{
+        liveness, observe_http, operational_http, operational_http_with_quota, request_admission,
+        request_scope,
+    },
     quota_observation::{QuotaRecorder, QuotaTerminalFacts},
-    render_infrastructure_failure, request_admission, request_scope,
+    render_infrastructure_failure,
 };
 use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
 use std::{
@@ -605,7 +608,7 @@ async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_pr
             .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
             .await
             .unwrap()
-            .into_router();
+            .in_process();
         let custom = HttpBoundary::new(policy())
             .with_liveness(ProbePath::new("/live").unwrap())
             .unwrap()
@@ -616,7 +619,7 @@ async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_pr
             )
             .await
             .unwrap()
-            .into_router();
+            .in_process();
         let nested = HttpBoundary::new(policy())
             .with_liveness(ProbePath::new("/live").unwrap())
             .unwrap()
@@ -630,16 +633,11 @@ async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_pr
             )
             .await
             .unwrap()
-            .into_router();
+            .in_process();
 
-        for router in [&default, &custom] {
+        for client in [&default, &custom] {
             assert_eq!(
-                router
-                    .clone()
-                    .oneshot(request("/live"))
-                    .await
-                    .unwrap()
-                    .status(),
+                client.request(request("/live")).await.status(),
                 StatusCode::OK,
                 "probe was gated while {phase}"
             );
@@ -651,7 +649,7 @@ async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_pr
                 StatusCode::SERVICE_UNAVAILABLE
             };
             assert_eq!(
-                router.clone().oneshot(method).await.unwrap().status(),
+                client.request(method).await.status(),
                 expected,
                 "method fallback escaped admission while {phase}"
             );
@@ -668,21 +666,17 @@ async fn canonical_boundary_gates_default_custom_and_method_fallbacks_but_not_pr
             StatusCode::SERVICE_UNAVAILABLE
         };
         assert_eq!(
-            default.oneshot(request("/missing")).await.unwrap().status(),
+            default.request(request("/missing")).await.status(),
             default_missing,
             "default fallback escaped admission while {phase}"
         );
         assert_eq!(
-            custom.oneshot(request("/missing")).await.unwrap().status(),
+            custom.request(request("/missing")).await.status(),
             custom_missing,
             "custom fallback escaped admission while {phase}"
         );
         assert_eq!(
-            nested
-                .oneshot(request("/nested/missing"))
-                .await
-                .unwrap()
-                .status(),
+            nested.request(request("/nested/missing")).await.status(),
             custom_missing,
             "nested fallback escaped admission while {phase}"
         );
