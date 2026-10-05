@@ -685,7 +685,11 @@ serving conversion. Each of those is a separate compile-fail control, as is the
 removed `into_router`: a returning escape cannot hide behind another that is
 still absent, so the `into_router` control does not chain a route call, and
 `Service<Request>` has its own control because `axum::serve` exercises only the
-make-service conversion. The eleven helpers moved to `low_level`, physically
+make-service conversion. The conversion and accessor traits are controlled by
+bound rather than by use, because an identity-return control rejects only an
+identity return: `Into<Router>`, `AsRef<Router>` and `Deref` each have their
+own unsatisfied-bound control on both types, and reading the private router
+field has its own control beside them. The eleven helpers moved to `low_level`, physically
 relocated where they were defined at the root so none can stay accidentally
 public there, with one compile-fail control per helper name rather than one per
 group, for the same reason. These controls assert non-compilation; rustdoc does

@@ -20,7 +20,9 @@ contracts, capability facts and validation history.
   implementation and no serving conversion, so no layer or route can be added
   outside the observer and nothing can be handed to `axum::serve`. Each of
   those escapes, and each relocated helper name at the crate root, has its own
-  compile-fail control rather than sharing a grouped one. It prepares
+  compile-fail control rather than sharing a grouped one, including bound
+  controls for `Into<Router>`, `AsRef<Router>` and `Deref` and a control over
+  the private router field. It prepares
   the router once, with the same `Router::with_state(())` preparation pinned
   Axum 0.8.9 performs in `into_make_service` and
   `into_make_service_with_connect_info`, then clones that prepared router per

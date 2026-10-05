@@ -1549,8 +1549,10 @@ The client keeps its router private, with no router conversion or accessor, no
 `Service`/`MakeService` implementation and no serving conversion, so no layer or
 route can be added outside the observer and neither value can be handed to
 `axum::serve`. One compile-fail control per escape rejects each of those,
-including the removed `into_router` and a `tower::Service<Request>`
-implementation. The client prepares the router once, with
+including the removed `into_router`, a `tower::Service<Request>`
+implementation, an `Into<Router>`, `AsRef<Router>` or `Deref` implementation
+that would reintroduce the router by bound, and reading the private router
+field. The client prepares the router once, with
 the same `Router::with_state(())` preparation pinned Axum 0.8.9 performs inside
 `into_make_service` and `into_make_service_with_connect_info`, then clones that
 prepared router per request, so a layer wrapping a lazily built endpoint is

@@ -528,9 +528,11 @@ protected serving, or consume it with `in_process()` into an opaque cloneable
 through this exact boundary. There is no third outcome: the router cannot be
 recovered, so no layer or route can land outside the observer. Independent
 compile-fail controls, one per escape, reject the removed `into_router`, a
-route added to the assembly, a wrapping layer, a `Router` conversion, handing
-either value to `axum::serve` and a `tower::Service<Request>` implementation;
-each relocated helper name has its own control against a crate-root import.
+route added to the assembly, a wrapping layer, an identity `Router` return,
+handing either value to `axum::serve`, a `tower::Service<Request>`
+implementation, an `Into<Router>`, `AsRef<Router>` or `Deref` implementation,
+and reading the private router field; each relocated helper name has its own
+control against a crate-root import.
 
 The client prepares the router once, with the same `Router::with_state(())`
 preparation pinned Axum 0.8.9 performs inside `into_make_service` and

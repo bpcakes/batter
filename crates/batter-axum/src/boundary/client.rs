@@ -33,6 +33,40 @@ use tower::ServiceExt;
 /// }
 /// ```
 ///
+/// Those two reject an identity return and a named taker. Each conversion and
+/// accessor trait that could reintroduce the router has its own control, and so
+/// does reading the field directly:
+///
+/// ```compile_fail,E0277
+/// fn converts_into_a_router<T: Into<axum::Router>>() {}
+///
+/// fn cannot_convert_into_a_router() {
+///     converts_into_a_router::<batter_axum::InProcessClient>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn borrows_a_router<T: AsRef<axum::Router>>() {}
+///
+/// fn cannot_borrow_a_router() {
+///     borrows_a_router::<batter_axum::InProcessClient>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn dereferences_to_a_router<T: std::ops::Deref<Target = axum::Router>>() {}
+///
+/// fn cannot_dereference_to_a_router() {
+///     dereferences_to_a_router::<batter_axum::InProcessClient>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// fn cannot_read_the_prepared_field(client: batter_axum::InProcessClient) {
+///     let _ = client.prepared;
+/// }
+/// ```
+///
 /// ```compile_fail,E0277
 /// async fn cannot_serve(listener: tokio::net::TcpListener, client: batter_axum::InProcessClient) {
 ///     axum::serve(listener, client).await.unwrap();

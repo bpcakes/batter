@@ -1736,12 +1736,19 @@ extracts it beside `Authenticated<P>`, with the response's generated identity
 
 ## Sealed HTTP assembly and the in-process client
 
-Separate compile-fail rustdocs on `AssembledHttp` reject, one each, a `Router`
-conversion, the removed `into_router`, appending a route to the assembly,
+Separate compile-fail rustdocs on `AssembledHttp` reject, one each, an identity
+`Router` return, the removed `into_router`, appending a route to the assembly,
 wrapping it in a layer, handing it to `axum::serve` and satisfying
-`tower::Service<Request>`. Matching per-escape controls on `InProcessClient`
-reject a `Router` conversion, taking its router, adding a route, adding a
-layer, serving it and satisfying `tower::Service<Request>`. One control per
+`tower::Service<Request>`, plus one control per conversion or accessor trait
+that would reintroduce the router — `Into<Router>`, `AsRef<Router>` and
+`Deref` — and one for reading the private router field. Matching per-escape
+controls on `InProcessClient` reject an identity `Router` return, taking its
+router, adding a route, adding a layer, serving it, satisfying
+`tower::Service<Request>`, the same three conversion and accessor bounds, and
+reading its private field. The trait controls assert the bound rather than a
+use, because an identity-return control rejects only an identity return; their
+`E0277` diagnostics name the unsatisfied bound, which is how the bounds are
+known to resolve rather than the controls passing on an unresolved path. One control per
 escape is deliberate: a chained control, such as `into_router().route(...)`,
 would keep failing on the first missing item and so could not detect the second
 one returning, and the `axum::serve` control alone exercises the make-service

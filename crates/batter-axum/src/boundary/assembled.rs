@@ -19,6 +19,40 @@ use std::fmt;
 /// }
 /// ```
 ///
+/// That control only rejects an identity return, so each conversion and
+/// accessor trait that could reintroduce the router has its own control, and so
+/// does reading the field directly:
+///
+/// ```compile_fail,E0277
+/// fn converts_into_a_router<T: Into<axum::Router>>() {}
+///
+/// fn cannot_convert_into_a_router() {
+///     converts_into_a_router::<batter_axum::AssembledHttp>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn borrows_a_router<T: AsRef<axum::Router>>() {}
+///
+/// fn cannot_borrow_a_router() {
+///     borrows_a_router::<batter_axum::AssembledHttp>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn dereferences_to_a_router<T: std::ops::Deref<Target = axum::Router>>() {}
+///
+/// fn cannot_dereference_to_a_router() {
+///     dereferences_to_a_router::<batter_axum::AssembledHttp>();
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// fn cannot_read_the_router_field(assembled: batter_axum::AssembledHttp) {
+///     let _ = assembled.router;
+/// }
+/// ```
+///
 /// Each of the following is a separate control, so one returning escape cannot
 /// hide behind another that is still absent. The pre-cutover `into_router`
 /// escape is gone:
