@@ -1795,6 +1795,30 @@ quota wrapper holds the request's writer is an explicitly low-level assembly, as
 Runlimit's protected boundary builds; `operational/renderer_isolation.rs` covers
 it beside the six boundary-owned renderer surfaces.
 
+## Probe response policy
+
+`operational/probe_policy.rs` covers
+`HttpBoundary::with_probe_response_policy`. One case drives GET, HEAD, POST and
+OPTIONS against both `/live` and `/ready`, with empty-body and with rendered
+probes, in the starting, ready and draining phases — 48 requests — and for each
+one requires the probe's own status (200 or 503 for GET and HEAD by phase and
+probe, 405 otherwise), a 36-character generated correlation header, and the
+selected policy's `no-store`, referrer and `nosniff` values each present exactly
+once, so a renderer applying the same policy cannot duplicate them. Every method
+rejection must also keep Axum's own `Allow: GET,HEAD` and empty body, which is
+how the layer is known not to change method or status semantics. The capture
+requires exactly one completion event per request.
+
+The remaining cases pin the boundaries of the selection. Probes stay outside
+admission: while unapproved, `/ready` answers its own empty-bodied 503 while a
+guarded route receives the admission envelope. Without the selection, probe
+responses carry none of those headers. With the selection but a group that has
+no browser policy, a probe method rejection is private while `/work` and an
+unmatched path are not, so the policy cannot leak out of the probe routers into
+guarded routes or the fallback. Selecting twice keeps the last policy. The filed
+consumer reproduction was also run against this API and passes with no router
+escape.
+
 ## Serving over a generic listener
 
 `operational/tcp_compatibility.rs` checks the original TCP function-pointer

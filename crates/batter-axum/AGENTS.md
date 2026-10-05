@@ -46,7 +46,9 @@ Windows support and non-Unix fallbacks are out of scope.
   retained route patterns share a request path under the pinned matchit 0.8.4
   rules, and `src/boundary/inventory.rs` confirms probe and group collisions
   through inert routers. `src/boundary/probe.rs` owns `ProbePath` and the
-  handlers of application-rendered probes.
+  handlers of application-rendered probes; the boundary's optional probe response
+  policy is layered around the probe routers in `src/boundary/assembly.rs`, before
+  anything is merged into them.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
   private-response headers with a typed same-origin/no-referrer choice. They do
@@ -215,6 +217,13 @@ them in the adapter. A probe renderer chooses only the body and headers: apply
 the readiness status, decision extension and severity, or the liveness 200
 and default severity, after it returns so no renderer can alter them, and reserve a rendered probe's
 path in the same duplicate and guarded-route checks outside admission.
+A selected probe response policy must stay a response-header choice: layer it
+around the probe routers only, never with `route_layer`, which would skip the
+method fallback the selection exists to cover, and never in a way that changes
+probe status, the rejection's `Allow` header, the readiness decision,
+correlation, observation or the admission boundary. Keep it opt-in, keep it off
+guarded routes and unmatched paths, and recheck `MethodRouter::layer` when the
+Axum pin changes.
 Keep `readiness_status` and `default_readiness_level` as the canonical reusable
 adapter mappings. The unready payload is named `ReadinessUnreadyReason`; do not
 introduce a `ReadinessReason` alias or re-export. Pre-cutover extension lookups

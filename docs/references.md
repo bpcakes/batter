@@ -4540,6 +4540,17 @@ layer that Axum applies lazily to a handler is constructed during preparation
 rather than on every request. `Router<()>`'s `Service<Request<B>>`
 implementation is always ready and dispatches through `call_with_state(req, ())`.
 
+Rechecked at the same date, for the probe response policy, the pinned
+[method routing source](https://docs.rs/axum/0.8.9/src/axum/routing/method_routing.rs.html):
+`MethodRouter::layer` maps the layer over every method handler *and* over
+`fallback`, and carries `allow_header` through unchanged, while
+`MethodRouter::route_layer` deliberately leaves the fallback alone. A probe is
+registered as `get(...)`, so the implicit `405` for an unsupported method comes
+from that fallback. `HttpBoundary::with_probe_response_policy` therefore layers
+the probes with `layer`, not `route_layer`, which is what lets the rejection
+gain the policy headers while keeping its status and `Allow` header. Recheck
+this when the Axum pin changes.
+
 `InProcessClient::new` therefore calls `with_state(())` once and clones that
 prepared router per request, which reproduces the served router's layer
 construction count exactly; the layer-count regression in

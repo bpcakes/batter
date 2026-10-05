@@ -1,7 +1,8 @@
 //! Library-owned HTTP composition with a fixed layer order.
 
 use crate::{
-    ReadinessDecision, ReadinessPolicy, low_level::liveness, readiness::dependency_readiness,
+    ReadinessDecision, ReadinessPolicy, browser::PrivateResponsePolicy, low_level::liveness,
+    readiness::dependency_readiness,
 };
 use assembly::Assembling;
 use axum::{Router, http::request::Parts, response::Response, routing::get};
@@ -156,6 +157,7 @@ pub struct HttpBoundary {
     groups: Vec<RouteGroup>,
     probes: Router,
     probe_paths: Vec<ProbePath>,
+    probe_policy: Option<PrivateResponsePolicy>,
     fallback: Option<fallback::RenderedFallback>,
 }
 
@@ -171,8 +173,74 @@ impl HttpBoundary {
             groups: Vec::new(),
             probes: Router::new(),
             probe_paths: Vec::new(),
+            probe_policy: None,
             fallback: None,
         }
+    }
+
+    /// Give every probe response the selected private-response policy,
+    /// including the method rejections no renderer sees.
+    ///
+    /// A probe is mounted outside every route group, so a group's
+    /// [`BrowserPolicy`] does not reach it, and an unsupported method on a
+    /// probe path is answered by the probe's own method fallback before any
+    /// renderer runs. Without this selection those `405` responses carry no
+    /// `Cache-Control`, `Referrer-Policy` or `X-Content-Type-Options`, which a
+    /// private administrative surface cannot allow. The boundary therefore
+    /// installs the policy around the probes itself, so a caller needs no
+    /// post-assembly layer and keeps the sealed [`AssembledHttp`] through
+    /// registration.
+    ///
+    /// This selects response headers only. Probe status, the readiness
+    /// decision, the `Allow` header of a method rejection, observation,
+    /// correlation and the rule that probes stay outside application
+    /// admission are all unchanged, and the policy applies to empty-body and
+    /// application-rendered probes alike. A renderer may still apply the same
+    /// policy itself; the values are set, not appended, so the headers stay
+    /// single-valued either way.
+    ///
+    /// The selection is deliberately opt-in and covers probes only: a boundary
+    /// without it keeps probe responses exactly as before, unmatched paths
+    /// remain the fallback's concern — a guarded fallback inside its group's
+    /// policy, or [`Self::with_rendered_fallback`]'s renderer — and guarded
+    /// routes keep their own group's [`BrowserPolicy`]. Selecting twice keeps
+    /// the last policy.
+    ///
+    /// ```
+    /// use axum::{body::Body, extract::Request, http::Method, routing::get};
+    /// use batter_core::lifecycle::ShutdownHandle;
+    /// use batter_axum::{
+    ///     GuardedRouter, HttpBoundary, ProbePath, RequestPolicy,
+    ///     ResponseConstructionBudget, browser::PrivateResponsePolicy,
+    /// };
+    /// use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let (control, approval) = ShutdownHandle::new_with_readiness_approval();
+    /// approval.approve();
+    /// let budget = ResponseConstructionBudget::new(Duration::from_secs(1))?;
+    /// let client = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+    ///     .with_probe_response_policy(PrivateResponsePolicy::NoReferrer)
+    ///     .with_liveness(ProbePath::new("/live")?)?
+    ///     .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
+    ///     .await?
+    ///     .in_process();
+    /// let rejected = client
+    ///     .request(
+    ///         Request::builder()
+    ///             .method(Method::POST)
+    ///             .uri("/live")
+    ///             .body(Body::empty())?,
+    ///     )
+    ///     .await;
+    /// // The method rejection keeps its own status and gains the policy.
+    /// assert_eq!(rejected.status(), 405);
+    /// assert_eq!(rejected.headers()["cache-control"], "no-store");
+    /// assert_eq!(rejected.headers()["referrer-policy"], "no-referrer");
+    /// # Ok(()) }
+    /// ```
+    pub fn with_probe_response_policy(mut self, policy: PrivateResponsePolicy) -> Self {
+        self.probe_policy = Some(policy);
+        self
     }
 
     /// Add a named route group with its own request and browser policy.
@@ -402,6 +470,7 @@ impl HttpBoundary {
             groups,
             probes,
             probe_paths,
+            probe_policy,
             fallback,
         } = self;
         if fallback.is_some() && guarded.declares_fallback {
@@ -414,7 +483,8 @@ impl HttpBoundary {
                     .map(|group| Assembling::new(group.name, group.policy, group.routes)),
             )
             .collect();
-        let router = assembly::assemble(probes, &probe_paths, groups, fallback).await?;
+        let router =
+            assembly::assemble(probes, probe_policy, &probe_paths, groups, fallback).await?;
         Ok(AssembledHttp { router })
     }
 }

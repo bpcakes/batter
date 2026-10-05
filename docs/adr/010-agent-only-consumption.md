@@ -732,6 +732,47 @@ mechanism; consumers can stay on their prior immutable revision until migrated.
 Fresh agent implementation and modification evaluations remain proposed and
 unexecuted for this API.
 
+### Probe response policy assessment (`batter-probe-response-policy-2wz4`)
+
+A consumer with a private administrative surface requires `no-store`, `nosniff`
+and a chosen referrer policy on every response it serves. The canonical path
+could not express that. `BrowserPolicy` belongs to a route group, and probes are
+mounted outside every group precisely so no admission gate can reach them, so a
+probe response was never covered. A renderer could apply the policy for GET and
+HEAD, but an unsupported method on a probe path is answered by the probe's own
+method fallback, which runs no renderer, so those `405` responses carried no
+policy headers at all. The only remedy was a post-assembly
+`PrivateResponsePolicy` layer over a router taken from the boundary — the escape
+`batter-tc9w.2` removes. That is the shape this ADR names as design debt from the
+other direction: the canonical path could not express a stated consumer
+invariant, so the supported composition and the escape hatch were not
+interchangeable, and sealing first would have left the consumer with no path at
+all.
+
+`with_probe_response_policy` keeps the selection typed and library-installed.
+The caller supplies an existing `PrivateResponsePolicy` value, and assembly
+layers it around the probe routers before anything is merged into them, so it
+reaches exactly the probes. Pinned Axum 0.8.9 `MethodRouter::layer` wraps the
+method fallback as well as each method handler and carries `allow_header`
+through unchanged, which is why the implicit `405` gains the headers while
+keeping its status and `Allow`. Nothing is added after assembly, so the sealed
+`AssembledHttp` still reaches registration, and the consumer's own filed
+reproduction passes with no router escape.
+
+The invariant the selection does not claim is as important as the one it does.
+It changes response headers only: it cannot alter probe status, the readiness
+decision, correlation, the single observation, or the rule that probes stay
+outside application admission, and a test drives GET, HEAD, POST and OPTIONS
+against both probes in the starting, ready and draining phases, with and without
+renderers, asserting each of those alongside exactly one completion event per
+request. It is deliberately opt-in, because a consumer that wants no private
+probe policy must keep its current responses, and deliberately scoped to probes,
+because unmatched paths belong to the guarded or rendered fallback and guarded
+routes to their group's policy; a test asserts the selection reaches neither.
+Selecting twice keeps the last policy, as `with_failure_renderer` does, since a
+replaced choice is not an invalid state. Fresh agent implementation and
+modification evaluations remain proposed and unexecuted for this API.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

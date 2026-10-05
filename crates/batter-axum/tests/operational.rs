@@ -6,6 +6,7 @@ mod operational {
     mod connect_info;
     mod correlation;
     mod lifecycle_readiness;
+    mod probe_policy;
     mod readiness;
     mod rendered_fallback;
     mod rendered_probes;

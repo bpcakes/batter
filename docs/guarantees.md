@@ -1376,7 +1376,24 @@ documents; none of what it allows is reachable through `HttpBoundary`.
 `AdmittedRequest`, described below. `low_level::observe_http` independently
 observes response construction without lifecycle state, a deadline or a context
 extension. The existing `low_level::request_scope` combines those behaviors for
-compatibility. `HttpBoundary`'s probe methods accept only opaque `ProbePath`
+compatibility. `HttpBoundary::with_probe_response_policy` selects a
+`PrivateResponsePolicy` for every probe response, including the method
+rejection that answers an unsupported method on a probe path before any
+renderer runs. A probe sits outside every route group, so a group's
+`BrowserPolicy` never reaches it, and without this selection those `405`
+responses carry no `Cache-Control`, `Referrer-Policy` or
+`X-Content-Type-Options`. The boundary installs the policy around the probe
+routers during assembly, so a private administrative surface needs no
+post-assembly layer and keeps the sealed `AssembledHttp` through registration.
+The selection changes response headers only: probe status, the readiness
+decision, the rejection's `Allow` header, correlation, the single observation
+and the rule that probes stay outside application admission are unchanged, and
+it applies to empty-body and application-rendered probes alike. Header values
+are set rather than appended, so a renderer applying the same policy leaves
+them single-valued. It is opt-in and covers probes alone: without it probe
+responses are exactly as before, unmatched paths remain the guarded or
+rendered fallback's concern, and guarded routes keep their own group's policy.
+`HttpBoundary`'s probe methods accept only opaque `ProbePath`
 values; captures, wildcards and other non-literal route syntax are rejected
 before a route can be mounted outside admission. Reusing a path across liveness or
 readiness declarations returns a sanitized `ProbeRegistrationError` before

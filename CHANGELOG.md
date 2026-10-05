@@ -8,6 +8,29 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Give probe responses a selected private-response policy.
+  `HttpBoundary::with_probe_response_policy(PrivateResponsePolicy)` applies that
+  policy to every probe response, including the method rejection that answers an
+  unsupported method on a probe path before any renderer runs. A probe sits
+  outside every route group, so a group's `BrowserPolicy` never reached it, and
+  those `405` responses previously carried no `Cache-Control`,
+  `Referrer-Policy` or `X-Content-Type-Options`. A private administrative
+  surface had to keep a post-assembly `PrivateResponsePolicy` layer over a taken
+  router; the boundary now installs the policy around the probe routers during
+  assembly, so that surface keeps the sealed `AssembledHttp` through
+  registration instead. This is the capability `batter-probe-response-policy-2wz4`
+  required before sealing.
+
+  The selection changes response headers only. Probe status, the readiness
+  decision, the rejection's `Allow` header, correlation, the single observation
+  and probes staying outside application admission are unchanged; it applies to
+  empty-body and application-rendered probes alike, and header values are set
+  rather than appended, so a renderer applying the same policy leaves them
+  single-valued. It is opt-in and scoped to probes: a boundary without it keeps
+  probe responses exactly as before, unmatched paths remain the guarded or
+  rendered fallback's concern, and guarded routes keep their own group's policy.
+  Selecting twice keeps the last policy.
+
 - Breaking: seal HTTP assembly and move deliberately caller-ordered composition
   into `batter_axum::low_level` (also `batter::axum::low_level`).
   `AssembledHttp::into_router` is removed. Assembly now has exactly two

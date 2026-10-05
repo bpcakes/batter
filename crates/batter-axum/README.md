@@ -269,6 +269,26 @@ fn items(converted: Router) -> Result<GuardedRouter, RouteInventoryError> {
 }
 ```
 
+### Private probe responses
+
+A probe is mounted outside every route group, so a group's `BrowserPolicy`
+never reaches it, and an unsupported method on a probe path is answered by the
+probe's own method fallback before any renderer runs. A private administrative
+surface that requires `no-store`, `nosniff` and a chosen referrer policy on
+every response therefore selects
+`with_probe_response_policy(PrivateResponsePolicy::…)`. The boundary installs
+that policy around the probe routers during assembly, covering GET, HEAD and
+the implicit `405`, so nothing has to be layered after assembly and the sealed
+`AssembledHttp` still goes through registration.
+
+The selection changes response headers only. Probe status, the readiness
+decision, the rejection's `Allow` header, correlation, the single observation
+and probes staying outside application admission are all unchanged, and it
+applies to empty-body and rendered probes alike; a renderer may apply the same
+policy itself without duplicating headers. It is opt-in and scoped to probes:
+without it probe responses are unchanged, unmatched paths stay with the guarded
+or rendered fallback, and guarded routes keep their group's policy.
+
 ### Application probe bodies and readiness conditions
 
 `with_liveness` and `with_readiness` answer with empty bodies. When the

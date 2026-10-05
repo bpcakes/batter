@@ -6,7 +6,7 @@ use super::{
     fallback::RenderedFallback,
     inventory,
 };
-use crate::low_level::operational_http;
+use crate::{browser::PrivateResponsePolicy, low_level::operational_http};
 use axum::{Router, middleware};
 
 /// One route group's native routes and admitted routers during assembly.
@@ -87,6 +87,13 @@ impl Assembling {
 
 /// Validate the groups, the default one first, then compose them.
 ///
+/// When a probe response policy is selected, it is installed around the probe
+/// routers before anything is merged into them, so it covers every probe
+/// method — including the method fallback that answers an unsupported method
+/// without running a renderer — while reaching no group route and no
+/// unmatched-path fallback. `MethodRouter::layer` wraps that fallback and
+/// keeps its `Allow` header, so statuses are unchanged.
+///
 /// Named groups are merged into the probes and the default group last, with
 /// correlation and the single observer outermost on every route. Admitted
 /// routers are never merged into that router. When there are any, its only
@@ -96,6 +103,7 @@ impl Assembling {
 /// fallbacks move behind that dispatch, with their policy and the observer.
 pub(super) async fn assemble(
     probes: Router,
+    probe_policy: Option<PrivateResponsePolicy>,
     probe_paths: &[ProbePath],
     groups: Vec<Assembling>,
     fallback: Option<RenderedFallback>,
@@ -104,7 +112,11 @@ pub(super) async fn assemble(
     let mut groups = groups.into_iter();
     let default = groups.next().expect("the default group is assembled first");
     let mut admitted = Vec::new();
-    let mut router = probes;
+    // Only the probe routes exist here, so this reaches exactly them.
+    let mut router = match probe_policy {
+        Some(policy) => probes.layer(policy),
+        None => probes,
+    };
     for group in groups {
         router = router.merge(group.install(&mut admitted));
     }

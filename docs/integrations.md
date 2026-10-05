@@ -247,6 +247,15 @@ futures retain WARN. The HTTP example selects INFO for Starting/Draining probe
 responses through `ReadinessPolicy`, leaving Stopped and unhealthy-dependency
 probes while Ready at WARN.
 
+`HttpBoundary::with_probe_response_policy` gives every probe response a
+selected `PrivateResponsePolicy`, including the method rejection that answers
+an unsupported method before any renderer runs; a group's `BrowserPolicy` does
+not reach probes, which sit outside every group. The boundary installs it
+around the probe routers during assembly, so a private surface needs no
+post-assembly layer. It selects headers only, leaving status, the readiness
+decision, the rejection's `Allow` header, correlation, observation and the
+admission boundary unchanged, and it is opt-in and scoped to probes.
+
 Assembly is sealed: an `AssembledHttp` is registered for protected serving or
 consumed with `in_process()` into an opaque cloneable `InProcessClient` whose
 `request(&self, Request<Body>) -> Response` dispatches through that exact
