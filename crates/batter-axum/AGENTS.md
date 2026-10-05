@@ -12,14 +12,28 @@ Windows support and non-Unix fallbacks are out of scope.
 
 ## Key entrypoints
 
-- `src/lib.rs` contains `RequestPolicy`, `observe_http`, `request_admission`,
-  `ResponseConstructionBudget`, `HttpObservationLevel`, the combined
-  `request_scope` compatibility entry point, probes, and failures.
+- `src/lib.rs` contains the supported policy and value types: `RequestPolicy`,
+  `ResponseConstructionBudget`, `HttpObservationLevel`, `HttpFailure` and
+  `RequestInterruptionResponder`. It defines no request middleware.
+- `src/low_level.rs` is the public `low_level` namespace: the physically
+  relocated `observe_http`, `request_admission`, the combined `request_scope`
+  compatibility entry point and the status-only `readiness`/`liveness` probe
+  handlers, plus re-exports of `operational_http`,
+  `operational_http_with_quota`, `dependency_readiness` and the three
+  `register_http*` helpers. These eleven items have no crate-root alias; keep
+  them reachable only here, and keep the supported types, `AdmittedRequest`,
+  `CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
+  `default_readiness_level`, the `browser` primitives and `quota_observation`
+  at the root, where the canonical path uses them.
 - `src/admitted.rs` owns the private admission record, the `AdmittedRequest`
   extractor that guarded handlers use instead of raw extensions and its
   sanitized `AdmittedRequestRejection`.
 - `src/boundary.rs` owns the canonical `HttpBoundary`/`AssembledHttp`
-  composition and `src/boundary/guarded.rs` the `GuardedRouter` builder. Probe
+  composition, sealed so assembly is consumed only into protected registration
+  or `in_process()`, and `src/boundary/client.rs` owns the resulting opaque
+  `InProcessClient`, including the one-time router preparation and the
+  compile-fail controls that reject recovering, mutating or serving it.
+  `src/boundary/guarded.rs` owns the `GuardedRouter` builder. Probe
   routes remain outside admission while the guarded router's default, custom,
   nested, and method fallbacks remain inside it. `src/boundary/fallback.rs`
   provides the alternative metadata-only unmatched-path renderer outside
@@ -42,14 +56,15 @@ Windows support and non-Unix fallbacks are out of scope.
   its single internal composition entry has no admission policy. Its shared
   private state lets nested adapter middleware contribute retained facts to
   the one outer completion event.
-- `src/correlation.rs` owns opt-in `operational_http`, generated `CorrelationId`
+- `src/correlation.rs` owns opt-in `operational_http` (published through
+  `low_level`), generated `CorrelationId`
   and the standard infrastructure renderer; it composes the existing observer once.
   Its private operational marker carries the generated identity that admission
   records. Its private `renderer_parts` filter removes quota, observation and
   operational ownership state and the admission record at every application
   renderer boundary, retaining public metadata.
 - `src/quota_observation.rs` owns bounded facts and a single-take writer for
-  `operational_http_with_quota`; its consuming start/finish states prevent terminal
+  `low_level::operational_http_with_quota`; its consuming start/finish states prevent terminal
   facts from being downgraded. Native quota execution belongs in batter-runlimit.
 - `src/readiness.rs` translates the foundation's valid readiness decision into
   HTTP status, response extensions and observation severity, and applies them
@@ -169,11 +184,18 @@ overlap decisions confirmed by native routing of each pattern alone when its
 witness survives request URI construction unchanged; otherwise reject the
 overlap before native merging. Update
 the pattern analysis and its Axum comparison test whenever the Axum or matchit
-pin changes. Apply `observe_http` after
-assembling routes/fallback; use `request_admission` inside it. If generated
-correlation is required, `operational_http` must be outside admission,
-`request_scope`, deadlines, authentication and any other short-circuiting
-middleware. The outermost observer owns emission and nested observation
+pin changes. Apply `low_level::observe_http` after
+assembling routes/fallback; use `low_level::request_admission` inside it. If
+generated correlation is required, `low_level::operational_http` must be outside
+admission, `request_scope`, deadlines, authentication and any other
+short-circuiting middleware. Keep the eleven relocated helpers out of the crate
+root: a root alias would make a known-invalid composition look equivalent to the
+protected path, which ADR-010 forbids. `AssembledHttp` must keep exactly two
+outcomes, and `InProcessClient` must keep its router private, implement no Tower
+service and add no route, layer or serving conversion. Prepare that router once,
+with the same `Router::with_state(())` preparation the pinned Axum
+make-service conversions perform, and recheck the pin when it changes. An
+in-process response is not serving evidence; keep real socket and TLS tests. The outermost observer owns emission and nested observation
 entrypoints perform only their other duties.
 Do not log cause contents or untrusted request fields. `operational_http` must
 replace inbound header, Tower and adapter identities before observation and must
@@ -224,7 +246,7 @@ forwarding headers. Scan every Cookie field and reject target ambiguity. Keep
 cookie/url dependency types private. Mutation checks are browser signals, not
 authentication or complete CSRF protection. Apply one `PrivateResponsePolicy`
 layer, or the same-origin compatibility `private_response`, outside application
-rejection middleware and inside `observe_http`; an outer short-circuit cannot
+rejection middleware and inside `low_level::observe_http`; an outer short-circuit cannot
 be retroactively decorated. Keep `no-store` and `nosniff` fixed, keep the
 referrer choice limited to policies that send nothing cross-origin, and never
 weaken an existing all-`no-referrer` field.

@@ -408,15 +408,22 @@ code. Register the
 handlers need the accepted peer. Both take any `axum::serve::Listener`, so an
 application-owned TLS listener serves the same boundary through the same
 registration, acknowledgement, drain and cleanup contract while keeping its
-certificates, protocol versions and handshake policy. The individual middlewares
-(`request_admission`, `observe_http`, `request_scope`, `operational_http`)
-remain available for compositions the boundary cannot express and document the
-ordering they leave with the caller. Only the outermost observer emits an HTTP
-completion event; nested Batter middleware contributes retained adapter facts
-to its shared private state. A plain observer may wrap `operational_http`, but
-admission, `request_scope`, deadlines and other rejecting middleware must remain
-inside it to retain generated correlation on every outcome. Routes added after
-assembly sit outside the boundary.
+certificates, protocol versions and handshake policy. For in-process requests,
+consume the `AssembledHttp` with `in_process()` and call
+`client.request(request).await`: the returned `InProcessClient` is opaque and
+cloneable, prepares the router once, and keeps it private, so nothing can add a
+route or layer outside the observer or hand the assembly to `axum::serve`. An
+in-process response is not serving evidence; keep real socket tests for that.
+The individual middlewares (`request_admission`, `observe_http`,
+`request_scope`, `operational_http`) remain available through
+`batter::axum::low_level` for compositions the boundary cannot express and
+document the ordering they leave with the caller; they have no alias at the
+module root, so a canonical composition cannot reach one by import alone. Only
+the outermost observer emits an HTTP completion event; nested Batter middleware
+contributes retained adapter facts to its shared private state. A plain
+observer may wrap `operational_http`, but admission, `request_scope`, deadlines
+and other rejecting middleware must remain inside it to retain generated
+correlation on every outcome. Routes cannot be added after assembly at all.
 Guarded handlers and route layers take one `admitted: AdmittedRequest`
 extractor: `admitted.context()` is the request's `OperationContext` for nested
 operations and admission waits, `admitted.correlation_id()` the generated
@@ -484,7 +491,7 @@ middleware outside the policy so it is available even for readiness/deadline
 failures. `HttpBoundary` runs application layers inside admission, so its
 renderer receives the adapter's `CorrelationId` and request parts but no
 application metadata. `HttpBoundary` installs
-`operational_http`, which generates a UUID and replaces incoming header/Tower/
+`low_level::operational_http`, which generates a UUID and replaces incoming header/Tower/
 adapter identities; it emits one HTTP completion with an event-local ID even
 when INFO spans are disabled. Read `AdmittedRequest::correlation_id` for
 explicit metadata propagation.

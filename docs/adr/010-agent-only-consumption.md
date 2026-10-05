@@ -256,8 +256,9 @@ so one path served with two budgets by method must use one group, and unmatched
 paths under a named group's prefix receive the default group's policy. The
 overlap analysis mirrors the pinned matchit 0.8.4 rules and needs its Axum
 comparison test re-run whenever that pin changes. Routers built outside
-`GuardedRouter` (`batter-tc9w.8`), real consumer ports (`batter-tc9w.9`) and
-sealing the low-level middleware (`batter-tc9w.2`) remain separate tasks.
+`GuardedRouter` (`batter-tc9w.8`) and real consumer ports (`batter-tc9w.9`)
+were separate tasks; `batter-tc9w.2` has since sealed assembly and moved the
+low-level middleware, assessed below.
 Fresh-agent usability evaluation is proposed and unexecuted.
 
 ### Reference HTTP boundary assessment (`batter-tc9w.4`)
@@ -285,9 +286,9 @@ trusted metadata and fails closed without it, so reversing those two route
 layers fails every business request rather than weakening one; ordinary tests
 also pin admission first while starting, ready and draining.
 
-The in-process client still takes the router through `AssembledHttp::into_router`
-until `batter-tc9w.2` supplies an opaque request-only client; the reference
-type keeps it private and unservable. These checks prove local ordering only,
+The in-process client now consumes the assembly with
+`AssembledHttp::in_process` and wraps the adapter's opaque `InProcessClient`;
+the reference type keeps both private and unservable. These checks prove local ordering only,
 not proxy trust or any remote client behaviour. Fresh-agent usability
 evaluation is proposed and unexecuted.
 
@@ -454,11 +455,11 @@ of looking equivalent to the protected path. The shared renderer filter also
 removes the record, so a request redispatched from renderer metadata is not
 admitted. Axum's handler traits do not expose which extractors a handler
 uses, so assembly cannot reject an extracting handler outside admission. On the
-canonical path every guarded route and fallback is admitted, which leaves routes
-added to the router taken from `AssembledHttp::into_router` and low-level
-compositions as the ways to reach the rejection. `batter-tc9w.2` owns replacing
-`into_router`. The facade HTTP example and the reference service now extract
-the admitted request. Tests cover every group's own context and generated
+canonical path every guarded route and fallback is admitted. Appending a route
+to an assembled boundary is no longer expressible at all since `batter-tc9w.2`
+sealed assembly, so a low-level composition, or a router with no Batter layer,
+is the way to reach the rejection. The facade HTTP example and the reference
+service now extract the admitted request. Tests cover every group's own context and generated
 identity, the rejection outside admission and in both unsupported lower-level
 orders, forged and replaced raw extensions, and redispatch from every renderer.
 They fail when the renderer filter keeps the record or when admission takes the
@@ -655,6 +656,71 @@ identity or history-protection guarantee follows from a narrower column list.
 Installed trigger ownership, routine bodies and application-added trigger
 dependencies stay explicit prerequisites. Fresh agent implementation and
 modification evaluations remain proposed and unexecuted for this API.
+
+### Sealed HTTP assembly assessment (`batter-tc9w.2`)
+
+`AssembledHttp::into_router` handed the complete boundary back as a bare
+`Router`. Every supported composition was therefore one method call away from a
+known-invalid one: a route appended afterwards bypassed correlation, the
+observer and every group's admission; a layer added afterwards sat outside the
+single observer; a second observer added that way silently observed nothing;
+and the value could be handed to `axum::serve` or any other serving path with
+no listener contract. The crate root published the eleven deliberately
+caller-ordered helpers beside the canonical types, so `observe_http`,
+`request_admission`, `request_scope`, `operational_http`,
+`operational_http_with_quota`, `readiness`, `liveness`,
+`dependency_readiness`, `register_http`, `register_http_in` and
+`register_http_with_connect_info_in` looked equivalent to `HttpBoundary` at the
+import site. Both are exactly the shape this ADR names as design debt: a public
+API offering a supported composition and a known-invalid ordering or nesting
+through the same surface, documented rather than prevented.
+
+Assembly now has exactly two outcomes. `register_in` and
+`register_with_connect_info_in` consume it into protected serving, and the new
+consuming `in_process()` returns an opaque cloneable `InProcessClient` whose
+only operation is `request(&self, Request<Body>) -> Response`. The router is
+unreachable: no conversion or accessor, no `Deref`/`AsRef`, no public field, no
+route or layer method, no Tower `Service` or `MakeService` implementation and no
+serving conversion. Every one of those is an independent compile-fail control,
+as is the removed `into_router`. The eleven helpers moved to `low_level`,
+physically relocated where they were defined at the root so none can stay
+accidentally public there, with four compile-fail controls over root imports.
+Choosing the weaker contract is now a visible, deliberate import, which is what
+this ADR asks of a low-level escape hatch.
+
+The remedy also had to keep the sealed path honest about what it proves. The
+client prepares its router once, with the same `Router::with_state(())`
+preparation pinned Axum performs in `into_make_service` and
+`into_make_service_with_connect_info`, so the layer-construction-count
+regression still holds while make-service stays unexposed. A request is polled,
+and its future destroyed, inside the caller's task under the boundary's
+existing dispatch and observation ownership, with nothing spawned, so the
+aborted-request destruction tests continue to observe exactly one completion.
+An in-process response establishes response construction only, so the real
+socket and TLS serving tests are retained unchanged and the facade example's
+phase test now serves the actual router through protected registration in a
+separately owned harness supervisor rather than taking its router.
+
+What remains with the caller is explicit. A request may carry explicitly
+inserted synthetic extensions, including a chosen `ConnectInfo`; the client
+constrains direct API conversions, not an application's own transport wrapper,
+and no local type can make a synthetic peer evidence of a remote client. The
+reference service therefore keeps its own wrapper, which replaces
+`ConnectInfo<SocketAddr>` on every request and exposes neither the adapter
+client nor a router. Runlimit's protected assembly stays the one production
+composition that orders this middleware itself, because authenticated quota
+checking has to sit between admission and body extraction, which `HttpBoundary`
+does not express; it now imports from `low_level` and is named as that seam in
+the adapter guide. One consequence is deliberate: because the boundary's own
+observer is outermost and the plain observer allocates no quota record, a
+boundary request carries no quota writer at all, so a composition that needs an
+outer quota wrapper belongs entirely in `low_level`. The renderer-isolation
+coverage follows that reachability rather than keeping a scenario the seal
+removed. This is a public hard cut with no deprecated aliases and no
+`into_router` shim, so an invalid API path cannot return as a rollback
+mechanism; consumers can stay on their prior immutable revision until migrated.
+Fresh agent implementation and modification evaluations remain proposed and
+unexecuted for this API.
 
 ## Recurring example review defects
 

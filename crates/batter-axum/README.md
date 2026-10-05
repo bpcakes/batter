@@ -81,7 +81,7 @@ policy keeps an existing all-`no-referrer` field, so an outer layer cannot
 weaken an inner `NoReferrer` choice. The compatibility
 `middleware::from_fn(browser::private_response)` applies `SameOriginReferrer`.
 Put mutation rejection inside the layer so rejection responses receive the
-headers, and put `observe_http` outside it to observe the final
+headers, and put `low_level::observe_http` outside it to observe the final
 application-selected status once. An outer short-circuit that does not call the
 private layer cannot receive its headers.
 
@@ -254,8 +254,8 @@ route matches consults each admitted router's inspection copy, at the root
 fallback where it carries no path captures; the default group's root and nested
 fallbacks then answer the requests no admitted router serves. Assembly prepares
 an admitted router, and when there are any the default group's fallbacks, once,
-as `into_make_service` prepares a served router, so their layers are built once
-and their state is shared by all of their requests.
+as a served router or an `InProcessClient` is prepared, so their layers are built
+once and their state is shared by all of their requests.
 
 ```rust
 use axum::Router;
@@ -349,7 +349,7 @@ their meaning; route groups are additive.
   layered around a route group, with `GroupPolicy::browser` and the chosen
   `PrivateResponsePolicy`. The boundary places the headers outside the group's
   admission, so admission and deadline rejections receive them too.
-- Replace separately layered `request_admission` routers that differ only in
+- Replace separately layered `low_level::request_admission` routers that differ only in
   their budget with one `RouteGroup` per `RequestPolicy`.
 - Drop prose ordering rules such as "add admission before merging probes" or
   "keep exactly one HTTP observer": the boundary installs that order.
@@ -359,13 +359,30 @@ their meaning; route groups are additive.
 
 ## Low-level composition and observation
 
-For compositions the boundary cannot express, `request_admission`, `observe_http`
-and `operational_http` remain available. Admission records an `AdmittedRequest`
-only with `operational_http` outside it; otherwise its handlers receive the
-sanitized rejection. `observe_http` requires no lifecycle
-state and adds no deadline or operation context. `RequestPolicy` keeps readiness
-and deadlines combined. The existing `request_scope` remains the combined
-observation/admission compatibility entry point. Only the outermost observer
+Deliberately caller-ordered composition lives in `batter_axum::low_level`
+(reachable as `batter::axum::low_level`), and nowhere else: the eleven helpers
+`observe_http`, `request_admission`, `request_scope`, `operational_http`,
+`operational_http_with_quota`, `readiness`, `liveness`,
+`dependency_readiness`, `register_http`, `register_http_in` and
+`register_http_with_connect_info_in` have no crate-root aliases. Importing one
+from the root does not compile. Policy and value types, `AdmittedRequest`,
+`CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
+`default_readiness_level`, the `browser` primitives and `quota_observation`
+keep their existing supported paths, because the canonical path uses them too.
+
+Choosing `low_level` means taking the ordering, placement and lifecycle
+obligations each helper documents. A composition built there can put a probe
+inside an admission gate, add a second observer, place correlation inside
+admission so rejections lose their generated identity, or append routes that
+bypass every layer; none of that is reachable through `HttpBoundary`.
+
+For compositions the boundary cannot express, `low_level::request_admission`,
+`low_level::observe_http` and `low_level::operational_http` remain available.
+Admission records an `AdmittedRequest` only with `operational_http` outside it;
+otherwise its handlers receive the sanitized rejection. `observe_http` requires
+no lifecycle state and adds no deadline or operation context. `RequestPolicy`
+keeps readiness and deadlines combined. The existing `low_level::request_scope`
+remains the combined observation/admission compatibility entry point. Only the outermost observer
 emits a completion event, so stacking observers cannot duplicate HTTP events.
 Nested Batter middleware publishes retained adapter facts, including quota
 facts, into that observer's shared private state in either operational/quota
@@ -404,8 +421,8 @@ Axum's `Router::layer` runs after routing and covers only routes/fallback alread
 assembled when applied. Routes appended later bypass it. A service wrapper
 outside routing records `<unmatched>` because the matched route template is not
 yet available. The [runnable example](../batter/examples/http_service.rs) uses
-`HttpBoundary`; the [`observe_http` rustdoc](src/lib.rs) demonstrates the manual
-composition.
+`HttpBoundary`; the [`observe_http` rustdoc](src/low_level.rs) demonstrates the
+manual composition.
 
 `with_failure_renderer` accepts application-controlled response mapping with a
 snapshot of request parts. Establish trusted metadata outside the boundary.
@@ -446,7 +463,7 @@ HTTP traffic; application probe and timing policy remain explicit.
 
 ## Opt-in operational composition
 
-Use `operational_http` instead of outer `observe_http` to generate a UUID, replace
+Use `low_level::operational_http` instead of an outer `observe_http` to generate a UUID, replace
 incoming x-request-id and Tower/adapter identity extensions, observe once, and
 replace the response ID header. Admitted handlers read it with
 `AdmittedRequest::correlation_id` and propagate its string explicitly to nested
@@ -463,7 +480,7 @@ headers are never fallback identity. Handlers may call
 envelope. Default Problem JSON and `with_failure_renderer` remain available;
 the last renderer selection wins. Domain error mappings remain application-owned.
 
-Mount `dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
+Mount `low_level::dependency_readiness::<E>` with `ReadinessPolicy::new(handle.status(), health)`
 outside admission. Its response has an empty body and 200 only when lifecycle is
 Ready, the latest read-only health snapshot is healthy and every application
 condition added with `with_condition` is satisfied. The response extension
@@ -481,22 +498,54 @@ atomic with future drain.
 
 Inside protected `Startup::scoped` composition, bind a native `TcpListener`, assemble the
 guarded `GuardedRouter` through `HttpBoundary`, then call
-`AssembledHttp::register_in(scope, "http", listener)`; `register_http_in(scope,
-"http", listener, router)` accepts a plain router for compositions outside the
-boundary. It acknowledges when
+`AssembledHttp::register_in(scope, "http", listener)`;
+`low_level::register_http_in(scope, "http", listener, router)` accepts a plain
+router for compositions outside the boundary. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
 failure and abandoned startup release the listener. Native accept errors are
 retried by Axum. Streaming bodies can outlive response deadlines and direct
 wrapper abortion; dependent cleanup remains conservatively skipped on forced
-abort. `register_http(&mut Supervisor, ...)` remains source-compatible for the
-lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
+abort. `low_level::register_http(&mut Supervisor, ...)` keeps the direct
+supervisor signature for the lower-level path. The [operational tests](tests/operational.rs) exercise that limit with a
 real socket and explicitly release the outstanding body afterward.
 
 When authentication admission needs the direct TCP peer, replace the registration
-call with `register_http_with_connect_info_in(scope, "http", listener, router)`.
+call with `AssembledHttp::register_with_connect_info_in(scope, "http", listener)`,
+or `low_level::register_http_with_connect_info_in(scope, "http", listener, router)`
+for a plain router.
 Middleware and handlers can then extract native `ConnectInfo<SocketAddr>`, including
 the peer port, through Axum's make-service conversion. Behind a proxy this is the
 proxy's socket address; forwarding headers do not select it. Authentication and
 proxy trust remain application policy. The listener ownership and shutdown
 contract is identical to `register_http_in`; existing plain registrations keep
 their behavior. See the helper's rustdoc for a complete registration example.
+
+## Sealed assembly and the in-process request client
+
+`assemble` returns an `AssembledHttp` with exactly two outcomes. Register it for
+protected serving, or consume it with `in_process()` into an opaque cloneable
+`InProcessClient` whose `request(&self, Request<Body>) -> Response` dispatches
+through this exact boundary. There is no third outcome: the router cannot be
+recovered, so no layer or route can land outside the observer. Independent
+compile-fail controls reject the removed `into_router`, a late route, a
+wrapping layer, a `Router` conversion and handing either value to
+`axum::serve`, and the raw helpers cannot be imported from the crate root.
+
+The client prepares the router once, with the same `Router::with_state(())`
+preparation pinned Axum 0.8.9 performs inside `into_make_service` and
+`into_make_service_with_connect_info`, and clones that prepared router per
+request; a layer wrapping a lazily built endpoint is therefore constructed once.
+Make-service stays unexposed. A request is polled, and its future destroyed,
+inside the caller's task under the boundary's existing dispatch and observation
+ownership, with nothing spawned, so dropping a `request` future drops the
+boundary's future as a dropped connection would. Requests may carry explicitly
+inserted synthetic extensions, such as a chosen `ConnectInfo`; choosing them,
+and their meaning, belongs to the caller.
+
+An in-process response establishes response construction only. It is not
+evidence of serving, an accepted connection, a listener, a TLS handshake, a
+remote peer, body streaming or a stopped detached descendant; keep real socket
+tests for those. The boundary installs the plain observer, which allocates no
+quota record, so a boundary request carries no quota writer at all; a
+composition that needs an outer quota wrapper belongs entirely in `low_level`,
+as Runlimit's protected assembly does.

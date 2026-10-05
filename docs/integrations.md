@@ -214,13 +214,17 @@ matching generated request-ID headers/body fields. Readiness requires
 all registered components to acknowledge startup before traffic is admitted.
 
 `RequestPolicy` retains one combined readiness/deadline policy. The independent
-observer requires neither that policy nor lifecycle state. `request_scope` keeps
-the combined observation/admission behavior for compatibility. Only the outermost
+observer requires neither that policy nor lifecycle state.
+`low_level::request_scope` keeps the combined observation/admission behavior for
+compatibility. The deliberately caller-ordered middleware and registration
+helpers live only in `batter_axum::low_level` (`batter::axum::low_level`), with
+no crate-root aliases, and each documents the obligation it leaves with the
+caller. Only the outermost
 observer emits a completion event; observation and operational ownership use
 distinct request extensions, so a plain outer observer cannot suppress inner
 server-generated correlation while stacked observers cannot duplicate HTTP
-events. Admission and deadlines do short-circuit: `operational_http` must be
-outside `request_scope`, `request_admission` and other rejecting middleware if
+events. Admission and deadlines do short-circuit: `low_level::operational_http`
+must be outside `request_scope`, `request_admission` and other rejecting middleware if
 every outcome requires its generated identity. All entry points use
 `batter::telemetry::with_current_dispatch` inside their async bodies to preserve
 first-poll capture and full future/span destruction under the captured dispatcher.
@@ -243,6 +247,18 @@ futures retain WARN. The HTTP example selects INFO for Starting/Draining probe
 responses through `ReadinessPolicy`, leaving Stopped and unhealthy-dependency
 probes while Ready at WARN.
 
+Assembly is sealed: an `AssembledHttp` is registered for protected serving or
+consumed with `in_process()` into an opaque cloneable `InProcessClient` whose
+`request(&self, Request<Body>) -> Response` dispatches through that exact
+boundary. The client keeps its router private, implements no Tower service, and
+offers no route, layer, conversion or serving method, so nothing can land
+outside the observer and neither value can reach `axum::serve`. It prepares the
+router once with the same preparation pinned Axum performs for a served router,
+then clones it per request, and polls each request inside the caller's task
+under the boundary's existing dispatch and observation ownership, spawning
+nothing. An in-process response establishes response construction only; keep
+real socket and TLS tests for serving.
+
 Keep authentication, authorization, request body limits, CORS, TLS, proxy trust,
 trace-header validation, tenant resolution, and user admission policy external.
 Choose middleware order deliberately: Batter's timer starts inside its middleware,
@@ -250,16 +266,17 @@ not before an outer queue. The example is GET-only and not an upload/streaming
 security template. See [guarantees](guarantees.md).
 
 `AssembledHttp::register_in` registers a boundary-assembled router through
-constrained startup authority; `register_http_in` accepts a plain bound listener
-and initialized `Router` for compositions outside the boundary. Its opt-in companion
-`register_http_with_connect_info_in` accepts the same arguments and installs native
+constrained startup authority; `low_level::register_http_in` accepts a plain
+bound listener and initialized `Router` for compositions outside the boundary.
+Its opt-in companion `low_level::register_http_with_connect_info_in` accepts the
+same arguments and installs native
 `ConnectInfo` for direct-peer admission middleware and handlers.
 For a `TcpListener`, and for a TLS listener over TCP, that is
 `ConnectInfo<SocketAddr>`: the address and port come from the accepted TCP socket
 and forwarded headers do not
 select identity. Behind a proxy this is the proxy address. Authentication and proxy
-trust remain application-owned. `register_http` retains its exact
-`&mut Supervisor` signature for lower-level compatibility. All three register a
+trust remain application-owned. `low_level::register_http` keeps its exact
+`&mut Supervisor` signature for the lower-level path. All three register a
 direct critical component through the adapter's own serving implementation. It acknowledges startup on its first task poll; bind
 errors remain in owned `Startup`. Registration failure and abandoned startup
 release the listener. Native Axum accept errors are retried internally.
@@ -283,7 +300,7 @@ records why a normally returned server can permit cleanup after forced request
 cancellation, while an aborted wrapper leaves body/socket ownership uncertain and
 requires skipped cleanup. The direct result does not aggregate connection errors.
 
-`operational_http` is an opt-in replacement for outer `observe_http` plus identity
+`low_level::operational_http` is an opt-in replacement for an outer `observe_http` plus identity
 glue. It composes exactly one existing observer inside server UUID correlation.
 Tower HTTP's native UUID generator is used directly; its header-preserving setter
 is unsuitable at an untrusted boundary. Incoming x-request-id values, Tower
@@ -309,7 +326,7 @@ Foundation `ReadinessEvaluator<E>` combines `HealthReader<E>` with
 observation into `DependencyReadiness`, then returns `ReadinessDecision::Ready`
 or `Unready(ReadinessUnreadyReason)`. A dependency reason accepts only
 `DependencyUnreadyReason`, never Healthy. `ReadinessPolicy<E>` wraps that evaluator
-for Axum; mount `dependency_readiness::<E>` outside admission. The empty-body
+for Axum; mount `low_level::dependency_readiness::<E>` outside admission. The empty-body
 200/503 response carries the typed decision and a separate severity extension.
 Unknown, probe-failed, probe-timed-out, stale and stopped-writer dependency states
 are unready; Starting/Draining default INFO, Stopped/dependency failures default
@@ -354,10 +371,12 @@ operation assembles that boundary and registers it with
 `AssembledHttp::register_with_connect_info_in` together; the production root does not make
 an independent transport-registration choice. Serving settings pin this policy
 in code and carry it through preparation; no environment setting selects a trust
-mode. The lower-level `in_process_client` awaits the same assembly and returns
-an opaque non-service type that requires a synthetic peer for every request; it
-owns insertion of the exact `ConnectInfo<SocketAddr>` and cannot expose or
-serve its inner router.
+mode. The lower-level `in_process_client` awaits the same assembly, consumes it
+with `AssembledHttp::in_process` and wraps the adapter's opaque
+`InProcessClient` in a non-service type that requires a synthetic peer for every
+request; it owns insertion of the exact `ConnectInfo<SocketAddr>` and exposes
+neither the adapter client nor a router. A synthetic peer is not evidence of a
+remote client, and an in-process response is not evidence of serving.
 `MockConnectInfo` affects extractor
 fallback only and is not read by this middleware. No proxy allowlist/CIDR mode
 or forwarded-header parser exists. Liveness and readiness are boundary probes
@@ -781,7 +800,7 @@ commit-outcome-loss and commit-timeout are `PossiblyConsumed`; pre-commit failur
 are `NotConsumed`. The native exhaustive errors no longer contain a
 post-commit malformed-response variant. Native decisions are built before commit.
 Nested quota check or work interruption is a lifecycle failure, not a fixed
-quota rejection. `request_admission` captures the original request metadata without the
+quota rejection. `low_level::request_admission` captures the original request metadata without the
 private quota writer, shared observation state and operational ownership marker,
 and installs an opaque interruption responder for the inner
 adapter; it uses
@@ -794,7 +813,8 @@ when later work is interrupted.
 serving under process ownership. Its `in_process` alternative requires a synthetic
 peer per request and cannot be served or converted into a Router. Probe routes
 are explicitly unguarded. All routes, probes and fallback are covered by one root
-observer with fresh server correlation. Opt-in `operational_http_with_quota` retains
+observer with fresh server correlation. Opt-in
+`low_level::operational_http_with_quota` retains
 bounded quota facts across outer timeout or drop and publishes them into the
 one outer observer in either supported operational-wrapper order. The adapter claims the sole
 writer before protected handlers and discards it before public probe handlers;
