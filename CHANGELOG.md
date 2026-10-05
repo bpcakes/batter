@@ -18,7 +18,9 @@ contracts, capability facts and validation history.
   private: it has no router conversion or accessor, no `Deref`/`AsRef`, no
   public field, no route or layer method, no Tower `Service`/`MakeService`
   implementation and no serving conversion, so no layer or route can be added
-  outside the observer and nothing can be handed to `axum::serve`. It prepares
+  outside the observer and nothing can be handed to `axum::serve`. Each of
+  those escapes, and each relocated helper name at the crate root, has its own
+  compile-fail control rather than sharing a grouped one. It prepares
   the router once, with the same `Router::with_state(())` preparation pinned
   Axum 0.8.9 performs in `into_make_service` and
   `into_make_service_with_connect_info`, then clones that prepared router per

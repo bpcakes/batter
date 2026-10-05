@@ -18,22 +18,56 @@
 //! root, where the canonical path also uses them.
 //!
 //! None of these helpers has a crate-root alias, so a canonical composition
-//! cannot reach one by import alone:
+//! cannot reach one by import alone. Each alias has its own control, so a
+//! single returning alias cannot hide behind another still-absent name:
 //!
 //! ```compile_fail,E0432
-//! use batter_axum::{observe_http, request_admission, request_scope};
+//! use batter_axum::observe_http;
 //! ```
 //!
 //! ```compile_fail,E0432
-//! use batter_axum::{operational_http, operational_http_with_quota};
+//! use batter_axum::request_admission;
 //! ```
 //!
 //! ```compile_fail,E0432
-//! use batter_axum::{dependency_readiness, liveness, readiness};
+//! use batter_axum::request_scope;
 //! ```
 //!
 //! ```compile_fail,E0432
-//! use batter_axum::{register_http, register_http_in, register_http_with_connect_info_in};
+//! use batter_axum::operational_http;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::operational_http_with_quota;
+//! ```
+//!
+//! The status-only probe handler's name is also the adapter's private
+//! `readiness` module, so the crate root rejects it as private rather than as
+//! absent; either way it is not reachable, and a returning public function
+//! alias would make this import resolve.
+//!
+//! ```compile_fail,E0603
+//! use batter_axum::readiness;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::liveness;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::dependency_readiness;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::register_http;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::register_http_in;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::register_http_with_connect_info_in;
 //! ```
 
 use crate::{

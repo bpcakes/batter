@@ -19,16 +19,24 @@ use std::fmt;
 /// }
 /// ```
 ///
-/// The pre-cutover `into_router` escape is gone, so a late route cannot be
-/// appended outside the boundary:
+/// Each of the following is a separate control, so one returning escape cannot
+/// hide behind another that is still absent. The pre-cutover `into_router`
+/// escape is gone:
+///
+/// ```compile_fail,E0599
+/// fn cannot_take_the_router(assembled: batter_axum::AssembledHttp) {
+///     let _ = assembled.into_router();
+/// }
+/// ```
+///
+/// A route cannot be appended to the assembly either, which the control above
+/// would not establish on its own:
 ///
 /// ```compile_fail,E0599
 /// use axum::routing::get;
 ///
 /// fn cannot_append_a_late_route(assembled: batter_axum::AssembledHttp) {
-///     let _ = assembled
-///         .into_router()
-///         .route("/late", get(|| async { "outside the boundary" }));
+///     let _ = assembled.route("/late", get(|| async { "outside the boundary" }));
 /// }
 /// ```
 ///
@@ -44,7 +52,7 @@ use std::fmt;
 /// }
 /// ```
 ///
-/// It is not a Tower service and cannot be handed to `axum::serve`:
+/// It cannot be handed to `axum::serve`:
 ///
 /// ```compile_fail,E0277
 /// async fn cannot_serve_directly(
@@ -52,6 +60,17 @@ use std::fmt;
 ///     assembled: batter_axum::AssembledHttp,
 /// ) {
 ///     axum::serve(listener, assembled).await.unwrap();
+/// }
+/// ```
+///
+/// And it is not a request service of its own, which the `axum::serve` control
+/// does not establish because that path needs the make-service conversion:
+///
+/// ```compile_fail,E0277
+/// fn requires_a_request_service<S: tower::Service<axum::extract::Request>>() {}
+///
+/// fn cannot_be_a_request_service() {
+///     requires_a_request_service::<batter_axum::AssembledHttp>();
 /// }
 /// ```
 #[must_use = "register the assembled boundary or consume it into a request client"]

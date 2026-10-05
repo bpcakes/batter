@@ -681,10 +681,16 @@ consuming `in_process()` returns an opaque cloneable `InProcessClient` whose
 only operation is `request(&self, Request<Body>) -> Response`. The router is
 unreachable: no conversion or accessor, no `Deref`/`AsRef`, no public field, no
 route or layer method, no Tower `Service` or `MakeService` implementation and no
-serving conversion. Every one of those is an independent compile-fail control,
-as is the removed `into_router`. The eleven helpers moved to `low_level`,
-physically relocated where they were defined at the root so none can stay
-accidentally public there, with four compile-fail controls over root imports.
+serving conversion. Each of those is a separate compile-fail control, as is the
+removed `into_router`: a returning escape cannot hide behind another that is
+still absent, so the `into_router` control does not chain a route call, and
+`Service<Request>` has its own control because `axum::serve` exercises only the
+make-service conversion. The eleven helpers moved to `low_level`, physically
+relocated where they were defined at the root so none can stay accidentally
+public there, with one compile-fail control per helper name rather than one per
+group, for the same reason. These controls assert non-compilation; rustdoc does
+not enforce the annotated error codes, so the codes document the expected cause
+and are not themselves the assertion.
 Choosing the weaker contract is now a visible, deliberate import, which is what
 this ADR asks of a low-level escape hatch.
 

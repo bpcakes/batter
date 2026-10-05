@@ -39,6 +39,18 @@ use tower::ServiceExt;
 /// }
 /// ```
 ///
+/// It is also not a request service in its own right, which `axum::serve`
+/// alone would not establish because that path needs the make-service
+/// conversion:
+///
+/// ```compile_fail,E0277
+/// fn requires_a_request_service<S: tower::Service<axum::extract::Request>>() {}
+///
+/// fn cannot_be_a_request_service() {
+///     requires_a_request_service::<batter_axum::InProcessClient>();
+/// }
+/// ```
+///
 /// No route or layer can be added after assembly, so nothing can end up outside
 /// the observer:
 ///

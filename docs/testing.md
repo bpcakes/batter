@@ -1736,14 +1736,26 @@ extracts it beside `Authenticated<P>`, with the response's generated identity
 
 ## Sealed HTTP assembly and the in-process client
 
-Independent compile-fail rustdocs on `AssembledHttp` reject the removed
-`into_router`, appending a late route, wrapping the assembly in a layer and
-handing it to `axum::serve`. Matching controls on `InProcessClient` reject a
-`Router` conversion, taking its router, adding a route, adding a layer and
-serving it. Four controls on the `low_level` module reject importing each group
-of the eleven relocated helpers from the crate root, and a facade control
-rejects `batter::axum::register_http` while a positive case pins
-`batter::axum::low_level::register_http`'s signature. A positive facade example
+Separate compile-fail rustdocs on `AssembledHttp` reject, one each, a `Router`
+conversion, the removed `into_router`, appending a route to the assembly,
+wrapping it in a layer, handing it to `axum::serve` and satisfying
+`tower::Service<Request>`. Matching per-escape controls on `InProcessClient`
+reject a `Router` conversion, taking its router, adding a route, adding a
+layer, serving it and satisfying `tower::Service<Request>`. One control per
+escape is deliberate: a chained control, such as `into_router().route(...)`,
+would keep failing on the first missing item and so could not detect the second
+one returning, and the `axum::serve` control alone exercises the make-service
+conversion rather than a request service. For the same reason the `low_level`
+module carries one control per relocated helper name, eleven in all, rather
+than one per group; a facade control rejects `batter::axum::register_http`
+while a positive case pins `batter::axum::low_level::register_http`'s
+signature. These controls assert only that the code does not compile — rustdoc
+accepts a `compile_fail` block whose emitted error code differs from the
+annotation, verified by deliberately mis-annotating one — so the annotated
+codes document the expected cause rather than carrying the assertion. The
+status-only probe handler's control expects `E0603` because the adapter's
+private `readiness` module shares that name at the root; a returning public
+function alias would still make the import resolve. A positive facade example
 assembles a boundary, consumes it with `in_process()` and asserts a 200 from the
 client using only `batter::axum` paths; the adapter's own `in_process` rustdoc
 does the same through `batter_axum`.
@@ -2043,7 +2055,13 @@ the reference policy tests establish the exact SocketAddr-to-IP step. The databa
 `InProcessRequestClient`, which wraps the adapter's `InProcessClient`, cannot be
 served, exposes neither that client nor a router, and requires the helper to
 select a synthetic peer for every request. It requires every parsed JSON
-`request_id` to equal the generated response header.
+`request_id` to equal the generated response header. The other ordinary cases
+dispatch straight to the adapter client, so one case drives a request through
+the reference wrapper itself: it hands the wrapper a request that already
+carries a different `ConnectInfo<SocketAddr>` and requires the reported trusted
+peer to be the selected one, then repeats with a request carrying none. That
+pins unconditional replacement rather than insert-when-absent; weakening the
+wrapper to insert only when absent makes the first assertion fail.
 
 The application-owned `http::register_in` function fuses boundary assembly
 with native peer-aware registration. An ordinary non-database real-socket case

@@ -526,6 +526,76 @@ async fn absent_optional_headers_work_but_absent_native_peer_fails_closed() {
     assert!(!body.to_string().contains("198.51.100.50"));
 }
 
+/// Wrap the same deterministic boundary in the application's own request
+/// client, so its explicit synthetic-peer policy is exercised rather than
+/// bypassed by dispatching straight to the adapter client.
+async fn wrapped_boundary_app(
+    routes: GuardedRouter,
+    handle: &ShutdownHandle,
+) -> InProcessRequestClient {
+    InProcessRequestClient {
+        application: boundary_app(routes, handle).await,
+    }
+}
+
+#[tokio::test]
+async fn the_request_client_replaces_a_peer_the_caller_already_supplied() {
+    let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
+    approval.approve();
+    let routes = GuardedRouter::new().route(
+        "/inspect",
+        get(
+            |Extension(metadata): Extension<TrustedRequestMetadata>| async move {
+                Json(json!({
+                    "request_id": metadata.correlation_id().as_str(),
+                    "peer_ip": metadata.peer().ip(),
+                }))
+            },
+        ),
+    );
+    let client = wrapped_boundary_app(routes, &handle).await;
+    let supplied = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7));
+    let selected = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 9)), 41_000);
+    assert_ne!(supplied, selected.ip());
+
+    // The request already carries a different peer. Each call owns the
+    // synthetic transport assertion, so the client must replace that value
+    // rather than defer to whatever it was handed.
+    let response = client
+        .request(
+            direct_request(
+                "GET",
+                "/inspect",
+                Body::empty(),
+                supplied,
+                Some("Bearer fake-token"),
+                true,
+            ),
+            selected,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, body) = json_response(response).await;
+    assert_eq!(body["peer_ip"], selected.ip().to_string());
+    assert_ne!(body["peer_ip"], supplied.to_string());
+
+    // A request carrying no peer of its own receives the selected one too, so
+    // the replacement is unconditional rather than insert-when-absent.
+    let response = client
+        .request(
+            HttpRequest::builder()
+                .uri("/inspect")
+                .header(header::AUTHORIZATION, "Bearer fake-token")
+                .body(Body::empty())
+                .unwrap(),
+            selected,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, body) = json_response(response).await;
+    assert_eq!(body["peer_ip"], selected.ip().to_string());
+}
+
 fn supervisor() -> Supervisor {
     let second = Duration::from_secs(1);
     let cleanup = CleanupBudget::new(second, second, second).unwrap();

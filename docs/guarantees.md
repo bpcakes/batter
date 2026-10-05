@@ -1376,9 +1376,9 @@ documents; none of what it allows is reachable through `HttpBoundary`.
 `AdmittedRequest`, described below. `low_level::observe_http` independently
 observes response construction without lifecycle state, a deadline or a context
 extension. The existing `low_level::request_scope` combines those behaviors for
-compatibility. Its probe methods accept only opaque `ProbePath` values;
-captures, wildcards and other non-literal route syntax are rejected before a
-route can be mounted outside admission. Reusing a path across liveness or
+compatibility. `HttpBoundary`'s probe methods accept only opaque `ProbePath`
+values; captures, wildcards and other non-literal route syntax are rejected
+before a route can be mounted outside admission. Reusing a path across liveness or
 readiness declarations returns a sanitized `ProbeRegistrationError` before
 Axum routing, rather than panicking during startup. Guarded application routes
 enter the canonical path through `GuardedRouter`, which retains route patterns
@@ -1548,8 +1548,9 @@ The client keeps its router private, with no router conversion or accessor, no
 `Deref`/`AsRef`, no public field, no route or layer method, no Tower
 `Service`/`MakeService` implementation and no serving conversion, so no layer or
 route can be added outside the observer and neither value can be handed to
-`axum::serve`. Independent compile-fail controls reject each of those,
-including the removed `into_router`. The client prepares the router once, with
+`axum::serve`. One compile-fail control per escape rejects each of those,
+including the removed `into_router` and a `tower::Service<Request>`
+implementation. The client prepares the router once, with
 the same `Router::with_state(())` preparation pinned Axum 0.8.9 performs inside
 `into_make_service` and `into_make_service_with_connect_info`, then clones that
 prepared router per request, so a layer wrapping a lazily built endpoint is
