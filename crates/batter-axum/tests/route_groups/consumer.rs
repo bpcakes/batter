@@ -6,13 +6,12 @@ use super::support::{
     exact_origin, from_origin, request, request_policy,
 };
 use axum::{
-    Router,
     body::Body,
     http::{Method, Request, StatusCode},
     routing::{MethodFilter, MethodRouter, get, on},
 };
 use batter_axum::{
-    GuardedRouter, HttpBoundary, ProbePath, ReadinessPolicy, RouteGroup,
+    GuardedRouter, HttpBoundary, InProcessClient, ProbePath, ReadinessPolicy, RouteGroup,
     browser::PrivateResponsePolicy,
 };
 use batter_core::{
@@ -28,7 +27,6 @@ use std::{
     time::Duration,
 };
 use tokio::time::Instant;
-use tower::ServiceExt;
 
 fn sleeping(filter: MethodFilter, duration: Duration, body: &'static str) -> MethodRouter {
     on(filter, move || async move {
@@ -41,7 +39,7 @@ async fn service(
     handle: &ShutdownHandle,
     readiness: HealthReader<Infallible>,
     saves: &Arc<AtomicUsize>,
-) -> Router {
+) -> InProcessClient {
     let default = GuardedRouter::new()
         .route(
             "/reports",
@@ -97,12 +95,12 @@ async fn service(
         .assemble(default)
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
-async fn timed(app: &Router, request: Request<Body>) -> (StatusCode, Duration, String) {
+async fn timed(app: &InProcessClient, request: Request<Body>) -> (StatusCode, Duration, String) {
     let started = Instant::now();
-    let response = app.clone().oneshot(request).await.unwrap();
+    let response = app.request(request).await;
     assert!(response.headers().contains_key("x-request-id"));
     (
         response.status(),
@@ -113,18 +111,10 @@ async fn timed(app: &Router, request: Request<Body>) -> (StatusCode, Duration, S
 
 /// Before readiness every group rejects through its own admission; probes and
 /// the account group's private headers stay in place.
-async fn assert_starting(app: &Router) {
-    let live = app
-        .clone()
-        .oneshot(request(Method::GET, "/live"))
-        .await
-        .unwrap();
+async fn assert_starting(app: &InProcessClient) {
+    let live = app.clone().request(request(Method::GET, "/live")).await;
     assert_eq!(live.status(), StatusCode::OK);
-    let ready = app
-        .clone()
-        .oneshot(request(Method::GET, "/ready"))
-        .await
-        .unwrap();
+    let ready = app.clone().request(request(Method::GET, "/ready")).await;
     assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body_text(ready).await, "", "readiness is not admission");
     for (method, path) in [
@@ -132,23 +122,22 @@ async fn assert_starting(app: &Router) {
         (Method::PUT, "/uploads/report.csv"),
         (Method::GET, "/missing"),
     ] {
-        let response = app.clone().oneshot(request(method, path)).await.unwrap();
+        let response = app.request(request(method, path)).await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
         assert_not_private(response.headers());
         assert!(body_text(response).await.contains("service_unavailable"));
     }
     let account = app
         .clone()
-        .oneshot(request(Method::GET, "/account/profile"))
-        .await
-        .unwrap();
+        .request(request(Method::GET, "/account/profile"))
+        .await;
     assert_eq!(account.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_private(account.headers(), "no-referrer");
 }
 
 /// The same two-second work times out under the default budget but not under
 /// the upload budget, which expires at its own three seconds.
-async fn assert_group_deadlines(app: &Router) {
+async fn assert_group_deadlines(app: &InProcessClient) {
     let (status, elapsed, body) = timed(app, request(Method::GET, "/reports")).await;
     assert_eq!((status, elapsed), (StatusCode::SERVICE_UNAVAILABLE, SECOND));
     assert!(body.contains("deadline_exceeded"), "{body}");
@@ -168,16 +157,15 @@ async fn assert_group_deadlines(app: &Router) {
 
 /// The private group rejects a cross-site mutation before its handler and
 /// sends its private headers on every response.
-async fn assert_browser_group(app: &Router, saves: &Arc<AtomicUsize>) {
+async fn assert_browser_group(app: &InProcessClient, saves: &Arc<AtomicUsize>) {
     let page = app
         .clone()
-        .oneshot(request(Method::GET, "/account/profile"))
-        .await
-        .unwrap();
+        .request(request(Method::GET, "/account/profile"))
+        .await;
     assert_eq!(page.status(), StatusCode::OK);
     assert_private(page.headers(), "no-referrer");
     let forged = from_origin(Method::POST, "/account/profile", "https://attacker.example");
-    let rejected = app.clone().oneshot(forged).await.unwrap();
+    let rejected = app.request(forged).await;
     assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
     assert_private(rejected.headers(), "no-referrer");
     assert_eq!(
@@ -187,9 +175,8 @@ async fn assert_browser_group(app: &Router, saves: &Arc<AtomicUsize>) {
     assert_eq!(count(saves), 0);
     let accepted = app
         .clone()
-        .oneshot(from_origin(Method::POST, "/account/profile", ORIGIN))
-        .await
-        .unwrap();
+        .request(from_origin(Method::POST, "/account/profile", ORIGIN))
+        .await;
     assert_eq!(accepted.status(), StatusCode::OK);
     assert_private(accepted.headers(), "no-referrer");
     assert_eq!(body_text(accepted).await, "saved");
@@ -198,20 +185,12 @@ async fn assert_browser_group(app: &Router, saves: &Arc<AtomicUsize>) {
 
 /// Default-group responses carry no private headers, and unmatched paths,
 /// including one under the account prefix, reach the default fallback.
-async fn assert_default_group(app: &Router) {
-    let item = app
-        .clone()
-        .oneshot(request(Method::GET, "/items/7"))
-        .await
-        .unwrap();
+async fn assert_default_group(app: &InProcessClient) {
+    let item = app.clone().request(request(Method::GET, "/items/7")).await;
     assert_eq!(item.status(), StatusCode::OK);
     assert_not_private(item.headers());
     for path in ["/missing", "/account/missing"] {
-        let response = app
-            .clone()
-            .oneshot(request(Method::GET, path))
-            .await
-            .unwrap();
+        let response = app.clone().request(request(Method::GET, path)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert_not_private(response.headers());
         assert_eq!(body_text(response).await, "application fallback");

@@ -29,7 +29,6 @@ use std::{
     },
     time::Duration,
 };
-use tower::ServiceExt;
 
 struct Records {
     pool: sqlx::PgPool,
@@ -119,15 +118,15 @@ async fn quota_query_and_atomic_workflow_compose_in_one_registered_handler() {
     let guarded = GuardedRouter::new()
         .route("/records", post(record))
         .with_state(records.clone());
-    let router = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
+    let client = HttpBoundary::new(RequestPolicy::new(control.operation_admission(), budget))
         .assemble(guarded)
         .await
         .expect("guarded routes assemble")
-        .into_router();
+        .in_process();
     let mut statuses = Vec::new();
     for _ in 0..2 {
         let request = Request::post("/records").body(Body::empty()).unwrap();
-        statuses.push(router.clone().oneshot(request).await.unwrap().status());
+        statuses.push(client.request(request).await.status());
     }
     assert_eq!(
         statuses,

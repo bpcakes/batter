@@ -7,13 +7,12 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    AdmittedRequest, BoundaryAssemblyError, CorrelationId, GuardedRouter, HttpBoundary, ProbePath,
-    RequestPolicy, ResponseConstructionBudget, RouteGroup, RouteInventory,
-    browser::PrivateResponsePolicy,
+    AdmittedRequest, BoundaryAssemblyError, CorrelationId, GuardedRouter, HttpBoundary,
+    InProcessClient, ProbePath, RequestPolicy, ResponseConstructionBudget, RouteGroup,
+    RouteInventory, browser::PrivateResponsePolicy,
 };
 use batter_core::lifecycle::ShutdownHandle;
 use std::time::Duration;
-use tower::ServiceExt;
 
 fn policy(control: &ShutdownHandle) -> RequestPolicy {
     RequestPolicy::new(
@@ -56,7 +55,7 @@ fn fallback_keeps_envelope_prefix_headers_and_one_observation_through_lifecycle(
                 for (method, path, expected) in cases(state == 1) {
                     let response = app
                         .clone()
-                        .oneshot(
+                        .request(
                             Request::builder()
                                 .method(method)
                                 .uri(path)
@@ -64,8 +63,7 @@ fn fallback_keeps_envelope_prefix_headers_and_one_observation_through_lifecycle(
                                 .body(Body::empty())
                                 .unwrap(),
                         )
-                        .await
-                        .unwrap();
+                        .await;
                     count += 1;
                     assert_eq!(
                         response.status(),
@@ -163,7 +161,7 @@ fn unreachable_fallback() -> StatusCode {
     panic!("undeclared fallback must never run")
 }
 
-async fn app(control: &ShutdownHandle, declared: bool) -> Router {
+async fn app(control: &ShutdownHandle, declared: bool) -> InProcessClient {
     let routes = if declared {
         GuardedRouter::from_router(
             Router::new()
@@ -184,7 +182,7 @@ async fn app(control: &ShutdownHandle, declared: bool) -> Router {
         .assemble(GuardedRouter::new().route("/default", get(work)))
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
 fn cases(ready: bool) -> [(Method, &'static str, StatusCode); 7] {

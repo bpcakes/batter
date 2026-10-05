@@ -11,7 +11,9 @@ use axum::{
     response::Response,
     routing::get,
 };
-use batter_axum::{HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http};
+use batter_axum::{
+    HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, low_level::observe_http,
+};
 use batter_core::lifecycle::ShutdownHandle;
 use std::time::Duration;
 use tower::ServiceExt;

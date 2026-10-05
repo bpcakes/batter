@@ -187,7 +187,9 @@ def facade_source(selected: tuple[str, ...]) -> str:
     if "at-rest" in chosen:
         lines.insert(1, "use batter::at_rest::{BorrowedSealedPayload, Context, Keyring, MacKey};")
     if "axum" in chosen or "runlimit-axum" in chosen:
-        lines.insert(1, "use batter::axum::{RequestPolicy, register_http_in};")
+        # Supported paths only: assembly is sealed into protected serving or
+        # an opaque request client, and the raw helpers live in low_level.
+        lines.insert(1, "use batter::axum::{AssembledHttp, HttpBoundary, InProcessClient, RequestPolicy};")
     if chosen & ({"sqlx", "sqlx-test-support"} | RUNLEDGER_SELECTORS):
         lines.insert(1, "use batter::sqlx::{PgLease, PgAtomicScope, PgReadOnlySnapshot, run_atomic, pool_in};")
     if chosen & RUNLEDGER_SELECTORS:
@@ -539,7 +541,6 @@ def run_composed_handler_case(cargo: list[str], host: str, root_lock: bytes,
         "runlimit-memory = { path = " + json.dumps(str(ROOT / "runlimit/runlimit-memory")) + " }",
         'sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres"] }',
         'tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }',
-        'tower = { version = "0.5.3", features = ["util"] }',
     ]
     (case / "Cargo.toml").write_text(
         manifest("facade-composed-consumer", dependencies, COMPOSED_FEATURES))

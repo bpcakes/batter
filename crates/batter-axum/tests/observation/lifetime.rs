@@ -11,8 +11,8 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    HttpObservationLevel, RequestPolicy, ResponseConstructionBudget, observe_http,
-    request_admission, request_scope,
+    HttpObservationLevel, RequestPolicy, ResponseConstructionBudget,
+    low_level::{observe_http, request_admission, request_scope},
 };
 use batter_core::{
     lifecycle::ShutdownHandle,

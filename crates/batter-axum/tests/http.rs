@@ -7,7 +7,8 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    HttpFailure, RequestPolicy, ResponseConstructionBudget, liveness, readiness, request_scope,
+    HttpFailure, RequestPolicy, ResponseConstructionBudget,
+    low_level::{liveness, readiness, request_scope},
 };
 use batter_core::{
     lifecycle::ShutdownHandle,

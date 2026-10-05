@@ -71,7 +71,7 @@ async fn readiness_responses() -> [String; 4] {
         batter::registration::RegistrationTarget::registration(&mut supervisor),
     )
     .unwrap();
-    let app = router(
+    let assembled = router(
         handle.status(),
         handle.operation_admission(),
         ResponseConstructionBudget::new(Duration::from_secs(1)).unwrap(),
@@ -79,20 +79,19 @@ async fn readiness_responses() -> [String; 4] {
         BulkheadCapacity::new(32).unwrap(),
     )
     .await
-    .unwrap()
-    .into_router();
+    .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let (stop_tx, stop_rx) = oneshot::channel();
-    // This listener remains available to inspect all phases of the actual
-    // example router. It does not model the binary's connection shutdown.
-    let mut server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = stop_rx.await;
-            })
-            .await
-    });
+    // The actual example router is served through its own protected
+    // registration, inside a separately owned harness lifecycle. That keeps
+    // the socket answering through every phase of the probed process,
+    // including Stopped, which registering into the probed supervisor could
+    // not do. It does not model the binary's connection shutdown.
+    let mut harness = Supervisor::new(support::shutdown_budget());
+    assembled
+        .register_in(&mut harness, "http", listener)
+        .unwrap();
+    let serving = harness.start();
     let pending = supervisor.start_unapproved();
     let observer = pending.observer();
     let exercise_observer = observer.clone();
@@ -122,17 +121,12 @@ async fn readiness_responses() -> [String; 4] {
         let _ = release.send(());
     }
     let report = timeout(Duration::from_secs(5), observer.wait()).await;
-    let _ = stop_tx.send(());
-    let server_result = timeout(Duration::from_secs(5), &mut server).await;
-    if server_result.is_err() {
-        server.abort();
-        let _ = server.await;
-    }
+    let serving_result = timeout(Duration::from_secs(5), serving.shutdown_checked()).await;
     assert!(
         matches!(&result, Ok((_, true)))
             && matches!(&report, Ok(Ok(report)) if report.is_success())
-            && matches!(&server_result, Ok(Ok(Ok(())))),
-        "request exercise: {result:?}\nsupervisor teardown: {report:?}\nHTTP server teardown: {server_result:?}"
+            && matches!(&serving_result, Ok(Ok(_))),
+        "request exercise: {result:?}\nsupervisor teardown: {report:?}\nHTTP harness teardown: {serving_result:?}"
     );
     result.unwrap().0
 }
@@ -197,7 +191,6 @@ async fn guarded_handlers_extract_the_admitted_request_with_its_generated_identi
         health::{HealthMonitor, HealthPolicy},
         lifecycle::ShutdownHandle,
     };
-    use tower::ServiceExt;
 
     let second = Duration::from_secs(1);
     let policy = HealthPolicy::new(second, second * 2, second * 4, second).unwrap();
@@ -213,7 +206,7 @@ async fn guarded_handlers_extract_the_admitted_request_with_its_generated_identi
     )
     .await
     .unwrap()
-    .into_router();
+    .in_process();
     let request = |path: &str| {
         Request::builder()
             .uri(path)
@@ -222,11 +215,11 @@ async fn guarded_handlers_extract_the_admitted_request_with_its_generated_identi
             .unwrap()
     };
 
-    let work = app.clone().oneshot(request("/work")).await.unwrap();
+    let work = app.request(request("/work")).await;
     assert_eq!(work.status(), StatusCode::OK);
     assert_eq!(to_bytes(work.into_body(), 64).await.unwrap(), "ok\n");
 
-    let fail = app.oneshot(request("/fail")).await.unwrap();
+    let fail = app.request(request("/fail")).await;
     assert_eq!(fail.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let id = fail.headers()["x-request-id"].to_str().unwrap().to_owned();
     assert_eq!(id.len(), 36);
@@ -257,7 +250,6 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
         },
         task::Poll,
     };
-    use tower::ServiceExt;
 
     let calls = Arc::new(AtomicUsize::new(0));
     let attempts = calls.clone();
@@ -290,18 +282,16 @@ async fn readiness_reads_cached_health_and_rejects_failed_stale_and_stopped_obse
     )
     .await
     .unwrap()
-    .into_router();
+    .in_process();
     let status = || async {
-        app.clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/ready")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-            .status()
+        app.request(
+            Request::builder()
+                .uri("/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .status()
     };
     let mut run = Box::pin(monitor.run(handle.signal()));
     assert_eq!(status().await, StatusCode::SERVICE_UNAVAILABLE); // unknown

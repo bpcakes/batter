@@ -19,7 +19,7 @@ impl Drop for DropTrace {
 #[test]
 fn aborted_http_request_destroys_nested_spans_without_cross_registry_panic() {
     use axum::{Router, body::Body, http::Request, middleware, routing::get};
-    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, low_level::request_scope};
     use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 

@@ -5,7 +5,7 @@ use axum::{
     response::Response,
     routing::get,
 };
-use batter_axum::register_http_with_connect_info_in;
+use batter_axum::low_level::register_http_with_connect_info_in;
 use batter_core::{
     RegistrationError,
     cleanup::CleanupBudget,

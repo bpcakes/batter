@@ -17,7 +17,7 @@ use axum::{
     routing::{MethodRouter, get, put},
 };
 use batter_axum::{
-    GuardedRouter, HttpBoundary, ProbePath, RouteGroup, RouteInventory,
+    GuardedRouter, HttpBoundary, InProcessClient, ProbePath, RouteGroup, RouteInventory,
     browser::PrivateResponsePolicy,
 };
 use batter_core::lifecycle::ShutdownHandle;
@@ -26,7 +26,6 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tokio::time::Instant;
-use tower::ServiceExt;
 use tracing::instrument::WithSubscriber;
 
 #[derive(Clone)]
@@ -79,7 +78,7 @@ fn default_routes() -> GuardedRouter {
         .fallback(|| async { (StatusCode::NOT_FOUND, "default fallback") })
 }
 
-async fn with_items_group(handle: &ShutdownHandle, items: GuardedRouter) -> Router {
+async fn with_items_group(handle: &ShutdownHandle, items: GuardedRouter) -> InProcessClient {
     let policy = browser_group(
         handle,
         3 * SECOND,
@@ -94,11 +93,11 @@ async fn with_items_group(handle: &ShutdownHandle, items: GuardedRouter) -> Rout
         .assemble(default_routes())
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
-async fn call(app: &Router, request: Request) -> (StatusCode, HeaderMap, String) {
-    let response = app.clone().oneshot(request).await.unwrap();
+async fn call(app: &InProcessClient, request: Request) -> (StatusCode, HeaderMap, String) {
+    let response = app.request(request).await;
     let status = response.status();
     let headers = response.headers().clone();
     (status, headers, body_text(response).await)
@@ -186,7 +185,7 @@ async fn nesting_merging_and_layers_carry_the_admitted_router() {
         .assemble(default)
         .await
         .unwrap()
-        .into_router();
+        .in_process();
 
     for (path, expected) in [
         ("/v1/items/7", "7:/v1/items/{id}"),
@@ -218,7 +217,7 @@ async fn nesting_merging_and_layers_carry_the_admitted_router() {
         .assemble(alone)
         .await
         .unwrap()
-        .into_router();
+        .in_process();
     let (status, headers, _) = call(&app, request(Method::GET, "/items")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers["x-layer"], "route");
@@ -250,7 +249,7 @@ async fn nested_fallback_captures_stay_out_of_admitted_routes() {
         } else {
             default = default.merge(items);
         }
-        let app = boundary.assemble(default).await.unwrap().into_router();
+        let app = boundary.assemble(default).await.unwrap().in_process();
         for (path, status, body) in [
             ("/tenants/acme/items/7", StatusCode::OK, "acme:7"),
             ("/tenants/acme/profile", StatusCode::OK, "profile:acme"),
@@ -315,14 +314,8 @@ async fn served_requests_reuse_layers_built_before_serving() {
             let group = RouteGroup::new("items", request_policy(&handle, SECOND), items);
             boundary = boundary.with_group(group).unwrap();
         }
-        let assembled = boundary.assemble(default).await.unwrap();
-        // Prepare the router once, as registration with the direct peer does.
-        let app = assembled
-            .into_router()
-            .into_make_service()
-            .oneshot(())
-            .await
-            .unwrap();
+        // The client prepares the router once, as a served router is prepared.
+        let app = boundary.assemble(default).await.unwrap().in_process();
         let built = count(&builds);
         for path in ["/work", "/items/7", "/work", "/items/8", "/missing"] {
             call(&app, request(Method::GET, path)).await;
@@ -388,8 +381,11 @@ fn aborted_admitted_request_is_destroyed_under_its_first_poll_dispatch() {
             GuardedRouter::from_router(converted, RouteInventory::new(["/items/{id}"]).unwrap());
         let app = with_items_group(&ready_handle(), items).await;
         let task = tokio::spawn(
-            app.oneshot(from_origin(Method::PUT, "/items/7", ORIGIN))
-                .with_subscriber(scoped.dispatch.clone()),
+            async move {
+                app.request(from_origin(Method::PUT, "/items/7", ORIGIN))
+                    .await
+            }
+            .with_subscriber(scoped.dispatch.clone()),
         );
         started_rx.await.unwrap();
         task.abort();

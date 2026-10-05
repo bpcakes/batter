@@ -10,7 +10,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use batter_axum::{RequestPolicy, ResponseConstructionBudget, observe_http, request_admission};
+use batter_axum::{
+    RequestPolicy, ResponseConstructionBudget,
+    low_level::{observe_http, request_admission},
+};
 use batter_core::{
     cleanup::SkipReason,
     lifecycle::{

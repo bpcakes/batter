@@ -45,7 +45,7 @@ async fn configured_request_policy_changes_actual_response_deadline() {
             )
             .layer(middleware::from_fn_with_state(
                 root.request_policy(handle.operation_admission()),
-                batter::axum::request_admission,
+                batter::axum::low_level::request_admission,
             ));
         let response = app
             .oneshot(Request::builder().uri("/held").body(Body::empty()).unwrap())

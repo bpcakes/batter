@@ -4,9 +4,9 @@ use axum::{
     response::IntoResponse,
 };
 use batter_axum::{
-    GuardedRouter, HttpBoundary, HttpObservationLevel, ProbePath, ReadinessDecision,
-    ReadinessPolicy, RequestPolicy, ResponseConstructionBudget, default_readiness_level,
-    readiness_status,
+    GuardedRouter, HttpBoundary, HttpObservationLevel, InProcessClient, ProbePath,
+    ReadinessDecision, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+    default_readiness_level, readiness_status,
 };
 use batter_core::{
     cleanup::CleanupBudget,
@@ -21,7 +21,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tower::ServiceExt;
 
 #[tokio::test]
 async fn lifecycle_only_probes_require_approval_driver_acknowledgement_and_conditions() {
@@ -68,15 +67,14 @@ async fn lifecycle_only_probes_require_approval_driver_acknowledgement_and_condi
     .assemble(GuardedRouter::new())
     .await
     .unwrap()
-    .into_router();
+    .in_process();
     let unready = ReadinessDecision::Unready;
-    async fn check(app: &axum::Router, expected: ReadinessDecision) {
+    async fn check(app: &InProcessClient, expected: ReadinessDecision) {
         for path in ["/empty", "/rendered"] {
             let response = app
                 .clone()
-                .oneshot(Request::get(path).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
+                .request(Request::get(path).body(Body::empty()).unwrap())
+                .await;
             assert_eq!(response.status(), readiness_status(expected));
             assert_eq!(
                 response.extensions().get::<ReadinessDecision>(),

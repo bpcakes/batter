@@ -1,6 +1,7 @@
 use axum::Router;
 use batter_axum::{
-    AssembledHttp, register_http, register_http_in, register_http_with_connect_info_in,
+    AssembledHttp,
+    low_level::{register_http, register_http_in, register_http_with_connect_info_in},
 };
 use batter_core::{RegistrationError, lifecycle::Supervisor};
 use tokio::net::TcpListener;

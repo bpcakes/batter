@@ -12,9 +12,14 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    RequestInterruptionResponder, RequestPolicy, operational_http_with_quota,
+    RequestInterruptionResponder,
+    RequestPolicy,
+    // This adapter's protected assembly is the one production composition that
+    // deliberately orders Batter's HTTP middleware itself: authenticated quota
+    // checking has to sit between admission and body extraction, which
+    // `HttpBoundary` does not express. See ADR-012 and the crate guide.
+    low_level::{operational_http_with_quota, request_admission},
     quota_observation::{QuotaConsumption, QuotaRecorder, QuotaTerminalFacts},
-    request_admission,
 };
 use batter_core::{
     operation::{OperationContext, OperationError},
@@ -371,7 +376,12 @@ impl PreparedHttp {
         target: &mut T,
         listener: tokio::net::TcpListener,
     ) -> Result<(), batter_core::RegistrationError> {
-        batter_axum::register_http_with_connect_info_in(target, "quota.http", listener, self.router)
+        batter_axum::low_level::register_http_with_connect_info_in(
+            target,
+            "quota.http",
+            listener,
+            self.router,
+        )
     }
     /// Consumes the prepared service into an explicit synthetic test transport.
     pub fn in_process(self) -> TestClient {

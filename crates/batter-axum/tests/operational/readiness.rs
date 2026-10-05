@@ -8,7 +8,8 @@ use axum::{
 };
 use batter_axum::{
     HttpObservationLevel, ReadinessDecision, ReadinessPolicy, default_readiness_level,
-    dependency_readiness, operational_http, readiness_status,
+    low_level::{dependency_readiness, operational_http},
+    readiness_status,
 };
 use batter_core::{
     cleanup::CleanupBudget,

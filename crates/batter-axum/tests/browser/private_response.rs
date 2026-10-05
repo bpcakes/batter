@@ -10,7 +10,7 @@ use axum::{
 };
 use batter_axum::{
     browser::{PrivateResponsePolicy, apply_private_response_headers, private_response},
-    observe_http,
+    low_level::observe_http,
 };
 use tower::{Layer, ServiceExt, service_fn};
 

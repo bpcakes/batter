@@ -49,7 +49,7 @@ async fn admission_rejects_before_trusted_metadata_or_authentication_runs() {
         ]
     };
     for request in requests() {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_infrastructure(
             response,
             StatusCode::SERVICE_UNAVAILABLE,
@@ -60,12 +60,12 @@ async fn admission_rejects_before_trusted_metadata_or_authentication_runs() {
 
     approval.approve();
     let [unauthenticated, peerless, _] = requests();
-    let response = app.clone().oneshot(unauthenticated).await.unwrap();
+    let response = app.request(unauthenticated).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
     let (_, body) = json_response(response).await;
     assert_eq!(body["code"], "authentication_required");
-    let response = app.clone().oneshot(peerless).await.unwrap();
+    let response = app.request(peerless).await;
     assert_infrastructure(
         response,
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -75,7 +75,7 @@ async fn admission_rejects_before_trusted_metadata_or_authentication_runs() {
 
     handle.request();
     for request in requests() {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_infrastructure(
             response,
             StatusCode::SERVICE_UNAVAILABLE,
@@ -122,7 +122,7 @@ async fn admitted_authenticated_request_succeeds_until_drain() {
         )
     };
 
-    let response = app.clone().oneshot(request()).await.unwrap();
+    let response = app.request(request()).await;
     assert_eq!(response.status(), StatusCode::OK);
     let (request_id, body) = json_response(response).await;
     assert_ne!(request_id, "forged-request-id");
@@ -135,7 +135,7 @@ async fn admitted_authenticated_request_succeeds_until_drain() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     handle.request();
-    let response = app.oneshot(request()).await.unwrap();
+    let response = app.request(request()).await;
     assert_infrastructure(
         response,
         StatusCode::SERVICE_UNAVAILABLE,
@@ -166,7 +166,7 @@ async fn fallbacks_answer_only_after_admission() {
         ]
     };
     for request in requests() {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_infrastructure(
             response,
             StatusCode::SERVICE_UNAVAILABLE,
@@ -180,7 +180,7 @@ async fn fallbacks_answer_only_after_admission() {
         .into_iter()
         .zip([StatusCode::NOT_FOUND, StatusCode::METHOD_NOT_ALLOWED])
     {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_eq!(response.status(), status);
         assert!(response.headers().contains_key("x-request-id"));
         let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -194,14 +194,14 @@ async fn fallbacks_answer_only_after_admission() {
         None,
         false,
     );
-    let response = app.clone().oneshot(unauthenticated_method).await.unwrap();
+    let response = app.request(unauthenticated_method).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let (_, body) = json_response(response).await;
     assert_eq!(body["code"], "authentication_required");
 
     handle.request();
     for request in requests() {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_infrastructure(
             response,
             StatusCode::SERVICE_UNAVAILABLE,

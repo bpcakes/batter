@@ -1,5 +1,8 @@
 use axum::{Router, body::Body, http::Request, middleware};
-use batter_axum::{RequestPolicy, observe_http, request_admission, request_scope};
+use batter_axum::{
+    RequestPolicy,
+    low_level::{observe_http, request_admission, request_scope},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Boundary {

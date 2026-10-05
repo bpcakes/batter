@@ -17,7 +17,7 @@ async fn http_observes_actual_failure_status_and_nested_context_without_untruste
         middleware,
         routing::any,
     };
-    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, low_level::request_scope};
     use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 
@@ -127,7 +127,7 @@ async fn readiness_rejection_has_http_status_telemetry_before_any_handler_runs()
         middleware,
         routing::get,
     };
-    use batter_axum::{RequestPolicy, ResponseConstructionBudget, request_scope};
+    use batter_axum::{RequestPolicy, ResponseConstructionBudget, low_level::request_scope};
     use batter_core::lifecycle::ShutdownHandle;
     use tower::ServiceExt;
 

@@ -13,10 +13,10 @@ use axum::{
 };
 use batter_axum::{
     AdmittedRequest, BrowserPolicy, CorrelationId, GroupPolicy, GuardedRouter, HttpBoundary,
-    ProbePath, ReadinessPolicy, RequestInterruptionResponder, RequestPolicy,
+    InProcessClient, ProbePath, ReadinessPolicy, RequestInterruptionResponder, RequestPolicy,
     ResponseConstructionBudget,
     browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
-    operational_http, operational_http_with_quota,
+    low_level::{operational_http, operational_http_with_quota, request_admission},
     quota_observation::{QuotaRecorder, QuotaTerminalFacts},
 };
 use batter_core::{
@@ -140,7 +140,7 @@ fn redispatch(parts: &Parts, quota: bool) -> Response {
         .into_response()
 }
 
-async fn app(surface: Surface, quota: bool) -> Router {
+async fn app(surface: Surface, quota: bool) -> InProcessClient {
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     if matches!(surface, Surface::Interruption | Surface::Browser) {
         approval.approve();
@@ -215,12 +215,10 @@ async fn app(surface: Surface, quota: bool) -> Router {
             .post(unexpected_browser_handler),
         )
     };
-    boundary
-        .assemble(guarded)
-        .await
-        .unwrap()
-        .into_router()
-        .layer(middleware::from_fn(operational_http_with_quota))
+    // Nothing can wrap the sealed assembly, so the boundary's own observer is
+    // outermost and no quota record exists on a boundary request. The one
+    // composition that can hand a renderer a live writer is exercised below.
+    boundary.assemble(guarded).await.unwrap().in_process()
 }
 
 async fn unexpected_browser_handler() -> Response {
@@ -244,7 +242,7 @@ fn check(surface: Surface) {
                 .body(Body::empty())
                 .unwrap();
             request.extensions_mut().insert(ApplicationMetadata("kept"));
-            let response = app(surface, quota).await.oneshot(request).await.unwrap();
+            let response = app(surface, quota).await.request(request).await;
             assert_eq!(response.status(), surface.status());
             let original_id = response.headers()["x-request-id"]
                 .to_str()
@@ -297,7 +295,9 @@ fn check(surface: Surface) {
             "/parent"
         };
         assert!(parent.contains(&format!("route=\"{route}\"")), "{text}");
-        assert!(parent.contains("quota_outcome=\"not_checked\""), "{text}");
+        // The sealed boundary installs the plain observer, which allocates no
+        // quota record at all, so the parent reports no quota outcome.
+        assert!(!parent.contains("quota_outcome="), "{text}");
         if quota {
             assert!(child.contains("quota_outcome=\"quota_denied\""), "{text}");
         } else {
@@ -334,4 +334,79 @@ fn browser_renderer_redispatch_cannot_rewrite_original_observation() {
 #[test]
 fn fallback_renderer_redispatch_cannot_rewrite_original_observation() {
     check(Surface::Fallback);
+}
+
+/// The one production composition that can hand a renderer a request whose
+/// outer quota wrapper still holds the writer: an explicitly low-level
+/// assembly, as the Runlimit quota boundary builds. The shared renderer filter
+/// must still remove that writer, so the renderer cannot forge a native denial
+/// against the original request's retained record.
+#[test]
+fn an_outer_low_level_quota_wrapper_does_not_lend_its_writer_to_a_renderer() {
+    let capture = Capture::new();
+    let (original_id, child_id) = capture.block_on(async {
+        // An unapproved lifecycle makes admission render its own rejection.
+        let handle = ShutdownHandle::new_unapproved();
+        let policy = RequestPolicy::new(
+            handle.operation_admission(),
+            ResponseConstructionBudget::new(SECOND).unwrap(),
+        )
+        .with_failure_renderer(|failure, parts| {
+            let mut response = redispatch(parts, true);
+            *response.status_mut() = failure.status();
+            response
+        });
+        let app = Router::new()
+            .route("/parent", get(unexpected_admitted_handler))
+            .layer(middleware::from_fn_with_state(policy, request_admission))
+            .layer(middleware::from_fn(operational_http_with_quota));
+        let mut request = Request::builder()
+            .uri("/parent")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ApplicationMetadata("kept"));
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let original_id = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(response.headers()["x-renderer-id"], original_id);
+        assert_eq!(response.headers()["x-child-admitted"], "false");
+        let child_id = response.headers()["x-child-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            to_bytes(response.into_body(), 1024).await.unwrap(),
+            "rendered"
+        );
+        (original_id, child_id)
+    });
+    let text = capture.text();
+    let events: Vec<_> = text
+        .lines()
+        .filter_map(|line| {
+            line.split_once("HTTP response boundary finished")
+                .map(|(_, fields)| fields)
+        })
+        .collect();
+    assert_eq!(events.len(), 2, "{text}");
+    assert_ne!(original_id, child_id, "child retained ownership: {text}");
+    let parent = events
+        .iter()
+        .find(|event| event.contains(&format!("request_id=\"{original_id}\"")))
+        .unwrap();
+    let child = events
+        .iter()
+        .find(|event| event.contains(&format!("request_id=\"{child_id}\"")))
+        .unwrap();
+    // The writer the renderer could not take stayed unstarted on the original
+    // record; only the child's own wrapper recorded a denial.
+    assert!(parent.contains("quota_outcome=\"not_checked\""), "{text}");
+    assert!(child.contains("quota_outcome=\"quota_denied\""), "{text}");
+}
+
+async fn unexpected_admitted_handler() -> Response {
+    panic!("admission rejection must precede its handler");
 }

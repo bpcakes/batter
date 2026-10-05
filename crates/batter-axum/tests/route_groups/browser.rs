@@ -5,7 +5,7 @@ use super::support::{
     exact_origin, from_origin, ready_handle, request, request_policy,
 };
 use axum::{
-    Extension, Router,
+    Extension,
     extract::Request,
     http::{Method, StatusCode, header},
     middleware::{self, Next},
@@ -13,7 +13,8 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, ProbePath, RouteGroup,
+    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, InProcessClient, ProbePath,
+    RouteGroup,
     browser::{FetchSitePolicy, PrivateResponsePolicy},
 };
 use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
@@ -21,14 +22,13 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use tower::ServiceExt;
 
 /// A private group whose layer records that it ran inside admission.
 async fn private_app(
     handle: &ShutdownHandle,
     handled: &Arc<AtomicUsize>,
     layered: &Arc<AtomicUsize>,
-) -> Router {
+) -> InProcessClient {
     let layer_calls = layered.clone();
     let account = GuardedRouter::new()
         .route("/account", counted(handled, "handled"))
@@ -57,11 +57,15 @@ async fn private_app(
         .assemble(GuardedRouter::new().route("/work", get(|| async { "ok" })))
         .await
         .unwrap()
-        .into_router()
+        .in_process()
 }
 
-async fn assert_rejected(app: &Router, request: axum::http::Request<axum::body::Body>, code: &str) {
-    let response = app.clone().oneshot(request).await.unwrap();
+async fn assert_rejected(
+    app: &InProcessClient,
+    request: axum::http::Request<axum::body::Body>,
+    code: &str,
+) {
+    let response = app.request(request).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN, "{code}");
     assert_private(response.headers(), "same-origin");
     assert!(response.headers().contains_key("x-request-id"));
@@ -93,9 +97,8 @@ async fn cross_site_and_ambiguous_mutations_are_rejected_before_application_code
 
     let accepted = app
         .clone()
-        .oneshot(from_origin(Method::POST, "/account", ORIGIN))
-        .await
-        .unwrap();
+        .request(from_origin(Method::POST, "/account", ORIGIN))
+        .await;
     assert_eq!(accepted.status(), StatusCode::OK);
     assert_private(accepted.headers(), "same-origin");
     assert_eq!((count(&handled), count(&layered)), (1, 1));
@@ -108,9 +111,8 @@ async fn only_safe_methods_skip_mutation_checks() {
     for method in [Method::GET, Method::HEAD, Method::OPTIONS, Method::TRACE] {
         let response = app
             .clone()
-            .oneshot(request(method.clone(), "/account"))
-            .await
-            .unwrap();
+            .request(request(method.clone(), "/account"))
+            .await;
         assert_eq!(response.status(), StatusCode::OK, "{method}");
         assert_private(response.headers(), "same-origin");
     }
@@ -136,42 +138,34 @@ async fn private_headers_cover_admission_deadline_and_method_rejections() {
     let app = private_app(&handle, &handled, &layered).await;
     let starting = app
         .clone()
-        .oneshot(request(Method::GET, "/account/view"))
-        .await
-        .unwrap();
+        .request(request(Method::GET, "/account/view"))
+        .await;
     assert_eq!(starting.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_private(starting.headers(), "same-origin");
     approval.approve();
     let timeout = app
         .clone()
-        .oneshot(request(Method::GET, "/account/slow"))
-        .await
-        .unwrap();
+        .request(request(Method::GET, "/account/slow"))
+        .await;
     assert_eq!(timeout.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_private(timeout.headers(), "same-origin");
     assert!(body_text(timeout).await.contains("deadline_exceeded"));
     // An unsupported method on a group route stays inside the group's layers.
     let method = app
         .clone()
-        .oneshot(from_origin(Method::POST, "/account/view", ORIGIN))
-        .await
-        .unwrap();
+        .request(from_origin(Method::POST, "/account/view", ORIGIN))
+        .await;
     assert_eq!(method.status(), StatusCode::METHOD_NOT_ALLOWED);
     assert_private(method.headers(), "same-origin");
     handle.request();
     let draining = app
         .clone()
-        .oneshot(request(Method::GET, "/account/view"))
-        .await
-        .unwrap();
+        .request(request(Method::GET, "/account/view"))
+        .await;
     assert_eq!(draining.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_private(draining.headers(), "same-origin");
     // Probes and the default group sit outside the account group's headers.
-    let live = app
-        .clone()
-        .oneshot(request(Method::GET, "/live"))
-        .await
-        .unwrap();
+    let live = app.clone().request(request(Method::GET, "/live")).await;
     assert_not_private(live.headers());
     assert_eq!(count(&handled), 0);
 }
@@ -195,20 +189,16 @@ async fn a_default_group_browser_policy_covers_its_fallbacks() {
         .assemble(routes)
         .await
         .unwrap()
-        .into_router();
-    let missing = app
-        .clone()
-        .oneshot(request(Method::GET, "/missing"))
-        .await
-        .unwrap();
+        .in_process();
+    let missing = app.clone().request(request(Method::GET, "/missing")).await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     assert_private(missing.headers(), "no-referrer");
     let forged = from_origin(Method::POST, "/missing", "https://attacker.example");
-    let rejected = app.clone().oneshot(forged).await.unwrap();
+    let rejected = app.request(forged).await;
     assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
     assert_private(rejected.headers(), "no-referrer");
     handle.request();
-    let draining = app.oneshot(request(Method::GET, "/pages")).await.unwrap();
+    let draining = app.request(request(Method::GET, "/pages")).await;
     assert_eq!(draining.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_private(draining.headers(), "no-referrer");
     assert_eq!(draining.headers()[header::CONTENT_TYPE], "application/json");
@@ -238,13 +228,9 @@ async fn a_group_without_mutation_checks_only_adds_private_headers() {
         .assemble(GuardedRouter::new())
         .await
         .unwrap()
-        .into_router();
+        .in_process();
     for method in [Method::GET, Method::POST] {
-        let response: Response = app
-            .clone()
-            .oneshot(request(method, "/reports"))
-            .await
-            .unwrap();
+        let response: Response = app.clone().request(request(method, "/reports")).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_private(response.headers(), "no-referrer");
     }
@@ -255,11 +241,7 @@ async fn unmatched_paths_keep_the_default_group_policy_without_a_custom_fallback
     let (handle, approval) = ShutdownHandle::new_with_readiness_approval();
     let (handled, layered) = (Arc::default(), Arc::default());
     let app = private_app(&handle, &handled, &layered).await;
-    let starting = app
-        .clone()
-        .oneshot(request(Method::GET, "/missing"))
-        .await
-        .unwrap();
+    let starting = app.clone().request(request(Method::GET, "/missing")).await;
     assert_eq!(starting.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_not_private(starting.headers());
     approval.approve();
@@ -267,7 +249,7 @@ async fn unmatched_paths_keep_the_default_group_policy_without_a_custom_fallback
         request(Method::GET, "/missing"),
         from_origin(Method::POST, "/missing", "https://attacker.example"),
     ] {
-        let response = app.clone().oneshot(request).await.unwrap();
+        let response = app.request(request).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_not_private(response.headers());
     }
