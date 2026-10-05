@@ -73,6 +73,13 @@ impl<'a, P: RateLimitPolicy> Checks<'a, P> {
 
 /// Internal observations for the retained HTTP quota recorder.
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    not(feature = "axum"),
+    expect(
+        dead_code,
+        reason = "terminal fields are read only by the HTTP recorder"
+    )
+)]
 pub(crate) enum Snapshot {
     /// A native check started without an observed result; consumption is unknown.
     Started,

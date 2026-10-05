@@ -918,8 +918,9 @@ native release-mode regression. Detached at-rest package checks retain Cargo's
 default profile because the override belongs to this workspace, not the leaf
 manifest. See [Cargo profile semantics](references.md#cargo-test-artifacts-and-profiles-2026-09-24).
 
-`bash scripts/verify.sh` directly runs formatting, source file budgets, three
-Clippy configurations (all-features workspace, default-feature Runlimit packages
+`bash scripts/verify.sh` directly runs formatting, source file budgets, four
+Clippy configurations (all-features workspace, default-feature Runlimit packages,
+the non-HTTP Runlimit adapter with memory and PostgreSQL,
 and the default-feature reference package without its opt-in metrics exporter),
 all six parts of `scripts/test_matrix.py`, rustdoc with
 warnings denied, and all five built HTTP process smoke profiles. Checks fail the

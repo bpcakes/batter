@@ -54,6 +54,9 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
             ["cargo", "clippy", "-p", "runlimit-core", "-p", "runlimit-memory", "-p",
              "runlimit-postgres", "-p", "runlimit-http", "-p", "runlimit-axum",
              "--all-targets", "--locked", "--", "-D", "warnings"],
+            ["cargo", "clippy", "-p", "batter-runlimit", "--all-targets",
+             "--no-default-features", "--features", "memory,postgres", "--locked",
+             "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
             ["cargo", "clippy", "-p", "batter-example-reference-service", "--all-targets",
              "--locked", "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
             *[["python3", "scripts/test_matrix.py", part] for part in
@@ -65,8 +68,8 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
         self.assertEqual((self.repo / "Cargo.lock").read_text(), "# retained fixture lock\n")
 
     def test_check_failure_is_not_reported_as_success(self):
-        for command in ["budget", "clippy", "test_matrix.py workspace", "test_matrix.py consumers",
-                        "cargo doc", "check_http_smokes.py"]:
+        for command in ["budget", "clippy", "clippy -p batter-runlimit", "test_matrix.py workspace",
+                        "test_matrix.py consumers", "cargo doc", "check_http_smokes.py"]:
             with self.subTest(command=command):
                 result, calls = self.run_verify(FAIL_COMMAND=command)
                 self.assertEqual(result.returncode, 9, result.stdout + result.stderr)
