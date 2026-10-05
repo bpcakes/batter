@@ -34,6 +34,7 @@ fi
 printf 'Workspace tests require loopback TCP sockets and Unix subprocess permissions.\n'
 cargo fmt --all -- --check
 bash scripts/check_file_budget.sh
+python3 scripts/check_beads_export.py
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::mod_module_files
 cargo clippy -p runlimit-core -p runlimit-memory -p runlimit-postgres -p runlimit-http -p runlimit-axum --all-targets --locked -- -D warnings
 # The quota recorder is optional when using native backends without HTTP.

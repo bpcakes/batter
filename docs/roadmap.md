@@ -21,6 +21,11 @@ dependencies, then `br sync --flush-only` to refresh the tracked
 against this workspace. Check `bv`'s reported `source_path` and counts against
 `br`; use the tracker result when a viewer snapshot is stale.
 
+Each checkout and linked worktree keeps its own tracker database, and comment
+IDs are assigned per database. `python3 scripts/check_beads_export.py` (run by
+`scripts/verify.sh` and CI) rejects an export whose issue rows or comment IDs
+collide after a merge; such an export cannot be imported by `br`.
+
 Legacy roadmap identifiers are retained in Beads external references and
 descriptions. Implemented capability facts remain in [status](status.md),
 behavioral contracts in [guarantees](guarantees.md) and
