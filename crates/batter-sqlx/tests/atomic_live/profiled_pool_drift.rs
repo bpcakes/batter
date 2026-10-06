@@ -1,5 +1,6 @@
 use super::{
     fixture,
+    profile::HookEvents,
     support::{Result, bounded, combine, require},
 };
 use batter_sqlx::{PgProfiledPool, PgSessionProfile};
@@ -8,6 +9,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use std::time::Duration;
+use tracing_subscriber::prelude::*;
 
 #[tokio::test]
 #[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
@@ -39,15 +41,8 @@ async fn idle_revocation(revocation: Revocation) -> Result {
     let login = format!("profile_login_{}", fixture.key);
     let role = format!("profile_role_{}", fixture.key);
     let schema = format!("profile_schema_{}", fixture.key);
-    let options = fixture.pool.connect_options().as_ref().clone();
-    let database_name: String = sqlx::query_scalar("SELECT current_database()::text")
-        .fetch_one(&fixture.pool)
-        .await?;
-    let admin_options: PgConnectOptions = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
-    let mut admin = bounded(PgConnection::connect_with(
-        &admin_options.database(&database_name),
-    ))
-    .await??;
+    let options: PgConnectOptions = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
+    let mut admin = bounded(PgConnection::connect_with(&options)).await??;
     // Only the parameter case owns this cluster-wide ACL entry. The other
     // concurrent cases must not update the same pg_parameter_acl row.
     let parameter = matches!(revocation, Revocation::Parameter);
@@ -140,13 +135,22 @@ async fn check_revocation(
         .execute(&mut *admin)
         .await?;
     check_revoked_authority(admin, login, role, schema, revocation).await?;
-    let acquired = bounded(database.pool().acquire()).await?;
+    let events = HookEvents::default();
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(events.clone()));
+    let acquire = tracing::dispatcher::with_default(&dispatch, || {
+        batter_core::telemetry::with_current_dispatch(database.pool().acquire())
+    });
+    let acquired = bounded(acquire).await?;
     let rejected = matches!(&acquired, Err(sqlx::Error::PoolTimedOut));
     eprintln!("idle_policy_revocation kind={revocation:?} acquisition_rejected={rejected}");
     drop(acquired);
     require(
         rejected,
         "ordinary acquisition handed out a revoked idle session",
+    )?;
+    events.assert_redacted(
+        "error from `before_acquire`",
+        &[login, role, "auto_explain.log_analyze"],
     )?;
     // The hook error discards the old client; replacement also fails setup
     // until authority is restored. Witness backend exit independently.

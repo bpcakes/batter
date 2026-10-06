@@ -15,6 +15,11 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    # Mutates a built-in function ACL in the dedicated admin database; keep
+    # this target separate from other live sessions and restore the ACL.
+    "profile_privileges_live": {
+        "profiles_use_effective_role_function_permissions",
+    },
     "atomic_live": {
         "pooled_query_helpers_preserve_macros_reuse_and_error_mapping",
         "pooled_query_acquisition_and_blocked_query_cancellation_preserve_ownership",

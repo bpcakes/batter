@@ -4576,10 +4576,19 @@ Profile validation therefore checks SET permission in its existing statement,
 including ordinary idle acquisition. This is a point-in-time check, not fencing
 against subsequent changes or a new check on native fast acquisition.
 
+PostgreSQL 18's [function expression initialization](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/executor/execExpr.c)
+checks function EXECUTE using the current user before evaluating any rows.
+Setup therefore uses native `SET ROLE` before the batched `set_config` query,
+preserving profiles whose login can assume the effective role without inheriting
+its function grants. A separate live target revokes PUBLIC execution of
+`set_config`, grants only the effective role, and covers both profile constructors
+through direct setup and ordinary pool reuse.
+
 PostgreSQL's [SELECT evaluation contract](https://www.postgresql.org/docs/18/sql-select.html#SQL-SELECT-LIST)
 places output-expression evaluation after sorting when those expressions are not
 sort/group/distinct keys. Profile setup orders array rows by ordinality before
-its volatile `set_config` output, keeping role first. The name/value arrays are
+its volatile `set_config` output, preserving declaration order after the native
+role switch. The name/value arrays are
 built from one assignment sequence; fixed query width and two binds avoid the
 former target-list ceiling without imposing a new profile-count limit. Settings
 remain subject to native resource and value limits.
@@ -4593,7 +4602,7 @@ Native tests cover these forms, the accepted maximum and all four interval style
 
 SQLx 0.9.0's pinned `sqlx-postgres/src/connection/{executor,mod}.rs` separately
 awaits uncached statement preparation and nonempty cache-close synchronization.
-The four reset policy statements and one ordinary-acquisition verification (plus
+The five reset policy statements and one ordinary-acquisition verification (plus
 one native assignment batch for profiles with custom settings) are
 statement accounting, not measured network-round-trip or latency
 claims. Existing retirement, redacted setup failures and independent atomic/

@@ -103,7 +103,7 @@ async fn batched_profiles_preserve_large_declarations_and_statement_count() -> R
             for (name, value) in names.iter().zip(&values) {
                 profile = profile.with_setting(name, value)?;
             }
-            counted(4, profile.reset_and_apply(&mut connection)).await?;
+            counted(5, profile.reset_and_apply(&mut connection)).await?;
             let actual: Vec<String> = sqlx::query_scalar(
                 "SELECT current_setting(name) FROM unnest($1::text[]) \
                  WITH ORDINALITY AS settings(name, position) ORDER BY position",

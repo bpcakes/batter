@@ -237,15 +237,17 @@ impl PgSessionProfile {
     }
 
     pub(crate) async fn apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-        // One statement establishes the whole policy: the effective role through
-        // the `role` parameter (what SET ROLE assigns), the trusted search path,
-        // the declared timeouts, the transaction defaults and every custom
-        // setting, with names and values bound as arrays. Role must run first:
-        // later assignments use the effective role's parameter permissions.
-        // The SQL orders input rows before evaluating volatile set_config calls.
-        // Verification then checks the session, login included, before work.
-        let mut assignments: Vec<(&str, String)> = Vec::with_capacity(10 + self.settings.len());
-        assignments.push(("role", self.effective_role.clone()));
+        // Function EXECUTE permissions are checked before a SELECT evaluates
+        // any rows. Switch natively first so both set_config execution and GUC
+        // assignment permissions belong to the effective role, even when the
+        // login can SET that role without inheriting its privileges.
+        let role = format!("SET ROLE {}", quote(&self.effective_role));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(role))
+            .execute(&mut *connection)
+            .await?;
+        // The remaining policy uses one fixed-width, array-bound statement.
+        // Verification checks the complete session, login included, before work.
+        let mut assignments: Vec<(&str, String)> = Vec::with_capacity(9 + self.settings.len());
         assignments.push(("search_path", self.search_path.clone()));
         for (key, value) in self.timeouts() {
             assignments.push((key, format!("{value}ms")));

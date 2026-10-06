@@ -8,11 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
-- Apply a session profile in one statement and verify idle pooled sessions at
-  acquisition instead of resetting them a second time. Reset uses four policy
-  SQL statements (ROLLBACK, DISCARD ALL, one ordered array-bound `set_config`
+- Batch session settings and verify idle pooled sessions at acquisition instead
+  of resetting them a second time. Reset uses five policy
+  SQL statements (ROLLBACK, DISCARD ALL, native SET ROLE, one array-bound `set_config`
   statement, one verification); ordinary idle acquisition uses one verification,
   plus one batched native assignment check when custom settings are declared.
+  Native role switching preserves effective-role-only function EXECUTE grants.
   Both role and custom-parameter SET authority are rechecked. These are statement counts,
   not measured network round trips or latency. Large profiles retain fixed query
   width, and live controls cover idle role/schema/parameter revocation, acquisition

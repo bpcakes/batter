@@ -1053,8 +1053,10 @@ authority and extension hooks without overwriting drift with declared values.
 Acquisition uses one policy statement without custom settings, two with them,
 and never clears the statement cache. External revocation rejects that
 acquisition; native fast acquisitions still skip the hook, and no check fences
-later grant changes or withdraws a held lease. Profile application uses two bound
-arrays and orders setting rows with role first; accepted large declarations do
+later grant changes or withdraws a held lease. Profile application first uses
+native `SET ROLE`, then two bound arrays for the remaining settings. Both function
+EXECUTE and parameter assignment checks therefore use the effective role;
+the login need not inherit its function grants. Accepted large declarations do
 not become a wide SELECT target list. Unsupported parameters
 fail setup. The compatibility `new` constructor leaves those two settings
 undeclared and preserves their reset defaults without checking them. Startup

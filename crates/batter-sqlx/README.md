@@ -200,10 +200,12 @@ without restoring declared values over drift. Native `try_acquire`/`try_begin` s
 skip acquisition hooks and rely on normalization before idle admission. Neither
 path fences later privilege changes or withdraws an already held lease.
 
-Setup binds parallel name/value arrays and applies their rows in declaration
-order, with role first so subsequent settings use the effective role's parameter
-permissions. Query width and bind count do not grow with custom-setting count;
-no new construction limit is imposed. Reset uses four policy SQL statements;
+Setup first executes native `SET ROLE`, so both `set_config` function EXECUTE
+and parameter assignment permissions belong to the effective role even when
+the login does not inherit them. The remaining settings use parallel name/value
+arrays in declaration order. Query width and bind count do not grow with
+custom-setting count; no new construction limit is imposed. Reset uses five
+policy SQL statements;
 ordinary idle acquisition uses one verification, plus one batched native assignment
 check when custom settings are declared, regardless of their count. It does not
 clear the statement cache. SQLx statement preparation,
@@ -699,7 +701,13 @@ contracts. Live cases are ignored in ordinary all-feature checks. Configure
 `BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
 and `BATTER_SQLX_ADMIN_URL` for a PostgreSQL superuser connection on a dedicated
 disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
-prerequisites fail. Roles and parameter ACLs are cluster-wide. Custom parameter
+prerequisites fail. Restricted-login fixtures use the admin endpoint for both
+provisioning and login; it must admit their password-authenticated connections.
+It need not share a cluster or database name with `DATABASE_URL`.
+The separate `profile_privileges_live` target temporarily revokes PUBLIC
+execution of `set_config` in that admin database and restores its original grant.
+Do not run other live targets against that database concurrently; the runner
+executes targets serially. Roles and parameter ACLs are cluster-wide. Custom parameter
 names are unique per fixture, while process death can still leave test-owned
 cluster residue for external cleanup. The
 authentication case first completes a query with those parsed connection options,

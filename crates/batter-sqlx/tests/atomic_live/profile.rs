@@ -137,7 +137,33 @@ async fn mixed_case_profile_settings_preserve_values() -> Result {
 }
 
 #[derive(Clone, Default)]
-struct HookEvents(Arc<Mutex<Vec<String>>>);
+pub(super) struct HookEvents(Arc<Mutex<Vec<String>>>);
+
+impl HookEvents {
+    pub(super) fn assert_redacted(&self, hook: &str, markers: &[&str]) -> Result {
+        let observed = self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.contains(hook))
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        require(
+            !observed.is_empty(),
+            "expected SQLx hook error was not logged",
+        )?;
+        require(
+            !markers.iter().any(|marker| observed.contains(marker)),
+            "SQLx hook logging disclosed native error contents",
+        )?;
+        require(
+            observed.contains("PostgreSQL operation failed"),
+            "hook log omitted safe diagnostic",
+        )
+    }
+}
 
 impl<S: Subscriber> Layer<S> for HookEvents {
     fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
@@ -212,24 +238,12 @@ async fn hook_logging(before_acquire: bool) -> Result {
             expected_outcome,
             "SQLx hook rejection/replacement behavior changed",
         )?;
-        let observed = events.0.lock().unwrap().join("\n");
         let hook = if before_acquire {
             "error from `before_acquire`"
         } else {
             "error returned from after_connect"
         };
-        require(
-            observed.contains(hook),
-            "expected SQLx hook error was not logged",
-        )?;
-        require(
-            !observed.contains(MARKER),
-            "SQLx hook logging disclosed profile marker",
-        )?;
-        require(
-            observed.contains("PostgreSQL operation failed"),
-            "hook log omitted safe diagnostic",
-        )?;
+        events.assert_redacted(hook, &[MARKER])?;
         Ok(())
     }
     .await;
