@@ -148,7 +148,8 @@ async fn check_revocation(
         rejected,
         "ordinary acquisition handed out a revoked idle session",
     )?;
-    events.assert_redacted(
+    // Replacement-connection diagnostics are a separate phase from the idle hook.
+    events.assert_hook_redacted(
         "error from `before_acquire`",
         &[login, role, "auto_explain.log_analyze"],
     )?;

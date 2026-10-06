@@ -918,8 +918,12 @@ restricted login and grants only the effective role parameter SET authority.
 Restricted-login setup and acquisition both use `BATTER_SQLX_ADMIN_URL`, whose
 endpoint must admit those password-authenticated logins; it may identify a
 different cluster and database from `DATABASE_URL`. The real idle-acquisition
-rejection also asserts that SQLx's hook log retains the safe diagnostic without
-native parameter or role text.
+rejection also asserts that the `before_acquire` hook log retains the safe
+diagnostic without native parameter or role text; replacement-connection errors
+are a separate phase. The two existing setup-redaction controls check marker
+absence across every captured pool event. An offline tracing-event regression
+proves that a marker outside the selected hook message still fails those controls,
+while the explicitly hook-scoped idle check retains its narrower boundary.
 The separate `profile_privileges_live` target verifies legacy and complete
 profiles when only the non-inherited effective role has `set_config` EXECUTE.
 It acknowledges restoration of the original PUBLIC function grant separately

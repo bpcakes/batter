@@ -141,6 +141,15 @@ pub(super) struct HookEvents(Arc<Mutex<Vec<String>>>);
 
 impl HookEvents {
     pub(super) fn assert_redacted(&self, hook: &str, markers: &[&str]) -> Result {
+        let observed = self.0.lock().unwrap().join("\n");
+        require(
+            !markers.iter().any(|marker| observed.contains(marker)),
+            "SQLx pool logging disclosed native error contents",
+        )?;
+        self.assert_hook_redacted(hook, markers)
+    }
+
+    pub(super) fn assert_hook_redacted(&self, hook: &str, markers: &[&str]) -> Result {
         let observed = self
             .0
             .lock()
@@ -163,6 +172,30 @@ impl HookEvents {
             "hook log omitted safe diagnostic",
         )
     }
+}
+
+#[test]
+fn redaction_control_checks_all_pool_events() -> Result {
+    for hook in [
+        "error from `before_acquire`",
+        "error returned from after_connect",
+    ] {
+        let events = HookEvents::default();
+        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(events.clone()));
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::error!(target: "sqlx::pool::test", "{hook}: PostgreSQL operation failed");
+        });
+        events.assert_redacted(hook, &[MARKER])?;
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::error!(target: "sqlx::pool::test", marker = MARKER, "additional pool diagnostic");
+        });
+        require(
+            events.assert_redacted(hook, &[MARKER]).is_err(),
+            "marker in another pool event escaped the redaction control",
+        )?;
+        events.assert_hook_redacted(hook, &[MARKER])?;
+    }
+    Ok(())
 }
 
 impl<S: Subscriber> Layer<S> for HookEvents {
