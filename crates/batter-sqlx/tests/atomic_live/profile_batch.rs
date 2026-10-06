@@ -4,7 +4,7 @@ use super::{
     validation::counted,
 };
 use batter_sqlx::{PgProfiledPool, PgSessionProfile};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{Row, postgres::PgPoolOptions};
 use std::time::Duration;
 
 #[tokio::test]
@@ -127,28 +127,59 @@ async fn profile_timeout_display_units_preserve_exact_milliseconds() -> Result {
         let login = fixture.pool.connect_options().get_username().to_owned();
         let mut connection = fixture.pool.acquire().await?;
         for (millis, displayed) in [
-            (0, "0"), (999, "999ms"), (1000, "1s"), (60_000, "1min"),
-            (3_600_000, "1h"), (86_400_000, "1d"), (i32::MAX as u64, "2147483647ms"),
+            (0, "0"),
+            (999, "999ms"),
+            (1000, "1s"),
+            (60_000, "1min"),
+            (3_600_000, "1h"),
+            (86_400_000, "1d"),
+            (i32::MAX as u64, "2147483647ms"),
         ] {
             let duration = Duration::from_millis(millis);
             // Keep the total/idle limits disabled so this representation test
             // does not depend on completing a transaction within a tiny limit.
-            let profile = PgSessionProfile::with_timeouts(&login, &login, vec!["public".into()],
-                Duration::ZERO, duration, Duration::ZERO, Duration::ZERO)?;
+            let profile = PgSessionProfile::with_timeouts(
+                &login,
+                &login,
+                vec!["public".into()],
+                Duration::ZERO,
+                duration,
+                Duration::ZERO,
+                Duration::ZERO,
+            )?;
             profile.reset_and_apply(&mut connection).await?;
             let rendered: String = sqlx::query_scalar("SELECT current_setting('lock_timeout')")
-                .fetch_one(&mut *connection).await?;
+                .fetch_one(&mut *connection)
+                .await?;
             assert_eq!(rendered, displayed);
             for style in ["postgres", "postgres_verbose", "sql_standard", "iso_8601"] {
                 sqlx::query("SELECT set_config('intervalstyle', $1, false)")
-                    .bind(style).execute(&mut *connection).await?;
-                let observed: i64 = sqlx::query_scalar(
-                    "SELECT (EXTRACT(EPOCH FROM current_setting('lock_timeout')::interval) * 1000)::bigint")
-                    .fetch_one(&mut *connection).await?;
-                assert_eq!(observed, millis as i64, "{style}");
+                    .bind(style)
+                    .execute(&mut *connection)
+                    .await?;
+                // Exercise the production conversion, including all declared
+                // timeout slots, so it cannot diverge from a test-only replica.
+                let observed = sqlx::query(include_str!("../../src/profile/validation.sql"))
+                    .bind(vec!["public"])
+                    .bind(vec![
+                        "statement_timeout",
+                        "lock_timeout",
+                        "idle_in_transaction_session_timeout",
+                        "transaction_timeout",
+                    ])
+                    .bind(Vec::<String>::new())
+                    .fetch_one(&mut *connection)
+                    .await?;
+                let timeouts: Vec<Option<i64>> = observed.try_get("timeouts")?;
+                assert_eq!(
+                    timeouts,
+                    vec![Some(0), Some(millis as i64), Some(0), Some(0)],
+                    "{style}"
+                );
             }
         }
         Ok(())
-    }.await;
+    }
+    .await;
     fixture.finish(body).await
 }

@@ -910,7 +910,14 @@ with restricted-login idle SET-role, schema-USAGE and loaded privileged
 custom-parameter SET revocation/recovery,
 1,700-setting legacy/complete profiles, five-statement reset accounting and exact
 timeout conversion for `0`, `ms`, `s`, `min`, `h` and `d` displays plus the maximum
-accepted value. An acquisition counter waits for release normalization, proves
+accepted value. The timeout control executes the included production validation
+SQL under all four `IntervalStyle` values and checks every declared timeout slot.
+The profiled-pool hook control creates a temporary table and holds a session
+advisory lock, confirms both before release, and requires the same backend on
+ordinary and fast reacquisition. It then checks table removal, independent
+observer lock availability, and restored settings. These assertions cover release
+normalization without imposing statement-cache clearing on idle acquisition.
+An acquisition counter waits for release normalization, proves
 same-backend reuse, and asserts one policy statement with no custom settings or
 two with 1 and 1,700 settings. The privileged-parameter test requires the supplied
 PostgreSQL 18 server to provide `auto_explain`; admin setup preloads it for the
