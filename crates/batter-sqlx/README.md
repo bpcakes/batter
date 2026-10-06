@@ -3,6 +3,8 @@
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
 0.0.1, Rust 1.94 minimum, Unix-only, and targeting crates.io. The foundation
 does not depend on this package.
+PostgreSQL 18 is the minimum supported server for every adapter path, including
+both session-profile constructors; older servers are unsupported.
 
 ## Owned transactions and snapshots
 
@@ -167,8 +169,12 @@ disables that timeout, including over nonzero inherited defaults. Setup is libra
 after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
+The declared login must match the connection's `session_user`; a valid effective
+role and its permissions cannot substitute for that identity. A mismatch rejects
+setup before protected atomic or snapshot callbacks run.
 
-Profile validation reads roles, path, every declared schema/timeout/setting and
+Profile validation reads roles, the login's current permission to SET the
+effective role, path, every declared schema/timeout/setting and
 atomic continuity in one SQL statement. Successful recoverable operations validate
 once after the body, then await RELEASE without another validation. Unprofiled
 operations omit the opening check because the opaque owner has run no arbitrary
@@ -186,12 +192,33 @@ The existing `PgSessionProfile::new` is a weaker compatibility constructor: it
 declares only statement/lock timeouts and neither sets nor verifies transaction
 timeouts. Their PostgreSQL reset defaults, including connection startup options,
 remain in effect. `DISCARD ALL` removes later session `SET` customizations; it does
-not erase startup defaults. All three pool hooks remain library-owned.
+not erase startup defaults. All three pool hooks remain library-owned: a
+session is reset and verified when it connects and before it is admitted idle,
+and acquisition verifies that idle session against the policy without resetting
+it again. Role SET permission, schema USAGE and custom-parameter SET authority can
+change externally while idle; ordinary acquisition rejects that drift. Declared
+custom settings are reassigned their current values in one native batch before
+verification, preserving PostgreSQL permission and extension check-hook semantics
+without restoring declared values over drift. Native `try_acquire`/`try_begin` still
+skip acquisition hooks and rely on normalization before idle admission. Neither
+path fences later privilege changes or withdraws an already held lease.
 
-Complete profiles require PostgreSQL 17 or later because `transaction_timeout`
-was introduced in 17, even when the declared value is zero. Unsupported settings
-fail setup before application access; they are never silently skipped. Native
-verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
+Setup first executes native `SET ROLE`, so both `set_config` function EXECUTE
+and parameter assignment permissions belong to the effective role even when
+the login does not inherit them. The remaining settings use parallel name/value
+arrays in declaration order. Query width and bind count do not grow with
+custom-setting count; no new construction limit is imposed. Reset uses five
+policy SQL statements;
+ordinary idle acquisition uses one verification, plus one batched native assignment
+check when custom settings are declared, regardless of their count. It does not
+clear the statement cache. SQLx statement preparation,
+cache synchronization and native ping are separate protocol work, so these counts
+are not network-round-trip or latency measurements.
+
+Both complete and legacy profiles require PostgreSQL 18 or later. Legacy
+compatibility concerns timeout declarations only. Unsupported settings fail setup
+before application access, even when the value is zero; they are never silently
+skipped. Native verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
 interval, while transaction timeout bounds the whole transaction and terminates
 the session; prepared transactions are excluded. A nonzero transaction timeout
 shorter than or equal to statement/idle timeout takes precedence. Choosing these
@@ -677,14 +704,23 @@ contracts. Live cases are ignored in ordinary all-feature checks. Configure
 `BATTER_SQLX_AUTH_ACCEPT_URL` for a known-good password-authenticated endpoint,
 and `BATTER_SQLX_ADMIN_URL` for a PostgreSQL superuser connection on a dedicated
 disposable cluster, then run `bash scripts/test_sqlx_live.sh`; missing
-prerequisites fail. Roles and parameter ACLs are cluster-wide. Custom parameter
-names are unique per fixture, while process death can still leave test-owned
-cluster residue for external cleanup. The
+prerequisites fail. Restricted-login fixtures use the admin endpoint for both
+provisioning and login; it must admit their password-authenticated connections.
+It need not share a cluster or database name with `DATABASE_URL`.
+The separate `profile_privileges_live` target temporarily revokes PUBLIC
+execution of `set_config` in that admin database. Restoration is acknowledged
+separately before fixture drops, so a failed drop cannot roll back that grant.
+Both restoration and fixture-cleanup errors are retained.
+Do not run other live targets against that database concurrently; the runner
+executes targets serially. Roles and parameter ACLs are cluster-wide. Custom parameter
+names are unique per fixture. Process death or a failed restoration can still
+leave the built-in function grant revoked, alongside test-owned cluster residue;
+restore the grant externally or recreate the disposable fixture before reuse. The
 authentication case first completes a query with those parsed connection options,
 then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
 A trust endpoint, missing role or connection refusal is not equivalent.
 The runner verifies
-an exact 61-case inventory across the eleven PostgreSQL lease/read-only
+an exact 64-case atomic inventory, alongside the eleven PostgreSQL lease/read-only
 verification cases, fourteen pool ownership cases and thirty-six authority-
 and-protected-verification cases,
 executes each target serially, and bounds every child process.

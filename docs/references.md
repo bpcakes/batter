@@ -296,12 +296,15 @@ Owning Bead: `batter-qhps`; resolved SQLx 0.9.0 and PostgreSQL 18.6.
   introduce `transaction_timeout`. Complete declarations require its existence
   even for explicit zero; native setup errors reject unsupported parameters.
   Compatibility construction does not query or set either undeclared GUC.
+  This historical feature introduction does not define Batter's support floor:
+  PostgreSQL 18 is the minimum for both constructors and all PostgreSQL integrations.
 
 The native cases distinguish startup/session values, profile enforcement and
 independently observed backend/lock release from a still-held local lease. This
 does not establish a hard wall-clock guarantee or permanent protection from SQL
 that changes settings between validation boundaries. PostgreSQL 16/17 runtime
-coverage and fresh-agent usability evaluation remain unexecuted.
+coverage remains unexecuted here and those versions are unsupported. Fresh-agent
+usability evaluation remains unexecuted.
 
 ## GitHub Actions scheduling and caching: reviewed 2026-09-22
 
@@ -4559,3 +4562,77 @@ asserts it through the client instead of the previously exposed make-service.
 Make-service stays unexposed, so no caller can serve the client. Recheck these
 semantics whenever the Axum pin changes. No dependency or `Cargo.lock` change
 was required.
+
+### PostgreSQL session-profile batching and idle authority (2026-10-06)
+
+PostgreSQL 18 distinguishes the authenticated session identity from the active
+execution identity: [SET SESSION AUTHORIZATION](https://www.postgresql.org/docs/18/sql-set-session-authorization.html)
+sets both, whereas `SET ROLE` changes the current user. Changing the session
+identity to another user requires an initially authenticated superuser. A direct
+restricted-login regression therefore declares the effective role as the wrong
+login, rather than relying on a session-authorization statement to succeed. Both
+profile constructors must reject that declaration before protected work even
+when role, schema and setting permissions are valid.
+
+The lockfile still resolves SQLx 0.9.0; live regression execution uses PostgreSQL
+18.6. PostgreSQL 18's [role inquiry](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
+defines `pg_has_role(user, role, 'SET')` as permission to assume the role, unlike
+plain membership or immediately inherited privileges. [REVOKE](https://www.postgresql.org/docs/18/sql-revoke.html)
+can clear only SET OPTION while retaining membership. The
+[role GUC check](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/variable.c)
+uses `member_can_set_role`; reading the current role name does not repeat it.
+Profile validation therefore checks SET permission in its existing statement,
+including ordinary idle acquisition. This is a point-in-time check, not fencing
+against subsequent changes or a new check on native fast acquisition.
+
+PostgreSQL 18's [function expression initialization](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/executor/execExpr.c)
+checks function EXECUTE using the current user before evaluating any rows.
+Setup therefore uses native `SET ROLE` before the batched `set_config` query,
+preserving profiles whose login can assume the effective role without inheriting
+its function grants. A separate live target revokes PUBLIC execution of
+`set_config`, grants only the effective role, and covers both profile constructors
+through direct setup and ordinary pool reuse.
+
+PostgreSQL 18's [multi-statement simple-query contract](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT)
+and SQLx 0.9.0's local `sqlx-core/src/raw_sql.rs` agree that one raw SQL batch
+executes in an implicit transaction. A later fixture-drop error therefore rolls
+back an earlier function-grant restoration in the same batch. The live fixture
+acknowledges restoration separately before its drop batch and retains both
+errors. A test-owned function and an intentionally failing nonempty-schema drop
+exercise this boundary without injecting failure into the built-in function ACL.
+
+PostgreSQL's [SELECT evaluation contract](https://www.postgresql.org/docs/18/sql-select.html#SQL-SELECT-LIST)
+places output-expression evaluation after sorting when those expressions are not
+sort/group/distinct keys. Profile setup orders array rows by ordinality before
+its volatile `set_config` output, preserving declaration order after the native
+role switch. The name/value arrays are
+built from one assignment sequence; fixed query width and two binds avoid the
+former target-list ceiling without imposing a new profile-count limit. Settings
+remain subject to native resource and value limits.
+
+The [PostgreSQL 18 GUC implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc.c)
+uses `ShowGUCOption` and `convert_int_from_base_unit` to display positive integer
+timeouts in a divisible unit (`d`, `h`, `min`, `s`, `ms`), while zero has no suffix.
+[Interval EPOCH extraction](https://www.postgresql.org/docs/18/functions-datetime.html#FUNCTIONS-DATETIME-EXTRACT)
+returns total seconds as numeric; multiplying by 1,000 recovers milliseconds.
+Native tests cover these forms, the accepted maximum and all four interval styles.
+
+SQLx 0.9.0's pinned `sqlx-postgres/src/connection/{executor,mod}.rs` separately
+awaits uncached statement preparation and nonempty cache-close synchronization.
+The five reset policy statements and one ordinary-acquisition verification (plus
+one native assignment batch for profiles with custom settings) are
+statement accounting, not measured network-round-trip or latency
+claims. Existing retirement, redacted setup failures and independent atomic/
+snapshot reset ownership remain unchanged; see `batter-md9y` for executed evidence.
+
+PostgreSQL 18's [GUC assignment implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc.c)
+checks parameter SET ACLs for `PGC_SUSET` assignments; `PGC_USERSET` assignments
+need no explicit grant. Reading `current_setting` does not repeat assignment
+authority checks. The [auto_explain module](https://github.com/postgres/postgres/blob/REL_18_STABLE/contrib/auto_explain/auto_explain.c)
+registers `auto_explain.log_analyze` as `PGC_SUSET`; the native regression preloads
+it before checking revocation, distinguishing it from an unrestricted placeholder.
+Idle acquisition reassigns current custom values through native `set_config` in
+one ordered array batch, then verifies the whole policy in a separate command.
+This preserves permission/check-hook semantics and detects value drift without
+repeating reset or clearing the statement cache. Native fast paths and already
+held leases retain their documented limits.

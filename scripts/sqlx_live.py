@@ -15,6 +15,12 @@ from parallel_process import render_outcomes, run_parallel
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = {
+    # Mutates a built-in function ACL in the dedicated admin database; keep
+    # this target separate from other live sessions and restore the ACL.
+    "profile_privileges_live": {
+        "function_acl_restore_survives_fixture_drop_failure",
+        "profiles_use_effective_role_function_permissions",
+    },
     "atomic_live": {
         "pooled_query_helpers_preserve_macros_reuse_and_error_mapping",
         "pooled_query_acquisition_and_blocked_query_cancellation_preserve_ownership",
@@ -45,12 +51,19 @@ TARGETS = {
         "profiled_schema_lookup_remains_index_eligible",
         "transaction_profiles_distinguish_startup_defaults_session_settings_and_zero",
         "transaction_profiles_cover_pool_hooks_atomic_and_snapshot_work",
+        "batched_profiles_preserve_large_declarations_and_statement_count",
+        "profile_timeout_display_units_preserve_exact_milliseconds",
+        "profiled_pool_rejects_idle_set_role_revocation",
+        "profiled_pool_rejects_idle_schema_usage_revocation",
+        "profiled_pool_rejects_idle_parameter_set_revocation",
+        "idle_acquisition_statement_count_is_bounded_with_custom_settings",
         "transaction_timeout_drift_poison_retains_cause_and_retires",
         "snapshot_timeout_drift_rejects_success_and_preserves_recovered_errors",
         "declared_idle_timeout_releases_server_locks_but_not_held_lease",
         "declared_transaction_timeout_bounds_multiple_short_statements",
         "owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy",
         "profile_setup_errors_redact_setting_and_role_values",
+        "profiles_reject_declared_login_mismatch_before_application_work",
         "profile_after_connect_logging_redacts_setting_values",
         "profile_before_acquire_logging_redacts_setting_values",
         "mixed_case_profile_settings_preserve_values",

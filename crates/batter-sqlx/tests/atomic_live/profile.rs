@@ -1,5 +1,6 @@
 use super::{
     fixture,
+    profile_hook_events::HookEvents,
     support::{Result, bounded, require},
 };
 use batter_sqlx::{
@@ -9,16 +10,12 @@ use batter_sqlx::{
 use sqlx::postgres::PgPoolOptions;
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
-use tracing::{
-    Event, Subscriber,
-    field::{Field, Visit},
-};
-use tracing_subscriber::{Layer, layer::Context, prelude::*};
+use tracing_subscriber::prelude::*;
 
 const MARKER: &str = "profile-secret-marker-not-a-timezone";
 
@@ -136,26 +133,6 @@ async fn mixed_case_profile_settings_preserve_values() -> Result {
     fixture.finish(body).await
 }
 
-#[derive(Clone, Default)]
-struct HookEvents(Arc<Mutex<Vec<String>>>);
-
-impl<S: Subscriber> Layer<S> for HookEvents {
-    fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
-        if event.metadata().target().contains("pool") {
-            let mut fields = Fields(String::new());
-            event.record(&mut fields);
-            self.0.lock().unwrap().push(fields.0);
-        }
-    }
-}
-struct Fields(String);
-impl Visit for Fields {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        use std::fmt::Write;
-        write!(self.0, " {}={value:?}", field.name()).unwrap();
-    }
-}
-
 async fn hook_logging(before_acquire: bool) -> Result {
     let fixture = fixture().await?;
     let body = async {
@@ -212,24 +189,12 @@ async fn hook_logging(before_acquire: bool) -> Result {
             expected_outcome,
             "SQLx hook rejection/replacement behavior changed",
         )?;
-        let observed = events.0.lock().unwrap().join("\n");
         let hook = if before_acquire {
             "error from `before_acquire`"
         } else {
             "error returned from after_connect"
         };
-        require(
-            observed.contains(hook),
-            "expected SQLx hook error was not logged",
-        )?;
-        require(
-            !observed.contains(MARKER),
-            "SQLx hook logging disclosed profile marker",
-        )?;
-        require(
-            observed.contains("PostgreSQL operation failed"),
-            "hook log omitted safe diagnostic",
-        )?;
+        events.assert_redacted(hook, &[MARKER])?;
         Ok(())
     }
     .await;

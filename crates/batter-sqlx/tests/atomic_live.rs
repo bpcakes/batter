@@ -21,6 +21,12 @@ mod policy_cancellation;
 mod policy_context;
 #[path = "atomic_live/profile.rs"]
 mod profile;
+#[path = "atomic_live/profile_batch.rs"]
+mod profile_batch;
+#[path = "profile/hook_events.rs"]
+mod profile_hook_events;
+#[path = "atomic_live/profile_login.rs"]
+mod profile_login;
 #[path = "atomic_live/profile_timeout_drift.rs"]
 mod profile_timeout_drift;
 #[path = "atomic_live/profile_timeout_expiry.rs"]
@@ -29,6 +35,8 @@ mod profile_timeout_expiry;
 mod profile_timeouts;
 #[path = "atomic_live/profiled_pool.rs"]
 mod profiled_pool;
+#[path = "atomic_live/profiled_pool_drift.rs"]
+mod profiled_pool_drift;
 #[path = "atomic_live/query_helpers.rs"]
 mod query_helpers;
 #[path = "atomic_live/query_pool.rs"]

@@ -1039,10 +1039,28 @@ explicit login/effective roles, trusted schema path, timeouts and custom setting
 after reset, before beginning a transaction. Validation precedes callback access
 and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
 still lock authoritative objects before their first snapshot-bearing query.
+The declared login is compared with `session_user`, independently of the effective
+role. A mismatch fails setup before protected application or inspection callbacks
+receive SQL access.
+PostgreSQL 18 is the minimum supported server for all PostgreSQL integration
+paths, including both profile constructors.
 `PgSessionProfile::with_timeouts` requires all four server timeout selections,
 including idle-in-transaction and total-transaction limits. The adapter validates
 exact bounded milliseconds before I/O, applies explicit zero as disable, and
-revalidates both settings alongside the existing policy. Unsupported parameters
+revalidates both settings alongside the existing policy. The shared validation
+also checks the login's current SET permission for the effective role. Ordinary
+profiled-pool acquisition verifies this and schema USAGE without repeating the
+reset performed before idle admission. It also reassigns declared custom settings
+their current values in one native batch before verification, checking assignment
+authority and extension hooks without overwriting drift with declared values.
+Acquisition uses one policy statement without custom settings, two with them,
+and never clears the statement cache. External revocation rejects that
+acquisition; native fast acquisitions still skip the hook, and no check fences
+later grant changes or withdraws a held lease. Profile application first uses
+native `SET ROLE`, then two bound arrays for the remaining settings. Both function
+EXECUTE and parameter assignment checks therefore use the effective role;
+the login need not inherit its function grants. Accepted large declarations do
+not become a wide SELECT target list. Unsupported parameters
 fail setup. The compatibility `new` constructor leaves those two settings
 undeclared and preserves their reset defaults without checking them. Startup
 options survive `DISCARD ALL`; subsequent session `SET` values do not. Server

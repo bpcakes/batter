@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, fmt, time::Duration};
 /// Explicit policy re-established after session reset. Names are quoted as
 /// identifiers; setting values are bound parameters. No setup callback can run
 /// application SQL before the policy is checked.
+/// PostgreSQL 18 is the minimum supported server for both constructors.
 ///
 /// Search-path schemas are a trust declaration: only include schemas whose
 /// object creators you trust. `pg_catalog` is implicitly searched first and
@@ -66,9 +67,9 @@ impl PgSessionProfile {
     ///
     /// `idle_in_transaction_session_timeout` bounds each idle interval inside a
     /// transaction; `transaction_timeout` bounds the entire transaction. The
-    /// latter requires PostgreSQL 17 or later, including when set to zero. An
-    /// unsupported setting fails setup before application access. Native tests
-    /// use PostgreSQL 18. PostgreSQL ignores a statement or idle timeout when a
+    /// minimum supported server is PostgreSQL 18. Unsupported settings fail
+    /// setup before application access, including when set to zero.
+    /// PostgreSQL ignores a statement or idle timeout when a
     /// nonzero transaction timeout is shorter or equal; relative values are
     /// application policy, not parent/child operation deadlines.
     ///
@@ -104,7 +105,8 @@ impl PgSessionProfile {
     /// This weaker path leaves both transaction timeouts at their reset defaults
     /// and never verifies them. Startup connection options and role/database
     /// defaults survive reset; later `SET` values and pool hooks are not retained.
-    /// It does not require PostgreSQL's `transaction_timeout` parameter to exist.
+    /// PostgreSQL 18 remains the minimum; compatibility refers to the timeout
+    /// declaration, not support for older servers.
     /// A zero statement or lock timeout explicitly disables that timeout. No
     /// policy is inferred from SQLx hooks or the authenticated user's privileges.
     pub fn new(
@@ -210,20 +212,45 @@ impl PgSessionProfile {
         .map_err(|error| sqlx::Error::Configuration(Box::new(crate::SqlxFailure::from(error))))
     }
 
-    pub(crate) async fn apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-        let login: String = sqlx::query_scalar("SELECT session_user::text")
-            .fetch_one(&mut *connection)
-            .await?;
-        if login != self.login_role {
-            return Err(mismatch());
+    /// Verify an idle session against the declared policy without resetting
+    /// it, with the same redacted failure shape as [`Self::reset_and_apply`].
+    pub(crate) async fn verify_idle(
+        &self,
+        connection: &mut PgConnection,
+    ) -> Result<(), sqlx::Error> {
+        async {
+            if !self.settings.is_empty() {
+                // Reads alone cannot prove assignment authority for privileged
+                // extension settings. Reassign current values using native
+                // permission/check hooks; using declared values could hide drift.
+                // Complete the batch before verifying every policy value, since
+                // extension assignment hooks can affect other session settings.
+                sqlx::query(include_str!("profile/revalidate_settings.sql"))
+                    .bind(self.settings.keys().collect::<Vec<_>>())
+                    .execute(&mut *connection)
+                    .await?;
+            }
+            self.verify(connection).await
         }
+        .await
+        .map_err(|error| sqlx::Error::Configuration(Box::new(crate::SqlxFailure::from(error))))
+    }
+
+    pub(crate) async fn apply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+        // Function EXECUTE permissions are checked before a SELECT evaluates
+        // any rows. Switch natively first so both set_config execution and GUC
+        // assignment permissions belong to the effective role, even when the
+        // login can SET that role without inheriting its privileges.
         let role = format!("SET ROLE {}", quote(&self.effective_role));
         sqlx::raw_sql(sqlx::AssertSqlSafe(role))
             .execute(&mut *connection)
             .await?;
-        set(connection, "search_path", &self.search_path).await?;
+        // The remaining policy uses one fixed-width, array-bound statement.
+        // Verification checks the complete session, login included, before work.
+        let mut assignments: Vec<(&str, String)> = Vec::with_capacity(9 + self.settings.len());
+        assignments.push(("search_path", self.search_path.clone()));
         for (key, value) in self.timeouts() {
-            set(connection, key, &format!("{value}ms")).await?;
+            assignments.push((key, format!("{value}ms")));
         }
         for (key, value) in [
             ("default_transaction_isolation", "read committed"),
@@ -231,11 +258,17 @@ impl PgSessionProfile {
             ("default_transaction_deferrable", "off"),
             ("row_security", "on"),
         ] {
-            set(connection, key, value).await?;
+            assignments.push((key, value.to_owned()));
         }
         for (key, value) in &self.settings {
-            set(connection, key, value).await?;
+            assignments.push((key.as_str(), value.clone()));
         }
+        let (names, values): (Vec<_>, Vec<_>) = assignments.into_iter().unzip();
+        sqlx::query(include_str!("profile/apply.sql"))
+            .bind(names)
+            .bind(values)
+            .execute(&mut *connection)
+            .await?;
         self.verify(connection).await
     }
 
@@ -274,13 +307,4 @@ fn timeout_ms(value: Duration) -> Result<u32, PgProfileError> {
         ));
     }
     Ok(ms as u32)
-}
-
-async fn set(connection: &mut PgConnection, key: &str, value: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT pg_catalog.set_config($1, $2, false)")
-        .bind(key)
-        .bind(value)
-        .execute(connection)
-        .await?;
-    Ok(())
 }

@@ -8,6 +8,17 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Batch session settings and verify idle pooled sessions at acquisition instead
+  of resetting them a second time. Reset uses five policy
+  SQL statements (ROLLBACK, DISCARD ALL, native SET ROLE, one array-bound `set_config`
+  statement, one verification); ordinary idle acquisition uses one verification,
+  plus one batched native assignment check when custom settings are declared.
+  Native role switching preserves effective-role-only function EXECUTE grants.
+  Both role and custom-parameter SET authority are rechecked. These are statement counts,
+  not measured network round trips or latency. Large profiles retain fixed query
+  width, and live controls cover idle role/schema/parameter revocation, acquisition
+  cost and timeout units. PostgreSQL 18 is explicitly the minimum supported server
+  for both profile constructors and all PostgreSQL integrations.
 - Give probe responses a selected private-response policy.
   `HttpBoundary::with_probe_response_policy(PrivateResponsePolicy)` applies that
   policy to every probe response, including the method rejection that answers an

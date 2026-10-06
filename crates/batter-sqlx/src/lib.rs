@@ -1,4 +1,5 @@
 //! Library-owned atomic PostgreSQL workflows and read-only snapshots.
+//! PostgreSQL 18 is the minimum supported server for all adapter paths.
 //!
 //! [`run_atomic`] releases output only after acknowledged commit, with known
 //! rejection separate from [`PgAtomicUncertainty`]. [`PgReadOnlySnapshot`] owns

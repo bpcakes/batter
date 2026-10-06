@@ -45,7 +45,8 @@ errors, and independently observed server termination/lock release. The expiry
 controls retain the Rust lease and assert that the local pool slot stays occupied.
 Total expiry spans multiple successful short statements; idle expiry waits for
 an independent backend observation. Existing setup-redaction cases use complete
-profiles. Older PostgreSQL versions and fresh-agent usability tasks are not
+profiles. PostgreSQL 18 is the minimum supported server, including the legacy
+constructor; older servers are unsupported. Fresh-agent usability tasks are not
 executed by these cases.
 
 Atomic runner regression coverage (`batter-gzh`) lives in
@@ -507,12 +508,18 @@ is unavailable. The example readiness tests run automatically
 under `--all-targets`; they are not ignored and contact only test-owned listeners
 on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
 HTTP process smokes run at the end of direct verification.
+Their launcher replaces inherited `BATTER_*` settings with the selected smoke
+profile and owns its `RUST_LOG` choice. Live-fixture variables, ambient settings
+files and application capacity overrides cannot alter that profile; unrelated
+process environment remains available. Configuration tests still exercise the
+example's strict rejection of unknown settings.
 The standalone commands below remain useful for focused troubleshooting.
 
 HTTP text assertions check completion fields after the completion message; span
 fields cannot satisfy the event-field oracle. `scripts/test_smoke_http.py` includes
 negative controls for missing and conflicting event fields even when the span
-contains every expected value. It runs in the existing Python discovery command.
+contains every expected value, plus hostile smoke-environment controls. It runs
+in the local `scripts` matrix part and the CI Python discovery command.
 Its operation-filter controls reject INFO completions with or without the
 example formatter's timestamp, while allowing WARN deadline completions and
 application INFO events. Nested-observer redaction checks cover the full capture,
@@ -898,6 +905,64 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Verification
 
+Session-profile optimization regressions (`batter-md9y`) extend `atomic_live`
+with restricted-login idle SET-role, schema-USAGE and loaded privileged
+custom-parameter SET revocation/recovery,
+1,700-setting legacy/complete profiles, five-statement reset accounting and exact
+timeout conversion for `0`, `ms`, `s`, `min`, `h` and `d` displays plus the maximum
+accepted value. The timeout control executes the included production validation
+SQL under all four `IntervalStyle` values and checks every declared timeout slot.
+The profiled-pool hook control creates a temporary table and holds a session
+advisory lock, confirms both before release, and requires the same backend on
+ordinary and fast reacquisition. It then checks table removal, independent
+observer lock availability, and restored settings. These assertions cover release
+normalization without imposing statement-cache clearing on idle acquisition.
+An acquisition counter waits for release normalization, proves
+same-backend reuse, and asserts one policy statement with no custom settings or
+two with 1 and 1,700 settings. The privileged-parameter test requires the supplied
+PostgreSQL 18 server to provide `auto_explain`; admin setup preloads it for the
+restricted login and grants only the effective role parameter SET authority.
+Restricted-login setup and acquisition both use `BATTER_SQLX_ADMIN_URL`, whose
+endpoint must admit those password-authenticated logins; it may identify a
+different cluster and database from `DATABASE_URL`. The real idle-acquisition
+rejection also asserts that the `before_acquire` hook log retains the safe
+diagnostic without native parameter or role text; replacement-connection errors
+are a separate phase. The two existing setup-redaction controls check marker
+absence across every captured pool event. A tracing-event regression in the
+offline `profile` target shares the capture helper with the live target and
+proves that a marker outside the selected hook message still fails those controls,
+while the explicitly hook-scoped idle check retains its narrower boundary.
+The separate `profile_privileges_live` target verifies legacy and complete
+profiles when only the non-inherited effective role has `set_config` EXECUTE.
+It acknowledges restoration of the original PUBLIC function grant separately
+before dropping fixtures, retaining errors from both steps. A second case uses
+the same cleanup helper with a test-owned function: a deliberately failing
+nonempty-schema drop must leave the restored PUBLIC grant intact. Process death
+or a failed restore can still leave the built-in grant revoked for external
+cleanup or fixture replacement. Because that ACL
+is database-wide, never run this target concurrently with other live targets on
+the admin database. The explicit runner executes targets serially and inventories
+the atomic cases and the separate function-permission target. A restricted-login
+control declares the effective role as the wrong login and requires both profile
+constructors to reject direct setup, atomic work and snapshot inspection. A valid
+profile first proves the same role/schema/settings permissions work; mismatch
+errors retain their profile cause and redact identities, and neither protected
+callback may run. This distinguishes `session_user` from `current_user` without
+requiring the test login to change session authorization.
+The owning Bead identifies the source snapshot for every executed full or focused
+run. Earlier full successes predate the final function-permission repair; its
+initial full rerun exhausted disk, so those successes do not validate later
+source. See `batter-md9y` for subsequent final-source outcomes and limitations.
+Ordinary test discovery still leaves these external PostgreSQL cases ignored.
+
+Facade consumer subprocesses explicitly select `SQLX_OFFLINE=true`, because their
+temporary external workspaces do not inherit the root Cargo configuration.
+Checked queries use committed metadata even with an ambient `DATABASE_URL` or
+`SQLX_OFFLINE=false`. Successful and expected-failure builds share one subprocess
+boundary, while negative cases retain their raw outcomes for exact diagnostic
+checks. Real child-process controls exercise the ordinary, disabled-feature and
+checked-completion negative launch paths, preserving the parent's environment
+and runtime database settings.
 Facade consumer checks reuse artifacts under
 `<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory
 comes from root Cargo metadata, honoring `CARGO_TARGET_DIR` and Cargo configuration;
@@ -2737,7 +2802,8 @@ RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-post
 ```
 
 CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
-1.98.1. A workflow definition is not hosted execution evidence. The native test
+1.98.1. That imported upstream matrix does not broaden Batter's PostgreSQL 18
+minimum. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
 

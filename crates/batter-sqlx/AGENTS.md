@@ -4,6 +4,7 @@
 
 Optional SQLx 0.9 PostgreSQL connection disposition and owned transaction/snapshot
 scopes. Domain SQL and replay policy remain downstream. Follow the root Unix-only policy.
+PostgreSQL 18 is the minimum supported server, including legacy session profiles.
 
 ## Key entrypoints
 
