@@ -208,7 +208,9 @@ explicitly native namespaces, so one `batter` dependency needs no direct native
 declaration or `[patch]`; see the
 [single-dependency recipe](reference-compatibility.md#single-dependency-recipe).
 The bounded facade consumer runner checks feature selection and normal dependency
-graphs in temporary external workspaces, while direct adapter suites retain
+graphs in temporary external workspaces. Its subprocess boundary explicitly
+selects committed SQLx metadata despite ambient live-test endpoints, with a real
+child-process environment regression (`batter-md9y`). Direct adapter suites retain
 behavior coverage. All eight runnable demonstrations and the PostgreSQL lifecycle and
 reference consumers now adopt the facade; their direct adapter integration tests
 remain in the owning adapter packages.
@@ -303,6 +305,9 @@ control separates permitted from denied PUBLIC delivery on native objects, which
 rendering cannot. Adoption remains grant-only and no downstream rollout is
 claimed.
 
+The HTTP smoke launcher owns its application settings and logging profile,
+excluding ambient `BATTER_*` fixture and configuration inputs while preserving
+the example's strict settings validation (`batter-md9y`).
 CI now configures adapter runtime tests and all five HTTP process smoke profiles
 on macOS, and includes both WARN-filtered profiles on Linux. The added filtering,
 middleware-order and readiness-phase regressions have Linux and local macOS

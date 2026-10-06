@@ -24,6 +24,8 @@ DOC_TESTS = ["cargo", "test", "--workspace", "--all-features", "--doc", "--locke
 RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                 "-p", "test_parallel_process.py", "-v"]
 SMOKE_TESTS = [sys.executable, "scripts/test_smoke_postgres.py", "-v"]
+HTTP_SMOKE_CONTROLS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
+                       "-p", "test_smoke_http.py", "-v"]
 REFERENCE_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
                           "-p", "test_reference_live.py", "-v"]
 SQLX_RUNNER_TESTS = [sys.executable, "-m", "unittest", "discover", "-s", "scripts",
@@ -127,8 +129,8 @@ def parts():
                       [RUNLIMIT_DEFAULT, RUNLIMIT_RELEASE, RUNLIMIT_GRAPH])],
         "scripts": [(["runner-controls", "smoke-controls", "sqlx-runner-controls", "runlimit-controls"],
                      [RUNNER_TESTS, SMOKE_TESTS, SQLX_RUNNER_TESTS, RUNLIMIT_CONTROLS]),
-                    (["runlimit-consumer-controls", "single-facade-controls"],
-                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS])],
+                    (["runlimit-consumer-controls", "single-facade-controls", "http-smoke-controls"],
+                     [RUNLIMIT_CONSUMER_CONTROLS, SINGLE_FACADE_CONTROLS, HTTP_SMOKE_CONTROLS])],
     })
 
 

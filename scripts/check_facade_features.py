@@ -51,7 +51,10 @@ BRIDGE_NATIVES = {
 
 def execute(command: list[str], cwd: Path, *, timeout: float = 600,
             output_limit: int = 8 * 1024 * 1024) -> str:
-    outcome = run_parallel([command], timeout=timeout, output_limit=output_limit,
+    # External consumers do not inherit the root Cargo config. Their checked
+    # SQL must use committed metadata even when live-test endpoints are set.
+    offline = ["env", "SQLX_OFFLINE=true", *command]
+    outcome = run_parallel([offline], timeout=timeout, output_limit=output_limit,
                            cwd=cwd, retain_tail=True)[0]
     if not outcome.ok:
         render_outcomes(["facade-consumer"], [outcome])

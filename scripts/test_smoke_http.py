@@ -1,8 +1,29 @@
 """Negative controls for the HTTP process smoke's telemetry oracle."""
 
+import os
 import unittest
+from unittest.mock import patch
 
-from smoke_http import check_completion_fields, check_operation_filter
+from smoke_http import check_completion_fields, check_operation_filter, smoke_environment
+
+
+class SmokeEnvironmentTests(unittest.TestCase):
+    def test_profile_ignores_ambient_application_settings_without_mutating_parent(self):
+        inherited = {"BATTER_SQLX_ADMIN_URL": "fixture", "BATTER_ENV_FILE": "/missing",
+                     "BATTER_BULKHEAD_CAPACITY": "0", "BATTER_UNKNOWN": "rejected",
+                     "BATTER_BIND": "invalid", "BATTER_REQUEST_TIMEOUT_MS": "invalid",
+                     "RUST_LOG": "off", "PATH": "/process-path"}
+        for deadline in (False, True):
+            for warn_filter in (False, True):
+                with self.subTest(deadline=deadline, warn_filter=warn_filter), \
+                        patch.dict(os.environ, inherited, clear=True):
+                    selected = smoke_environment(8123, deadline, warn_filter)
+                    expected = {"PATH": "/process-path", "BATTER_BIND": "127.0.0.1:8123",
+                                "BATTER_REQUEST_TIMEOUT_MS": "1" if deadline else "2000"}
+                    if warn_filter:
+                        expected["RUST_LOG"] = "info,batter=warn,batter::request=info"
+                    self.assertEqual(selected, expected)
+                    self.assertEqual(dict(os.environ), inherited)
 
 
 class CompletionFieldsTests(unittest.TestCase):

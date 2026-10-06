@@ -50,6 +50,17 @@ def check_operation_filter(output: str, request_ids: set[str], deadline_id=None)
         raise RuntimeError("Missing correlated deadline operation completion.")
 
 
+def smoke_environment(port: int, deadline: bool, warn_filter: bool) -> dict[str, str]:
+    """Own the example's settings while retaining unrelated process environment."""
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("BATTER_") and key != "RUST_LOG"}
+    env.update(BATTER_BIND=f"127.0.0.1:{port}",
+               BATTER_REQUEST_TIMEOUT_MS="1" if deadline else "2000")
+    if warn_filter:
+        env["RUST_LOG"] = "info,batter=warn,batter::request=info"
+    return env
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -65,11 +76,7 @@ def main() -> int:
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    env = dict(os.environ, BATTER_BIND=f"127.0.0.1:{port}", BATTER_REQUEST_TIMEOUT_MS="1" if args.deadline else "2000")
-    # Select a known filter profile, independent of ambient verbose logging.
-    env.pop("RUST_LOG", None)
-    if args.warn_filter:
-        env["RUST_LOG"] = "info,batter=warn,batter::request=info"
+    env = smoke_environment(port, args.deadline, args.warn_filter)
     # Bypass unrelated proxy configuration; this test is strictly loopback.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with tempfile.TemporaryFile(mode="w+b") as logs:

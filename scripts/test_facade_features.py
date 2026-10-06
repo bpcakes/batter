@@ -5,13 +5,26 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import check_facade_features as facade
 
 
 class CachedConsumerTests(unittest.TestCase):
+    def test_external_commands_force_offline_sqlx_without_changing_parent(self):
+        inherited = {"SQLX_OFFLINE": "false", "DATABASE_URL": "ambient-endpoint-marker"}
+        probe = ("import json, os; print(json.dumps([os.environ['SQLX_OFFLINE'], "
+                 "os.environ['DATABASE_URL']]))")
+        with tempfile.TemporaryDirectory(prefix="facade-environment-control-") as directory, \
+                patch.dict(os.environ, inherited):
+            observed = facade.execute([sys.executable, "-c", probe], Path(directory))
+            self.assertEqual(json.loads(observed), ["true", inherited["DATABASE_URL"]])
+            self.assertEqual(os.environ["SQLX_OFFLINE"], "false")
+            self.assertEqual(os.environ["DATABASE_URL"], inherited["DATABASE_URL"])
+
     def test_warm_cache_preserves_disabled_imports_and_rejects_false_negatives(self):
         toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or facade.execute(
             ["rustup", "show", "active-toolchain"], facade.ROOT).split()[0]

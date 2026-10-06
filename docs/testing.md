@@ -508,12 +508,18 @@ is unavailable. The example readiness tests run automatically
 under `--all-targets`; they are not ignored and contact only test-owned listeners
 on `127.0.0.1`. A sandbox denying those operations cannot run the complete gate.
 HTTP process smokes run at the end of direct verification.
+Their launcher replaces inherited `BATTER_*` settings with the selected smoke
+profile and owns its `RUST_LOG` choice. Live-fixture variables, ambient settings
+files and application capacity overrides cannot alter that profile; unrelated
+process environment remains available. Configuration tests still exercise the
+example's strict rejection of unknown settings.
 The standalone commands below remain useful for focused troubleshooting.
 
 HTTP text assertions check completion fields after the completion message; span
 fields cannot satisfy the event-field oracle. `scripts/test_smoke_http.py` includes
 negative controls for missing and conflicting event fields even when the span
-contains every expected value. It runs in the existing Python discovery command.
+contains every expected value, plus hostile smoke-environment controls. It runs
+in the local `scripts` matrix part and the CI Python discovery command.
 Its operation-filter controls reject INFO completions with or without the
 example formatter's timestamp, while allowing WARN deadline completions and
 application INFO events. Nested-observer redaction checks cover the full capture,
@@ -932,6 +938,11 @@ initial full rerun exhausted disk, so those successes do not validate later
 source. See `batter-md9y` for subsequent final-source outcomes and limitations.
 Ordinary test discovery still leaves these external PostgreSQL cases ignored.
 
+Facade consumer subprocesses explicitly select `SQLX_OFFLINE=true`, because their
+temporary external workspaces do not inherit the root Cargo configuration.
+Checked queries use committed metadata even with an ambient `DATABASE_URL` or
+`SQLX_OFFLINE=false`. A real child-process control verifies that selection while
+preserving the parent's environment and runtime database settings.
 Facade consumer checks reuse artifacts under
 `<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory
 comes from root Cargo metadata, honoring `CARGO_TARGET_DIR` and Cargo configuration;
