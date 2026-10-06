@@ -23,6 +23,8 @@ mod policy_context;
 mod profile;
 #[path = "atomic_live/profile_batch.rs"]
 mod profile_batch;
+#[path = "profile/hook_events.rs"]
+mod profile_hook_events;
 #[path = "atomic_live/profile_login.rs"]
 mod profile_login;
 #[path = "atomic_live/profile_timeout_drift.rs"]

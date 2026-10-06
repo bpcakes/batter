@@ -1,6 +1,6 @@
 use super::{
     fixture,
-    profile::HookEvents,
+    profile_hook_events::HookEvents,
     support::{Result, bounded, combine, require},
 };
 use batter_sqlx::{PgProfiledPool, PgSessionProfile};

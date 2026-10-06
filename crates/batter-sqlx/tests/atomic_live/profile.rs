@@ -1,5 +1,6 @@
 use super::{
     fixture,
+    profile_hook_events::HookEvents,
     support::{Result, bounded, require},
 };
 use batter_sqlx::{
@@ -9,16 +10,12 @@ use batter_sqlx::{
 use sqlx::postgres::PgPoolOptions;
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
-use tracing::{
-    Event, Subscriber,
-    field::{Field, Visit},
-};
-use tracing_subscriber::{Layer, layer::Context, prelude::*};
+use tracing_subscriber::prelude::*;
 
 const MARKER: &str = "profile-secret-marker-not-a-timezone";
 
@@ -134,85 +131,6 @@ async fn mixed_case_profile_settings_preserve_values() -> Result {
         Ok(())
     }.await;
     fixture.finish(body).await
-}
-
-#[derive(Clone, Default)]
-pub(super) struct HookEvents(Arc<Mutex<Vec<String>>>);
-
-impl HookEvents {
-    pub(super) fn assert_redacted(&self, hook: &str, markers: &[&str]) -> Result {
-        let observed = self.0.lock().unwrap().join("\n");
-        require(
-            !markers.iter().any(|marker| observed.contains(marker)),
-            "SQLx pool logging disclosed native error contents",
-        )?;
-        self.assert_hook_redacted(hook, markers)
-    }
-
-    pub(super) fn assert_hook_redacted(&self, hook: &str, markers: &[&str]) -> Result {
-        let observed = self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|event| event.contains(hook))
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n");
-        require(
-            !observed.is_empty(),
-            "expected SQLx hook error was not logged",
-        )?;
-        require(
-            !markers.iter().any(|marker| observed.contains(marker)),
-            "SQLx hook logging disclosed native error contents",
-        )?;
-        require(
-            observed.contains("PostgreSQL operation failed"),
-            "hook log omitted safe diagnostic",
-        )
-    }
-}
-
-#[test]
-fn redaction_control_checks_all_pool_events() -> Result {
-    for hook in [
-        "error from `before_acquire`",
-        "error returned from after_connect",
-    ] {
-        let events = HookEvents::default();
-        let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(events.clone()));
-        tracing::dispatcher::with_default(&dispatch, || {
-            tracing::error!(target: "sqlx::pool::test", "{hook}: PostgreSQL operation failed");
-        });
-        events.assert_redacted(hook, &[MARKER])?;
-        tracing::dispatcher::with_default(&dispatch, || {
-            tracing::error!(target: "sqlx::pool::test", marker = MARKER, "additional pool diagnostic");
-        });
-        require(
-            events.assert_redacted(hook, &[MARKER]).is_err(),
-            "marker in another pool event escaped the redaction control",
-        )?;
-        events.assert_hook_redacted(hook, &[MARKER])?;
-    }
-    Ok(())
-}
-
-impl<S: Subscriber> Layer<S> for HookEvents {
-    fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
-        if event.metadata().target().contains("pool") {
-            let mut fields = Fields(String::new());
-            event.record(&mut fields);
-            self.0.lock().unwrap().push(fields.0);
-        }
-    }
-}
-struct Fields(String);
-impl Visit for Fields {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        use std::fmt::Write;
-        write!(self.0, " {}={value:?}", field.name()).unwrap();
-    }
 }
 
 async fn hook_logging(before_acquire: bool) -> Result {

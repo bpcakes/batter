@@ -921,7 +921,8 @@ different cluster and database from `DATABASE_URL`. The real idle-acquisition
 rejection also asserts that the `before_acquire` hook log retains the safe
 diagnostic without native parameter or role text; replacement-connection errors
 are a separate phase. The two existing setup-redaction controls check marker
-absence across every captured pool event. An offline tracing-event regression
+absence across every captured pool event. A tracing-event regression in the
+offline `profile` target shares the capture helper with the live target and
 proves that a marker outside the selected hook message still fails those controls,
 while the explicitly hook-scoped idle check retains its narrower boundary.
 The separate `profile_privileges_live` target verifies legacy and complete
