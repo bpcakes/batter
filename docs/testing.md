@@ -919,9 +919,18 @@ profiles when only the non-inherited effective role has `set_config` EXECUTE.
 It restores the original PUBLIC function grant after the case. Because that ACL
 is database-wide, never run this target concurrently with other live targets on
 the admin database. The explicit runner executes targets serially and inventories
-the six atomic cases and the new function-permission case.
-The owning Bead records actual full and focused runs; ordinary test discovery
-still leaves these external PostgreSQL cases ignored.
+the atomic cases and the separate function-permission case. A restricted-login
+control declares the effective role as the wrong login and requires both profile
+constructors to reject direct setup, atomic work and snapshot inspection. A valid
+profile first proves the same role/schema/settings permissions work; mismatch
+errors retain their profile cause and redact identities, and neither protected
+callback may run. This distinguishes `session_user` from `current_user` without
+requiring the test login to change session authorization.
+The owning Bead identifies the source snapshot for every executed full or focused
+run. Earlier full successes predate the final function-permission repair; its
+initial full rerun exhausted disk, so those successes do not validate later
+source. See `batter-md9y` for subsequent final-source outcomes and limitations.
+Ordinary test discovery still leaves these external PostgreSQL cases ignored.
 
 Facade consumer checks reuse artifacts under
 `<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory

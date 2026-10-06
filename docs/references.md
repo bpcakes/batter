@@ -4565,6 +4565,15 @@ was required.
 
 ### PostgreSQL session-profile batching and idle authority (2026-10-06)
 
+PostgreSQL 18 distinguishes the authenticated session identity from the active
+execution identity: [SET SESSION AUTHORIZATION](https://www.postgresql.org/docs/18/sql-set-session-authorization.html)
+sets both, whereas `SET ROLE` changes the current user. Changing the session
+identity to another user requires an initially authenticated superuser. A direct
+restricted-login regression therefore declares the effective role as the wrong
+login, rather than relying on a session-authorization statement to succeed. Both
+profile constructors must reject that declaration before protected work even
+when role, schema and setting permissions are valid.
+
 The lockfile still resolves SQLx 0.9.0; live regression execution uses PostgreSQL
 18.6. PostgreSQL 18's [role inquiry](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-INFO-ACCESS-TABLE)
 defines `pg_has_role(user, role, 'SET')` as permission to assume the role, unlike

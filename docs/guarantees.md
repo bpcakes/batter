@@ -1039,6 +1039,9 @@ explicit login/effective roles, trusted schema path, timeouts and custom setting
 after reset, before beginning a transaction. Validation precedes callback access
 and follows scope work. Setup queries run before BEGIN so snapshot inspectors can
 still lock authoritative objects before their first snapshot-bearing query.
+The declared login is compared with `session_user`, independently of the effective
+role. A mismatch fails setup before protected application or inspection callbacks
+receive SQL access.
 PostgreSQL 18 is the minimum supported server for all PostgreSQL integration
 paths, including both profile constructors.
 `PgSessionProfile::with_timeouts` requires all four server timeout selections,

@@ -169,6 +169,9 @@ disables that timeout, including over nonzero inherited defaults. Setup is libra
 after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
+The declared login must match the connection's `session_user`; a valid effective
+role and its permissions cannot substitute for that identity. A mismatch rejects
+setup before protected atomic or snapshot callbacks run.
 
 Profile validation reads roles, the login's current permission to SET the
 effective role, path, every declared schema/timeout/setting and
@@ -714,7 +717,7 @@ authentication case first completes a query with those parsed connection options
 then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
 A trust endpoint, missing role or connection refusal is not equivalent.
 The runner verifies
-an exact 61-case inventory across the eleven PostgreSQL lease/read-only
+an exact 64-case atomic inventory, alongside the eleven PostgreSQL lease/read-only
 verification cases, fourteen pool ownership cases and thirty-six authority-
 and-protected-verification cases,
 executes each target serially, and bounds every child process.

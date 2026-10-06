@@ -62,6 +62,7 @@ TARGETS = {
         "declared_transaction_timeout_bounds_multiple_short_statements",
         "owned_pool_replaces_hooks_and_restores_fast_acquisition_and_atomic_policy",
         "profile_setup_errors_redact_setting_and_role_values",
+        "profiles_reject_declared_login_mismatch_before_application_work",
         "profile_after_connect_logging_redacts_setting_values",
         "profile_before_acquire_logging_redacts_setting_values",
         "mixed_case_profile_settings_preserve_values",
