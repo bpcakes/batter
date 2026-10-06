@@ -56,14 +56,82 @@ async fn profiles_use_effective_role_function_permissions() -> Result {
         }
         None => "",
     };
-    let cleanup = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{restore} REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) FROM {role}; \
+    let cleanup = restore_then_cleanup(
+        &mut admin,
+        restore,
+        &format!(
+            "REVOKE EXECUTE ON FUNCTION pg_catalog.set_config(text,text,boolean) FROM {role}; \
          DROP SCHEMA IF EXISTS {schema}; DROP ROLE IF EXISTS {login}; DROP ROLE IF EXISTS {role}"
-    )))
-    .execute(&mut admin)
+        ),
+    )
+    .await;
+    let close = bounded(admin.close())
+        .await
+        .and_then(|result| result.map_err(Into::into));
+    combine(body, combine(cleanup, close))
+}
+
+async fn restore_then_cleanup(admin: &mut PgConnection, restore: &str, cleanup: &str) -> Result {
+    // Separate acknowledgements: a failed fixture drop must not roll back the
+    // restoration of a pre-existing grant. Attempt both and retain both errors.
+    let restored = bounded(sqlx::raw_sql(sqlx::AssertSqlSafe(restore)).execute(&mut *admin))
+        .await
+        .and_then(|result| result.map(|_| ()).map_err(Into::into));
+    let removed = bounded(sqlx::raw_sql(sqlx::AssertSqlSafe(cleanup)).execute(admin))
+        .await
+        .and_then(|result| result.map(|_| ()).map_err(Into::into));
+    combine(restored, removed)
+}
+
+#[tokio::test]
+#[ignore = "external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn function_acl_restore_survives_fixture_drop_failure() -> Result {
+    let options = std::env::var("BATTER_SQLX_ADMIN_URL")?.parse()?;
+    let mut admin = bounded(PgConnection::connect_with(&options)).await??;
+    let schema = format!("profile_cleanup_{}", uuid::Uuid::new_v4().simple());
+    // Use a test-owned function for fault injection, leaving the built-in ACL alone.
+    let body = async {
+        bounded(
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "CREATE SCHEMA {schema}; \
+             CREATE FUNCTION {schema}.marker() RETURNS int LANGUAGE SQL AS 'SELECT 1'; \
+             REVOKE EXECUTE ON FUNCTION {schema}.marker() FROM PUBLIC"
+            )))
+            .execute(&mut admin),
+        )
+        .await??;
+        let result = restore_then_cleanup(
+            &mut admin,
+            &format!("GRANT EXECUTE ON FUNCTION {schema}.marker() TO PUBLIC;"),
+            &format!("DROP SCHEMA {schema}"),
+        )
+        .await;
+        require(result.is_err(), "nonempty fixture schema drop must fail")?;
+        let restored: bool = bounded(
+            sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p, LATERAL \
+             pg_catalog.aclexplode(p.proacl) acl \
+             WHERE p.oid = $1::regprocedure AND acl.grantee = 0 \
+             AND acl.privilege_type = 'EXECUTE')",
+            )
+            .bind(format!("{schema}.marker()"))
+            .fetch_one(&mut admin),
+        )
+        .await??;
+        require(
+            restored,
+            "fixture-drop failure must not undo acknowledged ACL restoration",
+        )
+    }
+    .await;
+    let cleanup = bounded(
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(&mut admin),
+    )
     .await
-    .map(|_| ())
-    .map_err(Into::into);
+    .and_then(|result| result.map(|_| ()).map_err(Into::into));
     let close = bounded(admin.close())
         .await
         .and_then(|result| result.map_err(Into::into));

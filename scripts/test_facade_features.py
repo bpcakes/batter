@@ -25,6 +25,50 @@ class CachedConsumerTests(unittest.TestCase):
             self.assertEqual(os.environ["SQLX_OFFLINE"], "false")
             self.assertEqual(os.environ["DATABASE_URL"], inherited["DATABASE_URL"])
 
+    def test_negative_launches_force_offline_sqlx_without_changing_parent(self):
+        inherited = {"SQLX_OFFLINE": "false", "DATABASE_URL": "ambient-endpoint-marker"}
+        # Replace Cargo's output, not the runner: every launch is a real child.
+        probe = """
+import json, os, pathlib, sys
+with pathlib.Path('environments.jsonl').open('a') as output:
+    output.write(json.dumps([os.environ['SQLX_OFFLINE'], os.environ['DATABASE_URL']]) + '\\n')
+if sys.argv[1] == 'test':
+    print('test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;')
+    sys.exit(0)
+source = pathlib.Path('src/main.rs').read_text()
+if 'fn forge(' in source:
+    print('error[E0451]: field `report` is private', file=sys.stderr)
+elif 'fn discard(' in source:
+    print('unused_must_use: SharedShutdownReport', file=sys.stderr)
+else:
+    print('error[E0432]: unresolved import batter::runledger::native::test_support', file=sys.stderr)
+sys.exit(101)
+"""
+        root_lock = (facade.ROOT / "Cargo.lock").read_bytes()
+        for kind, count in (("feature", 1), ("checked-completion", 3)):
+            with self.subTest(kind=kind), \
+                    tempfile.TemporaryDirectory(prefix="facade-negative-environment-") as directory, \
+                    patch.dict(os.environ, inherited), \
+                    patch.object(facade, "run_metadata", return_value={}), \
+                    patch.object(facade, "check_graph"), \
+                    patch.object(facade, "normal_names", return_value=set()):
+                parent = Path(directory)
+                cargo = [sys.executable, "-c", probe]
+                if kind == "feature":
+                    facade.run_negative_case(cargo, "host", root_lock, parent, parent / "target",
+                                             ("runledger",), "runledger-test-support",
+                                             "batter::runledger::native::test_support")
+                else:
+                    with redirect_stdout(io.StringIO()):
+                        facade.run_checked_completion_case(cargo, "host", root_lock, set(),
+                                                           parent, parent / "target")
+                captures = list(parent.glob("*/environments.jsonl"))
+                self.assertEqual(len(captures), 1)
+                observed = [json.loads(line) for line in captures[0].read_text().splitlines()]
+                self.assertEqual(observed, [["true", inherited["DATABASE_URL"]]] * count)
+                self.assertEqual(os.environ["SQLX_OFFLINE"], "false")
+                self.assertEqual(os.environ["DATABASE_URL"], inherited["DATABASE_URL"])
+
     def test_warm_cache_preserves_disabled_imports_and_rejects_false_negatives(self):
         toolchain = os.environ.get("RUSTUP_TOOLCHAIN") or facade.execute(
             ["rustup", "show", "active-toolchain"], facade.ROOT).split()[0]

@@ -4593,6 +4593,14 @@ its function grants. A separate live target revokes PUBLIC execution of
 `set_config`, grants only the effective role, and covers both profile constructors
 through direct setup and ordinary pool reuse.
 
+PostgreSQL 18's [multi-statement simple-query contract](https://www.postgresql.org/docs/18/protocol-flow.html#PROTOCOL-FLOW-MULTI-STATEMENT)
+and SQLx 0.9.0's local `sqlx-core/src/raw_sql.rs` agree that one raw SQL batch
+executes in an implicit transaction. A later fixture-drop error therefore rolls
+back an earlier function-grant restoration in the same batch. The live fixture
+acknowledges restoration separately before its drop batch and retains both
+errors. A test-owned function and an intentionally failing nonempty-schema drop
+exercise this boundary without injecting failure into the built-in function ACL.
+
 PostgreSQL's [SELECT evaluation contract](https://www.postgresql.org/docs/18/sql-select.html#SQL-SELECT-LIST)
 places output-expression evaluation after sorting when those expressions are not
 sort/group/distinct keys. Profile setup orders array rows by ordinality before

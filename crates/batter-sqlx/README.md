@@ -708,11 +708,14 @@ prerequisites fail. Restricted-login fixtures use the admin endpoint for both
 provisioning and login; it must admit their password-authenticated connections.
 It need not share a cluster or database name with `DATABASE_URL`.
 The separate `profile_privileges_live` target temporarily revokes PUBLIC
-execution of `set_config` in that admin database and restores its original grant.
+execution of `set_config` in that admin database. Restoration is acknowledged
+separately before fixture drops, so a failed drop cannot roll back that grant.
+Both restoration and fixture-cleanup errors are retained.
 Do not run other live targets against that database concurrently; the runner
 executes targets serially. Roles and parameter ACLs are cluster-wide. Custom parameter
-names are unique per fixture, while process death can still leave test-owned
-cluster residue for external cleanup. The
+names are unique per fixture. Process death or a failed restoration can still
+leave the built-in function grant revoked, alongside test-owned cluster residue;
+restore the grant externally or recreate the disposable fixture before reuse. The
 authentication case first completes a query with those parsed connection options,
 then changes only their password and requires exact PostgreSQL SQLSTATE `28P01`.
 A trust endpoint, missing role or connection refusal is not equivalent.

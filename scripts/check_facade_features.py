@@ -11,7 +11,7 @@ import re
 import sys
 import tempfile
 
-from parallel_process import render_outcomes, run_parallel
+from parallel_process import ProcessOutcome, render_outcomes, run_parallel
 from consumer_manifest import consumer_patches
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,13 +49,18 @@ BRIDGE_NATIVES = {
 }
 
 
-def execute(command: list[str], cwd: Path, *, timeout: float = 600,
-            output_limit: int = 8 * 1024 * 1024) -> str:
+def execute_outcome(command: list[str], cwd: Path, *, timeout: float = 600,
+                    output_limit: int = 8 * 1024 * 1024) -> ProcessOutcome:
     # External consumers do not inherit the root Cargo config. Their checked
     # SQL must use committed metadata even when live-test endpoints are set.
     offline = ["env", "SQLX_OFFLINE=true", *command]
-    outcome = run_parallel([offline], timeout=timeout, output_limit=output_limit,
-                           cwd=cwd, retain_tail=True)[0]
+    return run_parallel([offline], timeout=timeout, output_limit=output_limit,
+                        cwd=cwd, retain_tail=True)[0]
+
+
+def execute(command: list[str], cwd: Path, *, timeout: float = 600,
+            output_limit: int = 8 * 1024 * 1024) -> str:
+    outcome = execute_outcome(command, cwd, timeout=timeout, output_limit=output_limit)
     if not outcome.ok:
         render_outcomes(["facade-consumer"], [outcome])
         raise RuntimeError(f"command failed: {command!r}")
@@ -500,10 +505,10 @@ def run_checked_completion_case(cargo: list[str], host: str, root_lock: bytes,
     ]
     for label, source, expected in negatives:
         (case / "src/main.rs").write_text(source)
-        outcome = run_parallel(
-            [cargo + ["check", "--locked", "--offline", "--target-dir", str(target)]],
-            timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
-        )[0]
+        outcome = execute_outcome(
+            cargo + ["check", "--locked", "--offline", "--target-dir", str(target)],
+            case, timeout=600, output_limit=2 * 1024 * 1024,
+        )
         diagnostics = (outcome.stdout + outcome.stderr).decode(errors="replace")
         if (outcome.status != 101 or outcome.watchdog or outcome.overflow or outcome.errors
                 or not outcome.reaped or not outcome.output_eof
@@ -612,10 +617,10 @@ def run_negative_case(cargo: list[str], host: str, root_lock: bytes, parent: Pat
             raise RuntimeError(
                 f"{selected}: disabled {disabled} activated {package}/{feature}"
             )
-    outcome = run_parallel(
-        [cargo + ["check", "--locked", "--offline", "--target-dir", str(target)]],
-        timeout=600, output_limit=2 * 1024 * 1024, cwd=case, retain_tail=True,
-    )[0]
+    outcome = execute_outcome(
+        cargo + ["check", "--locked", "--offline", "--target-dir", str(target)],
+        case, timeout=600, output_limit=2 * 1024 * 1024,
+    )
     diagnostics = (outcome.stdout + outcome.stderr).decode(errors="replace")
     expected_token = symbol.replace("::", "::")
     if (outcome.status != 101 or outcome.watchdog or outcome.overflow or outcome.errors

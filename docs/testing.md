@@ -922,10 +922,15 @@ rejection also asserts that SQLx's hook log retains the safe diagnostic without
 native parameter or role text.
 The separate `profile_privileges_live` target verifies legacy and complete
 profiles when only the non-inherited effective role has `set_config` EXECUTE.
-It restores the original PUBLIC function grant after the case. Because that ACL
+It acknowledges restoration of the original PUBLIC function grant separately
+before dropping fixtures, retaining errors from both steps. A second case uses
+the same cleanup helper with a test-owned function: a deliberately failing
+nonempty-schema drop must leave the restored PUBLIC grant intact. Process death
+or a failed restore can still leave the built-in grant revoked for external
+cleanup or fixture replacement. Because that ACL
 is database-wide, never run this target concurrently with other live targets on
 the admin database. The explicit runner executes targets serially and inventories
-the atomic cases and the separate function-permission case. A restricted-login
+the atomic cases and the separate function-permission target. A restricted-login
 control declares the effective role as the wrong login and requires both profile
 constructors to reject direct setup, atomic work and snapshot inspection. A valid
 profile first proves the same role/schema/settings permissions work; mismatch
@@ -941,8 +946,11 @@ Ordinary test discovery still leaves these external PostgreSQL cases ignored.
 Facade consumer subprocesses explicitly select `SQLX_OFFLINE=true`, because their
 temporary external workspaces do not inherit the root Cargo configuration.
 Checked queries use committed metadata even with an ambient `DATABASE_URL` or
-`SQLX_OFFLINE=false`. A real child-process control verifies that selection while
-preserving the parent's environment and runtime database settings.
+`SQLX_OFFLINE=false`. Successful and expected-failure builds share one subprocess
+boundary, while negative cases retain their raw outcomes for exact diagnostic
+checks. Real child-process controls exercise the ordinary, disabled-feature and
+checked-completion negative launch paths, preserving the parent's environment
+and runtime database settings.
 Facade consumer checks reuse artifacts under
 `<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory
 comes from root Cargo metadata, honoring `CARGO_TARGET_DIR` and Cargo configuration;

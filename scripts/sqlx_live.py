@@ -18,6 +18,7 @@ TARGETS = {
     # Mutates a built-in function ACL in the dedicated admin database; keep
     # this target separate from other live sessions and restore the ACL.
     "profile_privileges_live": {
+        "function_acl_restore_survives_fixture_drop_failure",
         "profiles_use_effective_role_function_permissions",
     },
     "atomic_live": {
