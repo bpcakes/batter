@@ -9,6 +9,9 @@ Runlimit, Runledger, and postgres-test-harness are not dependencies of the
 library/test-support crate. The contracts below govern composition; they do not advertise unimplemented
 APIs. Delivery scope, acceptance tests and dependencies live in [Beads](roadmap.md).
 
+PostgreSQL integrations require PostgreSQL 18 or later. Legacy session-profile
+construction preserves timeout-declaration compatibility, not older-server support.
+
 ## Facade feature selection
 
 Applications can use `batter` as the single public import root. Its default

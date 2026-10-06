@@ -7,6 +7,7 @@ use sqlx::{PgConnection, Row, postgres::PgRow};
 struct Observation {
     login: String,
     role: String,
+    can_set_role: bool,
     path: String,
     schemas: Vec<bool>,
     timeouts: Vec<Option<i64>>,
@@ -21,6 +22,7 @@ impl sqlx::FromRow<'_, PgRow> for Observation {
         Ok(Self {
             login: row.try_get("login")?,
             role: row.try_get("role")?,
+            can_set_role: row.try_get("can_set_role")?,
             path: row.try_get("path")?,
             schemas: row.try_get("schemas")?,
             timeouts: row.try_get("timeouts")?,
@@ -63,6 +65,7 @@ impl PgSessionProfile {
             .await?;
         if observed.login != self.login_role
             || observed.role != self.effective_role
+            || !observed.can_set_role
             || observed.path != self.search_path
             || observed.schemas.len() != self.schemas.len()
             || observed.schemas.iter().any(|usable| !usable)

@@ -11,8 +11,10 @@ use std::sync::Arc;
 /// All three hooks are owned here. A session is reset and verified when it
 /// connects and again before idle admission, which also covers native
 /// `try_acquire`/`try_begin` paths that skip acquisition hooks; acquisition
-/// verifies that idle evidence against the live session instead of repeating
-/// the reset, and discards a session that no longer matches.
+/// verifies that idle evidence and current permission to assume the effective
+/// role instead of repeating the reset. Declared custom settings also undergo a
+/// native assignment check with their current values before policy verification.
+/// A failed check discards the session.
 ///
 /// Profiles describe session policy, not endpoint identity or permanent grants.
 /// Native SQL remains an escape hatch, not a sandbox or atomic outcome guarantee.
@@ -92,8 +94,8 @@ impl PgProfiledPool {
             .before_acquire(move |connection, _| {
                 let profile = Arc::clone(&on_acquire);
                 // Idle sessions were reset and verified at connection or release
-                // and nothing reaches them in the pool. Check that evidence
-                // against the live session; a mismatch discards the connection.
+                // but role/schema/parameter grants can change while idle. Check
+                // current authority and session policy before handing it out.
                 Box::pin(async move { profile.verify_idle(connection).await.map(|()| true) })
             })
             .after_release(move |connection, _| {

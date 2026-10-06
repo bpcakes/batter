@@ -66,6 +66,9 @@ examples, tests and tooling. There are no Windows implementation branches or CI
 targets. Other Unix targets remain unverified. See
 [ADR-007](docs/adr/007-unix-platform-scope.md).
 
+PostgreSQL 18 is the minimum supported server for PostgreSQL integrations,
+including both `PgSessionProfile` constructors. Older servers are unsupported.
+
 ## Quick start
 
 Network access is required to download dependencies on the first run.

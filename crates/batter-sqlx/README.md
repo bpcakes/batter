@@ -3,6 +3,8 @@
 An independently selected PostgreSQL adapter for SQLx 0.9 and Batter. Version
 0.0.1, Rust 1.94 minimum, Unix-only, and targeting crates.io. The foundation
 does not depend on this package.
+PostgreSQL 18 is the minimum supported server for every adapter path, including
+both session-profile constructors; older servers are unsupported.
 
 ## Owned transactions and snapshots
 
@@ -168,7 +170,8 @@ after reset and before BEGIN, and is verified before application work. Atomic
 scope boundaries and snapshot cleanup revalidate the retained profile. It is a
 policy declaration, not a permanent authority witness or privilege sandbox.
 
-Profile validation reads roles, path, every declared schema/timeout/setting and
+Profile validation reads roles, the login's current permission to SET the
+effective role, path, every declared schema/timeout/setting and
 atomic continuity in one SQL statement. Successful recoverable operations validate
 once after the body, then await RELEASE without another validation. Unprofiled
 operations omit the opening check because the opaque owner has run no arbitrary
@@ -189,12 +192,28 @@ remain in effect. `DISCARD ALL` removes later session `SET` customizations; it d
 not erase startup defaults. All three pool hooks remain library-owned: a
 session is reset and verified when it connects and before it is admitted idle,
 and acquisition verifies that idle session against the policy without resetting
-it again.
+it again. Role SET permission, schema USAGE and custom-parameter SET authority can
+change externally while idle; ordinary acquisition rejects that drift. Declared
+custom settings are reassigned their current values in one native batch before
+verification, preserving PostgreSQL permission and extension check-hook semantics
+without restoring declared values over drift. Native `try_acquire`/`try_begin` still
+skip acquisition hooks and rely on normalization before idle admission. Neither
+path fences later privilege changes or withdraws an already held lease.
 
-Complete profiles require PostgreSQL 17 or later because `transaction_timeout`
-was introduced in 17, even when the declared value is zero. Unsupported settings
-fail setup before application access; they are never silently skipped. Native
-verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
+Setup binds parallel name/value arrays and applies their rows in declaration
+order, with role first so subsequent settings use the effective role's parameter
+permissions. Query width and bind count do not grow with custom-setting count;
+no new construction limit is imposed. Reset uses four policy SQL statements;
+ordinary idle acquisition uses one verification, plus one batched native assignment
+check when custom settings are declared, regardless of their count. It does not
+clear the statement cache. SQLx statement preparation,
+cache synchronization and native ping are separate protocol work, so these counts
+are not network-round-trip or latency measurements.
+
+Both complete and legacy profiles require PostgreSQL 18 or later. Legacy
+compatibility concerns timeout declarations only. Unsupported settings fail setup
+before application access, even when the value is zero; they are never silently
+skipped. Native verification uses PostgreSQL 18. Idle-in-transaction timeout bounds each idle
 interval, while transaction timeout bounds the whole transaction and terminates
 the session; prepared transactions are excluded. A nonzero transaction timeout
 shorter than or equal to statement/idle timeout takes precedence. Choosing these

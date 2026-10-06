@@ -45,7 +45,8 @@ errors, and independently observed server termination/lock release. The expiry
 controls retain the Rust lease and assert that the local pool slot stays occupied.
 Total expiry spans multiple successful short statements; idle expiry waits for
 an independent backend observation. Existing setup-redaction cases use complete
-profiles. Older PostgreSQL versions and fresh-agent usability tasks are not
+profiles. PostgreSQL 18 is the minimum supported server, including the legacy
+constructor; older servers are unsupported. Fresh-agent usability tasks are not
 executed by these cases.
 
 Atomic runner regression coverage (`batter-gzh`) lives in
@@ -897,6 +898,20 @@ The focused `cargo test -p batter-example-postgres-lifecycle --test native_sqlx
 requiring Runledger or a database. Its unpolled-factory test makes no live SQL claim.
 
 ## Verification
+
+Session-profile optimization regressions (`batter-md9y`) extend `atomic_live`
+with restricted-login idle SET-role, schema-USAGE and loaded privileged
+custom-parameter SET revocation/recovery,
+1,700-setting legacy/complete profiles, four-statement reset accounting and exact
+timeout conversion for `0`, `ms`, `s`, `min`, `h` and `d` displays plus the maximum
+accepted value. An acquisition counter waits for release normalization, proves
+same-backend reuse, and asserts one policy statement with no custom settings or
+two with 1 and 1,700 settings. The privileged-parameter test requires the supplied
+PostgreSQL 18 server to provide `auto_explain`; admin setup preloads it for the
+restricted login and grants only the effective role parameter SET authority.
+The explicit SQLx live runner inventories all six new cases.
+The owning Bead records actual full and focused runs; ordinary test discovery
+still leaves these external PostgreSQL cases ignored.
 
 Facade consumer checks reuse artifacts under
 `<cargo-target-directory>/facade-features/<compiler-digest>`. The target directory
@@ -2737,7 +2752,8 @@ RUNLIMIT_POSTGRES_TEST_DATABASE_URL=postgresql://... cargo test -p runlimit-post
 ```
 
 CI retains upstream PostgreSQL 16 and executes both commands on Rust 1.94.0 and
-1.98.1. A workflow definition is not hosted execution evidence. The native test
+1.98.1. That imported upstream matrix does not broaden Batter's PostgreSQL 18
+minimum. A workflow definition is not hosted execution evidence. The native test
 fixtures own isolated schemas; database provisioning remains external. Existing
 Runledger PostgreSQL 18 tests are separate.
 
