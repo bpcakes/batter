@@ -260,6 +260,53 @@ async fn drain_during_pending_support_initialization_abandons_without_readiness(
 }
 
 #[tokio::test(start_paused = true)]
+async fn drain_winning_the_success_race_abandons_pending_initialization() {
+    let mut supervisor = supervisor();
+    let handle = supervisor.handle();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = runs.clone();
+    let reader = register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        first_success(
+            SECOND,
+            SECOND * 10,
+            SECOND * 100,
+            PeriodicShutdown::SupportThroughDrain,
+        ),
+        move |_| {
+            let handle = handle.clone();
+            counted.fetch_add(1, Ordering::SeqCst);
+            async move {
+                // Drain begins inside this run's own final poll, which the
+                // cooperative boundary cannot recheck before returning success.
+                handle.request();
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    let status = supervisor.status();
+    let running = supervisor.start();
+    let success = running.wait_checked().await.unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    let summary = &success.report().periodic[0].summary;
+    // The run is still counted, but it neither acknowledged startup nor took
+    // on the support obligation, so the loop abandoned initialization.
+    assert_eq!(summary.succeeded, 1);
+    assert_eq!(summary.invocations, 1);
+    assert!(!summary.acknowledged);
+    assert_eq!(
+        summary.completion,
+        PeriodicCompletion::AbandonedDuringStartup
+    );
+    assert!(!summary.has_failures());
+    // Readiness was never published, and abandoning on drain is expected.
+    assert_eq!(status.readiness(), Readiness::Stopped);
+    assert_eq!(reader.snapshot().invocations, 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn later_failures_never_revoke_an_issued_acknowledgement() {
     let mut supervisor = supervisor();
     let attempts = Arc::new(AtomicUsize::new(0));

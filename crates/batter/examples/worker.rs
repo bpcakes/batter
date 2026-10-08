@@ -10,7 +10,10 @@ mod support;
 
 use batter::{
     BoxError,
-    lifecycle::{Fatal, ProcessCapacity, ShutdownSuccess, Supervisor},
+    lifecycle::{
+        Fatal, ProcessAdmissionError, ProcessCapacity, ProcessHandle, ProcessReceipt,
+        RunningSupervisor, ShutdownFailure, ShutdownSuccess, Supervisor,
+    },
     operation::OperationContext,
     periodic::{
         PeriodicPolicy, PeriodicReader, PeriodicRun, PeriodicShutdown, PeriodicStartup,
@@ -111,6 +114,99 @@ struct Observed {
     pruned_entries: u64,
 }
 
+/// Counters read immediately before shutdown was requested.
+struct Progress {
+    prunings: u64,
+    renewals: u64,
+}
+
+/// Both independent failures stay available for a trusted application sink.
+struct DemonstrationFailure {
+    body: Option<BoxError>,
+    shutdown: Option<ShutdownFailure>,
+}
+
+impl std::fmt::Display for DemonstrationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("maintenance demonstration or shutdown failed")
+    }
+}
+
+impl std::fmt::Debug for DemonstrationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl std::error::Error for DemonstrationFailure {}
+
+/// Combine the demonstration body with the separately owned shutdown outcome.
+/// Neither is discarded when the other fails.
+fn complete(
+    body: Result<Progress, BoxError>,
+    shutdown: Result<ShutdownSuccess, ShutdownFailure>,
+) -> Result<(Progress, ShutdownSuccess), BoxError> {
+    match (body, shutdown) {
+        (Ok(progress), Ok(success)) => Ok((progress, success)),
+        (body, shutdown) => {
+            let failure = DemonstrationFailure {
+                body: body.err(),
+                shutdown: shutdown.err(),
+            };
+            tracing::warn!(
+                body_failed = failure.body.is_some(),
+                shutdown_failed = failure.shutdown.is_some(),
+                "maintenance demonstration did not complete successfully"
+            );
+            Err(Box::new(failure))
+        }
+    }
+}
+
+/// Admit the finite batch and run the observation window.
+///
+/// A shutdown signal before readiness, or a drain that races admission, is a
+/// normal operational outcome rather than an application failure. Either way
+/// the caller still awaits the owned driver's checked completion.
+async fn work_window(
+    running: &RunningSupervisor,
+    process: &ProcessHandle,
+    store: &Arc<Store>,
+    pruning: &PeriodicReader,
+    renewal: &PeriodicReader,
+    window: Duration,
+) -> Result<(Progress, Option<ProcessReceipt<(), StoreUnavailable>>), BoxError> {
+    let progress = |pruning: &PeriodicReader, renewal: &PeriodicReader| Progress {
+        prunings: pruning.snapshot().invocations,
+        renewals: renewal.snapshot().succeeded,
+    };
+    // Readiness waits for the first successful renewal, not merely for a loop.
+    if running.status().wait_ready().await.is_err() {
+        return Ok((progress(pruning, renewal), None));
+    }
+    let writing = store.clone();
+    let receipt = match process.try_spawn("entries.write", move |scope| async move {
+        for id in 0..8u64 {
+            writing.insert(id, 2);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if scope.signal().is_draining() {
+                break;
+            }
+        }
+        // Finishing a batch during drain is exactly what support exists for.
+        scope.signal().draining().await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        writing.insert(100, 1);
+        Ok::<_, Fatal<StoreUnavailable>>(())
+    }) {
+        Ok(receipt) => Some(receipt),
+        Err(ProcessAdmissionError::Closed) => None,
+        Err(error) => return Err(Box::new(error)),
+    };
+    tokio::time::sleep(window).await;
+    Ok((progress(pruning, renewal), receipt))
+}
+
 async fn demonstrate(window: Duration, signals: bool) -> Result<Observed, BoxError> {
     let store = Arc::new(Store::default());
     // One injected transient window shows retained, bounded failure evidence.
@@ -153,35 +249,24 @@ async fn demonstrate(window: Duration, signals: bool) -> Result<Observed, BoxErr
         .process_handle()
         .expect("configured process capacity");
     let running = supervisor.start();
-    // Readiness waits for the first successful renewal, not merely for a loop.
-    running
-        .status()
-        .wait_ready()
-        .await
-        .map_err(|state| format!("process did not become ready: {state:?}"))?;
-    let writing = store.clone();
-    let receipt = process.try_spawn("entries.write", move |scope| async move {
-        for id in 0..8u64 {
-            writing.insert(id, 2);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if scope.signal().is_draining() {
-                break;
-            }
-        }
-        // Finishing a batch during drain is exactly what support exists for.
-        scope.signal().draining().await;
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        writing.insert(100, 1);
-        Ok::<_, Fatal<StoreUnavailable>>(())
-    })?;
-    tokio::time::sleep(window).await;
-    let prunings_before = pruning.snapshot().invocations;
-    let renewals_before = renewal.snapshot().succeeded;
-    let success = running.shutdown_checked().await?;
-    receipt.wait().await?;
+    let window = work_window(&running, &process, &store, &pruning, &renewal, window).await;
+    // Whatever happened above, the owned driver's completion is still observed
+    // and its retained outcomes are never discarded.
+    let shutdown = running.shutdown_checked().await;
+    let body = match window {
+        // The receipt is only a waiter; the process owned the task either way.
+        Ok((progress, Some(receipt))) => receipt
+            .wait()
+            .await
+            .map(|()| progress)
+            .map_err(|error| Box::new(error) as BoxError),
+        Ok((progress, None)) => Ok(progress),
+        Err(error) => Err(error),
+    };
+    let (progress, success) = complete(body, shutdown)?;
     Ok(Observed {
-        prunings_during_drain: pruning.snapshot().invocations - prunings_before,
-        renewals_during_drain: renewal.snapshot().succeeded - renewals_before,
+        prunings_during_drain: pruning.snapshot().invocations - progress.prunings,
+        renewals_during_drain: renewal.snapshot().succeeded - progress.renewals,
         pruned_entries: store.pruned.load(Ordering::Acquire),
         success,
         pruning,

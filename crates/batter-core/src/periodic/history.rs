@@ -194,6 +194,10 @@ impl RetainedHistory {
     /// one the coordinator could not join: a published marker is the loop's
     /// claim about itself, and a runner whose task was never observed cannot
     /// support a termination claim even when it wrote one first.
+    ///
+    /// `unjoined` must name only registered components. Finite task labels are
+    /// a separate vocabulary that may repeat and may match a component name, so
+    /// the combined diagnostic list would misattribute a lost finite task.
     pub(crate) fn into_record(self, unjoined: &[&'static str]) -> PeriodicRecord {
         let mut summary = self.history.snapshot();
         if unjoined.contains(&self.name) {

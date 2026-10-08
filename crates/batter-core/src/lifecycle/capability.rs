@@ -406,6 +406,14 @@ impl PeriodicAdmission {
         self.shared.draining().await;
     }
 
+    /// Whether drain or stop has already been observed.
+    pub(crate) fn is_draining(&self) -> bool {
+        matches!(
+            self.shared.readiness(),
+            Readiness::Draining | Readiness::Stopped
+        )
+    }
+
     /// Derive one run's cancellation parent from process forced cancellation.
     pub(crate) fn operation_token(&self) -> CancellationToken {
         self.shared.operation_token()

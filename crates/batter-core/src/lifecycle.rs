@@ -665,7 +665,7 @@ impl Supervisor {
         let periodic = self
             .periodic
             .drain(..)
-            .map(|retained| retained.into_record(&summary.unjoined))
+            .map(|retained| retained.into_record(&summary.unjoined_components))
             .collect();
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.

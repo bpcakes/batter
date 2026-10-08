@@ -107,8 +107,13 @@ impl TaskSet {
         );
     }
 
-    fn sorted_names(&self) -> Vec<&'static str> {
-        let mut values: Vec<_> = self.names.values().map(|entry| entry.name).collect();
+    fn sorted_names(&self, keep: impl Fn(&TaskMetadata) -> bool) -> Vec<&'static str> {
+        let mut values: Vec<_> = self
+            .names
+            .values()
+            .filter(|entry| keep(entry))
+            .map(|entry| entry.name)
+            .collect();
         values.sort_unstable();
         values
     }
@@ -302,7 +307,11 @@ impl TaskSet {
 
     /// Release task ownership before the caller can start dependency cleanup.
     pub(super) fn finish(self) -> TaskSummary {
-        let unjoined = self.sorted_names();
+        let unjoined = self.sorted_names(|_| true);
+        // Finite labels are a separate vocabulary that may repeat and may
+        // match a registered component, so component-scoped reconciliation
+        // cannot use the combined diagnostic list.
+        let unjoined_components = self.sorted_names(|entry| entry.kind != TaskKind::Finite);
         let unsafe_exit = !unjoined.is_empty()
             || self.records.iter().any(|record| {
                 matches!(record.outcome, TaskOutcome::Panicked | TaskOutcome::Aborted)
@@ -311,6 +320,7 @@ impl TaskSet {
             records: self.records,
             completed: self.completed,
             unjoined,
+            unjoined_components,
             unsafe_exit,
         }
     }
@@ -319,7 +329,10 @@ impl TaskSet {
 pub(super) struct TaskSummary {
     pub(super) records: Vec<TaskRecord>,
     pub(super) completed: u64,
+    /// Every direct task whose completion was not observed, by diagnostic name.
     pub(super) unjoined: Vec<&'static str>,
+    /// Only the registered components among them, whose names are unique.
+    pub(super) unjoined_components: Vec<&'static str>,
     pub(super) unsafe_exit: bool,
 }
 

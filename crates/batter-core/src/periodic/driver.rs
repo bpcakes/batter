@@ -130,12 +130,18 @@ where
             Run::Succeeded => {
                 history.succeeded();
                 if pending.is_some() {
-                    // The run boundary is cooperative and does not reread its
-                    // clock after the work's own poll returns, so a blocking
-                    // poll or destructor can cross the initialization deadline
-                    // and still return success. Keep that run counted, but do
-                    // not let it acknowledge startup after the allowance
-                    // expired: expiry must still prevent Ready.
+                    // The run boundary is cooperative: it neither rereads its
+                    // clock nor rechecks drain after the work's own poll
+                    // returns, so a blocking poll or destructor can cross
+                    // either boundary and still return success. Keep that run
+                    // counted, but never acknowledge startup afterwards.
+                    // Pending initialization abandons on observed drain, and an
+                    // expired allowance stays a retained initialization
+                    // failure; both must still prevent Ready, and neither may
+                    // assume the support obligation.
+                    if admission.is_draining() {
+                        break Ending::Abandoned;
+                    }
                     if initialization.is_some_and(|deadline| Instant::now() >= deadline) {
                         break Ending::InitializationExpired;
                     }

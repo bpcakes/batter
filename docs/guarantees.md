@@ -889,10 +889,12 @@ failed runs and the interval waits between them; each initialization run is
 additionally capped by whichever of the run budget and that allowance expires
 first. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
-Because the run boundary is cooperative and does not reread its clock after the
-work's own poll returns, a success that only arrived after the allowance had
-expired is still counted as a successful run but cannot acknowledge startup;
-expiry prevents readiness either way.
+Because the run boundary is cooperative and rechecks neither its clock nor
+drain after the work's own poll returns, a success that only arrived after the
+allowance had expired, or after drain began, is still counted as a successful
+run but cannot acknowledge startup or assume the support obligation. An
+observed drain abandons that pending initialization; an expired allowance stays
+a retained initialization failure. Either way readiness is not published.
 Observed drain abandons pending initialization, including for support
 components, and expiry is a distinct retained library initialization failure
 (`PeriodicInitializationExpired`) that initiates the existing drain sequence.
@@ -965,7 +967,9 @@ observer polling. A runner that published no final snapshot leaves
 `PeriodicCompletion::Pending`, which marks the snapshot explicitly incomplete
 and claims nothing about termination; so does a runner the coordinator lists as
 unjoined, because a published marker is the loop's claim about itself and
-cannot stand without observed join evidence. `PeriodicSummary::has_failures`
+cannot stand without observed join evidence. That reconciliation uses only
+registered component names, because finite task labels are a separate
+vocabulary that may repeat and may match a component's name. `PeriodicSummary::has_failures`
 also reports the terminal `Fatal` and `InitializationExpired` completions,
 which advance no recurring counter. `Debug` and `Display` stay redacted, a
 displaced cause is destroyed outside the publication lock inside the
