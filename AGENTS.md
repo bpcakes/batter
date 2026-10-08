@@ -33,7 +33,7 @@ not broaden this repository's platform support.
 1. [README](README.md), [status](docs/status.md), [guarantees](docs/guarantees.md).
 2. [Architecture](docs/architecture.md) and [ADRs](docs/adr/README.md).
 3. [Testing](docs/testing.md).
-4. [Integration contracts](docs/integrations.md), [Beads backlog](docs/roadmap.md), and
+4. [Integration contracts](docs/integrations.md), [Backlog navigation](docs/roadmap.md), and
    [Effect v4 rationale](docs/effect-v4-brief.md).
 
 ## Verification
@@ -42,8 +42,8 @@ Local development uses the current stable release pinned in `rust-toolchain.toml
 (Rust 1.98.1). Upgrade that pin deliberately, together with the pinned CI entries.
 All packages retain Rust 1.94 as their minimum; SQLx 0.9.0 requires it in the
 adapter and examples. Run `bash scripts/verify.sh` with the default toolchain.
-It directly runs formatting, file budgets, the Beads export identifier check,
-all four Clippy configurations, all six test-matrix parts, rustdoc and all HTTP
+It directly runs formatting, file budgets, all four Clippy configurations,
+all six test-matrix parts, rustdoc and all HTTP
 smoke profiles. It does not create plans, receipts or gates. Do not repeat the matrix after it passes.
 Routine Rust 1.94.0 verification belongs only in CI, including the standalone
 `batter-at-rest` gate in `scripts/check-batter-at-rest-portability.sh`. Do not
@@ -269,7 +269,7 @@ Use generic scenario names in source, tests, examples, documentation, and update
 Do not use application-specific project names or project-shaped labels.
 
 Update the relevant contract, failure-path test, implemented-status row, and owning Bead.
-Beads owns delivery scope, acceptance, priority, status and dependencies; do not
+Beadroll owns delivery scope, acceptance, priority, status and dependencies; do not
 reintroduce Markdown backlog lists. Historical execution plans remain in Git
 history; new work does not require a Jig plan.
 New public APIs need rustdoc and an example. New claims need executable tests
@@ -293,16 +293,39 @@ Keep `.jig/file-budget.toml` limits and imported-file ceilings intact.
 There are no Jig plans, receipts, gates or MCP registration. Record actual
 verification outcomes in the owning Bead. See [verification](docs/testing.md#verification).
 
-## Finding the next task
+## Work tracking (beadroll)
 
-Run `bv --robot-triage`, then verify current state with `br ready --type task --json`
-and `br show <id> --json`. This repository uses Rust Beads (`br`), not Go `bd`.
-Epics group outcomes; claim a ready delivery task rather than its umbrella epic.
-Use `br list --all --deferred --label roadmap --json` for the migrated inventory.
-The [backlog navigation page](docs/roadmap.md) explains tracker/export access.
+This repository uses `bead` (beadroll), with the `batter-` issue prefix. One
+tracker is shared across worktrees, clones and machines; its state lives outside
+the working tree and syncs through a Git ref, not a code branch.
 
-Publication and deployment require a separate user decision; completing a Bead
-does not grant that permission.
+Start every session with `bead prime` and follow its current workflow, identity,
+claim and error guidance. Prefer that live guidance over this summary. Use
+`--json` for machine-readable output.
+
+- Find work with `bead ready --json`, inspect it with `bead show <id> --json`,
+  and check other owners with `bead claims --json`. Epics group outcomes; claim
+  a ready delivery task rather than its umbrella epic.
+- Claim with `bead claim <id>` before working. A claim is exclusive only after
+  the remote accepts it; offline claims are provisional. If another agent holds
+  the issue, pick another task.
+- Record progress, decisions and verification with `bead comments add <id> "..."`.
+  Split follow-ups with `bead create "title" --parent <id> -t task`.
+- Close with `bead close <id> -r "what was done"`; this releases the claim and
+  publishes the tracker update. Hand back unfinished work with `bead release <id>`.
+  Run `bead sync` before stopping and after a long gap.
+- Claims belong to agent threads. In a new session, resume your own earlier
+  work with `bead takeover <id> -r "same task, new session"`. Never force a claim
+  or take over someone else's work without a verified reason.
+
+The remaining `.beads/` directory is historical data. Do not edit it or run
+`br` or `bd` in this repository. Use `bead export` when another tool needs Beads
+JSONL; an export is a snapshot, not the live tracker. For the complete migrated
+inventory, use `bead list --all --deferred --label roadmap --limit 0 --json`.
+The [backlog navigation page](docs/roadmap.md) explains tracker access.
+
+Tracker sync and closure do not authorize code commits, pushes, publication or
+deployment. Those actions still require an explicit user request.
 
 Keep repo-local business rules and ownership guidance in backend-level guides;
 keep generic agent workflow and repo policy here.
@@ -355,122 +378,3 @@ When a backend package or crate has an `AGENTS.md`, use these sections:
 - `## Edit here for X`
 - `## Invariants`
 - `## Common commands`
-
-<!-- bv-agent-instructions-v5 -->
-
----
-
-## Beads Workflow Integration
-
-This project uses a Beads tracker—either the Go `bd` CLI or the Rust `br` CLI—for issue tracking, plus [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/`. `bv` auto-discovers supported JSONL exports, including `.beads/issues.jsonl` and legacy `.beads/beads.jsonl`.
-
-**This repository uses Rust beads_rust (`br`).** The generic command examples
-below describe both families, but only `br` applies here.
-
-**Choose the tracker CLI from this repository's instructions and configuration.** Use `bd` commands in a Go Beads workspace and `br` commands in a beads_rust workspace. Do not run both trackers against the same workspace or infer the tracker solely from the JSONL filename.
-
-### Using bv as an AI sidecar
-
-bv is a graph-aware triage engine for Beads projects. Instead of parsing .beads/issues.jsonl / .beads/beads.jsonl directly or hallucinating graph traversal, use robot flags for deterministic, dependency-aware outputs with precomputed metrics (PageRank, betweenness, critical path, cycles, HITS, eigenvector, k-core).
-
-**Scope boundary:** bv handles *what to work on* (triage, priority, planning). The selected tracker CLI (`bd` or `br`) handles creating, claiming, modifying, and closing beads.
-
-**CRITICAL: Use ONLY --robot-* flags. Bare bv launches an interactive TUI that blocks your session.**
-
-#### The Workflow: Start With Triage
-
-**`bv --robot-triage` is your single entry point.** It returns everything you need in one call:
-- `quick_ref`: at-a-glance counts + top 3 picks
-- `recommendations`: ranked actionable items with scores, reasons, unblock info
-- `quick_wins`: low-effort high-impact items
-- `blockers_to_clear`: items that unblock the most downstream work
-- `project_health`: status/type/priority distributions, graph metrics
-- `commands`: copy-paste shell commands for next steps
-
-```bash
-bv --robot-triage        # THE MEGA-COMMAND: start here
-bv --robot-next          # Minimal: just the single top pick + claim command
-
-# TOON output (--format toon): a compact tabular encoding. Measured on this
-# repository it is 7% smaller than JSON for --robot-graph but 9-15% LARGER for
-# nested payloads (--robot-triage, --robot-plan, --robot-insights,
-# --robot-label-health); use --stats to see both sizes before adopting it.
-bv --robot-graph --format toon
-bv --robot-triage --format toon --stats
-```
-
-Before claiming, verify current state with the selected tracker: `br show <id> --json`/`br ready --json` or `bd show <id> --json`/`bd ready --json`. `recommendations` can include graph-important blocked or assigned work; only `quick_ref.top_picks` and non-empty `claim_command` fields represent claimable work.
-
-#### Other bv Commands
-
-| Command | Returns |
-|---------|---------|
-| `--robot-plan` | Parallel execution tracks with unblocks lists |
-| `--robot-priority` | Priority misalignment detection with confidence |
-| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core |
-| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
-| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions, cycle breaks |
-| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues |
-| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
-
-Every robot command emits one JSON object; with `--graph-format=dot` or `mermaid` the diagram text is the `graph` field (`bv --robot-graph --graph-format=dot | jq -r .graph`), not the whole output.
-
-#### Scoping & Filtering
-
-```bash
-bv --robot-plan --label backend              # Scope to label's subgraph
-bv --robot-insights --as-of HEAD~30          # Historical point-in-time
-bv --recipe actionable --robot-plan          # Pre-filter: ready to work (no blockers)
-bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
-```
-
-### Tracker Commands for Issue Management
-
-Use exactly one command family, matching the tracker configured for the repository.
-
-#### Rust beads_rust (`br`)
-
-```bash
-br ready --json                       # Show issues ready to work (no blockers)
-br list --status=open --json          # All open issues
-br show <id> --json                   # Full issue details with dependencies
-br create --title="..." --type=task --priority=2 --json
-br update <id> --status=in_progress --json
-br close <id> --reason="Completed" --json
-br close <id1> <id2> --reason="Completed" --json
-br sync --flush-only                  # Export DB to JSONL after Beads mutations
-```
-
-#### Go Beads (`bd`)
-
-```bash
-bd ready --json                       # Show issues ready to work
-bd show <id> --json                   # Full issue details
-bd create "..." -t task -p 2 --json
-bd update <id> --claim --json         # Atomically claim work
-bd close <id> --json
-bd dep add <issue> <depends-on>
-bd export -o .beads/issues.jsonl        # Refresh the compatibility export read by bv
-```
-
-### Workflow Pattern
-
-1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
-2. **Verify**: Check the selected tracker's `show`/`ready` output before claiming
-3. **Claim**: Use `br update <id> --status=in_progress --json` or `bd update <id> --claim --json`
-4. **Work**: Implement the task
-5. **Complete**: Use the selected tracker's `close` command
-6. **Refresh for bv**: Run `br sync --flush-only` or the `bd export` command above so the JSONL export is current
-
-### Key Concepts
-
-- **Dependencies**: Issues can block other issues. `br ready --json` and `bd ready --json` show unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
-- **Types**: task, bug, feature, epic, chore, docs, question
-- **Blocking**: Use `br dep add <issue> <depends-on>` or `bd dep add <issue> <depends-on>` to add dependencies
-
-### Git Policy
-
-Tracker commands do not grant permission to commit or push application code. Follow this repository's own git and tracker instructions before staging, committing, syncing, or pushing. If the repository says "commit only when asked," that rule overrides any generic workflow advice.
-
-<!-- end-bv-agent-instructions -->

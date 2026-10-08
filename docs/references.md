@@ -2623,7 +2623,7 @@ an intentionally conservative policy; maintenance activity can cause a pending
 attempt requiring explicit retry. No autovacuum timing guarantee is claimed.
 The reference 30-second whole-run limit remains the documented consumer policy;
 only the recorded macOS execution establishes its timing evidence, not slower
-or hosted runners. Current `br show`/the Beads database is authoritative for
+or hosted runners. Current `bead show`/the beadroll tracker is authoritative for
 status; an older Git index is a historical staged snapshot, not delivery state.
 
 
@@ -4267,7 +4267,7 @@ not reset session settings, session advisory locks or prepared transactions.
 
 ## Rust Beads comment identity, 2026-09-14
 
-The workspace uses `br` 0.5.7. Its primary
+At that point, the workspace used `br` 0.5.7. Its primary
 [`br sync` safety contract](https://github.com/Dicklesworthstone/beads_rust/blob/v0.5.7/docs/SYNC_SAFETY.md#additive-reconciliation-guards)
 describes incoming comment surrogates as storage-local values that reconciliation
 reallocates. The matching
