@@ -245,6 +245,107 @@ async fn an_ordinary_failure_closes_ordinary_admission_but_not_support() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_unsafe_ordinary_exit_keeps_support_until_forced_cancellation() {
+    let schedule = Schedule::default();
+    // A short drain allowance makes the forced-cancellation boundary observable.
+    let mut supervisor = supervisor_with(Duration::from_millis(2_500));
+    let fail = Arc::new(Notify::new());
+    let failing = fail.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            let running = startup.acknowledge_started();
+            failing.notified().await;
+            drop(running);
+            panic!("ordinary component panicked")
+        })
+        .unwrap();
+    let recorded = schedule.clone();
+    let origin = Instant::now();
+    register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        immediate(SECOND, SECOND, PeriodicShutdown::SupportThroughDrain),
+        move |_| {
+            let started = recorded.started(origin);
+            async move {
+                drop(started);
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    supervisor
+        .on_cleanup("dependency", || async {
+            panic!("a panicked component must block dependency cleanup")
+        })
+        .unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    fail.notify_one();
+    let report = running.wait_report().await.unwrap();
+    // Joining a panic is observed termination, not evidence that its
+    // descendants released the dependencies support keeps alive, so support
+    // runs to the existing forced-cancellation boundary instead of stopping
+    // the moment the panicked component was joined.
+    assert_eq!(schedule.starts(), vec![Duration::ZERO, SECOND, SECOND * 2]);
+    assert!(!report.is_success());
+    assert_eq!(
+        report.tasks[0].outcome,
+        batter_core::lifecycle::TaskOutcome::Panicked
+    );
+    assert_eq!(
+        report.cleanup.skipped[0].reason,
+        batter_core::cleanup::SkipReason::UnsafeTaskExit,
+    );
+    assert_eq!(
+        report.periodic[0].summary.completion,
+        PeriodicCompletion::Stopped
+    );
+    drop(report);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_ordinary_exit_still_closes_support_promptly() {
+    let schedule = Schedule::default();
+    let mut supervisor = supervisor_with(Duration::from_millis(2_500));
+    let fail = Arc::new(Notify::new());
+    let failing = fail.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            let running = startup.acknowledge_started();
+            failing.notified().await;
+            drop(running);
+            Err(Box::new(Attempt(1)) as batter_core::BoxError)
+        })
+        .unwrap();
+    let recorded = schedule.clone();
+    let origin = Instant::now();
+    register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        immediate(SECOND, SECOND, PeriodicShutdown::SupportThroughDrain),
+        move |_| {
+            let started = recorded.started(origin);
+            async move {
+                drop(started);
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    fail.notify_one();
+    let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+        panic!("expected the failed component report")
+    };
+    // A returned application error is cooperative termination, so it does
+    // permit dependency cleanup and support closes at once.
+    assert_eq!(schedule.starts(), vec![Duration::ZERO]);
+    assert!(report.cleanup.skipped.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_support_only_supervisor_stops_without_consuming_the_grace_budget() {
     let mut supervisor = supervisor_with(SECOND * 30);
     let runs = Arc::new(AtomicUsize::new(0));

@@ -104,9 +104,21 @@ impl PeriodicSummary {
         self.completion != PeriodicCompletion::Pending
     }
 
-    /// Whether any run failed, expired or was interrupted.
+    /// Whether any run failed, expired or was interrupted, or the component
+    /// ended terminally.
+    ///
+    /// A fatal run and an expired initialization allowance advance no
+    /// recurring counter, so both are reported here through `completion`.
+    /// Abandoning pending initialization on drain is expected and is not a
+    /// failure.
     pub fn has_failures(&self) -> bool {
-        self.recoverable_failures != 0 || self.deadline_exceeded != 0 || self.stop_interrupted != 0
+        self.recoverable_failures != 0
+            || self.deadline_exceeded != 0
+            || self.stop_interrupted != 0
+            || matches!(
+                self.completion,
+                PeriodicCompletion::Fatal | PeriodicCompletion::InitializationExpired
+            )
     }
 }
 
@@ -175,12 +187,21 @@ impl RetainedHistory {
         Self { name, history }
     }
 
-    /// Freeze the evidence for the completion report. A runner that never
-    /// published leaves `completion` at `Pending`.
-    pub(crate) fn into_record(self) -> PeriodicRecord {
+    /// Freeze the evidence for the completion report, reconciling the runner's
+    /// own marker with the coordinator's join evidence.
+    ///
+    /// A runner that never published leaves `completion` at `Pending`. So does
+    /// one the coordinator could not join: a published marker is the loop's
+    /// claim about itself, and a runner whose task was never observed cannot
+    /// support a termination claim even when it wrote one first.
+    pub(crate) fn into_record(self, unjoined: &[&'static str]) -> PeriodicRecord {
+        let mut summary = self.history.snapshot();
+        if unjoined.contains(&self.name) {
+            summary.completion = PeriodicCompletion::Pending;
+        }
         PeriodicRecord {
             name: self.name,
-            summary: self.history.snapshot(),
+            summary,
         }
     }
 }

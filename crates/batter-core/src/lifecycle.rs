@@ -659,12 +659,13 @@ impl Supervisor {
         let summary = tasks.finish();
         let managed_records = managed::freeze(managed, &self.coordinator, reap).await;
         // Every runner has now been joined, destroyed or explicitly left
-        // unjoined. Reading the retained history here needs no second join and
-        // marks a snapshot incomplete when its runner never published one.
+        // unjoined. Reading the retained history here needs no second join, and
+        // the observed unjoined names mark a snapshot incomplete even when its
+        // runner published a final marker before its task was lost.
         let periodic = self
             .periodic
             .drain(..)
-            .map(crate::periodic::RetainedHistory::into_record)
+            .map(|retained| retained.into_record(&summary.unjoined))
             .collect();
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.

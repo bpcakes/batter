@@ -45,6 +45,10 @@ pub(super) struct TaskSet {
     names: HashMap<Id, TaskMetadata>,
     records: Vec<TaskRecord>,
     completed: u64,
+    // A joined panic or abort is observed termination, not evidence that the
+    // task's descendants released their dependencies. Retained here so the
+    // support boundary cannot treat it as settled work.
+    unsafe_ordinary_exit: bool,
 }
 
 impl TaskSet {
@@ -143,6 +147,11 @@ impl TaskSet {
         let finite = kind == TaskKind::Finite;
         if finite && outcome == TaskOutcome::Stopped {
             outcome = TaskOutcome::Completed;
+        }
+        if kind != TaskKind::Support
+            && matches!(outcome, TaskOutcome::Panicked | TaskOutcome::Aborted)
+        {
+            self.unsafe_ordinary_exit = true;
         }
         let exit = |cause| RecordedExit {
             cause,
@@ -261,13 +270,19 @@ impl TaskSet {
         self.collect_ready(coordinator);
     }
 
-    /// Whether every ordinary direct task has been joined and no queued or
-    /// active finite work or admitted descendant remains.
+    /// Whether every ordinary direct task has been joined with termination
+    /// evidence adequate for dependency cleanup, and no queued or active finite
+    /// work or admitted descendant remains.
+    ///
+    /// A joined panic or abort is deliberately not adequate: the same exit
+    /// makes the coordinator skip finalizers, and its descendants may still
+    /// need support. Support then closes at forced cancellation instead.
     fn ordinary_work_settled(&self, coordinator: &LifecycleCoordinator) -> bool {
-        !self
-            .names
-            .values()
-            .any(|task| task.kind != TaskKind::Support)
+        !self.unsafe_ordinary_exit
+            && !self
+                .names
+                .values()
+                .any(|task| task.kind != TaskKind::Support)
             && !coordinator.shared.has_finite_tasks()
     }
 

@@ -889,6 +889,10 @@ failed runs and the interval waits between them; each initialization run is
 additionally capped by whichever of the run budget and that allowance expires
 first. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
+Because the run boundary is cooperative and does not reread its clock after the
+work's own poll returns, a success that only arrived after the allowance had
+expired is still counted as a successful run but cannot acknowledge startup;
+expiry prevents readiness either way.
 Observed drain abandons pending initialization, including for support
 components, and expiry is a distinct retained library initialization failure
 (`PeriodicInitializationExpired`) that initiates the existing drain sequence.
@@ -903,8 +907,12 @@ on global drain. `PeriodicShutdown::SupportThroughDrain` keeps running bounded
 work while ordinary direct components, queued or active finite work and
 admitted descendants, or native settlement still need it. The coordinator owns
 that stopping point and closes support admission once ordinary direct work has
-been joined with observed results, no finite work or descendant remains, and
-every retained managed outcome allows dependency cleanup. Pending or
+been joined with termination evidence adequate for dependency cleanup, no
+finite work or descendant remains, and every retained managed outcome allows
+dependency cleanup. A joined panic or abort is deliberately not adequate: the
+same exit makes the coordinator skip finalizers and its descendants may still
+need support, so support then runs to forced cancellation. A returned
+application error is cooperative termination and does close support. Pending or
 uncooperative native settlement is not a stopped proof: neither a joined
 wrapper nor a finished native report alone suffices, and settlement is observed
 during drain rather than after support stops. Support components are excluded
@@ -953,9 +961,13 @@ application payload size or caller-retained clones. Later success never erases
 earlier evidence. The supervisor retains that history independently of the
 runner, so it survives a later panic, abort or lost waiter and appears in
 `ShutdownReport::periodic` with no second application join and no mandatory
-observer polling; a runner that published no final snapshot leaves
+observer polling. A runner that published no final snapshot leaves
 `PeriodicCompletion::Pending`, which marks the snapshot explicitly incomplete
-and claims nothing about termination. `Debug` and `Display` stay redacted, a
+and claims nothing about termination; so does a runner the coordinator lists as
+unjoined, because a published marker is the loop's claim about itself and
+cannot stand without observed join evidence. `PeriodicSummary::has_failures`
+also reports the terminal `Fatal` and `InitializationExpired` completions,
+which advance no recurring counter. `Debug` and `Display` stay redacted, a
 displaced cause is destroyed outside the publication lock inside the
 component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and

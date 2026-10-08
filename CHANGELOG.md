@@ -28,9 +28,10 @@ contracts, capability facts and validation history.
   initiates drain. `PeriodicShutdown` requires one of two library-owned
   classes: `StopAtDrain` destroys an active run on drain, while
   `SupportThroughDrain` keeps running while ordinary components, admitted
-  finite work and descendants, or native settlement still need it — pending or
-  uncooperative native settlement is not a stopped proof, and an unreached
-  boundary closes support at the existing forced-cancellation step.
+  finite work and descendants, or native settlement still need it — a joined
+  ordinary panic or abort, and pending or uncooperative native settlement, are
+  not stopped proofs, and an unreached boundary closes support at the existing
+  forced-cancellation step.
   `PeriodicFailure` converts a propagated application error into its
   recoverable variant, so `?` keeps the schedule and only an explicit
   `PeriodicFailure::Fatal` initiates drain; a recoverable failure or an expired

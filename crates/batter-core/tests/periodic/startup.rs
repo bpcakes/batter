@@ -160,6 +160,65 @@ async fn an_expired_initialization_allowance_is_a_retained_failure_that_drains()
     assert_eq!(reader.snapshot().invocations, 3);
 }
 
+/// Deliberately uses the real clock: a blocking poll is the documented way the
+/// cooperative run boundary can return success after its deadline has passed.
+#[tokio::test]
+async fn a_success_arriving_after_the_allowance_cannot_acknowledge_startup() {
+    let mut supervisor = supervisor();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = runs.clone();
+    let reader = register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        first_success(
+            SECOND * 10,
+            SECOND * 10,
+            // Generous enough that the first run certainly starts inside it.
+            Duration::from_millis(100),
+            PeriodicShutdown::StopAtDrain,
+        ),
+        move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async {
+                // A poll that blocks its runtime thread cannot be preempted by
+                // the run's own deadline, so this success is returned well
+                // after the initialization allowance expired.
+                std::thread::sleep(Duration::from_millis(400));
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    let status = supervisor.status();
+    let running = supervisor.start();
+    let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+        panic!("expected the initialization failure report")
+    };
+    // The run itself is preserved, but it could not acknowledge startup.
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    let summary = &report.periodic[0].summary;
+    assert_eq!(summary.succeeded, 1);
+    assert_eq!(summary.invocations, 1);
+    assert!(!summary.acknowledged);
+    assert!(summary.has_failures());
+    assert_eq!(
+        summary.completion,
+        PeriodicCompletion::InitializationExpired
+    );
+    assert_eq!(report.cause, ShutdownCause::ComponentExit("lease.renewal"));
+    assert!(
+        report.tasks[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .downcast_ref::<PeriodicInitializationExpired>()
+            .is_some()
+    );
+    // Expiry prevented readiness even though a run had succeeded.
+    assert_eq!(status.readiness(), Readiness::Stopped);
+    assert_eq!(reader.snapshot().succeeded, 1);
+}
+
 #[tokio::test(start_paused = true)]
 async fn drain_during_pending_support_initialization_abandons_without_readiness() {
     let mut supervisor = supervisor();

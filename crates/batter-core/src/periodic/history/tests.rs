@@ -188,8 +188,55 @@ fn a_reader_observes_the_same_retained_evidence_as_the_supervisor() {
     history.succeeded();
     history.finished(PeriodicCompletion::Stopped);
     assert_eq!(reader.name(), "storage.pruning");
-    let record = retained.into_record();
+    let record = retained.into_record(&[]);
     assert_eq!(record.name, "storage.pruning");
     assert_eq!(record.summary.succeeded, reader.snapshot().succeeded);
     assert_eq!(record.summary.completion, PeriodicCompletion::Stopped);
+}
+
+#[test]
+fn an_unjoined_runner_cannot_keep_its_published_termination_marker() {
+    let history = History::new();
+    history.admitted();
+    history.succeeded();
+    history.recoverable(2, cause(2));
+    history.acknowledged();
+    history.finished(PeriodicCompletion::Stopped);
+    // The coordinator never observed this runner's task, so its own claim
+    // about having stopped cannot stand in the report.
+    let record = RetainedHistory::new("lease.renewal", history.clone())
+        .into_record(&["dependency.health", "lease.renewal"]);
+    assert_eq!(record.summary.completion, PeriodicCompletion::Pending);
+    assert!(!record.summary.is_complete());
+    // Earlier evidence survives that reconciliation.
+    assert_eq!(record.summary.succeeded, 1);
+    assert_eq!(record.summary.recoverable_failures, 1);
+    assert_eq!(record.summary.first_failure.unwrap().invocation, 2);
+    assert!(record.summary.acknowledged);
+    // A joined runner keeps the marker it published.
+    let joined = RetainedHistory::new("lease.renewal", history).into_record(&["other.component"]);
+    assert_eq!(joined.summary.completion, PeriodicCompletion::Stopped);
+}
+
+#[test]
+fn terminal_completions_are_reported_as_failures() {
+    for (completion, expected) in [
+        (PeriodicCompletion::Fatal, true),
+        (PeriodicCompletion::InitializationExpired, true),
+        (PeriodicCompletion::AbandonedDuringStartup, false),
+        (PeriodicCompletion::Stopped, false),
+        (PeriodicCompletion::Pending, false),
+    ] {
+        let history = History::new();
+        // One admitted run that advanced no classified counter at all.
+        history.admitted();
+        history.finished(completion);
+        let summary = history.snapshot();
+        assert_eq!(
+            summary.has_failures(),
+            expected,
+            "{completion:?} must report has_failures() == {expected}",
+        );
+        assert_eq!(summary.recoverable_failures, 0);
+    }
 }

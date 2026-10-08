@@ -129,13 +129,27 @@ where
         match execute(name, &mut work, deadline, &admission, initializing).await {
             Run::Succeeded => {
                 history.succeeded();
-                if let Some(startup) = pending.take() {
+                if pending.is_some() {
+                    // The run boundary is cooperative and does not reread its
+                    // clock after the work's own poll returns, so a blocking
+                    // poll or destructor can cross the initialization deadline
+                    // and still return success. Keep that run counted, but do
+                    // not let it acknowledge startup after the allowance
+                    // expired: expiry must still prevent Ready.
+                    if initialization.is_some_and(|deadline| Instant::now() >= deadline) {
+                        break Ending::InitializationExpired;
+                    }
                     // A qualifying success acknowledges exactly once. Later
                     // run failures never revoke it, and it establishes no
                     // continuing lease, renewal or dependency health.
                     history.acknowledged();
                     obligation.assume();
-                    running = Some(startup.acknowledge_started());
+                    running = Some(
+                        pending
+                            .take()
+                            .expect("initialization is pending before acknowledgement")
+                            .acknowledge_started(),
+                    );
                 }
             }
             Run::Recoverable(error) => history.recoverable(invocation, Arc::new(error)),
@@ -151,6 +165,23 @@ where
             Run::Fatal(error) => break Ending::Fatal(error),
         }
     };
+    finish(name, &history, ending, pending, running)
+}
+
+/// Publish the loop's own final marker and return its exit proof or failure.
+///
+/// The marker is the runner's claim about itself; the coordinator reconciles it
+/// with its own join evidence when it freezes the report.
+fn finish<E>(
+    name: &'static str,
+    history: &History,
+    ending: Ending<E>,
+    pending: Option<ComponentStartup>,
+    running: Option<RunningComponent>,
+) -> Result<ComponentExit, BoxError>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
     match ending {
         Ending::InitializationExpired => {
             history.finished(PeriodicCompletion::InitializationExpired);
@@ -168,7 +199,6 @@ where
             None => {
                 history.finished(PeriodicCompletion::AbandonedDuringStartup);
                 Ok(pending
-                    .take()
                     .expect("an unacknowledged component still owns its startup")
                     .abandon())
             }
