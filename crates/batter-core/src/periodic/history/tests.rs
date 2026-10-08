@@ -219,6 +219,32 @@ fn an_unjoined_runner_cannot_keep_its_published_termination_marker() {
 }
 
 #[test]
+fn retained_terminal_evidence_survives_a_reset_completion_marker() {
+    let history = History::new();
+    history.admitted();
+    history.terminal(1, cause(5));
+    history.finished(PeriodicCompletion::Fatal);
+    // The coordinator could not join this runner, so its marker is reset, but
+    // the terminal cause it already retained must still be reported.
+    let record = RetainedHistory::new("storage.pruning", history).into_record(&["storage.pruning"]);
+    let summary = record.summary;
+    assert_eq!(summary.completion, PeriodicCompletion::Pending);
+    assert!(!summary.is_complete());
+    assert_eq!(summary.recoverable_failures, 0);
+    assert!(summary.has_failures());
+    assert_eq!(
+        summary
+            .terminal_failure
+            .unwrap()
+            .error
+            .downcast_ref::<Failure>()
+            .unwrap()
+            .0,
+        5,
+    );
+}
+
+#[test]
 fn terminal_completions_are_reported_as_failures() {
     for (completion, expected) in [
         (PeriodicCompletion::Fatal, true),

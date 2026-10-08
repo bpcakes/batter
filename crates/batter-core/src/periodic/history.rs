@@ -117,13 +117,18 @@ impl PeriodicSummary {
     /// ended terminally.
     ///
     /// A fatal run and an expired initialization allowance advance no
-    /// recurring counter, so both are reported here through `completion`.
-    /// Abandoning pending initialization on drain is expected and is not a
-    /// failure.
+    /// recurring counter, so both are reported through the retained terminal
+    /// cause and through `completion`, whichever survived. Abandoning pending
+    /// initialization on drain is expected and is not a failure.
     pub fn has_failures(&self) -> bool {
         self.recoverable_failures != 0
             || self.deadline_exceeded != 0
             || self.stop_interrupted != 0
+            // Retained terminal evidence is checked independently of the
+            // completeness marker: a runner can retain its cause and then be
+            // lost before publishing, or have its marker reset because the
+            // coordinator could not join it.
+            || self.terminal_failure.is_some()
             || matches!(
                 self.completion,
                 PeriodicCompletion::Fatal | PeriodicCompletion::InitializationExpired
@@ -219,7 +224,7 @@ impl RetainedHistory {
     }
 }
 
-type Cause = Arc<dyn Error + Send + Sync>;
+pub(super) type Cause = Arc<dyn Error + Send + Sync>;
 
 /// The one writer of a component's bounded evidence.
 pub(super) struct History {

@@ -5,6 +5,7 @@
 
 use super::{
     History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, PeriodicPolicy,
+    history::Cause,
 };
 use crate::{
     BoxError,
@@ -17,15 +18,15 @@ use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep_until};
 
 /// Why the loop stopped admitting further runs.
-enum Ending<E> {
+enum Ending {
     /// Drain was observed while initialization was still pending.
     Abandoned,
     /// The first-success allowance expired before any run succeeded.
     InitializationExpired,
     /// The applicable stopping point was reached.
     Stopped,
-    /// A run returned an explicit fatal failure.
-    Fatal(E),
+    /// A run returned an explicit fatal failure, already retained.
+    Fatal(Cause),
 }
 
 /// What the schedule produced while waiting for the next invocation.
@@ -37,12 +38,15 @@ enum Due {
 }
 
 /// One classified run outcome. Exactly one of these is recorded per run.
-enum Run<E> {
+///
+/// Causes arrive already shared, because a terminal one is retained while its
+/// run future is still alive.
+enum Run {
     Succeeded,
-    Recoverable(E),
+    Recoverable(Cause),
     DeadlineExceeded,
     Interrupted,
-    Fatal(E),
+    Fatal(Cause),
 }
 
 pub(super) async fn drive<F, Fut, E>(
@@ -126,7 +130,20 @@ where
         );
         // `execute` destroys its owned work future before returning, so no
         // application code is live while the evidence below is published.
-        match execute(name, &mut work, deadline, &admission, initializing).await {
+        let retention = Retention {
+            history: &history,
+            invocation,
+        };
+        match execute(
+            name,
+            &mut work,
+            deadline,
+            &admission,
+            initializing,
+            retention,
+        )
+        .await
+        {
             Run::Succeeded => {
                 history.succeeded();
                 if pending.is_some() {
@@ -158,7 +175,7 @@ where
                     );
                 }
             }
-            Run::Recoverable(error) => history.recoverable(invocation, Arc::new(error)),
+            Run::Recoverable(error) => history.recoverable(invocation, error),
             Run::DeadlineExceeded => history.deadline_exceeded(),
             Run::Interrupted => {
                 history.stop_interrupted();
@@ -174,6 +191,43 @@ where
     // The factory and its application captures are destroyed when this future
     // returns, so the ending's concrete cause is retained before that.
     finish(name, &history, invocation, ending, pending, running)
+}
+
+/// Await one run without consuming its future, retaining a terminal cause
+/// while that future is still alive.
+///
+/// Do not await the run by value: it would be destroyed at the end of that
+/// statement, and a run future whose own destructor panics would then leave
+/// only the panic in the report. The enclosing execution boundary destroys
+/// this future after this body has returned, so the cause is already retained
+/// by then. Recoverable causes are shared here too, so one classification
+/// handles both and nothing is cloned.
+async fn retained<Fut, E>(work: Fut, retention: Retention<'_>) -> Result<(), PeriodicFailure<Cause>>
+where
+    Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
+    E: Error + Send + Sync + 'static,
+{
+    tokio::pin!(work);
+    match work.as_mut().await {
+        Ok(()) => Ok(()),
+        Err(PeriodicFailure::Recoverable(error)) => {
+            Err(PeriodicFailure::Recoverable(Arc::new(error)))
+        }
+        Err(PeriodicFailure::Fatal(error)) => {
+            let error: Cause = Arc::new(error);
+            retention
+                .history
+                .terminal(retention.invocation, error.clone());
+            Err(PeriodicFailure::Fatal(error))
+        }
+    }
+}
+
+/// Where one run's classified outcome is retained.
+#[derive(Clone, Copy)]
+struct Retention<'a> {
+    history: &'a History,
+    invocation: u64,
 }
 
 /// A terminal cause shared with the component's independently retained
@@ -203,17 +257,14 @@ impl Error for SharedTerminal {
 ///
 /// The marker is the runner's claim about itself; the coordinator reconciles it
 /// with its own join evidence when it freezes the report.
-fn finish<E>(
+fn finish(
     name: &'static str,
     history: &History,
     invocation: u64,
-    ending: Ending<E>,
+    ending: Ending,
     pending: Option<ComponentStartup>,
     running: Option<RunningComponent>,
-) -> Result<ComponentExit, BoxError>
-where
-    E: Error + Send + Sync + 'static,
-{
+) -> Result<ComponentExit, BoxError> {
     match ending {
         Ending::InitializationExpired => {
             // This library error is reconstructible, so the report keeps a
@@ -223,8 +274,7 @@ where
             Err(Box::new(PeriodicInitializationExpired { name }) as BoxError)
         }
         Ending::Fatal(error) => {
-            let error: Arc<dyn Error + Send + Sync> = Arc::new(error);
-            history.terminal(invocation, error.clone());
+            // The cause was already retained while its run future was alive.
             history.finished(PeriodicCompletion::Fatal);
             Err(Box::new(SharedTerminal(error)) as BoxError)
         }
@@ -288,17 +338,21 @@ async fn execute<F, Fut, E>(
     deadline: Instant,
     admission: &PeriodicAdmission,
     initializing: bool,
-) -> Run<E>
+    retention: Retention<'_>,
+) -> Run
 where
     F: FnMut(OperationContext) -> Fut,
     Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
+    E: Error + Send + Sync + 'static,
 {
     // The run's cancellation lineage descends from process forced cancellation,
     // so children cannot outlive it and cannot exceed its deadline. Ending one
     // run cancels only its own child scope, never a sibling or a future run.
     let parent = admission.operation_token();
     let owner = OperationOwner::under(RootDeadline::at(deadline), &parent);
-    let attempt = owner.context().run(name, work);
+    let attempt = owner
+        .context()
+        .run(name, |scope| retained(work(scope), retention));
     tokio::pin!(attempt);
     tokio::select! {
         biased;

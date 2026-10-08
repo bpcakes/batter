@@ -974,11 +974,15 @@ also reports the terminal `Fatal` and `InitializationExpired` completions,
 which advance no recurring counter.
 
 The concrete terminal cause is retained in `PeriodicSummary::terminal_failure`
-before the runner's application captures are destroyed. A panicking capture
-destructor unwinds the component's normal return, so the error the future was
-returning would otherwise be replaced by the panic alone; the retained slot
-keeps the original cause while the panic stays visible in the task records and
-still forces conservative cleanup skipping. An escalated run's error is shared
+as soon as the run produces it, while that run's own future is still alive, and
+therefore before either that future or the factory's captures can be destroyed.
+A panicking destructor in either place unwinds the component's normal return,
+so the error it was carrying would otherwise be replaced by the panic alone;
+the retained slot keeps the original cause while the panic stays visible in the
+task records and still forces conservative cleanup skipping. Retained terminal
+evidence is reported by `has_failures` independently of the completeness
+marker, because a runner can retain its cause and then be lost before
+publishing one, or have its marker reset for want of join evidence. An escalated run's error is shared
 with that slot, so the task record exposes it through `Error::source`, exactly
 as a finite process task's shared failure does; the library's own
 initialization-expiry error stays directly downcastable because it is

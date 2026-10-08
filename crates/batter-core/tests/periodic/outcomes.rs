@@ -274,6 +274,69 @@ async fn an_escalated_cause_survives_a_panicking_capture_destructor() {
     assert!(!format!("{report:?}").contains("maintenance attempt failed"));
 }
 
+/// Escalates immediately, then panics when the enclosing boundary destroys it.
+struct EscalateThenPanicOnDrop(u32);
+
+impl std::future::Future for EscalateThenPanicOnDrop {
+    type Output = Run;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::task::Poll::Ready(escalated(self.0))
+    }
+}
+
+impl Drop for EscalateThenPanicOnDrop {
+    fn drop(&mut self) {
+        panic!("maintenance run future panicked while being destroyed")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_escalated_cause_survives_a_panicking_run_future_destructor() {
+    let mut supervisor = supervisor();
+    register_periodic_in(
+        &mut supervisor,
+        "storage.pruning",
+        immediate(SECOND, SECOND, PeriodicShutdown::StopAtDrain),
+        |_| EscalateThenPanicOnDrop(11),
+    )
+    .unwrap();
+    supervisor
+        .on_cleanup("dependency", || async {
+            panic!("a panicked component must block dependency cleanup")
+        })
+        .unwrap();
+    let running = supervisor.start();
+    let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+        panic!("expected the panicked component report")
+    };
+    assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
+    let summary = &report.periodic[0].summary;
+    // The run future was destroyed before the loop could publish anything, so
+    // the snapshot is explicitly incomplete.
+    assert_eq!(summary.completion, PeriodicCompletion::Pending);
+    assert!(!summary.is_complete());
+    // The escalated cause was retained while that future was still alive, and
+    // retained terminal evidence is reported independently of the marker.
+    let terminal = summary
+        .terminal_failure
+        .as_ref()
+        .expect("the escalated cause is retained before the run future dies");
+    assert_eq!(terminal.invocation, 1);
+    assert_eq!(terminal.error.downcast_ref::<Attempt>().unwrap().0, 11);
+    assert!(summary.has_failures());
+    assert_eq!(summary.recoverable_failures, 0);
+    // Conservative cleanup skipping is unchanged by that retention.
+    assert_eq!(
+        report.cleanup.skipped[0].reason,
+        batter_core::cleanup::SkipReason::UnsafeTaskExit,
+    );
+    assert!(!format!("{report:?}").contains("maintenance attempt failed"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn report_formatting_never_reveals_a_retained_cause() {
     let mut supervisor = supervisor();
