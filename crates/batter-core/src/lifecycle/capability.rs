@@ -1,5 +1,7 @@
-use super::state::{PendingComponentStart, Shared};
-use std::sync::Arc;
+use super::state::{PendingComponentStart, PeriodicAdmission as Decision, Shared};
+use std::{sync::Arc, time::Duration};
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// Process admission state, not an automatic dependency-health assessment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +344,71 @@ impl LifecycleCoordinator {
             self.shared.readiness(),
             Readiness::Draining | Readiness::Stopped
         )
+    }
+
+    /// Project the narrow capability one periodic runner needs.
+    pub(super) fn periodic_admission(
+        &self,
+        support: bool,
+        graceful: Duration,
+    ) -> PeriodicAdmission {
+        PeriodicAdmission {
+            shared: self.shared.clone(),
+            support,
+            graceful,
+        }
+    }
+}
+
+/// One admitted periodic invocation, with the clock that also bounds it.
+pub(crate) struct PeriodicGrant {
+    /// The already recorded global forced-cancellation instant when this run
+    /// was admitted during drain. A later tightened stop clock still governs
+    /// the run through its cancellation lineage.
+    pub(crate) forced_at: Option<Instant>,
+}
+
+/// Library-owned periodic admission and stopping observation.
+///
+/// This capability cannot approve readiness, request shutdown, close support,
+/// admit public operations or submit process work. It is created only by the
+/// coordinator, for a registered periodic component, inside the started driver.
+pub(crate) struct PeriodicAdmission {
+    shared: Arc<Shared>,
+    support: bool,
+    graceful: Duration,
+}
+
+impl PeriodicAdmission {
+    /// Grant one invocation, or reject it because a stopping point has passed.
+    ///
+    /// The decision is taken under the single transition mutex and returned as
+    /// a plain value; no application factory, destructor, span, subscriber or
+    /// recorder code runs under that guard.
+    pub(crate) fn admit(&self) -> Option<PeriodicGrant> {
+        match self.shared.admit_periodic(self.support, self.graceful) {
+            Decision::Admitted { forced_at } => Some(PeriodicGrant { forced_at }),
+            Decision::Stopped => None,
+        }
+    }
+
+    /// Wait until this component's own stopping point.
+    pub(crate) async fn stopping(&self) {
+        if self.support {
+            self.shared.support_stopping().await;
+        } else {
+            self.shared.draining().await;
+        }
+    }
+
+    /// Wait for global drain, which also abandons pending initialization.
+    pub(crate) async fn draining(&self) {
+        self.shared.draining().await;
+    }
+
+    /// Derive one run's cancellation parent from process forced cancellation.
+    pub(crate) fn operation_token(&self) -> CancellationToken {
+        self.shared.operation_token()
     }
 }
 

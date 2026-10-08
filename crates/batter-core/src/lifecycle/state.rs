@@ -19,6 +19,7 @@ pub(super) struct Shared {
     admission: Mutex<AdmissionState>,
     published_readiness: AtomicU8,
     drain: CancellationToken,
+    support_stop: CancellationToken,
     cancel: CancellationToken,
     changed: Notify,
 }
@@ -47,6 +48,9 @@ struct AdmissionState {
     finite_active: usize,
     forced: bool,
     failed: bool,
+    /// Support-through-drain admission closes at its own stopping point, which
+    /// is later than ordinary drain and no later than forced cancellation.
+    support_closed: bool,
     stop_started: Option<Instant>,
 }
 
@@ -82,10 +86,12 @@ impl Shared {
                 finite_active: 0,
                 forced: false,
                 failed: false,
+                support_closed: false,
                 stop_started: None,
             }),
             published_readiness: AtomicU8::new(Readiness::Starting as u8),
             drain: CancellationToken::new(),
+            support_stop: CancellationToken::new(),
             cancel: CancellationToken::new(),
             changed: Notify::new(),
         }
@@ -222,11 +228,71 @@ impl Shared {
             let mut state = self.lock();
             state.request_drain(Instant::now());
             state.forced = true;
+            state.support_closed = true;
             self.publish_readiness(&state);
         }
         self.drain.cancel();
+        self.support_stop.cancel();
         self.cancel.cancel();
         self.changed.notify_waiters();
+    }
+
+    /// Close support-through-drain admission at its own owned stopping point.
+    ///
+    /// The flag is set under the transition mutex before the observable token is
+    /// cancelled, so no later grant can follow an observed stop. Waking
+    /// arbitrary support futures happens outside that mutex.
+    pub(super) fn close_support(&self) {
+        {
+            let mut state = self.lock();
+            state.support_closed = true;
+        }
+        self.support_stop.cancel();
+        self.changed.notify_waiters();
+    }
+
+    pub(super) async fn support_stopping(&self) {
+        self.support_stop.cancelled().await;
+    }
+
+    pub(super) fn is_support_stopping(&self) -> bool {
+        self.support_stop.is_cancelled()
+    }
+
+    /// Grant or reject one periodic invocation under the transition mutex.
+    ///
+    /// Initial runs are admitted while the process is still `Starting`: this
+    /// path is reachable only from a library-owned registered component and
+    /// never weakens [`Admission::check`], which still gates public operation
+    /// and root process work on `Ready`. No application factory, destructor,
+    /// span, subscriber or recorder code runs under the guard: the decision is
+    /// a plain value and its caller invokes the run afterwards.
+    pub(super) fn admit_periodic(
+        &self,
+        support: bool,
+        graceful: std::time::Duration,
+    ) -> PeriodicAdmission {
+        let state = self.lock();
+        if state.forced || !state.driver_started {
+            return PeriodicAdmission::Stopped;
+        }
+        let draining = matches!(state.readiness, Readiness::Draining | Readiness::Stopped);
+        if support {
+            if state.support_closed {
+                return PeriodicAdmission::Stopped;
+            }
+        } else if draining || state.failed {
+            // An ordinary task failure closes ordinary admission exactly as it
+            // closes finite process admission; it does not close initialized
+            // support admission while consumers are still draining.
+            return PeriodicAdmission::Stopped;
+        }
+        PeriodicAdmission::Admitted {
+            forced_at: draining.then(|| {
+                let started = state.stop_started.unwrap_or_else(Instant::now);
+                started.checked_add(graceful).unwrap_or(started)
+            }),
+        }
     }
 
     pub(super) fn fail_task(&self) {
@@ -309,4 +375,14 @@ impl Admission<'_> {
     pub(super) fn admit_finite(&mut self) {
         self.0.finite_active += 1;
     }
+}
+
+/// One periodic invocation decision, taken under the transition mutex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PeriodicAdmission {
+    /// The run may start. During drain, `forced_at` is the already recorded
+    /// global forced-cancellation instant, which also caps this run.
+    Admitted { forced_at: Option<Instant> },
+    /// The applicable stopping point has already passed.
+    Stopped,
 }

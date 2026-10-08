@@ -37,6 +37,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         let mut tasks = TaskSet::default();
         tasks.spawn_component(Component {
             name: "component",
+            class: ComponentClass::Ordinary,
             lifecycle,
             factory: Box::new(move |startup, _| {
                 Box::pin(async move {
