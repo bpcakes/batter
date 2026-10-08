@@ -1,36 +1,41 @@
 # Backlog location
 
-Beads is the sole source of truth for delivery scope, priority, status,
-acceptance criteria and dependencies. The former Markdown roadmap has been
-migrated to the repository's Rust Beads tracker (`br`), including completed
-milestones and explicitly deferred outcomes. This page is navigation only;
-do not add task lists here.
+Beadroll (`bead`) is the sole source of truth for delivery scope, priority,
+status, acceptance criteria and dependencies. The former Markdown roadmap's
+completed milestones and explicitly deferred outcomes are retained in the
+tracker. This page is navigation only; do not add task lists here.
 
 From the repository root:
 
 ```sh
-bv --robot-triage
-br ready --type task --json
-br list --all --deferred --label roadmap --json
-br show <id> --json
+bead prime
+bead ready --type task --json
+bead list --all --deferred --label roadmap --limit 0 --json
+bead show <id> --json
 ```
 
-Verify an issue with `br show` before claiming it. Use `br` to update tasks and
-dependencies, then `br sync --flush-only` to refresh the tracked
-[Beads export](../.beads/issues.jsonl). Do not hand-edit the export or use `bd`
-against this workspace. Check `bv`'s reported `source_path` and counts against
-`br`; use the tracker result when a viewer snapshot is stale.
+Inspect an issue with `bead show` before claiming it with `bead claim <id>`.
+Follow the current workflow from `bead prime`, record progress and verification
+with `bead comments add`, and run `bead sync` before stopping. Close completed
+work with `bead close <id> -r "what was done"`; release unfinished work with
+`bead release <id>`.
 
-Each checkout and linked worktree keeps its own tracker database, and comment
-IDs are assigned per database. `python3 scripts/check_beads_export.py` (run by
-`scripts/verify.sh` and CI) rejects an export whose issue rows or comment IDs
-collide after a merge; such an export cannot be imported by `br`.
+One tracker is shared across worktrees, clones and machines. State lives outside
+the checkout and syncs through a Git ref, not a code branch. Claims belong to
+agent threads and become exclusive once accepted by the remote; `bead prime`
+explains resuming work in a new session and handling conflicts.
 
-Legacy roadmap identifiers are retained in Beads external references and
+The tracked [legacy Beads export](../.beads/issues.jsonl) and other `.beads/`
+files are historical data. Do not edit them or run `br` or `bd` in this repository.
+Use `bead export` when another tool needs a JSONL snapshot, and use `bead` for
+current state and ownership. The legacy export is not an input to local
+verification or CI.
+
+Legacy roadmap identifiers are retained in tracker external references and
 descriptions. Implemented capability facts remain in [status](status.md),
 behavioral contracts in [guarantees](guarantees.md) and
 [integrations](integrations.md). These documents are not parallel backlogs.
-Task-local ExecPlans hold implementation steps and evidence for their owning
-bead; archived plans are historical records, not open work.
+Archived plans are historical records, not open work; new work does not require
+an ExecPlan.
 
 Closing technical tasks does not authorize publishing to a crate registry.

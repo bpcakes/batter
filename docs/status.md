@@ -1,5 +1,14 @@
 # Implementation status
 
+2026-10-08 beadroll migration (`batter-1mp4`): local verification and repository
+policy CI no longer validate the historical `.beads/` export. The obsolete
+validator and its tests are removed; all other verification commands and failure
+controls remain. The daily bug-scan prompt reads and syncs the live beadroll
+tracker instead of committing tracker exports. Historical `.beads/` files remain
+untouched. The complete Rust 1.98.1 verification passed on macOS arm64, along
+with 161 script tests (one opt-in live check skipped), shell syntax and
+actionlint. Hosted CI was not run. The owning Bead records the results.
+
 2026-10-05 health-check repairs (`batter-r3sn`): the canonical verification adds
 non-HTTP `batter-runlimit` Clippy with memory and PostgreSQL enabled and warnings
 denied. Internal quota snapshot fields explicitly expect dead code only without
