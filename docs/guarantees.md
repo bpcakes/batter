@@ -926,6 +926,12 @@ are unchanged, and support work is joined or destroyed before finalizers run.
 A run admitted during drain is additionally capped by the already recorded
 forced-cancellation instant.
 
+A component whose initialization is still pending is admitted as ordinary work
+whatever its stopping class, because it has taken on no support obligation yet
+and pending initialization abandons on global drain. Treating it as support
+would grant a run after its applicable stopping point and leave only the
+cancellation preflight to stop it.
+
 Admission transitions stay private to the lifecycle state owner. Grants and
 rejections are taken under the single transition mutex and returned as plain
 values, so no application factory, destructor, poll, span, subscriber or
@@ -979,7 +985,14 @@ therefore before either that future or the factory's captures can be destroyed.
 A panicking destructor in either place unwinds the component's normal return,
 so the error it was carrying would otherwise be replaced by the panic alone;
 the retained slot keeps the original cause while the panic stays visible in the
-task records and still forces conservative cleanup skipping. Retained terminal
+task records and still forces conservative cleanup skipping. Every outcome the
+run itself produced — a success, a recoverable failure with its bounded sample
+and accounting, or an escalation — is published at that same point, so a
+destruction panic cannot erase the invocation's evidence. The boundary's own
+outcomes, an expired run deadline and a stop interruption, carry no application
+cause and are counted by the loop afterwards, so a destruction panic can still
+cost one of those counters; the panic in the task records is then the
+authoritative evidence for that invocation. Retained terminal
 evidence is reported by `has_failures` independently of the completeness
 marker, because a runner can retain its cause and then be lost before
 publishing one, or have its marker reset for want of join evidence. An escalated run's error is shared

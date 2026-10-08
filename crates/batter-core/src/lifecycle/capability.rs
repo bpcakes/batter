@@ -385,8 +385,15 @@ impl PeriodicAdmission {
     /// The decision is taken under the single transition mutex and returned as
     /// a plain value; no application factory, destructor, span, subscriber or
     /// recorder code runs under that guard.
-    pub(crate) fn admit(&self) -> Option<PeriodicGrant> {
-        match self.shared.admit_periodic(self.support, self.graceful) {
+    ///
+    /// A component with pending initialization is admitted as ordinary work,
+    /// whatever its stopping class: it has taken on no support obligation yet,
+    /// and pending initialization abandons on global drain. Treating it as
+    /// support would grant a run after that applicable stopping point and
+    /// leave only the cancellation preflight to stop it.
+    pub(crate) fn admit(&self, initializing: bool) -> Option<PeriodicGrant> {
+        let support = self.support && !initializing;
+        match self.shared.admit_periodic(support, self.graceful) {
             Decision::Admitted { forced_at } => Some(PeriodicGrant { forced_at }),
             Decision::Stopped => None,
         }

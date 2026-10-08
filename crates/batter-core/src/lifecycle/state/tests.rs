@@ -267,3 +267,66 @@ fn cancellation_and_readiness_wakers_run_outside_the_transition_lock() {
     assert!(drain.as_mut().poll(&mut contexts[1]).is_ready());
     assert!(cancel.as_mut().poll(&mut contexts[2]).is_ready());
 }
+
+#[tokio::test(start_paused = true)]
+async fn periodic_admission_separates_support_from_pending_initialization() {
+    let graceful = std::time::Duration::from_secs(5);
+    let state = ready();
+    // Before drain, both classes are admitted and carry no forced clock.
+    for support in [false, true] {
+        assert_eq!(
+            state.admit_periodic(support, graceful),
+            PeriodicAdmission::Admitted { forced_at: None },
+        );
+    }
+    state.request();
+    let started = state.stop_started().expect("drain records its clock");
+    // Ordinary admission closes on drain; initialized support continues and is
+    // capped by the already recorded forced-cancellation instant.
+    assert_eq!(
+        state.admit_periodic(false, graceful),
+        PeriodicAdmission::Stopped,
+    );
+    assert_eq!(
+        state.admit_periodic(true, graceful),
+        PeriodicAdmission::Admitted {
+            forced_at: Some(started + graceful)
+        },
+    );
+    // Forced cancellation closes both.
+    state.force_cancel();
+    for support in [false, true] {
+        assert_eq!(
+            state.admit_periodic(support, graceful),
+            PeriodicAdmission::Stopped,
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_ordinary_failure_closes_only_ordinary_periodic_admission() {
+    let graceful = std::time::Duration::from_secs(5);
+    let state = ready();
+    state.fail_task();
+    assert_eq!(
+        state.admit_periodic(false, graceful),
+        PeriodicAdmission::Stopped,
+    );
+    assert_eq!(
+        state.admit_periodic(true, graceful),
+        PeriodicAdmission::Admitted { forced_at: None },
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_support_rejects_later_support_runs() {
+    let graceful = std::time::Duration::from_secs(5);
+    let state = ready();
+    state.request();
+    state.close_support();
+    assert!(state.is_support_stopping());
+    assert_eq!(
+        state.admit_periodic(true, graceful),
+        PeriodicAdmission::Stopped,
+    );
+}

@@ -39,13 +39,20 @@ enum Due {
 
 /// One classified run outcome. Exactly one of these is recorded per run.
 ///
-/// Causes arrive already shared, because a terminal one is retained while its
-/// run future is still alive.
+/// Outcomes the run itself produced are already retained, because they are
+/// classified while its future is still alive. The boundary's own outcomes are
+/// recorded by the loop, which is the only place that observes them.
 enum Run {
     Succeeded,
-    Recoverable(Cause),
+    Recoverable,
     DeadlineExceeded,
     Interrupted,
+    Fatal(Cause),
+}
+
+/// A run's own outcome, already retained in bounded history.
+enum Classified {
+    Recoverable,
     Fatal(Cause),
 }
 
@@ -109,7 +116,7 @@ where
             Due::Expired => break Ending::InitializationExpired,
             Due::Stopped => break Ending::Stopped,
         }
-        let Some(grant) = admission.admit() else {
+        let Some(grant) = admission.admit(initializing) else {
             // No run is admitted after its applicable stopping point. A
             // rejection can also follow another component's failure before
             // drain is observable, so wait for the actual stopping point
@@ -145,7 +152,6 @@ where
         .await
         {
             Run::Succeeded => {
-                history.succeeded();
                 if pending.is_some() {
                     // The run boundary is cooperative: it neither rereads its
                     // clock nor rechecks drain after the work's own poll
@@ -175,7 +181,8 @@ where
                     );
                 }
             }
-            Run::Recoverable(error) => history.recoverable(invocation, error),
+            // Already retained while its run future was alive.
+            Run::Recoverable => {}
             Run::DeadlineExceeded => history.deadline_exceeded(),
             Run::Interrupted => {
                 history.stop_interrupted();
@@ -193,32 +200,42 @@ where
     finish(name, &history, invocation, ending, pending, running)
 }
 
-/// Await one run without consuming its future, retaining a terminal cause
-/// while that future is still alive.
+/// Await one run without consuming its future, retaining everything that run
+/// produced while that future is still alive.
 ///
 /// Do not await the run by value: it would be destroyed at the end of that
 /// statement, and a run future whose own destructor panics would then leave
-/// only the panic in the report. The enclosing execution boundary destroys
-/// this future after this body has returned, so the cause is already retained
-/// by then. Recoverable causes are shared here too, so one classification
-/// handles both and nothing is cloned.
-async fn retained<Fut, E>(work: Fut, retention: Retention<'_>) -> Result<(), PeriodicFailure<Cause>>
+/// only the panic in the report, with no retained cause, sample or count for
+/// the invocation. The enclosing execution boundary destroys this future only
+/// after this body has returned, so its evidence is already published by then
+/// and the loop must not count it again.
+///
+/// The boundary's own outcomes, an expired run deadline and a stop
+/// interruption, are not visible here and carry no application cause; the loop
+/// counts those instead.
+async fn retained<Fut, E>(work: Fut, retention: Retention<'_>) -> Result<(), Classified>
 where
     Fut: Future<Output = Result<(), PeriodicFailure<E>>>,
     E: Error + Send + Sync + 'static,
 {
     tokio::pin!(work);
     match work.as_mut().await {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            retention.history.succeeded();
+            Ok(())
+        }
         Err(PeriodicFailure::Recoverable(error)) => {
-            Err(PeriodicFailure::Recoverable(Arc::new(error)))
+            retention
+                .history
+                .recoverable(retention.invocation, Arc::new(error));
+            Err(Classified::Recoverable)
         }
         Err(PeriodicFailure::Fatal(error)) => {
             let error: Cause = Arc::new(error);
             retention
                 .history
                 .terminal(retention.invocation, error.clone());
-            Err(PeriodicFailure::Fatal(error))
+            Err(Classified::Fatal(error))
         }
     }
 }
@@ -360,10 +377,8 @@ where
         _ = admission.stopping(), if !initializing => Run::Interrupted,
         result = &mut attempt => match result {
             Ok(()) => Run::Succeeded,
-            Err(OperationError::Failed(PeriodicFailure::Recoverable(error))) => {
-                Run::Recoverable(error)
-            }
-            Err(OperationError::Failed(PeriodicFailure::Fatal(error))) => Run::Fatal(error),
+            Err(OperationError::Failed(Classified::Recoverable)) => Run::Recoverable,
+            Err(OperationError::Failed(Classified::Fatal(error))) => Run::Fatal(error),
             Err(OperationError::Interrupted(Interruption::DeadlineExceeded)) => {
                 Run::DeadlineExceeded
             }

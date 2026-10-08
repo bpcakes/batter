@@ -175,6 +175,9 @@ async fn an_expired_initialization_allowance_is_a_retained_failure_that_drains()
 
 /// Deliberately uses the real clock: a blocking poll is the documented way the
 /// cooperative run boundary can return success after its deadline has passed.
+/// The allowance leaves a full second for the first run to start and the
+/// blocking poll overshoots it by half again, so a scheduling delay can only
+/// make the late success later.
 #[tokio::test]
 async fn a_success_arriving_after_the_allowance_cannot_acknowledge_startup() {
     let mut supervisor = supervisor();
@@ -187,7 +190,7 @@ async fn a_success_arriving_after_the_allowance_cannot_acknowledge_startup() {
             SECOND * 10,
             SECOND * 10,
             // Generous enough that the first run certainly starts inside it.
-            Duration::from_millis(100),
+            SECOND,
             PeriodicShutdown::StopAtDrain,
         ),
         move |_| {
@@ -196,7 +199,7 @@ async fn a_success_arriving_after_the_allowance_cannot_acknowledge_startup() {
                 // A poll that blocks its runtime thread cannot be preempted by
                 // the run's own deadline, so this success is returned well
                 // after the initialization allowance expired.
-                std::thread::sleep(Duration::from_millis(400));
+                std::thread::sleep(Duration::from_millis(1_500));
                 succeeded()
             }
         },

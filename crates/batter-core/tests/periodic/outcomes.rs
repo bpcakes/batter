@@ -274,6 +274,59 @@ async fn an_escalated_cause_survives_a_panicking_capture_destructor() {
     assert!(!format!("{report:?}").contains("maintenance attempt failed"));
 }
 
+/// Fails recoverably, then panics when the enclosing boundary destroys it.
+struct FailThenPanicOnDrop(u32);
+
+impl std::future::Future for FailThenPanicOnDrop {
+    type Output = Run;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::task::Poll::Ready(failed(self.0))
+    }
+}
+
+impl Drop for FailThenPanicOnDrop {
+    fn drop(&mut self) {
+        panic!("maintenance run future panicked while being destroyed")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn recoverable_evidence_survives_a_panicking_run_future_destructor() {
+    let mut supervisor = supervisor();
+    register_periodic_in(
+        &mut supervisor,
+        "storage.pruning",
+        immediate(SECOND, SECOND, PeriodicShutdown::StopAtDrain),
+        |_| FailThenPanicOnDrop(13),
+    )
+    .unwrap();
+    let running = supervisor.start();
+    let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+        panic!("expected the panicked component report")
+    };
+    assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
+    let summary = &report.periodic[0].summary;
+    // The bounded recoverable evidence was published while the run future was
+    // still alive, so the invocation is still accounted for.
+    assert_eq!(summary.invocations, 1);
+    assert_eq!(summary.recoverable_failures, 1);
+    assert_eq!(summary.unsampled_failures, 0);
+    let first = summary
+        .first_failure
+        .as_ref()
+        .expect("the cause is retained");
+    assert_eq!(first.invocation, 1);
+    assert_eq!(first.error.downcast_ref::<Attempt>().unwrap().0, 13);
+    // It is not a terminal failure, and nothing was counted twice.
+    assert!(summary.terminal_failure.is_none());
+    assert_eq!(summary.succeeded, 0);
+    assert_eq!(summary.completion, PeriodicCompletion::Pending);
+}
+
 /// Escalates immediately, then panics when the enclosing boundary destroys it.
 struct EscalateThenPanicOnDrop(u32);
 

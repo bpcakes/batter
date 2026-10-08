@@ -307,25 +307,29 @@ mod tests {
     use super::*;
     use batter::periodic::PeriodicCompletion;
 
-    #[tokio::test]
+    /// Paused time keeps this contract deterministic: a real-clock window
+    /// would let a scheduling delay discard ticks and fail without any library
+    /// malfunction.
+    #[tokio::test(start_paused = true)]
     async fn support_renews_through_drain_while_pruning_stops_at_it() {
         let observed = demonstrate(Duration::from_millis(900), false)
             .await
             .expect("the bounded demonstration completes successfully");
-        // Pruning admitted nothing after the stop transition.
+        // Paused time makes the whole schedule exact. Pruning admitted
+        // nothing after the stop transition.
         assert_eq!(observed.prunings_during_drain, 0);
-        // Renewal kept supporting the finite batch that was still draining.
-        assert!(
-            observed.renewals_during_drain >= 1,
-            "support must renew during drain, observed {}",
-            observed.renewals_during_drain,
-        );
+        // Renewal kept supporting the finite batch for its whole 300ms drain,
+        // which is two further 150ms renewal intervals plus the overdue tick.
+        assert_eq!(observed.renewals_during_drain, 3);
         let pruning = observed.pruning.snapshot();
-        assert!(observed.pruned_entries >= 1);
+        assert_eq!(pruning.invocations, 5);
+        assert_eq!(observed.pruned_entries, 6);
         // The injected transient window is retained as bounded evidence and
         // did not drain the process or fail checked completion.
-        assert!(pruning.recoverable_failures >= 1);
-        assert!(pruning.first_failure.is_some());
+        assert_eq!(pruning.recoverable_failures, 2);
+        assert_eq!(pruning.unsampled_failures, 0);
+        assert_eq!(pruning.first_failure.unwrap().invocation, 1);
+        assert!(pruning.terminal_failure.is_none());
         for record in &observed.success.report().periodic {
             assert_eq!(record.summary.completion, PeriodicCompletion::Stopped);
         }
