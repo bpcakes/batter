@@ -13,7 +13,7 @@ use crate::{
     },
     operation::{Interruption, OperationContext, OperationError, OperationOwner, RootDeadline},
 };
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep_until};
 
 /// Why the loop stopped admitting further runs.
@@ -171,7 +171,32 @@ where
             Run::Fatal(error) => break Ending::Fatal(error),
         }
     };
-    finish(name, &history, ending, pending, running)
+    // The factory and its application captures are destroyed when this future
+    // returns, so the ending's concrete cause is retained before that.
+    finish(name, &history, invocation, ending, pending, running)
+}
+
+/// A terminal cause shared with the component's independently retained
+/// history. `Error::source` exposes the original error, exactly as a finite
+/// process task's shared failure does, so concrete downcasts survive.
+struct SharedTerminal(Arc<dyn Error + Send + Sync>);
+
+impl fmt::Debug for SharedTerminal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SharedPeriodicTerminalFailure")
+    }
+}
+
+impl fmt::Display for SharedTerminal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("periodic run failed terminally")
+    }
+}
+
+impl Error for SharedTerminal {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.0)
+    }
 }
 
 /// Publish the loop's own final marker and return its exit proof or failure.
@@ -181,21 +206,27 @@ where
 fn finish<E>(
     name: &'static str,
     history: &History,
+    invocation: u64,
     ending: Ending<E>,
     pending: Option<ComponentStartup>,
     running: Option<RunningComponent>,
 ) -> Result<ComponentExit, BoxError>
 where
-    E: std::error::Error + Send + Sync + 'static,
+    E: Error + Send + Sync + 'static,
 {
     match ending {
         Ending::InitializationExpired => {
+            // This library error is reconstructible, so the report keeps a
+            // directly downcastable copy alongside the retained one.
+            history.terminal(invocation, Arc::new(PeriodicInitializationExpired { name }));
             history.finished(PeriodicCompletion::InitializationExpired);
             Err(Box::new(PeriodicInitializationExpired { name }) as BoxError)
         }
         Ending::Fatal(error) => {
+            let error: Arc<dyn Error + Send + Sync> = Arc::new(error);
+            history.terminal(invocation, error.clone());
             history.finished(PeriodicCompletion::Fatal);
-            Err(Box::new(error) as BoxError)
+            Err(Box::new(SharedTerminal(error)) as BoxError)
         }
         Ending::Abandoned | Ending::Stopped => match running {
             Some(running) => {

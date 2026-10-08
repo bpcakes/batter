@@ -121,15 +121,24 @@ async fn only_an_explicit_escalation_initiates_drain() {
         ShutdownCause::ComponentExit("storage.pruning")
     );
     assert_eq!(report.tasks[0].outcome, TaskOutcome::Failed);
+    // The terminal cause is shared with the retained history, so the task
+    // record exposes the original error through its source chain.
     assert_eq!(
         report.tasks[0]
             .error
             .as_ref()
-            .and_then(|error| error.downcast_ref::<Attempt>())
+            .and_then(|error| error.source())
+            .and_then(|source| source.downcast_ref::<Attempt>())
             .map(|attempt| attempt.0),
         Some(3),
     );
     let summary = &report.periodic[0].summary;
+    let terminal = summary
+        .terminal_failure
+        .as_ref()
+        .expect("the escalated cause is retained independently of the task");
+    assert_eq!(terminal.invocation, 4);
+    assert_eq!(terminal.error.downcast_ref::<Attempt>().unwrap().0, 3);
     assert_eq!(summary.completion, PeriodicCompletion::Fatal);
     assert_eq!(summary.invocations, 4);
     assert_eq!(summary.recoverable_failures, 3);
@@ -200,6 +209,69 @@ async fn history_survives_a_lost_driver_waiter() {
     assert_eq!(summary.recoverable_failures, 3);
     assert_eq!(summary.completion, PeriodicCompletion::Pending);
     assert_eq!(summary.first_failure.unwrap().invocation, 1);
+}
+
+/// Panics while destroying a periodic factory's captured value.
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("captured maintenance state panicked while being destroyed")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_escalated_cause_survives_a_panicking_capture_destructor() {
+    let mut supervisor = supervisor();
+    let witness = PanicOnDrop;
+    register_periodic_in(
+        &mut supervisor,
+        "storage.pruning",
+        immediate(SECOND, SECOND, PeriodicShutdown::StopAtDrain),
+        move |_| {
+            // The witness belongs to the factory, so it is destroyed with the
+            // component future, after the run has already escalated.
+            let _ = &witness;
+            async { escalated(9) }
+        },
+    )
+    .unwrap();
+    supervisor
+        .on_cleanup("dependency", || async {
+            panic!("a panicked component must block dependency cleanup")
+        })
+        .unwrap();
+    let running = supervisor.start();
+    let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+        panic!("expected the panicked component report")
+    };
+    // The task's own returned error was discarded by the unwind, so the report
+    // retains only the panic for that task.
+    assert_eq!(report.tasks[0].outcome, TaskOutcome::Panicked);
+    assert!(
+        report.tasks[0]
+            .error
+            .as_ref()
+            .and_then(|error| error.source())
+            .and_then(|source| source.downcast_ref::<Attempt>())
+            .is_none()
+    );
+    // The escalated cause survives independently of that task result.
+    let summary = &report.periodic[0].summary;
+    assert_eq!(summary.completion, PeriodicCompletion::Fatal);
+    assert!(summary.has_failures());
+    let terminal = summary
+        .terminal_failure
+        .as_ref()
+        .expect("the escalated cause is retained before the factory is destroyed");
+    assert_eq!(terminal.invocation, 1);
+    assert_eq!(terminal.error.downcast_ref::<Attempt>().unwrap().0, 9);
+    // Conservative cleanup skipping is unchanged by that retention.
+    assert_eq!(
+        report.cleanup.skipped[0].reason,
+        batter_core::cleanup::SkipReason::UnsafeTaskExit,
+    );
+    assert!(!format!("{report:?}").contains("maintenance attempt failed"));
 }
 
 #[tokio::test(start_paused = true)]

@@ -39,7 +39,8 @@ contracts, capability facts and validation history.
 
   **Source-compatibility hard cut.** `ShutdownReport` gains a public
   `periodic: Vec<PeriodicRecord>` field carrying bounded, redacted evidence
-  retained independently of each runner. Code that constructs or exhaustively
+  retained independently of each runner, including the concrete terminal cause
+  of an escalated run or an expired initialization allowance. Code that constructs or exhaustively
   destructures `ShutdownReport` must be updated; match it with `..`. The
   coordinator is the only constructor, and no existing field changes meaning.
 

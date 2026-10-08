@@ -157,6 +157,19 @@ async fn an_expired_initialization_allowance_is_a_retained_failure_that_drains()
     );
     assert_eq!(summary.invocations, 3);
     assert_eq!(summary.recoverable_failures, 3);
+    // The library-owned initialization failure is also retained independently
+    // of the component's own task result.
+    assert_eq!(
+        summary
+            .terminal_failure
+            .as_ref()
+            .unwrap()
+            .error
+            .downcast_ref::<PeriodicInitializationExpired>()
+            .unwrap()
+            .name,
+        "lease.renewal",
+    );
     assert_eq!(reader.snapshot().invocations, 3);
 }
 

@@ -391,9 +391,21 @@ async fn an_escalating_support_run_is_a_retained_component_failure() {
         report.tasks[0]
             .error
             .as_ref()
-            .and_then(|error| error.downcast_ref::<Attempt>())
+            .and_then(|error| std::error::Error::source(error.as_ref()))
+            .and_then(|source| source.downcast_ref::<Attempt>())
             .map(|attempt| attempt.0),
         Some(7),
     );
-    assert_eq!(reader.snapshot().completion, PeriodicCompletion::Fatal);
+    let summary = reader.snapshot();
+    assert_eq!(summary.completion, PeriodicCompletion::Fatal);
+    assert_eq!(
+        summary
+            .terminal_failure
+            .unwrap()
+            .error
+            .downcast_ref::<Attempt>()
+            .unwrap()
+            .0,
+        7,
+    );
 }

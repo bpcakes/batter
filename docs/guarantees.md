@@ -971,7 +971,18 @@ cannot stand without observed join evidence. That reconciliation uses only
 registered component names, because finite task labels are a separate
 vocabulary that may repeat and may match a component's name. `PeriodicSummary::has_failures`
 also reports the terminal `Fatal` and `InitializationExpired` completions,
-which advance no recurring counter. `Debug` and `Display` stay redacted, a
+which advance no recurring counter.
+
+The concrete terminal cause is retained in `PeriodicSummary::terminal_failure`
+before the runner's application captures are destroyed. A panicking capture
+destructor unwinds the component's normal return, so the error the future was
+returning would otherwise be replaced by the panic alone; the retained slot
+keeps the original cause while the panic stays visible in the task records and
+still forces conservative cleanup skipping. An escalated run's error is shared
+with that slot, so the task record exposes it through `Error::source`, exactly
+as a finite process task's shared failure does; the library's own
+initialization-expiry error stays directly downcastable because it is
+reconstructible. `Debug` and `Display` stay redacted, a
 displaced cause is destroyed outside the publication lock inside the
 component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and

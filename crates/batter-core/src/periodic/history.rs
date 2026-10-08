@@ -91,6 +91,15 @@ pub struct PeriodicSummary {
     pub first_failure: Option<PeriodicFailureSample>,
     /// Most recent retained recoverable failure, replaced as newer ones arrive.
     pub last_failure: Option<PeriodicFailureSample>,
+    /// The concrete cause that ended the component, retained here independently
+    /// of the runner's own task result.
+    ///
+    /// A panicking capture destructor can discard the error the component
+    /// future was returning, leaving only the panic in the process report, so
+    /// this slot is written before the runner's application captures are
+    /// destroyed. It carries an escalated run's original error or the library's
+    /// own initialization-expiry error.
+    pub terminal_failure: Option<PeriodicFailureSample>,
     /// Whether this component acknowledged its registered startup.
     pub acknowledged: bool,
     /// How the loop ended, or `Pending` when the runner published nothing.
@@ -276,6 +285,13 @@ impl History {
 
     pub(super) fn finished(&self, completion: PeriodicCompletion) {
         self.lock().completion = completion;
+    }
+
+    /// Retain the concrete terminal cause before the runner's application
+    /// captures are destroyed. Only the loop's own ending writes this slot, so
+    /// no displaced value can be destroyed under the publication lock.
+    pub(super) fn terminal(&self, invocation: u64, error: Cause) {
+        self.lock().terminal_failure = Some(PeriodicFailureSample { invocation, error });
     }
 
     /// Retain one recoverable failure in the bounded sample slots.
