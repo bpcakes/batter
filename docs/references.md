@@ -1444,6 +1444,42 @@ pool closure; transaction and remote-commit guarantees are unchanged.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
 
+### Periodic maintenance scheduling semantics, 2026-10-08
+
+`Cargo.lock` resolves Tokio 1.53.1, and this section records the semantics
+Batter's periodic components rely on against that exact pin, read from the
+installed `src/time/interval.rs` as well as the versioned documentation.
+
+- [`tokio::time::interval`](https://docs.rs/tokio/1.53.1/tokio/time/fn.interval.html)
+  starts its first deadline at `Instant::now()`, so the first tick completes
+  immediately, and it panics when the period is zero. `PeriodicPolicy::new`
+  validates a positive, representable interval before registration, so that
+  panic is unreachable from the protected path.
+- The default missed-tick behaviour is
+  [`Burst`](https://docs.rs/tokio/1.53.1/tokio/time/enum.MissedTickBehavior.html#variant.Burst),
+  which replays every missed tick. Batter selects
+  [`Skip`](https://docs.rs/tokio/1.53.1/tokio/time/enum.MissedTickBehavior.html#variant.Skip)
+  explicitly instead.
+- `Interval::poll_tick` returns the already elapsed deadline as soon as it is
+  polled, so one overdue invocation runs immediately after an overrun. Only
+  then does `Skip` realign: its next deadline is
+  `now + period - ((now - missed_deadline) % period)`, measured from the
+  original schedule, so no burst of missed work is replayed. Tokio treats a
+  tick as missed only when `now` exceeds its deadline by more than five
+  milliseconds; within that grace the next deadline stays
+  `missed_deadline + period`.
+- `Interval::tick` is cancellation-safe in `select!`: losing that race consumes
+  no tick. Batter still ends its loop at the applicable stopping point rather
+  than resuming the schedule.
+
+These are start-to-start semantics. They are deliberately not the
+completion-plus-delay schedule that `crates/batter-core/src/health.rs` uses for
+dependency sampling, and periodic runs keep `OperationContext`'s documented
+cooperative boundary instead of health's late-publication rule. Neither the
+interval nor the per-run deadline preempts a factory, poll or destructor that
+blocks its runtime thread, and dropping a run's future proves nothing about a
+remote effect it already started.
+
 ### Retry attempt deadline boundaries, 2026-09-14
 
 Cargo.lock resolves Tokio 1.53.1 and tokio-util 0.7.19. The versioned

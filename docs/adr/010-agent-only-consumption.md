@@ -773,6 +773,60 @@ Selecting twice keeps the last policy, as `with_failure_renderer` does, since a
 replaced choice is not an invalid state. Fresh agent implementation and
 modification evaluations remain proposed and unexecuted for this API.
 
+### Periodic maintenance assessment (`batter-s6vu`)
+
+A read-only two-consumer survey recorded hand-written drain-aware maintenance
+loops in two independently maintained downstream services, repeated maintenance
+and progress supervision code, and a closeout review that found one cleanup loop
+had been omitted entirely — an omission no type prevented. Those quantities are
+historical survey evidence, not a current measurement, and the later
+`batter-qjxi` audit withdraws the earlier claim that either service was
+deployed. Repeated consumer instructions to coordinate cadence, drain
+observation, per-run budgets and error retention are exactly the signal this ADR
+names, so the review is on the API shape rather than on more documentation.
+
+The canonical path now makes these states unrepresentable rather than merely
+documented. `PeriodicPolicy` is an opaque validated value, so a zero or
+unrepresentable interval, run budget or initialization allowance is rejected
+before registration instead of panicking at the first tick as the pinned Tokio
+`interval` would. The stopping class is a required constructor parameter with
+exactly two library-owned variants, so a registration cannot silently default to
+the wrong drain behaviour, and there is no application-managed token, join
+protocol, dependency graph or third shutdown timer to assemble incorrectly.
+Batter owns one directly polled serial future per component, so overlapping
+invocations, a detached per-run task and a second scheduler are not reachable
+from the protected path. Each run receives a library-created `OperationContext`,
+so a caller cannot forget a per-run deadline, derive a child that outlives the
+run, or reuse an expired protected-startup initializer context. `PeriodicFailure`
+converts a propagated application error into the recoverable variant and offers
+no conversion into `Fatal`, so an ordinary error cannot implicitly become a
+process drain while `?` still works; this is deliberately the mirror image of
+`Fatal<E>` for finite tasks, where recurrence does not exist and the safe
+default is therefore to refuse to compile. The supervisor retains each
+component's bounded history independently of its runner and publishes it in
+`ShutdownReport::periodic`, so forgetting to join or poll an observer cannot
+lose the evidence, and `PeriodicReader` is a read-only projection that cannot
+run, stop, cancel or clear anything.
+
+What the API does not claim matters as much. Registration authorizes recurrence
+only: it is not evidence of remote rollback, idempotence, a successful renewal,
+fencing, or the absence of a timed-out effect, and lease-loss, freshness and
+durable witness transitions stay application- or native-owned. The admission
+guarantee is that no run is admitted after its applicable stopping point;
+Batter deliberately does not claim that invoking an already admitted callback is
+atomic with stop, because a cancellation preflight cannot close that race, and
+the limit is stated rather than designed away. A support component that
+initialized and then returns success before its own stopping point would be an
+early exit, and the periodic API makes that unreachable by construction — the
+only representable early end is an explicit escalation, which is retained as a
+component failure. Pending or uncooperative native settlement is never treated
+as a stopped proof, so conservative cleanup skipping is preserved rather than
+replaced by "support stopped, call it clean". Adding `ShutdownReport::periodic`
+is a source-compatibility hard cut, recorded in the compatibility notes, because
+the report is constructed only by the coordinator and consumers should match it
+with `..`. Fresh agent implementation and modification evaluations remain
+proposed and unexecuted for this API.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
