@@ -138,6 +138,15 @@ impl OperationContext {
     }
 
     /// Create a child whose deadline is no later than this context's deadline.
+    ///
+    /// The child's deadline is the earlier of `maximum` after this call and
+    /// this context's deadline, so derive it just before the step it limits; it
+    /// can shorten the remaining time but never extend it. The child inherits
+    /// this context's cancellation, so an expired or cancelled context yields
+    /// an already expired or cancelled child rather than an error. The returned
+    /// owner can cancel only the child and its descendants. A zero `maximum`,
+    /// one longer than a year, or one the runtime clock cannot represent is
+    /// rejected with [`ConfigurationError`].
     pub fn child(&self, maximum: Duration) -> Result<OperationOwner, ConfigurationError> {
         validation::positive(maximum, "child budget")?;
         Ok(OperationOwner {

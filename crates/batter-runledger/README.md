@@ -40,8 +40,11 @@ nothing computed afterwards is stored; the exit reaches spawned work that holds
 a phase or a child derived from it. Run final-state work under `finalization()`
 when it uses Batter boundaries such as admission, retries, children or spawned
 tasks; a plain write awaited in the handler is bounded by the native deadline
-either way. The facade's `batter::runledger` module documentation shows a
-complete handler using facade paths.
+either way. Limit one step inside work with `phases.work().child(limit)`, which
+ends at the earlier of that limit and the work deadline and stays linked to the
+invocation's exit; a new root built inside a handler is never cancelled by it.
+The facade's `batter::runledger` module documentation shows a complete handler
+using facade paths.
 Derivation rejects with a typed `JobPhasesRejection` before any application work:
 `Unsupported` for custom `JobExecutionServices` that make no exit claim,
 `Ended`, `Exhausted` when no work time remains, or `Reserve` for an invalid

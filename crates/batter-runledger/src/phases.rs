@@ -42,6 +42,13 @@ use std::{fmt, time::Duration};
 /// spawned tasks; a plain write awaited in the handler is bounded by the native
 /// deadline either way, as in the reference delivery worker.
 ///
+/// Limit one step inside work with `phases.work().child(limit)`: the child
+/// ends at the earlier of `limit` from that call and the work deadline, the
+/// invocation's exit still cancels it, and later steps under `work()` keep the
+/// time it leaves. Never build a new root for a step inside a handler: a root
+/// from `OperationOwner::new` or `RootDeadline` has no link to the invocation,
+/// so its exit would never cancel that step.
+///
 /// `Duration::ZERO` selects no reserve: both phases end at the invocation
 /// deadline, through [`batter_core::operation::OperationContext::split_finalization`].
 /// The worker accepts a handler result only when it is observed strictly before
