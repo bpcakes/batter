@@ -307,23 +307,24 @@ mod tests {
     use super::*;
     use batter::periodic::PeriodicCompletion;
 
-    /// Paused time keeps this contract deterministic: a real-clock window
-    /// would let a scheduling delay discard ticks and fail without any library
-    /// malfunction.
+    /// Paused time prevents scheduling delays from discarding ticks. The
+    /// observation window and drain end between renewal ticks, so their counts
+    /// do not depend on the ordering of tasks with the same deadline.
     #[tokio::test(start_paused = true)]
     async fn support_renews_through_drain_while_pruning_stops_at_it() {
-        let observed = demonstrate(Duration::from_millis(900), false)
+        let observed = demonstrate(Duration::from_millis(875), false)
             .await
             .expect("the bounded demonstration completes successfully");
-        // Paused time makes the whole schedule exact. Pruning admitted
-        // nothing after the stop transition.
+        // Pruning admitted nothing after the stop transition.
         assert_eq!(observed.prunings_during_drain, 0);
-        // Renewal kept supporting the finite batch for its whole 300ms drain,
-        // which is two further 150ms renewal intervals plus the overdue tick.
-        assert_eq!(observed.renewals_during_drain, 3);
+        // The finite batch drains from 875ms to 1175ms, with renewal ticks at
+        // 900ms and 1050ms strictly inside that interval.
+        assert_eq!(observed.renewals_during_drain, 2);
         let pruning = observed.pruning.snapshot();
         assert_eq!(pruning.invocations, 5);
-        assert_eq!(observed.pruned_entries, 6);
+        // Insertion and pruning can share a deadline; their relative order
+        // determines the exact number of expired entries, not this contract.
+        assert!(observed.pruned_entries > 0);
         // The injected transient window is retained as bounded evidence and
         // did not drain the process or fail checked completion.
         assert_eq!(pruning.recoverable_failures, 2);

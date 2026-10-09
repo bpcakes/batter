@@ -132,6 +132,59 @@ async fn support_continues_while_an_ordinary_component_drains() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn all_support_components_stop_together_after_ordinary_work_settles() {
+    let schedules = [Schedule::default(), Schedule::default()];
+    let ordinary_drain = Duration::from_millis(2_500);
+    let mut supervisor = supervisor_with(SECOND * 10);
+    supervisor
+        .register("worker", move |startup| async move {
+            let running = startup.acknowledge_started();
+            running.draining().await;
+            sleep(ordinary_drain).await;
+            Ok(running.stopped())
+        })
+        .unwrap();
+    let origin = Instant::now();
+    for (name, schedule) in ["lease.renewal", "progress.observation"]
+        .into_iter()
+        .zip(&schedules)
+    {
+        let recorded = schedule.clone();
+        register_periodic_in(
+            &mut supervisor,
+            name,
+            immediate(SECOND, SECOND, PeriodicShutdown::SupportThroughDrain),
+            move |_| {
+                let started = recorded.started(origin);
+                async move {
+                    drop(started);
+                    succeeded()
+                }
+            },
+        )
+        .unwrap();
+    }
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    let requested = Instant::now();
+    let success = running.shutdown_checked().await.unwrap();
+    let elapsed = Instant::now().duration_since(requested);
+    // Both supports remain active through ordinary drain, then stop before
+    // another tick. Neither waits for the other or for the ten-second budget.
+    assert!(elapsed >= ordinary_drain);
+    assert!(elapsed < SECOND * 3);
+    for schedule in &schedules {
+        assert_eq!(schedule.starts(), vec![Duration::ZERO, SECOND, SECOND * 2]);
+    }
+    assert!(!success.report().forced_cancellation);
+    assert_eq!(success.report().periodic.len(), 2);
+    for record in &success.report().periodic {
+        assert_eq!(record.summary.invocations, 3);
+        assert_eq!(record.summary.completion, PeriodicCompletion::Stopped);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn support_continues_while_admitted_finite_descendants_drain() {
     let schedule = Schedule::default();
     let mut supervisor = supervisor_process(ProcessCapacity::new(4).unwrap());

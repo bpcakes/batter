@@ -928,10 +928,11 @@ need support, so support then runs to forced cancellation. A returned
 application error is cooperative termination and does close support. Pending or
 uncooperative native settlement is not a stopped proof: neither a joined
 wrapper nor a finished native report alone suffices, and settlement is observed
-during drain rather than after support stops. Support components are excluded
-from the predicate they await, so a process with no ordinary work closes
-support promptly on drain. If that boundary is never reached, support closes at
-the existing global forced-cancellation boundary; earliest-stop-clock
+during drain rather than after support stops. All support components are excluded
+together from the predicate they await: two support schedules do not wait for
+each other after ordinary work settles, and a process with no ordinary work
+closes support promptly on drain. If that boundary is never reached, support
+closes at the existing global forced-cancellation boundary; earliest-stop-clock
 tightening, the cancel and abort/reap limits and conservative cleanup skipping
 are unchanged, and support work is joined or destroyed before finalizers run.
 A run admitted during drain is additionally capped by the already recorded
