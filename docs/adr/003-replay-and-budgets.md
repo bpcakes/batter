@@ -25,6 +25,13 @@ shortened work deadline and original finalization deadline. Work cancellation
 does not cancel finalization; parent cancellation still reaches both. This
 reserves time without shielding execution or extending the total allowance.
 
+Amendment, 2026-10-09 (`batter-5h5y`): `split_finalization` is the zero-reserve
+form. It shares `reserve_finalization`'s one work-deadline computation with no
+interval subtracted, so both sibling phases keep the original deadline and
+finalization has time only when work ends or is cancelled early.
+`reserve_finalization` still rejects a zero reserve; choosing no reserve is a
+separate, explicit call rather than a weakened validator.
+
 Amendment, 2026-09-14: `RetryOptions::with_attempt_maximum` adds an opt-in cap
 derived again when each attempt starts. The cap is clamped to the unchanged
 input context, including a shortened work phase, and its typed expiration is

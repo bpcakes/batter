@@ -175,6 +175,10 @@ and transaction completion without native replacement; server-session terminatio
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
 process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.
+Its `phases.rs` owns `job_phases`, which derives `OperationPhases` from a native
+`JobExecution`'s absolute deadline and links them to the invocation's exit
+through Runledger's `JobInvocation` hook; the worker ends that signal in
+`runledger-runtime/src/worker/invocation.rs`.
 Its `native` module reexports `runledger-core`, `runledger-postgres`,
 `runledger-runtime` and, behind `test-support`, `runledger-test-support`, as the
 native packages themselves; `register_in` remains the protected path.

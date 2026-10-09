@@ -172,6 +172,20 @@ POSTing. That attempt still consumes native retry budget. Returned storage error
 retain known delay, but process death before any successful persistence can lose
 the remote response; this is not an exactly-once or remote-acknowledgement guarantee.
 
+The handler derives its provider work from the native invocation with
+`batter::runledger::job_phases(execution, FINAL_STATE_RESERVE)`, not a fresh
+root sized from the remaining budget. Provider work ends 500 ms before the
+worker's own deadline; the retained state SQL that records its outcome runs
+directly inside that native deadline, so the reserve remains for it after
+provider work expires. Each state transition is one awaited, lease-fenced
+transaction, so it needs no Batter boundary of its own. When the invocation exits, including timeout, lease loss
+or task abort, every provider operation still linked to it is cancelled. A
+derivation with no provider time left keeps the explicit
+`delivery.operation_budget_exhausted` timeout, and execution services that make
+no invocation exit claim are refused as `delivery.operation_phases_unavailable`
+before any state or provider work. The reserve does not shield cleanup, join
+detached work or undo a provider effect.
+
 Provider admission waits on the purpose-specific `BATTER_PROVIDER_CAPACITY`
 inside the handler work deadline. Runledger necessarily claims and increments the
 native attempt before invoking the handler and exposes no attempt-neutral

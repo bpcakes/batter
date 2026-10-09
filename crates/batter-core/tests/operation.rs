@@ -292,6 +292,55 @@ async fn work_cancellation_preserves_finalization_but_parent_cancellation_does_n
 }
 
 #[tokio::test(start_paused = true)]
+async fn split_finalization_keeps_one_deadline_and_sibling_cancellation() {
+    let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10)).unwrap();
+    let deadline = parent.context().deadline();
+    let phases = parent.context().split_finalization().unwrap();
+    assert_eq!(phases.work().deadline(), deadline);
+    assert_eq!(phases.finalization().deadline(), deadline);
+    tokio::time::advance(Duration::from_secs(4)).await;
+    phases.cancel_work();
+    assert_eq!(phases.work().check(), Err(Interruption::Cancelled));
+    assert!(parent.context().check().is_ok());
+    let finalized = phases
+        .finalization()
+        .run("unreserved.finalization", |_| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<_, std::io::Error>(())
+        })
+        .await;
+    assert!(
+        finalized.is_ok(),
+        "time saved by work stays with finalization"
+    );
+    parent.cancel();
+    assert_eq!(phases.finalization().check(), Err(Interruption::Cancelled));
+
+    let expiring = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
+        .unwrap()
+        .into_context();
+    let phases = expiring.split_finalization().unwrap();
+    tokio::time::advance(Duration::from_secs(10)).await;
+    assert_eq!(phases.work().check(), Err(Interruption::DeadlineExceeded));
+    assert_eq!(
+        phases.finalization().check(),
+        Err(Interruption::DeadlineExceeded),
+        "no interval outlives work without a reserve"
+    );
+    assert!(matches!(
+        expiring.split_finalization(),
+        Err(ConfigurationError::InvalidReserve)
+    ));
+    assert!(
+        matches!(
+            expiring.reserve_finalization(Duration::ZERO),
+            Err(ConfigurationError::Zero(_))
+        ),
+        "the reserving form still rejects zero"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn reserve_must_leave_positive_work_time_at_allocation() {
     let parent = batter_core::operation::OperationOwner::new(Duration::from_secs(10))
         .unwrap()

@@ -1444,6 +1444,34 @@ pool closure; transaction and remote-commit guarantees are unchanged.
 - [Paused time](https://docs.rs/tokio/latest/tokio/time/fn.pause.html): a runtime
   testing facility, not control of database time.
 
+### Runledger invocation phases, 2026-10-09
+
+Cargo.lock still resolves Tokio 1.53.1. Its
+[`Instant::from_std`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.from_std)
+and [`into_std`](https://docs.rs/tokio/1.53.1/tokio/time/struct.Instant.html#method.into_std)
+wrap and unwrap the same `std::time::Instant` (the locked source stores the std
+value unchanged), and outside a paused test clock `Instant::now()` reads
+`std::time::Instant::now()`. The Runledger worker computes its handler deadline
+with Tokio's `Instant::now()`, exposes it through `into_std`, and enforces it
+with Tokio timers; `job_phases` converts it back with `from_std`, so the bridge
+and native enforcement use one value on one clock, including under
+[paused time](https://docs.rs/tokio/1.53.1/tokio/time/fn.pause.html). A custom
+runtime that reads `std::time::Instant::now()` while a Tokio test clock is paused
+uses a different clock; that is its own obligation.
+
+Runledger's exit hooks run inside
+[`catch_unwind`](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html),
+which catches unwinding panics but not aborting ones. Its boundary can contain
+a hook panic raised while `JobInvocationOwner::drop` runs during an outer
+unwind, provided the nested panic reaches that boundary before escaping the
+destructor. Two probes compiled against the native source on Rust 1.98.1 confirmed
+that later hooks still run and the outer panic remains catchable; their evidence is
+recorded in `batter-5h5y.3`. A second panic escaping destruction during unwinding
+can abort the process, as the
+[`Drop` panics section](https://doc.rust-lang.org/std/ops/trait.Drop.html#panics)
+warns. `catch_unwind` neither suppresses panic-hook output nor recovers from
+aborting panics, including `panic = "abort"`.
+
 ### Retry attempt deadline boundaries, 2026-09-14
 
 Cargo.lock resolves Tokio 1.53.1 and tokio-util 0.7.19. The versioned

@@ -8,6 +8,20 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `batter_runledger::job_phases` (also `batter::runledger::job_phases`), the
+  one bridge from a native `JobExecution` and an explicit final-state reserve to
+  `OperationPhases`. Work ends at the worker's own absolute deadline minus the
+  reserve; finalization keeps that deadline; `Duration::ZERO` selects no reserve.
+  The native invocation's exit cancels both phases through its own exit hook,
+  with no caller guard or forwarding task. Derivation returns a typed
+  `JobPhasesRejection` (`Unsupported`, `Ended`, `Exhausted`, `Reserve`) before
+  any application work, including for custom execution services that make no
+  exit claim.
+- Add `OperationContext::split_finalization`, the zero-reserve form of
+  `reserve_finalization`. It returns the same sibling `OperationPhases`, with
+  both phases ending at the context's deadline, and shares the one
+  work-deadline computation. `reserve_finalization` still rejects
+  `Duration::ZERO`; no existing call changes behavior.
 - Batch session settings and verify idle pooled sessions at acquisition instead
   of resetting them a second time. Reset uses five policy
   SQL statements (ROLLBACK, DISCARD ALL, native SET ROLE, one array-bound `set_config`

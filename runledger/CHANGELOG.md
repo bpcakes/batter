@@ -6,6 +6,70 @@ All notable changes to this workspace are documented here.
 
 [Compare changes](https://github.com/bpcakes/batter/compare/runledger-v0.13.0...HEAD)
 
+### Added
+
+- `JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
+  observes one handler invocation's exit. The worker ends it after the handler
+  future is destroyed and before the outcome is persisted, whenever the
+  invocation exits: success, continuation, returned failure, panic, deadline,
+  lease loss found by progress or heartbeat, failed lease maintenance, or abort
+  of the task that drives it. A graceful stop request alone does not end it.
+  Observers use `ended()`, `has_ended()` or a synchronous `on_end` hook and
+  cannot end the invocation. Each panicking waiter wake or hook is contained
+  without skipping later notifications and retained as
+  `RuntimeCallbackFailure::Panicked` evidence with callback
+  `job_invocation_exit_hook`. The source-compatible `JobInvocationHookPanics`
+  report includes waiter-wake panics before hook panics. Continuations and retries
+  get fresh invocations. Waker cloning and destruction run outside the invocation
+  mutex, including waiter replacement and removal, to permit reentrant state reads.
+- `JobInvocationHookPanics::payloads()` provides borrowed diagnostics. Owner and
+  report drop release string payloads but intentionally retain opaque panic
+  allocations so their destructors cannot escape notification containment.
+  The native worker borrows the report while recording every failure. Existing
+  `into_payloads()` remains a low-level ownership transfer with caller-owned
+  disposal.
+- `JobExecutionServices` gains the provided method `invocation()`, which returns
+  `None`. Existing custom services compile unchanged and make no exit claim, so
+  consumers that need the signal reject them. To opt in, own one
+  `JobInvocationOwner` per invocation and end or drop it when that invocation
+  exits on every path, including task abort:
+
+  Before:
+
+  ```rust
+  struct Services {
+      deadline: Instant,
+  }
+
+  #[async_trait]
+  impl JobExecutionServices for Services {
+      fn deadline(&self) -> Instant { self.deadline }
+      fn remaining_budget(&self) -> Duration {
+          self.deadline.saturating_duration_since(Instant::now())
+      }
+      async fn persist_progress(&self, update: JobExecutionUpdate<'_>)
+          -> Result<(), JobExecutionError> { /* lease-fenced commit */ }
+  }
+  ```
+
+  After:
+
+  ```rust
+  struct Services {
+      deadline: Instant,
+      // One owner per invocation; dropping the services ends the invocation.
+      invocation: JobInvocationOwner,
+  }
+
+  #[async_trait]
+  impl JobExecutionServices for Services {
+      // deadline, remaining_budget and persist_progress are unchanged.
+      fn invocation(&self) -> Option<JobInvocation> {
+          Some(self.invocation.invocation())
+      }
+  }
+  ```
+
 ### Changed
 
 - Breaking: `JobDeadLetterInfo` carries a typed `origin`

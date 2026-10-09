@@ -19,7 +19,8 @@ Fast jump index for agent-facing guidance in this repository.
   client retirement, bounded probes, explicit pool cleanup and opt-in isolated
   database fixture ownership.
 - [Native runtime adapter](./crates/batter-runledger/AGENTS.md): inert native preparation,
-  initialization, stop-clock exchange and retained descendant settlement.
+  initialization, stop-clock exchange, retained descendant settlement and
+  invocation-derived operation phases.
 - [Native quota adapter](./crates/batter-runlimit/AGENTS.md): atomic quota-before-work,
   authenticated HTTP assembly and retained consumption observations.
 - [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
