@@ -1461,10 +1461,16 @@ uses a different clock; that is its own obligation.
 
 Runledger's exit hooks run inside
 [`catch_unwind`](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html),
-which catches unwinding panics but not aborting ones. A panic raised while the
-thread is already unwinding aborts the process instead of unwinding, as the
+which catches unwinding panics but not aborting ones. Its boundary can contain
+a hook panic raised while `JobInvocationOwner::drop` runs during an outer
+unwind, provided the nested panic reaches that boundary before escaping the
+destructor. Two probes compiled against the native source on Rust 1.98.1 confirmed
+that later hooks still run and the outer panic remains catchable; their evidence is
+recorded in `batter-5h5y.3`. A second panic escaping destruction during unwinding
+can abort the process, as the
 [`Drop` panics section](https://doc.rust-lang.org/std/ops/trait.Drop.html#panics)
-describes, so a hook run from a destructor during unwinding cannot be contained.
+warns. `catch_unwind` neither suppresses panic-hook output nor recovers from
+aborting panics, including `panic = "abort"`.
 
 ### Retry attempt deadline boundaries, 2026-09-14
 
