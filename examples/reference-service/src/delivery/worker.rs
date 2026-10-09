@@ -8,7 +8,8 @@ use crate::provider::{
 };
 use batter::{
     admission::{Admission, AdmissionError, Bulkhead},
-    operation::OperationContext,
+    operation::{OperationContext, OperationPhases},
+    runledger::{JobPhasesRejection, job_phases},
 };
 use runledger_core::{
     jobs::{JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType},
@@ -18,7 +19,11 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::time::Duration;
 
+/// Kept inside the native handler deadline for the retained final-state SQL
+/// that follows provider work, including after provider work expires.
 const FINAL_STATE_RESERVE: Duration = Duration::from_millis(500);
+const CODE_OPERATION_BUDGET_EXHAUSTED: &str = "delivery.operation_budget_exhausted";
+const CODE_OPERATION_PHASES_UNAVAILABLE: &str = "delivery.operation_phases_unavailable";
 const CODE_ADMISSION_OVERLOADED: &str = "delivery.admission_overloaded";
 const CODE_ADMISSION_CLOSED: &str = "delivery.admission_closed";
 const CODE_ADMISSION_INTERRUPTED: &str = "delivery.admission_interrupted";
@@ -61,18 +66,29 @@ impl JobExecutionHandler for DeliveryWorker {
         value: Value,
     ) -> Result<JobCompletion, JobFailure> {
         let payload = decode_payload(execution, value)?;
-        let budget = execution.remaining_work_budget(FINAL_STATE_RESERVE);
-        let operation = batter::operation::OperationOwner::new(budget)
-            .map(|owner| owner.into_context())
-            .map_err(|_| {
-                JobFailure::timeout(
-                    "delivery.operation_budget_exhausted",
-                    "No provider work budget remained.",
-                )
-            })?;
-
-        self.execute_retained(execution, &operation, &payload).await
+        let phases = provider_phases(execution)?;
+        // Provider admission and calls use the work phase. The state SQL that
+        // records their outcome runs directly under the native deadline, so the
+        // reserve remains for it after provider work expires; the invocation's
+        // exit cancels every provider operation still linked to the phases.
+        self.execute_retained(execution, phases.work(), &payload)
+            .await
     }
+}
+
+/// Derive provider work from the native invocation, not a fresh root. Both
+/// rejections that leave no provider time keep the earlier timeout mapping.
+fn provider_phases(execution: JobExecution<'_>) -> Result<OperationPhases, JobFailure> {
+    job_phases(execution, FINAL_STATE_RESERVE).map_err(|rejection| match rejection {
+        JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => JobFailure::timeout(
+            CODE_OPERATION_BUDGET_EXHAUSTED,
+            "No provider work budget remained.",
+        ),
+        JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => JobFailure::terminal(
+            CODE_OPERATION_PHASES_UNAVAILABLE,
+            "Provider work phases could not be derived from this invocation.",
+        ),
+    })
 }
 
 impl DeliveryWorker {

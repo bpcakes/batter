@@ -183,7 +183,10 @@ Provider non-dispatch persistence takes the retry delay and constructs the nativ
 scheduling result itself. The durable absolute eligibility timestamp commits with
 the outcome and every dispatch authorization checks it under the effect-row lock.
 Admission failure has a separate narrow transition and cannot classify an
-uncertain provider result. A recovered attempt may consume native retry budget
+uncertain provider result. Derive provider work only through
+`batter::runledger::job_phases` with the explicit 500 ms final-state reserve;
+never rebuild a fresh root from the remaining budget. Keep the explicit
+rejection-to-`JobFailure` mapping and the final-state SQL after work expiry. A recovered attempt may consume native retry budget
 while deferring; there is no refund or replacement scheduler. A response never
 successfully persisted can still be lost on process death; no local type removes
 that external acknowledgement gap.
