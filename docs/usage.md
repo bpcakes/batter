@@ -239,6 +239,27 @@ Native initialization alone does not establish dependency health or
 application readiness, and native joins do not prove arbitrary detached work or
 remote sessions stopped.
 
+Inside a `JobExecutionHandler`, derive the job's operation contexts with
+`let phases = batter::runledger::job_phases(execution, reserve)` and match
+`JobPhasesRejection` explicitly into the job's `JobFailure`. Run provider calls,
+admission, retries and child operations under `phases.work()`, then await any
+final-state work under `phases.finalization()`, which keeps the native deadline
+after work expires. Choose a positive reserve that covers that final-state work;
+`Duration::ZERO` means none, and the worker then times out any result or write
+after work expiry. Do not build a fresh root from the remaining budget: it would
+neither share the worker's deadline nor be cancelled when the invocation ends.
+The worker destroys the handler future before ending the invocation, so the
+cancellation reaches spawned work holding a phase or one of its children, not
+code awaited in the handler. A plain final-state write awaited in the handler is
+bounded by the native deadline either way; use `finalization()` when that work
+uses Batter boundaries such as admission, retries, children or spawned tasks.
+Limit one step inside work with `phases.work().child(limit)`; never build a
+new root inside a handler, because nothing would cancel it when the invocation
+ends. The facade's `batter::runledger` module documentation shows the handler
+with facade paths.
+The [rustdoc example](../crates/batter-runledger/src/phases.rs) shows a complete
+handler; the reference delivery worker keeps a 500 ms reserve for its state SQL.
+
 At service completion, use `running.wait_checked().await?` inside the
 application's `run` function. For an explicit stop, use
 `running.shutdown_checked().await?`. Both borrowed waiters are cancel-safe;

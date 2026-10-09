@@ -2373,6 +2373,46 @@ Native privilege inquiry functions can observe newer catalog state than a
 repeatable-read ACL query; required and excess checks therefore use the same
 captured data and native inquiries serve as differential test references.
 
+## Runledger invocation phases
+
+`batter_runledger::job_phases(execution, reserve)` is the one bridge from a
+native `JobExecution` to Batter `OperationPhases`. Both phases share one root at
+exactly `JobExecution::deadline()`, converted from the native std instant to
+Tokio's view of the same monotonic clock; deriving late never moves it. Work
+ends `reserve` before that deadline through `reserve_finalization`'s checked
+arithmetic, or at it through `split_finalization` when `reserve` is
+`Duration::ZERO`; finalization always keeps it. Cancelling or exhausting work
+leaves finalization running. Derivation returns `JobPhasesRejection` without
+running application work when the services make no exit claim (`Unsupported`),
+the invocation already ended (`Ended`), no positive work time remains
+(`Exhausted`, including a subtraction outside the clock's range) or the reserve
+is not an accepted duration (`Reserve`). Later operation boundaries keep their
+preflight: an expired or cancelled phase invokes no factory, and an unpolled
+operation is inert.
+
+Native ownership: Runledger ends each invocation's `JobInvocation` exactly once
+when the invocation exits for any reason (success, continuation, returned
+failure, panic, deadline, lease loss found by progress or heartbeat, failed lease
+maintenance, task abort or destruction), after the handler future is destroyed
+and before the outcome is persisted. A graceful stop request alone does not end
+it. The bridge registers one exit hook per derivation; the hook owns the root's
+only cancellation authority, so both phases and every context derived from them
+observe the end, including observers in independently spawned tasks and contexts
+derived afterwards. Handlers, observers and copies of the execution handle can
+neither end the invocation nor cancel the root; child contexts cancel only
+downward, and separate invocations and derivations are isolated. Continuations
+and retries are new invocations with fresh signals. Contained exit-hook panics
+are retained as runtime callback evidence.
+
+**Not supplied:** joining or stopping detached work, cancellation shielding,
+undoing remote effects, effect fencing, a generic `OperationError` to
+`JobFailure` conversion, or any change to native outcome precedence. A result or
+final-state write observed at or after the native deadline is
+`job.timeout_exceeded`, so a zero reserve leaves nothing after work expiry. The
+reserve lies inside the handler deadline; native outcome persistence follows the
+handler. Notification never grants dependency-cleanup authority or turns a
+completed, late or fenced result into an interrupted handler.
+
 ## Shared Runledger workspace
 
 The optional adapter and native Runledger packages now resolve from one checkout.

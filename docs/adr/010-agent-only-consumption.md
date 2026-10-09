@@ -773,6 +773,137 @@ Selecting twice keeps the last policy, as `with_failure_renderer` does, since a
 replaced choice is not an invalid state. Fresh agent implementation and
 modification evaluations remain proposed and unexecuted for this API.
 
+### Runledger invocation phases assessment (`batter-5h5y`)
+
+A read-only survey of two downstream consumers and the reference worker found
+three copies converting a job execution into a fresh root operation: the
+remaining work budget fed to `OperationOwner::new`, the execution deadline fed to
+`RootDeadline`, or a fresh root sized from the remaining budget. Each repeated
+the deadline and reserve arithmetic, restarted the budget at derivation, and
+built a root whose cancellation nothing could trigger. The worker enforces
+timeout and lease loss by dropping the handler future, so awaited work stopped,
+but work that observed the context instead of being dropped with the handler was
+never told the invocation had been abandoned. A context that silently never ends
+was the invalid state; the repeated arithmetic was the caller obligation.
+
+The canonical path is now `job_phases(execution, reserve)`. It takes the whole
+`JobExecution`, so its deadline is the worker's own absolute instant rather than
+a value the caller re-derives, and the reserve is a required argument, so no
+default hides the final-state budget. It returns the existing `OperationPhases`:
+work ends `reserve` before the native deadline and finalization keeps it, through
+the one core computation, so the bridge adds no arithmetic. The value carries no
+authority: `OperationPhases` cannot cancel both phases and
+`OperationContext::cancel` stays private, so a handler can neither end its
+invocation nor cancel the shared root, and children cancel only downward.
+
+Linkage. Batter contexts cancel through a tokio-util `CancellationToken`,
+`runledger-core` had no Tokio dependency, and a detached forwarding task was
+excluded, so only two mechanisms could let native ownership hold the link. The
+selected one is a native exit hook. `runledger-core` gains a std-only
+`JobInvocationOwner` whose read-only, cloneable `JobInvocation` offers `ended()`,
+`has_ended()` and `on_end(hook)`; the owner runs registered hooks once when it is
+ended or dropped. The bridge moves the derived root's `OperationOwner` into one
+hook, so its only cancellation authority lives in native-owned storage and runs
+on every exit path, including destruction during task abort. Batter-core's
+construction surface is unchanged: `OperationContext::{new, at, under}` stay
+unreachable with their existing compile-fail controls, `OperationOwner::under`
+stays crate-private, and tokio-util stays out of both public APIs. The rejected
+alternative, a downward-only child `CancellationToken` from native plus a
+capability-shaped core constructor, would have made tokio-util 0.7 part of the
+public API and semver of both `runledger-core` and `batter-core`, and would have
+needed a public core constructor linking a new root to any token a caller holds:
+the unrelated-root construction the operation-authority assessment above removed.
+Its one advantage, that native would run nothing but token cancellation, is
+covered differently: the owner contains a panicking hook and still notifies later
+hooks and observers, and the worker records the panic as
+`RuntimeCallbackFailure::Panicked` evidence, keeping settlement conservative. The
+remaining cost is that synchronous hook code runs in the native exit path.
+`on_end` requires hooks to be brief, non-blocking and panic-free; a panic raised
+while the thread is already unwinding cannot be contained. Each derivation keeps
+one hook until the invocation ends.
+
+Zero reserve. `reserve_finalization` rejects `Duration::ZERO` through the shared
+positive validator, while the bridge must read zero as no reserve. The selected
+resolution is a core extension: `OperationContext::split_finalization` returns
+the same sibling `OperationPhases` with no interval reserved and shares one
+private work-deadline computation with `reserve_finalization`, whose existing
+rejections and tests are unchanged. The rejected alternative, a bridge output
+whose zero form is a single context, would have given one choice two output
+shapes and either removed `cancel_work` or let the zero form's `cancel_work` also
+cancel finalization: a known-invalid composition selected by a reserve value.
+With the extension every reserve yields the same sibling semantics; zero merely
+leaves finalization no time after work expires, which the bridge rustdoc states
+together with the worker's `job.timeout_exceeded` precedence.
+
+Ownership and drop order. The worker owns one signal per invocation in
+`worker/invocation.rs`. Its owner is a local that outlives the handler future:
+every returned path destroys the handler future, ends the invocation, and only
+then returns to outcome persistence; task abort and task-set destruction drop the
+owner after the handler future. A graceful stop request touches neither, so drain
+keeps admitted invocations running until native escalation abandons them.
+Continuations and retries get new owners. Custom runtimes keep compiling because
+`JobExecutionServices::invocation` is a provided method returning `None`; the
+bridge refuses such services with `JobPhasesRejection::Unsupported` rather than
+returning phases that could never be cancelled. Opting in means owning one
+`JobInvocationOwner` per invocation, as the native changelog shows.
+
+Against the review questions: derivation rejects unsupported, ended and
+exhausted executions and invalid reserves before returning phases, and operation
+preflight rejects later expiry or cancellation before any factory runs; no
+ordering, paired call or guard remains with the caller, because native ownership
+establishes and releases the link; authority is split into a non-cloneable native
+owner and read-only observations, contexts and phases; the bridge is the only
+ordinary path, used by the reference worker and the facade-only consumer. What
+remains is application policy (the reserve size, the rejection-to-`JobFailure`
+mapping and replay classification), the custom-runtime obligation to end one
+owner per invocation, and unverifiable remote effects. A generic
+`OperationError`-to-`JobFailure` conversion was deliberately not added:
+`JobFailure` keeps only kind, code and message, and native policy treats timeout
+and lease expiry as retryable, so a universal conversion would erase concrete
+causes and choose replay policy for the application.
+
+Compile-fail controls reject ending an invocation through its observation,
+cloning its owner, carrying `JobExecution` into a thread, cancelling both phases,
+and cancelling finalization through its context. PostgreSQL-backed worker tests
+end the signal on success, continuation, returned failure, panic, timeout,
+swallowed progress lease loss, heartbeat lease loss, lease-maintenance failure,
+direct task abort and worker-loop destruction, with acknowledged, multiple and
+late observers and an outcome gate proving the end precedes persistence; drain
+keeps the invocation running. Paused-time bridge tests cover the arithmetic,
+rejections, phase semantics, observers, isolation and typed forwarding. The
+reference worker's live state probe drives provider-work expiry through its
+production `execute` path and requires the retained state to commit inside the
+native deadline, and the facade-only consumer requires each invocation's exit to
+cancel its derived work phase.
+
+Fresh-agent usability evaluation was executed on 2026-10-09 with two
+independent agents that had no context from this implementation and could read,
+but not change, the repository. Each worked in a scratch crate outside the
+repository that declared only `batter` (feature `runledger`), Tokio and
+serde_json. The implementation task asked for a provider call bounded by the
+job's own deadline, a 300 ms recording reserve and cancellation on abandonment,
+without naming a Batter API. The agent found and used `job_phases`, mapped every
+`JobPhasesRejection` explicitly, ran the call under `work()` and the record
+under `finalization()`, rejected a fresh root from the remaining budget, and
+passed build, Clippy and five unit tests driven through services built on
+`JobInvocationOwner`. The modification task added a lookup with its own
+two-second limit and raised the reserve to one second. The second agent used
+`phases.work().child(limit)` for the lookup, kept the send under `work()`, and
+passed build, Clippy and ten tests; temporary mutations confirmed that those
+tests catch a send under the lookup's child, a child of finalization, a missing
+limit, an unlinked root and a shortened reserve. Gaps they reported were fixed in
+the rustdoc and guides before closure: no facade-path handler example, exit
+ordering and spawned-work reach missing from the bridge rustdoc, an example that
+collapsed provider outcomes, no guidance for nested limits or against a new root
+inside a handler, and terse `child` documentation. Two remain outside this task.
+Consumers write their own test execution services, and constructing a
+`JobContext` needs a UUID. A new independent root is still constructible inside
+a handler, because `OperationOwner::new` and `RootDeadline` remain the general
+independent-root API; the guides direct nested limits to `child`, and only an
+exit test detects the unlinked root. These are two executed evaluations against
+in-progress documentation, not a benchmark, and their scratch artifacts were not
+committed.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed
