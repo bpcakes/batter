@@ -30,6 +30,19 @@ struct Started {
     ended_at_start: bool,
     observed: mpsc::UnboundedReceiver<usize>,
     hooks: Arc<AtomicUsize>,
+    ended_at_handler_drop: Arc<Mutex<Option<bool>>>,
+}
+
+/// Records whether the invocation had ended when the handler future was destroyed.
+struct HandlerDropProbe {
+    invocation: JobInvocation,
+    ended: Arc<Mutex<Option<bool>>>,
+}
+
+impl Drop for HandlerDropProbe {
+    fn drop(&mut self) {
+        *self.ended.lock().expect("drop probe") = Some(self.invocation.has_ended());
+    }
 }
 
 struct ExitHandler {
@@ -53,6 +66,11 @@ impl JobExecutionHandler for ExitHandler {
             .invocation()
             .expect("the worker owns every invocation's exit");
         let ended_at_start = invocation.has_ended();
+        let ended_at_handler_drop = Arc::new(Mutex::new(None));
+        let _probe = HandlerDropProbe {
+            invocation: invocation.clone(),
+            ended: Arc::clone(&ended_at_handler_drop),
+        };
         let (acknowledged, mut acknowledgements) = mpsc::unbounded_channel();
         let (done, observed) = mpsc::unbounded_channel();
         for index in 0..OBSERVERS {
@@ -86,6 +104,7 @@ impl JobExecutionHandler for ExitHandler {
                 ended_at_start,
                 observed,
                 hooks,
+                ended_at_handler_drop,
             })
             .expect("test receives each invocation");
         match self.exit {
@@ -152,6 +171,11 @@ async fn assert_ended(started: &mut Started) {
     assert_eq!(seen, (0..OBSERVERS).collect::<Vec<_>>());
     assert!(started.invocation.has_ended());
     assert_eq!(started.hooks.load(Ordering::SeqCst), HOOKS);
+    assert_eq!(
+        *started.ended_at_handler_drop.lock().expect("drop probe"),
+        Some(false),
+        "the handler future is destroyed before the invocation ends"
+    );
     timeout(
         Duration::from_millis(100),
         started.invocation.clone().ended(),
