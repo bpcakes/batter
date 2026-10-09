@@ -939,6 +939,31 @@ exit test detects the unlinked root. These are two executed evaluations against
 in-progress documentation, not a benchmark, and their scratch artifacts were not
 committed.
 
+### Whole-application baseline (`batter-k64t`)
+
+Executed on 2026-10-09; the record is `docs/evidence/whole-app-baseline-2026-10-09`.
+One general-purpose agent with no session context built a complete service from
+a Git-free copy of master (`71e37ea`) under a reading allowlist of public
+documentation only, in a scratch crate that declares only `batter` with the
+`axum` and `runledger` features plus registry crates: typed settings, an owned
+pool, schema setup, a POST route that inserts a row and records a durable job
+intent in one transaction, a GET route, probes, a `records.notify` handler with
+a bounded provider step and a final-state write, and signal-driven shutdown.
+Against an oracle frozen before launch, all eleven decision points were the
+canonical path or the documented alternative; none was wrong. The first build
+failed once, on a missing `PgScopeError` re-export and a by-value
+`CorrelationId`; `clippy -D warnings` needed three further rounds, all in test
+code. The crate passes build, clippy, fmt and 26 tests, and the archived copy
+builds against this tree. No live PostgreSQL run was made.
+
+The evaluation found no fork that documentation failed to resolve. Its eleven
+reported gaps are a missing re-export, four composition sentences missing from
+public documentation, and three capability gaps already tracked or filed:
+one profiled pool owner shared with Runledger (`batter-nhu5`), a handler test
+facility (`batter-3upk`), and budget guidance that remains application policy.
+The re-export and the documentation sentences were repaired in the same change.
+This is one run of one agent and does not establish population reliability.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

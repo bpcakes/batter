@@ -914,6 +914,14 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Verification
 
+Launch `scripts/verify.sh` from a foreground shell, or reset `SIGINT` and
+`SIGQUIT` to their default dispositions before exec when it has to run as a
+background job. A background job of a non-interactive POSIX shell runs with
+both signals ignored, every descendant inherits that, and the `startup_signals`
+suite expects an unstarted child to die from the default `SIGINT` action; under
+the inherited ignore it fails with `signal child timed out:
+mode=configured-unstarted signal=INT` while passing in the foreground.
+
 Session-profile optimization regressions (`batter-md9y`) extend `atomic_live`
 with restricted-login idle SET-role, schema-USAGE and loaded privileged
 custom-parameter SET revocation/recovery,

@@ -74,10 +74,15 @@ result/error and cause. Caught terminal failures retain the first database poiso
 cause; abandoned operations are classified separately. `PgScopeFailure` cannot
 contain an ordinary application rejection.
 Every completion retires the session, and acquisition resets inherited state.
+The runner has no `_in` variant. Bound the whole call with the caller's
+context, `context.run("records.create", |_| run_atomic(&database, ..))`, so the
+deadline and cancellation reach the transaction; an abandoned call is
+classified as described above.
 
 `run_atomic_with` binds SQL and named operations to a concrete consumer error
 through `PgFailurePolicy`. All types required by its five handlers, including
-`PgTransactionError`, are reexported here; the crate-level rustdoc implements a
+`PgTransactionError` and the `PgScopeError` that `scope.application` returns, are
+reexported here; the crate-level rustdoc implements a
 policy using only adapter imports. These are the original native types: the
 reexports do not add constructors or relax transaction ownership and poisoning.
 
@@ -87,7 +92,9 @@ behind the opt-in `test-support` feature — so one `batter` dependency reaches
 worker preparation, the job catalog, durable intents and the migrators. They are
 deliberately low-level: `register_in` remains the protected registration path, and
 the module rustdoc states what a caller that builds a live native supervisor takes
-on instead.
+on instead. Sync job definitions during owned startup, before `register_in`,
+with `native::runtime::catalog::JobCatalog::sync_definitions`: a standard
+supervisor promotes recorded intents only for registered, enabled definitions.
 
 Native graceful and abort/join allowances come from the process budget's drain and
 cancellation phases. The adapter exchanges the earliest native/parent stop timestamp;

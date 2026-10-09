@@ -8,6 +8,16 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Re-export `PgScopeError` from `batter_runledger` (also `batter::runledger`),
+  the error `PgIntentScope::application` returns, so a consumer that handles it
+  needs no direct `batter-sqlx` import. A whole-application fresh-agent
+  baseline, recorded under `docs/evidence/whole-app-baseline-2026-10-09`, hit
+  its only build error on that missing re-export. The same baseline repaired
+  documentation: how to run bounded startup work inside the protected scope,
+  that `run_atomic` is bounded by wrapping it in `context.run`, that definition
+  sync precedes `register_in`, that the runtime `sqlx::query_as` function is not
+  a `PgNativeQuery`, that `AdmittedRequest::correlation_id` returns a reference,
+  and that a handler test ends its invocation explicitly.
 - Backfill the operation-authority hard cut and add a supported-path choice
   table to the facade's rustdoc front page; see the `Breaking (backfilled note)`
   entry below and `docs/evidence/public-api-diff-2026-10-09`.

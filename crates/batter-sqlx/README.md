@@ -79,6 +79,9 @@ let value = scope.fetch_one(sqlx::query_scalar!(
 including `query!`, `query_as!` and `query_scalar!` results. Macros retain SQLx's
 compile-time checking against live or offline metadata. Runtime constructors
 produce the same types and remain usable without gaining compile-time checking.
+The runtime `sqlx::query_as` function is the exception: it returns `QueryAs`,
+which is not accepted; use `sqlx::query(..).try_map(..)` or the `query_as!`
+macro for a mapped row type.
 Fetch helpers preserve row mapping and decode errors; `fetch_one` retains
 `RowNotFound`, `fetch_optional` returns `None`, and `fetch_all` collects a native
 in-memory vector. `execute` discards rows and mappers, including mapped/scalar
