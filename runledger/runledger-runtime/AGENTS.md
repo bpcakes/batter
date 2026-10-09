@@ -27,6 +27,7 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
 ## Edit here for X
 - Worker claim/execute/heartbeat semantics: `src/worker.rs`.
 - Worker completion persistence: `src/worker/completion.rs`.
+- Handler invocation exit ownership: `src/worker/invocation.rs`.
 - Reaper terminal hook fanout: `src/reaper/terminal_hooks.rs`.
 - Scheduler cadence/jitter logic: `src/scheduler.rs`.
 - Lease cleanup runtime behavior: `src/reaper.rs`.
@@ -83,6 +84,12 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
   both phases through signal_panic(); unsubmitted destruction has no report
   recipient and emits only a redacted diagnostic. Keep fatal signal policy
   distinct from best-effort callback policy.
+- End each handler invocation's exit signal on every exit path, after the
+  handler future is destroyed and before its outcome is persisted, and when
+  the task driving it is aborted or destroyed. A graceful stop request must not
+  end it; draining keeps admitted invocations running. The signal is a
+  notification, not a join or cleanup permit; retain contained exit-hook
+  panics as callback evidence.
 - Keep durable result classification separate from execution-interruption
   evidence. A completed handler rejected by deadline or lease fencing was not
   cancelled. Record interruption at the pending-future cancellation or panic

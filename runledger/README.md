@@ -820,9 +820,32 @@ even if the handler ignores that error. Successful writes acknowledge commit;
 an error or cancellation can leave an indeterminate commit outcome.
 External effects still require application idempotency.
 
+`JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
+observes this invocation's exit, unlike the borrowed handle, so work the handler
+starts can learn that the invocation is over. The worker ends it whenever the
+invocation exits: a returned success, continuation or failure, a panic, the
+deadline, lease loss found by a progress write (even when the handler ignores
+the error) or by a heartbeat, failed lease maintenance, and destruction of the
+task that drives it. The end follows destruction of the handler future and
+precedes persistence of its outcome. A graceful stop request alone does not end
+it: draining lets an admitted invocation finish until native escalation
+abandons it. Observers wait with `ended()`, poll `has_ended()`, or register a
+brief, non-blocking `on_end` hook that runs once, synchronously, when the
+invocation ends; none of them can end it. The worker contains a panicking hook
+and retains it as callback evidence. The end is a notification only: it does
+not join detached work, undo external effects, change the durable outcome or
+permit dependency cleanup. Each continuation or retry is a new invocation with
+its own signal.
+
 Custom runtimes must supply `JobExecutionServices` and invoke
 `JobHandler::execute_with_services`. Calling legacy `execute` directly on
 an adapted execution-services handler returns `job.execution_services_required`.
+`JobExecutionServices::invocation` returns `None` by default, so an existing
+custom implementation compiles unchanged but makes no exit claim, and a consumer
+that needs one rejects it rather than treating the invocation as never ending.
+To opt in, own one `JobInvocationOwner` per invocation, return its
+`invocation()`, and end or drop the owner when that invocation exits on every
+path, including task abort, before persisting the outcome.
 SQLx pools and persistence errors remain outside the serializable `JobContext`.
 Validated [OneSales and IdentityPro migration patches](docs/execution-services-migrations/README.md)
 show how to replace existing execution-state reconstruction.

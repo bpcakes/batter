@@ -11,6 +11,7 @@ mod completion;
 mod dead_letter;
 mod execution;
 mod execution_services;
+mod invocation;
 mod observers;
 
 use self::execution::ClaimedJobExecution;

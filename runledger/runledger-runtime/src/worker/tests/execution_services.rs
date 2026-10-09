@@ -4,6 +4,8 @@ use runledger_core::jobs::{
 
 use super::*;
 
+mod invocation_exit;
+
 const JOB_TYPE: JobType<'static> = JobType::new("jobs.test.execution_services");
 
 struct CheckpointHandler {
