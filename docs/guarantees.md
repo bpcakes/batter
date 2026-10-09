@@ -996,7 +996,10 @@ cannot stand without observed join evidence. That reconciliation uses only
 registered component names, because finite task labels are a separate
 vocabulary that may repeat and may match a component's name. `PeriodicSummary::has_failures`
 also reports the terminal `Fatal` and `InitializationExpired` completions,
-which advance no recurring counter.
+which advance no recurring counter. Expected `AbandonedDuringStartup`
+completion alone does not make this predicate true, but any recorded run failure
+or interruption still does, including a pending initialization run interrupted
+by drain. This predicate does not determine checked shutdown success.
 
 `invocations` includes active work and runs lost before classification through
 panic, abort or an unjoined runner, so it need not equal the classified outcomes

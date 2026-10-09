@@ -128,8 +128,11 @@ impl PeriodicSummary {
     ///
     /// A fatal run and an expired initialization allowance advance no
     /// recurring counter, so both are reported through the retained terminal
-    /// cause and through `completion`, whichever survived. Abandoning pending
-    /// initialization on drain is expected and is not a failure.
+    /// cause and through `completion`, whichever survived.
+    /// [`PeriodicCompletion::AbandonedDuringStartup`] alone does not make this
+    /// return `true`; any recorded run failure or interruption still does,
+    /// including a pending initialization run interrupted by drain. This
+    /// predicate does not determine checked shutdown success.
     pub fn has_failures(&self) -> bool {
         self.recoverable_failures != 0
             || self.deadline_exceeded != 0
