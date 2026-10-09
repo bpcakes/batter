@@ -96,7 +96,10 @@ pub struct PeriodicSummary {
     pub saturated: bool,
     /// First retained recoverable failure, kept for the whole lifetime.
     pub first_failure: Option<PeriodicFailureSample>,
-    /// Most recent retained recoverable failure, replaced as newer ones arrive.
+    /// Most recent retained recoverable failure from the second failure onward,
+    /// replaced as newer ones arrive. This is `None` until the second failure;
+    /// when it is `None`, [`Self::first_failure`] holds the newest retained
+    /// cause, if any.
     pub last_failure: Option<PeriodicFailureSample>,
     /// The concrete cause that ended the component, retained here independently
     /// of the runner's own task result.

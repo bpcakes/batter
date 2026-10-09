@@ -980,8 +980,12 @@ Retained evidence is bounded. `PeriodicSummary` keeps saturating counters that
 report saturation instead of wrapping, counts deadline and stop interruptions
 separately, records at most one outcome classification per admitted run, and
 explicitly accounts for the recoverable failures it did not sample. The first
-and last recoverable causes are retained concretely, without an `E: Clone`
-bound or error-string conversion, and stay inspectable through the
+and last recoverable causes are retained concretely: `first_failure` keeps the
+first cause for the component's lifetime, while `last_failure` remains `None`
+until the second recoverable failure and then keeps the newest subsequent cause.
+When `last_failure` is `None`, `first_failure` is the newest retained cause, if
+any. Both slots retain concrete causes without an `E: Clone` bound or
+error-string conversion and stay inspectable through the
 inherent `downcast_ref` on `dyn Error + Send + Sync`; only the library-owned
 sample count is bounded, not
 application payload size or caller-retained clones. Later success never erases
