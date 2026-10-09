@@ -48,6 +48,14 @@ impl RootDeadline {
 /// The owner is not cloneable. Dropping it alone does not request cancellation
 /// or join work. Execution boundaries still cancel their own children on exit.
 ///
+/// Migration: this owner replaces the removed `OperationContext::new` and
+/// `OperationContext::at` constructors and the removed `OperationContext::cancel`.
+/// Build a root here, hand `context()` or `into_context()` to work, and keep the
+/// owner where cancellation is decided. Derive a child from a parent through
+/// [`OperationContext::child`]; the former `OperationContext::under` is not
+/// public. No deprecated constructor is kept, because a context that can
+/// cancel itself is the state this split removed.
+///
 /// ```
 /// use batter_core::operation::{Interruption, OperationOwner};
 /// use std::time::Duration;

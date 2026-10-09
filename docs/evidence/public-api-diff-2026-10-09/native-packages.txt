@@ -1,0 +1,171 @@
+## runledger-core: 1500 -> 1571 entries; 2 removed, 73 added
+- REMOVED use runledger_core::jobs::JobDeadLetterInfo <- runtime_types::JobDeadLetterInfo
+- REMOVED use runledger_core::jobs::JobDeadLetterReason <- runtime_types::JobDeadLetterReason
++ ADDED   enum runledger_core::jobs::JobDeadLetterOrigin
++ ADDED   enum runledger_core::prelude::JobDeadLetterOrigin
++ ADDED   field runledger_core::jobs::JobDeadLetterInfo.origin
++ ADDED   field runledger_core::prelude::JobDeadLetterInfo.origin
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: Clone
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: Copy
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: Debug
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: Eq
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: PartialEq
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: Serialize
++ ADDED   impl runledger_core::jobs::JobDeadLetterOrigin: StructuralPartialEq
++ ADDED   impl runledger_core::jobs::JobInvocation: Clone
++ ADDED   impl runledger_core::jobs::JobInvocation: Debug
++ ADDED   impl runledger_core::jobs::JobInvocationEnded: Debug
++ ADDED   impl runledger_core::jobs::JobInvocationEnded: Drop
++ ADDED   impl runledger_core::jobs::JobInvocationEnded: Future
++ ADDED   impl runledger_core::jobs::JobInvocationHookPanics: Debug
++ ADDED   impl runledger_core::jobs::JobInvocationHookPanics: Drop
++ ADDED   impl runledger_core::jobs::JobInvocationOwner: Debug
++ ADDED   impl runledger_core::jobs::JobInvocationOwner: Default
++ ADDED   impl runledger_core::jobs::JobInvocationOwner: Drop
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: Clone
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: Copy
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: Debug
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: Eq
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: PartialEq
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: Serialize
++ ADDED   impl runledger_core::prelude::JobDeadLetterOrigin: StructuralPartialEq
++ ADDED   impl runledger_core::prelude::JobInvocation: Clone
++ ADDED   impl runledger_core::prelude::JobInvocation: Debug
++ ADDED   impl runledger_core::prelude::JobInvocationOwner: Debug
++ ADDED   impl runledger_core::prelude::JobInvocationOwner: Default
++ ADDED   impl runledger_core::prelude::JobInvocationOwner: Drop
++ ADDED   method runledger_core::jobs::JobExecution::invocation
++ ADDED   method runledger_core::jobs::JobInvocation::ended
++ ADDED   method runledger_core::jobs::JobInvocation::has_ended
++ ADDED   method runledger_core::jobs::JobInvocation::on_end
++ ADDED   method runledger_core::jobs::JobInvocationHookPanics::into_payloads
++ ADDED   method runledger_core::jobs::JobInvocationHookPanics::is_empty
++ ADDED   method runledger_core::jobs::JobInvocationHookPanics::len
++ ADDED   method runledger_core::jobs::JobInvocationHookPanics::payloads
++ ADDED   method runledger_core::jobs::JobInvocationOwner::end
++ ADDED   method runledger_core::jobs::JobInvocationOwner::invocation
++ ADDED   method runledger_core::jobs::JobInvocationOwner::new
++ ADDED   method runledger_core::prelude::JobExecution::invocation
++ ADDED   method runledger_core::prelude::JobInvocation::ended
++ ADDED   method runledger_core::prelude::JobInvocation::has_ended
++ ADDED   method runledger_core::prelude::JobInvocation::on_end
++ ADDED   method runledger_core::prelude::JobInvocationOwner::end
++ ADDED   method runledger_core::prelude::JobInvocationOwner::invocation
++ ADDED   method runledger_core::prelude::JobInvocationOwner::new
++ ADDED   struct runledger_core::jobs::JobInvocation
++ ADDED   struct runledger_core::jobs::JobInvocationEnded
++ ADDED   struct runledger_core::jobs::JobInvocationHookPanics
++ ADDED   struct runledger_core::jobs::JobInvocationOwner
++ ADDED   struct runledger_core::prelude::JobInvocation
++ ADDED   struct runledger_core::prelude::JobInvocationOwner
++ ADDED   trait_item runledger_core::jobs::JobExecutionServices::invocation
++ ADDED   trait_item runledger_core::prelude::JobExecutionServices::invocation
++ ADDED   use runledger_core::jobs::JobDeadLetterInfo <- dead_letter::JobDeadLetterInfo
++ ADDED   use runledger_core::jobs::JobDeadLetterOrigin <- dead_letter::JobDeadLetterOrigin
++ ADDED   use runledger_core::jobs::JobDeadLetterReason <- dead_letter::JobDeadLetterReason
++ ADDED   use runledger_core::jobs::JobInvocation <- invocation::JobInvocation
++ ADDED   use runledger_core::jobs::JobInvocationEnded <- invocation::JobInvocationEnded
++ ADDED   use runledger_core::jobs::JobInvocationHookPanics <- invocation::JobInvocationHookPanics
++ ADDED   use runledger_core::jobs::JobInvocationOwner <- invocation::JobInvocationOwner
++ ADDED   use runledger_core::prelude::JobDeadLetterOrigin <- crate::jobs::JobDeadLetterOrigin
++ ADDED   use runledger_core::prelude::JobInvocation <- crate::jobs::JobInvocation
++ ADDED   use runledger_core::prelude::JobInvocationOwner <- crate::jobs::JobInvocationOwner
++ ADDED   variant runledger_core::jobs::JobDeadLetterOrigin::Reaper
++ ADDED   variant runledger_core::jobs::JobDeadLetterOrigin::Worker
++ ADDED   variant runledger_core::prelude::JobDeadLetterOrigin::Reaper
++ ADDED   variant runledger_core::prelude::JobDeadLetterOrigin::Worker
+
+## runledger-postgres: 3074 -> 3152 entries; 0 removed, 78 added
++ ADDED   enum runledger_postgres::grants::RunledgerGrantError
++ ADDED   enum runledger_postgres::grants::RunledgerOperation
++ ADDED   function runledger_postgres::grants::grant_fragment
++ ADDED   function runledger_postgres::prelude::run_atomic_fail_fast_with
++ ADDED   function runledger_postgres::prelude::run_atomic_with
++ ADDED   function runledger_postgres::run_atomic_fail_fast_with
++ ADDED   function runledger_postgres::run_atomic_with
++ ADDED   impl runledger_postgres::grants::RunledgerGrantError: Debug
++ ADDED   impl runledger_postgres::grants::RunledgerGrantError: Display
++ ADDED   impl runledger_postgres::grants::RunledgerGrantError: Error
++ ADDED   impl runledger_postgres::grants::RunledgerGrantError: From
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: Clone
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: Copy
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: Debug
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: Eq
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: Ord
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: PartialEq
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: PartialOrd
++ ADDED   impl runledger_postgres::grants::RunledgerOperation: StructuralPartialEq
++ ADDED   method runledger_postgres::PgPolicyIntentScope::execute
++ ADDED   method runledger_postgres::PgPolicyIntentScope::fetch_all
++ ADDED   method runledger_postgres::PgPolicyIntentScope::fetch_one
++ ADDED   method runledger_postgres::PgPolicyIntentScope::fetch_optional
++ ADDED   method runledger_postgres::PgPolicyIntentScope::observe_job_enqueue_intent
++ ADDED   method runledger_postgres::PgPolicyIntentScope::queue
++ ADDED   method runledger_postgres::PgPolicyIntentScope::record_required_job_enqueue_intent
++ ADDED   method runledger_postgres::PgPolicyIntentScope::recoverable_sql
++ ADDED   method runledger_postgres::PgPolicyIntentScope::sql
++ ADDED   method runledger_postgres::PgPolicyQueueScope::enqueue_job
++ ADDED   method runledger_postgres::PgPolicyQueueScope::enqueue_job_with_execution_resource
++ ADDED   method runledger_postgres::PgPolicyQueueScope::execute
++ ADDED   method runledger_postgres::PgPolicyQueueScope::fetch_all
++ ADDED   method runledger_postgres::PgPolicyQueueScope::fetch_one
++ ADDED   method runledger_postgres::PgPolicyQueueScope::fetch_optional
++ ADDED   method runledger_postgres::PgPolicyQueueScope::recoverable_sql
++ ADDED   method runledger_postgres::PgPolicyQueueScope::sql
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::execute
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::fetch_all
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::fetch_one
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::fetch_optional
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::observe_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::queue
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::record_required_job_enqueue_intent
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::recoverable_sql
++ ADDED   method runledger_postgres::prelude::PgPolicyIntentScope::sql
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::enqueue_job
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::enqueue_job_with_execution_resource
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::execute
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::fetch_all
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::fetch_one
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::fetch_optional
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::recoverable_sql
++ ADDED   method runledger_postgres::prelude::PgPolicyQueueScope::sql
++ ADDED   mod runledger_postgres::grants
++ ADDED   struct runledger_postgres::PgPolicyIntentScope
++ ADDED   struct runledger_postgres::PgPolicyQueueScope
++ ADDED   struct runledger_postgres::prelude::PgPolicyIntentScope
++ ADDED   struct runledger_postgres::prelude::PgPolicyQueueScope
++ ADDED   use runledger_postgres::PgFailurePolicy <- atomic::PgFailurePolicy
++ ADDED   use runledger_postgres::PgPolicyIntentScope <- atomic::PgPolicyIntentScope
++ ADDED   use runledger_postgres::PgPolicyQueueScope <- atomic::PgPolicyQueueScope
++ ADDED   use runledger_postgres::PgScopeRolledBack <- atomic::PgScopeRolledBack
++ ADDED   use runledger_postgres::grants::RunledgerOperation <- inventory::RunledgerOperation
++ ADDED   use runledger_postgres::prelude::PgFailurePolicy <- crate::PgFailurePolicy
++ ADDED   use runledger_postgres::prelude::PgPolicyIntentScope <- crate::PgPolicyIntentScope
++ ADDED   use runledger_postgres::prelude::PgPolicyQueueScope <- crate::PgPolicyQueueScope
++ ADDED   use runledger_postgres::prelude::run_atomic_fail_fast_with <- crate::run_atomic_fail_fast_with
++ ADDED   use runledger_postgres::prelude::run_atomic_with <- crate::run_atomic_with
++ ADDED   use runledger_postgres::run_atomic_fail_fast_with <- atomic::run_atomic_fail_fast_with
++ ADDED   use runledger_postgres::run_atomic_with <- atomic::run_atomic_with
++ ADDED   variant runledger_postgres::grants::RunledgerGrantError::Declaration
++ ADDED   variant runledger_postgres::grants::RunledgerGrantError::EmptySelection
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::CatalogSync
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::DirectJobExecution
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::IntentPromotion
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::IntentSubmission
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::ScheduledDispatch
++ ADDED   variant runledger_postgres::grants::RunledgerOperation::SchemaSnapshot
+
+## runledger-runtime: 1497 -> 1497 entries; 0 removed, 0 added
+
+## runledger-test-support: 30 -> 30 entries; 0 removed, 0 added
+
+## runlimit-core: 722 -> 722 entries; 0 removed, 0 added
+
+## runlimit-memory: 155 -> 155 entries; 0 removed, 0 added
+
+## runlimit-postgres: 181 -> 181 entries; 0 removed, 0 added
+
+## runlimit-http: 30 -> 30 entries; 0 removed, 0 added
+
+## runlimit-axum: 63 -> 63 entries; 0 removed, 0 added
+

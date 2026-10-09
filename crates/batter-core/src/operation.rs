@@ -80,6 +80,10 @@ pub struct OperationContext {
 /// The caller must explicitly await finalization after observing the work
 /// result. This value does not run cleanup on drop, own spawned descendants,
 /// shield parent cancellation, or guarantee scheduling within the reserve.
+///
+/// Migration: `OperationPhases` is no longer `Clone`, because [`Self::cancel_work`]
+/// is cancellation authority. Share clones of [`Self::work`] and
+/// [`Self::finalization`] with tasks instead of cloning the pair.
 #[derive(Debug)]
 pub struct OperationPhases {
     work: OperationContext,

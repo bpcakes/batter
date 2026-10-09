@@ -8,6 +8,10 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Backfill the operation-authority hard cut and add a supported-path choice
+  table to the facade's rustdoc front page; see the `Breaking (backfilled note)`
+  entry below and `docs/evidence/public-api-diff-2026-10-09`.
+
 - Add `batter_runledger::job_phases` (also `batter::runledger::job_phases`), the
   one bridge from a native `JobExecution` and an explicit final-state reserve to
   `OperationPhases`. Work ends at the worker's own absolute deadline minus the
@@ -327,6 +331,92 @@ contracts, capability facts and validation history.
   field instead of replacing it with `same-origin`, so an outer layer cannot
   weaken an inner `NoReferrer` choice. Rustdoc explains the `Referer` and
   `Origin` consequences for document navigations and HTML form mutations.
+
+- Breaking (backfilled note; cut landed 2026-09-22 in `9f04aeb`, task
+  `batter-tc9w.1`): separate operation cancellation authority from contexts.
+  `OperationContext::new`, `OperationContext::at`, `OperationContext::under` and
+  `OperationContext::cancel` are removed from the public API, as is
+  `OperationAdmission::admit`, and `OperationPhases` no longer implements
+  `Clone`. A context is now observation and execution capability only; the new
+  `OperationOwner` holds cancellation authority for one root or derived child,
+  `RootDeadline` names an explicitly independent deadline, and
+  `OperationContext::child` derives a bounded child owner from a parent.
+  `OperationAdmission::admit_root` admits a process-linked root and returns its
+  owner. No `#[deprecated]` shim is kept for any removed item: a context that can
+  cancel itself, or a root created without a visible owner, is the state this
+  cut removed, and the core keeps compile-fail controls that reject each old
+  constructor. `docs/usage.md` ("Operation ownership and migration") explains
+  how to decide between a root and a child. Migrate as follows.
+
+  Creating an independent root budget:
+
+  ```rust
+  // Before
+  let context = OperationContext::new(Duration::from_secs(2))?;
+  let context = OperationContext::at(deadline);
+
+  // After
+  let context = OperationOwner::new(Duration::from_secs(2))?.into_context();
+  let context = OperationOwner::at(RootDeadline::at(deadline)).into_context();
+  ```
+
+  Keeping the ability to cancel:
+
+  ```rust
+  // Before
+  let context = OperationContext::new(budget)?;
+  let shared = context.clone();
+  context.cancel();
+
+  // After
+  let owner = OperationOwner::new(budget)?;
+  let shared = owner.context().clone();
+  owner.cancel();
+  ```
+
+  Deriving a child that inherits deadline and cancellation:
+
+  ```rust
+  // Before
+  let child = OperationContext::under(step_deadline, &parent_token);
+
+  // After
+  let child = parent_context.child(step_budget)?; // an OperationOwner
+  let context = child.context();
+  ```
+
+  Admitting a request-scoped root from the process lifecycle:
+
+  ```rust
+  // Before
+  let context = admission.admit(deadline)?;
+
+  // After
+  let owner = admission.admit_root(RootDeadline::at(deadline))?;
+  let context = owner.into_context();
+  ```
+
+  Sharing phases with tasks:
+
+  ```rust
+  // Before
+  let phases = context.reserve_finalization(reserve)?;
+  tokio::spawn(run(phases.clone()));
+
+  // After
+  let phases = context.reserve_finalization(reserve)?;
+  tokio::spawn(run(phases.work().clone()));
+  ```
+
+- Record the public-API diff between the 0.0.1 release and the current head
+  under `docs/evidence/public-api-diff-2026-10-09`. It confirms that the
+  operation-authority cut and the sealed HTTP assembly are the only removed or
+  renamed public items in the Batter packages since 0.0.1, and that the native
+  Runledger and Runlimit packages removed none; the two Runledger dead-letter
+  re-exports it lists moved modules and keep their public paths. Every public
+  hard cut now follows the rule in `AGENTS.md`: a `Breaking:` entry with
+  before/after code, the removed name in the replacement's rustdoc, and a
+  recorded shim decision.
 
 ## 0.0.1 — 2026-09-22
 

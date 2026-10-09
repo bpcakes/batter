@@ -17,6 +17,12 @@
 //! Supported value and policy types are *not* here: they stay at the crate
 //! root, where the canonical path also uses them.
 //!
+//! Migration: before assembly was sealed, every helper in this module was
+//! exported at the crate root. A `use batter_axum::<helper>` or
+//! `batter::axum::<helper>` import now fails to resolve; the replacement is the
+//! same name under `batter_axum::low_level` or `batter::axum::low_level`, with
+//! unchanged behavior and caller obligations.
+//!
 //! None of these helpers has a crate-root alias, so a canonical composition
 //! cannot reach one by import alone. Each alias has its own control, so a
 //! single returning alias cannot hide behind another still-absent name:

@@ -228,6 +228,12 @@ impl OperationAdmission {
     /// A past deadline is accepted and will fail at the operation boundary, as
     /// with [`crate::operation::RootDeadline::at`]. The returned error is the
     /// observed non-ready lifecycle state and carries no application cause.
+    ///
+    /// Migration: replaces the removed `admit(deadline)`, which returned a context
+    /// that could cancel itself. The returned [`crate::operation::OperationOwner`]
+    /// now holds that authority; call `into_context()` to hand work a context
+    /// without it, and build the deadline with
+    /// [`crate::operation::RootDeadline::after`] or `at`.
     pub fn admit_root(
         &self,
         deadline: crate::operation::RootDeadline,
