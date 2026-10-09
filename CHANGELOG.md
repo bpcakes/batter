@@ -342,6 +342,35 @@ contracts, capability facts and validation history.
   weaken an inner `NoReferrer` choice. Rustdoc explains the `Referer` and
   `Origin` consequences for document navigations and HTML form mutations.
 
+- Breaking: add `ReadinessUnreadyReason::Condition(ReadinessCondition)` to the
+  intentionally exhaustive readiness-reason enum (backfilled migration note).
+  Exhaustive matches must handle application-condition denials as well as
+  lifecycle and dependency reasons:
+
+  ```rust
+  // Before
+  match reason {
+      ReadinessUnreadyReason::Starting => "starting",
+      ReadinessUnreadyReason::Draining => "draining",
+      ReadinessUnreadyReason::Stopped => "stopped",
+      ReadinessUnreadyReason::Dependency(_) => "dependency",
+  }
+  // After
+  match reason {
+      ReadinessUnreadyReason::Starting => "starting",
+      ReadinessUnreadyReason::Draining => "draining",
+      ReadinessUnreadyReason::Stopped => "stopped",
+      ReadinessUnreadyReason::Dependency(_) => "dependency",
+      ReadinessUnreadyReason::Condition(_) => "condition",
+  }
+  ```
+
+  No one-release deprecated shim is kept: a function or alias cannot make the
+  old exhaustive match cover a new variant. Collapsing a condition into an old
+  reason would misrepresent why readiness was denied. The enum remains
+  exhaustive so consumers explicitly review their response policy; the default
+  HTTP mapping is still 503 and WARN. This note changes no runtime behavior.
+
 - Breaking: separate operation cancellation authority from contexts (backfilled
   note; cut landed 2026-09-22 in `9f04aeb`, task `batter-tc9w.1`).
   `OperationContext::new`, `OperationContext::at`, `OperationContext::under` and

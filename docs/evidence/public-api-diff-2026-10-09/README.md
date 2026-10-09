@@ -51,13 +51,19 @@ revision.
   does not affect the generated entry counts below.
 - A `use` entry changes when a re-export's source module moves, even when the
   public path is unchanged. Each such entry below was checked by hand.
+- Additions can also break source compatibility: variants added to an
+  exhaustive enum invalidate old exhaustive matches, and required public fields
+  invalidate old struct literals and patterns. The added variants/fields were
+  checked against their historical parent types: `ReadinessUnreadyReason` and
+  `JobDeadLetterInfo` need migrations; `BoundaryAssemblyError` was already
+  `#[non_exhaustive]` at 0.0.1. The other added variants/fields belong to new types.
 - Counts are entries of this walk, not a count of public items.
 
 ## Results
 
 | Package | Entries old to new | Removed | Classification |
 | --- | --- | --- | --- |
-| batter-core | 850 to 1030 | 6 | One cut: `OperationContext::{new, at, under, cancel}`, `OperationAdmission::admit`, `OperationPhases: Clone`. Backfilled as a `Breaking:` entry with before/after code; replacements carry `Migration:` rustdoc. |
+| batter-core | 850 to 1030 | 6 | The operation-authority cut covers `OperationContext::{new, at, under, cancel}`, `OperationAdmission::admit`, `OperationPhases: Clone`, plus the manually checked `child` return type. The added exhaustive `ReadinessUnreadyReason::Condition` variant also breaks old matches. Both have `Breaking:` before/after examples, item-level `Migration:` rustdoc and shim decisions. |
 | batter-axum | 457 to 563 | 18 | One cut: eleven helpers moved to `low_level` (twelve entries counting their re-exports) and `AssembledHttp::into_router`. Already recorded as `Breaking:` with before/after code; `low_level` and `in_process` now carry `Migration:` rustdoc. |
 | batter-sqlx | 1068 to 1153 | 0 | No removed or renamed public item since 0.0.1. The `PgLease::connection` and `return_to_pool` removal that a downstream consumer recorded happened before 0.0.1. |
 | batter-runledger | 22 to 50 | 0 | Additions only. |
@@ -72,7 +78,7 @@ revision.
 
 ## Shim decisions
 
-No `#[deprecated]` shim is kept for any removed item.
+No `#[deprecated]` shim is kept for the identified cuts.
 
 - `OperationContext::new`, `at`, `under`: the core keeps compile-fail doctests
   that reject each constructor, so that every root is created through a visible
@@ -87,6 +93,10 @@ No `#[deprecated]` shim is kept for any removed item.
   second root path that hides the owner, for the same reason as above.
 - `OperationPhases: Clone`: `cancel_work` is authority; cloning the pair would
   duplicate it.
+- `ReadinessUnreadyReason::Condition`: a shim cannot make an old exhaustive
+  match accept a new variant. Mapping it to an older reason would mislabel an
+  application denial as a lifecycle or dependency failure. The enum stays
+  exhaustive so consumers review their response policy.
 - The eleven Axum helpers and `into_router`: the sealed-assembly entry already
   records that no root alias or router shim is kept, so an invalid composition
   cannot be restored as a rollback mechanism.
