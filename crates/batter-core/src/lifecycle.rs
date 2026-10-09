@@ -182,7 +182,9 @@ impl RegisteredComponent {
 /// not an application-managed token, join protocol or dependency graph.
 #[derive(Clone)]
 pub(crate) enum ComponentClass {
-    /// Stops admitting work and is cancelled/destroyed on global drain.
+    /// Follows ordinary cooperative drain under the existing forced-cancellation
+    /// and abort/reap limits. Within this class, a `StopAtDrain` periodic runner
+    /// stops admission and destroys its active run when it observes drain.
     Ordinary,
     /// Keeps running bounded periodic work until the coordinator closes support
     /// admission, which happens no later than forced cancellation. Its

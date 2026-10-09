@@ -64,13 +64,18 @@ pub enum PeriodicCompletion {
 /// Bounded evidence about one periodic component's runs.
 ///
 /// Counters saturate instead of wrapping, and saturation is reported rather
-/// than hidden. Exactly one classified counter advances per admitted run, so a
-/// retained failure is never counted twice. Later success never erases earlier
+/// than hidden. A recorded nonfatal outcome contributes to one of `succeeded`,
+/// `recoverable_failures`, `deadline_exceeded` or `stop_interrupted`; fatal run
+/// evidence is retained separately. Later success never erases earlier
 /// evidence. Only the library-owned sample count is bounded here: application
 /// error payload size and caller-retained clones remain the caller's own.
 ///
-/// `invocations` counts every admitted run. The classified counters plus at
-/// most one fatal run, indicated by `completion`, account for all of them.
+/// `invocations` counts admitted runs, including active work. Runs still active
+/// or lost before classification through panic, abort or an unjoined runner
+/// need not have a recorded outcome. In particular, a panicking destructor can
+/// prevent recording a deadline or stop interruption. `completion` records how
+/// the loop ended, not an exact accounting identity; saturation also prevents
+/// exact accounting.
 #[derive(Clone, Debug, Default)]
 #[must_use = "inspect the retained periodic evidence"]
 pub struct PeriodicSummary {

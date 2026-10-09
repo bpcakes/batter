@@ -966,7 +966,7 @@ native-owned.
 
 Retained evidence is bounded. `PeriodicSummary` keeps saturating counters that
 report saturation instead of wrapping, counts deadline and stop interruptions
-separately, advances exactly one classified counter per admitted run, and
+separately, records at most one outcome classification per admitted run, and
 explicitly accounts for the recoverable failures it did not sample. The first
 and last recoverable causes are retained concretely, without an `E: Clone`
 bound or error-string conversion, and stay inspectable through the
@@ -985,6 +985,12 @@ registered component names, because finite task labels are a separate
 vocabulary that may repeat and may match a component's name. `PeriodicSummary::has_failures`
 also reports the terminal `Fatal` and `InitializationExpired` completions,
 which advance no recurring counter.
+
+`invocations` includes active work and runs lost before classification through
+panic, abort or an unjoined runner, so it need not equal the classified outcomes
+plus a fatal run. A final completion marker describes how the loop ended; it
+does not promise exact accounting when counters saturated or an interruption
+classification was lost to a destruction panic, as described below.
 
 The concrete terminal cause is retained in `PeriodicSummary::terminal_failure`
 as soon as the run produces it, while that run's own future is still alive, and

@@ -392,9 +392,11 @@ unobserved task results from unfinished tasks: ready joins are harvested at phas
 boundaries, and only unfinished tasks receive abort requests.
 
 Directly registered components carry one of two library-owned stopping classes.
-Ordinary components stop admitting work and are cancelled on drain. Periodic
-support components keep running bounded work until the coordinator closes
-support admission, which happens once ordinary direct work has been joined with
+Ordinary components follow their cooperative drain protocol under the existing
+forced-cancellation and abort/reap limits. Within this class, a `StopAtDrain`
+periodic runner stops admission and destroys its active run when it observes
+drain. Periodic support components keep running bounded work until the
+coordinator closes support admission, which happens once ordinary direct work has been joined with
 observed results, queued and active finite work and admitted descendants are
 exhausted, and every retained managed outcome allows dependency cleanup.
 `lifecycle/tasks.rs` therefore classifies owned tasks instead of counting them

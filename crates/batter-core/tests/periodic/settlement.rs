@@ -9,7 +9,7 @@ use batter_core::{
 };
 use std::{future::pending, time::Duration};
 use tokio::{
-    sync::oneshot,
+    sync::{mpsc, oneshot},
     time::{Instant, sleep},
 };
 
@@ -115,6 +115,42 @@ async fn unsafe_native_settlement_keeps_support_until_forced_cancellation() {
         PeriodicCompletion::Stopped
     );
     drop(report);
+}
+
+#[tokio::test(start_paused = true)]
+async fn support_run_admitted_during_drain_receives_the_forced_deadline() {
+    let drain = Duration::from_millis(2_500);
+    let budget = SECOND * 10;
+    let mut supervisor = supervisor_with(drain);
+    // Uncooperative settlement keeps support admission open until force-cancel.
+    register_native(&mut supervisor, Duration::ZERO, false);
+    let (observed, mut deadlines) = mpsc::unbounded_channel();
+    register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        immediate(SECOND, budget, PeriodicShutdown::SupportThroughDrain),
+        move |context| {
+            observed.send((Instant::now(), context.deadline())).unwrap();
+            async { succeeded() }
+        },
+    )
+    .unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    let (started, deadline) = deadlines.recv().await.unwrap();
+    assert_eq!(deadline, started + budget);
+
+    let requested = Instant::now();
+    running.handle().request();
+    let (started, deadline) = deadlines.recv().await.unwrap();
+    let forced_at = requested + drain;
+    assert_eq!(started, requested + SECOND);
+    assert!(started + budget > forced_at);
+    // Inspect the callback's deadline directly: global token cancellation would
+    // otherwise hide a missing cap if the test only observed termination time.
+    assert_eq!(deadline, forced_at);
+    let report = running.wait_report().await.unwrap();
+    assert!(!report.managed[0].outcome.allows_dependency_cleanup());
 }
 
 #[tokio::test(start_paused = true)]
