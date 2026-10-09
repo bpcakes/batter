@@ -65,7 +65,7 @@ revision.
 | batter-at-rest | 137 to 145 | 0 | Additions only. |
 | batter-test-support | 21 to 21 | 0 | Unchanged. |
 | batter | 16 to 17 | 0 | One added namespace (`otlp`). Facade modules re-export their adapters, so their contents are covered by the adapter rows. |
-| runledger-core | 1500 to 1571 | 2 | `jobs::JobDeadLetterInfo` and `jobs::JobDeadLetterReason` moved from `runtime_types` to a `dead_letter` module; both keep their public path through `jobs`. Not a cut. The `JobDeadLetterInfo::new` fourth argument is a signature change already recorded as `Breaking:` in `runledger/CHANGELOG.md`. |
+| runledger-core | 1500 to 1571 | 2 | `jobs::JobDeadLetterInfo` and `jobs::JobDeadLetterReason` moved from `runtime_types` to a `dead_letter` module; both keep their public path through `jobs`. That move is not a cut. The required `origin` field and `JobDeadLetterInfo::new` fourth argument are a separate cut: `runledger/CHANGELOG.md` has `Breaking:` before/after constructor, struct-literal and exhaustive-pattern examples; the type and constructor have `Migration:` rustdoc. |
 | runledger-postgres | 3074 to 3152 | 0 | Additions only. |
 | runledger-runtime, runledger-test-support | unchanged | 0 | Unchanged. |
 | runlimit-core, -memory, -postgres, -http, -axum | unchanged | 0 | Unchanged. |
@@ -90,6 +90,11 @@ No `#[deprecated]` shim is kept for any removed item.
 - The eleven Axum helpers and `into_router`: the sealed-assembly entry already
   records that no root alias or router shim is kept, so an invalid composition
   cannot be restored as a rollback mechanism.
+- `JobDeadLetterInfo` / `JobDeadLetterInfo::new`: the former fields/arguments
+  do not determine whether the worker or reaper delivers the hook. A default
+  origin would mislabel one path, so no deprecated shim is kept. Rust cannot
+  overload `new` by arity; a constructor shim also cannot preserve old literals
+  or exhaustive patterns. The native changelog records all three migrations.
 
 ## Reproduction
 

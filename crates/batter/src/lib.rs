@@ -32,10 +32,10 @@
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
 //!
-//! The SQLx `_in` runners retain acknowledged outcomes before resolving local
-//! interruption. The Runledger `context.run` wrapper can instead return an
-//! interruption even when commit was acknowledged in the final poll; that result
-//! proves neither rollback nor permission to replay.
+//! An interruption selected before the Runledger runner returns local commit
+//! acknowledgement proves neither rollback nor permission to replay. When the
+//! work branch completes, `context.run` returns its result without rechecking
+//! cancellation or the clock; dropping the outer future loses its result.
 //!
 //! An owned service root awaits checked completion after startup handoff. The
 //! success witness retains the report; `?` propagates the original failed

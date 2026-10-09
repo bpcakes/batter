@@ -48,6 +48,24 @@ pub enum JobDeadLetterOrigin {
     Reaper,
 }
 
+/// A terminal job failure and the component delivering its dead-letter hook.
+///
+/// Migration: `JobDeadLetterInfo` struct literals now require `origin`;
+/// exhaustive patterns must bind it or use `..`. Choose the actual hook-delivery
+/// component, not a value inferred from the failure reason or worker identity.
+/// ```
+/// use runledger_core::jobs::{
+///     JobDeadLetterInfo, JobDeadLetterOrigin, JobDeadLetterReason, JobFailure,
+/// };
+/// let info = JobDeadLetterInfo {
+///     failure: JobFailure::lease_expired("job.lease_expired", "lease expired"),
+///     reason: JobDeadLetterReason::LeaseExpired,
+///     max_attempts: Some(3),
+///     origin: JobDeadLetterOrigin::Reaper,
+/// };
+/// let JobDeadLetterInfo { failure, reason, max_attempts, origin } = info;
+/// assert_eq!(origin, JobDeadLetterOrigin::Reaper);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct JobDeadLetterInfo {
     pub failure: JobFailure,
@@ -58,6 +76,12 @@ pub struct JobDeadLetterInfo {
 }
 
 impl JobDeadLetterInfo {
+    /// Construct hook information with an explicit delivery origin.
+    ///
+    /// Migration: `JobDeadLetterInfo::new(failure, reason, max_attempts)` now
+    /// requires a fourth argument, the actual [`JobDeadLetterOrigin`]. There is
+    /// no default origin valid for both worker and reaper delivery. See the
+    /// [`JobDeadLetterOrigin`] example for the complete call.
     #[must_use]
     pub fn new(
         failure: JobFailure,

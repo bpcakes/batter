@@ -76,12 +76,14 @@ contain an ordinary application rejection.
 Every completion retires the session, and acquisition resets inherited state.
 The runner has no `_in` variant. Bound the whole call with the caller's
 context, `context.run("records.create", |_| run_atomic(&database, ..))`, so the
-deadline and cancellation bound the call. Unlike the SQLx `_in` runners, this
-generic wrapper does not retain an acknowledged outcome before resolving local
-interruption: even a commit acknowledged in the final poll can become
-`OperationError::Interrupted`. Dropping the runner cannot return its internal
-classification to the caller. An interruption proves neither rollback nor
-permission to replay; the application must retain uncertainty about remote effects.
+deadline and cancellation bound the call cooperatively. If interruption wins
+before the runner returns local commit acknowledgement, the caller receives
+`OperationError::Interrupted` even though PostgreSQL may have committed. When
+the work branch completes, `context.run` returns that result without rechecking
+the clock or cancellation token. The runner does not yield after acknowledging
+commit. Dropping the outer future loses its result and cannot return the runner's
+internal classification. An interruption proves neither rollback nor permission
+to replay; the application must retain uncertainty about remote effects.
 
 `run_atomic_with` binds SQL and named operations to a concrete consumer error
 through `PgFailurePolicy`; its scopes' `sql` methods return `P::Error`. All types
