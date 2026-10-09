@@ -73,6 +73,75 @@ fn waiters_are_woken_once_and_replaced_or_removed_without_duplicates() {
     assert_eq!(waiter_count(&invocation), 0);
 }
 
+struct ReentrantWaker {
+    invocation: JobInvocation,
+    drops: Arc<AtomicUsize>,
+    wakes: Arc<AtomicUsize>,
+}
+
+impl Wake for ReentrantWaker {
+    fn wake(self: Arc<Self>) {
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Drop for ReentrantWaker {
+    fn drop(&mut self) {
+        assert!(!self.invocation.has_ended());
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn assert_reentrant_waker_drop_completes(replace: bool) {
+    let (finished, completion) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let owner = JobInvocationOwner::new();
+        let invocation = owner.invocation();
+        let drops = Arc::new(AtomicUsize::new(0));
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let waker = Waker::from(Arc::new(ReentrantWaker {
+            invocation: invocation.clone(),
+            drops: Arc::clone(&drops),
+            wakes: Arc::clone(&wakes),
+        }));
+        let mut waiting = invocation.ended();
+        assert_eq!(poll(&mut waiting, &waker), Poll::Pending);
+        drop(waker); // Only the registered waiter now retains this waker.
+        let (next_count, next) = counting_waker();
+        if replace {
+            assert_eq!(poll(&mut waiting, &next), Poll::Pending);
+        } else {
+            drop(waiting);
+        }
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        let hooks = Arc::new(AtomicUsize::new(0));
+        let ran = Arc::clone(&hooks);
+        invocation.on_end(move || {
+            ran.fetch_add(1, Ordering::SeqCst);
+        });
+        assert!(owner.end().is_empty());
+        assert!(invocation.has_ended());
+        assert_eq!(hooks.load(Ordering::SeqCst), 1);
+        assert_eq!(wakes.load(Ordering::SeqCst), 0);
+        assert_eq!(next_count.0.load(Ordering::SeqCst), usize::from(replace));
+        finished.send(()).expect("completion receiver");
+    });
+    completion
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("waker destruction must not deadlock invocation state");
+    worker.join().expect("waiter thread");
+}
+
+#[test]
+fn removing_a_waiter_destroys_its_waker_outside_the_invocation_lock() {
+    assert_reentrant_waker_drop_completes(false);
+}
+
+#[test]
+fn replacing_a_waiter_destroys_its_waker_outside_the_invocation_lock() {
+    assert_reentrant_waker_drop_completes(true);
+}
+
 #[test]
 fn late_observers_complete_immediately_and_late_hooks_run_on_the_caller() {
     let owner = JobInvocationOwner::new();
@@ -117,6 +186,131 @@ fn a_panicking_hook_is_contained_reported_and_does_not_withhold_later_hooks() {
         payloads[0].downcast_ref::<&str>(),
         Some(&"exit hook failure")
     );
+}
+
+struct PanickingWaker;
+
+impl Wake for PanickingWaker {
+    fn wake(self: Arc<Self>) {
+        panic!("waiter wake failure");
+    }
+}
+
+#[test]
+fn panicking_waiters_do_not_withhold_notifications_on_end_or_drop() {
+    for explicit_end in [true, false] {
+        let owner = JobInvocationOwner::new();
+        let invocation = owner.invocation();
+        let (count, counting) = counting_waker();
+        let panicking = Waker::from(Arc::new(PanickingWaker));
+        let mut waiters = Vec::new();
+        for waker in [&panicking, &counting, &panicking, &counting] {
+            let mut waiter = invocation.ended();
+            assert_eq!(poll(&mut waiter, waker), Poll::Pending);
+            waiters.push(waiter);
+        }
+        let ran = Arc::new(AtomicUsize::new(0));
+        let before = Arc::clone(&ran);
+        let woken = Arc::clone(&count);
+        invocation.on_end(move || {
+            assert_eq!(woken.0.load(Ordering::SeqCst), 2, "waiters precede hooks");
+            before.fetch_add(1, Ordering::SeqCst);
+        });
+        invocation.on_end(|| panic!("exit hook failure"));
+        let after = Arc::clone(&ran);
+        invocation.on_end(move || {
+            after.fetch_add(1, Ordering::SeqCst);
+        });
+        if explicit_end {
+            let contained = owner.end();
+            assert_eq!(contained.len(), 3);
+            assert_eq!(format!("{contained:?}"), "JobInvocationHookPanics(3)");
+            let payloads = contained.into_payloads();
+            let messages: Vec<_> = payloads
+                .iter()
+                .map(|payload| *payload.downcast_ref::<&str>().expect("panic message"))
+                .collect();
+            assert_eq!(
+                messages,
+                [
+                    "waiter wake failure",
+                    "waiter wake failure",
+                    "exit hook failure"
+                ]
+            );
+        } else {
+            drop(owner);
+        }
+        assert!(invocation.has_ended());
+        assert_eq!(count.0.load(Ordering::SeqCst), 2);
+        assert_eq!(ran.load(Ordering::SeqCst), 2);
+        for mut waiter in waiters {
+            assert_eq!(poll(&mut waiter, &counting), Poll::Ready(()));
+        }
+        assert_eq!(
+            count.0.load(Ordering::SeqCst),
+            2,
+            "each waiter is woken once"
+        );
+    }
+}
+
+struct PanicOnDrop(Arc<AtomicUsize>);
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        panic!("opaque payload destruction");
+    }
+}
+
+struct PayloadWaker(Arc<AtomicUsize>);
+
+impl Wake for PayloadWaker {
+    fn wake(self: Arc<Self>) {
+        std::panic::panic_any(PanicOnDrop(Arc::clone(&self.0)));
+    }
+}
+
+#[test]
+fn owner_and_report_drop_never_destroy_opaque_panic_payloads() {
+    for explicit_end in [true, false] {
+        let owner = JobInvocationOwner::new();
+        let invocation = owner.invocation();
+        let destroyed = Arc::new(AtomicUsize::new(0));
+        let waker = Waker::from(Arc::new(PayloadWaker(Arc::clone(&destroyed))));
+        let mut waiter = invocation.ended();
+        assert_eq!(poll(&mut waiter, &waker), Poll::Pending);
+        let hook_payload = Arc::clone(&destroyed);
+        invocation.on_end(move || std::panic::panic_any(PanicOnDrop(hook_payload)));
+        invocation.on_end(|| panic!("later hook failure"));
+        let ran = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&ran);
+        invocation.on_end(move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+        });
+
+        if explicit_end {
+            let report = owner.end();
+            let mut payloads = report.payloads();
+            assert_eq!(payloads.len(), 3);
+            assert!(payloads.next().expect("wake panic").is::<PanicOnDrop>());
+            assert!(payloads.next().expect("hook panic").is::<PanicOnDrop>());
+            assert_eq!(
+                payloads.next().expect("later panic").downcast_ref::<&str>(),
+                Some(&"later hook failure")
+            );
+        } else {
+            drop(owner);
+        }
+        assert!(invocation.has_ended());
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            destroyed.load(Ordering::SeqCst),
+            0,
+            "opaque allocations retained"
+        );
+    }
 }
 
 #[test]

@@ -2401,8 +2401,17 @@ observe the end, including observers in independently spawned tasks and contexts
 derived afterwards. Handlers, observers and copies of the execution handle can
 neither end the invocation nor cancel the root; child contexts cancel only
 downward, and separate invocations and derivations are isolated. Continuations
-and retries are new invocations with fresh signals. Contained exit-hook panics
-are retained as runtime callback evidence.
+and retries are new invocations with fresh signals. Waker cloning, waking and
+destruction, including waiter replacement and removal, run outside the invocation
+state mutex so reentrant state reads do not deadlock it. Waiter wakes and exit hooks
+have independent panic boundaries: one panicking notification cannot discard
+later waiters or the bridge's cancellation hook. All contained notification
+panics are retained as runtime callback evidence under the existing
+`job_invocation_exit_hook` category; notification still grants no cleanup proof.
+The report owns payload disposal, and native diagnostics borrow its payloads.
+Dropping an owner or report releases strings but intentionally retains opaque
+panic allocations without executing their destructors. Raw `into_payloads()` is
+a low-level transfer whose caller owns potentially panicking disposal.
 
 **Not supplied:** joining or stopping detached work, cancellation shielding,
 undoing remote effects, effect fencing, a generic `OperationError` to

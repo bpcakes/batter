@@ -814,13 +814,48 @@ public API and semver of both `runledger-core` and `batter-core`, and would have
 needed a public core constructor linking a new root to any token a caller holds:
 the unrelated-root construction the operation-authority assessment above removed.
 Its one advantage, that native would run nothing but token cancellation, is
-covered differently: the owner contains a panicking hook and still notifies later
-hooks and observers, and the worker records the panic as
+covered differently: the owner contains each panicking waiter wake or hook and
+still notifies later hooks and observers, and the worker records every panic as
 `RuntimeCallbackFailure::Panicked` evidence, keeping settlement conservative. The
 remaining cost is that synchronous hook code runs in the native exit path.
-`on_end` requires hooks to be brief, non-blocking and panic-free; a panic raised
-while the thread is already unwinding cannot be contained. Each derivation keeps
-one hook until the invocation ends.
+`on_end` requires hooks to be brief, non-blocking and panic-free; containment does
+not suppress the panic hook or catch aborting panics. Each derivation keeps one
+hook until the invocation ends.
+
+Waiter containment (`batter-5h5y.2`). A custom waker can panic before exit hooks
+run. Marking the invocation ended does not itself cancel derived contexts, and
+dropping a skipped hook drops the root authority without cancelling it. Rust's
+`Waker` capability does not express panic freedom, so the native notification
+boundary contains each wake independently and retains its panic before invoking
+the remaining waiters and hooks. The capability API and waiter-before-hook order
+stay intact; no caller coordination or new public type is needed. The existing
+`JobInvocationHookPanics` report and runtime callback category retain both wake
+and hook failures. Primitive end/drop regressions, a runtime diagnostic regression
+and acknowledged derived-context observers cover this failure mechanism.
+
+A subsequent actual-source probe exposed the coupled disposal phase: an opaque
+`panic_any` payload can panic when dropped, after the notification hook ran but
+before later diagnostics were retained. This is library-owned error disposal,
+not an application replay decision. The report now owns that boundary and offers
+borrowed `payloads()` for diagnostics; the worker no longer extracts raw boxes.
+Following native shutdown containment, report drop releases known string payloads
+and intentionally retains opaque allocations. Catching and then dropping each
+secondary panic was rejected because payload destruction can panic recursively.
+Raw `into_payloads()` remains source-compatible as a documented low-level escape
+hatch with caller-owned disposal; it is not equivalent to borrowed diagnostics.
+Tests exercise opaque payloads with panicking destructors on owner/report drop,
+later native failure records and actual derived cancellation. This bounded remedy
+keeps disposal in library ownership without a new caller protocol; retained
+opaque allocations are an explicit cost, not proof of resource cleanup.
+
+The same foreign-callback boundary applies while observers are active. An
+actual-source probe and bounded regressions reproduced a deadlock when replacing
+or removing a stored waker: its last-reference destructor read `has_ended` while
+the invocation mutex was still held. The native implementation now clones before
+locking and moves replaced or removed wakers out before destroying them. This
+is library-owned locking, not application policy; the existing API needs no
+caller coordination. Regressions cover both paths, subsequent owner end and hook
+progress, while existing tests retain notification order and waiter counts.
 
 Zero reserve. `reserve_finalization` rejects `Duration::ZERO` through the shared
 positive validator, while the bridge must read zero as no reserve. The selected

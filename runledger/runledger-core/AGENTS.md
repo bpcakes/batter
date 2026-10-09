@@ -30,7 +30,12 @@ Shared durable-execution contracts: handler traits, job/workflow enums, runtime 
 - Keep this crate free of Tokio. `JobInvocation` observes an invocation's exit
   without authority to end it; only the non-cloneable owner ends it, once, by
   `end` or drop. `JobExecutionServices::invocation` defaults to `None`, never to
-  a signal that silently never ends. Contain hook panics so later hooks still run.
+  a signal that silently never ends. Contain each waiter-wake and hook panic so
+  later waiters and hooks still run; return all contained notification panics.
+  The panic report owns disposal: release strings, retain opaque allocations
+  without running their destructors, and prefer borrowed `payloads()` diagnostics.
+  Clone, wake and destroy wakers outside the invocation state mutex, including
+  replacement and removal, because their callbacks may re-enter the signal.
 
 ## Common commands
 - `cargo check -p runledger-core`

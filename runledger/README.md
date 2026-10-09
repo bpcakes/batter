@@ -831,8 +831,17 @@ precedes persistence of its outcome. A graceful stop request alone does not end
 it: draining lets an admitted invocation finish until native escalation
 abandons it. Observers wait with `ended()`, poll `has_ended()`, or register a
 brief, non-blocking `on_end` hook that runs once, synchronously, when the
-invocation ends; none of them can end it. The worker contains a panicking hook
-and retains it as callback evidence. The end is a notification only: it does
+invocation ends; none of them can end it. Each waiter wake and hook has its own
+panic boundary, so one panic cannot discard later notifications or cancellation
+hooks. `JobInvocationHookPanics` retains both kinds of panic, and the worker
+records them under the existing `job_invocation_exit_hook` callback category.
+Waker cloning, waking and destruction run outside the invocation state mutex,
+including waiter replacement and removal, so callbacks may read invocation state.
+Use the report's borrowed `payloads()` for diagnostics. Its drop releases string
+payloads but intentionally retains opaque panic allocations without invoking
+their potentially panicking destructors, matching native shutdown containment.
+The low-level `into_payloads()` transfer makes disposal the caller's obligation.
+The end is a notification only: it does
 not join detached work, undo external effects, change the durable outcome or
 permit dependency cleanup. Each continuation or retry is a new invocation with
 its own signal.

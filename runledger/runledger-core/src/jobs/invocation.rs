@@ -24,8 +24,9 @@ struct State {
 }
 
 impl Shared {
-    // Hooks and wakers run outside this lock, so a poisoned state is still
-    // consistent: every update is a single field assignment or collection edit.
+    // Hooks and all waker callbacks (including clone/drop) run outside this
+    // lock, so a poisoned state is still consistent: every update is a single
+    // field assignment or collection edit.
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -46,16 +47,15 @@ impl Shared {
                 std::mem::take(&mut state.waiters),
             )
         };
-        for (_, waker) in waiters {
-            waker.wake();
-        }
-        // One hook's panic must not withhold the signal from later hooks.
-        JobInvocationHookPanics(
-            hooks
-                .into_iter()
-                .filter_map(|hook| catch_unwind(AssertUnwindSafe(hook)).err())
-                .collect(),
-        )
+        // A failed wake must not discard the hooks that carry cancellation.
+        // Both iterators are consumed in notification order, outside the lock.
+        let wake_panics = waiters
+            .into_iter()
+            .filter_map(|(_, waker)| catch_unwind(AssertUnwindSafe(|| waker.wake())).err());
+        let hook_panics = hooks
+            .into_iter()
+            .filter_map(|hook| catch_unwind(AssertUnwindSafe(hook)).err());
+        JobInvocationHookPanics(wake_panics.chain(hook_panics).collect())
     }
 }
 
@@ -66,7 +66,8 @@ impl Shared {
 /// the owner when that invocation exits: explicitly with [`Self::end`], or by
 /// dropping it, including when the task driving the invocation is aborted or
 /// destroyed. Ending wakes every [`JobInvocation::ended`] waiter and then runs
-/// every registered exit hook once, in registration order.
+/// every registered exit hook once, in registration order. Each waiter wake or
+/// hook panic is contained independently, so later notifications still run.
 ///
 /// The owner is not `Clone`, and no observation can reach it, so handlers,
 /// observers and detached tasks cannot end an invocation. A runtime that ends
@@ -109,11 +110,12 @@ impl JobInvocationOwner {
         }
     }
 
-    /// End the invocation now and return the exit-hook panics it contained.
+    /// End the invocation now and return the waiter-wake and exit-hook panics
+    /// it contained.
     ///
     /// Dropping the owner ends the invocation the same way, but has nowhere to
-    /// report contained panics. A hook that panics while its thread is already
-    /// unwinding aborts the process; this cannot be contained.
+    /// report contained panics. Containment catches unwinding panics; it does
+    /// not suppress the panic hook or catch panics that abort the process.
     pub fn end(self) -> JobInvocationHookPanics {
         self.shared.end()
     }
@@ -180,9 +182,8 @@ impl JobInvocation {
     /// The owner runs registered hooks synchronously, in registration order, on
     /// the thread that ends the invocation, which can be inside a destructor
     /// during task abort. Keep a hook brief, non-blocking and panic-free: the
-    /// owner contains and reports a panic, but cannot contain one raised while
-    /// that thread is already unwinding. If the invocation has already ended,
-    /// `hook` runs immediately on the caller's thread and a panic propagates.
+    /// owner contains and reports unwinding panics. If the invocation has already
+    /// ended, `hook` runs immediately on the caller's thread and a panic propagates.
     /// Each registration is retained until the invocation ends.
     pub fn on_end<F>(&self, hook: F)
     where
@@ -207,6 +208,9 @@ impl fmt::Debug for JobInvocation {
 }
 
 /// Future returned by [`JobInvocation::ended`].
+///
+/// Waker cloning, replacement and removal run their callbacks outside the
+/// invocation's state lock, so they may read the invocation without deadlocking.
 #[must_use = "futures do nothing unless polled"]
 pub struct JobInvocationEnded {
     shared: Arc<Shared>,
@@ -218,6 +222,7 @@ impl Future for JobInvocationEnded {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let this = &mut *self;
+        let waker = cx.waker().clone();
         let mut state = this.shared.lock();
         if state.ended {
             drop(state);
@@ -227,14 +232,17 @@ impl Future for JobInvocationEnded {
         let current = this
             .waiter
             .and_then(|id| state.waiters.iter_mut().find(|(waiter, _)| *waiter == id));
-        if let Some((_, waker)) = current {
-            waker.clone_from(cx.waker());
+        let replaced = if let Some((_, current)) = current {
+            Some(std::mem::replace(current, waker))
         } else {
             let id = state.next_waiter;
             state.next_waiter = state.next_waiter.wrapping_add(1);
-            state.waiters.push((id, cx.waker().clone()));
+            state.waiters.push((id, waker));
             this.waiter = Some(id);
-        }
+            None
+        };
+        drop(state);
+        drop(replaced);
         Poll::Pending
     }
 }
@@ -242,10 +250,15 @@ impl Future for JobInvocationEnded {
 impl Drop for JobInvocationEnded {
     fn drop(&mut self) {
         if let Some(id) = self.waiter.take() {
-            self.shared
-                .lock()
-                .waiters
-                .retain(|(waiter, _)| *waiter != id);
+            let removed = {
+                let mut state = self.shared.lock();
+                state
+                    .waiters
+                    .iter()
+                    .position(|(waiter, _)| *waiter == id)
+                    .map(|index| state.waiters.remove(index).1)
+            };
+            drop(removed);
         }
     }
 }
@@ -258,29 +271,65 @@ impl fmt::Debug for JobInvocationEnded {
     }
 }
 
-/// Exit-hook panics contained by [`JobInvocationOwner::end`], in registration
-/// order. Each one means that hook's notification may not have completed.
-/// Formatting reports only the count.
-#[must_use = "a contained hook panic is evidence that an observer may not have been notified"]
+/// Notification panics contained by [`JobInvocationOwner::end`]: waiter wakes
+/// first, then exit hooks in registration order. Each one means that callback's
+/// notification may not have completed. The existing type name is retained for
+/// compatibility; formatting reports only the count.
+///
+/// Inspect payloads through [`Self::payloads`]. Dropping this report releases
+/// string payloads but intentionally retains every other payload allocation:
+/// an opaque `panic_any` payload can itself panic, even recursively, on drop.
+/// This also applies when an owner is dropped without a report recipient.
+#[must_use = "a contained notification panic means an observer may not have been notified"]
 pub struct JobInvocationHookPanics(Vec<Box<dyn Any + Send>>);
 
 impl JobInvocationHookPanics {
-    /// Whether every hook returned normally.
+    /// Whether every waiter wake and exit hook returned normally.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Number of hooks that panicked.
+    /// Number of waiter wakes and exit hooks that panicked.
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// The original panic payloads.
+    /// Borrow the original payloads while this report retains disposal ownership.
+    ///
+    /// ```
+    /// use runledger_core::jobs::JobInvocationOwner;
+    /// let owner = JobInvocationOwner::new();
+    /// owner.invocation().on_end(|| panic!("notification failed"));
+    /// let panics = owner.end();
+    /// assert_eq!(panics.payloads().len(), 1);
+    /// assert!(panics.payloads().next().unwrap().is::<&'static str>());
+    /// ```
+    pub fn payloads(&self) -> impl ExactSizeIterator<Item = &(dyn Any + Send)> {
+        self.0.iter().map(Box::as_ref)
+    }
+
+    /// Transfer the original payloads through a low-level ownership escape hatch.
+    ///
+    /// The caller now owns their disposal: dropping an opaque payload may execute
+    /// arbitrary application code and panic. Prefer [`Self::payloads`] for
+    /// diagnostics that should retain the report's disposal policy.
     #[must_use]
-    pub fn into_payloads(self) -> Vec<Box<dyn Any + Send>> {
-        self.0
+    pub fn into_payloads(mut self) -> Vec<Box<dyn Any + Send>> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for JobInvocationHookPanics {
+    fn drop(&mut self) {
+        for payload in self.0.drain(..) {
+            // Match native shutdown containment: never execute an opaque panic
+            // payload's destructor inside a library-owned failure boundary.
+            if !payload.is::<String>() && !payload.is::<&'static str>() {
+                std::mem::forget(payload);
+            }
+        }
     }
 }
 

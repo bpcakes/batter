@@ -19,6 +19,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+use std::task::{Context, Wake, Waker};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, advance};
@@ -322,6 +323,73 @@ async fn native_exit_reaches_every_retained_derived_observer() {
     late.cancelled().await;
     let after = late.child(DEADLINE).expect("late child");
     assert_eq!(after.context().check(), Err(Interruption::Cancelled));
+}
+
+struct PanickingWaker;
+
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("native panic payload destruction");
+    }
+}
+
+impl Wake for PanickingWaker {
+    fn wake(self: Arc<Self>) {
+        std::panic::panic_any(PanicOnDrop);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn panicking_native_waiter_cannot_suppress_derived_cancellation() {
+    for explicit_end in [true, false] {
+        let services = Services::new();
+        let context = context();
+        let phases = job_phases(JobExecution::new(&context, &services), RESERVE).expect("phases");
+        let child = phases.work().child(DEADLINE).expect("child");
+        let waker = Waker::from(Arc::new(PanickingWaker));
+        let mut waiter = std::pin::pin!(services.observation.ended());
+        assert!(
+            waiter
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+        let (done, mut reports) = mpsc::unbounded_channel();
+        for (name, observed) in [
+            ("work", phases.work().clone()),
+            ("finalization", phases.finalization().clone()),
+            ("child", child.context().clone()),
+        ] {
+            observe(observed, done.clone(), name).await;
+        }
+
+        let owner = services
+            .owner
+            .lock()
+            .expect("owner")
+            .take()
+            .expect("active");
+        if explicit_end {
+            assert_eq!(owner.end().len(), 1);
+        } else {
+            drop(owner);
+        }
+        assert_cancelled(&phases);
+        assert_eq!(child.context().check(), Err(Interruption::Cancelled));
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            names.push(
+                tokio::time::timeout(Duration::from_secs(1), reports.recv())
+                    .await
+                    .expect("observer was notified")
+                    .expect("observer report"),
+            );
+        }
+        names.sort_unstable();
+        assert_eq!(names, ["child", "finalization", "work"]);
+    }
 }
 
 #[tokio::test(start_paused = true)]

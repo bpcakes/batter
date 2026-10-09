@@ -88,8 +88,10 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
   handler future is destroyed and before its outcome is persisted, and when
   the task driving it is aborted or destroyed. A graceful stop request must not
   end it; draining keeps admitted invocations running. The signal is a
-  notification, not a join or cleanup permit; retain contained exit-hook
-  panics as callback evidence.
+  notification, not a join or cleanup permit; retain contained waiter-wake and
+  exit-hook panics as callback evidence.
+  Borrow notification panic payloads from their report so native diagnostics
+  cannot execute opaque payload destructors or skip later failure records.
 - Keep durable result classification separate from execution-interruption
   evidence. A completed handler rejected by deadline or lease fencing was not
   cancelled. Record interruption at the pending-future cancellation or panic

@@ -15,9 +15,19 @@ All notable changes to this workspace are documented here.
   lease loss found by progress or heartbeat, failed lease maintenance, or abort
   of the task that drives it. A graceful stop request alone does not end it.
   Observers use `ended()`, `has_ended()` or a synchronous `on_end` hook and
-  cannot end the invocation. A panicking hook is contained and retained as
+  cannot end the invocation. Each panicking waiter wake or hook is contained
+  without skipping later notifications and retained as
   `RuntimeCallbackFailure::Panicked` evidence with callback
-  `job_invocation_exit_hook`. Continuations and retries get fresh invocations.
+  `job_invocation_exit_hook`. The source-compatible `JobInvocationHookPanics`
+  report includes waiter-wake panics before hook panics. Continuations and retries
+  get fresh invocations. Waker cloning and destruction run outside the invocation
+  mutex, including waiter replacement and removal, to permit reentrant state reads.
+- `JobInvocationHookPanics::payloads()` provides borrowed diagnostics. Owner and
+  report drop release string payloads but intentionally retain opaque panic
+  allocations so their destructors cannot escape notification containment.
+  The native worker borrows the report while recording every failure. Existing
+  `into_payloads()` remains a low-level ownership transfer with caller-owned
+  disposal.
 - `JobExecutionServices` gains the provided method `invocation()`, which returns
   `None`. Existing custom services compile unchanged and make no exit claim, so
   consumers that need the signal reject them. To opt in, own one
