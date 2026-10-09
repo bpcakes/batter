@@ -76,14 +76,19 @@ contain an ordinary application rejection.
 Every completion retires the session, and acquisition resets inherited state.
 The runner has no `_in` variant. Bound the whole call with the caller's
 context, `context.run("records.create", |_| run_atomic(&database, ..))`, so the
-deadline and cancellation reach the transaction; an abandoned call is
-classified as described above.
+deadline and cancellation bound the call. Unlike the SQLx `_in` runners, this
+generic wrapper does not retain an acknowledged outcome before resolving local
+interruption: even a commit acknowledged in the final poll can become
+`OperationError::Interrupted`. Dropping the runner cannot return its internal
+classification to the caller. An interruption proves neither rollback nor
+permission to replay; the application must retain uncertainty about remote effects.
 
 `run_atomic_with` binds SQL and named operations to a concrete consumer error
-through `PgFailurePolicy`. All types required by its five handlers, including
-`PgTransactionError` and the `PgScopeError` that `scope.application` returns, are
-reexported here; the crate-level rustdoc implements a
-policy using only adapter imports. These are the original native types: the
+through `PgFailurePolicy`; its scopes' `sql` methods return `P::Error`. All types
+required by its five handlers, including `PgTransactionError`, are reexported
+here; the crate-level rustdoc implements a policy using only adapter imports.
+The non-policy scopes' `application` methods return `PgScopeError<E>`, also
+reexported here. These are the original native types: the
 reexports do not add constructors or relax transaction ownership and poisoning.
 
 The `native` module reexports the native packages themselves —

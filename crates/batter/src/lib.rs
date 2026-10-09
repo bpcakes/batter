@@ -28,9 +28,14 @@
 //! | A long-running service | [`startup::Startup::scoped`], `with_unix_signals`, `start`, then [`lifecycle::RunningSupervisor::wait_checked`]; with metrics export, [`service::start`] and `otlp::prepare` (feature `otlp`) | driving [`lifecycle::Supervisor::start`] yourself, or awaiting the raw report without the checked form |
 //! | Finite work: setup, migration, an operator command | [`command::Command::new`] or [`command::Command::within`], then [`command::check_command`] | `Startup`, which reports `EmptySupervisor` for a process with no critical component |
 //! | A PostgreSQL pool the service owns | `sqlx::pool_in` after `reserve_cleanup` (feature `sqlx`); `sqlx::PgProfiledPool` when a session profile is declared; `runledger::RunledgerDatabase` when Runledger runs on the same pool (feature `runledger`) | a pool built outside startup with a manual close |
-//! | A transaction write | `sqlx::run_atomic_in`, or `sqlx::run_atomic_with` for an exhaustive failure policy; `runledger::run_atomic` when a durable job is enqueued in the same transaction | `sqlx::low_level::PgAtomicTransaction`, which leaves commit confirmation to the caller |
+//! | A transaction write | `sqlx::run_atomic_in`, or `sqlx::run_atomic_with_in` for an exhaustive failure policy; use their `run_atomic_profiled_in` / `run_atomic_profiled_with_in` counterparts with a profiled pool. For a durable job in the same transaction, wrap `runledger::run_atomic` in the caller's `context.run` | `sqlx::low_level::PgAtomicTransaction`, which leaves commit confirmation to the caller |
 //! | Quota admission | `runlimit::http::HttpQuota` when Batter orders deadline, authentication and quota before the body (feature `runlimit-axum`); `runlimit::Quota::run` inside your own work; `runlimit::native_transport` when the application owns subject derivation and rejection mapping (features `runlimit-native-http`, `runlimit-native-axum`) | the native Tower layer under `HttpBoundary`, which receives no deadline or ordering from it |
 //! | A job handler's budget | `runledger::job_phases(execution, reserve)`: provider work under `work()`, the final-state write under `finalization()`; a positive reserve keeps time for that write and `Duration::ZERO` keeps none | a fresh root sized from the remaining budget, which never sees the invocation's exit |
+//!
+//! The SQLx `_in` runners retain acknowledged outcomes before resolving local
+//! interruption. The Runledger `context.run` wrapper can instead return an
+//! interruption even when commit was acknowledged in the final poll; that result
+//! proves neither rollback nor permission to replay.
 //!
 //! An owned service root awaits checked completion after startup handoff. The
 //! success witness retains the report; `?` propagates the original failed
@@ -238,6 +243,7 @@ pub mod sqlx {
 /// ```
 /// let _: Option<batter::runledger::NativeReport> = None;
 /// let _: Option<batter::runledger::JobPhasesRejection> = None;
+/// let _: fn(batter::sqlx::PgScopeError<()>) -> batter::runledger::PgScopeError<()> = |e| e;
 /// let _: Option<batter::sqlx::PgSession<'_>> = None;
 /// let _: Option<batter::runledger::native::core::jobs::JobType<'static>> = None;
 /// let _: Option<batter::runledger::native::postgres::SchemaCompatibilityError> = None;

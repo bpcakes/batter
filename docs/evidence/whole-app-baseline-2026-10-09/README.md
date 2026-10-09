@@ -53,7 +53,7 @@ No decision point was wrong.
 | Documents read before the first build | 27 |
 | Rust written | 1,446 lines in six modules |
 | Builds to first clean `cargo build` | 2 |
-| `clippy -D warnings` runs to first clean | 4, all repairs in test code |
+| `clippy -D warnings` runs to first clean | 4; test repairs and a production `result_large_err` allowance |
 | Tests | 26 passed, no database |
 | Problems surviving three rounds | none |
 
@@ -61,7 +61,10 @@ The first build failed on two things: `batter::runledger` did not re-export
 `PgScopeError`, the error that `scope.application` returns, and a helper took
 `CorrelationId` by value where the extractor returns a reference. The clippy
 rounds were trait bounds and `'static` on test fakes, `type_complexity` on a
-test fixture, and a dropped `#[must_use]` value from `JobInvocationOwner::end`.
+test fixture, a dropped `#[must_use]` value from `JobInvocationOwner::end`, and
+`result_large_err` on production `RecordsStore::create`. The latter was resolved
+with a local allowance to retain the complete atomic error, as the archived
+source records.
 
 Two smoke runs without a database behaved as the contracts state: missing
 settings failed before any resource with `configuration failed: DATABASE_URL:

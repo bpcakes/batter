@@ -240,6 +240,9 @@ impl<E> ReadinessPolicy<E> {
 pub(crate) type ReadinessRenderer = dyn Fn(ReadinessDecision, &Parts) -> Response + Send + Sync;
 
 /// Serve [`ReadinessPolicy`]'s read-only decision outside guarded routes.
+///
+/// Migration: `batter_axum::dependency_readiness` moved to
+/// `batter_axum::low_level::dependency_readiness` with the same caller obligations.
 pub async fn dependency_readiness<E>(State(policy): State<ReadinessPolicy<E>>) -> Response {
     policy.response()
 }

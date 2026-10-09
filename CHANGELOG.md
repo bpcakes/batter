@@ -342,15 +342,16 @@ contracts, capability facts and validation history.
   weaken an inner `NoReferrer` choice. Rustdoc explains the `Referer` and
   `Origin` consequences for document navigations and HTML form mutations.
 
-- Breaking (backfilled note; cut landed 2026-09-22 in `9f04aeb`, task
-  `batter-tc9w.1`): separate operation cancellation authority from contexts.
+- Breaking: separate operation cancellation authority from contexts (backfilled
+  note; cut landed 2026-09-22 in `9f04aeb`, task `batter-tc9w.1`).
   `OperationContext::new`, `OperationContext::at`, `OperationContext::under` and
   `OperationContext::cancel` are removed from the public API, as is
   `OperationAdmission::admit`, and `OperationPhases` no longer implements
   `Clone`. A context is now observation and execution capability only; the new
   `OperationOwner` holds cancellation authority for one root or derived child,
   `RootDeadline` names an explicitly independent deadline, and
-  `OperationContext::child` derives a bounded child owner from a parent.
+  `OperationContext::child` now returns `Result<OperationOwner, ConfigurationError>`
+  instead of `Result<OperationContext, ConfigurationError>`.
   `OperationAdmission::admit_root` admits a process-linked root and returns its
   owner. No `#[deprecated]` shim is kept for any removed item: a context that can
   cancel itself, or a root created without a visible owner, is the state this
@@ -394,6 +395,25 @@ contracts, capability facts and validation history.
   let child = parent_context.child(step_budget)?; // an OperationOwner
   let context = child.context();
   ```
+
+  Updating an existing `child` call:
+
+  ```rust
+  // Before
+  let child: OperationContext = parent.child(step_budget)?;
+  let value = child.run("step", work).await?;
+
+  // After
+  let child: OperationContext = parent.child(step_budget)?.into_context();
+  let value = child.run("step", work).await?;
+  // Retain the returned owner and borrow owner.context() instead when explicit
+  // cancellation authority is needed.
+  ```
+
+  No deprecated same-name shim is kept for `child`: Rust cannot overload a method
+  by return type, and restoring the old return would hide the child's owner on
+  the canonical derivation path. `into_context()` is the explicit transition to
+  an execution handle without cancellation authority.
 
   Admitting a request-scoped root from the process lifecycle:
 

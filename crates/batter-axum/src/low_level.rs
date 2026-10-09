@@ -163,6 +163,9 @@ pub use crate::serving::{register_http, register_http_in, register_http_with_con
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Migration: `batter_axum::observe_http` moved to
+/// `batter_axum::low_level::observe_http` with the same caller obligations.
 pub async fn observe_http(request: Request, next: Next) -> Response {
     with_current_dispatch(observe_response(request, |request| next.run(request))).await
 }
@@ -191,6 +194,9 @@ pub async fn observe_http(request: Request, next: Next) -> Response {
 /// Custom rendering applies to every infrastructure failure generated here.
 /// Operation events and full inner-future destruction retain the first-poll
 /// subscriber. This middleware does not create a `batter.http` span or HTTP event.
+///
+/// Migration: `batter_axum::request_admission` moved to
+/// `batter_axum::low_level::request_admission` with the same caller obligations.
 pub async fn request_admission(
     State(policy): State<RequestPolicy>,
     request: Request,
@@ -222,6 +228,9 @@ pub async fn request_admission(
 ///         .layer(middleware::from_fn(operational_http))
 /// }
 /// ```
+///
+/// Migration: `batter_axum::request_scope` moved to
+/// `batter_axum::low_level::request_scope` with the same caller obligations.
 pub async fn request_scope(
     State(policy): State<RequestPolicy>,
     request: Request,
@@ -267,6 +276,9 @@ async fn request_admission_inner(policy: RequestPolicy, request: Request, next: 
 /// A status-only readiness probe. Mount outside the guarded application router;
 /// [`HttpBoundary::with_readiness`](crate::HttpBoundary::with_readiness) mounts
 /// the dependency-aware probe there.
+///
+/// Migration: `batter_axum::readiness` moved to
+/// `batter_axum::low_level::readiness` with the same caller obligations.
 pub async fn readiness(State(status): State<LifecycleStatus>) -> StatusCode {
     if status.readiness() == Readiness::Ready {
         StatusCode::OK
@@ -276,6 +288,9 @@ pub async fn readiness(State(status): State<LifecycleStatus>) -> StatusCode {
 }
 
 /// Process liveness only; not proof of dependency health or scheduler health.
+///
+/// Migration: `batter_axum::liveness` moved to
+/// `batter_axum::low_level::liveness` with the same caller obligations.
 pub async fn liveness() -> StatusCode {
     StatusCode::OK
 }

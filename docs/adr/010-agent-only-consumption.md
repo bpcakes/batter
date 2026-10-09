@@ -952,9 +952,11 @@ a bounded provider step and a final-state write, and signal-driven shutdown.
 Against an oracle frozen before launch, all eleven decision points were the
 canonical path or the documented alternative; none was wrong. The first build
 failed once, on a missing `PgScopeError` re-export and a by-value
-`CorrelationId`; `clippy -D warnings` needed three further rounds, all in test
-code. The crate passes build, clippy, fmt and 26 tests, and the archived copy
-builds against this tree. No live PostgreSQL run was made.
+`CorrelationId`; `clippy -D warnings` needed three further rounds for test-code
+repairs and a production `result_large_err` allowance on `RecordsStore::create`
+that retains the complete atomic error. The crate passes build, clippy, fmt and
+26 tests, and the archived copy builds against this tree. No live PostgreSQL run
+was made.
 
 The evaluation found no fork that documentation failed to resolve. Its eleven
 reported gaps are a missing re-export, four composition sentences missing from

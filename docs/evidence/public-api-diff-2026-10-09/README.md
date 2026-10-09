@@ -44,6 +44,11 @@ revision.
   type on an item that kept its name is not detected. The sealed-assembly and
   operation-authority entries in `CHANGELOG.md`, and the native `Breaking:`
   entries in `runledger/CHANGELOG.md`, remain the record for those.
+  Manual comparison also confirms that `OperationContext::child` returned
+  `Result<Self, ConfigurationError>` at `f646187` and returns
+  `Result<OperationOwner, ConfigurationError>` now. Its before/after call shape
+  and shim decision are recorded in the operation-authority entry; this change
+  does not affect the generated entry counts below.
 - A `use` entry changes when a re-export's source module moves, even when the
   public path is unchanged. Each such entry below was checked by hand.
 - Counts are entries of this walk, not a count of public items.
@@ -75,6 +80,9 @@ No `#[deprecated]` shim is kept for any removed item.
   owner, the state the cut removed.
 - `OperationContext::cancel`: cancellation authority on a shared handle is the
   invalid state the split removed.
+- `OperationContext::child`: no same-name deprecated shim can coexist based on
+  return type alone. Restoring the context return would hide child ownership;
+  callers explicitly select `into_context()` or retain the owner instead.
 - `OperationAdmission::admit`: a deprecated form returning a context would be a
   second root path that hides the owner, for the same reason as above.
 - `OperationPhases: Clone`: `cancel_work` is authority; cloning the pair would
