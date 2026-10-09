@@ -11,6 +11,7 @@ mod execution;
 mod handler;
 mod identifier_macros;
 mod identifiers;
+mod invocation;
 mod runtime_types;
 mod spec;
 mod status;
@@ -24,6 +25,9 @@ pub use handler::{ExecutionHandlerAdapter, JobExecutionHandler, JobHandler, JobH
 pub use identifiers::{
     IdentifierValidationError, JobType, JobTypeName, StepKey, StepKeyName, WorkflowType,
     WorkflowTypeName,
+};
+pub use invocation::{
+    JobInvocation, JobInvocationEnded, JobInvocationHookPanics, JobInvocationOwner,
 };
 pub use runtime_types::{
     JobCompletion, JobCompletionDisposition, JobContext, JobFailure, JobProgressValidationError,

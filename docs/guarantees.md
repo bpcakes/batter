@@ -188,6 +188,10 @@ finalization keeps the original deadline. Cancelling/finishing work does not
 cancel finalization; parent cancellation cancels both. The caller must await
 finalization explicitly while the enclosing owner remains active. The reserve
 does not extend total time, shield parent cancellation, or prove rollback.
+`split_finalization` produces the same siblings with no reserve: both phases end
+at the original deadline, so finalization has time only after work ends or is
+cancelled early. Both forms require positive work time when called, and
+`reserve_finalization` keeps rejecting a zero reserve.
 
 **Not supplied:** asynchronous descendant joining, preemption, cancellation
 shielding, remote cancellation acknowledgement, transaction rollback proof,
@@ -2535,6 +2539,55 @@ column allowances. Required-policy validation and discovery share that rule.
 Native privilege inquiry functions can observe newer catalog state than a
 repeatable-read ACL query; required and excess checks therefore use the same
 captured data and native inquiries serve as differential test references.
+
+## Runledger invocation phases
+
+`batter_runledger::job_phases(execution, reserve)` is the one bridge from a
+native `JobExecution` to Batter `OperationPhases`. Both phases share one root at
+exactly `JobExecution::deadline()`, converted from the native std instant to
+Tokio's view of the same monotonic clock; deriving late never moves it. Work
+ends `reserve` before that deadline through `reserve_finalization`'s checked
+arithmetic, or at it through `split_finalization` when `reserve` is
+`Duration::ZERO`; finalization always keeps it. Cancelling or exhausting work
+leaves finalization running. Derivation returns `JobPhasesRejection` without
+running application work when the services make no exit claim (`Unsupported`),
+the invocation already ended (`Ended`), no positive work time remains
+(`Exhausted`, including a subtraction outside the clock's range) or the reserve
+is not an accepted duration (`Reserve`). Later operation boundaries keep their
+preflight: an expired or cancelled phase invokes no factory, and an unpolled
+operation is inert.
+
+Native ownership: Runledger ends each invocation's `JobInvocation` exactly once
+when the invocation exits for any reason (success, continuation, returned
+failure, panic, deadline, lease loss found by progress or heartbeat, failed lease
+maintenance, task abort or destruction), after the handler future is destroyed
+and before the outcome is persisted. A graceful stop request alone does not end
+it. The bridge registers one exit hook per derivation; the hook owns the root's
+only cancellation authority, so both phases and every context derived from them
+observe the end, including observers in independently spawned tasks and contexts
+derived afterwards. Handlers, observers and copies of the execution handle can
+neither end the invocation nor cancel the root; child contexts cancel only
+downward, and separate invocations and derivations are isolated. Continuations
+and retries are new invocations with fresh signals. Waker cloning, waking and
+destruction, including waiter replacement and removal, run outside the invocation
+state mutex so reentrant state reads do not deadlock it. Waiter wakes and exit hooks
+have independent panic boundaries: one panicking notification cannot discard
+later waiters or the bridge's cancellation hook. All contained notification
+panics are retained as runtime callback evidence under the existing
+`job_invocation_exit_hook` category; notification still grants no cleanup proof.
+The report owns payload disposal, and native diagnostics borrow its payloads.
+Dropping an owner or report releases strings but intentionally retains opaque
+panic allocations without executing their destructors. Raw `into_payloads()` is
+a low-level transfer whose caller owns potentially panicking disposal.
+
+**Not supplied:** joining or stopping detached work, cancellation shielding,
+undoing remote effects, effect fencing, a generic `OperationError` to
+`JobFailure` conversion, or any change to native outcome precedence. A result or
+final-state write observed at or after the native deadline is
+`job.timeout_exceeded`, so a zero reserve leaves nothing after work expiry. The
+reserve lies inside the handler deadline; native outcome persistence follows the
+handler. Notification never grants dependency-cleanup authority or turns a
+completed, late or fenced result into an interrupted handler.
 
 ## Shared Runledger workspace
 

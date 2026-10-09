@@ -1,5 +1,43 @@
 # Implementation status
 
+2026-10-09 invocation waiter panic containment (`batter-5h5y.2`): native
+invocation exit contains each waiter wake panic before continuing later waiters
+and cancellation hooks. The existing panic report and runtime callback category
+retain both wake and hook failures. Regressions cover explicit end, owner drop,
+multiple failures, runtime diagnostics and acknowledged derived-context
+cancellation. Borrowed panic diagnostics keep disposal in the report: strings
+are released and opaque panic allocations are intentionally retained without
+running their destructors, so later failure records are preserved. Waker cloning
+and destruction also run outside the invocation mutex; bounded regressions cover
+reentrant destruction on waiter replacement and removal and subsequent exit-hook
+progress. Executed verification and fresh review results belong to the owning Bead.
+
+Follow-up `batter-5h5y.3` corrects the invocation reference's unwind limitation:
+a hook panic caught inside owner destruction can be contained during an outer
+unwind. Two Rust 1.98.1 probes compiled against the native source demonstrated
+later hooks running and preservation of the outer panic; aborting panics remain
+outside the contract.
+
+2026-10-09 facade consumer interruption classification (`batter-5h5y.1`):
+the handler distinguishes work and finalization interruption from application
+payload/observer failures, retaining separate timeout-kind diagnostic codes.
+Paused-time consumer tests cover work expiry inside the native finalization
+reserve, finalization expiry, cancellation, application failures and success.
+The existing standalone consumer runner includes them; executed verification
+and fresh review results belong to the owning Bead.
+
+2026-10-09 Runledger invocation phases (`batter-5h5y`): native Runledger owns
+each handler invocation's exit signal (`JobInvocationOwner`/`JobInvocation`,
+std-only) and ends it on every exit path after destroying the handler future and
+before persisting the outcome; graceful drain does not end it.
+`batter_runledger::job_phases` derives `OperationPhases` from the worker's
+absolute deadline and an explicit reserve, linked through the invocation's exit
+hook, and `OperationContext::split_finalization` is the zero-reserve form. The
+reference delivery worker and the facade-only consumer use the bridge; custom
+execution services without an exit claim compile unchanged and are refused with
+a typed rejection. Executed verification and the usability evaluation are
+recorded in the owning Bead and ADR-010.
+
 2026-10-08 beadroll migration (`batter-1mp4`): local verification and repository
 policy CI no longer validate the historical `.beads/` export. The obsolete
 validator and its tests are removed; all other verification commands and failure
@@ -333,6 +371,7 @@ exercise the later documentation, package-description, or rustdoc refresh.
 | Standalone native consumers and maintenance | Implemented; two-toolchain and live verification, `batter-biqv.2` | Git-free copied sources compile and execute direct/facade identity plus the native producer/worker round trip on both Rust versions against PostgreSQL 18.6. A real SQLx 0.9.0 refresh on a disposable copy passes online preparation, offline compilation and asset checks; canonical migrations remain unchanged. Negative controls cover source/dependency drift, snippets, migration states and failed preparation. |
 | Native Runlimit workspace | Implemented; two-toolchain validation passed, `batter-isdr.1` | Five local native packages preserve imported versions, source algorithms, migrations and dual licenses; graph/asset controls, native verification and PostgreSQL CI retained. Git-free native/facade consumers execute on Rust 1.94.0 and 1.98.1 (`batter-isdr.2`), preserving locked external versions and proving admitted work and denial without work. The pool-budget regression explicitly polls pending acquisition and outwaits the work budget for admission and cleanup (`batter-qhps`). |
 | Native Runledger workspace | Implemented; `batter-biqv.1` | Five local packages from master `46b5cd085d011e597de9552dfebbed4c19416453`; unique foundation identity, one-way dependencies, unchanged migrations/caches, native PostgreSQL/container tests, both Rust verification runs and all HTTP profiles pass locally. Standalone consumer/tooling follow-up: `batter-biqv.2`. |
+| Runledger invocation phases | Implemented; `batter-5h5y`, `batter-5h5y.1`, `batter-5h5y.2`, `batter-5h5y.3` | Runledger's worker ends a std-only, owned `JobInvocation` exit signal on success, continuation, returned failure, panic, timeout, progress or heartbeat lease loss, failed lease maintenance and task abort or destruction, after destroying the handler future and before persisting the outcome; graceful drain does not end it, and contained waiter-wake and exit-hook panics are retained as callback evidence without suppressing later notifications. `batter_runledger::job_phases(execution, reserve)` (also `batter::runledger`) derives `OperationPhases` from the worker's absolute deadline on Tokio's clock: work ends `reserve` earlier through core's single computation, finalization keeps the native deadline, and `Duration::ZERO` uses the new `OperationContext::split_finalization`. The root's only cancellation authority lives in the native exit hook, so no caller guard, forwarding task or public token constructor exists. Typed `JobPhasesRejection` covers unsupported custom services (the provided `JobExecutionServices::invocation` defaults to `None`), ended invocations, exhausted work and invalid reserves before application work. PostgreSQL-backed native tests cover every exit path, an outcome gate proving ordering, fresh continuation/retry signals and drain versus forced abandonment; paused-time bridge tests and compile-fail controls cover arithmetic, phase semantics, observers, isolation and authority, including derived cancellation after a native waiter panic. The reference worker and the facade-only consumer use the bridge; no generic `OperationError` to `JobFailure` conversion is provided. The facade consumer distinguishes interruption from payload/observer failures, with paused-time failure controls in its existing standalone runner. Executed checks are recorded in the owning Beads. |
 | Runledger dead-letter worker identity | Implemented; `batter-9uas` | Reaper hooks receive the durable attempt's worker identity in `JobContext::worker_id`; `JobDeadLetterOrigin` distinguishes `Worker` and `Reaper` delivery. The PostgreSQL regression compares the hook identity with `job_attempts.worker_id`, and unit tests cover typed origin and skipping an ownerless record while delivering a valid sibling. The owning Bead records a successful Rust 1.98.1 `bash scripts/verify.sh` run on 2026-09-29, including existing reaper concurrency, timeout and shutdown-drain tests. |
 | Outcome-aware attempt composition | Implemented; profile correction verified; `batter-mzd`, `batter-979` | `AttemptRunner` requires a profile-owned pool and one authoritative schema for native admission and atomic completion. The shared SQLx pool owner normalizes all acquisition/release paths; `run_atomic_profiled_in` retains native atomic outcomes before operation resolution. Fourteen live PG18 tests cover restricted authority/schema, drift/fallback rejection, audit/failure state, stale claims, shared budget, cancellation and uncertain commit without replay. Existing quota workflows remain unchanged. Both Rust matrices, HTTP smokes, Jig and stable-range native review passed; see the parallel-foundation evidence record. |
 | Declared PostgreSQL transaction timeouts | Implemented; original verification `batter-qhps`; session-profile optimization and current evidence `batter-md9y` | PostgreSQL 18 is the minimum for complete and legacy profiles. Four validated timeout selections share application/revalidation across pool, atomic and snapshot paths. Explicit zero disables; legacy profiles preserve undeclared reset defaults. Native SET ROLE precedes array-bound settings, preserving effective-role-only function EXECUTE and parameter permissions with large declarations. Ordinary idle acquisition verifies current SET-role, schema-USAGE and native custom-parameter assignment authority without a second reset or cache clearing; fast native acquisition retains its weaker hook boundary. Live controls cover declared-login mismatch before direct setup or protected callbacks, restricted function grants, all three idle revocation/recovery cases, actual idle-hook redaction, 1,700-setting profiles, five-statement resets, one-statement acquisition without custom settings and two with them, and every timeout display unit through the production validation SQL under all four IntervalStyle values. Profiled pool reuse checks temporary-table removal and independently observed session-lock release on the same backend through ordinary and fast acquisition. Original setup-redaction controls reject markers across all captured pool events; an offline tracing regression distinguishes that guarantee from the explicitly scoped idle-hook control. Restricted-login fixtures use the dedicated admin endpoint independently of the application endpoint. Their function-grant restoration is acknowledged before fixture drops, with a live control for a subsequent drop failure. Executed checks and limitations are recorded in the owning Bead. |

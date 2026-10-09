@@ -30,6 +30,8 @@ runledger-postgres.workspace = true
 runledger-runtime.workspace = true
 runledger-test-support = { workspace = true, optional = true }
 sqlx = { workspace = true, features = ["postgres"] }
+# Converts the native std deadline to the same monotonic clock as Tokio timers.
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 batter-test-support.workspace = true

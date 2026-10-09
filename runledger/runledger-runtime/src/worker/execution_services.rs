@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
-use runledger_core::jobs::{JobExecutionError, JobExecutionServices, JobExecutionUpdate};
+use runledger_core::jobs::{
+    JobExecutionError, JobExecutionServices, JobExecutionUpdate, JobInvocation,
+};
 use runledger_postgres::jobs::{
     JobLeaseIdentity, JobOrdinaryProgressUpdate, update_job_ordinary_progress_for_lease,
 };
@@ -16,16 +18,23 @@ pub(super) struct LeaseExecutionServices<'a> {
     pool: &'a DbPool,
     identity: JobLeaseIdentity<'a>,
     deadline: Instant,
+    invocation: JobInvocation,
     lease_lost: AtomicBool,
     lease_lost_notification: Notify,
 }
 
 impl<'a> LeaseExecutionServices<'a> {
-    pub(super) fn new(pool: &'a DbPool, identity: JobLeaseIdentity<'a>, deadline: Instant) -> Self {
+    pub(super) fn new(
+        pool: &'a DbPool,
+        identity: JobLeaseIdentity<'a>,
+        deadline: Instant,
+        invocation: JobInvocation,
+    ) -> Self {
         Self {
             pool,
             identity,
             deadline,
+            invocation,
             lease_lost: AtomicBool::new(false),
             lease_lost_notification: Notify::new(),
         }
@@ -48,6 +57,10 @@ impl JobExecutionServices for LeaseExecutionServices<'_> {
 
     fn remaining_budget(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    fn invocation(&self) -> Option<JobInvocation> {
+        Some(self.invocation.clone())
     }
 
     async fn persist_progress(

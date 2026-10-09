@@ -195,6 +195,7 @@ async fn probes(pool: &PgPool) -> Result<(), BoxError> {
     }
     durable_eligibility(&worker).await?;
     stale_terminal_sources(&worker).await?;
+    final_state_reserve_outlives_provider_work(&worker).await?;
     confirmation::ordering(&worker).await?;
     Ok(())
 }
@@ -255,6 +256,46 @@ async fn stale_terminal_sources(worker: &DeliveryWorker) -> Result<(), BoxError>
         .await?;
         assert_eq!(after, before, "stale source changed retained {retained:?}");
     }
+    Ok(())
+}
+
+/// Provider work expires while its only admission slot is held. The handler
+/// still commits the retained state with the final-state reserve, inside the
+/// native deadline, through the production `execute` path.
+async fn final_state_reserve_outlives_provider_work(
+    worker: &DeliveryWorker,
+) -> Result<(), BoxError> {
+    let (mut context, payload) = claimed(&worker.pool).await?;
+    context.organization_id = Some(payload.owner_id);
+    let holder = batter::operation::OperationOwner::new(Duration::from_secs(30))?;
+    let held = worker
+        .admission
+        .enter(holder.context(), Admission::Wait)
+        .await?;
+    let services =
+        super::super::tests::Invocation::new(FINAL_STATE_RESERVE + Duration::from_millis(100));
+    let failure = worker
+        .execute(
+            JobExecution::new(&context, &services),
+            serde_json::to_value(&payload)?,
+        )
+        .await
+        .expect_err("provider work expires while admission is held");
+    drop(held);
+    assert!(
+        services.remaining_budget() > Duration::ZERO,
+        "the state committed before the native deadline"
+    );
+    assert_eq!(failure.kind, runledger_core::jobs::JobFailureKind::Timeout);
+    assert_eq!(failure.code, CODE_ADMISSION_INTERRUPTED);
+    let (state, outcome): (String, Option<String>) = sqlx::query_as(
+        "SELECT state, outcome_code FROM reference_delivery_effects WHERE delivery_id = $1",
+    )
+    .bind(payload.delivery_id)
+    .fetch_one(&worker.pool)
+    .await?;
+    assert_eq!(state, "RETRYABLE_UNDISPATCHED");
+    assert_eq!(outcome.as_deref(), Some(CODE_ADMISSION_INTERRUPTED));
     Ok(())
 }
 

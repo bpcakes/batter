@@ -66,7 +66,16 @@ process ownership targets cover retained settlement and delayed native stop
 observation. Library lifecycle controls verify wakeups in all three process phases
 and an earlier update arriving during callback execution. Native complete-report
 tests tighten active graceful and abort waits while preserving failure causes and
-uncertain descendants. Review closure is tracked separately; older hosted-control sections below describe
+uncertain descendants. `tests/job_phases.rs` drives `job_phases` through the
+same `JobInvocationOwner` the worker uses, under paused Tokio time: exact
+deadline-minus-reserve arithmetic after delayed derivation, equality at the
+cutoff, excessive and unrepresentable reserves, typed rejection of services
+without an exit claim and of ended invocations without invoking a factory,
+OperationPhases semantics for zero and positive reserves, acknowledged spawned,
+multiple and late observers, copied handles, invocation and sibling isolation,
+and adapted and typed handler forwarding. Runledger's worker tests cover each
+native exit path against PostgreSQL 18, with an advisory-lock gate on the
+outcome write proving that every observer and hook sees the end first. Review closure is tracked separately; older hosted-control sections below describe
 the previous implementation.
 
 Finite command completion controls in `crates/batter-core/tests/command/completion.rs`
@@ -1147,6 +1156,10 @@ excludes archived reviews under `.agent/reviews`.
 | Deadline clamping, preflight rejection and downward child cancellation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Scope cancellation on success/drop, owned-future drop on timeout | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Finalization reserve validation, sibling cancellation and original deadline | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Zero-reserve split keeps one deadline and sibling cancellation; the reserving form still rejects zero | [operation.rs](../crates/batter-core/tests/operation.rs) |
+| Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
+| Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
+| Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -2715,6 +2728,17 @@ from resolved Cargo metadata that the only workspace package it declares is
 `batter`, that the facade keeps default features disabled, that every required
 identity resolves exactly once from the source copy, and that no external source
 drifts from the root lock, which must remain unchanged.
+
+Its handler derives `job_phases` from each native invocation, and an independent
+task per invocation must observe the invocation's exit cancel the work phase; the
+runner requires the `invocation exit cancelled each job's derived phases` marker.
+The consumer's `single_facade_job_tests.rs` runs through that same temporary
+manifest, with Tokio's test clock enabled only as a dev-dependency. Its paused-time
+controls expire the derived work deadline while finalization time remains and
+require an interruption-specific failure for a valid payload. Neighboring cases
+cover finalization expiry, work/native cancellation, real missing-name and
+closed-observer failures, and successful recording. They call the same private
+operation boundaries as the handler; native timeout precedence is unchanged.
 
 `consumers/single_facade_harness.rs` owns the disposable database and is checked
 under the same single-dependency assertion; it reaches Runledger's existing

@@ -234,6 +234,7 @@ class SourceCopyTests(unittest.TestCase):
             parent = Path(directory)
             root = parent / 'root'
             keep = [CONSUMER_SOURCE, HARNESS_SOURCE, 'consumers/README.md',
+                    'consumers/single_facade_job_tests.rs',
                     'consumers/single_facade_completion.rs',
                     'consumers/single_facade_completion_tests.rs',
                     'consumers/single_facade_quota.rs',

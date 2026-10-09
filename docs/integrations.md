@@ -657,8 +657,9 @@ the pinned Runledger completion predicates reject the stale handler outcome too.
 This is application-owned failure projection, not a queue transaction or a claim
 that arbitrary database tampering can be repaired.
 
-Provider `Bulkhead` admission then waits inside the existing provider work budget
-using the purpose-specific `BATTER_PROVIDER_CAPACITY`. Runledger has already
+Provider `Bulkhead` admission then waits inside the provider work phase that
+`batter::runledger::job_phases` derives from the native invocation, using the
+purpose-specific `BATTER_PROVIDER_CAPACITY`. Runledger has already
 claimed the job and offers no attempt-neutral defer/refund, but its validated
 global handler concurrency also bounds the number of provider waiters. This
 durable-work composition avoids request-style immediate rejection without adding
@@ -687,6 +688,32 @@ already-active wait. No application termination gate or independent join driver
 is required. In-flight claims can still dispatch after stop; arbitrary detached
 handler descendants and remote server sessions are not covered by native joins.
 
+Inside a `JobExecutionHandler`, `batter_runledger::job_phases(execution, reserve)`
+derives `OperationPhases` from the native invocation instead of a fresh root.
+Their root deadline is exactly `JobExecution::deadline()`, the instant the worker
+enforces, on Tokio's view of the same monotonic clock; it is never rebuilt as
+now plus the remaining budget. Work ends `reserve` earlier through
+`reserve_finalization`'s checked arithmetic, finalization keeps the invocation
+deadline, and `Duration::ZERO` selects no reserve through `split_finalization`.
+Runledger's `JobInvocation` ends when the invocation exits for any reason,
+after the handler future is destroyed and before the outcome is persisted:
+success, continuation, returned failure, panic, timeout, lease loss found by
+progress or heartbeat, failed lease maintenance and task abort. Its exit hook
+owns the root's only cancellation authority, so both phases and every derived
+context are cancelled without a caller guard, forwarding task or paired call,
+and no handler can cancel the invocation. A graceful stop that lets the
+invocation finish does not cancel it. Custom `JobExecutionServices` without an
+exit claim keep compiling but are refused with `JobPhasesRejection::Unsupported`;
+derivation also rejects ended invocations and exhausted work before any
+application work. The worker classifies a result or final-state write observed
+at or after its deadline as `job.timeout_exceeded`, so a zero reserve leaves no
+time for final-state work after work expiry; a positive reserve is application
+policy. Notification does not join detached work, shield cleanup, undo remote
+effects or authorize dependency cleanup, and applications keep their explicit
+`OperationError`-to-`JobFailure` mapping; no generic conversion is provided,
+because `JobFailure` keeps only kind, code and message and native policy treats
+timeout and lease expiry as retryable.
+
 The reference combines native initialization with fresh PostgreSQL health and
 explicit application approval. The production registry contains the delivery
 handler and grants ordinary approval after registration. Durable execution proof
@@ -711,7 +738,10 @@ the external protocol independently protects them.
 Copy correlation metadata into durable payload/envelope fields only through a
 versioned, validated representation. Never persist a CancellationToken or Tokio
 Instant, and never keep a job subordinate to an already-finished HTTP scope.
-The worker creates a new execution context with its own deadline/retry policy.
+Each handler invocation derives its operation contexts from that invocation with
+`batter_runledger::job_phases`: the worker's deadline and the invocation's exit
+bound the job's work, not the enqueuing request. Retry policy stays native and
+application-classified.
 
 ## Runlimit: optional protected native quota adapter
 

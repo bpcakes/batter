@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use super::{JobContext, JobFailure, JobProgressValidationError, validate_job_progress};
+use super::{
+    JobContext, JobFailure, JobInvocation, JobProgressValidationError, validate_job_progress,
+};
 
 /// An atomic ordinary-progress/checkpoint update. Omitted fields retain their
 /// durable values. This cannot change job stage, lease identity, or final output.
@@ -88,6 +90,51 @@ pub trait JobExecutionServices: Send + Sync {
         &self,
         update: JobExecutionUpdate<'_>,
     ) -> Result<(), JobExecutionError>;
+
+    /// Observation of this exact invocation's exit, when this runtime owns it.
+    ///
+    /// The default returns `None`: the runtime makes no exit claim, and a
+    /// consumer that needs one must reject the execution rather than treat it
+    /// as never ending. To opt in, create one [`super::JobInvocationOwner`] for
+    /// each handler invocation, return its observation here, and end or drop
+    /// the owner when that invocation exits on every path, including task abort,
+    /// before persisting the handler's outcome:
+    ///
+    /// ```
+    /// use runledger_core::jobs::{
+    ///     JobExecutionError, JobExecutionServices, JobExecutionUpdate, JobInvocation,
+    ///     JobInvocationOwner,
+    /// };
+    /// use std::time::{Duration, Instant};
+    ///
+    /// struct Services {
+    ///     deadline: Instant,
+    ///     // Created for this invocation; dropping the services ends it.
+    ///     invocation: JobInvocationOwner,
+    /// }
+    ///
+    /// #[async_trait::async_trait]
+    /// impl JobExecutionServices for Services {
+    ///     fn deadline(&self) -> Instant {
+    ///         self.deadline
+    ///     }
+    ///     fn remaining_budget(&self) -> Duration {
+    ///         self.deadline.saturating_duration_since(Instant::now())
+    ///     }
+    ///     async fn persist_progress(
+    ///         &self,
+    ///         _: JobExecutionUpdate<'_>,
+    ///     ) -> Result<(), JobExecutionError> {
+    ///         Ok(())
+    ///     }
+    ///     fn invocation(&self) -> Option<JobInvocation> {
+    ///         Some(self.invocation.invocation())
+    ///     }
+    /// }
+    /// ```
+    fn invocation(&self) -> Option<JobInvocation> {
+        None
+    }
 }
 
 /// Borrowed services for the current handler invocation.
@@ -99,6 +146,14 @@ pub trait JobExecutionServices: Send + Sync {
 ///
 /// The runtime still enforces timeout and lease loss. These services cannot
 /// cancel external effects already issued by a handler.
+///
+/// ```compile_fail,E0521
+/// fn escape(execution: runledger_core::jobs::JobExecution<'_>) {
+///     std::thread::spawn(move || {
+///         let _ = execution.deadline();
+///     });
+/// }
+/// ```
 #[derive(Clone, Copy)]
 pub struct JobExecution<'a> {
     context: &'a JobContext,
@@ -138,6 +193,16 @@ impl<'a> JobExecution<'a> {
     #[must_use]
     pub fn remaining_work_budget(&self, reserve: Duration) -> Duration {
         self.remaining_budget().saturating_sub(reserve)
+    }
+
+    /// Observation of this invocation's exit, or `None` when the services make
+    /// no exit claim (the trait default). The Runledger worker always returns
+    /// one. It ends when the invocation exits for any reason, including runtime
+    /// abandonment, and not when shutdown merely stops new claims. It is owned
+    /// and cloneable, unlike this borrowed handle, but cannot end the invocation.
+    #[must_use]
+    pub fn invocation(&self) -> Option<JobInvocation> {
+        self.services.invocation()
     }
 
     #[must_use]

@@ -3,7 +3,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
-use runledger_core::jobs::{JobCompletion, JobContext, JobExecution, JobFailure};
+use runledger_core::jobs::{JobCompletion, JobContext, JobExecution, JobFailure, JobInvocation};
 use runledger_postgres::QueryErrorKind;
 use runledger_postgres::jobs::{self, JobLeaseIdentity, JobRunningUpdate};
 use tokio::time::{Duration, Instant, MissedTickBehavior, sleep_until};
@@ -14,6 +14,7 @@ use super::completion::{
     complete_job_failure_after_handler,
 };
 use super::execution_services::LeaseExecutionServices;
+use super::invocation::InvocationExit;
 use super::observers::{JobRunningNotification, TerminalJobObserverEvent, TerminalObserverTasks};
 use crate::WorkerError;
 use crate::observer::{JobLeaseLostEvent, JobLifecycleObservers, ObservedJob};
@@ -289,12 +290,32 @@ impl ClaimedJobExecution {
         &self,
         context: &JobContext,
     ) -> Result<JobCompletion, JobExecutionFailure> {
+        // Task abort drops this owner while the handler is pending. Every
+        // returned path drops it below, after the handler future is destroyed
+        // and before the caller persists the outcome.
+        let invocation = InvocationExit::new(self.terminal_observer_tasks.registry());
+        let result = self
+            .drive_handler_with_heartbeats(context, invocation.observe())
+            .await;
+        drop(invocation);
+        result
+    }
+
+    async fn drive_handler_with_heartbeats(
+        &self,
+        context: &JobContext,
+        invocation: JobInvocation,
+    ) -> Result<JobCompletion, JobExecutionFailure> {
         let registry = Arc::clone(&self.registry);
         let settlement = self.terminal_observer_tasks.registry();
         let timeout_deadline =
             Instant::now() + Duration::from_secs(self.job.timeout_seconds.max(1) as u64);
-        let services =
-            LeaseExecutionServices::new(&self.pool, self.lease_identity(), timeout_deadline);
+        let services = LeaseExecutionServices::new(
+            &self.pool,
+            self.lease_identity(),
+            timeout_deadline,
+            invocation,
+        );
         let mut execution = Box::pin(
             AssertUnwindSafe(execute_job_handler(
                 registry,
