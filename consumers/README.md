@@ -6,6 +6,9 @@ exist so the manifests those checks generate stay reviewable source in Git.
 
 - `single_facade_consumer.rs` is the acceptance consumer for the
   single-dependency recipe in [reference compatibility](../docs/reference-compatibility.md).
+  Its `JobExecutionHandler` runs under `batter::runledger::job_phases`, and an
+  independent task per invocation must observe the invocation's exit cancel the
+  derived work phase before the run counts as complete.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.

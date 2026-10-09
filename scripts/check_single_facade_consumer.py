@@ -33,6 +33,7 @@ ECOSYSTEM = ('tokio = { version = "1", features = ["macros", "rt-multi-thread", 
              'serde_json = "1"')
 MARKERS = ("facade consumer: runledger and runlimit migrations applied",
            "facade consumer: durable intent and atomic enqueue committed",
+           "facade consumer: invocation exit cancelled each job's derived phases",
            "facade consumer: worker executed both durable jobs",
            "facade consumer: postgres quota admitted then denied",
            "facade consumer: native draft-11 response metadata encoded",
