@@ -2723,6 +2723,13 @@ drifts from the root lock, which must remain unchanged.
 Its handler derives `job_phases` from each native invocation, and an independent
 task per invocation must observe the invocation's exit cancel the work phase; the
 runner requires the `invocation exit cancelled each job's derived phases` marker.
+The consumer's `single_facade_job_tests.rs` runs through that same temporary
+manifest, with Tokio's test clock enabled only as a dev-dependency. Its paused-time
+controls expire the derived work deadline while finalization time remains and
+require an interruption-specific failure for a valid payload. Neighboring cases
+cover finalization expiry, work/native cancellation, real missing-name and
+closed-observer failures, and successful recording. They call the same private
+operation boundaries as the handler; native timeout precedence is unchanged.
 
 `consumers/single_facade_harness.rs` owns the disposable database and is checked
 under the same single-dependency assertion; it reaches Runledger's existing

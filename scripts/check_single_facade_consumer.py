@@ -53,6 +53,7 @@ def consumer_manifest(source):
     return ('[package]\nname = "single-facade-consumer"\nversion = "0.0.0"\n'
             'edition = "2024"\nrust-version = "1.94"\npublish = false\n'
             '[workspace]\nresolver = "3"\n[dependencies]\n' + dependencies + '\n'
+            '[dev-dependencies]\ntokio = { version = "1", features = ["test-util"] }\n'
             + PACKAGE_LINTS + '[[bin]]\nname = "single-facade-consumer"\npath = '
             + json.dumps(str(Path(source) / CONSUMER_SOURCE)) + '\n')
 

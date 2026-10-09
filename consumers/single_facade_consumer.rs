@@ -23,7 +23,7 @@ mod single_facade_quota;
 
 use batter::cleanup::CleanupBudget;
 use batter::lifecycle::{ShutdownBudget, Supervisor};
-use batter::operation::{OperationContext, OperationOwner};
+use batter::operation::{OperationContext, OperationError, OperationOwner};
 use batter::runledger::native::core::jobs::{
     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
 };
@@ -116,32 +116,61 @@ impl JobExecutionHandler for Greet {
             observed.cancelled().await;
             let _ = ended.send(());
         });
-        let name = phases
-            .work()
-            .run("facade.consumer.greet", |_| async move {
-                match payload.get("name").and_then(Value::as_str) {
-                    Some(name) => Ok(name.to_owned()),
-                    None => Err("missing name"),
-                }
-            })
-            .await
-            .map_err(|_| JobFailure::terminal("facade.consumer.payload", "Expected a name."))?;
-        let executed = self.executed.clone();
-        phases
-            .finalization()
-            .run(
-                "facade.consumer.record",
-                |_| async move { executed.send(name) },
-            )
-            .await
-            .map_err(|_| {
-                JobFailure::terminal("facade.consumer.observer", "Root stopped observing.")
-            })?;
+        let name = greeting_name(phases.work(), payload).await?;
+        record_greeting(phases.finalization(), self.executed.clone(), name).await?;
         JobCompletion::success()
             .progress(1, 1)
             .map_err(|_| JobFailure::terminal("facade.consumer.progress", "Invalid counts."))
     }
 }
+
+// This one-attempt fixture classifies interruption as timeout, independently of
+// genuine application failures; this is consumer policy, not a library conversion.
+async fn greeting_name(context: &OperationContext, payload: Value) -> Result<String, JobFailure> {
+    context
+        .run("facade.consumer.greet", |_| async move {
+            match payload.get("name").and_then(Value::as_str) {
+                Some(name) => Ok(name.to_owned()),
+                None => Err("missing name"),
+            }
+        })
+        .await
+        .map_err(|error| match error {
+            OperationError::Failed(_) => {
+                JobFailure::terminal("facade.consumer.payload", "Expected a name.")
+            }
+            OperationError::Interrupted(_) => JobFailure::timeout(
+                "facade.consumer.work_interrupted",
+                "Greeting work was interrupted.",
+            ),
+        })
+}
+
+async fn record_greeting(
+    context: &OperationContext,
+    executed: UnboundedSender<String>,
+    name: String,
+) -> Result<(), JobFailure> {
+    context
+        .run(
+            "facade.consumer.record",
+            |_| async move { executed.send(name) },
+        )
+        .await
+        .map_err(|error| match error {
+            OperationError::Failed(_) => {
+                JobFailure::terminal("facade.consumer.observer", "Root stopped observing.")
+            }
+            OperationError::Interrupted(_) => JobFailure::timeout(
+                "facade.consumer.record_interrupted",
+                "Greeting recording was interrupted.",
+            ),
+        })
+}
+
+#[cfg(test)]
+#[path = "single_facade_job_tests.rs"]
+mod job_tests;
 
 fn cleanup_budget() -> Outcome<CleanupBudget> {
     Ok(CleanupBudget::new(

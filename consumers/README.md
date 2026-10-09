@@ -9,6 +9,10 @@ exist so the manifests those checks generate stay reviewable source in Git.
   Its `JobExecutionHandler` runs under `batter::runledger::job_phases`, and an
   independent task per invocation must observe the invocation's exit cancel the
   derived work phase before the run counts as complete.
+  Work and recording interruptions have their own timeout-kind diagnostics;
+  only application failures report an invalid payload or a closed observer.
+  Its paused-time job tests expire work while the native reserve remains and
+  cover finalization expiry, cancellation, application failures and success.
   It must keep declaring only `batter` plus ordinary registry crates: adding any
   direct native-workspace dependency or a `[patch]` section would remove exactly
   the property it proves.
