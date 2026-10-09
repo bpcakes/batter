@@ -14,7 +14,7 @@ nightly toolchain, cargo 1.100.0-nightly (b2e9d5f9d 2026-09-02) and rustdoc
   a detached worktree;
 - new: `71e37ea` (master after PR 46).
 
-For every library package in the workspace:
+For each library package compared in the saved inventories:
 
 ```sh
 cargo +nightly rustdoc -p <package> --lib --all-features --locked -- \
@@ -32,10 +32,12 @@ source path. It prints the entries present only in the old revision as
 python3 surface.py <old-doc-dir> <new-doc-dir> batter-core batter-axum ...
 ```
 
-`batter-packages.txt` is the output for the nine Batter packages and
+`batter-packages.txt` is the output for the eight Batter packages present in
+both revisions, and
 `native-packages.txt` for the nine native Runledger and Runlimit packages.
-`batter-otlp` did not exist at 0.0.1 and is listed as present only in the new
-revision.
+The ninth Batter package, `batter-otlp`, did not exist at 0.0.1. It is not
+included in the saved comparison output; its new facade namespace appears in
+the `batter` section. The table below records the new package separately.
 
 ## Limits
 
@@ -64,13 +66,14 @@ revision.
 | Package | Entries old to new | Removed | Classification |
 | --- | --- | --- | --- |
 | batter-core | 850 to 1030 | 6 | The operation-authority cut covers `OperationContext::{new, at, under, cancel}`, `OperationAdmission::admit`, `OperationPhases: Clone`, plus the manually checked `child` return type. The added exhaustive `ReadinessUnreadyReason::Condition` variant also breaks old matches. Both have `Breaking:` before/after examples, item-level `Migration:` rustdoc and shim decisions. |
-| batter-axum | 457 to 563 | 18 | One cut: eleven helpers moved to `low_level` (twelve entries counting their re-exports) and `AssembledHttp::into_router`. Already recorded as `Breaking:` with before/after code; `low_level` and `in_process` now carry `Migration:` rustdoc. |
+| batter-axum | 457 to 563 | 18 | One cut: eleven helpers moved to `low_level` (seventeen entries: eleven functions and six re-exports) and `AssembledHttp::into_router` (the eighteenth entry). Already recorded as `Breaking:` with before/after code; `low_level` and `in_process` now carry `Migration:` rustdoc. |
 | batter-sqlx | 1068 to 1153 | 0 | No removed or renamed public item since 0.0.1. The `PgLease::connection` and `return_to_pool` removal that a downstream consumer recorded happened before 0.0.1. |
 | batter-runledger | 22 to 50 | 0 | Additions only. |
 | batter-runlimit | 180 to 208 | 0 | Additions only. The denial-accessor change a consumer recorded happened before 0.0.1. |
 | batter-at-rest | 137 to 145 | 0 | Additions only. |
 | batter-test-support | 21 to 21 | 0 | Unchanged. |
 | batter | 16 to 17 | 0 | One added namespace (`otlp`). Facade modules re-export their adapters, so their contents are covered by the adapter rows. |
+| batter-otlp | New package; not compared | N/A | Absent at 0.0.1; no old public surface to remove. No package-level entry count is claimed by the saved inventories. |
 | runledger-core | 1500 to 1571 | 2 | `jobs::JobDeadLetterInfo` and `jobs::JobDeadLetterReason` moved from `runtime_types` to a `dead_letter` module; both keep their public path through `jobs`. That move is not a cut. The required `origin` field and `JobDeadLetterInfo::new` fourth argument are a separate cut: `runledger/CHANGELOG.md` has `Breaking:` before/after constructor, struct-literal and exhaustive-pattern examples; the type and constructor have `Migration:` rustdoc. |
 | runledger-postgres | 3074 to 3152 | 0 | Additions only. |
 | runledger-runtime, runledger-test-support | unchanged | 0 | Unchanged. |
