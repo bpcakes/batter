@@ -34,6 +34,14 @@ them: success, continuation, failure, panic, timeout, lease loss, failed lease
 maintenance and task abort, but not a graceful stop that lets it finish. The
 native invocation owns the only cancellation authority, so no guard, forwarding
 task or paired call exists to forget, and handlers cannot cancel the invocation.
+The worker destroys the handler future before it ends the invocation, so work
+awaited inside the handler is dropped rather than seeing the cancellation, and
+nothing computed afterwards is stored; the exit reaches spawned work that holds
+a phase or a child derived from it. Run final-state work under `finalization()`
+when it uses Batter boundaries such as admission, retries, children or spawned
+tasks; a plain write awaited in the handler is bounded by the native deadline
+either way. The facade's `batter::runledger` module documentation shows a
+complete handler using facade paths.
 Derivation rejects with a typed `JobPhasesRejection` before any application work:
 `Unsupported` for custom `JobExecutionServices` that make no exit claim,
 `Ended`, `Exhausted` when no work time remains, or `Reserve` for an invalid

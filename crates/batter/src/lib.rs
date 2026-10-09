@@ -151,8 +151,75 @@ pub mod sqlx {
 /// `runledger::native::test_support` for a consumer's own tests. They are
 /// low-level: `register_in` remains the protected composition, and reaching a
 /// native namespace does not move ownership of durable policy, storage or
-/// supervision into the facade. Inside a handler, `runledger::job_phases`
-/// derives work and finalization contexts from the native invocation.
+/// supervision into the facade.
+///
+/// Inside a native handler, `runledger::job_phases` derives work and
+/// finalization contexts from the invocation: the worker's own deadline bounds
+/// them and the invocation's exit cancels them. Handlers join a native
+/// `JobCatalog` or `JobRegistry`; `register_in` registers the prepared worker,
+/// not a handler.
+///
+/// ```
+/// use batter::operation::OperationError;
+/// use batter::runledger::native::core::jobs::{
+///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
+/// };
+/// use batter::runledger::native::core::prelude::async_trait;
+/// use batter::runledger::native::runtime::catalog::JobCatalog;
+/// use batter::runledger::{JobPhasesRejection, job_phases};
+/// use serde_json::Value;
+/// use std::time::Duration;
+///
+/// /// Time kept inside the native deadline for recording the outcome.
+/// const RECORD_RESERVE: Duration = Duration::from_millis(300);
+///
+/// struct Notify;
+///
+/// #[async_trait]
+/// impl JobExecutionHandler for Notify {
+///     fn job_type(&self) -> JobType<'static> {
+///         JobType::new("example.notify")
+///     }
+///
+///     async fn execute(
+///         &self,
+///         execution: JobExecution<'_>,
+///         _payload: Value,
+///     ) -> Result<JobCompletion, JobFailure> {
+///         let phases = job_phases(execution, RECORD_RESERVE).map_err(|rejection| {
+///             match rejection {
+///                 JobPhasesRejection::Exhausted | JobPhasesRejection::Ended => {
+///                     JobFailure::timeout("example.no_work_time", "No work time remained.")
+///                 }
+///                 JobPhasesRejection::Unsupported | JobPhasesRejection::Reserve(_) => {
+///                     JobFailure::terminal("example.unsupported", "Invocation phases unavailable.")
+///                 }
+///             }
+///         })?;
+///         let sent = phases
+///             .work()
+///             .run("example.send", |_scope| async { Ok::<_, std::io::Error>("receipt") })
+///             .await;
+///         let outcome = match sent {
+///             Ok(_receipt) => Ok(JobCompletion::success()),
+///             Err(OperationError::Failed(_)) => {
+///                 Err(JobFailure::retryable("example.refused", "The provider refused."))
+///             }
+///             Err(OperationError::Interrupted(_)) => {
+///                 Err(JobFailure::timeout("example.unknown", "Delivery is unknown."))
+///             }
+///         };
+///         phases
+///             .finalization()
+///             .run("example.record", |_scope| async { Ok::<_, std::io::Error>(()) })
+///             .await
+///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Not recorded."))?;
+///         outcome
+///     }
+/// }
+///
+/// let _catalog = JobCatalog::new().handler(Notify.into_job_handler());
+/// ```
 ///
 /// ```
 /// let _: Option<batter::runledger::NativeReport> = None;

@@ -30,6 +30,18 @@ use std::{fmt, time::Duration};
 ///   needed, and dropping the phases changes nothing. A graceful stop that
 ///   lets the invocation finish does not cancel it.
 ///
+/// The worker destroys the handler future before it ends the invocation, so
+/// work awaited inside the handler is dropped rather than seeing that
+/// cancellation, and nothing the handler computes afterwards is stored. The
+/// exit reaches work outside the handler future: give a spawned task a clone
+/// of a phase, or a child derived from it. A `run` boundary's own scope is
+/// also cancelled as soon as that boundary ends.
+///
+/// Await final-state work after work ends. Run it under `finalization()` when
+/// it uses Batter boundaries such as admission, retries, child operations or
+/// spawned tasks; a plain write awaited in the handler is bounded by the native
+/// deadline either way, as in the reference delivery worker.
+///
 /// `Duration::ZERO` selects no reserve: both phases end at the invocation
 /// deadline, through [`batter_core::operation::OperationContext::split_finalization`].
 /// The worker accepts a handler result only when it is observed strictly before
@@ -47,7 +59,12 @@ use std::{fmt, time::Duration};
 /// effects or choose the job's failure classification, which stays an explicit
 /// application mapping to `JobFailure`.
 ///
+/// Facade consumers reach the same items as `batter::runledger::job_phases`
+/// and `batter::runledger::native::core::jobs`; the facade's `runledger`
+/// module shows the handler with those paths.
+///
 /// ```
+/// use batter_core::operation::OperationError;
 /// use batter_runledger::{JobPhasesRejection, job_phases};
 /// use runledger_core::jobs::{
 ///     JobCompletion, JobExecution, JobExecutionHandler, JobFailure, JobType,
@@ -88,18 +105,27 @@ use std::{fmt, time::Duration};
 ///                 Ok::<_, std::io::Error>("receipt")
 ///             })
 ///             .await;
+///         // Classify before recording: an interrupted call leaves delivery unknown.
+///         let outcome = match delivered {
+///             Ok(_receipt) => Ok(JobCompletion::success()),
+///             Err(OperationError::Failed(_)) => Err(JobFailure::retryable(
+///                 "example.refused",
+///                 "The provider refused delivery.",
+///             )),
+///             Err(OperationError::Interrupted(_)) => Err(JobFailure::timeout(
+///                 "example.unknown",
+///                 "Delivery is unknown.",
+///             )),
+///         };
 ///         // The final-state write runs even when work was interrupted.
-///         let recorded = phases
+///         phases
 ///             .finalization()
-///             .run("example.record", |_scope| async move {
-///                 Ok::<_, std::io::Error>(delivered.is_ok())
+///             .run("example.record", |_scope| async {
+///                 Ok::<_, std::io::Error>(())
 ///             })
-///             .await;
-///         match recorded {
-///             Ok(true) => Ok(JobCompletion::success()),
-///             Ok(false) => Err(JobFailure::retryable("example.undelivered", "Delivery failed.")),
-///             Err(_) => Err(JobFailure::retryable("example.unrecorded", "Outcome not recorded.")),
-///         }
+///             .await
+///             .map_err(|_| JobFailure::retryable("example.unrecorded", "Outcome not recorded."))?;
+///         outcome
 ///     }
 /// }
 /// # let _ = Deliver.into_job_handler();

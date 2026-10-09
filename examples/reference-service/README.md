@@ -177,7 +177,8 @@ The handler derives its provider work from the native invocation with
 root sized from the remaining budget. Provider work ends 500 ms before the
 worker's own deadline; the retained state SQL that records its outcome runs
 directly inside that native deadline, so the reserve remains for it after
-provider work expires. When the invocation exits, including timeout, lease loss
+provider work expires. Each state transition is one awaited, lease-fenced
+transaction, so it needs no Batter boundary of its own. When the invocation exits, including timeout, lease loss
 or task abort, every provider operation still linked to it is cancelled. A
 derivation with no provider time left keeps the explicit
 `delivery.operation_budget_exhausted` timeout, and execution services that make
