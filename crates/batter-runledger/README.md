@@ -17,6 +17,31 @@ success, and `Unsettled` never authorizes dependency cleanup.
 The exact `register(&mut Supervisor, ...)` signature remains available for
 lower-level consumers; both names enter the same native ownership path.
 
+Inside a `JobExecutionHandler`, `job_phases(execution, reserve)` derives Batter
+`OperationPhases` from the native invocation. Both phases share one root whose
+deadline is exactly the worker's `JobExecution::deadline()`, converted to Tokio's
+view of the same monotonic clock and never rebuilt from the remaining budget.
+Work ends `reserve` earlier, by the same checked arithmetic as
+`reserve_finalization`; finalization keeps the invocation deadline, and cancelling
+or exhausting work leaves it running. `Duration::ZERO` selects no reserve
+(`split_finalization`): then any result or final-state write after work expiry is
+classified `job.timeout_exceeded` by the worker. A positive reserve is application
+policy and must cover the final-state work done after work expires. The worker
+persists the outcome after the handler returns, outside that budget.
+
+The invocation's own exit cancels both phases and every context derived from
+them: success, continuation, failure, panic, timeout, lease loss, failed lease
+maintenance and task abort, but not a graceful stop that lets it finish. The
+native invocation owns the only cancellation authority, so no guard, forwarding
+task or paired call exists to forget, and handlers cannot cancel the invocation.
+Derivation rejects with a typed `JobPhasesRejection` before any application work:
+`Unsupported` for custom `JobExecutionServices` that make no exit claim,
+`Ended`, `Exhausted` when no work time remains, or `Reserve` for an invalid
+duration. Later operation boundaries reject expired or cancelled work before
+invoking their factories. The signal notifies; it does not join detached tasks,
+shield cleanup, undo remote effects or convert `OperationError` into `JobFailure`,
+which stays an explicit application mapping.
+
 Declare `PgSessionProfile` and construct `RunledgerDatabase`; an arbitrary native
 pool cannot establish serving authority after reset. The profile names login and
 effective roles, the authoritative schema, timeouts and optional tenant settings.

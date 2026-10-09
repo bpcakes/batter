@@ -14,7 +14,11 @@ ownership, durable job outcomes, registry/catalog policy and database provisioni
 - `src/lib.rs`: opaque `run_atomic` composition without native connection exposure.
 - `src/lib.rs`: the `native` module reexporting `runledger-core`, `runledger-postgres`,
   `runledger-runtime` and, behind `test-support`, `runledger-test-support`.
+- `src/phases.rs`: `job_phases`, the one bridge from a native `JobExecution` to
+  Batter `OperationPhases`, and its typed `JobPhasesRejection`.
 - `tests/lifecycle.rs`: actual native-supervisor contracts without PostgreSQL.
+- `tests/job_phases.rs`: paused-time bridge arithmetic, rejection, phase,
+  observer and isolation contracts through the native invocation owner.
 - Reference service: application schema, handler selection and dependency health.
 
 ## Edit here for X
@@ -36,6 +40,14 @@ snapshot evidence; never restore borrowed session/transaction views.
 `run_atomic` owns disposition and consumes the intent phase before queue operations.
 It uses Batter's SQLx foundation and only releases outputs after acknowledgement.
 No raw owner extraction or legacy bridge is supported.
+`job_phases` takes the whole `JobExecution` and an explicit reserve. Derive the
+root from the absolute native deadline, never from the remaining budget; reuse
+core `reserve_finalization`/`split_finalization` rather than new arithmetic.
+Link cancellation only through the native invocation's exit hook, which owns
+the root's authority: no guard, forwarding task or paired call, and no public
+core constructor from a token. Reject services without an exit claim instead
+of treating them as never ending. Keep `OperationError` to `JobFailure`
+mapping in applications.
 The `native` module reexports the native packages themselves, never wrappers or
 copies, so facade and direct paths keep one type identity. Reachability is not
 ownership: keep `register_in` the protected path, keep the module documentation's

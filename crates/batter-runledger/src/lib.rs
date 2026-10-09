@@ -10,6 +10,10 @@
 //! managed settlement and process cleanup classification. A native settlement
 //! cannot by itself prove remote effects or arbitrary detached work stopped.
 //!
+//! Inside a handler, [`job_phases`] derives Batter work and finalization contexts
+//! from the native invocation: its deadline is the worker's own, and the
+//! invocation's exit cancels both phases without a guard or forwarding task.
+//!
 //! Direct adapter consumers can implement [`PgFailurePolicy`] using only this
 //! crate's exports, retaining the concrete causes and provisional outcomes:
 //!
@@ -46,6 +50,10 @@
 //! ```
 
 #![forbid(unsafe_code)]
+
+mod phases;
+
+pub use phases::{JobPhasesRejection, job_phases};
 
 use batter_core::{
     BoxError, RegistrationError,

@@ -151,10 +151,12 @@ pub mod sqlx {
 /// `runledger::native::test_support` for a consumer's own tests. They are
 /// low-level: `register_in` remains the protected composition, and reaching a
 /// native namespace does not move ownership of durable policy, storage or
-/// supervision into the facade.
+/// supervision into the facade. Inside a handler, `runledger::job_phases`
+/// derives work and finalization contexts from the native invocation.
 ///
 /// ```
 /// let _: Option<batter::runledger::NativeReport> = None;
+/// let _: Option<batter::runledger::JobPhasesRejection> = None;
 /// let _: Option<batter::sqlx::PgSession<'_>> = None;
 /// let _: Option<batter::runledger::native::core::jobs::JobType<'static>> = None;
 /// let _: Option<batter::runledger::native::postgres::SchemaCompatibilityError> = None;
