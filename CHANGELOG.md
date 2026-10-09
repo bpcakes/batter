@@ -8,6 +8,11 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `OperationContext::split_finalization`, the zero-reserve form of
+  `reserve_finalization`. It returns the same sibling `OperationPhases`, with
+  both phases ending at the context's deadline, and shares the one
+  work-deadline computation. `reserve_finalization` still rejects
+  `Duration::ZERO`; no existing call changes behavior.
 - Batch session settings and verify idle pooled sessions at acquisition instead
   of resetting them a second time. Reset uses five policy
   SQL statements (ROLLBACK, DISCARD ALL, native SET ROLE, one array-bound `set_config`

@@ -188,6 +188,10 @@ finalization keeps the original deadline. Cancelling/finishing work does not
 cancel finalization; parent cancellation cancels both. The caller must await
 finalization explicitly while the enclosing owner remains active. The reserve
 does not extend total time, shield parent cancellation, or prove rollback.
+`split_finalization` produces the same siblings with no reserve: both phases end
+at the original deadline, so finalization has time only after work ends or is
+cancelled early. Both forms require positive work time when called, and
+`reserve_finalization` keeps rejecting a zero reserve.
 
 **Not supplied:** asynchronous descendant joining, preemption, cancellation
 shielding, remote cancellation acknowledgement, transaction rollback proof,

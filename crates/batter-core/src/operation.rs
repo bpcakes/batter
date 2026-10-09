@@ -165,6 +165,38 @@ impl OperationContext {
         reserve: Duration,
     ) -> Result<OperationPhases, ConfigurationError> {
         validation::positive(reserve, "finalization reserve")?;
+        self.phases_before(reserve)
+    }
+
+    /// Split work and finalization without reserving an interval between them.
+    ///
+    /// This is the zero-reserve form of [`Self::reserve_finalization`], which
+    /// still rejects `Duration::ZERO`. Both phases end at this context's
+    /// deadline, so finalization has time left only when work finishes or is
+    /// cancelled early; once the work deadline passes, finalization has expired
+    /// too. They remain siblings: cancelling work leaves finalization active,
+    /// and cancellation of this context cancels both. This context must have
+    /// positive time remaining when called.
+    ///
+    /// ```
+    /// use batter_core::operation::{Interruption, OperationOwner};
+    /// use std::time::Duration;
+    ///
+    /// let owner = OperationOwner::new(Duration::from_secs(1))?;
+    /// let phases = owner.context().split_finalization()?;
+    /// assert_eq!(phases.work().deadline(), owner.context().deadline());
+    /// phases.cancel_work();
+    /// assert_eq!(phases.work().check(), Err(Interruption::Cancelled));
+    /// assert!(phases.finalization().check().is_ok());
+    /// # Ok::<(), batter_core::ConfigurationError>(())
+    /// ```
+    pub fn split_finalization(&self) -> Result<OperationPhases, ConfigurationError> {
+        self.phases_before(Duration::ZERO)
+    }
+
+    // The one work/finalization arithmetic: work ends `reserve` before this
+    // deadline and must still be in the future; finalization keeps the deadline.
+    fn phases_before(&self, reserve: Duration) -> Result<OperationPhases, ConfigurationError> {
         let work_deadline = self
             .deadline
             .checked_sub(reserve)
