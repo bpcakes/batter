@@ -1,0 +1,1 @@
+{"v":1,"id":"01a11fc3-0223-7682-9314-05dc7deaa7ae","replica":"194cc432","deps":["01a11fc1-26f5-7214-b8cc-6738789a89d8"],"actor":{"agent":"claude","thread":"eabe0389-264c-4476-963f-e4811beba228"},"op":"claim","issue":"01a11cee-8bb8-7aaa-954b-5a09cd5ca676","data":{"mode":"online","generation":3},"where":{"branch":"master","commit":"18cdf97ac544c665e0189efd28388d1e10456232"}}
