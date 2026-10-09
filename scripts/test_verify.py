@@ -49,7 +49,6 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
         self.assertEqual(calls, [
             ["rustc", "--version", "--verbose"], ["cargo", "--version"],
             ["cargo", "fmt", "--all", "--", "--check"], ["budget"],
-            ["python3", "scripts/check_beads_export.py"],
             ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked",
              "--", "-D", "warnings", "-D", "clippy::mod_module_files"],
             ["cargo", "clippy", "-p", "runlimit-core", "-p", "runlimit-memory", "-p",
@@ -69,7 +68,7 @@ if os.environ.get("FAIL_COMMAND") and os.environ["FAIL_COMMAND"] in " ".join([na
         self.assertEqual((self.repo / "Cargo.lock").read_text(), "# retained fixture lock\n")
 
     def test_check_failure_is_not_reported_as_success(self):
-        for command in ["budget", "check_beads_export.py", "clippy", "clippy -p batter-runlimit", "test_matrix.py workspace",
+        for command in ["budget", "clippy", "clippy -p batter-runlimit", "test_matrix.py workspace",
                         "test_matrix.py consumers", "cargo doc", "check_http_smokes.py"]:
             with self.subTest(command=command):
                 result, calls = self.run_verify(FAIL_COMMAND=command)

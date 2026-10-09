@@ -983,8 +983,8 @@ native release-mode regression. Detached at-rest package checks retain Cargo's
 default profile because the override belongs to this workspace, not the leaf
 manifest. See [Cargo profile semantics](references.md#cargo-test-artifacts-and-profiles-2026-09-24).
 
-`bash scripts/verify.sh` directly runs formatting, source file budgets, the
-Beads export identifier check, four Clippy configurations (all-features workspace, default-feature Runlimit packages,
+`bash scripts/verify.sh` directly runs formatting, source file budgets,
+four Clippy configurations (all-features workspace, default-feature Runlimit packages,
 the non-HTTP Runlimit adapter with memory and PostgreSQL,
 and the default-feature reference package without its opt-in metrics exporter),
 all six parts of `scripts/test_matrix.py`, rustdoc with
@@ -992,16 +992,9 @@ warnings denied, and all five built HTTP process smoke profiles. Checks fail the
 script on any unsuccessful command. No plan, receipt, freshness digest or gate
 is involved. Record executed results and limitations in the owning Bead.
 
-`scripts/check_beads_export.py` rejects a `.beads/issues.jsonl` export with a
-duplicated issue row or a comment ID used more than once. Each checkout and
-linked worktree has its own gitignored tracker database, which assigns comment
-IDs locally, so two branches can each be valid and still merge into an export
-that `br sync --import-only` rejects, even into a fresh database. On 2026-10-05
-master carried comment IDs 404-406 on two issues and no fresh tracker could
-load it. The repository-policy workflow also runs the check on pull requests,
-pushes and merge groups, so a merge that creates a collision fails before
-another agent imports it. `scripts/test_beads_export.py` covers that collision
-shape and malformed rows.
+Work tracking uses beadroll outside the checkout. The historical `.beads/`
+export is not validated by the local or CI verification sequence; see
+[backlog navigation](roadmap.md).
 
 The six test parts retain their existing command selections:
 

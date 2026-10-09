@@ -42,8 +42,6 @@ jobs:
         run: scripts/jig file-budget validate
       - name: Test script controls and source packaging
         run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
-      - name: Check Beads export identifiers
-        run: python3 scripts/check_beads_export.py
       - name: Check repository file-budget policy
         env:
           JIG_EVENT_NAME: ${{ github.event_name }}
