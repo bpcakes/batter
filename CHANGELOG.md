@@ -18,7 +18,9 @@ contracts, capability facts and validation history.
   is spawned per run. The first invocation is immediate and later ones follow a
   fixed interval with missed ticks skipped, so one overdue invocation may run
   immediately after an overrun without replaying a burst; the semantics are
-  recorded against the pinned Tokio 1.53.1 interval in `docs/references.md`.
+  recorded against pinned Tokio 1.53.1 timers in `docs/references.md`.
+  The library realigns even short intervals within Tokio's five-ms Skip
+  tolerance; sub-millisecond timer precision is not promised.
   A run budget longer than the interval is valid.
 
   `PeriodicStartup::immediate` acknowledges that the loop is initialized;
@@ -43,6 +45,8 @@ contracts, capability facts and validation history.
   of an escalated run or an expired initialization allowance. Code that constructs or exhaustively
   destructures `ShutdownReport` must be updated; match it with `..`. The
   coordinator is the only constructor, and no existing field changes meaning.
+  For initialization expiry, the terminal sample's invocation counts admitted
+  runs before expiry (zero if none), rather than identifying a failed run.
 
   The facade `worker` example replaces its hand-written drain-aware interval
   loop with both stopping classes and asserts that pruning admits nothing after

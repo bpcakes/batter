@@ -1448,29 +1448,42 @@ pool closure; transaction and remote-commit guarantees are unchanged.
 
 `Cargo.lock` resolves Tokio 1.53.1, and this section records the semantics
 Batter's periodic components rely on against that exact pin, read from the
-installed `src/time/interval.rs` as well as the versioned documentation.
+installed `src/time/interval.rs` and `src/time/sleep.rs`. The versioned links
+below identify those primary APIs; a browser re-fetch during the scheduling
+repair was unavailable, so the installed locked source supplies that check.
 
 - [`tokio::time::interval`](https://docs.rs/tokio/1.53.1/tokio/time/fn.interval.html)
   starts its first deadline at `Instant::now()`, so the first tick completes
   immediately, and it panics when the period is zero. `PeriodicPolicy::new`
-  validates a positive, representable interval before registration, so that
-  panic is unreachable from the protected path.
+  validates a positive, representable interval before registration. The private
+  periodic schedule now owns its cadence over `sleep_until`, rather than
+  delegating missed-tick policy to `Interval`.
 - The default missed-tick behaviour is
   [`Burst`](https://docs.rs/tokio/1.53.1/tokio/time/enum.MissedTickBehavior.html#variant.Burst),
-  which replays every missed tick. Batter selects
+  which replays every missed tick. The native alternative is
   [`Skip`](https://docs.rs/tokio/1.53.1/tokio/time/enum.MissedTickBehavior.html#variant.Skip)
-  explicitly instead.
+  for skipping overdue work, subject to its lateness tolerance below.
 - `Interval::poll_tick` returns the already elapsed deadline as soon as it is
   polled, so one overdue invocation runs immediately after an overrun. Only
   then does `Skip` realign: its next deadline is
   `now + period - ((now - missed_deadline) % period)`, measured from the
-  original schedule, so no burst of missed work is replayed. Tokio treats a
+  original schedule. Tokio treats a
   tick as missed only when `now` exceeds its deadline by more than five
   milliseconds; within that grace the next deadline stays
   `missed_deadline + period`.
-- `Interval::tick` is cancellation-safe in `select!`: losing that race consumes
-  no tick. Batter still ends its loop at the applicable stopping point rather
-  than resuming the schedule.
+- That five-ms tolerance can replay multiple short-period ticks. Batter's sole
+  private schedule applies the phase-preserving formula at every delivered tick,
+  without a tolerance. It awaits
+  [`sleep_until`](https://docs.rs/tokio/1.53.1/tokio/time/fn.sleep_until.html),
+  then records the next strictly future cadence point before invoking work.
+  One overdue invocation remains allowed; later missed ticks are not queued.
+  Remainders use full `u128` duration nanoseconds and deadline addition is
+  checked. If the next point cannot be represented, the schedule stays pending
+  under the existing initialization/shutdown waits instead of overflowing.
+- `Sleep` cancellation drops the timer without additional cleanup. The private
+  schedule changes its deadline only after that sleep completes, so losing
+  `select!` while waiting consumes no tick. Native timer resolution remains:
+  Tokio documents millisecond granularity, not precise sub-millisecond wakeups.
 
 These are start-to-start semantics. They are deliberately not the
 completion-plus-delay schedule that `crates/batter-core/src/health.rs` uses for

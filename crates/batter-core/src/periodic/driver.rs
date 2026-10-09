@@ -5,7 +5,7 @@
 
 use super::{
     History, PeriodicCompletion, PeriodicFailure, PeriodicInitializationExpired, PeriodicPolicy,
-    history::Cause,
+    history::Cause, schedule::Schedule,
 };
 use crate::{
     BoxError,
@@ -15,7 +15,10 @@ use crate::{
     operation::{Interruption, OperationContext, OperationError, OperationOwner, RootDeadline},
 };
 use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
-use tokio::time::{Instant, Interval, MissedTickBehavior, interval, sleep_until};
+use tokio::time::{Instant, sleep_until};
+
+#[cfg(test)]
+mod tests;
 
 /// Why the loop stopped admitting further runs.
 enum Ending {
@@ -101,12 +104,7 @@ where
                 .acknowledge_started(),
         );
     }
-    let mut ticker = interval(policy.interval());
-    // Missed ticks are skipped. One overdue tick may run immediately after an
-    // overrun and the schedule then realigns, so no burst of missed work is
-    // replayed. This is not completion-plus-delay: the interval is measured
-    // between invocation starts.
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut ticker = Schedule::new(policy.interval());
     let mut invocation = 0u64;
     let ending = loop {
         let initializing = pending.is_some();
@@ -311,7 +309,7 @@ fn finish(
 }
 
 async fn next_due(
-    ticker: &mut Interval,
+    ticker: &mut Schedule,
     admission: &PeriodicAdmission,
     initializing: bool,
     initialization: Option<Instant>,

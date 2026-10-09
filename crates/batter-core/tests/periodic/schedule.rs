@@ -15,6 +15,89 @@ use std::{
 use tokio::time::{Instant, sleep};
 
 #[tokio::test(start_paused = true)]
+async fn short_intervals_skip_overdue_ticks_even_inside_five_milliseconds() {
+    short_interval_overrun(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn fast_recoverable_failures_do_not_replay_short_interval_ticks() {
+    short_interval_overrun(true).await;
+}
+
+async fn short_interval_overrun(recoverable: bool) {
+    for period in [Duration::from_millis(1), Duration::from_micros(250)] {
+        let schedule = Schedule::default();
+        let recorded = schedule.clone();
+        let mut supervisor = supervisor();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let signal = entered.clone();
+        let resume = release.clone();
+        let origin = Instant::now();
+        let mut invocation = 0;
+        register_periodic_in(
+            &mut supervisor,
+            "storage.pruning",
+            immediate(period, SECOND, PeriodicShutdown::StopAtDrain),
+            move |_| {
+                let active = recorded.started(origin);
+                let (signal, resume) = (signal.clone(), resume.clone());
+                invocation += 1;
+                let attempt = invocation;
+                async move {
+                    if attempt == 1 {
+                        signal.notify_one();
+                        resume.notified().await;
+                    }
+                    drop(active);
+                    if recoverable {
+                        failed(attempt)
+                    } else {
+                        succeeded()
+                    }
+                }
+            },
+        )
+        .unwrap();
+        let running = supervisor.start();
+        entered.notified().await;
+        // Hold the first invocation across several deadlines, all within
+        // Tokio's five-ms missed-tick tolerance, then let fast runs proceed.
+        tokio::time::advance(Duration::from_millis(4)).await;
+        release.notify_one();
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            schedule.starts(),
+            [Duration::ZERO, Duration::from_millis(4)]
+        );
+        tokio::time::advance(Duration::from_millis(1)).await;
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        // Sub-ms deadlines share Tokio's timer resolution, but still cannot
+        // turn a single wakeup into a burst of overdue invocations.
+        assert_eq!(
+            schedule.starts(),
+            [
+                Duration::ZERO,
+                Duration::from_millis(4),
+                Duration::from_millis(5)
+            ]
+        );
+        let report = running.shutdown_checked().await.unwrap();
+        let summary = &report.report().periodic[0].summary;
+        assert_eq!(summary.invocations, 3);
+        assert_eq!(
+            summary.recoverable_failures,
+            if recoverable { 3 } else { 0 }
+        );
+        assert_eq!(schedule.overlapped(), 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_first_invocation_is_immediate_and_later_ones_follow_the_interval() {
     let schedule = Schedule::default();
     let mut supervisor = supervisor();

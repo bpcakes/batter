@@ -58,6 +58,7 @@ mod driver;
 mod failure;
 mod history;
 mod policy;
+mod schedule;
 
 pub use failure::{PeriodicFailure, PeriodicInitializationExpired, PeriodicRun};
 pub use history::{

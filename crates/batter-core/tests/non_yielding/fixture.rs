@@ -15,14 +15,14 @@ use std::{
 
 pub const BLOCKED_OBSERVATION: Duration = Duration::from_secs(2);
 
-fn emit(event: &str) {
+pub(super) fn emit(event: &str) {
     let mut output = std::io::stdout().lock();
     // libtest can print its test-name prefix without a trailing newline.
     writeln!(output, "\nbatter-fixture:{event}").unwrap();
     output.flush().unwrap();
 }
 
-fn block_forever() -> ! {
+pub(super) fn block_forever() -> ! {
     // OS parking releases the CPU, but this Tokio task's poll never returns.
     // Repeat on spurious unparks; no self-release can rescue a broken watchdog.
     loop {
@@ -30,7 +30,7 @@ fn block_forever() -> ! {
     }
 }
 
-struct TaskLifetime(Arc<AtomicBool>);
+pub(super) struct TaskLifetime(pub(super) Arc<AtomicBool>);
 
 impl Drop for TaskLifetime {
     fn drop(&mut self) {
@@ -39,7 +39,7 @@ impl Drop for TaskLifetime {
     }
 }
 
-fn budget() -> ShutdownBudget {
+pub(super) fn budget() -> ShutdownBudget {
     ShutdownBudget::new(
         Duration::from_millis(100),
         Duration::from_millis(250),
@@ -149,6 +149,10 @@ fn invalid_output(scenario: &str) {
 pub fn run(scenario: &str) {
     emit("fixture-entered");
     match scenario {
+        "periodic-non-yielding" | "periodic-finite-namesake" => {
+            super::periodic::run(scenario);
+            return;
+        }
         "stuck-before-runtime" => block_forever(),
         "fixture-failure" => panic!("deliberate fixture failure"),
         "exit-success" => return,

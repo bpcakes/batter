@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-/// One retained recoverable failure and the invocation that produced it.
+/// One retained cause and its invocation position.
 ///
 /// The cause keeps its concrete type behind `dyn Error`, so the inherent
 /// `downcast_ref` on `dyn Error + Send + Sync` still recovers it. Nothing here
@@ -22,9 +22,11 @@ use std::{
 /// cause.
 #[derive(Clone)]
 pub struct PeriodicFailureSample {
-    /// One-based index of the admitted run that failed.
+    /// One-based index of the admitted run that failed, except for the library's
+    /// initialization-expiry cause: that uses the number of runs admitted before
+    /// expiry (zero if none) and does not identify a failing run.
     pub invocation: u64,
-    /// Original application error, retained by reference count.
+    /// Original application or library initialization error, retained by reference count.
     pub error: Arc<dyn Error + Send + Sync>,
 }
 
@@ -99,6 +101,9 @@ pub struct PeriodicSummary {
     /// this slot is written before the runner's application captures are
     /// destroyed. It carries an escalated run's original error or the library's
     /// own initialization-expiry error.
+    /// For initialization expiry, `invocation` counts admitted runs before the
+    /// expiry, including successful or recoverably failed runs; it is zero when
+    /// expiry precedes the first admission. It does not identify a failing run.
     pub terminal_failure: Option<PeriodicFailureSample>,
     /// Whether this component acknowledged its registered startup.
     pub acknowledged: bool,

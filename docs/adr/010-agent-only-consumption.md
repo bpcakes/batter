@@ -795,7 +795,12 @@ the wrong drain behaviour, and there is no application-managed token, join
 protocol, dependency graph or third shutdown timer to assemble incorrectly.
 Batter owns one directly polled serial future per component, so overlapping
 invocations, a detached per-run task and a second scheduler are not reachable
-from the protected path. Each run receives a library-created `OperationContext`,
+from the protected path. The schedule itself realigns every overdue tick,
+including short intervals inside Tokio's five-ms `Skip` tolerance; callers do
+not have to select a minimum interval or discard catch-up work. This repairs an
+implementation gap against the existing protected contract without narrowing
+the accepted timing domain or adding another caller obligation.
+Each run receives a library-created `OperationContext`,
 so a caller cannot forget a per-run deadline, derive a child that outlives the
 run, or reuse an expired protected-startup initializer context. `PeriodicFailure`
 converts a propagated application error into the recoverable variant and offers

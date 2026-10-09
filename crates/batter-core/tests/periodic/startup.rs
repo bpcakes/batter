@@ -157,6 +157,7 @@ async fn an_expired_initialization_allowance_is_a_retained_failure_that_drains()
     );
     assert_eq!(summary.invocations, 3);
     assert_eq!(summary.recoverable_failures, 3);
+    assert_eq!(summary.terminal_failure.as_ref().unwrap().invocation, 3);
     // The library-owned initialization failure is also retained independently
     // of the component's own task result.
     assert_eq!(
@@ -215,6 +216,8 @@ async fn a_success_arriving_after_the_allowance_cannot_acknowledge_startup() {
     let summary = &report.periodic[0].summary;
     assert_eq!(summary.succeeded, 1);
     assert_eq!(summary.invocations, 1);
+    // Expiry is a library event after this successful run, not a run failure.
+    assert_eq!(summary.terminal_failure.as_ref().unwrap().invocation, 1);
     assert!(!summary.acknowledged);
     assert!(summary.has_failures());
     assert_eq!(

@@ -873,12 +873,19 @@ is no detached per-run task, no event queue and no second scheduler, so
 invocations cannot overlap. The first invocation is immediate once the
 component can run; later ones follow a fixed interval with missed ticks
 skipped. One overdue invocation may run immediately after an overrun, and the
-schedule then realigns without replaying a burst of missed work; this is
-start-to-start scheduling, not completion-plus-delay. Each run receives a
+schedule then realigns without replaying a burst of missed work, including
+intervals and overruns shorter than Tokio's five-millisecond missed-tick
+tolerance. The private schedule advances to the first future point on its
+original cadence before admitting that overdue run; this is start-to-start
+scheduling, not completion-plus-delay. Tokio timers retain their native
+resolution, so sub-millisecond intervals do not promise sub-millisecond wakeups.
+If no later cadence point fits the monotonic clock, the component waits for its
+existing initialization or shutdown boundary instead of overflowing or spinning.
+Each run receives a
 library-created `OperationContext` with its own fresh deadline and a
 cancellation lineage descending from process forced cancellation, so a child
 cannot exceed the run and ending one run cancels only its own child scope, not
-a sibling or a future run. The recorded semantics of the pinned Tokio interval
+a sibling or a future run. The recorded semantics of the schedule and pinned Tokio timers
 are in [references](references.md#periodic-maintenance-scheduling-semantics-2026-10-08).
 
 Startup acknowledgement is an explicit policy. `PeriodicStartup::immediate`
@@ -999,7 +1006,9 @@ publishing one, or have its marker reset for want of join evidence. An escalated
 with that slot, so the task record exposes it through `Error::source`, exactly
 as a finite process task's shared failure does; the library's own
 initialization-expiry error stays directly downcastable because it is
-reconstructible. `Debug` and `Display` stay redacted, a
+reconstructible. That library event uses the number of runs admitted before
+expiry as its `terminal_failure.invocation` (zero if none); unlike an escalated
+run's one-based index, it does not identify a failing invocation. `Debug` and `Display` stay redacted, a
 displaced cause is destroyed outside the publication lock inside the
 component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and
