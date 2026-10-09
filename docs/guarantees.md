@@ -898,7 +898,10 @@ states that the loop is initialized, not that maintenance succeeded.
 allowance, measured from the component's first live execution and including
 failed runs and the interval waits between them; each initialization run is
 additionally capped by whichever of the run budget and that allowance expires
-first. A qualifying success acknowledges exactly once, and later run failures
+first. When its run budget is longer, a cooperative pending run receives the
+original initialization deadline and is destroyed when it expires under either
+stopping class; a preceding failed run and cadence wait do not restart the
+allowance. A qualifying success acknowledges exactly once, and later run failures
 never revoke it or establish continuing lease, renewal or dependency health.
 Because the run boundary is cooperative and rechecks neither its clock nor
 drain after the work's own poll returns, a success that only arrived after the
@@ -940,9 +943,10 @@ forced-cancellation instant.
 
 A component whose initialization is still pending is admitted as ordinary work
 whatever its stopping class, because it has taken on no support obligation yet
-and pending initialization abandons on global drain. Treating it as support
-would grant a run after its applicable stopping point and leave only the
-cancellation preflight to stop it.
+and pending initialization abandons on global drain. That abandonment is an
+expected exit even while ordinary work keeps the later support boundary open.
+Treating it as support would grant a run after its applicable stopping point
+and leave only the cancellation preflight to stop it.
 
 Admission transitions stay private to the lifecycle state owner. Grants and
 rejections are taken under the single transition mutex and returned as plain
@@ -960,6 +964,9 @@ failure, run deadline, normal stop interruption, and explicit escalation.
 `From<E>` on `PeriodicFailure` produces the recoverable variant, so `?` on an
 ordinary application error keeps the schedule and cannot silently drain the
 process; `PeriodicFailure::Fatal` has no conversion and must be written out.
+The `recoverable` and `fatal` helpers select those same outcomes explicitly.
+Consuming `into_inner` returns the original concrete cause and deliberately
+discards its classification, as the executable helper examples demonstrate.
 Only that explicit escalation escalates a returned application outcome, while a
 native factory, poll or destructor panic, unexpected component termination and
 initialization failure stay terminal. A recoverable failure or an expired run

@@ -55,11 +55,25 @@ pub type PeriodicRun<E> = Result<(), PeriodicFailure<E>>;
 
 impl<E> PeriodicFailure<E> {
     /// Mark one run's failure as recoverable without relying on inference.
+    ///
+    /// ```
+    /// use batter_core::periodic::PeriodicFailure;
+    ///
+    /// let failure = PeriodicFailure::recoverable(std::io::Error::other("storage unavailable"));
+    /// assert!(!failure.is_fatal());
+    /// ```
     pub fn recoverable(error: E) -> Self {
         Self::Recoverable(error)
     }
 
     /// Mark one run's failure as terminal for the process.
+    ///
+    /// ```
+    /// use batter_core::periodic::PeriodicFailure;
+    ///
+    /// let failure = PeriodicFailure::fatal(std::io::Error::other("witness state is unusable"));
+    /// assert!(failure.is_fatal());
+    /// ```
     pub fn fatal(error: E) -> Self {
         Self::Fatal(error)
     }
@@ -70,6 +84,24 @@ impl<E> PeriodicFailure<E> {
     }
 
     /// Recover the original error, discarding the escalation decision.
+    ///
+    /// Consume the wrapper only when that decision is no longer needed:
+    ///
+    /// ```
+    /// use batter_core::periodic::PeriodicFailure;
+    ///
+    /// let cause = Box::new(std::io::Error::other("maintenance failed"));
+    /// let identity = std::ptr::from_ref(cause.as_ref());
+    /// let failure = PeriodicFailure::fatal(cause);
+    /// assert!(failure.is_fatal());
+    /// let cause = failure.into_inner(); // The fatal classification is discarded.
+    /// assert_eq!(std::ptr::from_ref(cause.as_ref()), identity);
+    ///
+    /// let failure = PeriodicFailure::recoverable(cause);
+    /// assert!(!failure.is_fatal());
+    /// let cause = failure.into_inner();
+    /// assert_eq!(std::ptr::from_ref(cause.as_ref()), identity);
+    /// ```
     pub fn into_inner(self) -> E {
         match self {
             Self::Recoverable(error) | Self::Fatal(error) => error,

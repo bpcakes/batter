@@ -2,19 +2,19 @@
 
 use super::support::*;
 use batter_core::{
-    lifecycle::{Readiness, ShutdownCause, ShutdownFailure},
+    lifecycle::{Readiness, ShutdownCause, ShutdownFailure, TaskOutcome},
     periodic::{
         PeriodicCompletion, PeriodicInitializationExpired, PeriodicShutdown, register_periodic_in,
     },
 };
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 
 #[tokio::test(start_paused = true)]
 async fn immediate_acknowledgement_does_not_claim_that_maintenance_succeeded() {
@@ -174,6 +174,70 @@ async fn an_expired_initialization_allowance_is_a_retained_failure_that_drains()
     assert_eq!(reader.snapshot().invocations, 3);
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_pending_initialization_run_keeps_the_original_total_deadline() {
+    for shutdown in [
+        PeriodicShutdown::StopAtDrain,
+        PeriodicShutdown::SupportThroughDrain,
+    ] {
+        let mut supervisor = supervisor();
+        let allowance = Duration::from_millis(2_500);
+        let deadlines = Arc::new(Mutex::new(Vec::new()));
+        let recorded = deadlines.clone();
+        let order = Order::default();
+        let observed = order.clone();
+        let mut invocation = 0;
+        let reader = register_periodic_in(
+            &mut supervisor,
+            "lease.renewal",
+            first_success(SECOND, SECOND * 10, allowance, shutdown),
+            move |context| {
+                recorded.lock().unwrap().push(context.deadline());
+                invocation += 1;
+                let first = invocation == 1;
+                let observed = observed.clone();
+                async move {
+                    if first {
+                        return failed(1);
+                    }
+                    let _pending = Destroyed(observed, "initialization.run.destroyed");
+                    std::future::pending::<()>().await;
+                    succeeded()
+                }
+            },
+        )
+        .unwrap();
+        let started = Instant::now();
+        let running = supervisor.start();
+        let ShutdownFailure::Report(report) = running.wait_checked().await.unwrap_err() else {
+            panic!("expected the initialization failure report")
+        };
+        // The first failure and cadence wait consume the same total allowance;
+        // neither the second admission nor its longer run budget extends it.
+        assert_eq!(Instant::now(), started + allowance);
+        assert_eq!(*deadlines.lock().unwrap(), vec![started + allowance; 2]);
+        assert_eq!(order.observed(), ["initialization.run.destroyed"]);
+        assert!(
+            report.tasks[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .downcast_ref::<PeriodicInitializationExpired>()
+                .is_some()
+        );
+        let summary = &report.periodic[0].summary;
+        assert!(!summary.acknowledged);
+        assert_eq!(summary.invocations, 2);
+        assert_eq!(summary.recoverable_failures, 1);
+        assert_eq!(summary.deadline_exceeded, 1);
+        assert_eq!(
+            summary.completion,
+            PeriodicCompletion::InitializationExpired
+        );
+        assert!(!reader.snapshot().acknowledged);
+    }
+}
+
 /// Deliberately uses the real clock: a blocking poll is the documented way the
 /// cooperative run boundary can return success after its deadline has passed.
 /// The allowance leaves a full second for the first run to start and the
@@ -276,6 +340,68 @@ async fn drain_during_pending_support_initialization_abandons_without_readiness(
     );
     assert_eq!(summary.stop_interrupted, 1);
     assert_eq!(reader.snapshot().succeeded, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pending_support_abandons_while_ordinary_work_keeps_drain_open() {
+    let mut supervisor = supervisor_with(SECOND * 10);
+    let order = Order::default();
+    let observed = order.clone();
+    supervisor
+        .register("worker", |startup| async move {
+            let running = startup.acknowledge_started();
+            running.draining().await;
+            sleep(Duration::from_millis(2_500)).await;
+            observed.push("ordinary.settled");
+            Ok(running.stopped())
+        })
+        .unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let signalled = entered.clone();
+    let observed = order.clone();
+    let reader = register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        first_success(
+            SECOND,
+            SECOND * 100,
+            SECOND * 100,
+            PeriodicShutdown::SupportThroughDrain,
+        ),
+        move |_| {
+            let signalled = signalled.clone();
+            let observed = observed.clone();
+            async move {
+                let _pending = Destroyed(observed, "support.destroyed");
+                signalled.notify_one();
+                std::future::pending::<()>().await;
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    let running = supervisor.start();
+    entered.notified().await;
+    assert_eq!(running.status().readiness(), Readiness::Starting);
+    let requested = Instant::now();
+    let success = running.shutdown_checked().await.unwrap();
+    let report = success.report();
+    // Ordinary work prevents support closure from masking the expected-exit
+    // classification of a component that never assumed its support obligation.
+    assert_eq!(Instant::now(), requested + Duration::from_millis(2_500));
+    assert_eq!(order.observed(), ["support.destroyed", "ordinary.settled"]);
+    assert!(!report.forced_cancellation);
+    let task = report
+        .tasks
+        .iter()
+        .find(|task| task.name == "lease.renewal")
+        .unwrap();
+    assert_eq!(task.outcome, TaskOutcome::Stopped);
+    assert_eq!(
+        report.periodic[0].summary.completion,
+        PeriodicCompletion::AbandonedDuringStartup
+    );
+    assert!(!reader.snapshot().acknowledged);
 }
 
 #[tokio::test(start_paused = true)]
