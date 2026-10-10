@@ -938,6 +938,12 @@ closes support promptly on drain. If that boundary is never reached, support
 closes at the existing global forced-cancellation boundary; earliest-stop-clock
 tightening, the cancel and abort/reap limits and conservative cleanup skipping
 are unchanged, and support work is joined or destroyed before finalizers run.
+For an initialized component, observing the support stopping point interrupts
+an active cooperative run; it does not wait for that run's budget
+or the remaining drain allowance. Its future is destroyed before dependency
+cleanup and the interruption is retained in `stop_interrupted`. A paused-time
+regression keeps a run pending through ordinary drain, then proves destruction
+after ordinary settlement and before cleanup without forced cancellation.
 A run admitted during drain is additionally capped by the already recorded
 forced-cancellation instant.
 

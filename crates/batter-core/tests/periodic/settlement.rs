@@ -233,3 +233,82 @@ async fn support_work_is_destroyed_before_dependency_cleanup() {
     assert_eq!(order.observed(), vec!["support.destroyed", "cleanup"]);
     assert_eq!(schedule.starts(), vec![Duration::ZERO, SECOND]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn active_support_run_stops_after_ordinary_settlement_before_cleanup() {
+    let order = Order::default();
+    let ordinary_drain = SECOND * 2;
+    let mut supervisor = supervisor_with(SECOND * 10);
+    let observed = order.clone();
+    supervisor
+        .register("worker", move |startup| async move {
+            let running = startup.acknowledge_started();
+            running.draining().await;
+            sleep(ordinary_drain).await;
+            // Global drain must not destroy the supporting invocation early.
+            assert_eq!(observed.observed(), vec!["support.run.started"]);
+            observed.push("ordinary.settled");
+            Ok(running.stopped())
+        })
+        .unwrap();
+    let (entered, started) = oneshot::channel();
+    let mut entered = Some(entered);
+    let observed = order.clone();
+    register_periodic_in(
+        &mut supervisor,
+        "lease.renewal",
+        // The run cannot expire before the coordinator-owned stopping point.
+        immediate(SECOND, SECOND * 100, PeriodicShutdown::SupportThroughDrain),
+        move |_| {
+            let entered = entered.take().expect("one pending support invocation");
+            let observed = observed.clone();
+            async move {
+                let _active = Destroyed(observed.clone(), "support.run.destroyed");
+                observed.push("support.run.started");
+                entered.send(()).unwrap();
+                pending::<()>().await;
+                succeeded()
+            }
+        },
+    )
+    .unwrap();
+    let closing = order.clone();
+    supervisor
+        .on_cleanup("dependency", move || {
+            let closing = closing.clone();
+            async move {
+                closing.push("cleanup");
+                Ok(())
+            }
+        })
+        .unwrap();
+    let running = supervisor.start();
+    running.status().wait_ready().await.unwrap();
+    started.await.unwrap();
+    let requested = Instant::now();
+    running.handle().request();
+    let success = running.wait_checked().await.unwrap();
+    let report = success.report();
+    // Checked success alone also permits a cooperative forced cancellation.
+    // The active run must stop promptly when ordinary work settles instead.
+    assert_eq!(Instant::now(), requested + ordinary_drain);
+    assert!(!report.forced_cancellation);
+    assert!(report.abort_requested.is_empty());
+    assert!(report.unjoined.is_empty());
+    assert_eq!(
+        order.observed(),
+        vec![
+            "support.run.started",
+            "ordinary.settled",
+            "support.run.destroyed",
+            "cleanup",
+        ]
+    );
+    let summary = &report.periodic[0].summary;
+    assert!(summary.acknowledged);
+    assert_eq!(summary.invocations, 1);
+    assert_eq!(summary.succeeded, 0);
+    assert_eq!(summary.deadline_exceeded, 0);
+    assert_eq!(summary.stop_interrupted, 1);
+    assert_eq!(summary.completion, PeriodicCompletion::Stopped);
+}
