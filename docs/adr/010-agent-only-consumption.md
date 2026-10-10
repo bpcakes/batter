@@ -958,12 +958,14 @@ that retains the complete atomic error. The crate passes build, clippy, fmt and
 26 tests, and the archived copy builds against this tree. No live PostgreSQL run
 was made.
 
-The evaluation found no fork that documentation failed to resolve. Its eleven
-reported gaps are a missing re-export, four composition sentences missing from
-public documentation, and three capability gaps already tracked or filed:
-one profiled pool owner shared with Runledger (`batter-nhu5`), a handler test
-facility (`batter-3upk`), and budget guidance that remains application policy.
-The re-export and the documentation sentences were repaired in the same change.
+Separate from the eleven scored decisions, the agent reported eleven gaps:
+six documentation repairs, one missing re-export, two capability follow-ups,
+and two policy or default questions. The re-export and documentation repairs
+shipped in the same change. The capability follow-ups are one profiled pool
+owner shared with Runledger (`batter-nhu5`) and a handler test facility
+(`batter-3upk`). Shutdown budget sizing remains application policy; the consumer
+default between `PgSessionProfile::with_timeouts` and `new` remains unresolved
+and needs a maintainer decision. The evidence README records each disposition.
 This is one run of one agent and does not establish population reliability.
 
 ## Recurring example review defects
