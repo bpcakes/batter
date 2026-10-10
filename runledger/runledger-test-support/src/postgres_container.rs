@@ -315,10 +315,20 @@ mod tests {
             std::env::var(TEST_PG_IMAGE_ENV).unwrap_or_else(|_| DEFAULT_POSTGRES_IMAGE.to_owned());
         // Initialization proves PostgreSQL 18 and uuidv7 at the selected endpoint.
         let postgres = initialize_owned_postgres(&image_ref).await;
-        let port = resolve_host_port(postgres._container.as_ref().unwrap().container(), 5432).await;
-        assert_ne!(port, occupied.local_addr().unwrap().port());
+        let container = postgres
+            ._container
+            .as_ref()
+            .expect("owned PostgreSQL container");
+        let port = resolve_host_port(container.container(), 5432).await;
+        assert_ne!(
+            port,
+            occupied.local_addr().expect("occupied host address").port()
+        );
         assert_eq!(
-            occupied.accept().unwrap_err().kind(),
+            occupied
+                .accept()
+                .expect_err("unrelated listener received no connection")
+                .kind(),
             std::io::ErrorKind::WouldBlock
         );
     }
