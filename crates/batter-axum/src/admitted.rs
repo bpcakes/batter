@@ -147,7 +147,10 @@ impl AdmittedRequest {
     /// The server-generated correlation of this request: the identifier on its
     /// `x-request-id` response header and its completion event.
     ///
-    /// It identifies related work and grants no authority.
+    /// It identifies related work and grants no authority. It is returned by
+    /// reference: pass `Some(admitted.correlation_id())` to
+    /// [`render_infrastructure_failure`](crate::render_infrastructure_failure),
+    /// or clone it to retain it beyond the request.
     pub fn correlation_id(&self) -> &CorrelationId {
         &self.0.correlation_id
     }

@@ -914,6 +914,14 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Verification
 
+Launch `scripts/verify.sh` from a foreground shell, or reset `SIGINT` and
+`SIGQUIT` to their default dispositions before exec when it has to run as a
+background job. A background job of a non-interactive POSIX shell runs with
+both signals ignored, every descendant inherits that, and the `startup_signals`
+suite expects an unstarted child to die from the default `SIGINT` action; under
+the inherited ignore it fails with `signal child timed out:
+mode=configured-unstarted signal=INT` while passing in the foreground.
+
 Session-profile optimization regressions (`batter-md9y`) extend `atomic_live`
 with restricted-login idle SET-role, schema-USAGE and loaded privileged
 custom-parameter SET revocation/recovery,
@@ -2649,6 +2657,12 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+Native fixtures ask the host kernel for an available TCP port and explicitly
+map it through Docker; Docker Desktop's VM allocator can otherwise select a
+port already occupied on the host. The reservation is released just before
+container start, so the handoff is not atomic and later collisions still fail.
+The existing-host-listener control checks that startup reaches PostgreSQL 18
+without touching an unrelated listener; delayed startup uses the same allocator.
 After container start, native test support polls Docker's published PostgreSQL
 port under a 30-second bootstrap allowance; a missing mapping still fails the
 test. Connection and PostgreSQL 18 checks follow that mapping.

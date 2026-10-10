@@ -51,6 +51,39 @@ impl ReadinessDecision {
 /// application condition, and is decided only while lifecycle and dependency
 /// health, when configured, are both ready.
 ///
+/// Migration: exhaustive matches on `ReadinessUnreadyReason` must now handle
+/// [`ReadinessUnreadyReason::Condition`]. The former four-arm match no longer
+/// compiles; a condition is an application denial, not a dependency failure.
+///
+/// ```compile_fail,E0004
+/// use batter_core::readiness::ReadinessUnreadyReason as Reason;
+/// fn category(reason: Reason) -> &'static str {
+///     match reason {
+///         Reason::Starting => "starting",
+///         Reason::Draining => "draining",
+///         Reason::Stopped => "stopped",
+///         Reason::Dependency(_) => "dependency",
+///     }
+/// }
+/// ```
+///
+/// Add an explicit arm that preserves the application's unready policy:
+///
+/// ```
+/// use batter_core::readiness::{ReadinessCondition, ReadinessUnreadyReason as Reason};
+/// fn category(reason: Reason) -> &'static str {
+///     match reason {
+///         Reason::Starting => "starting",
+///         Reason::Draining => "draining",
+///         Reason::Stopped => "stopped",
+///         Reason::Dependency(_) => "dependency",
+///         Reason::Condition(_) => "condition",
+///     }
+/// }
+/// let condition = ReadinessCondition::new("capacity").unwrap();
+/// assert_eq!(category(Reason::Condition(condition)), "condition");
+/// ```
+///
 /// ```compile_fail,E0308
 /// use batter_core::{
 ///     health::HealthStatus,

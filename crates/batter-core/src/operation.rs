@@ -80,6 +80,10 @@ pub struct OperationContext {
 /// The caller must explicitly await finalization after observing the work
 /// result. This value does not run cleanup on drop, own spawned descendants,
 /// shield parent cancellation, or guarantee scheduling within the reserve.
+///
+/// Migration: `OperationPhases` is no longer `Clone`, because [`Self::cancel_work`]
+/// is cancellation authority. Share clones of [`Self::work`] and
+/// [`Self::finalization`] with tasks instead of cloning the pair.
 #[derive(Debug)]
 pub struct OperationPhases {
     work: OperationContext,
@@ -147,6 +151,22 @@ impl OperationContext {
     /// owner can cancel only the child and its descendants. A zero `maximum`,
     /// one longer than a year, or one the runtime clock cannot represent is
     /// rejected with [`ConfigurationError`].
+    ///
+    /// Migration: `OperationContext::child` previously returned another context;
+    /// it now returns an [`OperationOwner`]. Use `parent.child(budget)?.into_context()`
+    /// to keep the former execution handle, or retain the owner and use `context()`
+    /// when the caller needs explicit child cancellation authority.
+    /// ```
+    /// # use batter_core::operation::OperationOwner;
+    /// # use std::time::Duration;
+    /// # fn example() -> Result<(), batter_core::ConfigurationError> {
+    /// let parent = OperationOwner::new(Duration::from_secs(2))?.into_context();
+    /// let child = parent.child(Duration::from_secs(1))?.into_context();
+    /// assert!(child.deadline() <= parent.deadline());
+    /// # Ok(())
+    /// # }
+    /// # example().unwrap();
+    /// ```
     pub fn child(&self, maximum: Duration) -> Result<OperationOwner, ConfigurationError> {
         validation::positive(maximum, "child budget")?;
         Ok(OperationOwner {

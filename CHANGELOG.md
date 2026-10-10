@@ -8,6 +8,62 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Breaking: backfill the `Quota::run` work-future bound added after 0.0.1
+  (also `batter::runlimit::Quota::run`). Work futures must be `Send`; generic
+  wrappers must add `+ Send` to their `Fut: Future<Output = Result<T, E>>` bound.
+  In a generic wrapper's `where` clause:
+
+  ```rust,ignore
+  // Before:
+  Fut: Future<Output = Result<T, E>>,
+  // After:
+  Fut: Future<Output = Result<T, E>> + Send,
+  ```
+
+  For a future that retains shared data across an await, migrate captures:
+
+  ```rust,ignore
+  // Before: an Rc capture made the work future non-Send.
+  let shared = std::rc::Rc::new(String::from("record"));
+  quota.run(&context, checks, move |_| async move {
+      tokio::task::yield_now().await;
+      Ok::<_, std::convert::Infallible>(shared.len())
+  }).await;
+
+  // After: Arc<String> is Send; owned Send data is another option.
+  let shared = std::sync::Arc::new(String::from("record"));
+  quota.run(&context, checks, move |_| async move {
+      tokio::task::yield_now().await;
+      Ok::<_, std::convert::Infallible>(shared.len())
+  }).await;
+  ```
+
+  The factory closure itself has no `Send` bound. A synchronous factory can
+  extract owned `Send` data from thread-local state before creating the future.
+  No deprecated shim is retained: Rust cannot overload `run` by the future's
+  `Send` bound, and restoring its old bound would require a non-`Send` erased
+  work future, breaking the canonical handler/task composition. A separately
+  named local runner would be a new API, not source compatibility for old calls.
+- Native Runledger PostgreSQL fixtures select an available host TCP port before
+  publishing it through Docker, avoiding ports already occupied on the host
+  but unknown to Docker Desktop's VM allocator. The handoff is not atomic;
+  a later collision still fails startup. Bootstrap deadlines and cleanup stay
+  unchanged, and no application database operation is retried.
+- Re-export `PgScopeError` from `batter_runledger` (also `batter::runledger`),
+  the error `PgIntentScope::application` returns, so a consumer that handles it
+  needs no direct `batter-sqlx` import. A whole-application fresh-agent
+  baseline, recorded under `docs/evidence/whole-app-baseline-2026-10-09`, first
+  failed to build on that missing re-export and four `CorrelationId` versus
+  `&CorrelationId` type mismatches. The baseline also informed documentation
+  repairs: how to run bounded startup work inside the protected scope,
+  that `run_atomic` is bounded by wrapping it in `context.run`, that definition
+  sync precedes `register_in`, that the runtime `sqlx::query_as` function is not
+  a `PgNativeQuery`, that `AdmittedRequest::correlation_id` returns a reference,
+  and that a handler test ends its invocation explicitly.
+- Backfill the operation-authority hard cut and add a supported-path choice
+  table to the facade's rustdoc front page; see the `Breaking (backfilled note)`
+  entry below and `docs/evidence/public-api-diff-2026-10-09`.
+
 - Add `batter_runledger::job_phases` (also `batter::runledger::job_phases`), the
   one bridge from a native `JobExecution` and an explicit final-state reserve to
   `OperationPhases`. Work ends at the worker's own absolute deadline minus the
@@ -327,6 +383,141 @@ contracts, capability facts and validation history.
   field instead of replacing it with `same-origin`, so an outer layer cannot
   weaken an inner `NoReferrer` choice. Rustdoc explains the `Referer` and
   `Origin` consequences for document navigations and HTML form mutations.
+
+- Breaking: add `ReadinessUnreadyReason::Condition(ReadinessCondition)` to the
+  intentionally exhaustive readiness-reason enum (backfilled migration note).
+  Exhaustive matches must handle application-condition denials as well as
+  lifecycle and dependency reasons:
+
+  ```rust
+  // Before
+  match reason {
+      ReadinessUnreadyReason::Starting => "starting",
+      ReadinessUnreadyReason::Draining => "draining",
+      ReadinessUnreadyReason::Stopped => "stopped",
+      ReadinessUnreadyReason::Dependency(_) => "dependency",
+  }
+  // After
+  match reason {
+      ReadinessUnreadyReason::Starting => "starting",
+      ReadinessUnreadyReason::Draining => "draining",
+      ReadinessUnreadyReason::Stopped => "stopped",
+      ReadinessUnreadyReason::Dependency(_) => "dependency",
+      ReadinessUnreadyReason::Condition(_) => "condition",
+  }
+  ```
+
+  No one-release deprecated shim is kept: a function or alias cannot make the
+  old exhaustive match cover a new variant. Collapsing a condition into an old
+  reason would misrepresent why readiness was denied. The enum remains
+  exhaustive so consumers explicitly review their response policy; the default
+  HTTP mapping is still 503 and WARN. This note changes no runtime behavior.
+
+- Breaking: separate operation cancellation authority from contexts (backfilled
+  note; cut landed 2026-09-22 in `9f04aeb`, task `batter-tc9w.1`).
+  `OperationContext::new`, `OperationContext::at`, `OperationContext::under` and
+  `OperationContext::cancel` are removed from the public API, as is
+  `OperationAdmission::admit`, and `OperationPhases` no longer implements
+  `Clone`. A context is now observation and execution capability only; the new
+  `OperationOwner` holds cancellation authority for one root or derived child,
+  `RootDeadline` names an explicitly independent deadline, and
+  `OperationContext::child` now returns `Result<OperationOwner, ConfigurationError>`
+  instead of `Result<OperationContext, ConfigurationError>`.
+  `OperationAdmission::admit_root` admits a process-linked root and returns its
+  owner. No `#[deprecated]` shim is kept for any removed item: a context that can
+  cancel itself, or a root created without a visible owner, is the state this
+  cut removed, and the core keeps compile-fail controls that reject each old
+  constructor. `docs/usage.md` ("Operation ownership and migration") explains
+  how to decide between a root and a child. Migrate as follows.
+
+  Creating an independent root budget:
+
+  ```rust
+  // Before
+  let context = OperationContext::new(Duration::from_secs(2))?;
+  let context = OperationContext::at(deadline);
+
+  // After
+  let context = OperationOwner::new(Duration::from_secs(2))?.into_context();
+  let context = OperationOwner::at(RootDeadline::at(deadline)).into_context();
+  ```
+
+  Keeping the ability to cancel:
+
+  ```rust
+  // Before
+  let context = OperationContext::new(budget)?;
+  let shared = context.clone();
+  context.cancel();
+
+  // After
+  let owner = OperationOwner::new(budget)?;
+  let shared = owner.context().clone();
+  owner.cancel();
+  ```
+
+  Deriving a child that inherits deadline and cancellation:
+
+  ```rust
+  // Before
+  let child = OperationContext::under(step_deadline, &parent_token);
+
+  // After
+  let child = parent_context.child(step_budget)?; // an OperationOwner
+  let context = child.context();
+  ```
+
+  Updating an existing `child` call:
+
+  ```rust
+  // Before
+  let child: OperationContext = parent.child(step_budget)?;
+  let value = child.run("step", work).await?;
+
+  // After
+  let child: OperationContext = parent.child(step_budget)?.into_context();
+  let value = child.run("step", work).await?;
+  // Retain the returned owner and borrow owner.context() instead when explicit
+  // cancellation authority is needed.
+  ```
+
+  No deprecated same-name shim is kept for `child`: Rust cannot overload a method
+  by return type, and restoring the old return would hide the child's owner on
+  the canonical derivation path. `into_context()` is the explicit transition to
+  an execution handle without cancellation authority.
+
+  Admitting a request-scoped root from the process lifecycle:
+
+  ```rust
+  // Before
+  let context = admission.admit(deadline)?;
+
+  // After
+  let owner = admission.admit_root(RootDeadline::at(deadline))?;
+  let context = owner.into_context();
+  ```
+
+  Sharing phases with tasks:
+
+  ```rust
+  // Before
+  let phases = context.reserve_finalization(reserve)?;
+  tokio::spawn(run(phases.clone()));
+
+  // After
+  let phases = context.reserve_finalization(reserve)?;
+  tokio::spawn(run(phases.work().clone()));
+  ```
+
+- Record the public-API diff between the 0.0.1 release and the current head
+  under `docs/evidence/public-api-diff-2026-10-09`. It confirms that the
+  operation-authority cut and the sealed HTTP assembly are the only removed or
+  renamed public items in the Batter packages since 0.0.1, and that the native
+  Runledger and Runlimit packages removed none; the two Runledger dead-letter
+  re-exports it lists moved modules and keep their public paths. Every public
+  hard cut now follows the rule in `AGENTS.md`: a `Breaking:` entry with
+  before/after code, the removed name in the replacement's rustdoc, and a
+  recorded shim decision.
 
 ## 0.0.1 — 2026-09-22
 

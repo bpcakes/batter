@@ -939,6 +939,35 @@ exit test detects the unlinked root. These are two executed evaluations against
 in-progress documentation, not a benchmark, and their scratch artifacts were not
 committed.
 
+### Whole-application baseline (`batter-k64t`)
+
+Executed on 2026-10-09; the record is `docs/evidence/whole-app-baseline-2026-10-09`.
+One general-purpose agent with no session context built a complete service from
+a Git-free copy of master (`71e37ea`) under a reading allowlist of public
+documentation only, in a scratch crate that declares only `batter` with the
+`axum` and `runledger` features plus registry crates: typed settings, an owned
+pool, schema setup, a POST route that inserts a row and records a durable job
+intent in one transaction, a GET route, probes, a `records.notify` handler with
+a bounded provider step and a final-state write, and signal-driven shutdown.
+Against an oracle frozen before launch, all eleven decision points were the
+canonical path or the documented alternative; none was wrong. The first build
+failed once, on a missing `PgScopeError` re-export and a by-value
+`CorrelationId`; `clippy -D warnings` needed three further rounds for test-code
+repairs and a production `result_large_err` allowance on `RecordsStore::create`
+that retains the complete atomic error. The crate passes build, clippy, fmt and
+26 tests, and the archived copy builds against this tree. No live PostgreSQL run
+was made.
+
+Separate from the eleven scored decisions, the agent reported eleven gaps:
+six documentation repairs, one missing re-export, two capability follow-ups,
+and two policy or default questions. The re-export and documentation repairs
+shipped in the same change. The capability follow-ups are one profiled pool
+owner shared with Runledger (`batter-nhu5`) and a handler test facility
+(`batter-3upk`). Shutdown budget sizing remains application policy; the consumer
+default between `PgSessionProfile::with_timeouts` and `new` remains unresolved
+and needs a maintainer decision. The evidence README records each disposition.
+This is one run of one agent and does not establish population reliability.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

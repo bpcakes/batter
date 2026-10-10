@@ -188,7 +188,10 @@ protected scope to adapter `_in` helpers rather than lending the complete
 supervisor. Application helpers that only register work take a concrete
 `batter::registration::Registration<'_>`, passed as `scope.registration()`.
 For a native SQLx pool, reserve its slot and call `batter_sqlx::pool_in`, then run
-an explicit bounded query or `probe`. Await `starting.wait()` to obtain the
+an explicit bounded query or `probe`. The protected scope exposes no operation
+context: clone the startup context before passing it to `Startup::scoped` and
+use that clone for the query and for other bounded initialization work, as the
+reference root does for native worker preparation. Await `starting.wait()` to obtain the
 `RunningSupervisor`; startup failure retains initialization and cleanup errors.
 The [HTTP example](../crates/batter/examples/http_service.rs) demonstrates
 this complete path with native listener binding and `HttpBoundary`; the

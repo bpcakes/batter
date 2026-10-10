@@ -172,6 +172,20 @@ PostgreSQL bootstrap allowance before failing that prerequisite; this is a
 bounded fixture readiness policy, not evidence that Docker always publishes a
 mapping or that the database is ready.
 
+On 2026-10-10, `batter-pasy.1` reproduced a different cause on Docker Desktop
+29.8.2: its backend log repeatedly failed to bind selected host port 55019 with
+`address already in use`, while independent inspection showed a running
+container with an empty published-port mapping for the full 30-second wait.
+The same bind failure appears in the earlier failed container's retained log.
+Rechecked locked testcontainers 0.28.0 source at `59792c3d6631218fb0da174d7093c719f58f7071`:
+[`ImageExt::with_mapped_port`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3d6631218fb0da174d7093c719f58f7071/testcontainers/src/core/image/image_ext.rs)
+records an explicit host-to-container mapping. Native fixtures now select a
+host-kernel-available port and pass it through that API. They release the local
+reservation before Docker binds, so this avoids an already occupied selection
+but does not guarantee an atomic handoff or eventual publication. The separate
+unexpected SSL response observed earlier is not independently reproduced by
+this mapping diagnosis. Logs and verification outcomes are recorded on the Bead.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,

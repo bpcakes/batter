@@ -87,6 +87,17 @@ pub use runledger_postgres::{
     run_atomic_fail_fast_with, run_atomic_with,
 };
 
+/// The error returned by non-policy [`PgIntentScope::application`] and
+/// [`PgQueueScope::application`]. Policy scopes' `sql` methods instead return
+/// the consumer error selected by [`PgFailurePolicy`].
+///
+/// This re-export needs no direct `batter-sqlx` import in consumer code and
+/// preserves the original type identity:
+/// ```
+/// let _: fn(batter_sqlx::PgScopeError<()>) -> batter_runledger::PgScopeError<()> = |e| e;
+/// ```
+pub use batter_sqlx::PgScopeError;
+
 /// The exact native Runledger packages this adapter resolves.
 ///
 /// These namespaces exist so one `batter` dependency can reach the native
