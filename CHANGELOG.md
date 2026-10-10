@@ -11,9 +11,10 @@ contracts, capability facts and validation history.
 - Re-export `PgScopeError` from `batter_runledger` (also `batter::runledger`),
   the error `PgIntentScope::application` returns, so a consumer that handles it
   needs no direct `batter-sqlx` import. A whole-application fresh-agent
-  baseline, recorded under `docs/evidence/whole-app-baseline-2026-10-09`, hit
-  its only build error on that missing re-export. The same baseline repaired
-  documentation: how to run bounded startup work inside the protected scope,
+  baseline, recorded under `docs/evidence/whole-app-baseline-2026-10-09`, first
+  failed to build on that missing re-export and four `CorrelationId` versus
+  `&CorrelationId` type mismatches. The baseline also informed documentation
+  repairs: how to run bounded startup work inside the protected scope,
   that `run_atomic` is bounded by wrapping it in `context.run`, that definition
   sync precedes `register_in`, that the runtime `sqlx::query_as` function is not
   a `PgNativeQuery`, that `AdmittedRequest::correlation_id` returns a reference,
