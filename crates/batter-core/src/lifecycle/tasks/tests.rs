@@ -1,5 +1,7 @@
 use super::*;
-use crate::lifecycle::{ComponentStartup, Fatal, ProcessAdmissionError, ProcessHandle, Readiness};
+use crate::lifecycle::{
+    ComponentStartup, Fatal, ProcessAdmissionError, ProcessHandle, Readiness, SupportObligation,
+};
 use std::{convert::Infallible, future::poll_fn, io, task::Poll};
 use tokio::sync::oneshot;
 
@@ -37,6 +39,7 @@ async fn cancelled_join_wait_keeps_each_failure_owned_and_recorded_once() {
         let mut tasks = TaskSet::default();
         tasks.spawn_component(Component {
             name: "component",
+            class: ComponentClass::Ordinary,
             lifecycle,
             factory: Box::new(move |startup, _| {
                 Box::pin(async move {
@@ -136,4 +139,41 @@ async fn finishing_unjoined_tasks_releases_ownership_without_claiming_terminatio
         .unwrap()
         .unwrap();
     assert_eq!(summary.unjoined, ["unfinished"]);
+}
+
+#[tokio::test]
+async fn unjoined_component_evidence_excludes_a_finite_task_sharing_its_name() {
+    let (coordinator, _approval) = LifecycleCoordinator::new(false);
+    coordinator.shared.start_driver();
+    let lifecycle = RegisteredComponent::new(&coordinator);
+    let (component_started, component_ready) = oneshot::channel();
+    let (finite_started, finite_ready) = oneshot::channel();
+    let mut tasks = TaskSet::default();
+    tasks.spawn_component(Component {
+        name: "lease.renewal",
+        class: ComponentClass::PeriodicSupport(SupportObligation::default()),
+        lifecycle,
+        factory: Box::new(move |startup, _| {
+            Box::pin(async move {
+                let _startup = startup;
+                component_started.send(()).unwrap();
+                std::future::pending().await
+            })
+        }),
+    });
+    // Finite labels are a separate vocabulary and may match a component name.
+    tasks.spawn_process(process::QueuedProcess {
+        name: "lease.renewal",
+        future: Box::pin(async move {
+            finite_started.send(()).unwrap();
+            std::future::pending().await
+        }),
+    });
+    component_ready.await.unwrap();
+    finite_ready.await.unwrap();
+    let summary = tasks.finish();
+    assert_eq!(summary.unjoined, ["lease.renewal", "lease.renewal"]);
+    // Component-scoped reconciliation sees exactly one entry, so a lost finite
+    // task cannot overwrite a joined component's published completion.
+    assert_eq!(summary.unjoined_components, ["lease.renewal"]);
 }

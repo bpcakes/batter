@@ -23,6 +23,10 @@ Windows support and non-Unix fallbacks are out of scope.
   Application composition uses the native adapter; descendant accounting stays native.
 - `src/lifecycle/state.rs` owns all readiness/admission facts and transitions;
   its private snapshot writer requires the admission mutex guard.
+- `src/periodic.rs` and `periodic/` own the one serial schedule, per-run budget,
+  startup acknowledgement policy, two library-owned stopping classes and
+  bounded recoverable-failure evidence. The operation remains application- or
+  native-owned.
 - `src/settings.rs` and `src/settings/` own explicit source/bound/redaction
   mechanics; application schemas and native adapter constructors stay outside.
 - `src/operation.rs`, `src/retry.rs`, and `src/admission.rs` bound application work.

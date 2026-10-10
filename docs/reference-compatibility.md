@@ -269,6 +269,22 @@ sources. Reproduce with the full revision and Cargo.lock. Runledger enables SQLx
 defaults internally; optional/target-specific entries in Cargo.lock do not add
 other database backends or non-Unix platforms to Batter's support policy.
 
+## Public report hard cuts
+
+`lifecycle::ShutdownReport` is constructed only by the supervisor's coordinator,
+and its public fields exist so an application can read every retained outcome.
+It gains fields as the foundation grows, so consumers must match it with `..`
+rather than exhaustively.
+
+| Change | Owning Bead | Effect on consumers |
+| --- | --- | --- |
+| Added `periodic: Vec<PeriodicRecord>` | `batter-s6vu` | Source-breaking for code that constructs `ShutdownReport` or destructures it exhaustively. No existing field changes name, type or meaning, and the new field is empty when no periodic component is registered. Recoverable periodic history alone does not change `is_success`. |
+
+This is a deliberate hard cut rather than a staged addition: the type is not
+persisted, queued, sent over a wire or bookmarked, so no two deploys can
+straddle an old and a new shape. The only migration is to add `..` to a match
+or stop constructing the report directly.
+
 ## Executable contracts
 
 Set `POSTGRES_TEST_ADMIN_URL` and `POSTGRES_TEST_OBSERVER_URL` to two distinct

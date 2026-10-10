@@ -11,8 +11,9 @@ Fast jump index for agent-facing guidance in this repository.
 - [Batter facade](./crates/batter/AGENTS.md): public re-exports, feature namespaces, and foundation examples.
 - [OTLP metrics](./crates/batter-otlp/AGENTS.md): explicit bounded export through protected service completion.
 - [At-rest encryption](./crates/batter-at-rest/AGENTS.md): standalone envelope format, stable MAC keys, Rust 1.94 portability, and detached MIT license metadata.
-- [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, finite commands, operations, retry,
-  cleanup, admission, dependency health, settings, and telemetry.
+- [Foundation](./crates/batter-core/AGENTS.md): lifecycle, startup, periodic maintenance,
+  finite commands, operations, retry, cleanup, admission, dependency health,
+  settings, and telemetry.
 - [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, browser credential
   transport, probes, rendering, operational defaults, and HTTP observations.
 - [SQLx adapter](./crates/batter-sqlx/AGENTS.md): native PostgreSQL leases,

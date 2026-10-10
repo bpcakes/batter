@@ -142,6 +142,15 @@ and initiate drain, retaining all failures in the bounded outstanding set. A
 plain application error cannot be propagated into a drain with `?`. Expected domain
 rejections are task values. This is not persistent scheduling or general fiber scope.
 
+Recurring maintenance is process lifetime with a library-owned schedule.
+`periodic::register_periodic_in` keeps one directly polled serial future per
+component: Batter owns the immediate-first, missed-tick-skipping cadence, the
+per-run deadline and cancellation lineage, the startup acknowledgement policy,
+the stopping class and the bounded diagnostics, while the application owns only
+the operation. Nothing is spawned per run, so invocations cannot overlap and
+there is no second scheduler beside the supervisor. This is not durable
+scheduling, a retry framework or a lease protocol.
+
 **Durable lifetime:** work persisted in Runledger. Durable work must not inherit
 an expiring HTTP cancellation token or serialize a Tokio Instant. Persist safe
 correlation metadata and give each job its own policy. Runledger owns leasing,
@@ -385,6 +394,22 @@ into the caller-owned driver, including before its first poll. Actual startup
 stays lazy. Shutdown distinguishes
 unobserved task results from unfinished tasks: ready joins are harvested at phase
 boundaries, and only unfinished tasks receive abort requests.
+
+Directly registered components carry one of two library-owned stopping classes.
+Ordinary components follow their cooperative drain protocol under the existing
+forced-cancellation and abort/reap limits. Within this class, a `StopAtDrain`
+periodic runner stops admission and destroys its active run when it observes
+drain. Periodic support components keep running bounded work until the
+coordinator closes support admission, which happens once ordinary direct work has been joined with
+observed results, queued and active finite work and admitted descendants are
+exhausted, and every retained managed outcome allows dependency cleanup.
+`lifecycle/tasks.rs` therefore classifies owned tasks instead of counting them
+together, and the drain phase observes native settlement rather than waiting for
+support to stop first. Support components are excluded from the predicate they
+await, and a boundary that is never reached closes support at the existing
+forced-cancellation step. Support work is joined or destroyed before finalizers.
+The two classes are deliberately not an application-managed token, join
+protocol, arbitrary dependency graph or third shutdown timer.
 
 The current policy deliberately skips dependent finalizers after panic, requested
 abort, or unjoined direct tasks. This is conservative: aborting an Axum wrapper,

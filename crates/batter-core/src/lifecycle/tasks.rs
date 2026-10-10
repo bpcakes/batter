@@ -4,8 +4,8 @@
 mod tests;
 
 use super::{
-    Component, LifecycleCoordinator, RegisteredComponent, ShutdownCause, TaskOutcome, TaskRecord,
-    process, receive_process,
+    Component, ComponentClass, LifecycleCoordinator, RegisteredComponent, ShutdownCause,
+    TaskOutcome, TaskRecord, managed::ManagedObserver, process, receive_process,
 };
 use crate::{BoxError, scoped_dispatch};
 use std::collections::HashMap;
@@ -20,9 +20,20 @@ pub(super) struct TaskExit {
     pub(super) expected: bool,
 }
 
+/// How one owned task is classified for stopping and escalation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskKind {
+    /// A directly registered ordinary component.
+    Component,
+    /// A directly registered component that supports others through drain.
+    Support,
+    /// An admitted finite process task.
+    Finite,
+}
+
 struct TaskMetadata {
     name: &'static str,
-    finite: bool,
+    kind: TaskKind,
     abort: AbortHandle,
 }
 
@@ -34,12 +45,17 @@ pub(super) struct TaskSet {
     names: HashMap<Id, TaskMetadata>,
     records: Vec<TaskRecord>,
     completed: u64,
+    // A joined panic or abort is observed termination, not evidence that the
+    // task's descendants released their dependencies. Retained here so the
+    // support boundary cannot treat it as settled work.
+    unsafe_ordinary_exit: bool,
 }
 
 impl TaskSet {
     pub(super) fn spawn_component(&mut self, component: Component) {
         let Component {
             name,
+            class,
             lifecycle:
                 RegisteredComponent {
                     startup,
@@ -48,24 +64,32 @@ impl TaskSet {
             factory,
         } = component;
         let classification = coordinator.clone();
+        let kind = match &class {
+            ComponentClass::Ordinary => TaskKind::Component,
+            ComponentClass::PeriodicSupport(_) => TaskKind::Support,
+        };
         let span = tracing::info_span!(target: "batter", "batter.task", task = name).or_current();
         let abort = self.set.spawn(scoped_dispatch::scope(
             async move {
                 let result = factory(startup, coordinator).await.map(|_exit| ());
                 // Capture the state at completion, never at delayed observation.
-                let expected = classification.is_draining();
+                // Initialized support work is expected to stop only at its own
+                // later point, so a success during ordinary drain remains an
+                // early exit. Support that never initialized abandons on drain
+                // exactly like any other component.
+                let expected = match &class {
+                    ComponentClass::PeriodicSupport(obligation) => {
+                        classification.shared.is_support_stopping()
+                            || (!obligation.assumed() && classification.is_draining())
+                    }
+                    ComponentClass::Ordinary => classification.is_draining(),
+                };
                 TaskExit { result, expected }
             }
             .instrument(span),
         ));
-        self.names.insert(
-            abort.id(),
-            TaskMetadata {
-                name,
-                finite: false,
-                abort,
-            },
-        );
+        self.names
+            .insert(abort.id(), TaskMetadata { name, kind, abort });
     }
 
     pub(super) fn spawn_process(&mut self, task: process::QueuedProcess) {
@@ -77,14 +101,19 @@ impl TaskSet {
             abort.id(),
             TaskMetadata {
                 name,
-                finite: true,
+                kind: TaskKind::Finite,
                 abort,
             },
         );
     }
 
-    fn sorted_names(&self) -> Vec<&'static str> {
-        let mut values: Vec<_> = self.names.values().map(|entry| entry.name).collect();
+    fn sorted_names(&self, keep: impl Fn(&TaskMetadata) -> bool) -> Vec<&'static str> {
+        let mut values: Vec<_> = self
+            .names
+            .values()
+            .filter(|entry| keep(entry))
+            .map(|entry| entry.name)
+            .collect();
         values.sort_unstable();
         values
     }
@@ -116,12 +145,18 @@ impl TaskSet {
     // Actual failures are retained and initiate shutdown before drain.
     fn record(&mut self, result: TaskResult) -> RecordedExit {
         let (id, mut outcome, error) = classify_task_result(result);
-        let TaskMetadata { name, finite, .. } = self
+        let TaskMetadata { name, kind, .. } = self
             .names
             .remove(&id)
             .expect("every owned task has metadata");
+        let finite = kind == TaskKind::Finite;
         if finite && outcome == TaskOutcome::Stopped {
             outcome = TaskOutcome::Completed;
+        }
+        if kind != TaskKind::Support
+            && matches!(outcome, TaskOutcome::Panicked | TaskOutcome::Aborted)
+        {
+            self.unsafe_ordinary_exit = true;
         }
         let exit = |cause| RecordedExit {
             cause,
@@ -180,7 +215,54 @@ impl TaskSet {
         coordinator: &LifecycleCoordinator,
         allowance: std::time::Duration,
     ) {
-        while self.pending(coordinator) {
+        self.collect_while(queued, coordinator, allowance, |_, _| {})
+            .await;
+    }
+
+    /// Drive the drain phase, closing support admission once the work that
+    /// support exists for has actually finished.
+    ///
+    /// Support components are excluded from the predicate they await. Native
+    /// settlement is observed here, during drain, rather than after support has
+    /// stopped: a joined wrapper or a published-but-unsafe report is not a
+    /// stopped proof, so the retained evidence must also allow dependency
+    /// cleanup. When the boundary is never reached, support closes at the
+    /// existing global forced-cancellation boundary instead.
+    pub(super) async fn drain_phase(
+        &mut self,
+        queued: &mut Option<mpsc::Receiver<process::QueuedProcess>>,
+        coordinator: &LifecycleCoordinator,
+        allowance: std::time::Duration,
+        managed: &[(&'static str, ManagedObserver)],
+    ) {
+        self.collect_while(queued, coordinator, allowance, |tasks, coordinator| {
+            if !coordinator.shared.is_support_stopping()
+                && tasks.ordinary_work_settled(coordinator)
+                && managed
+                    .iter()
+                    .all(|(_, observer)| observer.snapshot().allows_dependency_cleanup())
+            {
+                coordinator.shared.close_support();
+            }
+        })
+        .await;
+    }
+
+    /// Collect exits within one phase allowance, reassessing `each` before
+    /// every wait. The hook only observes the task set and the coordinator; it
+    /// neither owns nor joins work.
+    async fn collect_while(
+        &mut self,
+        queued: &mut Option<mpsc::Receiver<process::QueuedProcess>>,
+        coordinator: &LifecycleCoordinator,
+        allowance: std::time::Duration,
+        mut each: impl FnMut(&Self, &LifecycleCoordinator),
+    ) {
+        loop {
+            each(self, coordinator);
+            if !self.pending(coordinator) {
+                break;
+            }
             tokio::select! {
                 biased;
                 _ = coordinator.shared.phase_elapsed(allowance) => break,
@@ -191,6 +273,22 @@ impl TaskSet {
         // Expired allowances stop waiting, not observation of results that are
         // already available. Reconcile before escalation or final reporting.
         self.collect_ready(coordinator);
+    }
+
+    /// Whether every ordinary direct task has been joined with termination
+    /// evidence adequate for dependency cleanup, and no queued or active finite
+    /// work or admitted descendant remains.
+    ///
+    /// A joined panic or abort is deliberately not adequate: the same exit
+    /// makes the coordinator skip finalizers, and its descendants may still
+    /// need support. Support then closes at forced cancellation instead.
+    fn ordinary_work_settled(&self, coordinator: &LifecycleCoordinator) -> bool {
+        !self.unsafe_ordinary_exit
+            && !self
+                .names
+                .values()
+                .any(|task| task.kind != TaskKind::Support)
+            && !coordinator.shared.has_finite_tasks()
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -209,7 +307,11 @@ impl TaskSet {
 
     /// Release task ownership before the caller can start dependency cleanup.
     pub(super) fn finish(self) -> TaskSummary {
-        let unjoined = self.sorted_names();
+        let unjoined = self.sorted_names(|_| true);
+        // Finite labels are a separate vocabulary that may repeat and may
+        // match a registered component, so component-scoped reconciliation
+        // cannot use the combined diagnostic list.
+        let unjoined_components = self.sorted_names(|entry| entry.kind != TaskKind::Finite);
         let unsafe_exit = !unjoined.is_empty()
             || self.records.iter().any(|record| {
                 matches!(record.outcome, TaskOutcome::Panicked | TaskOutcome::Aborted)
@@ -218,6 +320,7 @@ impl TaskSet {
             records: self.records,
             completed: self.completed,
             unjoined,
+            unjoined_components,
             unsafe_exit,
         }
     }
@@ -226,7 +329,10 @@ impl TaskSet {
 pub(super) struct TaskSummary {
     pub(super) records: Vec<TaskRecord>,
     pub(super) completed: u64,
+    /// Every direct task whose completion was not observed, by diagnostic name.
     pub(super) unjoined: Vec<&'static str>,
+    /// Only the registered components among them, whose names are unique.
+    pub(super) unjoined_components: Vec<&'static str>,
     pub(super) unsafe_exit: bool,
 }
 

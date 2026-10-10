@@ -649,6 +649,54 @@ The helper combines results; it does not magically run teardown after panic or
 cancellation. A test that needs that behavior must drive the body in an owned
 task, observe its JoinError, and explicitly perform teardown afterward.
 
+## Register recurring maintenance instead of writing a drain-aware loop
+
+```rust
+use batter::{
+    operation::OperationContext,
+    periodic::{
+        PeriodicPolicy, PeriodicReader, PeriodicRun, PeriodicShutdown, PeriodicStartup,
+        register_periodic_in,
+    },
+    registration::Registration,
+};
+use std::{io, time::Duration};
+
+async fn prune(scope: OperationContext) -> PeriodicRun<io::Error> {
+    // `?` on an ordinary application error keeps the schedule running.
+    scope.check().map_err(io::Error::other)?;
+    Ok(())
+}
+
+// Call as `register_pruning(scope.registration())` inside `Startup::scoped`.
+fn register_pruning(
+    mut registration: Registration<'_>,
+) -> Result<PeriodicReader, batter::BoxError> {
+    let policy = PeriodicPolicy::new(
+        Duration::from_secs(30), // interval between invocation starts
+        Duration::from_secs(10), // total budget for one invocation
+        PeriodicStartup::immediate(),
+        PeriodicShutdown::StopAtDrain,
+    )?;
+    Ok(register_periodic_in(
+        &mut registration,
+        "storage.pruning",
+        policy,
+        prune,
+    )?)
+}
+```
+
+Select `PeriodicStartup::after_first_success(allowance)` when readiness should
+wait for one successful run, and `PeriodicShutdown::SupportThroughDrain` when
+other work still needs this component while it drains — a renewed lease, for
+example. The returned reader is optional: the same bounded evidence is already
+in `ShutdownReport::periodic`. Return `PeriodicFailure::Fatal(error)` only for a
+failure that must drain the process; recurrence itself proves nothing about a
+remote effect, so lease-loss and freshness policy stay in the application. The
+facade `worker` example shows both classes together with finite work that keeps
+draining while its lease is renewed.
+
 ## Sample health independently of HTTP traffic
 
 ```rust

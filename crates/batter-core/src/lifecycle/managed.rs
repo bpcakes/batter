@@ -220,6 +220,7 @@ impl Registration {
         let waiter = observer.clone();
         let component = Component {
             name,
+            class: super::ComponentClass::Ordinary,
             lifecycle,
             factory: Box::new(move |startup, coordinator| {
                 Box::pin(async move {
