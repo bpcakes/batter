@@ -8,6 +8,47 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Breaking: backfill the `Quota::run` work-future bound added after 0.0.1
+  (also `batter::runlimit::Quota::run`). Work futures must be `Send`; generic
+  wrappers must add `+ Send` to their `Fut: Future<Output = Result<T, E>>` bound.
+  In a generic wrapper's `where` clause:
+
+  ```rust,ignore
+  // Before:
+  Fut: Future<Output = Result<T, E>>,
+  // After:
+  Fut: Future<Output = Result<T, E>> + Send,
+  ```
+
+  For a future that retains shared data across an await, migrate captures:
+
+  ```rust,ignore
+  // Before: an Rc capture made the work future non-Send.
+  let shared = std::rc::Rc::new(String::from("record"));
+  quota.run(&context, checks, move |_| async move {
+      tokio::task::yield_now().await;
+      Ok::<_, std::convert::Infallible>(shared.len())
+  }).await;
+
+  // After: Arc<String> is Send; owned Send data is another option.
+  let shared = std::sync::Arc::new(String::from("record"));
+  quota.run(&context, checks, move |_| async move {
+      tokio::task::yield_now().await;
+      Ok::<_, std::convert::Infallible>(shared.len())
+  }).await;
+  ```
+
+  The factory closure itself has no `Send` bound. A synchronous factory can
+  extract owned `Send` data from thread-local state before creating the future.
+  No deprecated shim is retained: Rust cannot overload `run` by the future's
+  `Send` bound, and restoring its old bound would require a non-`Send` erased
+  work future, breaking the canonical handler/task composition. A separately
+  named local runner would be a new API, not source compatibility for old calls.
+- Native Runledger PostgreSQL fixtures select an available host TCP port before
+  publishing it through Docker, avoiding ports already occupied on the host
+  but unknown to Docker Desktop's VM allocator. The handoff is not atomic;
+  a later collision still fails startup. Bootstrap deadlines and cleanup stay
+  unchanged, and no application database operation is retried.
 - Re-export `PgScopeError` from `batter_runledger` (also `batter::runledger`),
   the error `PgIntentScope::application` returns, so a consumer that handles it
   needs no direct `batter-sqlx` import. A whole-application fresh-agent

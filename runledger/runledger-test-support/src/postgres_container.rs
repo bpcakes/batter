@@ -1,8 +1,9 @@
-use std::time::Duration;
+use std::{net::TcpListener, time::Duration};
 
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt, core::ContainerPort, runners::AsyncRunner,
+    ContainerAsync, ContainerRequest, GenericImage, ImageExt, core::ContainerPort,
+    runners::AsyncRunner,
 };
 
 use crate::container_lifecycle::{
@@ -90,7 +91,7 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
         .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
         .with_env_var("POSTGRES_DB", POSTGRES_DB)
         .with_label(PROCESS_OWNER_LABEL, process_owner_label_value());
-    let container = image.start().await.expect("start postgres container");
+    let container = start_postgres(image).await;
     let process_container = ProcessContainer::new(container).await;
 
     let port = resolve_host_port(process_container.container(), 5432).await;
@@ -101,6 +102,25 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
         admin_url,
         _container: Some(process_container),
     }
+}
+
+async fn start_postgres(image: ContainerRequest<GenericImage>) -> ContainerAsync<GenericImage> {
+    // Docker Desktop's VM allocator can choose a port occupied on the host.
+    // Ask the host kernel instead. Release immediately before Docker takes over;
+    // this is not an atomic handoff, so startup still fails if another process
+    // claims the port in between. Do not retry application database work.
+    let reservation = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
+        .expect("reserve available PostgreSQL host port");
+    let port = reservation
+        .local_addr()
+        .expect("reserved host address")
+        .port();
+    drop(reservation);
+    image
+        .with_mapped_port(port, ContainerPort::Tcp(5432))
+        .start()
+        .await
+        .expect("start postgres container on selected host port")
 }
 
 async fn resolve_host_port(container: &ContainerAsync<GenericImage>, internal_port: u16) -> u16 {
@@ -256,15 +276,13 @@ mod tests {
         let (repository, tag) = parse_image_ref(
             &std::env::var(TEST_PG_IMAGE_ENV).unwrap_or_else(|_| DEFAULT_POSTGRES_IMAGE.to_owned()),
         );
-        let container = GenericImage::new(repository, tag)
+        let image = GenericImage::new(repository, tag)
             .with_exposed_port(ContainerPort::Tcp(5432))
             .with_env_var("POSTGRES_USER", POSTGRES_USER)
             .with_env_var("POSTGRES_PASSWORD", POSTGRES_PASSWORD)
             .with_env_var("POSTGRES_DB", POSTGRES_DB)
-            .with_cmd(["sh", "-c", "sleep 12; exec docker-entrypoint.sh postgres"])
-            .start()
-            .await
-            .expect("start delayed PostgreSQL container");
+            .with_cmd(["sh", "-c", "sleep 12; exec docker-entrypoint.sh postgres"]);
+        let container = start_postgres(image).await;
         let port = resolve_host_port(&container, 5432).await;
         let admin_url = postgres_admin_url(port);
 
@@ -281,6 +299,28 @@ mod tests {
             .expect("read delayed PostgreSQL server version");
         eprintln!("delayed startup: PostgreSQL server_version={server_version}");
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn owned_postgres_leaves_an_existing_host_listener_untouched() {
+        if std::env::var_os(TEST_ADMIN_DATABASE_URL_ENV).is_some() {
+            return;
+        }
+        let occupied = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .expect("bind unrelated host listener");
+        occupied
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let image_ref =
+            std::env::var(TEST_PG_IMAGE_ENV).unwrap_or_else(|_| DEFAULT_POSTGRES_IMAGE.to_owned());
+        // Initialization proves PostgreSQL 18 and uuidv7 at the selected endpoint.
+        let postgres = initialize_owned_postgres(&image_ref).await;
+        let port = resolve_host_port(postgres._container.as_ref().unwrap().container(), 5432).await;
+        assert_ne!(port, occupied.local_addr().unwrap().port());
+        assert_eq!(
+            occupied.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     async fn postgres_18_admin_url(test_name: &str) -> String {

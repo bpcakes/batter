@@ -51,6 +51,9 @@ the `batter` section. The table below records the new package separately.
   `Result<OperationOwner, ConfigurationError>` now. Its before/after call shape
   and shim decision are recorded in the operation-authority entry; this change
   does not affect the generated entry counts below.
+  `Quota::run` also gained a `Send` bound on its work future in `128d79e`;
+  this manually checked bound change has no removed name. Its migration and
+  shim decision are recorded in the root changelog and method rustdoc.
 - A `use` entry changes when a re-export's source module moves, even when the
   public path is unchanged. Each such entry below was checked by hand.
 - Additions can also break source compatibility: variants added to an
@@ -69,7 +72,7 @@ the `batter` section. The table below records the new package separately.
 | batter-axum | 457 to 563 | 18 | One cut: eleven helpers moved to `low_level` (seventeen entries: eleven functions and six re-exports) and `AssembledHttp::into_router` (the eighteenth entry). Already recorded as `Breaking:` with before/after code; `low_level` and `in_process` now carry `Migration:` rustdoc. |
 | batter-sqlx | 1068 to 1153 | 0 | No removed or renamed public item since 0.0.1. The `PgLease::connection` and `return_to_pool` removal that a downstream consumer recorded happened before 0.0.1. |
 | batter-runledger | 22 to 50 | 0 | Additions only. |
-| batter-runlimit | 180 to 208 | 0 | Additions only. The denial-accessor change a consumer recorded happened before 0.0.1. |
+| batter-runlimit | 180 to 208 | 0 | Name additions plus a manually checked bound cut: `Quota::run` now requires a `Send` work future. The root changelog and method rustdoc cover migration. The denial-accessor change a consumer recorded happened before 0.0.1. |
 | batter-at-rest | 137 to 145 | 0 | Additions only. |
 | batter-test-support | 21 to 21 | 0 | Unchanged. |
 | batter | 16 to 17 | 0 | One added namespace (`otlp`). Facade modules re-export their adapters, so their contents are covered by the adapter rows. |
@@ -83,6 +86,10 @@ the `batter` section. The table below records the new package separately.
 
 No `#[deprecated]` shim is kept for the identified cuts.
 
+- `Quota::run`: Rust cannot overload the method by its work-future `Send` bound.
+  Restoring the old bound would require non-`Send` future erasure and break the
+  canonical handler/task composition; a separately named local runner would not
+  preserve existing calls. Migrate captures or generic wrapper bounds instead.
 - `OperationContext::new`, `at`, `under`: the core keeps compile-fail doctests
   that reject each constructor, so that every root is created through a visible
   `OperationOwner`. A deprecated constructor would restore root creation with no

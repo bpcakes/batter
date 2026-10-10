@@ -2657,6 +2657,12 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+Native fixtures ask the host kernel for an available TCP port and explicitly
+map it through Docker; Docker Desktop's VM allocator can otherwise select a
+port already occupied on the host. The reservation is released just before
+container start, so the handoff is not atomic and later collisions still fail.
+The existing-host-listener control checks that startup reaches PostgreSQL 18
+without touching an unrelated listener; delayed startup uses the same allocator.
 After container start, native test support polls Docker's published PostgreSQL
 port under a 30-second bootstrap allowance; a missing mapping still fails the
 test. Connection and PostgreSQL 18 checks follow that mapping.
