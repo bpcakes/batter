@@ -411,29 +411,33 @@ mod tests {
             assert!(rendered.contains(
                 "GRANT EXECUTE ON ROUTINE \"service\".\"normalize_note\"(\"pg_catalog\".\"text\")",
             ));
-            // Intent submission is column scoped, so no Runledger relation may
-            // carry the relation-wide read the full-schema snapshot needs. The
-            // check is scoped to the jobs schema because fixed-window cleanup
-            // legitimately holds relation-level `SELECT` on its own counter
-            // table, which it reads by `ctid`.
+            // Every serving selection is column scoped: intent submission never
+            // carries the relation-wide read the full-schema snapshot needs, and
+            // fixed-window cleanup identifies rows by primary key rather than by
+            // a system column that would need relation-level `SELECT`.
             let relation_wide = relation_wide_select_targets(&rendered);
             assert!(
-                !relation_wide
-                    .iter()
-                    .any(|target| target.starts_with("\"jobs\".")),
-                "a serving role received a relation-wide read on a Runledger relation: {relation_wide:?}",
+                relation_wide.is_empty(),
+                "a serving role received a relation-wide read: {relation_wide:?}",
             );
         }
         assert!(render(&INTENT_WRITER).contains("ON TABLE \"quotas\".\"runlimit_fixed_windows\""));
-        // The check above is only worth anything if it sees combined statements,
-        // which is exactly what a substring search for `GRANT SELECT ON TABLE`
-        // missed: fixed-window cleanup renders `GRANT SELECT, DELETE ON TABLE`
-        // on its own counter table, and that read is legitimate.
-        assert!(
-            relation_wide_select_targets(&render(&INTENT_WRITER))
-                .contains(&"\"quotas\".\"runlimit_fixed_windows\"".to_owned()),
-        );
         assert!(render(&WORKER_SERVICE).contains("ON TABLE \"quotas\".\"runlimit_gcra\""));
+    }
+
+    #[test]
+    fn relation_wide_reads_are_found_inside_combined_grants() {
+        // The emptiness check above is only worth anything if combined
+        // statements are read, which is exactly what a substring search for
+        // `GRANT SELECT ON TABLE` misses.
+        assert_eq!(
+            relation_wide_select_targets(
+                "GRANT SELECT (\"id\"), UPDATE (\"id\") ON TABLE \"a\".\"columns\" TO \"r\";\n\
+                 GRANT SELECT, DELETE ON TABLE \"a\".\"combined\" TO \"r\";\n\
+                 GRANT DELETE ON TABLE \"a\".\"delete_only\" TO \"r\";\n",
+            ),
+            ["\"a\".\"combined\""],
+        );
     }
 
     #[test]

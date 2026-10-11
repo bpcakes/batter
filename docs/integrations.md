@@ -751,8 +751,20 @@ enables fixed-window/GCRA error bridges; `postgres` enables the native error
 bridge and canonical outcome-aware attempt runner; `axum` selects HTTP assembly.
 Policies, hashed subject keys, atomic batch validation, quota algorithms, storage,
 transactions and migrations remain Runlimit's responsibilities. PostgreSQL
-initialization and maintenance remain application/native-owned. The reference
-service has not adopted this adapter. Explicit live attempt acceptance and its
+initialization and pools remain application/native-owned. Expiry maintenance is
+not: `maintenance::register_in` is the canonical construction of a supervised
+PostgreSQL limiter. It registers the native limiter's `cleanup_expired` as a
+periodic component through the supplied registration authority and returns the
+`MaintainedLimiter` that `Quota::new` and the HTTP assembly serve, so cleanup
+cannot be omitted on that path. Each run deletes at most the configured nonzero
+row bound on the limiter's own pool and login, within a budget derived from the
+native acquisition and operation timeouts, and every failure stays recoverable.
+The login needs its store's admission and expiry-cleanup `grants` selections;
+choose `PeriodicStartup::after_first_success` to withhold readiness until one
+cleanup has committed under it. A native `postgres` limiter used directly is the
+unmaintained low-level form. See
+[the maintained storage contract](guarantees.md#maintained-runlimit-postgresql-storage).
+The reference service has not adopted this adapter. Explicit live attempt acceptance and its
 limits are documented in the adapter README and testing guide.
 
 `Quota::run(context, Checks::new(&checks)?, work_factory)` performs one native

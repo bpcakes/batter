@@ -59,6 +59,20 @@ synthetic peer. See the
 [facade compiling example](../batter/examples/quota_service.rs), [API docs](src/http.rs) and
 [integration contract](../../docs/integrations.md#runlimit-optional-protected-native-quota-adapter).
 
+## Maintained PostgreSQL storage
+
+With `postgres`, `maintenance::register_in(scope, name, limiter, maintenance)`
+is the canonical construction of a supervised PostgreSQL limiter. It registers
+the native `PostgresLimiter` or `PostgresGcraLimiter`'s `cleanup_expired` as a
+periodic component and only then returns the `MaintainedLimiter` that
+`Quota::new` and `HttpQuota` serve. `ExpiryMaintenance` takes the interval, a
+nonzero row bound per run, the startup policy and the stopping class; the run
+budget is derived from the native timeouts. The limiter's login needs its store's
+admission and expiry-cleanup `grants` selections, neither of which needs
+relation-level `SELECT`. A native limiter served directly is the unmaintained
+low-level form. See the [module documentation](src/maintenance.rs) and the
+[maintained storage contract](../../docs/guarantees.md#maintained-runlimit-postgresql-storage).
+
 ## Outcome-aware attempts
 
 The optional `postgres` feature also exposes `attempts::AttemptRunner` and the

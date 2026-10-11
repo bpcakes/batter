@@ -267,7 +267,11 @@ CROSS JOIN response
 ORDER BY input.input_position
 ";
 
-pub(crate) const CLEANUP_SQL: &str = include_str!("cleanup_expired.sql");
+// The imported `cleanup_expired.sql` stays byte-identical as a digest-guarded
+// provenance record. It selected victims by `ctid`, a system column that
+// PostgreSQL checks against relation-level SELECT; this successor identifies
+// them by primary key so a cleanup login needs only column privileges.
+pub(crate) const CLEANUP_SQL: &str = include_str!("cleanup_expired_by_key.sql");
 
 pub(crate) fn is_server_timeout(error: &Error) -> bool {
     let sqlx::Error::Database(database_error) = error else {
@@ -299,4 +303,24 @@ pub(crate) fn advisory_lock_id(counter_key: CounterKey) -> i64 {
 
 pub(crate) fn capacity_shard(counter_key: CounterKey) -> i16 {
     i16::from(counter_key.fingerprint().as_bytes()[0] ^ counter_key.subject().as_bytes()[0])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CLEANUP_SQL;
+
+    #[test]
+    fn cleanup_query_identifies_rows_without_system_columns() {
+        // A system-column read needs relation-level SELECT, which would let a
+        // cleanup login read every counter column. The primary key is grantable
+        // column by column.
+        for system_column in ["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"] {
+            assert!(
+                !CLEANUP_SQL.contains(system_column),
+                "cleanup reads the {system_column} system column"
+            );
+        }
+        assert!(CLEANUP_SQL.contains("windows.config_fingerprint = expired.config_fingerprint"));
+        assert!(CLEANUP_SQL.contains("AND windows.subject_key = expired.subject_key"));
+    }
 }

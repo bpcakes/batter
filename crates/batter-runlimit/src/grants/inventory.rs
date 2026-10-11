@@ -126,12 +126,17 @@ const FIXED_WINDOW_ADMISSION: &[Requirement] = &[
 const FIXED_WINDOW_EXPIRY_CLEANUP: &[Requirement] = &[
     Requirement {
         relation: FIXED_WINDOWS,
-        // The bounded delete identifies its victims by `ctid`. PostgreSQL checks
-        // system-column reads against relation-level SELECT, never column
-        // privileges, so this selection reads every counter column including the
-        // retained policy and scope metadata.
-        relation_privileges: &[ObjectPrivilege::Delete, ObjectPrivilege::Select],
-        select: &[],
+        // The bounded delete identifies its victims by primary key, so it reads
+        // only the key, the expiry it orders by and the shard it locks. It never
+        // reads a system column, which would need relation-level SELECT, so the
+        // counters' usage and policy and scope metadata stay unreadable.
+        relation_privileges: &[ObjectPrivilege::Delete],
+        select: &[
+            "capacity_shard",
+            "config_fingerprint",
+            "subject_key",
+            "window_expires_at",
+        ],
         insert: &[],
         update: &["window_expires_at"],
     },

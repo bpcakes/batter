@@ -419,6 +419,7 @@ def identity_source(selected: tuple[str, ...]) -> str:
             "const _: fn() = postgres_bridge::<runlimit_postgres::BatchCheckError>;",
             "const _: fn(batter::runlimit::attempts::AttemptRunner) = |_: batter_runlimit::attempts::AttemptRunner| {};",
             "const _: fn(batter::runlimit::postgres::PostgresLimiter) = |_: runlimit_postgres::PostgresLimiter| {};",
+            "const _: fn(batter::runlimit::maintenance::MaintainedLimiter<runlimit_postgres::PostgresLimiter>) = |_: batter_runlimit::maintenance::MaintainedLimiter<runlimit_postgres::PostgresLimiter>| {};",
         ]
     if "runlimit-native-http" in chosen:
         lines += [
@@ -589,6 +590,8 @@ def negative_cases() -> list[tuple[tuple[str, ...], str, str]]:
         (("runledger",), "runledger-test-support", "batter::runledger::native::test_support"),
         (("runlimit",), "runlimit-memory", "batter::runlimit::memory"),
         (("runlimit",), "runlimit-postgres", "batter::runlimit::postgres"),
+        # A selected memory backend must not expose PostgreSQL maintenance.
+        (("runlimit-memory",), "runlimit-postgres", "batter::runlimit::maintenance"),
         (("runlimit",), "runlimit-native-http", "batter::runlimit::native_transport"),
         (("runlimit-native-http",), "runlimit-native-axum",
          "batter::runlimit::native_transport::axum"),

@@ -66,8 +66,9 @@ a check leaves `Unresolved`. A published terminal fact cannot be replaced with a
 later timeout/nonterminal fact through this API.
 This observation capability is not authentication or quota authority: the
 supported adapter still owns recording native truth. Application authorization, proxy trust,
-backend initialization/maintenance, body streaming and detached descendants stay
-outside these guarantees. Memory atomicity and offline native error/type tests
+backend initialization, body streaming and detached descendants stay outside
+these guarantees; PostgreSQL expiry maintenance is covered by
+[maintained Runlimit PostgreSQL storage](#maintained-runlimit-postgresql-storage). Memory atomicity and offline native error/type tests
 are not live PostgreSQL or fresh-agent usability evidence.
 
 ## Execution boundary
@@ -1071,6 +1072,60 @@ component's protected dispatch, and recoverable history alone does not make
 checked lifecycle completion fail. Terminal task failures, unjoined work and
 unsuccessful cleanup keep their existing failure meaning.
 
+## Maintained Runlimit PostgreSQL storage
+
+Native PostgreSQL quota storage keeps an expired counter, and the capacity slot
+it occupies, until a bounded `cleanup_expired` call deletes it; a full shard then
+denies new keys. `batter_runlimit::maintenance::register_in` (facade
+`batter::runlimit::maintenance`, feature `runlimit-postgres`) is the canonical
+construction of a supervised PostgreSQL limiter. It takes a native
+`PostgresLimiter` or `PostgresGcraLimiter` and a validated `ExpiryMaintenance`,
+registers that limiter's cleanup through `periodic::register_periodic_in`, and
+only then returns the `MaintainedLimiter` the application serves with.
+`MaintainedLimiter` has no other constructor, so the protected path cannot produce
+a PostgreSQL limiter whose cleanup was never registered. It implements the native
+`Limiter` trait by delegating each check unchanged, so `Quota::new` and the HTTP
+assembly serve it exactly as they serve the native limiter. The native limiters
+remain reachable through `batter_runlimit::postgres` as the named, unmaintained
+low-level form: nothing deletes their expired rows unless the caller schedules
+cleanup itself.
+
+Registration is inert and validated like any periodic component: an invalid or
+duplicate name is rejected and nothing touches the database before the
+supervisor starts it. `ExpiryMaintenance` takes a nonzero row bound, because the
+native call treats zero as "do nothing", and validates its interval with the
+`PeriodicPolicy` rules. Each run calls the native `cleanup_expired` once, on the
+limiter's own pool, login and configuration, deleting at most that many expired
+rows; there is no second cleanup query in the adapter. The per-run budget is not
+selectable: it is the limiter's pool-acquisition timeout plus its operation
+timeout plus one second, so the native bounds report a slow acquisition or
+statement with their own `MaintenanceError` classification before the periodic
+deadline could destroy the run and discard it. An executed negative control that
+shortened the derived budget below the acquisition bound turned that native
+classification into an unclassified `deadline_exceeded` run. Every native
+maintenance failure, including an uncertain commit that may have removed rows, is
+retained as a recoverable periodic failure; maintenance never initiates a drain.
+Removed-row counts reach a native observer installed on the limiter.
+
+Maintenance runs under the limiter's login, which therefore needs both its
+store's admission selection and its expiry-cleanup selection from
+`batter_runlimit::grants`. Neither cleanup selection needs relation-level
+`SELECT`. A cleanup transaction checks its privileges even when nothing has
+expired, so `PeriodicStartup::after_first_success` withholds readiness until one
+cleanup has committed under that login; with `PeriodicStartup::immediate` a
+missing grant appears only as recurring retained failures while the process
+serves. Every stopping class is joined or destroyed before finalizers run, so a
+pool closed by a cleanup finalizer such as `batter_sqlx::pool_in` begins to
+close only after maintenance has stopped and any active run has been destroyed;
+the destroyed run closes its own connection.
+
+Registration does not prove that the schema is installed, that rows were
+removed, or that cleanup keeps pace: each run skips rows locked by concurrent
+admission and removes at most its row bound per interval. Migrations, pools and
+their ownership remain the application's. The offline `maintenance` tests in
+`batter-runlimit` and the two `maintenance_cases` live cases in the facade's
+`grants_live` suite are the evidence for these statements.
+
 ## Dependency health sampling
 
 `HealthMonitor` owns one native probe factory and creates no tasks. Constructing
@@ -1507,7 +1562,11 @@ holds submitted request data, releasing an unstarted claim deletes its
 `job_attempts` row, and `MAINTAIN` on the catalog relations also permits
 `VACUUM`, `ANALYZE`, `REINDEX` and `CLUSTER`. A column-restricted fragment bounds
 which columns a login reads; it is not a payload-secrecy, row-level, tenant
-isolation or history-protection claim. Runledger's full-schema snapshot is a
+isolation or history-protection claim. No Runlimit selection needs
+relation-level `SELECT`: fixed-window expiry cleanup identifies expired rows by
+primary key rather than by the `ctid` system column, whose read PostgreSQL checks
+against relation-level `SELECT`, so a cleanup login cannot read a counter's usage
+or policy and scope metadata. Runledger's full-schema snapshot is a
 separate relation-level selection because PostgreSQL checks `LOCK TABLE` against
 relation privileges, and the direct-job requirements support a direct-only
 workload: workflow-linked rows reach the same hooks and reaper, so they establish

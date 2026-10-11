@@ -1053,6 +1053,49 @@ form, which the PostgreSQL lifecycle and reference roots still use. Fresh-agent
 implementation and modification evaluations remain proposed and unexecuted for
 this API.
 
+### Maintained Runlimit storage assessment (`batter-z4m9`)
+
+The same read-only two-consumer survey that motivated periodic components found
+native GCRA storage cleanup omitted entirely in one consumer and hand-written as a
+supervised future in the other, which had also deferred work because native
+fixed-window cleanup read `ctid` and so needed relation-level `SELECT` for its
+maintenance login. Expired counters keep their capacity slots until deleted, so
+the omission eventually turns into storage-capacity denials. A PostgreSQL limiter
+that a service serves from without registered cleanup was therefore reachable
+from the canonical path, and only documentation said otherwise.
+
+`maintenance::register_in` is now the only constructor of `MaintainedLimiter`,
+the value a service serves through `Quota::new` or the HTTP assembly, and it
+registers cleanup through the existing periodic authority before returning it.
+Holding the canonical value is therefore evidence that cleanup was registered
+for that same native limiter. Maintenance runs on that limiter's own pool, login
+and configuration rather than a separately supplied pool, so a maintenance pool
+naming different storage than the serving pool, which no local check could
+detect, is not expressible; for either store, combining the cleanup selection
+with admission adds only `DELETE` and `SELECT (capacity_shard)` on the counter
+relation. A zero row bound, which the native call treats as "do nothing", is
+unrepresentable through `NonZeroU32`. The per-run budget is derived from the
+native acquisition and operation timeouts instead of being chosen, so the
+deadline relationship that keeps native failure classification from being
+destroyed by a shorter outer deadline is library-owned rather than a caller
+instruction, and an executed negative control shows what it prevents. Maintenance
+failures are always recoverable, so a transient database failure cannot drain
+the process, while `after_first_success` lets an application make a missing grant
+or schema fail startup.
+
+What remains an obligation is stated rather than designed away. The native
+limiters stay reachable through `batter::runlimit::postgres`, because native
+reachability and type identity are a recorded decision (`batter-0jsf`) and
+migration, finite commands and caller-owned schedules legitimately use them; they
+are documented as the unmaintained low-level form. `Quota::new` still accepts any
+`Limiter`: restricting it would be a hard cut on the memory and application-owned
+backends and cannot be expressed for one native type without negative reasoning,
+so the protection is that the routing table, module documentation and examples
+lead to `register_in`. Grants, installed schema and keeping pace with expiry are
+remote effects: registration proves none of them, and the startup policy only
+detects the first two. Fresh agent implementation and modification evaluations
+remain proposed and unexecuted for this API.
+
 ### Whole-application baseline (`batter-k64t`)
 
 Executed on 2026-10-09; the record is `docs/evidence/whole-app-baseline-2026-10-09`.

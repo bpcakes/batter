@@ -100,6 +100,7 @@ def main():
                     source += "use batter_runlimit::memory::MemoryStore;\n"
                 if "postgres" in selected:
                     source += "use batter_runlimit::postgres::PostgresLimiter;\n"
+                    source += "use batter_runlimit::maintenance::MaintainedLimiter;\n"
                 if "native-http" in selected:
                     source += "use batter_runlimit::native_transport::http::draft_11;\n"
                 if "native-axum" in selected:

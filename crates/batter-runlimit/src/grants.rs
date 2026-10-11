@@ -28,11 +28,15 @@
 //!   `subject_key` are never updatable.
 //! * `DELETE` on an expiry-cleanup store is relation-wide authority over those
 //!   rows. No history-protection, tenant-isolation or secrecy claim follows.
-//! * Fixed-window expiry cleanup additionally needs relation-level `SELECT`,
-//!   because its bounded delete identifies victims by the `ctid` system column
-//!   and PostgreSQL checks system-column reads against relation privileges. A
-//!   login that selects that cleanup therefore reads every counter column,
-//!   including the retained `policy_id` and `scope_id` metadata.
+//! * No selection needs relation-level `SELECT`. Fixed-window expiry cleanup
+//!   identifies victims by primary key and reads only `capacity_shard`,
+//!   `config_fingerprint`, `subject_key` and `window_expires_at`, so a
+//!   cleanup-only login cannot read a counter's `used` count or its retained
+//!   `policy_id` and `scope_id` metadata.
+//!
+//! [`crate::maintenance::register_in`] runs a limiter's expiry cleanup on the
+//! limiter's own pool, so that login needs the admission and the cleanup
+//! selection of its store; see [`crate::maintenance`].
 
 mod inventory;
 

@@ -104,7 +104,9 @@ snapshots built on those SQLx scopes. It also translates owned native
 preparation, initialization, stop clocks and complete settlement into managed
 process ownership; native supervision and durable policy remain in Runledger.
 The optional `batter-runlimit`
-adapter owns quota-before-work execution, not a second limiter. Its HTTP boundary
+adapter owns quota-before-work execution, not a second limiter, and its
+supervised PostgreSQL limiter construction registers the native expiry cleanup as
+a periodic component rather than adding a cleanup engine. Its HTTP boundary
 owns async authentication, one atomic native batch, body ordering and retained
 quota facts; its opaque prepared service owns the required serving metadata.
 Bulkhead bounds simultaneous work; Runlimit accounts usage over time. Neither

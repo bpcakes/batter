@@ -14,6 +14,8 @@
 
 #[path = "grants_live/control_cases.rs"]
 mod control_cases;
+#[path = "grants_live/maintenance_cases.rs"]
+mod maintenance_cases;
 #[path = "grants_live/policy.rs"]
 mod policy;
 #[path = "grants_live/quota_cases.rs"]
