@@ -289,10 +289,16 @@ where
 
 /// Destroy rejected output, retaining its panic unless an earlier one exists.
 fn discard<T>(unused: T, destruction_panic: &mut Option<PanicPayload>) {
-    if let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(unused)))
-        && destruction_panic.is_none()
-    {
+    let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(unused))) else {
+        return;
+    };
+    if destruction_panic.is_none() {
         *destruction_panic = Some(PanicPayload::new(payload));
+    } else if !payload.is::<String>() && !payload.is::<&'static str>() {
+        // Cleanup has not run yet. An opaque payload's destructor may panic
+        // again, so only known string payloads are released; this
+        // intentionally leaks other allocations, as native containment does.
+        std::mem::forget(payload);
     }
 }
 

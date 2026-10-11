@@ -347,7 +347,9 @@ reservation across await, real request handling and join-before-finalization.
 arrives only with the running or unapproved owner while the observer sees the
 plain handoff; output returned in the poll that observes drain or cancellation
 is destroyed before cleanup and never handed off; its destructor panic is
-retained with cleanup still run; dropping the owner after handoff destroys the
+retained with cleanup still run; a second output panic whose payload panics on
+drop, after the future's own destruction panic, still reaches cleanup with the
+first payload retained; dropping the owner after handoff destroys the
 queued output and drains; returned errors and polling panics yield no output;
 `ApplicationError` failures propagate with `?` into `BoxError` while the
 concrete cause stays downcastable and unprinted; and a unit async initializer

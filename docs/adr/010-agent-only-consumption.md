@@ -1044,8 +1044,10 @@ test rather than hidden.
 What the API does not claim: typed output is application data, not a readiness or
 liveness witness. Rejected output is destroyed on the coordinator task; an
 unclaimed handoff is destroyed wherever the owner or its queued value drops. If both
-the future's and the output's destructors panic, the earlier payload is retained
-and the later one dropped. Delivery through `ServiceOwner` belongs to
+the future's and the output's destructors panic, the earlier payload is retained.
+The later one is released only when it is a known string payload; an opaque
+payload is intentionally leaked, following the native containment above, because
+its own destructor could panic before cleanup runs. Delivery through `ServiceOwner` belongs to
 `batter-m9rp`. `Startup::scoped` and `StartupFuture` remain the lower-level boxed
 form, which the PostgreSQL lifecycle and reference roots still use. Fresh-agent
 implementation and modification evaluations remain proposed and unexecuted for

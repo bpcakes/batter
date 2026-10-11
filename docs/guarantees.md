@@ -759,7 +759,9 @@ failure carries no output. Output returned in the same poll that observes drain,
 cancellation or deadline, or followed by a destruction panic or a failed final
 lifecycle check, is destroyed before cleanup. Its destructor panic is retained in
 `destruction_panic` unless the initializer future's own destruction panic already
-occupies that field, in which case the later payload is dropped. Dropping the
+occupies that field. The later payload is then released only when it is a
+`String` or `&'static str`; any other payload is intentionally leaked, because its
+destructor could panic again inside the coordinator before cleanup. Dropping the
 starting owner instead of waiting destroys the queued owner and output together,
 on the dropping task or the monitor task, and requests drain. `wait` exists only for unit output. `service::start` accepts only unit
 output and does not deliver typed output.

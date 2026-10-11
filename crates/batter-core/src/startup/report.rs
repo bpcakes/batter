@@ -98,8 +98,10 @@ pub struct StartupFailure<E> {
     /// An independent panic while destroying the initializer future or, after
     /// a successful return that startup then rejected, its unused typed output.
     /// Both are destroyed before cleanup; if both panic, the future's payload is
-    /// retained and the output's later payload is dropped. It never replaces a
-    /// returned application failure or polling panic.
+    /// retained. The output's later payload is then released only when it is a
+    /// `String` or `&'static str`; any other payload is intentionally leaked,
+    /// because its destructor could panic again before cleanup. It never
+    /// replaces a returned application failure or polling panic.
     pub destruction_panic: Option<PanicPayload>,
     /// All explicitly driven finalizer outcomes.
     pub cleanup: CleanupReport,

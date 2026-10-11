@@ -235,6 +235,77 @@ async fn rejected_output_destructor_panic_is_retained_and_cleanup_still_runs() {
 }
 
 #[tokio::test]
+async fn secondary_output_panic_with_a_panicking_payload_cannot_bypass_cleanup() {
+    /// A `panic_any` payload whose own destructor panics again.
+    struct PanickingPayload;
+    impl Drop for PanickingPayload {
+        fn drop(&mut self) {
+            panic!("secondary-payload-drop-marker");
+        }
+    }
+    struct OutputPanics;
+    impl Drop for OutputPanics {
+        fn drop(&mut self) {
+            std::panic::panic_any(PanickingPayload);
+        }
+    }
+    struct FuturePanics;
+    impl Drop for FuturePanics {
+        fn drop(&mut self) {
+            panic!("future-destruction-marker");
+        }
+    }
+    /// Completes with output, then panics when the completed future is destroyed.
+    struct Completing(FuturePanics, Option<OutputPanics>);
+    impl std::future::Future for Completing {
+        type Output = Result<OutputPanics, RegistrationError>;
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Ready(Ok(self.1.take().expect("polled once")))
+        }
+    }
+
+    let events = Events::default();
+    let mut process = supervisor();
+    let cleanup_events = events.clone();
+    process
+        .reserve_cleanup("resource")
+        .unwrap()
+        .register(move || async move {
+            cleanup_events.lock().unwrap().push("cleanup");
+            Ok(())
+        });
+    let mut starting = batter_core::startup::Startup::protected(
+        process,
+        context(),
+        cleanup_budget(),
+        |_scope: &mut batter_core::startup::ProtectedStartupScope| {
+            Completing(FuturePanics, Some(OutputPanics))
+        },
+    )
+    .start();
+    let Err(StartupError::Failed(report)) = starting.wait_with_output().await else {
+        panic!("the coordinator must retain a report and run cleanup")
+    };
+    assert!(matches!(report.cause, StartupCause::DestructionPanicked));
+    report
+        .destruction_panic
+        .as_ref()
+        .unwrap()
+        .try_inspect(|payload| {
+            assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"future-destruction-marker")
+            );
+        })
+        .unwrap();
+    assert!(report.cleanup.is_success());
+    assert_eq!(*events.lock().unwrap(), ["cleanup"]);
+}
+
+#[tokio::test]
 async fn dropping_the_starting_owner_after_handoff_destroys_queued_output_and_drains() {
     let events = Events::default();
     let output_events = events.clone();
