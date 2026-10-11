@@ -998,6 +998,59 @@ exit test detects the unlinked root. These are two executed evaluations against
 in-progress documentation, not a benchmark, and their scratch artifacts were not
 committed.
 
+### Typed startup initializer assessment (`batter-syah`)
+
+A read-only two-consumer survey recorded every protected initializer written as
+`Box::pin(async move { ... })`, a bound address passed out of startup through a
+oneshot channel and `expect`, a separate address announcement in the reference
+root, anyhow errors converted to `std::io::Error` six times, and adapter newtypes
+that make boxed initializer errors implement `std::error::Error`. Carrying values
+out by a side channel and adapting errors so that `?` works are the repeated
+caller obligations this ADR names. That survey is historical evidence, not a
+current measurement.
+
+The canonical path now removes them. `Startup::protected` takes an owned async
+closure, and the library boxes its future, so a caller cannot box incorrectly or
+need a channel: the closure's `Ok` value is the typed output. It travels only in
+the one-shot handoff. `StartingSupervisor::wait_with_output` returns it with the
+running or unapproved owner, observers receive only the supervisor observer, and
+every failure variant carries none, so a failed initializer cannot yield output.
+Output returned in the same poll that observes drain, cancellation or deadline,
+or followed by a destruction panic or a failed final check, is destroyed before
+cleanup instead of being delivered. `wait` exists only for unit output, so a
+typed value cannot be skipped by an ordinary call, and `service::start` accepts
+only unit output rather than silently dropping a value it does not yet deliver.
+The output must be `Send + 'static`, so it cannot carry a scope borrow, a
+cleanup reservation or a registration view out of startup. A non-`Send` future is
+rejected when the specification is built. Stable Rust cannot name an
+`AsyncFnOnce` future, so `Initializer` states that bound through a sealed
+higher-ranked helper; generic code cannot derive `AsyncFnOnce` from an `FnOnce`
+bound, so that helper, not `AsyncFnOnce`, is what `start` and `service::start`
+require. Existing boxed closures therefore keep their exact `start` turbofish and
+generic bounds.
+
+Errors stay concrete. Rust coherence forbids implementing `std::error::Error` for
+`InitializationError<BoxError>` or `InitializationError<anyhow::Error>` beside
+the generic `E: Error` implementation, because an upstream crate may add `Error`
+for either. `ApplicationError` is therefore a local opt-in type that deliberately
+does not implement `Error`. That makes its `From<impl Into<BoxError>>` conversion
+coherent and lets `InitializationError<ApplicationError>` implement `Error`
+directly, with the retained box as its source. The box is kept unchanged, so a
+concrete cause stays downcastable. A raw `BoxError` or `anyhow::Error` initializer
+error remains a compile error at the `?` boundary, not a silent loss. anyhow's own
+conversion wraps its head error; that limit is documented and pinned by a facade
+test rather than hidden.
+
+What the API does not claim: typed output is application data, not a readiness or
+liveness witness. Rejected output is destroyed on the coordinator task; an
+unclaimed handoff is destroyed wherever the owner or its queued value drops. If both
+the future's and the output's destructors panic, the earlier payload is retained
+and the later one dropped. Delivery through `ServiceOwner` belongs to
+`batter-m9rp`. `Startup::scoped` and `StartupFuture` remain the lower-level boxed
+form, which the PostgreSQL lifecycle and reference roots still use. Fresh-agent
+implementation and modification evaluations remain proposed and unexecuted for
+this API.
+
 ### Whole-application baseline (`batter-k64t`)
 
 Executed on 2026-10-09; the record is `docs/evidence/whole-app-baseline-2026-10-09`.

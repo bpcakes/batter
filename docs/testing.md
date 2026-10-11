@@ -343,6 +343,21 @@ awaits shutdown/resource release. The protected example reserves cleanup and
 registers a critical component without supervisor access. `tests/protected_startup.rs`
 checks typed error retention before destructor panic, observer identity, direct
 reservation across await, real request handling and join-before-finalization.
+`tests/typed_startup.rs` drives `Startup::protected` async closures: typed output
+arrives only with the running or unapproved owner while the observer sees the
+plain handoff; output returned in the poll that observes drain or cancellation
+is destroyed before cleanup and never handed off; its destructor panic is
+retained with cleanup still run; dropping the owner after handoff destroys the
+queued output and drains; returned errors and polling panics yield no output;
+`ApplicationError` failures propagate with `?` into `BoxError` while the
+concrete cause stays downcastable and unprinted; and a unit async initializer
+completes through `service::start`. The facade's
+`tests/typed_startup_consumer.rs` runs an anyhow-style root that applies `?` to
+anyhow, std and Batter errors inside the initializer and to the startup failure
+at an `anyhow::Result` boundary, returning the bound address without adapters,
+and pins anyhow's wrapping of its head error. Rustdoc compile-fail cases reject a
+non-`Send` initializer future, output borrowing the scope, `wait` on typed output
+and typed output through `service::start`.
 `tests/registration.rs` checks sealed reborrowing plus invalid/duplicate ordinary
 and managed rejection without factory invocation. `tests/startup_composition.rs` independently
 checks unsuccessful empty supervision with successful cleanup and successful
@@ -357,6 +372,8 @@ task suite checks work and cleanup destruction under the originating subscriber.
 
 ```sh
 cargo test -p batter-core --locked --test command --test startup_composition
+cargo test -p batter-core --locked --test typed_startup
+cargo test -p batter --locked --test typed_startup_consumer
 cargo test -p batter-core --doc --locked startup::Startup
 cargo test -p batter --doc --locked
 cargo run -p batter --example finite_command --locked
@@ -1186,6 +1203,7 @@ excludes archived reviews under `.agent/reviews`.
 | Dependency health freshness, exhaustive observation-to-readiness classification, unrepresentable healthy-as-failure state, 2,000 concurrent read-only observations, sequential probes, combined acquisition/query timeout, recovery, writer loss, drain/abort/destruction and safe publication | [health.rs](../crates/batter-core/tests/health.rs), foundation [readiness](../crates/batter-core/src/readiness.rs) with its [unit tests](../crates/batter-core/src/readiness/tests.rs), and [ownership](../crates/batter-core/tests/health/ownership.rs), [publication](../crates/batter-core/tests/health/publication.rs) |
 | Periodic registration validation and inertness, immediate-first missed-tick-skipping cadence, overrun and long-pause bounds including sub-five-ms realignment, fresh per-run budgets and child clamping, both startup policies with initialization expiry between runs and during a longer-budget pending run under both stopping classes, expected pending-support startup abandonment while ordinary work still drains, both stopping classes with support through ordinary/finite/descendant drain, two support components stopping together after ordinary settlement without forced cancellation, native settlement, forced-cancellation boundaries and the capped context deadline delivered to support work admitted during drain, support destroyed before finalizers, an initialized active support invocation held through ordinary drain and destroyed at support closure with one stop interruption and no forced cancellation, exhaustive run outcomes, bounded history across panic and lost waiters, and report redaction | [periodic.rs](../crates/batter-core/tests/periodic.rs) with [registration](../crates/batter-core/tests/periodic/registration.rs), [schedule](../crates/batter-core/tests/periodic/schedule.rs), [startup](../crates/batter-core/tests/periodic/startup.rs), [shutdown](../crates/batter-core/tests/periodic/shutdown.rs), [settlement](../crates/batter-core/tests/periodic/settlement.rs) and [outcomes](../crates/batter-core/tests/periodic/outcomes.rs); counter saturation, bounded sampling and destruction outside the publication lock in [history unit tests](../crates/batter-core/src/periodic/history/tests.rs); executable failure-helper examples in [failure.rs](../crates/batter-core/src/periodic/failure.rs); consumer evidence independent of equal-deadline ordering in the [worker example](../crates/batter/examples/worker.rs) |
 | Owned startup waiter/owner loss, constrained registration, acquisition-registration barriers, LIFO failures, initialization deadline, returned-error/destruction panic, simultaneous drain/destruction classification and readiness/handoff | [startup.rs](../crates/batter-core/tests/startup.rs), [protected_startup.rs](../crates/batter-core/tests/protected_startup.rs), [registration.rs](../crates/batter-core/tests/registration.rs) |
+| Async-closure initializers: typed output only with the owner, rejected output destroyed before cleanup with retained destructor panic, queued output on owner loss, no output after failure or panic, boxed application failures through `?`, unit output through `service::start`, anyhow-style facade root | [typed_startup.rs](../crates/batter-core/tests/typed_startup.rs), [typed_startup_consumer.rs](../crates/batter/tests/typed_startup_consumer.rs), compile-fail rustdoc in [initializer.rs](../crates/batter-core/src/startup/initializer.rs), [handoff.rs](../crates/batter-core/src/startup/handoff.rs) and [service/driver.rs](../crates/batter-core/src/service/driver.rs) |
 | Protected synchronous signal install, policy precedence, reserved identity, retained injected IO/destructor/cleanup causes, deterministic same-poll failure/success reception, TERM/INT during start and running, cleanup-owned observation of delayed repeated signals without deadline restart, and unconfigured/unstarted default-disposition controls | [startup_signals.rs](../crates/batter-core/tests/startup_signals.rs), injected driver controls in [driver.rs](../crates/batter-core/src/startup/driver.rs), and lower-level controls in [unix.rs](../crates/batter-core/src/lifecycle/unix.rs) |
 | Cleanup after task stop, partial startup, failed finalization | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
 | Completion/drain classification regression | [lifecycle.rs](../crates/batter-core/tests/lifecycle.rs) |
@@ -2121,7 +2139,9 @@ the correct route/status for each tested server-generated request ID, including
 probes and fallback; raw unmatched paths/queries must not appear in telemetry. Normal mode verifies an application 500; deadline mode verifies the
 middleware 503. Both check the shared error envelope, nonempty generated
 correlation ID/header, rejection of untrusted correlation input, and default INFO
-completion/status/latency logs. It sends the selected signal and requires exit 0.
+completion/status/latency logs. Every profile requires the `HTTP listener bound`
+event with the selected loopback address, which the binary logs only after
+receiving it as typed startup output. It sends the selected signal and requires exit 0.
 The `--warn-filter` profile sets `RUST_LOG=info,batter=warn,batter::request=info`,
 requires INFO HTTP and operation completions to be absent, and requires operation
 warnings to correlate to observed response IDs (including the deadline completion
