@@ -225,6 +225,42 @@ where
     /// once, when they start, so this future stays small and its type shallow
     /// inside handlers and tasks that compose further adapters. The work future
     /// must therefore be `Send`, as handler and spawned-task futures already are.
+    ///
+    /// Migration: `Quota::run` accepted non-`Send` work futures in 0.0.1.
+    /// Generic wrappers now need `Fut: Future<Output = Result<T, E>> + Send`.
+    /// Replace thread-local captures held by the future with owned `Send` data
+    /// or, for shared `Send + Sync` data, `Arc`. The factory itself need not be
+    /// `Send`; it may extract owned data before returning its future.
+    ///
+    /// A future retaining `Rc` is rejected:
+    ///
+    /// ```compile_fail
+    /// # use batter_core::operation::OperationContext;
+    /// # use batter_runlimit::{Checks, ConsumptionError, Quota, native::Limiter};
+    /// # async fn example<L: Limiter>(quota: &Quota<L>, context: &OperationContext,
+    /// #     checks: Checks<'_, L::Policy>) where L::CheckAllError: ConsumptionError {
+    /// let shared = std::rc::Rc::new(String::from("record"));
+    /// let _ = quota.run(context, checks, move |_| async move {
+    ///     tokio::task::yield_now().await;
+    ///     Ok::<_, std::convert::Infallible>(shared.len())
+    /// }).await;
+    /// # }
+    /// ```
+    ///
+    /// Use `Arc` when shared ownership is needed:
+    ///
+    /// ```no_run
+    /// # use batter_core::operation::OperationContext;
+    /// # use batter_runlimit::{Checks, ConsumptionError, Quota, native::Limiter};
+    /// # async fn example<L: Limiter>(quota: &Quota<L>, context: &OperationContext,
+    /// #     checks: Checks<'_, L::Policy>) where L::CheckAllError: ConsumptionError {
+    /// let shared = std::sync::Arc::new(String::from("record"));
+    /// let _ = quota.run(context, checks, move |_| async move {
+    ///     tokio::task::yield_now().await;
+    ///     Ok::<_, std::convert::Infallible>(shared.len())
+    /// }).await;
+    /// # }
+    /// ```
     pub async fn run<T, E, F, Fut>(
         &self,
         context: &OperationContext,

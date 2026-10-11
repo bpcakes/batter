@@ -85,7 +85,7 @@ pub(crate) fn process_owner_label_value() -> String {
         .unwrap_or_else(|| std::process::id().to_string())
 }
 
-fn should_remove_container() -> bool {
+pub(crate) fn should_remove_container() -> bool {
     std::env::var(TESTCONTAINERS_COMMAND_ENV).as_deref() != Ok("keep")
 }
 

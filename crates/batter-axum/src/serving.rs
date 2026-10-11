@@ -55,6 +55,9 @@ use std::fmt::Debug;
 /// See the runnable `http_service` example for owned startup and signal composition.
 /// Prefer [`register_http_in`] inside canonical protected startup; this signature
 /// remains for lower-level direct-supervisor composition.
+///
+/// Migration: `batter_axum::register_http` moved to
+/// `batter_axum::low_level::register_http` with the same caller obligations.
 pub fn register_http(
     supervisor: &mut Supervisor,
     name: &'static str,
@@ -118,6 +121,9 @@ pub fn register_http(
 ///     Ok(())
 /// }
 /// ```
+///
+/// Migration: `batter_axum::register_http_in` moved to
+/// `batter_axum::low_level::register_http_in` with the same caller obligations.
 pub fn register_http_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,
@@ -192,6 +198,9 @@ pub fn register_http_in<T: RegistrationTarget + ?Sized>(
 ///     Ok(())
 /// }
 /// ```
+///
+/// Migration: `batter_axum::register_http_with_connect_info_in` moved to
+/// `batter_axum::low_level::register_http_with_connect_info_in` with the same caller obligations.
 pub fn register_http_with_connect_info_in<T: RegistrationTarget + ?Sized>(
     target: &mut T,
     name: &'static str,

@@ -914,6 +914,14 @@ requiring Runledger or a database. Its unpolled-factory test makes no live SQL c
 
 ## Verification
 
+Launch `scripts/verify.sh` from a foreground shell, or reset `SIGINT` and
+`SIGQUIT` to their default dispositions before exec when it has to run as a
+background job. A background job of a non-interactive POSIX shell runs with
+both signals ignored, every descendant inherits that, and the `startup_signals`
+suite expects an unstarted child to die from the default `SIGINT` action; under
+the inherited ignore it fails with `signal child timed out:
+mode=configured-unstarted signal=INT` while passing in the foreground.
+
 Session-profile optimization regressions (`batter-md9y`) extend `atomic_live`
 with restricted-login idle SET-role, schema-USAGE and loaded privileged
 custom-parameter SET revocation/recovery,
@@ -2658,6 +2666,33 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
+Native fixtures let Docker allocate the published TCP port, avoiding a local
+reservation that must be released before Docker's create/pull/start sequence.
+Docker binds IPv4 loopback, matching the fixture URL and avoiding all-interface
+binds that can conflict with outbound host sockets on Docker Desktop.
+Docker Desktop can still fail to publish a port; this is a prerequisite failure,
+not a reason to retry application database work. Each startup attempt has a
+unique name and label before creation. A returned start failure triggers an
+awaited, 30-second cleanup through the configured Docker API, verifying that
+label and removing by immutable container ID with anonymous volumes. Cleanup
+failure is reported alongside the original start failure; explicit
+`TESTCONTAINERS_COMMAND=keep` retains the container. The optional CLI reaper is
+still used for successfully started process-owned containers. Startup cleanup
+survives waiter cancellation while the Tokio runtime remains alive; runtime
+death or an unreachable Docker daemon cannot guarantee remote cleanup.
+Failed-start subprocess controls force Docker to reject a missing executable
+after creation, check cleanup on ordinary libtest exit without the optional CLI,
+and check keep policy, anonymous-volume removal and unrelated-name protection.
+The cancelled-start-waiter control uses the actual `start_postgres` boundary in
+a child with the optional CLI disabled. A task-local, test-only gate pauses
+after Docker rejects startup and before cleanup; the test observes the created
+container and anonymous volume, aborts and joins the waiter, then releases the
+gate and independently observes both resources disappear. The runtime remains
+alive throughout. A direct-await mutation of the spawned owner must fail this
+control; cleanup on runtime death remains outside the claim.
+The existing-host-listener and delayed-startup controls retain PostgreSQL 18
+readiness coverage; the former also inspects the actual published mapping and
+requires IPv4 loopback at the port used by SQLx.
 After container start, native test support polls Docker's published PostgreSQL
 port under a 30-second bootstrap allowance; a missing mapping still fails the
 test. Connection and PostgreSQL 18 checks follow that mapping.

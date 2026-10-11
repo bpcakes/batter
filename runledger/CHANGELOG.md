@@ -81,6 +81,46 @@ All notable changes to this workspace are documented here.
   fourth argument, and struct literals must include `origin`. Exhaustive struct
   patterns must bind `origin` or add `..`; ordinary access to existing fields
   remains compatible.
+
+  Constructor calls (the example's caller is the reaper; a worker uses `Worker`):
+
+  ```rust
+  // Before
+  let info = JobDeadLetterInfo::new(failure, reason, max_attempts);
+  // After
+  let info = JobDeadLetterInfo::new(
+      failure, reason, max_attempts, JobDeadLetterOrigin::Reaper,
+  );
+  ```
+
+  Struct literals:
+
+  ```rust
+  // Before
+  let info = JobDeadLetterInfo { failure, reason, max_attempts };
+  // After
+  let info = JobDeadLetterInfo {
+      failure, reason, max_attempts, origin: JobDeadLetterOrigin::Reaper,
+  };
+  ```
+
+  Exhaustive patterns:
+
+  ```rust
+  // Before
+  let JobDeadLetterInfo { failure, reason, max_attempts } = info;
+  // After, when delivery origin affects policy
+  let JobDeadLetterInfo { failure, reason, max_attempts, origin } = info;
+  // Or, when the consumer deliberately ignores delivery origin
+  let JobDeadLetterInfo { failure, reason, max_attempts, .. } = info;
+  ```
+
+  No one-release deprecated shim is kept. The former three arguments cannot
+  determine the delivery component; defaulting to either origin would mislabel
+  the other path. Rust cannot overload `new` by arity, and a function shim cannot
+  preserve an old struct-literal or exhaustive-pattern shape. The explicit field
+  and argument remain required; this migration note changes no runtime behavior.
+
 - Reaper-originated dead-letter hooks receive the durable attempt's worker
   identity in `JobContext::worker_id`, the lease owner the claim recorded on
   both `job_queue` and `job_attempts`, instead of the fixed string `reaper`.

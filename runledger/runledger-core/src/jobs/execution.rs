@@ -132,6 +132,12 @@ pub trait JobExecutionServices: Send + Sync {
     ///     }
     /// }
     /// ```
+    ///
+    /// A test that drives a handler through such services ends the invocation
+    /// itself once the handler returns: [`crate::jobs::JobInvocationOwner::end`]
+    /// returns [`crate::jobs::JobInvocationHookPanics`], which is `#[must_use]`,
+    /// so assert that it is
+    /// empty rather than dropping it.
     fn invocation(&self) -> Option<JobInvocation> {
         None
     }

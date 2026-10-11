@@ -108,6 +108,9 @@ impl std::fmt::Display for CorrelationId {
 /// `info,batter=warn,batter::request=info` retains nested request correlation while
 /// suppressing Batter INFO completion events. HTTP events retain their typed ID
 /// even when all INFO spans are disabled.
+///
+/// Migration: `batter_axum::operational_http` moved to
+/// `batter_axum::low_level::operational_http` with the same caller obligations.
 pub async fn operational_http(request: Request, next: Next) -> Response {
     operational_http_inner(request, next, false).await
 }
@@ -129,6 +132,9 @@ pub async fn operational_http(request: Request, next: Next) -> Response {
 /// let app: Router = Router::new().route("/live", get(|| async { "live" }))
 ///     .layer(middleware::from_fn(operational_http_with_quota));
 /// ```
+///
+/// Migration: `batter_axum::operational_http_with_quota` moved to
+/// `batter_axum::low_level::operational_http_with_quota` with the same caller obligations.
 pub async fn operational_http_with_quota(request: Request, next: Next) -> Response {
     operational_http_inner(request, next, true).await
 }

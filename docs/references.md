@@ -172,6 +172,49 @@ PostgreSQL bootstrap allowance before failing that prerequisite; this is a
 bounded fixture readiness policy, not evidence that Docker always publishes a
 mapping or that the database is ready.
 
+On 2026-10-10, `batter-pasy.1` reproduced a different cause on Docker Desktop
+29.8.2: its backend log repeatedly failed to bind selected host port 55019 with
+`address already in use`, while independent inspection showed a running
+container with an empty published-port mapping for the full 30-second wait.
+The same bind failure appears in the earlier failed container's retained log.
+Rechecked locked testcontainers 0.28.0 source at `59792c3d6631218fb0da174d7093c719f58f7071`:
+[`ImageExt::with_mapped_port`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3d6631218fb0da174d7093c719f58f7071/testcontainers/src/core/image/image_ext.rs)
+records an explicit host-to-container mapping. The initial workaround selected
+a host-kernel-available port, but released the reservation before Docker's
+create/pull/start sequence. Review identified both that race and a failed-start
+ownership gap, so `batter-pasy.3` removes the explicit mapping and lets Docker
+allocate the port. This does not guarantee publication on Docker Desktop. The separate
+unexpected SSL response observed earlier is not independently reproduced by
+this mapping diagnosis. Logs and verification outcomes are recorded on the Bead.
+
+For the repair, rechecked the same locked 0.28.0 source:
+[`AsyncRunner::start`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3d6631218fb0da174d7093c719f58f7071/testcontainers/src/runners/async_runner.rs)
+creates the container before calling Docker start and only then constructs
+`ContainerAsync`; a rejected start can therefore leave a container without that
+handle. Its watchdog handles signals, not ordinary libtest exit. Native test
+support now assigns a unique attempt name/label before start and cleans up a
+failed attempt through
+[`docker_client_instance`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3d6631218fb0da174d7093c719f58f7071/testcontainers/src/core/client/factory.rs),
+which exposes the configured Bollard client. Removal verifies ownership and
+uses the inspected ID with `force` and `v`, matching the dependency's own
+[`Client::rm`](https://github.com/testcontainers/testcontainers-rs/blob/59792c3d6631218fb0da174d7093c719f58f7071/testcontainers/src/core/client.rs)
+anonymous-volume removal. Real Docker failure tests cover cleanup, explicit
+keep policy and a conflicting name owned by a different attempt. No dependency
+version or public API changes are needed.
+
+The first repair's full verification reproduced the Desktop all-interface bind
+collision at 55019. Host socket inspection showed an established outbound
+connection on that port at a non-loopback address. Backend logs confirmed that
+the failed mapping's container was removed. A three-container concurrent Docker
+29.8.2 probe with `127.0.0.1::5432` succeeded with three distinct host ports.
+The fixture now requests that loopback-only dynamic binding through
+`with_host_config_modifier`, leaving selection and binding to Docker.
+[Docker's publication reference](https://docs.docker.com/reference/cli/docker/container/run/#publish)
+documents binding to a selected host interface; this matches the fixture's
+existing IPv4 loopback SQLx URL. The real fixture test inspects the resulting
+published address and port. Docker publication can still fail; a missing mapping
+still fails under the bootstrap allowance.
+
 ## Native query adapters: reviewed 2026-09-22
 
 For `batter-ywd2`, checked SQLx0.9.0's locked `sqlx-core/src/query.rs`,

@@ -1,0 +1,500 @@
+## batter-core: 850 -> 1030 entries; 6 removed, 186 added
+- REMOVED impl batter_core::operation::OperationPhases: Clone
+- REMOVED method batter_core::lifecycle::OperationAdmission::admit
+- REMOVED method batter_core::operation::OperationContext::at
+- REMOVED method batter_core::operation::OperationContext::cancel
+- REMOVED method batter_core::operation::OperationContext::new
+- REMOVED method batter_core::operation::OperationContext::under
++ ADDED   constant batter_core::telemetry::metrics::ADMISSIONS
++ ADDED   constant batter_core::telemetry::metrics::ADMISSION_DECISIONS
++ ADDED   constant batter_core::telemetry::metrics::BULKHEAD_DECISIONS
++ ADDED   constant batter_core::telemetry::metrics::CLEANUP_HOOKS
++ ADDED   constant batter_core::telemetry::metrics::CLEANUP_OUTCOMES
++ ADDED   constant batter_core::telemetry::metrics::COALESCE_DOMAINS
++ ADDED   constant batter_core::telemetry::metrics::COALESCE_REASONS
++ ADDED   constant batter_core::telemetry::metrics::INVALID_NAME
++ ADDED   constant batter_core::telemetry::metrics::LABELS_COALESCED
++ ADDED   constant batter_core::telemetry::metrics::MAX_NAME_LEN
++ ADDED   constant batter_core::telemetry::metrics::MAX_SERIES
++ ADDED   constant batter_core::telemetry::metrics::NAME_CAPACITY
++ ADDED   constant batter_core::telemetry::metrics::OPERATION_COMPLETIONS
++ ADDED   constant batter_core::telemetry::metrics::OPERATION_DURATION
++ ADDED   constant batter_core::telemetry::metrics::OUTCOMES
++ ADDED   constant batter_core::telemetry::metrics::OVERFLOW_NAME
++ ADDED   constant batter_core::telemetry::metrics::PROCESS_DECISIONS
++ ADDED   constant batter_core::telemetry::metrics::RETRY_ATTEMPTS
++ ADDED   constant batter_core::telemetry::metrics::RETRY_EXECUTIONS
++ ADDED   constant batter_core::telemetry::metrics::RETRY_RESULTS
++ ADDED   constant batter_core::telemetry::metrics::ROOT_DECISIONS
++ ADDED   constant batter_core::telemetry::metrics::SHUTDOWNS
++ ADDED   constant batter_core::telemetry::metrics::SHUTDOWN_CAUSES
++ ADDED   constant batter_core::telemetry::metrics::SHUTDOWN_DURATION
++ ADDED   constant batter_core::telemetry::metrics::SHUTDOWN_RESULTS
++ ADDED   constant batter_core::telemetry::metrics::TASK_EXITS
++ ADDED   constant batter_core::telemetry::metrics::TASK_KINDS
++ ADDED   constant batter_core::telemetry::metrics::TASK_OUTCOMES
++ ADDED   constant batter_core::telemetry::metrics::catalog::CATALOG
++ ADDED   constant batter_core::telemetry::metrics::catalog::HISTOGRAMS
++ ADDED   enum batter_core::readiness::ReadinessConditionError
++ ADDED   enum batter_core::service::CompletionCoverage
++ ADDED   enum batter_core::service::DiagnosticOutcome
++ ADDED   enum batter_core::service::ServiceOutcome
++ ADDED   enum batter_core::telemetry::metrics::catalog::MetricKind
++ ADDED   field batter_core::service::IncompleteCoverage.missing_report
++ ADDED   field batter_core::service::IncompleteCoverage.skipped_cleanup
++ ADDED   field batter_core::service::IncompleteCoverage.uncertain_native
++ ADDED   field batter_core::service::IncompleteCoverage.unjoined_cleanup
++ ADDED   field batter_core::service::IncompleteCoverage.unjoined_tasks
++ ADDED   function batter_core::service::start
++ ADDED   function batter_core::telemetry::metrics::catalog::shape
++ ADDED   function batter_core::telemetry::metrics::install
++ ADDED   impl batter_core::lifecycle::ShutdownSuccess: Clone
++ ADDED   impl batter_core::lifecycle::ShutdownSuccess: Debug
++ ADDED   impl batter_core::operation::OperationOwner: Debug
++ ADDED   impl batter_core::operation::RootDeadline: Clone
++ ADDED   impl batter_core::operation::RootDeadline: Copy
++ ADDED   impl batter_core::operation::RootDeadline: Debug
++ ADDED   impl batter_core::readiness::ReadinessCondition: Clone
++ ADDED   impl batter_core::readiness::ReadinessCondition: Copy
++ ADDED   impl batter_core::readiness::ReadinessCondition: Debug
++ ADDED   impl batter_core::readiness::ReadinessCondition: Eq
++ ADDED   impl batter_core::readiness::ReadinessCondition: Hash
++ ADDED   impl batter_core::readiness::ReadinessCondition: PartialEq
++ ADDED   impl batter_core::readiness::ReadinessCondition: StructuralPartialEq
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Clone
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Copy
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Debug
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Display
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Eq
++ ADDED   impl batter_core::readiness::ReadinessConditionError: Error
++ ADDED   impl batter_core::readiness::ReadinessConditionError: PartialEq
++ ADDED   impl batter_core::readiness::ReadinessConditionError: StructuralPartialEq
++ ADDED   impl batter_core::service::CompletionCoverage: Clone
++ ADDED   impl batter_core::service::CompletionCoverage: Copy
++ ADDED   impl batter_core::service::CompletionCoverage: Debug
++ ADDED   impl batter_core::service::CompletionCoverage: Eq
++ ADDED   impl batter_core::service::CompletionCoverage: PartialEq
++ ADDED   impl batter_core::service::CompletionCoverage: StructuralPartialEq
++ ADDED   impl batter_core::service::DiagnosticOutcome: Debug
++ ADDED   impl batter_core::service::IncompleteCoverage: Clone
++ ADDED   impl batter_core::service::IncompleteCoverage: Copy
++ ADDED   impl batter_core::service::IncompleteCoverage: Debug
++ ADDED   impl batter_core::service::IncompleteCoverage: Default
++ ADDED   impl batter_core::service::IncompleteCoverage: Eq
++ ADDED   impl batter_core::service::IncompleteCoverage: PartialEq
++ ADDED   impl batter_core::service::IncompleteCoverage: StructuralPartialEq
++ ADDED   impl batter_core::service::NoDiagnostics: Diagnostics
++ ADDED   impl batter_core::service::ServiceCompletion: Clone
++ ADDED   impl batter_core::service::ServiceCompletion: Debug
++ ADDED   impl batter_core::service::ServiceObserver: Clone
++ ADDED   impl batter_core::service::ServiceOutcome: Debug
++ ADDED   impl batter_core::service::ServiceOwner: Drop
++ ADDED   impl batter_core::telemetry::metrics::catalog::MetricKind: Clone
++ ADDED   impl batter_core::telemetry::metrics::catalog::MetricKind: Copy
++ ADDED   impl batter_core::telemetry::metrics::catalog::MetricKind: Eq
++ ADDED   impl batter_core::telemetry::metrics::catalog::MetricKind: PartialEq
++ ADDED   impl batter_core::telemetry::metrics::catalog::MetricKind: StructuralPartialEq
++ ADDED   method batter_core::command::CommandScope::cancel_work
++ ADDED   method batter_core::lifecycle::OperationAdmission::admit_root
++ ADDED   method batter_core::lifecycle::RunningSupervisor::shutdown_checked
++ ADDED   method batter_core::lifecycle::RunningSupervisor::shutdown_report
++ ADDED   method batter_core::lifecycle::RunningSupervisor::wait_checked
++ ADDED   method batter_core::lifecycle::RunningSupervisor::wait_report
++ ADDED   method batter_core::lifecycle::ShutdownSuccess::into_report
++ ADDED   method batter_core::lifecycle::ShutdownSuccess::report
++ ADDED   method batter_core::lifecycle::SupervisorObserver::wait_checked
++ ADDED   method batter_core::lifecycle::SupervisorObserver::wait_report
++ ADDED   method batter_core::lifecycle::UnapprovedSupervisor::shutdown_checked
++ ADDED   method batter_core::lifecycle::UnapprovedSupervisor::shutdown_report
++ ADDED   method batter_core::lifecycle::UnapprovedSupervisor::wait_checked
++ ADDED   method batter_core::lifecycle::UnapprovedSupervisor::wait_report
++ ADDED   method batter_core::operation::OperationContext::split_finalization
++ ADDED   method batter_core::operation::OperationOwner::at
++ ADDED   method batter_core::operation::OperationOwner::cancel
++ ADDED   method batter_core::operation::OperationOwner::context
++ ADDED   method batter_core::operation::OperationOwner::into_context
++ ADDED   method batter_core::operation::OperationOwner::new
++ ADDED   method batter_core::operation::OperationPhases::cancel_work
++ ADDED   method batter_core::operation::RootDeadline::after
++ ADDED   method batter_core::operation::RootDeadline::at
++ ADDED   method batter_core::operation::RootDeadline::instant
++ ADDED   method batter_core::readiness::ReadinessCondition::as_str
++ ADDED   method batter_core::readiness::ReadinessCondition::new
++ ADDED   method batter_core::readiness::ReadinessEvaluator::lifecycle_only
++ ADDED   method batter_core::readiness::ReadinessEvaluator::with_condition
++ ADDED   method batter_core::service::DiagnosticCompletion::wait
++ ADDED   method batter_core::service::RetainedCompletion::coverage
++ ADDED   method batter_core::service::ServiceCompletion::diagnostics
++ ADDED   method batter_core::service::ServiceCompletion::service
++ ADDED   method batter_core::service::ServiceObserver::wait
++ ADDED   method batter_core::service::ServiceOwner::observer
++ ADDED   method batter_core::service::ServiceOwner::request_shutdown
++ ADDED   method batter_core::service::ServiceOwner::wait
++ ADDED   method batter_core::telemetry::metrics::catalog::MetricShape::accepts
++ ADDED   method batter_core::telemetry::metrics::catalog::MetricShape::description
++ ADDED   method batter_core::telemetry::metrics::catalog::MetricShape::kind
++ ADDED   method batter_core::telemetry::metrics::catalog::MetricShape::name
++ ADDED   method batter_core::telemetry::metrics::catalog::MetricShape::unit
++ ADDED   mod batter_core::service
++ ADDED   mod batter_core::telemetry::metrics
++ ADDED   mod batter_core::telemetry::metrics::catalog
++ ADDED   struct batter_core::lifecycle::ShutdownSuccess
++ ADDED   struct batter_core::operation::OperationOwner
++ ADDED   struct batter_core::operation::RootDeadline
++ ADDED   struct batter_core::readiness::ReadinessCondition
++ ADDED   struct batter_core::service::DiagnosticCompletion
++ ADDED   struct batter_core::service::IncompleteCoverage
++ ADDED   struct batter_core::service::NoDiagnostics
++ ADDED   struct batter_core::service::RetainedCompletion
++ ADDED   struct batter_core::service::ServiceCompletion
++ ADDED   struct batter_core::service::ServiceObserver
++ ADDED   struct batter_core::service::ServiceOwner
++ ADDED   struct batter_core::telemetry::metrics::catalog::MetricShape
++ ADDED   trait batter_core::service::Diagnostics
++ ADDED   trait_item batter_core::service::Diagnostics::Report
++ ADDED   trait_item batter_core::service::Diagnostics::install
++ ADDED   use batter_core::lifecycle::ShutdownSuccess <- driver::ShutdownSuccess
++ ADDED   use batter_core::operation::OperationOwner <- owner::OperationOwner
++ ADDED   use batter_core::operation::RootDeadline <- owner::RootDeadline
++ ADDED   use batter_core::service::CompletionCoverage <- coverage::CompletionCoverage
++ ADDED   use batter_core::service::DiagnosticOutcome <- report::DiagnosticOutcome
++ ADDED   use batter_core::service::IncompleteCoverage <- coverage::IncompleteCoverage
++ ADDED   use batter_core::service::RetainedCompletion <- coverage::RetainedCompletion
++ ADDED   use batter_core::service::ServiceCompletion <- report::ServiceCompletion
++ ADDED   use batter_core::service::ServiceObserver <- driver::ServiceObserver
++ ADDED   use batter_core::service::ServiceOutcome <- report::ServiceOutcome
++ ADDED   use batter_core::service::ServiceOwner <- driver::ServiceOwner
++ ADDED   use batter_core::service::start <- driver::start
++ ADDED   use batter_core::telemetry::metrics::ADMISSIONS <- vocabulary::ADMISSIONS
++ ADDED   use batter_core::telemetry::metrics::BULKHEAD_DECISIONS <- vocabulary::BULKHEAD_DECISIONS
++ ADDED   use batter_core::telemetry::metrics::CLEANUP_OUTCOMES <- vocabulary::CLEANUP_OUTCOMES
++ ADDED   use batter_core::telemetry::metrics::COALESCE_DOMAINS <- vocabulary::COALESCE_DOMAINS
++ ADDED   use batter_core::telemetry::metrics::COALESCE_REASONS <- vocabulary::COALESCE_REASONS
++ ADDED   use batter_core::telemetry::metrics::OUTCOMES <- vocabulary::OUTCOMES
++ ADDED   use batter_core::telemetry::metrics::PROCESS_DECISIONS <- vocabulary::PROCESS_DECISIONS
++ ADDED   use batter_core::telemetry::metrics::RETRY_RESULTS <- vocabulary::RETRY_RESULTS
++ ADDED   use batter_core::telemetry::metrics::ROOT_DECISIONS <- vocabulary::ROOT_DECISIONS
++ ADDED   use batter_core::telemetry::metrics::SHUTDOWN_CAUSES <- vocabulary::SHUTDOWN_CAUSES
++ ADDED   use batter_core::telemetry::metrics::SHUTDOWN_RESULTS <- vocabulary::SHUTDOWN_RESULTS
++ ADDED   use batter_core::telemetry::metrics::TASK_KINDS <- vocabulary::TASK_KINDS
++ ADDED   use batter_core::telemetry::metrics::TASK_OUTCOMES <- vocabulary::TASK_OUTCOMES
++ ADDED   use batter_core::telemetry::metrics::facade <- ::metrics
++ ADDED   variant batter_core::readiness::ReadinessConditionError::InvalidName
++ ADDED   variant batter_core::readiness::ReadinessUnreadyReason::Condition
++ ADDED   variant batter_core::service::CompletionCoverage::Incomplete
++ ADDED   variant batter_core::service::CompletionCoverage::Reported
++ ADDED   variant batter_core::service::DiagnosticOutcome::Completed
++ ADDED   variant batter_core::service::DiagnosticOutcome::InstallationPanicked
++ ADDED   variant batter_core::service::DiagnosticOutcome::TaskFailed
++ ADDED   variant batter_core::service::ServiceOutcome::Coordinator
++ ADDED   variant batter_core::service::ServiceOutcome::Shutdown
++ ADDED   variant batter_core::service::ServiceOutcome::StartupFailed
++ ADDED   variant batter_core::telemetry::metrics::catalog::MetricKind::Counter
++ ADDED   variant batter_core::telemetry::metrics::catalog::MetricKind::Histogram
+
+## batter-axum: 457 -> 563 entries; 18 removed, 124 added
+- REMOVED function batter_axum::dependency_readiness
+- REMOVED function batter_axum::liveness
+- REMOVED function batter_axum::observe_http
+- REMOVED function batter_axum::operational_http
+- REMOVED function batter_axum::operational_http_with_quota
+- REMOVED function batter_axum::readiness
+- REMOVED function batter_axum::register_http
+- REMOVED function batter_axum::register_http_in
+- REMOVED function batter_axum::register_http_with_connect_info_in
+- REMOVED function batter_axum::request_admission
+- REMOVED function batter_axum::request_scope
+- REMOVED method batter_axum::AssembledHttp::into_router
+- REMOVED use batter_axum::dependency_readiness <- readiness::dependency_readiness
+- REMOVED use batter_axum::operational_http <- correlation::operational_http
+- REMOVED use batter_axum::operational_http_with_quota <- correlation::operational_http_with_quota
+- REMOVED use batter_axum::register_http <- serving::register_http
+- REMOVED use batter_axum::register_http_in <- serving::register_http_in
+- REMOVED use batter_axum::register_http_with_connect_info_in <- serving::register_http_with_connect_info_in
++ ADDED   enum batter_axum::RouteGroupError
++ ADDED   enum batter_axum::RouteInventoryError
++ ADDED   enum batter_axum::browser::PrivateResponsePolicy
++ ADDED   function batter_axum::low_level::dependency_readiness
++ ADDED   function batter_axum::low_level::liveness
++ ADDED   function batter_axum::low_level::observe_http
++ ADDED   function batter_axum::low_level::operational_http
++ ADDED   function batter_axum::low_level::operational_http_with_quota
++ ADDED   function batter_axum::low_level::readiness
++ ADDED   function batter_axum::low_level::register_http
++ ADDED   function batter_axum::low_level::register_http_in
++ ADDED   function batter_axum::low_level::register_http_with_connect_info_in
++ ADDED   function batter_axum::low_level::request_admission
++ ADDED   function batter_axum::low_level::request_scope
++ ADDED   impl batter_axum::AdmittedRequest: Debug
++ ADDED   impl batter_axum::AdmittedRequest: FromRequestParts
++ ADDED   impl batter_axum::AdmittedRequestRejection: Clone
++ ADDED   impl batter_axum::AdmittedRequestRejection: Copy
++ ADDED   impl batter_axum::AdmittedRequestRejection: Debug
++ ADDED   impl batter_axum::AdmittedRequestRejection: Display
++ ADDED   impl batter_axum::AdmittedRequestRejection: Eq
++ ADDED   impl batter_axum::AdmittedRequestRejection: Error
++ ADDED   impl batter_axum::AdmittedRequestRejection: IntoResponse
++ ADDED   impl batter_axum::AdmittedRequestRejection: PartialEq
++ ADDED   impl batter_axum::AdmittedRequestRejection: StructuralPartialEq
++ ADDED   impl batter_axum::BrowserPolicy: Clone
++ ADDED   impl batter_axum::GroupPolicy: Clone
++ ADDED   impl batter_axum::GroupPolicy: From
++ ADDED   impl batter_axum::InProcessClient: Clone
++ ADDED   impl batter_axum::RequestPolicy: From
++ ADDED   impl batter_axum::RouteGroupError: Clone
++ ADDED   impl batter_axum::RouteGroupError: Copy
++ ADDED   impl batter_axum::RouteGroupError: Debug
++ ADDED   impl batter_axum::RouteGroupError: Display
++ ADDED   impl batter_axum::RouteGroupError: Eq
++ ADDED   impl batter_axum::RouteGroupError: Error
++ ADDED   impl batter_axum::RouteGroupError: PartialEq
++ ADDED   impl batter_axum::RouteGroupError: StructuralPartialEq
++ ADDED   impl batter_axum::RouteInventory: Clone
++ ADDED   impl batter_axum::RouteInventory: Debug
++ ADDED   impl batter_axum::RouteInventory: Eq
++ ADDED   impl batter_axum::RouteInventory: PartialEq
++ ADDED   impl batter_axum::RouteInventory: StructuralPartialEq
++ ADDED   impl batter_axum::RouteInventoryError: Clone
++ ADDED   impl batter_axum::RouteInventoryError: Copy
++ ADDED   impl batter_axum::RouteInventoryError: Debug
++ ADDED   impl batter_axum::RouteInventoryError: Display
++ ADDED   impl batter_axum::RouteInventoryError: Eq
++ ADDED   impl batter_axum::RouteInventoryError: Error
++ ADDED   impl batter_axum::RouteInventoryError: PartialEq
++ ADDED   impl batter_axum::RouteInventoryError: StructuralPartialEq
++ ADDED   impl batter_axum::browser::PrivateResponseFuture: Future
++ ADDED   impl batter_axum::browser::PrivateResponseFuture: Unpin
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Clone
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Copy
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Debug
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Default
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Eq
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: Layer
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: PartialEq
++ ADDED   impl batter_axum::browser::PrivateResponsePolicy: StructuralPartialEq
++ ADDED   impl batter_axum::browser::PrivateResponseService: Clone
++ ADDED   impl batter_axum::browser::PrivateResponseService: Debug
++ ADDED   impl batter_axum::browser::PrivateResponseService: Service
++ ADDED   method batter_axum::AdmittedRequest::context
++ ADDED   method batter_axum::AdmittedRequest::correlation_id
++ ADDED   method batter_axum::AdmittedRequest::interruption_responder
++ ADDED   method batter_axum::AssembledHttp::in_process
++ ADDED   method batter_axum::BrowserPolicy::with_mutation_checks
++ ADDED   method batter_axum::BrowserPolicy::without_mutation_checks
++ ADDED   method batter_axum::GroupPolicy::browser
++ ADDED   method batter_axum::GroupPolicy::new
++ ADDED   method batter_axum::GuardedRouter::from_router
++ ADDED   method batter_axum::HttpBoundary::with_group
++ ADDED   method batter_axum::HttpBoundary::with_probe_response_policy
++ ADDED   method batter_axum::HttpBoundary::with_rendered_fallback
++ ADDED   method batter_axum::HttpBoundary::with_rendered_liveness
++ ADDED   method batter_axum::HttpBoundary::with_rendered_readiness
++ ADDED   method batter_axum::InProcessClient::request
++ ADDED   method batter_axum::ReadinessPolicy::lifecycle_only
++ ADDED   method batter_axum::ReadinessPolicy::with_condition
++ ADDED   method batter_axum::RouteGroup::new
++ ADDED   method batter_axum::RouteInventory::new
++ ADDED   method batter_axum::browser::PrivateResponsePolicy::apply
++ ADDED   mod batter_axum::low_level
++ ADDED   struct batter_axum::AdmittedRequest
++ ADDED   struct batter_axum::AdmittedRequestRejection
++ ADDED   struct batter_axum::BrowserPolicy
++ ADDED   struct batter_axum::GroupPolicy
++ ADDED   struct batter_axum::InProcessClient
++ ADDED   struct batter_axum::RouteGroup
++ ADDED   struct batter_axum::RouteInventory
++ ADDED   struct batter_axum::browser::PrivateResponseFuture
++ ADDED   struct batter_axum::browser::PrivateResponseService
++ ADDED   use batter_axum::AdmittedRequest <- admitted::AdmittedRequest
++ ADDED   use batter_axum::AdmittedRequestRejection <- admitted::AdmittedRequestRejection
++ ADDED   use batter_axum::BrowserPolicy <- boundary::BrowserPolicy
++ ADDED   use batter_axum::GroupPolicy <- boundary::GroupPolicy
++ ADDED   use batter_axum::InProcessClient <- boundary::InProcessClient
++ ADDED   use batter_axum::RouteGroup <- boundary::RouteGroup
++ ADDED   use batter_axum::RouteGroupError <- boundary::RouteGroupError
++ ADDED   use batter_axum::RouteInventory <- boundary::RouteInventory
++ ADDED   use batter_axum::RouteInventoryError <- boundary::RouteInventoryError
++ ADDED   use batter_axum::browser::PrivateResponseFuture <- private_response::PrivateResponseFuture
++ ADDED   use batter_axum::browser::PrivateResponsePolicy <- private_response::PrivateResponsePolicy
++ ADDED   use batter_axum::browser::PrivateResponseService <- private_response::PrivateResponseService
++ ADDED   use batter_axum::low_level::dependency_readiness <- crate::readiness::dependency_readiness
++ ADDED   use batter_axum::low_level::operational_http <- crate::correlation::operational_http
++ ADDED   use batter_axum::low_level::operational_http_with_quota <- crate::correlation::operational_http_with_quota
++ ADDED   use batter_axum::low_level::register_http <- crate::serving::register_http
++ ADDED   use batter_axum::low_level::register_http_in <- crate::serving::register_http_in
++ ADDED   use batter_axum::low_level::register_http_with_connect_info_in <- crate::serving::register_http_with_connect_info_in
++ ADDED   variant batter_axum::BoundaryAssemblyError::ConflictingFallback
++ ADDED   variant batter_axum::BoundaryAssemblyError::OverlappingGroupPaths
++ ADDED   variant batter_axum::BoundaryAssemblyError::OverlappingRouteInventory
++ ADDED   variant batter_axum::BoundaryAssemblyError::RouteInventoryMismatch
++ ADDED   variant batter_axum::RouteGroupError::DeclaresFallback
++ ADDED   variant batter_axum::RouteGroupError::DuplicateName
++ ADDED   variant batter_axum::RouteGroupError::InvalidName
++ ADDED   variant batter_axum::RouteGroupError::NoRoutes
++ ADDED   variant batter_axum::RouteInventoryError::Empty
++ ADDED   variant batter_axum::RouteInventoryError::InvalidPattern
++ ADDED   variant batter_axum::browser::PrivateResponsePolicy::NoReferrer
++ ADDED   variant batter_axum::browser::PrivateResponsePolicy::SameOriginReferrer
+
+## batter-sqlx: 1068 -> 1153 entries; 0 removed, 85 added
++ ADDED   function batter_sqlx::run_atomic_fail_fast_with
++ ADDED   function batter_sqlx::run_atomic_fail_fast_with_in
++ ADDED   function batter_sqlx::run_atomic_profiled_fail_fast_with
++ ADDED   function batter_sqlx::run_atomic_profiled_fail_fast_with_in
++ ADDED   function batter_sqlx::run_atomic_profiled_with
++ ADDED   function batter_sqlx::run_atomic_profiled_with_in
++ ADDED   function batter_sqlx::run_atomic_with
++ ADDED   function batter_sqlx::run_atomic_with_in
++ ADDED   impl batter_sqlx::PgScopeRolledBack: Clone
++ ADDED   impl batter_sqlx::PgScopeRolledBack: Debug
++ ADDED   impl batter_sqlx::PgScopeRolledBack: Display
++ ADDED   impl batter_sqlx::PgScopeRolledBack: Error
++ ADDED   impl batter_sqlx::verification::FragmentObjectPolicy: Clone
++ ADDED   impl batter_sqlx::verification::FragmentObjectPolicy: Debug
++ ADDED   impl batter_sqlx::verification::FragmentObjectPolicy: Eq
++ ADDED   impl batter_sqlx::verification::FragmentObjectPolicy: PartialEq
++ ADDED   impl batter_sqlx::verification::FragmentObjectPolicy: StructuralPartialEq
++ ADDED   impl batter_sqlx::verification::GrantFragment: Clone
++ ADDED   impl batter_sqlx::verification::GrantFragment: Debug
++ ADDED   impl batter_sqlx::verification::GrantFragment: Default
++ ADDED   impl batter_sqlx::verification::GrantFragment: Eq
++ ADDED   impl batter_sqlx::verification::GrantFragment: PartialEq
++ ADDED   impl batter_sqlx::verification::GrantFragment: StructuralPartialEq
++ ADDED   method batter_sqlx::PgAtomicScope::execute
++ ADDED   method batter_sqlx::PgAtomicScope::fetch_all
++ ADDED   method batter_sqlx::PgAtomicScope::fetch_one
++ ADDED   method batter_sqlx::PgAtomicScope::fetch_optional
++ ADDED   method batter_sqlx::PgPolicyScope::execute
++ ADDED   method batter_sqlx::PgPolicyScope::fetch_all
++ ADDED   method batter_sqlx::PgPolicyScope::fetch_one
++ ADDED   method batter_sqlx::PgPolicyScope::fetch_optional
++ ADDED   method batter_sqlx::PgPolicyScope::recoverable_sql
++ ADDED   method batter_sqlx::PgPolicyScope::sql
++ ADDED   method batter_sqlx::PgQueryHandle::execute
++ ADDED   method batter_sqlx::PgQueryHandle::fetch_all
++ ADDED   method batter_sqlx::PgQueryHandle::fetch_one
++ ADDED   method batter_sqlx::PgQueryHandle::fetch_optional
++ ADDED   method batter_sqlx::PgQueryHandle::within
++ ADDED   method batter_sqlx::PgSessionProfile::with_timeouts
++ ADDED   method batter_sqlx::verification::ExactRoleManifest::with_fragment
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::allow_relation_owner
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::allow_row_type_public_usage
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::allow_schema_owner
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::declare_columns
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::declare_relations
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::declare_schema
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::new
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::schema
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::with_public_delivered_privileges
++ ADDED   method batter_sqlx::verification::FragmentObjectPolicy::with_schema_privileges
++ ADDED   method batter_sqlx::verification::GrantFragment::is_empty
++ ADDED   method batter_sqlx::verification::GrantFragment::new
++ ADDED   method batter_sqlx::verification::GrantFragment::with_columns
++ ADDED   method batter_sqlx::verification::GrantFragment::with_relations
++ ADDED   method batter_sqlx::verification::GrantFragment::with_routine
++ ADDED   method batter_sqlx::verification::GrantFragment::with_schema
++ ADDED   struct batter_sqlx::PgPolicyScope
++ ADDED   struct batter_sqlx::PgQueryHandle
++ ADDED   struct batter_sqlx::PgScopeRolledBack
++ ADDED   struct batter_sqlx::verification::FragmentObjectPolicy
++ ADDED   struct batter_sqlx::verification::GrantFragment
++ ADDED   trait batter_sqlx::PgFailurePolicy
++ ADDED   trait batter_sqlx::PgNativeQuery
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::Error
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::begin_failed
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::commit_unconfirmed
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::rollback_unconfirmed
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::scope_lost
++ ADDED   trait_item batter_sqlx::PgFailurePolicy::scope_lost_after_body
++ ADDED   trait_item batter_sqlx::PgNativeQuery::Output
++ ADDED   use batter_sqlx::PgFailurePolicy <- atomic_policy::PgFailurePolicy
++ ADDED   use batter_sqlx::PgNativeQuery <- native_query::PgNativeQuery
++ ADDED   use batter_sqlx::PgPolicyScope <- atomic_policy::PgPolicyScope
++ ADDED   use batter_sqlx::PgQueryHandle <- pooled_query::PgQueryHandle
++ ADDED   use batter_sqlx::PgScopeRolledBack <- atomic_policy::PgScopeRolledBack
++ ADDED   use batter_sqlx::run_atomic_fail_fast_with <- atomic_policy::run_atomic_fail_fast_with
++ ADDED   use batter_sqlx::run_atomic_fail_fast_with_in <- atomic_policy::run_atomic_fail_fast_with_in
++ ADDED   use batter_sqlx::run_atomic_profiled_fail_fast_with <- atomic_policy::run_atomic_profiled_fail_fast_with
++ ADDED   use batter_sqlx::run_atomic_profiled_fail_fast_with_in <- atomic_policy::run_atomic_profiled_fail_fast_with_in
++ ADDED   use batter_sqlx::run_atomic_profiled_with <- atomic_policy::run_atomic_profiled_with
++ ADDED   use batter_sqlx::run_atomic_profiled_with_in <- atomic_policy::run_atomic_profiled_with_in
++ ADDED   use batter_sqlx::run_atomic_with <- atomic_policy::run_atomic_with
++ ADDED   use batter_sqlx::run_atomic_with_in <- atomic_policy::run_atomic_with_in
++ ADDED   use batter_sqlx::verification::FragmentObjectPolicy <- manifest::FragmentObjectPolicy
++ ADDED   use batter_sqlx::verification::GrantFragment <- manifest::GrantFragment
+
+## batter-runledger: 22 -> 50 entries; 0 removed, 28 added
++ ADDED   enum batter_runledger::JobPhasesRejection
++ ADDED   function batter_runledger::job_phases
++ ADDED   impl batter_runledger::JobPhasesRejection: Clone
++ ADDED   impl batter_runledger::JobPhasesRejection: Debug
++ ADDED   impl batter_runledger::JobPhasesRejection: Display
++ ADDED   impl batter_runledger::JobPhasesRejection: Eq
++ ADDED   impl batter_runledger::JobPhasesRejection: Error
++ ADDED   impl batter_runledger::JobPhasesRejection: PartialEq
++ ADDED   impl batter_runledger::JobPhasesRejection: StructuralPartialEq
++ ADDED   mod batter_runledger::native
++ ADDED   use batter_runledger::JobPhasesRejection <- phases::JobPhasesRejection
++ ADDED   use batter_runledger::PgFailurePolicy <- runledger_postgres::PgFailurePolicy
++ ADDED   use batter_runledger::PgPolicyIntentScope <- runledger_postgres::PgPolicyIntentScope
++ ADDED   use batter_runledger::PgPolicyQueueScope <- runledger_postgres::PgPolicyQueueScope
++ ADDED   use batter_runledger::PgScopeRolledBack <- runledger_postgres::PgScopeRolledBack
++ ADDED   use batter_runledger::PgTransactionError <- runledger_postgres::PgTransactionError
++ ADDED   use batter_runledger::grants <- runledger_postgres::grants
++ ADDED   use batter_runledger::job_phases <- phases::job_phases
++ ADDED   use batter_runledger::native::core <- runledger_core
++ ADDED   use batter_runledger::native::postgres <- runledger_postgres
++ ADDED   use batter_runledger::native::runtime <- runledger_runtime
++ ADDED   use batter_runledger::native::test_support <- runledger_test_support
++ ADDED   use batter_runledger::run_atomic_fail_fast_with <- runledger_postgres::run_atomic_fail_fast_with
++ ADDED   use batter_runledger::run_atomic_with <- runledger_postgres::run_atomic_with
++ ADDED   variant batter_runledger::JobPhasesRejection::Ended
++ ADDED   variant batter_runledger::JobPhasesRejection::Exhausted
++ ADDED   variant batter_runledger::JobPhasesRejection::Reserve
++ ADDED   variant batter_runledger::JobPhasesRejection::Unsupported
+
+## batter-runlimit: 180 -> 208 entries; 0 removed, 28 added
++ ADDED   enum batter_runlimit::grants::RunlimitGrantError
++ ADDED   enum batter_runlimit::grants::RunlimitOperation
++ ADDED   function batter_runlimit::grants::grant_fragment
++ ADDED   impl batter_runlimit::grants::RunlimitGrantError: Debug
++ ADDED   impl batter_runlimit::grants::RunlimitGrantError: Display
++ ADDED   impl batter_runlimit::grants::RunlimitGrantError: Error
++ ADDED   impl batter_runlimit::grants::RunlimitGrantError: From
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: Clone
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: Copy
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: Debug
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: Eq
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: Ord
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: PartialEq
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: PartialOrd
++ ADDED   impl batter_runlimit::grants::RunlimitOperation: StructuralPartialEq
++ ADDED   mod batter_runlimit::grants
++ ADDED   mod batter_runlimit::native_transport
++ ADDED   use batter_runlimit::grants::RunlimitOperation <- inventory::RunlimitOperation
++ ADDED   use batter_runlimit::memory <- runlimit_memory
++ ADDED   use batter_runlimit::native_transport::axum <- runlimit_axum
++ ADDED   use batter_runlimit::native_transport::http <- runlimit_http
++ ADDED   variant batter_runlimit::grants::RunlimitGrantError::Declaration
++ ADDED   variant batter_runlimit::grants::RunlimitGrantError::EmptySelection
++ ADDED   variant batter_runlimit::grants::RunlimitOperation::AuthenticationAttempts
++ ADDED   variant batter_runlimit::grants::RunlimitOperation::FixedWindowAdmission
++ ADDED   variant batter_runlimit::grants::RunlimitOperation::FixedWindowExpiryCleanup
++ ADDED   variant batter_runlimit::grants::RunlimitOperation::GcraAdmission
++ ADDED   variant batter_runlimit::grants::RunlimitOperation::GcraExpiryCleanup
+
+## batter-at-rest: 137 -> 145 entries; 0 removed, 8 added
++ ADDED   impl batter_at_rest::BorrowedSealedPayload: Debug
++ ADDED   method batter_at_rest::BorrowedSealedPayload::as_ref
++ ADDED   method batter_at_rest::BorrowedSealedPayload::ciphertext
++ ADDED   method batter_at_rest::BorrowedSealedPayload::decode
++ ADDED   method batter_at_rest::BorrowedSealedPayload::envelope
++ ADDED   method batter_at_rest::Keyring::rewrap_envelope
++ ADDED   struct batter_at_rest::BorrowedSealedPayload
++ ADDED   use batter_at_rest::BorrowedSealedPayload <- format::BorrowedSealedPayload
+
+## batter-test-support: 21 -> 21 entries; 0 removed, 0 added
+
+## batter: 16 -> 17 entries; 0 removed, 1 added
++ ADDED   use batter::otlp <- batter_otlp
+

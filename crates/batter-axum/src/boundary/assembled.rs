@@ -174,6 +174,11 @@ impl AssembledHttp {
     /// An in-process response proves response construction, never serving
     /// compatibility; keep real socket tests for that.
     ///
+    /// Migration: replaces the removed `into_router`. A test that called
+    /// `assemble(..).await?.into_router()` and dispatched with Tower's `oneshot`
+    /// calls `in_process()` and [`InProcessClient::request`] instead; a serving
+    /// composition registers the assembly directly with [`Self::register_in`].
+    ///
     /// ```
     /// use axum::{body::Body, extract::Request, http::StatusCode, routing::get};
     /// use batter_core::lifecycle::ShutdownHandle;
