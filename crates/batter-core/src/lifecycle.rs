@@ -19,6 +19,8 @@ use caller_owned::SupervisorOwnership;
 use capability::LifecycleCoordinator;
 use tasks::TaskSet;
 
+pub(crate) use capability::PeriodicAdmission;
+
 pub use caller_owned::UnapprovedDriver;
 pub use capability::{
     ComponentExit, ComponentStartup, LifecycleStatus, OperationAdmission, Readiness,
@@ -174,8 +176,44 @@ impl RegisteredComponent {
     }
 }
 
+/// The library-owned stopping class of a directly registered component.
+///
+/// There are exactly two classes and the registering API selects one. This is
+/// not an application-managed token, join protocol or dependency graph.
+#[derive(Clone)]
+pub(crate) enum ComponentClass {
+    /// Follows ordinary cooperative drain under the existing forced-cancellation
+    /// and abort/reap limits. Within this class, a `StopAtDrain` periodic runner
+    /// stops admission and destroys its active run when it observes drain.
+    Ordinary,
+    /// Keeps running bounded periodic work until the coordinator closes support
+    /// admission, which happens no later than forced cancellation. Its
+    /// obligation begins only once it has actually initialized.
+    PeriodicSupport(SupportObligation),
+}
+
+/// Whether a support component has initialized and therefore owes support to
+/// other work until the coordinator closes support admission.
+///
+/// Before that, an observed global drain abandons its pending initialization
+/// like any other component, so that exit is expected. Afterwards, returning
+/// success before its own stopping point remains an unexpected early exit.
+#[derive(Clone, Default)]
+pub(crate) struct SupportObligation(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl SupportObligation {
+    pub(crate) fn assume(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn assumed(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 struct Component {
     name: &'static str,
+    class: ComponentClass,
     lifecycle: RegisteredComponent,
     factory:
         Box<dyn FnOnce(ComponentStartup, LifecycleCoordinator) -> ComponentFuture + Send + 'static>,
@@ -196,6 +234,9 @@ pub struct Supervisor {
     ownership: Option<SupervisorOwnership>,
     components: Vec<Component>,
     managed: Vec<managed::Registration>,
+    // Retained independently of each runner so history survives panic, abort
+    // and waiter loss and reaches the completion report automatically.
+    periodic: Vec<crate::periodic::RetainedHistory>,
     reserved_components: Vec<&'static str>,
     cleanup: CleanupStack,
     coordinator: LifecycleCoordinator,
@@ -212,6 +253,7 @@ impl Supervisor {
             ownership: Some(SupervisorOwnership::new(coordinator.clone(), approval)),
             components: Vec::new(),
             managed: Vec::new(),
+            periodic: Vec::new(),
             reserved_components: Vec::new(),
             cleanup: CleanupStack::new(),
             coordinator,
@@ -282,12 +324,53 @@ impl Supervisor {
         let lifecycle = RegisteredComponent::new(&self.coordinator);
         self.components.push(Component {
             name,
+            class: ComponentClass::Ordinary,
             lifecycle,
             factory: Box::new(move |startup, _coordinator| {
                 Box::pin(factory(startup)) as ComponentFuture
             }),
         });
         Ok(())
+    }
+
+    /// Register one library-owned serial periodic component. See
+    /// [`crate::periodic::register_periodic_in`] for the public entry point.
+    pub(crate) fn register_periodic<F, Fut, E>(
+        &mut self,
+        name: &'static str,
+        policy: crate::periodic::PeriodicPolicy,
+        work: F,
+    ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
+    where
+        F: FnMut(crate::operation::OperationContext) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.check_component_name(name)?;
+        let registration = crate::periodic::Registration::new(name, policy, work);
+        let reader = registration.reader();
+        let support = registration.supports_through_drain();
+        let obligation = SupportObligation::default();
+        let class = if support {
+            ComponentClass::PeriodicSupport(obligation.clone())
+        } else {
+            ComponentClass::Ordinary
+        };
+        let lifecycle = RegisteredComponent::new(&self.coordinator);
+        // Support runs admitted during drain are additionally capped by the
+        // already recorded global forced-cancellation boundary.
+        let graceful = self.budget.drain;
+        self.periodic.push(registration.retained());
+        self.components.push(Component {
+            name,
+            class,
+            lifecycle,
+            factory: Box::new(move |startup, coordinator| {
+                let admission = coordinator.periodic_admission(support, graceful);
+                Box::pin(registration.run(startup, admission, obligation)) as ComponentFuture
+            }),
+        });
+        Ok(reader)
     }
 
     fn check_component_name(&self, name: &'static str) -> Result<(), RegistrationError> {
@@ -327,6 +410,7 @@ impl Supervisor {
         let lifecycle = RegisteredComponent::new(&self.coordinator);
         self.components.push(Component {
             name,
+            class: ComponentClass::Ordinary,
             lifecycle,
             factory: Box::new(move |startup, _coordinator| {
                 Box::pin(factory(startup)) as ComponentFuture
@@ -551,9 +635,11 @@ impl Supervisor {
         tracing::info!(target: "batter", "shutdown drain started");
         terminal.draining(cause);
         tasks
-            .collect_until(&mut self.queued, &self.coordinator, drain)
+            .drain_phase(&mut self.queued, &self.coordinator, drain, &managed)
             .await;
         let forced_cancellation = tasks.unfinished(&self.coordinator);
+        // Forced cancellation also closes support admission, so a boundary that
+        // was never reached cannot keep support work running past this point.
         self.coordinator.shared.force_cancel();
         tasks
             .collect_until(&mut self.queued, &self.coordinator, cancel)
@@ -574,6 +660,15 @@ impl Supervisor {
         }
         let summary = tasks.finish();
         let managed_records = managed::freeze(managed, &self.coordinator, reap).await;
+        // Every runner has now been joined, destroyed or explicitly left
+        // unjoined. Reading the retained history here needs no second join, and
+        // the observed unjoined names mark a snapshot incomplete even when its
+        // runner published a final marker before its task was lost.
+        let periodic = self
+            .periodic
+            .drain(..)
+            .map(|retained| retained.into_record(&summary.unjoined_components))
+            .collect();
         // Joining a wrapper does not prove that its hidden children have ended.
         // Be conservative after panic or forced abort, particularly for servers.
         let unsafe_exit = !abort_requested.is_empty()
@@ -590,6 +685,7 @@ impl Supervisor {
             cause,
             tasks: summary.records,
             managed: managed_records,
+            periodic,
             completed_process_tasks: summary.completed,
             forced_cancellation,
             abort_requested,

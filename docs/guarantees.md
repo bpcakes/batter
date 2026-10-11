@@ -857,6 +857,194 @@ readback can clarify a lost commit acknowledgement but never replaces or erases
 the original command failure. Retirement is not run by service startup; its
 fixture acceptance is not evidence of a deployment retirement.
 
+## Periodic maintenance components
+
+`periodic::register_periodic_in` registers recurring maintenance through the
+same sealed `RegistrationTarget` authority as native adapters, so a component
+can be added without process start, replacement or cleanup-extraction
+authority. Registration is inert and fully validated first: the name shares the
+one component vocabulary and rejects duplicates and invalid spellings, and
+`PeriodicPolicy` rejects a zero or unrepresentable interval, run budget or
+initialization allowance before anything can run. Construction, a rejected
+registration, an abandoned unstarted supervisor and a never-polled driver all
+invoke no application work. A run budget longer than the interval is a valid
+selection. The returned `PeriodicReader` is read-only: it owns no work and no
+history, cannot run, stop, cancel or clear anything, and reading it is never
+required because the completion report carries the same evidence.
+
+One registered component owns exactly one directly polled serial future. There
+is no detached per-run task, no event queue and no second scheduler, so
+invocations cannot overlap. The first invocation is immediate once the
+component can run; later ones follow a fixed interval with missed ticks
+skipped. One overdue invocation may run immediately after an overrun, and the
+schedule then realigns without replaying a burst of missed work, including
+intervals and overruns shorter than Tokio's five-millisecond missed-tick
+tolerance. The private schedule advances to the first future point on its
+original cadence before admitting that overdue run; this is start-to-start
+scheduling, not completion-plus-delay. Tokio timers retain their native
+resolution, so sub-millisecond intervals do not promise sub-millisecond wakeups.
+If no later cadence point fits the monotonic clock, the component waits for its
+existing initialization or shutdown boundary instead of overflowing or spinning.
+Each run receives a
+library-created `OperationContext` with its own fresh deadline and a
+cancellation lineage descending from process forced cancellation, so a child
+cannot exceed the run and ending one run cancels only its own child scope, not
+a sibling or a future run. The recorded semantics of the schedule and pinned Tokio timers
+are in [references](references.md#periodic-maintenance-scheduling-semantics-2026-10-08).
+
+Startup acknowledgement is an explicit policy. `PeriodicStartup::immediate`
+states that the loop is initialized, not that maintenance succeeded.
+`PeriodicStartup::after_first_success` requires a selected positive total
+allowance, measured from the component's first live execution and including
+failed runs and the interval waits between them; each initialization run is
+additionally capped by whichever of the run budget and that allowance expires
+first. When its run budget is longer, a cooperative pending run receives the
+original initialization deadline and is destroyed when it expires under either
+stopping class; a preceding failed run and cadence wait do not restart the
+allowance. A qualifying success acknowledges exactly once, and later run failures
+never revoke it or establish continuing lease, renewal or dependency health.
+Because the run boundary is cooperative and rechecks neither its clock nor
+drain after the work's own poll returns, a success that only arrived after the
+allowance had expired, or after drain began, is still counted as a successful
+run but cannot acknowledge startup or assume the support obligation. An
+observed drain abandons that pending initialization; an expired allowance stays
+a retained initialization failure. Either way readiness is not published.
+Observed drain abandons pending initialization, including for support
+components, and expiry is a distinct retained library initialization failure
+(`PeriodicInitializationExpired`) that initiates the existing drain sequence.
+Neither policy can publish readiness without its acknowledgement, and both run
+their initial invocations while the process is still `Starting` through a
+private admission path that does not weaken readiness-gated public operation or
+root process admission.
+
+Registration requires one of exactly two library-owned stopping classes.
+`PeriodicShutdown::StopAtDrain` stops admitting runs and destroys an active run
+on global drain. `PeriodicShutdown::SupportThroughDrain` keeps running bounded
+work while ordinary direct components, queued or active finite work and
+admitted descendants, or native settlement still need it. The coordinator owns
+that stopping point and closes support admission once ordinary direct work has
+been joined with termination evidence adequate for dependency cleanup, no
+finite work or descendant remains, and every retained managed outcome allows
+dependency cleanup. A joined panic or abort is deliberately not adequate: the
+same exit makes the coordinator skip finalizers and its descendants may still
+need support, so support then runs to forced cancellation. A returned
+application error is cooperative termination and does close support. Pending or
+uncooperative native settlement is not a stopped proof: neither a joined
+wrapper nor a finished native report alone suffices, and settlement is observed
+during drain rather than after support stops. All support components are excluded
+together from the predicate they await: two support schedules do not wait for
+each other after ordinary work settles, and a process with no ordinary work
+closes support promptly on drain. If that boundary is never reached, support
+closes at the existing global forced-cancellation boundary; earliest-stop-clock
+tightening, the cancel and abort/reap limits and conservative cleanup skipping
+are unchanged, and support work is joined or destroyed before finalizers run.
+For an initialized component, observing the support stopping point interrupts
+an active cooperative run; it does not wait for that run's budget
+or the remaining drain allowance. Its future is destroyed before dependency
+cleanup and the interruption is retained in `stop_interrupted`. A paused-time
+regression keeps a run pending through ordinary drain, then proves destruction
+after ordinary settlement and before cleanup without forced cancellation.
+A run admitted during drain is additionally capped by the already recorded
+forced-cancellation instant.
+
+A component whose initialization is still pending is admitted as ordinary work
+whatever its stopping class, because it has taken on no support obligation yet
+and pending initialization abandons on global drain. That abandonment is an
+expected exit even while ordinary work keeps the later support boundary open.
+Treating it as support would grant a run after its applicable stopping point
+and leave only the cancellation preflight to stop it.
+
+Admission transitions stay private to the lifecycle state owner. Grants and
+rejections are taken under the single transition mutex and returned as plain
+values, so no application factory, destructor, poll, span, subscriber or
+recorder code runs under that guard. An ordinary task failure closes ordinary
+admission, exactly as it closes finite process admission, without closing
+initialized support admission while consumers are still draining. The
+guarantee is that no run is admitted after its applicable stopping point.
+Batter deliberately does not claim that invoking an already admitted callback
+is atomic with stop: cancellation preflight happens, but a previously admitted
+callback can still race physical invocation.
+
+Run outcomes are exhaustive and distinct: success, recoverable application
+failure, run deadline, normal stop interruption, and explicit escalation.
+`From<E>` on `PeriodicFailure` produces the recoverable variant, so `?` on an
+ordinary application error keeps the schedule and cannot silently drain the
+process; `PeriodicFailure::Fatal` has no conversion and must be written out.
+The `recoverable` and `fatal` helpers select those same outcomes explicitly.
+Consuming `into_inner` returns the original concrete cause and deliberately
+discards its classification, as the executable helper examples demonstrate.
+Only that explicit escalation escalates a returned application outcome, while a
+native factory, poll or destructor panic, unexpected component termination and
+initialization failure stay terminal. A recoverable failure or an expired run
+deadline permits the next scheduled invocation and never an extra immediate
+retry. Registration authorizes recurrence only: it proves no remote rollback,
+idempotence, successful renewal, fencing or absence of a timed-out effect, and
+lease-loss, freshness and durable witness policy stay application- or
+native-owned.
+
+Retained evidence is bounded. `PeriodicSummary` keeps saturating counters that
+report saturation instead of wrapping, counts deadline and stop interruptions
+separately, records at most one outcome classification per admitted run, and
+explicitly accounts for the recoverable failures it did not sample. The first
+and last recoverable causes are retained concretely: `first_failure` keeps the
+first cause for the component's lifetime, while `last_failure` remains `None`
+until the second recoverable failure and then keeps the newest subsequent cause.
+When `last_failure` is `None`, `first_failure` is the newest retained cause, if
+any. Both slots retain concrete causes without an `E: Clone` bound or
+error-string conversion and stay inspectable through the
+inherent `downcast_ref` on `dyn Error + Send + Sync`; only the library-owned
+sample count is bounded, not
+application payload size or caller-retained clones. Later success never erases
+earlier evidence. The supervisor retains that history independently of the
+runner, so it survives a later panic, abort or lost waiter and appears in
+`ShutdownReport::periodic` with no second application join and no mandatory
+observer polling. A runner that published no final snapshot leaves
+`PeriodicCompletion::Pending`, which marks the snapshot explicitly incomplete
+and claims nothing about termination; so does a runner the coordinator lists as
+unjoined, because a published marker is the loop's claim about itself and
+cannot stand without observed join evidence. That reconciliation uses only
+registered component names, because finite task labels are a separate
+vocabulary that may repeat and may match a component's name. `PeriodicSummary::has_failures`
+also reports the terminal `Fatal` and `InitializationExpired` completions,
+which advance no recurring counter. Expected `AbandonedDuringStartup`
+completion alone does not make this predicate true, but any recorded run failure
+or interruption still does, including a pending initialization run interrupted
+by drain. This predicate does not determine checked shutdown success.
+
+`invocations` includes active work and runs lost before classification through
+panic, abort or an unjoined runner, so it need not equal the classified outcomes
+plus a fatal run. A final completion marker describes how the loop ended; it
+does not promise exact accounting when counters saturated or an interruption
+classification was lost to a destruction panic, as described below.
+
+The concrete terminal cause is retained in `PeriodicSummary::terminal_failure`
+as soon as the run produces it, while that run's own future is still alive, and
+therefore before either that future or the factory's captures can be destroyed.
+A panicking destructor in either place unwinds the component's normal return,
+so the error it was carrying would otherwise be replaced by the panic alone;
+the retained slot keeps the original cause while the panic stays visible in the
+task records and still forces conservative cleanup skipping. Every outcome the
+run itself produced — a success, a recoverable failure with its bounded sample
+and accounting, or an escalation — is published at that same point, so a
+destruction panic cannot erase the invocation's evidence. The boundary's own
+outcomes, an expired run deadline and a stop interruption, carry no application
+cause and are counted by the loop afterwards, so a destruction panic can still
+cost one of those counters; the panic in the task records is then the
+authoritative evidence for that invocation. Retained terminal
+evidence is reported by `has_failures` independently of the completeness
+marker, because a runner can retain its cause and then be lost before
+publishing one, or have its marker reset for want of join evidence. An escalated run's error is shared
+with that slot, so the task record exposes it through `Error::source`, exactly
+as a finite process task's shared failure does; the library's own
+initialization-expiry error stays directly downcastable because it is
+reconstructible. That library event uses the number of runs admitted before
+expiry as its `terminal_failure.invocation` (zero if none); unlike an escalated
+run's one-based index, it does not identify a failing invocation. `Debug` and `Display` stay redacted, a
+displaced cause is destroyed outside the publication lock inside the
+component's protected dispatch, and recoverable history alone does not make
+checked lifecycle completion fail. Terminal task failures, unjoined work and
+unsuccessful cleanup keep their existing failure meaning.
+
 ## Dependency health sampling
 
 `HealthMonitor` owns one native probe factory and creates no tasks. Constructing

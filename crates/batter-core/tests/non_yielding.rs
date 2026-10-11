@@ -8,6 +8,8 @@ mod evidence;
 mod fixture;
 #[path = "non_yielding/launch.rs"]
 mod launch;
+#[path = "non_yielding/periodic.rs"]
+mod periodic;
 #[path = "non_yielding/timing.rs"]
 mod timing;
 #[path = "non_yielding/watchdog.rs"]
@@ -55,6 +57,40 @@ fn non_yielding_child_reports_unjoined_work_and_cannot_drop_runtime() {
         .validate(
             ExpectedExit::WatchdogKill,
             NON_YIELDING_EVIDENCE,
+            &["task-dropped", "cleanup-invoked", "runtime-dropped"],
+        )
+        .unwrap();
+}
+
+#[test]
+fn non_yielding_periodic_support_retains_failure_history_in_the_report() {
+    ChildRun::run("periodic-non-yielding")
+        .validate(
+            ExpectedExit::WatchdogKill,
+            &[
+                "task-entered",
+                "drain-requested",
+                "periodic-history-pending",
+                "report-unjoined-cleanup-skipped",
+                "runtime-drop-started",
+            ],
+            &["task-dropped", "cleanup-invoked", "runtime-dropped"],
+        )
+        .unwrap();
+}
+
+#[test]
+fn unjoined_finite_work_cannot_invalidate_a_joined_periodic_namesake() {
+    ChildRun::run("periodic-finite-namesake")
+        .validate(
+            ExpectedExit::WatchdogKill,
+            &[
+                "task-entered",
+                "drain-requested",
+                "periodic-history-stopped",
+                "report-unjoined-cleanup-skipped",
+                "runtime-drop-started",
+            ],
             &["task-dropped", "cleanup-invoked", "runtime-dropped"],
         )
         .unwrap();

@@ -1,5 +1,5 @@
 use super::{ManagedRecord, ShutdownCause, TaskOutcome, TaskRecord};
-use crate::cleanup::CleanupReport;
+use crate::{cleanup::CleanupReport, periodic::PeriodicRecord};
 
 /// Complete process report, including teardown failures and unreaped work.
 /// Awaiting a raw driver outcome does not by itself establish successful shutdown.
@@ -10,6 +10,9 @@ use crate::cleanup::CleanupReport;
 /// explicitly dropping that raw report bypasses the `must_use` lint.
 /// Debug and Display are redacted: retained task and cleanup errors are reachable
 /// only through the public fields, never through formatting.
+///
+/// This struct gains fields as the foundation grows and is constructed only by
+/// the coordinator; match it with `..` rather than exhaustively.
 ///
 /// ```compile_fail
 /// #![deny(unused_must_use)]
@@ -27,6 +30,10 @@ pub struct ShutdownReport {
     /// Native initialization and descendant settlement retained independently of
     /// direct wrapper joins. Pending settlement prevents dependency cleanup.
     pub managed: Vec<ManagedRecord>,
+    /// Bounded periodic-maintenance history, retained independently of each
+    /// runner. Recoverable run failures recorded here do not by themselves make
+    /// this report unsuccessful; a terminal run failure appears in `tasks`.
+    pub periodic: Vec<PeriodicRecord>,
     /// Successful finite tasks are counted instead of retained individually.
     pub completed_process_tasks: u64,
     /// Whether directly registered tasks remained after the drain phase.
@@ -69,6 +76,7 @@ impl std::fmt::Debug for ShutdownReport {
             .field("cause", &self.cause)
             .field("tasks", &self.tasks)
             .field("managed", &self.managed)
+            .field("periodic", &self.periodic)
             .field("completed_process_tasks", &self.completed_process_tasks)
             .field("forced_cancellation", &self.forced_cancellation)
             .field("abort_requested", &self.abort_requested)
