@@ -28,7 +28,7 @@ use sqlx::{AssertSqlSafe, PgPool, migrate::Migrate, postgres::PgPoolOptions};
 use tokio::{sync::Barrier, time::sleep};
 
 const TEST_DATABASE_URL: &str = "RUNLIMIT_POSTGRES_TEST_DATABASE_URL";
-const CLEANUP_SQL: &str = include_str!("../src/cleanup_expired.sql");
+const CLEANUP_SQL: &str = include_str!("../src/cleanup_expired_by_key.sql");
 const TEST_HOST_MIGRATION_VERSION: i64 = 20_260_722_000_000;
 const PUBLISHED_CREATE_MIGRATION_VERSION: i64 = 20_260_723_000_000;
 const FILLFACTOR_MIGRATION_VERSION: i64 = 20_260_725_000_000;
