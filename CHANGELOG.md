@@ -44,11 +44,13 @@ contracts, capability facts and validation history.
   `Send` bound, and restoring its old bound would require a non-`Send` erased
   work future, breaking the canonical handler/task composition. A separately
   named local runner would be a new API, not source compatibility for old calls.
-- Native Runledger PostgreSQL fixtures select an available host TCP port before
-  publishing it through Docker, avoiding ports already occupied on the host
-  but unknown to Docker Desktop's VM allocator. The handoff is not atomic;
-  a later collision still fails startup. Bootstrap deadlines and cleanup stay
-  unchanged, and no application database operation is retried.
+- Native Runledger PostgreSQL fixtures delegate host-port selection and binding
+  to Docker on IPv4 loopback, matching the fixture URL and avoiding all-interface
+  binds that can collide with unrelated outbound host sockets on Docker Desktop.
+  Failed starts await cleanup of their uniquely identified container and
+  anonymous volumes, honoring explicit keep mode. Cleanup failure retains the
+  startup diagnostic. Docker publication can still fail; no application
+  database operation is retried.
 - Re-export `PgScopeError` from `batter_runledger` (also `batter::runledger`),
   the error `PgIntentScope::application` returns, so a consumer that handles it
   needs no direct `batter-sqlx` import. A whole-application fresh-agent

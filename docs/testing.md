@@ -2666,12 +2666,26 @@ default database and container-lifecycle tests require Docker and PostgreSQL 18
 retain their external database prerequisites. Missing Docker must fail these
 native tests rather than skip them. Root Cargo configuration selects committed
 SQLx offline metadata for compilation, which does not replace database tests.
-Native fixtures ask the host kernel for an available TCP port and explicitly
-map it through Docker; Docker Desktop's VM allocator can otherwise select a
-port already occupied on the host. The reservation is released just before
-container start, so the handoff is not atomic and later collisions still fail.
-The existing-host-listener control checks that startup reaches PostgreSQL 18
-without touching an unrelated listener; delayed startup uses the same allocator.
+Native fixtures let Docker allocate the published TCP port, avoiding a local
+reservation that must be released before Docker's create/pull/start sequence.
+Docker binds IPv4 loopback, matching the fixture URL and avoiding all-interface
+binds that can conflict with outbound host sockets on Docker Desktop.
+Docker Desktop can still fail to publish a port; this is a prerequisite failure,
+not a reason to retry application database work. Each startup attempt has a
+unique name and label before creation. A returned start failure triggers an
+awaited, 30-second cleanup through the configured Docker API, verifying that
+label and removing by immutable container ID with anonymous volumes. Cleanup
+failure is reported alongside the original start failure; explicit
+`TESTCONTAINERS_COMMAND=keep` retains the container. The optional CLI reaper is
+still used for successfully started process-owned containers. Startup cleanup
+survives waiter cancellation while the Tokio runtime remains alive; runtime
+death or an unreachable Docker daemon cannot guarantee remote cleanup.
+Failed-start subprocess controls force Docker to reject a missing executable
+after creation, check cleanup on ordinary libtest exit without the optional CLI,
+and check keep policy, anonymous-volume removal and unrelated-name protection.
+The existing-host-listener and delayed-startup controls retain PostgreSQL 18
+readiness coverage; the former also inspects the actual published mapping and
+requires IPv4 loopback at the port used by SQLx.
 After container start, native test support polls Docker's published PostgreSQL
 port under a 30-second bootstrap allowance; a missing mapping still fails the
 test. Connection and PostgreSQL 18 checks follow that mapping.

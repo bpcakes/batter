@@ -1,14 +1,12 @@
-use std::{net::TcpListener, time::Duration};
+use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::{
-    ContainerAsync, ContainerRequest, GenericImage, ImageExt, core::ContainerPort,
-    runners::AsyncRunner,
-};
+use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::ContainerPort};
 
 use crate::container_lifecycle::{
     PROCESS_OWNER_LABEL, ProcessContainer, process_owner_label_value,
 };
+use crate::container_start::start_postgres;
 
 const DEFAULT_POSTGRES_IMAGE: &str = "postgres:18";
 const POSTGRES_USER: &str = "runledger";
@@ -104,25 +102,6 @@ async fn initialize_owned_postgres(image_ref: &str) -> SharedPostgres {
     }
 }
 
-async fn start_postgres(image: ContainerRequest<GenericImage>) -> ContainerAsync<GenericImage> {
-    // Docker Desktop's VM allocator can choose a port occupied on the host.
-    // Ask the host kernel instead. Release immediately before Docker takes over;
-    // this is not an atomic handoff, so startup still fails if another process
-    // claims the port in between. Do not retry application database work.
-    let reservation = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
-        .expect("reserve available PostgreSQL host port");
-    let port = reservation
-        .local_addr()
-        .expect("reserved host address")
-        .port();
-    drop(reservation);
-    image
-        .with_mapped_port(port, ContainerPort::Tcp(5432))
-        .start()
-        .await
-        .expect("start postgres container on selected host port")
-}
-
 async fn resolve_host_port(container: &ContainerAsync<GenericImage>, internal_port: u16) -> u16 {
     // Docker can report a started container before its published mapping is visible.
     tokio::time::timeout(POSTGRES_BOOTSTRAP_TIMEOUT, async {
@@ -142,7 +121,7 @@ async fn resolve_host_port(container: &ContainerAsync<GenericImage>, internal_po
     })
 }
 
-fn parse_image_ref(image_ref: &str) -> (String, String) {
+pub(crate) fn parse_image_ref(image_ref: &str) -> (String, String) {
     let (name_and_tag, digest) = image_ref
         .split_once('@')
         .map_or((image_ref, None), |(name_and_tag, digest)| {
@@ -234,6 +213,7 @@ async fn wait_for_postgres(admin_url: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -320,6 +300,25 @@ mod tests {
             .as_ref()
             .expect("owned PostgreSQL container");
         let port = resolve_host_port(container.container(), 5432).await;
+        let inspection = testcontainers::core::client::docker_client_instance()
+            .await
+            .expect("Docker client")
+            .inspect_container(container.container().id(), None)
+            .await
+            .expect("inspect actual published mapping");
+        let ports = inspection
+            .network_settings
+            .and_then(|network| network.ports)
+            .expect("published ports");
+        let bindings = ports
+            .get("5432/tcp")
+            .and_then(Option::as_ref)
+            .expect("PostgreSQL bindings");
+        assert!(!bindings.is_empty());
+        assert!(bindings.iter().all(|binding| {
+            binding.host_ip.as_deref() == Some("127.0.0.1")
+                && binding.host_port.as_deref() == Some(port.to_string().as_str())
+        }));
         assert_ne!(
             port,
             occupied.local_addr().expect("occupied host address").port()

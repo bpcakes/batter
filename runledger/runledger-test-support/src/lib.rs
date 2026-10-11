@@ -4,6 +4,7 @@
 //! relies on Unix process groups and shell semantics.
 
 mod container_lifecycle;
+mod container_start;
 mod db_lifecycle;
 mod env;
 mod postgres_container;
