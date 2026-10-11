@@ -136,7 +136,9 @@ def main() -> int:
                 raise RuntimeError(f"Graceful shutdown returned nonzero status {status}.")
             logs.seek(0)
             output = re.sub(r"\x1b\[[0-9;]*m", "", logs.read().decode("utf-8", errors="replace"))
-            required = ["http_outcome", "latency_ms", "request_id="]
+            # The address is typed startup output, logged only after handoff.
+            required = ["http_outcome", "latency_ms", "request_id=",
+                        "HTTP listener bound", f"address=127.0.0.1:{port}"]
             if not args.warn_filter:
                 required += ["operation boundary finished"]
             else:
