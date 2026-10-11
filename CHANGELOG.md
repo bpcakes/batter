@@ -8,6 +8,24 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `Startup::protected` (also `batter::startup::Startup::protected`): protected
+  startup initializers are owned async closures whose future the library boxes,
+  and their `Ok` value is typed output delivered with the running owner by the
+  new `StartingSupervisor::wait_with_output`. A failed startup never yields
+  output; output returned while drain, cancellation or deadline is observed is
+  destroyed before cleanup. `startup::Initializer<E>` names the `Send` initializer
+  bound in return types. `startup::ApplicationError` lets `?` combine unrelated
+  errors in an initializer and keeps the boxed cause downcastable, and
+  `InitializationError<ApplicationError>` implements `std::error::Error`, so
+  anyhow-style roots need no adapter type. The HTTP example now returns its bound
+  address from startup. This is not a hard cut: `Startup::scoped`, its
+  `StartupFuture` closures, `ScopedStartup::start`,
+  `DeferredScopedStartup::start` and `service::start` keep their generic
+  parameter lists and, for existing closures, their return types;
+  `StartingSupervisor` gains a defaulted third type parameter, and its `wait`
+  remains for unit output. `service::start` accepts unit-output async
+  initializers but not typed output.
+
 - Breaking: backfill the `Quota::run` work-future bound added after 0.0.1
   (also `batter::runlimit::Quota::run`). Work futures must be `Send`; generic
   wrappers must add `+ Send` to their `Fut: Future<Output = Result<T, E>>` bound.

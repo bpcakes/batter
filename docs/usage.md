@@ -180,24 +180,52 @@ components and no finite-work capacity reports `EmptySupervisor`; successful
 resource cleanup does not make that shutdown report successful. Configure
 genuine service work, or use the finite-command composition below.
 
-Use `Startup::scoped(supervisor, context, cleanup_budget, initializer)`, select
-library-owned signals with `.with_unix_signals("signals")`, then call `.start()`.
-Inside the initializer, reserve cleanup before resource acquisition through
+Use `Startup::protected(supervisor, context, cleanup_budget, async move |scope| { ... })`,
+select library-owned signals with `.with_unix_signals("signals")`, then call
+`.start()`. The initializer is an ordinary owned async closure: it borrows the
+protected scope across awaits and the library boxes its future, so there is no
+`Box::pin`. Inside it, reserve cleanup before resource acquisition through
 `scope.reserve_cleanup(...)` and register it immediately after success. Pass the
 protected scope to adapter `_in` helpers rather than lending the complete
 supervisor. Application helpers that only register work take a concrete
 `batter::registration::Registration<'_>`, passed as `scope.registration()`.
 For a native SQLx pool, reserve its slot and call `batter_sqlx::pool_in`, then run
 an explicit bounded query or `probe`. The protected scope exposes no operation
-context: clone the startup context before passing it to `Startup::scoped` and
+context: clone the startup context before passing it to `Startup::protected` and
 use that clone for the query and for other bounded initialization work, as the
-reference root does for native worker preparation. Await `starting.wait()` to obtain the
-`RunningSupervisor`; startup failure retains initialization and cleanup errors.
+reference root does for native worker preparation.
+
+The initializer's `Ok` value is typed output, such as a bound listener address.
+Await `starting.wait_with_output()` to receive `(RunningSupervisor, output)`
+together; observers never receive the output, and a failed startup never yields
+it. Output returned while a drain, cancellation or deadline is observed is
+destroyed before cleanup, not handed off. With unit output, `starting.wait()`
+returns only the running owner; a typed output does not offer `wait()`, so the
+value cannot be skipped by accident. `service::start` does not deliver typed
+output yet and accepts only unit output. To name the specification in a helper's
+return type, use `ScopedStartup<impl Initializer<E, Output = T>>`.
+
+Keep `E` concrete when callers match on it; startup retains it unchanged in
+`InitializationError::Application`. An initializer that combines unrelated
+errors with `?` returns `batter::startup::ApplicationError`: `?` converts any
+error that converts into `BoxError`, the box is retained unchanged for
+`downcast_ref` and `source()` inspection, and the startup failure still
+propagates with `?` into `BoxError` or `anyhow::Result`. A raw `BoxError` or
+`anyhow::Error` cannot be the initializer error itself, because neither
+implements `std::error::Error`, so the startup failure could not propagate with
+`?`. An `anyhow::Error` converted by `?` wraps its head error; apply `?` to the
+concrete error to keep it downcastable. Startup failure retains initialization
+and cleanup errors.
 The [HTTP example](../crates/batter/examples/http_service.rs) demonstrates
-this complete path with native listener binding and `HttpBoundary`; the
+this complete path with native listener binding and `HttpBoundary`, returning
+the bound address from startup; the
 [PostgreSQL lifecycle example](../examples/postgres-lifecycle/src/main.rs) and
 [reference root](../examples/reference-service/src/runtime.rs) add `pool_in`, and
 the reference root also registers native Runledger preparation with `register_in`.
+Those two roots still use the lower-level `Startup::scoped` form, which takes a
+caller-boxed `StartupFuture` closure (`|scope| Box::pin(async move { ... })`),
+has unit output and otherwise shares the protected scope, coordinator and
+policies.
 
 `Startup::new` remains the lower-level compatibility path when a composition
 root deliberately needs full supervisor access. Its additional caller
@@ -671,7 +699,7 @@ async fn prune(scope: OperationContext) -> PeriodicRun<io::Error> {
     Ok(())
 }
 
-// Call as `register_pruning(scope.registration())` inside `Startup::scoped`.
+// Call as `register_pruning(scope.registration())` inside `Startup::protected`.
 fn register_pruning(
     mut registration: Registration<'_>,
 ) -> Result<PeriodicReader, batter::BoxError> {
@@ -709,7 +737,7 @@ use batter::{
 };
 use std::{io, time::Duration};
 
-// Call as `register_health(scope.registration())` inside `Startup::scoped`.
+// Call as `register_health(scope.registration())` inside `Startup::protected`.
 fn register_health(
     mut registration: Registration<'_>,
 ) -> Result<HealthReader<io::Error>, batter::BoxError> {

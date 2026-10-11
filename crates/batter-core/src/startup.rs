@@ -1,5 +1,13 @@
 //! Owned initialization, explicit resource registration and running-driver handoff.
 //!
+//! [`Startup::protected`] is the canonical constructor: its initializer is an
+//! ordinary owned async closure over [`ProtectedStartupScope`] that may return
+//! typed output, delivered with the running owner by
+//! [`StartingSupervisor::wait_with_output`]. Errors stay concrete; an
+//! initializer that combines unrelated errors with `?` returns
+//! [`ApplicationError`]. Boxed [`StartupFuture`] closures through
+//! [`Startup::scoped`] remain the lower-level form.
+//!
 //! Construction is inert. [`Startup::start`] launches a coordinator that retains
 //! the supervisor while the initializer runs and through failed-startup cleanup.
 //! Borrowed waiter cancellation leaves that owner alone; dropping the startup
@@ -15,13 +23,17 @@
 //! Configuring finite-work capacity supports component-free process supervision,
 //! but does not turn this initializer into a finite-command owner.
 
+mod application;
 mod driver;
 mod handoff;
+mod initializer;
 mod report;
 mod signals;
 
 pub use crate::{PanicPayload, PanicPayloadBusy};
+pub use application::ApplicationError;
 pub use handoff::{StartingSupervisor, StartupObserver, StartupOutcome};
+pub use initializer::Initializer;
 pub use report::{InitializationError, StartupCause, StartupError, StartupFailure};
 
 use crate::{
@@ -35,6 +47,11 @@ use std::{future::Future, pin::Pin};
 
 /// A native initializer future borrowing its startup scope.
 /// One box permits that borrow across awaits without a shared resource registry.
+///
+/// This is the lower-level caller-boxed form accepted by [`Startup::new`] and
+/// [`Startup::scoped`]. Protected composition should use
+/// [`Startup::protected`], whose async closure is boxed by the library and may
+/// return typed output.
 pub type StartupFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'a>>;
 
 /// Inert startup specification. Dropping it abandons the unstarted supervisor
@@ -211,13 +228,81 @@ impl<F> DeferredStartup<F> {
 }
 
 impl Startup<()> {
-    /// Construct the canonical registration-constrained startup specification.
+    /// Construct the canonical protected startup specification from an owned
+    /// async closure.
     ///
-    /// The callback receives no supervisor or operation-context accessor. It can
-    /// set stage metadata, reserve finalization before acquisition, and lend
-    /// sealed registration authority to supported adapters. Construction is
-    /// inert; [`ScopedStartup::start`] uses the same owned coordinator as legacy
-    /// [`Startup::start`].
+    /// The initializer receives a [`ProtectedStartupScope`], with no supervisor
+    /// or operation-context accessor. It can set stage metadata, reserve
+    /// finalization before acquisition and lend sealed registration authority
+    /// to supported adapters, borrowing the scope across awaits. The library
+    /// boxes its future. Its `Ok` value is delivered with the running owner by
+    /// [`StartingSupervisor::wait_with_output`], never to observers; a failed
+    /// startup never yields it. `E` stays concrete: use a concrete error type,
+    /// or [`ApplicationError`] when `?` combines unrelated errors. Construction
+    /// is inert; [`ScopedStartup::start`] uses the owned coordinator shared with
+    /// [`Startup::scoped`], including its cleanup, signal and approval policies.
+    ///
+    /// ```
+    /// use batter_core::{
+    ///     BoxError, cleanup::CleanupBudget, lifecycle::{ShutdownBudget, Supervisor},
+    ///     operation::OperationOwner, startup::{ApplicationError, Startup},
+    /// };
+    /// use std::time::Duration;
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), BoxError> {
+    /// let second = Duration::from_secs(1);
+    /// let cleanup = CleanupBudget::new(second, second, second)?;
+    /// let process = Supervisor::new(ShutdownBudget::new(second, second, second, cleanup)?);
+    /// let context = OperationOwner::new(second)?.into_context();
+    /// let mut starting = Startup::protected(process, context, cleanup, async |scope| {
+    ///     scope.stage("listener.bind")?;
+    ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    ///     let address = listener.local_addr()?;
+    ///     scope.registration().register("accept", move |startup| async move {
+    ///         let shutdown = startup.acknowledge_started();
+    ///         loop {
+    ///             tokio::select! {
+    ///                 biased;
+    ///                 _ = shutdown.draining() => break,
+    ///                 accepted = listener.accept() => drop(accepted),
+    ///             }
+    ///         }
+    ///         Ok(shutdown.stopped())
+    ///     })?;
+    ///     Ok::<_, ApplicationError>(address)
+    /// })
+    /// .start();
+    /// // Startup failure propagates with `?`; the address arrives with the owner.
+    /// let (running, address) = starting.wait_with_output().await?;
+    /// assert!(address.ip().is_loopback());
+    /// running.status().wait_ready().await.unwrap();
+    /// running.shutdown_checked().await?;
+    /// # Ok(()) }
+    /// ```
+    pub fn protected<F, T, E>(
+        supervisor: Supervisor,
+        context: OperationContext,
+        cleanup: CleanupBudget,
+        initialize: F,
+    ) -> ScopedStartup<F>
+    where
+        F: AsyncFnOnce(&mut ProtectedStartupScope) -> Result<T, E> + Initializer<E, Output = T>,
+    {
+        ScopedStartup {
+            supervisor,
+            context,
+            cleanup,
+            signals: signals::SignalPolicy::default(),
+            initialize,
+        }
+    }
+
+    /// Construct a protected startup specification from a caller-boxed
+    /// [`StartupFuture`] closure.
+    ///
+    /// This lower-level form predates [`Self::protected`] and remains for
+    /// existing callers. It has the same protected scope, coordinator and
+    /// policies, but no typed output and requires `Box::pin` at the call site.
     ///
     /// ```
     /// use batter_core::{cleanup::CleanupBudget,
@@ -263,7 +348,8 @@ impl Startup<()> {
     }
 }
 
-/// Inert protected startup specification returned by [`Startup::scoped`].
+/// Inert protected startup specification returned by [`Startup::protected`]
+/// and [`Startup::scoped`].
 pub struct ScopedStartup<F> {
     supervisor: Supervisor,
     context: OperationContext,
@@ -316,9 +402,14 @@ impl<F> ScopedStartup<F> {
     ///
     /// Application failures are retained as
     /// [`InitializationError::Application`] without strengthening `E`'s bounds.
-    pub fn start<E>(self) -> StartingSupervisor<InitializationError<E>>
+    /// Typed output is delivered by [`StartingSupervisor::wait_with_output`];
+    /// a boxed [`StartupFuture`] initializer has unit output and can use
+    /// [`StartingSupervisor::wait`].
+    pub fn start<E>(
+        self,
+    ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::RunningSupervisor, F::Output>
     where
-        F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+        F: Initializer<E>,
         E: Send + Sync + 'static,
     {
         driver::start_scoped(self)
@@ -342,12 +433,13 @@ impl<F> DeferredScopedStartup<F> {
         self
     }
 
-    /// Launch protected startup and return an unapproved running owner on success.
+    /// Launch protected startup and return an unapproved running owner on
+    /// success, with any typed output from [`StartingSupervisor::wait_with_output`].
     pub fn start<E>(
         self,
-    ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::UnapprovedSupervisor>
+    ) -> StartingSupervisor<InitializationError<E>, crate::lifecycle::UnapprovedSupervisor, F::Output>
     where
-        F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+        F: Initializer<E>,
         E: Send + Sync + 'static,
     {
         driver::start_scoped_deferred(self)

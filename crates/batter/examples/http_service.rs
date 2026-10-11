@@ -31,6 +31,7 @@ use batter::{
     lifecycle::Supervisor,
     operation::OperationError,
     registration::Registration,
+    startup::{ApplicationError, Startup},
 };
 use std::{convert::Infallible, time::Duration};
 
@@ -149,23 +150,6 @@ fn report_exit(result: Result<(), BoxError>) -> std::process::ExitCode {
     }
 }
 
-struct InitializationFailure(BoxError);
-impl std::fmt::Display for InitializationFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("initialization failed")
-    }
-}
-impl std::error::Error for InitializationFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-impl std::fmt::Debug for InitializationFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-}
-
 async fn run() -> Result<(), BoxError> {
     let config = Config::load()?;
     tracing_subscriber::fmt()
@@ -179,37 +163,34 @@ async fn run() -> Result<(), BoxError> {
     let supervisor = Supervisor::new(support::shutdown_budget());
     let lifecycle = supervisor.status();
     let admission = supervisor.operation_admission();
-    let mut starting = batter::startup::Startup::scoped(
+    // The initializer borrows the protected scope across awaits; `?` combines
+    // unrelated errors into `ApplicationError` and the bound address is returned.
+    let mut starting = Startup::protected(
         supervisor,
         batter::operation::OperationOwner::new(Duration::from_secs(15))?.into_context(),
         support::cleanup_budget(),
-        move |scope| {
-            Box::pin(async move {
-                let result: Result<(), BoxError> = async {
-                    scope.stage("dependency.health")?;
-                    let health = register_dependency_health(scope.registration())?;
-                    scope.stage("http.bind")?;
-                    let application = router(
-                        lifecycle.clone(),
-                        admission.clone(),
-                        config.request_budget,
-                        health,
-                        config.bulkhead_capacity,
-                    )
-                    .await?;
-                    let listener = tokio::net::TcpListener::bind(config.bind).await?;
-                    tracing::info!(address = %listener.local_addr()?, "HTTP listener bound");
-                    application.register_in(scope, "http", listener)?;
-                    Ok(())
-                }
-                .await;
-                result.map_err(InitializationFailure)
-            })
+        async move |scope| {
+            scope.stage("dependency.health")?;
+            let health = register_dependency_health(scope.registration())?;
+            scope.stage("http.bind")?;
+            let application = router(
+                lifecycle,
+                admission,
+                config.request_budget,
+                health,
+                config.bulkhead_capacity,
+            )
+            .await?;
+            let listener = tokio::net::TcpListener::bind(config.bind).await?;
+            let address = listener.local_addr()?;
+            application.register_in(scope, "http", listener)?;
+            Ok::<_, ApplicationError>(address)
         },
     )
     .with_unix_signals("signals")
     .start();
-    let running = starting.wait().await?;
+    let (running, address) = starting.wait_with_output().await?;
+    tracing::info!(%address, "HTTP listener bound");
     running.wait_checked().await?;
     Ok(())
 }

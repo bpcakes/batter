@@ -725,7 +725,12 @@ supervisor; root work still requires readiness, submission and explicit shutdown
 The executable startup rustdocs and `startup_composition` tests cover these
 distinct outcomes without changing the empty-supervisor contract.
 
-`Startup::scoped` is the canonical agent-consumer path. Its
+`Startup::protected` is the canonical agent-consumer path. Its initializer is an
+owned async closure (or `async fn`) over `ProtectedStartupScope` whose future the
+library boxes; the `Initializer` bound requires that future to be `Send` and its
+output to be `Send + 'static`, so the output cannot borrow the scope.
+`Startup::scoped` accepts the lower-level caller-boxed `StartupFuture` closure
+with unit output and otherwise shares the scope, coordinator and policies. The
 `ProtectedStartupScope` exposes only validated stage selection, direct cleanup
 reservation and a private-field `Registration` view. That view forwards ordinary
 and managed registration but cannot start or replace the process, extract cleanup,
@@ -739,6 +744,27 @@ non-exhaustive `InitializationError<E>` envelope. The driver maps a returned `E`
 at its poll boundary before destroying the completed initializer future, so the
 application error and a separate destruction panic can coexist. It uses the same
 coordinator, cleanup, report publication and running handoff as the legacy path.
+`E` stays concrete. `ApplicationError` is the opt-in dynamic error: `?` converts
+anything that converts into `BoxError`, the box is retained unchanged, and
+`InitializationError<ApplicationError>` implements `std::error::Error` with that
+box as its `source()`. `ApplicationError` itself deliberately does not implement
+`Error`, so its blanket conversion is coherent; Rust coherence forbids giving
+`InitializationError<BoxError>` that implementation beside the generic one.
+Formatting of both stays fixed text.
+
+Typed initializer output travels only in the one-shot handoff:
+`StartingSupervisor::wait_with_output` returns it with the running (or
+unapproved) owner, observers receive only the supervisor observer, and every
+failure carries no output. Output returned in the same poll that observes drain,
+cancellation or deadline, or followed by a destruction panic or a failed final
+lifecycle check, is destroyed before cleanup. Its destructor panic is retained in
+`destruction_panic` unless the initializer future's own destruction panic already
+occupies that field. The later payload is then released only when it is a
+`String` or `&'static str`; any other payload is intentionally leaked, because its
+destructor could panic again inside the coordinator before cleanup. Dropping the
+starting owner instead of waiting destroys the queued owner and output together,
+on the dropping task or the monitor task, and requests drain. `wait` exists only for unit output. `service::start` accepts only unit
+output and does not deliver typed output.
 
 `Startup::new` remains the explicitly lower-level compatibility path and invokes
 no initializer. `start` launches the owner on a live Tokio

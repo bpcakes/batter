@@ -4583,6 +4583,36 @@ Rechecked for `batter-3q3` against the selected sources.
   than 1 MiB of this stack unoptimized; it now runs in at most 320 KiB
   unoptimized and 96 KiB optimized, including the complete HTTP boundary.
 
+## Async startup initializers and boxed errors, 2026-10-11
+
+Rechecked for `batter-syah` against the selected sources and Rust 1.98.1.
+
+- [RFC 3668](https://rust-lang.github.io/rfcs/3668-async-closures.html) states that
+  async closures "unconditionally implement the (non-async) `FnOnce` trait" and
+  always implement `AsyncFnOnce`. The built-in `AsyncFn*` implementations for
+  other callables apply only to concrete callable types, because blanket impls
+  would overlap the async-closure implementations. The `AsyncFn*` associated
+  types are reserved implementation details and not nameable on stable.
+  `Initializer` therefore states the `Send` future through a sealed higher-ranked
+  `FnOnce(&'a mut ProtectedStartupScope) -> Fut` helper. Only the async-closure
+  constructor requires `AsyncFnOnce`, which drives argument inference for an
+  unannotated closure. On Rust 1.98.1 a generic `F` bounded only by that `FnOnce`
+  form did not satisfy `AsyncFnOnce`, while concrete async closures, `async fn`
+  items and boxed `StartupFuture` closures satisfied the helper.
+- The Reference's [orphan rules](https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules)
+  let only the defining crate's future versions add impls for its foreign types.
+  On Rust 1.98.1, an `Error` impl for `W<Box<dyn Error + Send + Sync>>` or
+  `W<anyhow::Error>` beside `impl<E: Error> Error for W<E>` failed with E0119:
+  "upstream crates may add a new impl of trait `std::error::Error`". The same
+  pair compiles for a local type that does not implement `Error`, which is why
+  `ApplicationError` deliberately omits it.
+- anyhow 1.0.104's [`error.rs`](https://docs.rs/anyhow/1.0.104/src/anyhow/error.rs.html)
+  implements `From<anyhow::Error> for Box<dyn StdError + Send + Sync>` through
+  `object_boxed`, which boxes the private `ErrorImpl<E>` rather than `E`. Its
+  `StdError::source` delegates to the inner error's `source`, so the head error
+  is neither a direct downcast of that box nor in its source chain; its message
+  remains available through `Display`. `typed_startup_consumer` pins this.
+
 ## Generic serving listeners and connection metadata, 2026-09-30
 
 Rechecked for `batter-tc9w.7` against the resolved Axum 0.8.9 sources in the

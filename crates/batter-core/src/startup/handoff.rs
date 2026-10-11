@@ -55,7 +55,9 @@ impl<E> StartupObserver<E> {
 /// Drop requests drain; the startup coordinator continues through cleanup on
 /// the live runtime. Observers never keep this owner or a running owner alive.
 /// `R` is [`RunningSupervisor`] for default startup and
-/// [`UnapprovedSupervisor`] after selecting deferred readiness approval.
+/// [`UnapprovedSupervisor`] after selecting deferred readiness approval. `T` is
+/// the initializer's typed output, delivered only with that owner by
+/// [`Self::wait_with_output`]; observers never receive it.
 ///
 /// Discarding the started owner requests drain before initialization can
 /// hand off, so the owner must be retained:
@@ -70,23 +72,41 @@ impl<E> StartupObserver<E> {
 ///     })).start();
 /// }
 /// ```
+///
+/// Typed output cannot be skipped by waiting for the owner alone:
+///
+/// ```compile_fail,E0599
+/// use batter_core::{cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,
+///     startup::Startup};
+/// async fn skipped(supervisor: Supervisor, context: OperationContext, cleanup: CleanupBudget) {
+///     let mut starting = Startup::protected(supervisor, context, cleanup, async |_scope| {
+///         Ok::<_, std::io::Error>(8080_u16)
+///     }).start();
+///     let _running = starting.wait().await;
+/// }
+/// ```
 #[must_use = "retain the startup owner; dropping it requests drain"]
-pub struct StartingSupervisor<E, R = RunningSupervisor> {
+pub struct StartingSupervisor<E, R = RunningSupervisor, T = ()> {
     handle: Option<ShutdownHandle>,
-    receiver: oneshot::Receiver<Result<R, StartupError<E>>>,
+    receiver: oneshot::Receiver<Result<(R, T), StartupError<E>>>,
     observer: StartupObserver<E>,
 }
 
-impl<E, R> StartingSupervisor<E, R> {
+impl<E, R, T> StartingSupervisor<E, R, T> {
     /// Clone a startup observer without prolonging service ownership.
     pub fn observer(&self) -> StartupObserver<E> {
         self.observer.clone()
     }
 
-    /// Borrow the handoff waiter. Cancellation leaves this owner and receiver
-    /// intact. Call only until its first completed result; a second completed
-    /// wait panics, as with the underlying one-shot receiver.
-    pub async fn wait(&mut self) -> Result<R, StartupError<E>> {
+    /// Borrow the handoff waiter and receive the owner with the initializer's
+    /// typed output. A failed startup never yields output: output from an
+    /// initializer that startup then rejected was destroyed before cleanup.
+    /// Cancellation leaves this owner and receiver intact. Call only until its
+    /// first completed result; a second completed wait panics, as with the
+    /// underlying one-shot receiver. Dropping this owner instead destroys any
+    /// owner and output it would have received, where that queued value drops,
+    /// and requests drain.
+    pub async fn wait_with_output(&mut self) -> Result<(R, T), StartupError<E>> {
         let result = (&mut self.receiver)
             .await
             .expect("owned startup monitor retains handoff");
@@ -95,7 +115,18 @@ impl<E, R> StartingSupervisor<E, R> {
     }
 }
 
-impl<E, R> Drop for StartingSupervisor<E, R> {
+impl<E, R> StartingSupervisor<E, R> {
+    /// Borrow the handoff waiter. Cancellation leaves this owner and receiver
+    /// intact. Call only until its first completed result; a second completed
+    /// wait panics, as with the underlying one-shot receiver. Available only
+    /// when the initializer has no typed output; otherwise use
+    /// [`Self::wait_with_output`].
+    pub async fn wait(&mut self) -> Result<R, StartupError<E>> {
+        self.wait_with_output().await.map(|(running, ())| running)
+    }
+}
+
+impl<E, R, T> Drop for StartingSupervisor<E, R, T> {
     fn drop(&mut self) {
         if let Some(handle) = &self.handle {
             handle.request();
@@ -121,13 +152,14 @@ impl StartupHandoff for UnapprovedSupervisor {
     }
 }
 
-pub(super) fn start_driver<E, R>(
+pub(super) fn start_driver<E, R, T>(
     handle: ShutdownHandle,
-    drive: impl Future<Output = Result<R, StartupFailure<E>>> + Send + 'static,
-) -> StartingSupervisor<E, R>
+    drive: impl Future<Output = Result<(R, T), StartupFailure<E>>> + Send + 'static,
+) -> StartingSupervisor<E, R, T>
 where
     E: Send + Sync + 'static,
     R: StartupHandoff + Send + 'static,
+    T: Send + 'static,
 {
     let (handoff, receiver) = oneshot::channel();
     let (publication, completion) = watch::channel(None);
@@ -138,7 +170,7 @@ where
             Err(error) => Err(StartupError::Coordinator(Arc::new(error))),
         };
         let observation = match &result {
-            Ok(running) => StartupOutcome::Running(running.observer()),
+            Ok((running, _)) => StartupOutcome::Running(running.observer()),
             Err(error) => StartupOutcome::Failed(error.clone()),
         };
         publication.send_replace(Some(observation));

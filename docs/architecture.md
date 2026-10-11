@@ -204,8 +204,12 @@ browser dependency.
 ## Composition and readiness
 
 `startup::Startup` owns an explicit native initializer from `start` through
-failure cleanup or transfer to `RunningSupervisor`. Its boxed future borrows a
-`StartupScope`; no service registry or dependency graph is introduced. Reserve a
+failure cleanup or transfer to `RunningSupervisor`. The canonical
+`Startup::protected` initializer is an owned async closure over
+`ProtectedStartupScope`; the library boxes its future, which borrows the scope,
+and its typed output travels only in the one-shot handoff with the running owner.
+The lower-level forms take a caller-boxed future borrowing their scope. No
+service registry or dependency graph is introduced. Reserve a
 cleanup name before acquisition, then register the finalizer synchronously after
 success. Register dependencies before dependents so teardown reverses the order.
 Application stages and initialization/cleanup budgets remain explicit inputs.

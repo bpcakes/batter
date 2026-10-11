@@ -1,13 +1,14 @@
 use super::{
-    DeferredScopedStartup, DeferredStartup, InitializationError, PanicPayload,
+    DeferredScopedStartup, DeferredStartup, InitializationError, Initializer, PanicPayload,
     ProtectedStartupScope, ScopedStartup, Startup, StartupCause, StartupFailure, StartupFuture,
     StartupScope,
     handoff::{StartingSupervisor, StartupHandoff, start_driver},
+    initializer::Initialize,
 };
 use crate::{
     lifecycle::{
-        InstalledSignals, Readiness, ShutdownHandle, SignalRegistrationError, UnapprovedSupervisor,
-        install_reserved_signals,
+        InstalledSignals, Readiness, RunningSupervisor, ShutdownHandle, SignalRegistrationError,
+        UnapprovedSupervisor, install_reserved_signals,
     },
     operation::OperationContext,
 };
@@ -67,15 +68,15 @@ where
             |error| error,
         )
         .await
-        .map(handoff)
+        .map(|(supervisor, ())| (handoff(supervisor), ()))
     })
 }
 
 pub(super) fn start_scoped<F, E>(
     startup: ScopedStartup<F>,
-) -> StartingSupervisor<InitializationError<E>>
+) -> StartingSupervisor<InitializationError<E>, RunningSupervisor, F::Output>
 where
-    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    F: Initializer<E>,
     E: Send + Sync + 'static,
 {
     start_scoped_with(startup, install_reserved_signals)
@@ -83,9 +84,9 @@ where
 
 pub(super) fn start_scoped_deferred<F, E>(
     startup: DeferredScopedStartup<F>,
-) -> StartingSupervisor<InitializationError<E>, UnapprovedSupervisor>
+) -> StartingSupervisor<InitializationError<E>, UnapprovedSupervisor, F::Output>
 where
-    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    F: Initializer<E>,
     E: Send + Sync + 'static,
 {
     start_scoped_mapped(
@@ -98,9 +99,9 @@ where
 fn start_scoped_with<F, E, G>(
     startup: ScopedStartup<F>,
     install: impl FnOnce(&'static str) -> Result<G, SignalRegistrationError>,
-) -> StartingSupervisor<InitializationError<E>>
+) -> StartingSupervisor<InitializationError<E>, RunningSupervisor, F::Output>
 where
-    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    F: Initializer<E>,
     E: Send + Sync + 'static,
     G: StartupSignals + Send + 'static,
 {
@@ -111,9 +112,9 @@ fn start_scoped_mapped<F, E, G, R>(
     startup: ScopedStartup<F>,
     install: impl FnOnce(&'static str) -> Result<G, SignalRegistrationError>,
     handoff: fn(UnapprovedSupervisor) -> R,
-) -> StartingSupervisor<InitializationError<E>, R>
+) -> StartingSupervisor<InitializationError<E>, R, F::Output>
 where
-    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    F: Initializer<E>,
     E: Send + Sync + 'static,
     G: StartupSignals + Send + 'static,
     R: StartupHandoff + Send + 'static,
@@ -182,7 +183,7 @@ where
             InitializationError::Application,
         )
         .await
-        .map(handoff)
+        .map(|(supervisor, output)| (handoff(supervisor), output))
     })
 }
 
@@ -232,9 +233,9 @@ async fn drive<F, I, E, S, C, M, G>(
     initialization: OwnedInitialization<F, E, G>,
     construct_scope: C,
     map_error: M,
-) -> Result<UnapprovedSupervisor, StartupFailure<E>>
+) -> Result<(UnapprovedSupervisor, F::Output), StartupFailure<E>>
 where
-    F: for<'a> FnOnce(&'a mut S) -> StartupFuture<'a, I>,
+    F: Initialize<S, I>,
     S: DriverScope,
     C: FnOnce(crate::lifecycle::Supervisor) -> S,
     M: Fn(I) -> E + Copy,
@@ -246,7 +247,7 @@ where
     } = initialization;
     let handle = supervisor.handle();
     let mut scope = construct_scope(supervisor);
-    let (mut result, destruction_panic) = initialize_owned(
+    let (result, mut destruction_panic) = initialize_owned(
         &mut scope,
         &context,
         &handle,
@@ -255,20 +256,24 @@ where
         signals.as_mut(),
     )
     .await;
-    if result.is_ok()
-        && destruction_panic.is_none()
-        && let Some(signals) = signals.take()
-    {
-        signals.register_reserved(scope.supervisor_mut());
-    }
-    if result.is_ok() {
-        result = check(&context, &handle);
-    }
-    if result.is_ok() && destruction_panic.is_none() {
-        let (supervisor, _) = scope.into_parts();
-        return Ok(supervisor.start_unapproved());
-    }
-    let cause = result.err().unwrap_or(StartupCause::DestructionPanicked);
+    let cause = match result {
+        Err(cause) => cause,
+        Ok(output) => {
+            if destruction_panic.is_none()
+                && let Some(signals) = signals.take()
+            {
+                signals.register_reserved(scope.supervisor_mut());
+            }
+            let checked = check(&context, &handle);
+            if checked.is_ok() && destruction_panic.is_none() {
+                let (supervisor, _) = scope.into_parts();
+                return Ok((supervisor.start_unapproved(), output));
+            }
+            // A failed startup never yields output; destroy it before cleanup.
+            discard(output, &mut destruction_panic);
+            checked.err().unwrap_or(StartupCause::DestructionPanicked)
+        }
+    };
     handle.request();
     let (mut supervisor, stage) = scope.into_parts();
     let pending = supervisor.take_cleanup();
@@ -280,6 +285,21 @@ where
         destruction_panic,
         cleanup,
     })
+}
+
+/// Destroy rejected output, retaining its panic unless an earlier one exists.
+fn discard<T>(unused: T, destruction_panic: &mut Option<PanicPayload>) {
+    let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(unused))) else {
+        return;
+    };
+    if destruction_panic.is_none() {
+        *destruction_panic = Some(PanicPayload::new(payload));
+    } else if !payload.is::<String>() && !payload.is::<&'static str>() {
+        // Cleanup has not run yet. An opaque payload's destructor may panic
+        // again, so only known string payloads are released; this
+        // intentionally leaks other allocations, as native containment does.
+        std::mem::forget(payload);
+    }
 }
 
 trait DriverScope {
@@ -319,9 +339,9 @@ async fn initialize_owned<F, I, E, S, M, G>(
     initialization: Initialization<F, E>,
     map_error: M,
     mut signals: Option<&mut G>,
-) -> (Result<(), StartupCause<E>>, Option<PanicPayload>)
+) -> (Result<F::Output, StartupCause<E>>, Option<PanicPayload>)
 where
-    F: for<'a> FnOnce(&'a mut S) -> StartupFuture<'a, I>,
+    F: Initialize<S, I>,
     M: Fn(I) -> E + Copy,
     G: StartupSignals,
 {
@@ -344,7 +364,7 @@ where
                 .map(PanicPayload::new),
         );
     }
-    let mut future = match catch_unwind(AssertUnwindSafe(|| initialize(scope))) {
+    let mut future = match catch_unwind(AssertUnwindSafe(|| initialize.initialize(scope))) {
         Ok(future) => future,
         Err(payload) => {
             return (
@@ -358,16 +378,17 @@ where
     let cancelled = context.cancelled();
     let deadline = tokio::time::sleep_until(context.deadline());
     tokio::pin!(draining, cancelled, deadline);
+    // A rejected successful return carries its output out for destruction.
     let result = poll_fn(|cx| {
         if let Err(cause) = check(context, handle) {
-            return Poll::Ready(Err(cause));
+            return Poll::Ready(Err((cause, None)));
         }
         if signals
             .as_mut()
             .is_some_and(|signals| signals.poll_received(cx).is_ready())
         {
             handle.request();
-            return Poll::Ready(Err(StartupCause::Draining));
+            return Poll::Ready(Err((StartupCause::Draining, None)));
         }
 
         let initialization = match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
@@ -386,31 +407,38 @@ where
             handle.request();
         }
 
-        match initialization {
-            Poll::Ready(Err(cause)) => Poll::Ready(Err(cause)),
-            Poll::Ready(Ok(())) if draining => Poll::Ready(Err(StartupCause::Draining)),
-            Poll::Ready(Ok(())) if cancelled => Poll::Ready(Err(StartupCause::Interrupted(
+        let interruption = if draining {
+            Some(StartupCause::Draining)
+        } else if cancelled {
+            Some(StartupCause::Interrupted(
                 crate::operation::Interruption::Cancelled,
-            ))),
-            Poll::Ready(Ok(())) if deadline => Poll::Ready(Err(StartupCause::Interrupted(
+            ))
+        } else if deadline {
+            Some(StartupCause::Interrupted(
                 crate::operation::Interruption::DeadlineExceeded,
-            ))),
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Pending if draining => Poll::Ready(Err(StartupCause::Draining)),
-            Poll::Pending if cancelled => Poll::Ready(Err(StartupCause::Interrupted(
-                crate::operation::Interruption::Cancelled,
-            ))),
-            Poll::Pending if deadline => Poll::Ready(Err(StartupCause::Interrupted(
-                crate::operation::Interruption::DeadlineExceeded,
-            ))),
-            Poll::Pending if received => Poll::Ready(Err(StartupCause::Draining)),
-            Poll::Pending => Poll::Pending,
+            ))
+        } else {
+            None
+        };
+        match (initialization, interruption) {
+            (Poll::Ready(Err(cause)), _) => Poll::Ready(Err((cause, None))),
+            (Poll::Ready(Ok(output)), Some(cause)) => Poll::Ready(Err((cause, Some(output)))),
+            (Poll::Ready(Ok(output)), None) => Poll::Ready(Ok(output)),
+            (Poll::Pending, Some(cause)) => Poll::Ready(Err((cause, None))),
+            (Poll::Pending, None) if received => Poll::Ready(Err((StartupCause::Draining, None))),
+            (Poll::Pending, None) => Poll::Pending,
         }
     })
     .await;
-    let destruction = catch_unwind(AssertUnwindSafe(|| drop(future)))
+    let mut destruction = catch_unwind(AssertUnwindSafe(|| drop(future)))
         .err()
         .map(PanicPayload::new);
+    let result = result.map_err(|(cause, unused)| {
+        if let Some(unused) = unused {
+            discard(unused, &mut destruction);
+        }
+        cause
+    });
     (result, destruction)
 }
 

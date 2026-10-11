@@ -1,3 +1,4 @@
+use super::ApplicationError;
 use crate::{
     PanicPayload, cleanup::CleanupReport, lifecycle::SignalRegistrationError,
     operation::Interruption,
@@ -9,7 +10,9 @@ use tokio::task::JoinError;
 ///
 /// Formatting is deliberately redacted and never requires the application
 /// error to implement `Debug` or `Display`. Trusted callers can match the
-/// concrete application or signal cause directly.
+/// concrete application or signal cause directly. `std::error::Error` is
+/// implemented when the application error implements it, and for
+/// [`ApplicationError`], whose `source()` is its retained cause.
 #[non_exhaustive]
 pub enum InitializationError<E> {
     /// Original application initialization failure.
@@ -43,6 +46,17 @@ impl<E: Error + 'static> Error for InitializationError<E> {
         }
     }
 }
+// Coherent beside the generic impl only because the local `ApplicationError`
+// does not implement `Error`; `BoxError` itself could not be given this impl.
+impl Error for InitializationError<ApplicationError> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Application(error) => Some(error.get_ref()),
+            Self::Signals(error) => Some(error),
+            Self::SignalPolicyAlreadySelected => None,
+        }
+    }
+}
 
 /// Why owned initialization did not reach its running-driver handoff.
 pub enum StartupCause<E> {
@@ -55,7 +69,8 @@ pub enum StartupCause<E> {
     /// An initializer construction or polling panic, with its original payload.
     Panicked(PanicPayload),
     /// The initializer returned successfully but its future destructor panicked.
-    /// The original payload is in `StartupFailure::destruction_panic`.
+    /// The original payload is in `StartupFailure::destruction_panic`. Typed
+    /// output returned by that initializer was destroyed, never handed off.
     DestructionPanicked,
 }
 
@@ -80,8 +95,13 @@ pub struct StartupFailure<E> {
     pub stage: &'static str,
     /// Original application failure or explicit lifecycle interruption.
     pub cause: StartupCause<E>,
-    /// An independent panic while destroying the initializer future, if any.
-    /// It never replaces a returned application failure or polling panic.
+    /// An independent panic while destroying the initializer future or, after
+    /// a successful return that startup then rejected, its unused typed output.
+    /// Both are destroyed before cleanup; if both panic, the future's payload is
+    /// retained. The output's later payload is then released only when it is a
+    /// `String` or `&'static str`; any other payload is intentionally leaked,
+    /// because its destructor could panic again before cleanup. It never
+    /// replaces a returned application failure or polling panic.
     pub destruction_panic: Option<PanicPayload>,
     /// All explicitly driven finalizer outcomes.
     pub cleanup: CleanupReport,

@@ -516,9 +516,11 @@ both crates so stale response-extension lookups fail to compile even after an
 import change. Decisions do no probe I/O and are point-in-time observations, not
 atomic with future drain.
 
-Inside protected `Startup::scoped` composition, bind a native `TcpListener`, assemble the
+Inside a protected `Startup::protected` initializer, bind a native `TcpListener`, assemble the
 guarded `GuardedRouter` through `HttpBoundary`, then call
-`AssembledHttp::register_in(scope, "http", listener)`;
+`AssembledHttp::register_in(scope, "http", listener)`; return
+`listener.local_addr()` read before registration as the initializer's typed output when
+the root needs the bound address;
 `low_level::register_http_in(scope, "http", listener, router)` accepts a plain
 router for compositions outside the boundary. It acknowledges when
 the registered task runs and delegates graceful drain to Axum. Registration
