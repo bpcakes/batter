@@ -133,6 +133,10 @@ only re-export its types behind the opt-in `at-rest` feature.
 acknowledgements, shutdown phases, and the separately driven completion report.
 `crates/batter-core/src/startup.rs` and `startup/` own initialization, failure cleanup
 and transfer to the running driver.
+`crates/batter-core/src/periodic.rs` and `periodic/` own the one serial schedule,
+per-run budget, startup acknowledgement policy, two library-owned stopping
+classes and bounded recoverable-failure evidence of registered recurring
+maintenance; the operation itself stays application- or native-owned.
 `crates/batter-core/src/health.rs` and `health/` own sequential dependency sampling,
 read-only freshness snapshots and writer lifetime.
 `crates/batter-core/src/readiness.rs` owns the pure lifecycle-plus-optional-dependency decision,

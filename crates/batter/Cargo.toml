@@ -65,6 +65,7 @@ uuid = { version = "1", features = ["v4"] }
 
 [[example]]
 name = "worker"
+test = true
 
 [[example]]
 name = "process_owned"

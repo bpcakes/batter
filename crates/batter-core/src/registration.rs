@@ -67,6 +67,23 @@ impl<'a> Registration<'a> {
         self.supervisor.register_managed(name, context, factory)
     }
 
+    /// Register one library-owned serial periodic component through the
+    /// supervisor's validated and inert registration path. See
+    /// [`crate::periodic::register_periodic_in`] for the public entry point.
+    pub(crate) fn register_periodic<F, Fut, E>(
+        &mut self,
+        name: &'static str,
+        policy: crate::periodic::PeriodicPolicy,
+        work: F,
+    ) -> Result<crate::periodic::PeriodicReader, RegistrationError>
+    where
+        F: FnMut(OperationContext) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), crate::periodic::PeriodicFailure<E>>> + Send + 'static,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.supervisor.register_periodic(name, policy, work)
+    }
+
     /// Reserve a validated finalizer name before acquiring a dependency.
     /// The returned slot borrows the actual supervisor cleanup stack and can be
     /// held across the native acquisition await.

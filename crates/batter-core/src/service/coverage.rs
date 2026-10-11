@@ -131,6 +131,7 @@ mod tests {
             cause: ShutdownCause::Requested,
             tasks: Vec::new(),
             managed: Vec::new(),
+            periodic: Vec::new(),
             completed_process_tasks: 0,
             forced_cancellation: !unjoined.is_empty(),
             abort_requested: unjoined.clone(),

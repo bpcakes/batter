@@ -8,6 +8,56 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Supervise recurring maintenance as registered periodic components.
+  `periodic::register_periodic_in` takes a sealed `RegistrationTarget`, a
+  validated `PeriodicPolicy` and a per-run factory, and returns a read-only
+  `PeriodicReader`. Batter owns the serial schedule, the per-run deadline and
+  cancellation lineage, startup acknowledgement, the stopping class and the
+  bounded diagnostics; the application owns the operation. One component owns
+  one directly polled serial future, so invocations never overlap and nothing
+  is spawned per run. The first invocation is immediate and later ones follow a
+  fixed interval with missed ticks skipped, so one overdue invocation may run
+  immediately after an overrun without replaying a burst; the semantics are
+  recorded against pinned Tokio 1.53.1 timers in `docs/references.md`.
+  The library realigns even short intervals within Tokio's five-ms Skip
+  tolerance; sub-millisecond timer precision is not promised.
+  A run budget longer than the interval is valid.
+
+  `PeriodicStartup::immediate` acknowledges that the loop is initialized;
+  `PeriodicStartup::after_first_success(allowance)` acknowledges only after one
+  run succeeds within a validated total allowance, whose expiry is a distinct
+  retained `PeriodicInitializationExpired` initialization failure that
+  initiates drain. `PeriodicShutdown` requires one of two library-owned
+  classes: `StopAtDrain` destroys an active run on drain, while
+  `SupportThroughDrain` keeps running while ordinary components, admitted
+  finite work and descendants, or native settlement still need it — a joined
+  ordinary panic or abort, and pending or uncooperative native settlement, are
+  not stopped proofs, and an unreached boundary closes support at the existing
+  forced-cancellation step.
+  `PeriodicFailure` converts a propagated application error into its
+  recoverable variant, so `?` keeps the schedule and only an explicit
+  `PeriodicFailure::Fatal` initiates drain; a recoverable failure or an expired
+  run deadline permits only the next scheduled invocation.
+
+  **Source-compatibility hard cut.** `ShutdownReport` gains a public
+  `periodic: Vec<PeriodicRecord>` field carrying bounded, redacted evidence
+  retained independently of each runner, including the concrete terminal cause
+  of an escalated run or an expired initialization allowance. Code that constructs or exhaustively
+  destructures `ShutdownReport` must be updated; match it with `..`. The
+  coordinator is the only constructor, and no existing field changes meaning.
+  For initialization expiry, the terminal sample's invocation counts admitted
+  runs before expiry (zero if none), rather than identifying a failed run.
+
+  The facade `worker` example replaces its hand-written drain-aware interval
+  loop with both stopping classes and asserts that pruning admits nothing after
+  drain while lease renewal keeps supporting a finite batch that is still
+  draining. Registration authorizes recurrence only: it establishes no remote
+  rollback, idempotence, successful renewal, fencing or absence of a timed-out
+  effect, and lease-loss, freshness and durable witness policy stay
+  application- or native-owned. No durable scheduler, retry framework,
+  lease protocol or native maintenance SQL is added; `HealthMonitor` and OTLP
+  scheduling are unchanged.
+
 - Add `batter_runledger::job_phases` (also `batter::runledger::job_phases`), the
   one bridge from a native `JobExecution` and an explicit final-state reserve to
   `OperationPhases`. Work ends at the worker's own absolute deadline minus the
