@@ -73,9 +73,14 @@ cargo test -p batter-core --doc --locked
 ```
 
 The executable `startup::Startup` rustdoc shows a service handling a request
-before shutdown. New composition should use `Startup::scoped`, whose
-`ProtectedStartupScope` exposes stage metadata, direct cleanup reservation and
-sealed registration authority without process start or cleanup extraction.
+before shutdown. New composition should use `Startup::protected`, whose owned
+async-closure initializer receives a `ProtectedStartupScope` exposing stage
+metadata, direct cleanup reservation and sealed registration authority without
+process start or cleanup extraction. The library boxes the initializer future;
+its typed output, such as a bound address, arrives with the running owner from
+`StartingSupervisor::wait_with_output`. Use `startup::ApplicationError` when `?`
+combines unrelated errors. `Startup::scoped` keeps the lower-level caller-boxed
+`StartupFuture` form.
 Select `.with_unix_signals("signals")` when the startup owner should install
 SIGTERM/SIGINT synchronously and retain reception through initialization,
 handoff and supervised drain. Unselected startup preserves the native default.

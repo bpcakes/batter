@@ -7,7 +7,7 @@ use crate::{
     completion::wait_published,
     lifecycle::ShutdownHandle,
     scoped_dispatch,
-    startup::{ProtectedStartupScope, ScopedStartup, StartupFuture},
+    startup::{Initializer, ScopedStartup},
 };
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
@@ -91,6 +91,21 @@ impl<E, R> ServiceObserver<E, R> {
 /// startup failure cleanup or checked running-driver completion is retained.
 /// See the module example for owner/observer composition.
 ///
+/// The service owner does not deliver typed initializer output, so this
+/// accepts only an initializer whose output is `()`; one returning a value is
+/// rejected rather than having that value silently dropped:
+///
+/// ```compile_fail,E0271
+/// use batter_core::{cleanup::CleanupBudget, lifecycle::Supervisor, operation::OperationContext,
+///     service::{self, NoDiagnostics}, startup::Startup};
+/// fn typed(supervisor: Supervisor, context: OperationContext, cleanup: CleanupBudget) {
+///     let startup = Startup::protected(supervisor, context, cleanup, async |_scope| {
+///         Ok::<_, std::io::Error>(8080_u16)
+///     });
+///     let _owner = service::start(startup, NoDiagnostics);
+/// }
+/// ```
+///
 /// # Panics
 /// Panics outside a Tokio runtime, before diagnostics are installed or startup
 /// begins. Blocking installation cannot be preempted.
@@ -101,7 +116,7 @@ impl<E, R> ServiceObserver<E, R> {
 /// ```
 pub fn start<F, E, D>(startup: ScopedStartup<F>, diagnostics: D) -> ServiceOwner<E, D::Report>
 where
-    F: for<'a> FnOnce(&'a mut ProtectedStartupScope) -> StartupFuture<'a, E> + Send + 'static,
+    F: Initializer<E, Output = ()>,
     E: Send + Sync + 'static,
     D: Diagnostics,
 {

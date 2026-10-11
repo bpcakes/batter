@@ -39,6 +39,9 @@ Windows support and non-Unix fallbacks are out of scope.
   application-condition decision; adapters translate its valid result.
 - `src/cleanup.rs` drives explicit LIFO finalizers and validates acquisition reservations.
 - `src/startup.rs` and `src/startup/` own initialization, cleanup and driver handoff.
+  `startup/initializer.rs` owns the sealed `Initializer` bound that boxes async-closure
+  futures; `startup/application.rs` owns `ApplicationError`, which must never implement
+  `std::error::Error` (its blanket `From` and `InitializationError` impl depend on that).
 - `src/command.rs` and `command/` own finite callbacks and independently retained
   LIFO finalization, with separate work/cleanup outcomes and an optional total reserve.
 - `src/service.rs` and `service/` own protected startup through separately retained diagnostic completion. Only a protected startup can release the opaque diagnostic completion witness; adapter panics never replace service outcomes.
@@ -88,6 +91,8 @@ wake active phase waits; keep the first failure cause independent of tightening.
 Publish caught stop-control failures at their catch boundary, including repeated
 clock updates; pending native settlement must not hide an already-observed error.
 `StartingSupervisor` exposes startup observation without retaining running ownership.
+Typed initializer output travels only in the one-shot handoff, never to observers
+or failure reports; output rejected after a successful return is destroyed before cleanup.
 Finite command scopes expose validated cleanup reservations, never a takeable
 stack or process-task admission. Command cancellation is downward and cleanup
 does not inherit it; callback return/unwinding cannot bypass registered cleanup.
