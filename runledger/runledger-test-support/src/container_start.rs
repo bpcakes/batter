@@ -41,6 +41,8 @@ pub(crate) async fn start_postgres(
 struct StartAttempt {
     name: String,
     token: String,
+    #[cfg(test)]
+    cleanup_gate: Option<std::sync::Arc<tests::CleanupGate>>,
 }
 
 impl StartAttempt {
@@ -54,6 +56,8 @@ impl StartAttempt {
         Self {
             name: format!("runledger-postgres-{token}"),
             token,
+            #[cfg(test)]
+            cleanup_gate: tests::CLEANUP_GATE.try_with(std::sync::Arc::clone).ok(),
         }
     }
 
@@ -86,6 +90,10 @@ impl StartAttempt {
         error: TestcontainersError,
         remove: bool,
     ) -> String {
+        #[cfg(test)]
+        if let Some(gate) = &self.cleanup_gate {
+            gate.pause(&self.name).await;
+        }
         let cleanup = if remove {
             match tokio::time::timeout(CLEANUP_TIMEOUT, self.remove_owned(docker)).await {
                 Ok(Ok(())) => "failed-start cleanup completed".to_owned(),

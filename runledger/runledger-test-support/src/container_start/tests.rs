@@ -4,6 +4,26 @@ use testcontainers::bollard::models::ContainerInspectResponse;
 
 use super::*;
 
+mod cancellation;
+
+pub(super) struct CleanupGate {
+    reached: tokio::sync::mpsc::UnboundedSender<String>,
+    release: tokio::sync::Notify,
+}
+
+impl CleanupGate {
+    pub(super) async fn pause(&self, name: &str) {
+        self.reached
+            .send(name.to_owned())
+            .expect("cleanup observer");
+        self.release.notified().await;
+    }
+}
+
+tokio::task_local! {
+    pub(super) static CLEANUP_GATE: std::sync::Arc<CleanupGate>;
+}
+
 const CHILD_TEST: &str = "container_start::tests::failed_start_child";
 const CHILD_NAME_ENV: &str = "RUNLEDGER_FAILED_START_NAME";
 const CHILD_TOKEN_ENV: &str = "RUNLEDGER_FAILED_START_TOKEN";
@@ -77,6 +97,7 @@ async fn name_conflict_does_not_remove_an_unrelated_container() {
     let conflicting = StartAttempt {
         name: original.name.clone(),
         token: StartAttempt::new().token,
+        cleanup_gate: None,
     };
     let error = conflicting
         .start(rejected_image(), true)
@@ -103,6 +124,7 @@ async fn failed_start_child() {
     let attempt = StartAttempt {
         name,
         token: std::env::var(CHILD_TOKEN_ENV).expect("child attempt token"),
+        cleanup_gate: None,
     };
     // Docker creates the container and its image-declared anonymous volume,
     // then rejects exec at start. No port collision or host timing is needed.
@@ -131,8 +153,28 @@ fn rejected_image() -> ContainerRequest<GenericImage> {
 }
 
 async fn run_failed_start_child(attempt: &StartAttempt, keep: bool) -> String {
+    let output = run_child(CHILD_TEST, attempt, keep).await;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(101),
+        "child must fail through libtest, not a signal: {text}"
+    );
+    assert!(text.contains("expected rejected start:"), "{text}");
+    assert!(
+        text.contains("runledger-deliberately-missing-executable"),
+        "{text}"
+    );
+    text
+}
+
+async fn run_child(test: &str, attempt: &StartAttempt, keep: bool) -> std::process::Output {
     let mut child = Command::new(std::env::current_exe().expect("test executable"))
-        .args(["--exact", CHILD_TEST, "--ignored", "--nocapture"])
+        .args(["--exact", test, "--ignored", "--nocapture"])
         .env(CHILD_NAME_ENV, &attempt.name)
         .env(CHILD_TOKEN_ENV, &attempt.token)
         .env(
@@ -154,25 +196,9 @@ async fn run_failed_start_child(attempt: &StartAttempt, keep: bool) -> String {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let output = child
+    child
         .wait_with_output()
-        .expect("collect failed-start child output");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(101),
-        "child must fail through libtest, not a signal: {text}"
-    );
-    assert!(text.contains("expected rejected start:"), "{text}");
-    assert!(
-        text.contains("runledger-deliberately-missing-executable"),
-        "{text}"
-    );
-    text
+        .expect("collect failed-start child output")
 }
 
 async fn assert_container_absent(docker: &Docker, name: &str) {

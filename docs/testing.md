@@ -2683,6 +2683,13 @@ death or an unreachable Docker daemon cannot guarantee remote cleanup.
 Failed-start subprocess controls force Docker to reject a missing executable
 after creation, check cleanup on ordinary libtest exit without the optional CLI,
 and check keep policy, anonymous-volume removal and unrelated-name protection.
+The cancelled-start-waiter control uses the actual `start_postgres` boundary in
+a child with the optional CLI disabled. A task-local, test-only gate pauses
+after Docker rejects startup and before cleanup; the test observes the created
+container and anonymous volume, aborts and joins the waiter, then releases the
+gate and independently observes both resources disappear. The runtime remains
+alive throughout. A direct-await mutation of the spawned owner must fail this
+control; cleanup on runtime death remains outside the claim.
 The existing-host-listener and delayed-startup controls retain PostgreSQL 18
 readiness coverage; the former also inspects the actual published mapping and
 requires IPv4 loopback at the port used by SQLx.
