@@ -75,7 +75,8 @@ constructor of `MaintainedLimiter`, so the canonical path cannot produce a
 PostgreSQL limiter without registered cleanup. It runs the native
 `cleanup_expired` on the limiter's own pool and login, never a second cleanup
 query, and derives each run's budget from the native acquisition and operation
-timeouts so native classification precedes the periodic deadline. Every
+timeouts so native classification precedes that budget's expiry during ordinary
+running; earlier startup or shutdown boundaries can interrupt it. Every
 maintenance failure stays recoverable. A native `postgres` limiter used directly
 remains the named, unmaintained low-level form. Keep the grant inventory's
 cleanup requirements equal to what the native cleanup statements read.
