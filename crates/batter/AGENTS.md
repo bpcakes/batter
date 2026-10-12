@@ -37,7 +37,8 @@ explicit cleanup, tracing target `batter`, and the Unix-only scope.
 A native namespace re-exports the native package itself, never a wrapper, and
 every one is feature-gated: no feature may silently select another backend or
 transport, and `default` stays empty. Reachability moves no ownership — keep
-`runledger::register_in` and `runlimit::http` the documented protected paths, and
+`runledger::register_in`, `runlimit::http` and `runlimit::maintenance::register_in`
+the documented protected paths, and
 keep the low-level namespaces named and documented as native with their caller
 obligations. A new feature needs a `check_facade_features.py` graph expectation,
 a reachability import, an identity assertion and a negative case; the runner

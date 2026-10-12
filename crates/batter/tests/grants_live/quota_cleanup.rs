@@ -66,23 +66,44 @@ pub(crate) async fn exercise_cleanup_only(
                 quote(quotas),
                 family.counters()
             ),
+            // No cleanup selection holds relation-level SELECT, which a system
+            // column read would need and which would expose every column.
+            format!("SELECT ctid FROM {}.{}", quote(quotas), family.counters()),
         ] {
             require_denied(&pool, &forbidden).await?;
+        }
+        for column in family.unread_counter_columns() {
+            require_denied(
+                &pool,
+                &format!(
+                    "SELECT {column} FROM {}.{}",
+                    quote(quotas),
+                    family.counters()
+                ),
+            )
+            .await?;
         }
     }
     Ok(())
 }
 
-/// The two independently selectable quota families, as the cleanup-only proof
-/// needs them: their cleanup selection, their counter and capacity relations.
+/// The two independently selectable quota families, as the cleanup proofs need
+/// them: their selections, their counter and capacity relations.
 #[derive(Clone, Copy)]
-enum Family {
+pub(crate) enum Family {
     FixedWindow,
     Gcra,
 }
 
 impl Family {
-    const fn cleanup(self) -> RunlimitOperation {
+    pub(crate) const fn admission(self) -> RunlimitOperation {
+        match self {
+            Self::FixedWindow => RunlimitOperation::FixedWindowAdmission,
+            Self::Gcra => RunlimitOperation::GcraAdmission,
+        }
+    }
+
+    pub(crate) const fn cleanup(self) -> RunlimitOperation {
         match self {
             Self::FixedWindow => RunlimitOperation::FixedWindowExpiryCleanup,
             Self::Gcra => RunlimitOperation::GcraExpiryCleanup,
@@ -96,7 +117,7 @@ impl Family {
         }
     }
 
-    const fn counters(self) -> &'static str {
+    pub(crate) const fn counters(self) -> &'static str {
         match self {
             Self::FixedWindow => "runlimit_fixed_windows",
             Self::Gcra => "runlimit_gcra",
@@ -107,6 +128,14 @@ impl Family {
         match self {
             Self::FixedWindow => "runlimit_capacity_shards",
             Self::Gcra => "runlimit_gcra_shards",
+        }
+    }
+
+    /// Counter columns that no cleanup statement reads.
+    const fn unread_counter_columns(self) -> &'static [&'static str] {
+        match self {
+            Self::FixedWindow => &["used", "policy_id", "scope_id", "window_started_at"],
+            Self::Gcra => &["tat_scaled"],
         }
     }
 
@@ -122,9 +151,15 @@ impl Family {
     }
 }
 
-/// Seed one already-expired counter from the owner. The subject digest is the
-/// login name so two cleanup-only roles never share a seeded row.
-async fn seed_expired_counter(owner: &PgPool, quotas: &str, family: Family, login: &str) -> Result {
+/// Seed one already-expired counter from the owner. The subject digest is
+/// derived from `subject`, which callers keep unique so no two seeds share a
+/// row.
+pub(crate) async fn seed_expired_counter(
+    owner: &PgPool,
+    quotas: &str,
+    family: Family,
+    subject: &str,
+) -> Result {
     let quotas = quote(quotas);
     let statement = match family {
         Family::FixedWindow => format!(
@@ -142,8 +177,25 @@ async fn seed_expired_counter(owner: &PgPool, quotas: &str, family: Family, logi
         ),
     };
     sqlx::query(sqlx::AssertSqlSafe(statement))
-        .bind(login.as_bytes())
+        .bind(subject.as_bytes())
         .execute(owner)
         .await?;
     Ok(())
+}
+
+/// How many counters seeded for `subject` remain.
+pub(crate) async fn seeded_rows(
+    owner: &PgPool,
+    quotas: &str,
+    family: Family,
+    subject: &str,
+) -> Result<i64> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {}.{} WHERE subject_key = sha256($1::bytea)",
+        quote(quotas),
+        family.counters()
+    )))
+    .bind(subject.as_bytes())
+    .fetch_one(owner)
+    .await?)
 }

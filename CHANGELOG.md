@@ -8,6 +8,29 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `batter_runlimit::maintenance` (also `batter::runlimit::maintenance`,
+  feature `runlimit-postgres`). `maintenance::register_in(target, name, limiter,
+  ExpiryMaintenance::new(interval, maximum_rows, startup, shutdown)?)` registers
+  a native `PostgresLimiter` or `PostgresGcraLimiter`'s `cleanup_expired` as a
+  periodic component and returns the `MaintainedLimiter` to serve through
+  `Quota::new` or the HTTP assembly; it is the only constructor of that type.
+  The row bound is a `NonZeroU32`, each run's budget is derived from the native
+  acquisition and operation timeouts, and every maintenance failure is retained
+  as a recoverable periodic failure. Native limiters used directly are the named
+  unmaintained low-level form. Additive; no existing signature changes.
+
+- Narrow `RunlimitOperation::FixedWindowExpiryCleanup`: native fixed-window
+  cleanup now identifies expired rows by primary key instead of `ctid`, so the
+  selection renders `DELETE` with `SELECT` on `capacity_shard`,
+  `config_fingerprint`, `subject_key` and `window_expires_at` instead of
+  relation-level `SELECT`. No Rust signature changes. Compatibility: an older
+  replica's cleanup still reads `ctid`, so narrow a provisioned role only after
+  every replica runs this version. Until then, exact-role verification against
+  a role provisioned from the old fragment reports the relation-level `SELECT`
+  as excess authority; `REVOKE SELECT ON TABLE ... runlimit_fixed_windows` also
+  removes that table's column `SELECT` grants, so re-apply the newly rendered
+  grant plan afterwards.
+
 - Add `Startup::protected` (also `batter::startup::Startup::protected`): protected
   startup initializers are owned async closures whose future the library boxes,
   and their `Ok` value is typed output delivered with the running owner by the

@@ -134,6 +134,8 @@ TARGETS = {
         "scheduler_disabled_and_default_loop_supervisors_run_a_direct_workload",
         "promotion_catalog_disable_and_due_scheduled_dispatch_run_under_their_selections",
         "the_direct_job_worker_runs_every_selected_lifecycle_path",
+        "maintained_limiters_clean_expired_rows_under_their_selections_until_drain",
+        "maintenance_without_its_cleanup_selection_never_becomes_ready",
     },
     "verification_live": {
         "verification_temporary_namespace_requests_are_incomplete",

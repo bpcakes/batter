@@ -5,10 +5,16 @@
 //! dropped unpolled. Native checks, native admission and admitted work are each
 //! erased once, so consumer work state never enters the quota future.
 
-use batter_core::operation::{OperationContext, OperationOwner};
+use batter_core::{
+    cleanup::CleanupBudget,
+    lifecycle::{ShutdownBudget, Supervisor},
+    operation::{OperationContext, OperationOwner},
+    periodic::{PeriodicShutdown, PeriodicStartup},
+};
 use batter_runlimit::{
     Checks, Quota,
     attempts::{AttemptRunner, Authentication},
+    maintenance::{ExpiryMaintenance, MaintainedLimiter, register_in},
 };
 use batter_sqlx::{PgProfiledPool, PgQueryHandle, PgSessionProfile};
 use runlimit_core::{
@@ -16,7 +22,7 @@ use runlimit_core::{
 };
 use runlimit_memory::{MemoryStore, MemoryStoreConfig};
 use runlimit_postgres::PostgresLimiter;
-use std::{convert::Infallible, future::Future, time::Duration};
+use std::{convert::Infallible, future::Future, num::NonZeroU32, time::Duration};
 
 /// Unerased, the pooled query and `run_atomic_in` futures alone measured 24-79 KB
 /// and `AttemptRunner::run` 28 KB.
@@ -34,6 +40,33 @@ fn lazy_pool() -> sqlx::PgPool {
     sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://unused@127.0.0.1:1/unused")
         .unwrap()
+}
+
+/// Register expiry cleanup on a supervisor that is never started.
+fn maintained(pool: sqlx::PgPool) -> MaintainedLimiter<PostgresLimiter> {
+    let second = Duration::from_secs(1);
+    let mut supervisor = Supervisor::new(
+        ShutdownBudget::new(
+            second,
+            second,
+            second,
+            CleanupBudget::new(second, second, second).unwrap(),
+        )
+        .unwrap(),
+    );
+    register_in(
+        &mut supervisor,
+        "quota.maintenance",
+        PostgresLimiter::new(pool),
+        ExpiryMaintenance::new(
+            second,
+            NonZeroU32::MIN,
+            PeriodicStartup::immediate(),
+            PeriodicShutdown::StopAtDrain,
+        )
+        .unwrap(),
+    )
+    .unwrap()
 }
 
 fn context() -> OperationContext {
@@ -74,6 +107,14 @@ async fn quota_futures_erase_native_checks_and_admitted_work() {
     bounded(
         "Quota<PostgresLimiter>::run",
         postgres.run(&context, Checks::new(&checks).unwrap(), |_| async {
+            Ok::<_, Infallible>(1)
+        }),
+    );
+    // The canonical supervised limiter delegates each check unchanged.
+    let maintained = Quota::new(maintained(pool.clone()));
+    bounded(
+        "Quota<MaintainedLimiter<PostgresLimiter>>::run",
+        maintained.run(&context, Checks::new(&checks).unwrap(), |_| async {
             Ok::<_, Infallible>(1)
         }),
     );

@@ -15,6 +15,10 @@ disposition. This is a Unix-only adapter, not a limiter or authentication servic
 - `src/http.rs`: owned async authentication, native-peer subject selection and opaque serving.
 - `src/attempts.rs`: native pre-authentication reserve, verification, receipt claim,
   transactional final decision and native completion; no limiter persistence here.
+- `src/maintenance.rs`: `register_in`, the canonical supervised PostgreSQL limiter
+  construction, which registers expired-row cleanup as a periodic component and
+  returns the `MaintainedLimiter` to serve with.
+- `src/grants.rs`, `src/grants/inventory.rs`: per-operation native grant fragments.
 - `batter-axum/src/quota_observation.rs`: the retained HTTP fact writer and read-only observation.
 - `tests/quota.rs`, `tests/http.rs`: native memory, interrupted execution and actual serving.
 - `../batter/examples/quota_service.rs`: runnable facade consumer without the reference service.
@@ -65,7 +69,16 @@ The allowed result retains native scalar decision metadata without exposing a
 denial arm. Match every native `DenialView` reason explicitly; a future reason
 must force an adapter and contract update when the native contract changes.
 Authentication meaning and explicitly unguarded probe routes remain application
-policy. PostgreSQL setup/maintenance is not implemented or implicitly performed.
+policy. PostgreSQL pools, migrations and setup are not implemented or implicitly
+performed. Expiry maintenance is: `maintenance::register_in` is the only
+constructor of `MaintainedLimiter`, so the canonical path cannot produce a
+PostgreSQL limiter without registered cleanup. It runs the native
+`cleanup_expired` on the limiter's own pool and login, never a second cleanup
+query, and derives each run's budget from the native acquisition and operation
+timeouts so native classification precedes the periodic deadline. Every
+maintenance failure stays recoverable. A native `postgres` limiter used directly
+remains the named, unmaintained low-level form. Keep the grant inventory's
+cleanup requirements equal to what the native cleanup statements read.
 No body-stream, detached-task or remote rollback guarantee is added.
 
 Attempt verification runs before acquiring the application transaction; the final
@@ -81,6 +94,7 @@ protocol here. Lease expiry after a locked claim does not revoke that transactio
 
 ```sh
 cargo test -p batter-runlimit --all-features --locked
+BATTER_SQLX_ADMIN_URL=postgres://... cargo test -p batter --features runledger,runlimit-postgres --test grants_live --locked -- --ignored --test-threads=1
 cargo run -p batter --features runlimit-memory,runlimit-axum --example quota_service --locked
 python3 scripts/check_runlimit_features.py
 ```

@@ -9,8 +9,12 @@
 //! stay in Runlimit. There are no default features. `memory` and `postgres`
 //! supply native error-classification bridges and re-export their native
 //! packages as `memory` and `postgres`; `axum` exposes `http` for
-//! authenticated HTTP assembly. PostgreSQL pools, migrations and maintenance
-//! remain application/native-owned; this adapter does not prepare their lifecycle.
+//! authenticated HTTP assembly. With `postgres`, `maintenance::register_in`
+//! is the canonical construction of a supervised PostgreSQL limiter: it
+//! registers the storage's expired-row cleanup as a periodic component and only
+//! then returns the limiter to serve with. A native `postgres` limiter used
+//! directly is the unmaintained low-level form. PostgreSQL pools and migrations
+//! remain application/native-owned; this adapter does not prepare them.
 //!
 //! The separate `native-http` and `native-axum` features expose the native
 //! transport packages under `native_transport`. They are low-level and are not
@@ -43,6 +47,8 @@
 pub mod attempts;
 #[cfg(feature = "postgres")]
 pub mod grants;
+#[cfg(feature = "postgres")]
+pub mod maintenance;
 pub mod quota;
 
 /// The exact native policy and decision types used by this adapter.
@@ -53,6 +59,11 @@ pub use quota::{
     RunResult,
 };
 /// The selected native PostgreSQL backend and its explicit migrations.
+///
+/// Its limiters are the native, unmaintained low-level form: nothing deletes
+/// their expired rows unless the caller schedules `cleanup_expired`. A
+/// supervised service constructs its limiter through
+/// [`maintenance::register_in`] instead.
 #[cfg(feature = "postgres")]
 pub use runlimit_postgres as postgres;
 

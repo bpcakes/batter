@@ -231,6 +231,29 @@ An external disposable Cargo consumer additionally checks a valid assembled
 service and confirms wrong auth and selector closure signatures fail at
 `HttpQuota::new`.
 
+Maintained PostgreSQL storage (`batter-z4m9`) has six offline cases in
+`cargo test -p batter-runlimit --features postgres --test maintenance --locked`,
+which contact no database: a closed pool fails every acquisition at once, and a
+local listener that accepts and never answers holds an acquisition until a native
+timeout. They cover recurring retained `PoolClosed` failures for both stores
+without drain, first-success startup expiring without readiness, the native
+acquisition timeout classifying a hung run before the derived run deadline,
+drain destroying an active run before a finalizer that observes the pool still
+open, inert name-validated registration, and admission delegated through
+`Quota`. A negative control that shortened the derived budget below the native
+acquisition bound turned the classified failure into an unclassified
+`deadline_exceeded` run. `tests/future_size.rs` bounds the maintained limiter's
+`Quota::run` future too. The facade's ignored `grants_live` target adds two
+PostgreSQL 18 cases, run by `bash scripts/test_sqlx_live.sh` or directly with
+`BATTER_SQLX_ADMIN_URL=... cargo test -p batter --features
+runledger,runlimit-postgres --test grants_live --locked -- --ignored
+--test-threads=1`: maintenance under exactly the admission and cleanup
+selections removes owner-seeded expired counters before and after readiness for
+both stores, keeps a live counter, and has stopped with its pool still open when
+finalizers begin; a login without the cleanup selection never becomes ready and
+retains SQLSTATE `42501`. Its cleanup-only case also requires `ctid` and every
+counter column the cleanup does not read to be refused.
+
 `python3 scripts/check_runlimit_features.py` compiles all 32 independent feature
 subsets of `memory`, `postgres`, `axum`, `native-http` and `native-axum` in a
 disposable consumer workspace with the current toolchain. It checks

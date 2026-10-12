@@ -6,6 +6,35 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL column privileges for key-identified cleanup, 2026-10-11
+
+For `batter-z4m9`, rechecked the rules that decide whether a bounded delete can
+run under column privileges once it stops reading `ctid`:
+
+* [`DELETE`](https://www.postgresql.org/docs/18/sql-delete.html): deleting needs
+  the `DELETE` privilege on the target table and `SELECT` on any table in the
+  `USING` clause or whose values are read in the condition. Column `SELECT` on the
+  columns the condition reads is enough; no relation-level `SELECT` is implied.
+* [`SELECT`](https://www.postgresql.org/docs/18/sql-select.html) and
+  [privileges](https://www.postgresql.org/docs/18/ddl-priv.html): a locking
+  `SELECT ... FOR UPDATE` needs `UPDATE` on at least one column in addition to
+  `SELECT` on the columns it reads, as recorded on 2026-10-03.
+* System columns remain non-addressable by column privileges (2026-10-03 entry
+  below), which is why the replacement statement reads only ordinary columns.
+
+Executed evidence, PostgreSQL **18.6** (`postgres:18` container, macOS arm64
+host, Rust 1.98.1): the facade's `grants_live` case
+`maintained_limiters_clean_expired_rows_under_their_selections_until_drain`
+provisions a `NOINHERIT` login holding only the admission and expiry-cleanup
+selections, verifies it is exactly within that policy, requires
+`SELECT ctid` to be refused, and has registered maintenance delete owner-seeded
+expired counters for both families. As a negative control, pointing the native
+statement back at the imported `ctid` query under the same narrowed login left
+the first cleanup unable to commit, so readiness was never published. The cleanup-only case
+additionally requires `SELECT` of every counter column the cleanup does not read
+to be refused. Native Runlimit PostgreSQL tests also passed against PostgreSQL
+16.15 and 18.6. Other server versions and platforms were not executed.
+
 ## PostgreSQL 18 grant semantics for native requirement fragments, 2026-10-03
 
 For `batter-qjxi`, checked the privilege rules that decide what a native

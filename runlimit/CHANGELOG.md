@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `PostgresLimiter::cleanup_expired` identifies expired windows by their
+  primary key instead of the `ctid` system column. PostgreSQL checks a
+  system-column read against relation-level `SELECT`, so a cleanup login no
+  longer needs to read every counter column; `SELECT` on `capacity_shard`,
+  `config_fingerprint`, `subject_key` and `window_expires_at`, `UPDATE` on
+  `window_expires_at` for the row lock, and `DELETE` suffice. The bounded,
+  `SKIP LOCKED`, shard-ordered protocol and its results are unchanged. The
+  imported `src/cleanup_expired.sql` is retained unchanged as a provenance
+  record; the executed statement is `src/cleanup_expired_by_key.sql`.
+
 ## [0.4.0] - 2026-09-22
 
 ### Changed

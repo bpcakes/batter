@@ -17,6 +17,11 @@ contracts and persisted schema are unchanged by this import.
 
 `upstream-assets.json` retains SHA-256 digests of imported SQL and root licenses.
 The workspace check rejects changes/removal; it permits new forward migrations.
+A superseded imported statement is replaced by a new file rather than edited:
+since `batter-z4m9`, fixed-window cleanup executes
+`runlimit-postgres/src/cleanup_expired_by_key.sql`, which identifies expired rows
+by primary key, and the imported `src/cleanup_expired.sql`, which read `ctid`, is
+retained byte-identical as a provenance record that no code path executes.
 Source archives retain SQL and both license names, and mutation fixtures include
 this native root. Root verification preserves default/all-feature tests and lint,
 the release-mode fail-closed regression, and CI's explicit native PostgreSQL tests.

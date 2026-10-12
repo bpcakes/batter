@@ -23,7 +23,8 @@ Fast jump index for agent-facing guidance in this repository.
   initialization, stop-clock exchange, retained descendant settlement and
   invocation-derived operation phases.
 - [Native quota adapter](./crates/batter-runlimit/AGENTS.md): atomic quota-before-work,
-  authenticated HTTP assembly and retained consumption observations.
+  authenticated HTTP assembly, retained consumption observations and
+  supervised PostgreSQL limiters with registered expiry cleanup.
 - [Test support](./crates/batter-test-support/AGENTS.md): generic test scripts
   and error-preserving result combination.
 - [SQLx lifecycle example](./examples/postgres-lifecycle/AGENTS.md): native pool

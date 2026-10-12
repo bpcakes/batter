@@ -110,9 +110,12 @@ fn each_remaining_family_renders_its_own_independently_selected_authority() {
         ),
         concat!(
             "GRANT USAGE ON SCHEMA \"quotas\" TO \"quota_service\";\n",
-            "GRANT SELECT, DELETE ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
+            "GRANT DELETE ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
             "GRANT SELECT (\"capacity_shard\"), UPDATE (\"capacity_shard\") ON TABLE \"quotas\".\"runlimit_capacity_shards\" TO \"quota_service\";\n",
-            "GRANT UPDATE (\"window_expires_at\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
+            "GRANT SELECT (\"capacity_shard\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
+            "GRANT SELECT (\"config_fingerprint\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
+            "GRANT SELECT (\"subject_key\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
+            "GRANT SELECT (\"window_expires_at\"), UPDATE (\"window_expires_at\") ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";\n",
         ),
     );
     assert_eq!(
@@ -182,12 +185,15 @@ fn no_selection_grants_counter_key_capacity_or_ledger_authority() {
             "unexpected authority: {forbidden}"
         );
     }
-    // Relation-level privileges are only the ones PostgreSQL cannot express per
-    // column: DELETE, and the SELECT that the fixed-window cleanup's `ctid` read
-    // requires. No selection widens INSERT or UPDATE to a whole relation.
+    // Relation-level privileges are only the one PostgreSQL cannot express per
+    // column: DELETE. No selection widens SELECT, INSERT or UPDATE to a whole
+    // relation; fixed-window cleanup identifies rows by primary key, never by a
+    // system column that would need relation-level SELECT.
     for statement in every.lines() {
-        let relation_wide =
-            statement.starts_with("GRANT UPDATE ON") || statement.starts_with("GRANT INSERT ON");
+        let relation_wide = statement.starts_with("GRANT UPDATE ON")
+            || statement.starts_with("GRANT INSERT ON")
+            || statement.starts_with("GRANT SELECT ON")
+            || statement.starts_with("GRANT SELECT, ");
         assert!(!relation_wide, "relation-wide grant: {statement}");
     }
     let relation_level: Vec<&str> = every
@@ -198,7 +204,7 @@ fn no_selection_grants_counter_key_capacity_or_ledger_authority() {
         relation_level,
         [
             "GRANT DELETE ON TABLE \"quotas\".\"runlimit_attempts\" TO \"quota_service\";",
-            "GRANT SELECT, DELETE ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";",
+            "GRANT DELETE ON TABLE \"quotas\".\"runlimit_fixed_windows\" TO \"quota_service\";",
             "GRANT DELETE ON TABLE \"quotas\".\"runlimit_gcra\" TO \"quota_service\";",
         ],
     );

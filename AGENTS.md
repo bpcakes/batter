@@ -187,8 +187,10 @@ Its `native` module reexports `runledger-core`, `runledger-postgres`,
 `runledger-runtime` and, behind `test-support`, `runledger-test-support`, as the
 native packages themselves; `register_in` remains the protected path.
 `crates/batter-runlimit/src/quota.rs` owns native atomic quota-before-work execution;
-`http.rs` owns authenticated quota-before-body assembly. Native policy, storage,
-transactions and PostgreSQL initialization/maintenance remain owned by the distinct
+`http.rs` owns authenticated quota-before-body assembly; `maintenance.rs` owns the
+supervised PostgreSQL limiter construction that registers native expiry cleanup as
+a periodic component. Native policy, storage, transactions, PostgreSQL
+initialization and the cleanup statements themselves remain owned by the distinct
 packages under `runlimit/`; see their guide and ADR-012. `src/lib.rs` reexports
 those packages as `native`, `memory`, `postgres` and `native_transport::{http, axum}`;
 `native_transport` is named apart from `http` because the native layer is

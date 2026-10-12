@@ -214,7 +214,7 @@ examples; extracting it does not establish a lower library minimum.
 | `batter-axum` | [crates/batter-axum](crates/batter-axum/README.md) | HTTP adapter: request policy, observation, correlation, readiness, browser credential transport, and native serving. |
 | `batter-sqlx` | [crates/batter-sqlx](crates/batter-sqlx/README.md) | Owned PostgreSQL transaction and read-only snapshot scopes, schema verification, explicit low-level connection disposition, and opt-in fixtures. |
 | `batter-runledger` | [crates/batter-runledger](crates/batter-runledger/README.md) | Native initialization and settlement plus a phase-scoped atomic enqueue runner and schema snapshots built on `batter-sqlx`. |
-| `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution and protected authenticated HTTP assembly. |
+| `batter-runlimit` | [crates/batter-runlimit](crates/batter-runlimit/README.md) | Optional native atomic quota-before-work execution, protected authenticated HTTP assembly and supervised PostgreSQL limiters with registered expiry cleanup. |
 | `batter-test-support` | [crates/batter-test-support](crates/batter-test-support/README.md) | Generic test utilities; independent of the foundation and adapters. |
 | `runlimit-core` | [runlimit/runlimit-core](runlimit/README.md) | Native validated policies, subject keys and decisions. |
 | `runlimit-memory` | [runlimit/runlimit-memory](runlimit/README.md) | Native bounded process-local quota and attempt storage. |
