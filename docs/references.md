@@ -6,6 +6,25 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL cleanup prepared-plan selection, 2026-10-12
+
+For `batter-z4m9.1`, rechecked PostgreSQL 18's
+[`PREPARE`](https://www.postgresql.org/docs/18/sql-prepare.html) and
+[query-planning settings](https://www.postgresql.org/docs/18/runtime-config-query.html).
+Automatic selection compares a generic plan with the first five custom plans;
+`plan_cache_mode = force_generic_plan` overrides that choice, and
+`EXPLAIN EXECUTE` inspects the selected prepared plan. Disabling sequential scans
+only discourages them; it does not establish a production access-path guarantee.
+
+A disposable `postgres:18` probe of the actual cleanup statement on 20,000
+counters (20 expired), with a one-row bound, used primary-key delete probes under
+forced custom planning and a full-table hash join under forced generic planning.
+The row bound limits deletions, not scan cost. The native plan regression now
+checks repeated automatic selection with sequential scans enabled and has a
+forced-scan negative control. Executed test outcomes and server versions belong
+to the follow-up Bead; this probe is not evidence for every cardinality or cost
+configuration.
+
 ## PostgreSQL column privileges for key-identified cleanup, 2026-10-11
 
 For `batter-z4m9`, rechecked the rules that decide whether a bounded delete can

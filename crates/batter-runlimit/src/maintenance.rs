@@ -28,9 +28,11 @@
 //!
 //! Each run's budget is derived, never chosen: the limiter's pool-acquisition
 //! timeout plus its operation timeout plus one second. Native cleanup applies
-//! both of those bounds itself, so a slow acquisition or statement is reported
-//! with its native [`MaintenanceError`] classification before the periodic run
-//! deadline could destroy it and discard that classification.
+//! both of those bounds itself, so during ordinary running a slow acquisition
+//! or statement reports its native [`MaintenanceError`] before that budget
+//! expires. An earlier startup allowance or shutdown boundary can still destroy
+//! the run before native classification; initialization expiry and stopping
+//! retain the existing [`batter_core::periodic`] outcomes instead.
 //!
 //! Every stopping class ends before finalizers run, so maintenance registered
 //! here has stopped, and an active run has been destroyed, before a pool closed
@@ -54,7 +56,9 @@
 //! removed: cleanup is bounded per run, skips rows locked by concurrent
 //! admission, and an uncertain commit
 //! ([`MaintenanceError::may_have_removed_rows`]) may or may not have deleted
-//! rows. Throughput is at most `maximum_rows` per interval. Migrations, pools
+//! rows. The row bound limits deletions, not the planner's scan cost; a forced
+//! generic plan can scan the counter table. Throughput is at most `maximum_rows`
+//! per interval. Migrations, pools
 //! and their ownership remain the application's.
 //!
 //! ```no_run

@@ -1098,9 +1098,12 @@ native call treats zero as "do nothing", and validates its interval with the
 limiter's own pool, login and configuration, deleting at most that many expired
 rows; there is no second cleanup query in the adapter. The per-run budget is not
 selectable: it is the limiter's pool-acquisition timeout plus its operation
-timeout plus one second, so the native bounds report a slow acquisition or
-statement with their own `MaintenanceError` classification before the periodic
-deadline could destroy the run and discard it. An executed negative control that
+timeout plus one second, so during ordinary running the native bounds report a
+slow acquisition or statement with their own `MaintenanceError` classification
+before that budget expires. An earlier initialization allowance or shutdown
+boundary can still destroy the native future before it returns that error;
+the periodic report then retains its deadline or stop-interruption outcome,
+with initialization expiry reported separately. An executed negative control that
 shortened the derived budget below the acquisition bound turned that native
 classification into an unclassified `deadline_exceeded` run. Every native
 maintenance failure, including an uncertain commit that may have removed rows, is
@@ -1121,7 +1124,9 @@ the destroyed run closes its own connection.
 
 Registration does not prove that the schema is installed, that rows were
 removed, or that cleanup keeps pace: each run skips rows locked by concurrent
-admission and removes at most its row bound per interval. Migrations, pools and
+admission and removes at most its row bound per interval. That bounds deletions,
+not rows scanned: PostgreSQL chooses the access paths, and a forced generic plan
+can scan the counter table even for a small deletion bound. Migrations, pools and
 their ownership remain the application's. The offline `maintenance` tests in
 `batter-runlimit` and the two `maintenance_cases` live cases in the facade's
 `grants_live` suite are the evidence for these statements.

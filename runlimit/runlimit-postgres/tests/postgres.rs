@@ -35,6 +35,9 @@ const FILLFACTOR_MIGRATION_VERSION: i64 = 20_260_725_000_000;
 const CARDINALITY_MIGRATION_VERSION: i64 = 20_260_726_000_000;
 const ADVISORY_LOCK_DOMAIN: &[u8] = b"runlimit/postgres-advisory-lock/v1\0";
 
+#[path = "postgres/cleanup_plan.rs"]
+mod cleanup_plan;
+
 const PUBLISHED_CREATE_MIGRATION_SHA384: [u8; 48] = [
     0x31, 0xd9, 0x3f, 0xde, 0x98, 0xc2, 0x36, 0x4a, 0x33, 0x06, 0x2e, 0x37, 0x35, 0x08, 0xf5, 0x63,
     0xb4, 0x86, 0xdf, 0x28, 0x98, 0xf8, 0xe7, 0x73, 0x65, 0x91, 0x8e, 0x81, 0xda, 0x89, 0x80, 0xa8,
@@ -616,31 +619,7 @@ async fn cleanup_uses_an_indexable_cutoff_and_skips_locked_rows() {
     let expired_subject = key(152);
     let active_subject = key(153);
 
-    let mut plan_transaction = pool.begin().await.expect("begin plan transaction");
-    sqlx::query("SET LOCAL enable_seqscan = off")
-        .execute(&mut *plan_transaction)
-        .await
-        .expect("make the cleanup access path deterministic");
-    let plan_sql = format!("EXPLAIN (COSTS OFF) {CLEANUP_SQL}");
-    let plan = sqlx::query_scalar::<_, String>(AssertSqlSafe(plan_sql))
-        .bind(1_i64)
-        .fetch_all(&mut *plan_transaction)
-        .await
-        .expect("explain the production cleanup statement");
-    plan_transaction
-        .rollback()
-        .await
-        .expect("finish plan transaction");
-    let plan = plan.join("\n");
-    assert!(
-        plan.contains("Index Scan using runlimit_fixed_windows_expiry_idx"),
-        "cleanup did not use the expiry index:\n{plan}"
-    );
-    assert!(
-        plan.lines()
-            .any(|line| line.contains("Index Cond:") && line.contains("window_expires_at")),
-        "cleanup did not use expiry as an index condition:\n{plan}"
-    );
+    cleanup_plan::assert_indexed_cleanup(&pool).await;
 
     insert_counter_window(&pool, &locked_policy, locked_subject, -7_200, -3_600).await;
     insert_counter_window(&pool, &expired_policy, expired_subject, -3_600, -1_800).await;

@@ -254,6 +254,18 @@ finalizers begin; a login without the cleanup selection never becomes ready and
 retains SQLSTATE `42501`. Its cleanup-only case also requires `ctid` and every
 counter column the cleanup does not read to be refused.
 
+The native `cleanup_uses_an_indexable_cutoff_and_skips_locked_rows` case also
+checks the production fixed-window statement on 20,000 counters (20 expired).
+Its `postgres/cleanup_plan.rs` helper leaves sequential scans enabled and checks
+both the expiry cutoff and primary-key delete probes over six executions of one
+prepared statement with a one-row bound, reaching automatic generic/custom plan
+selection. It inspects a forced generic plan and verifies the plan counter;
+forced full-table access is a negative control for the delete-join assertion.
+The fixture rolls back before the existing locking and deletion checks. This
+covers the representative automatic plan, not every cardinality or server cost
+setting; forced generic planning can scan the table despite the deletion bound.
+Review follow-up verification belongs to `batter-z4m9.1`.
+
 `python3 scripts/check_runlimit_features.py` compiles all 32 independent feature
 subsets of `memory`, `postgres`, `axum`, `native-http` and `native-axum` in a
 disposable consumer workspace with the current toolchain. It checks

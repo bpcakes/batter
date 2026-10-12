@@ -1076,9 +1076,11 @@ with admission adds only `DELETE` and `SELECT (capacity_shard)` on the counter
 relation. A zero row bound, which the native call treats as "do nothing", is
 unrepresentable through `NonZeroU32`. The per-run budget is derived from the
 native acquisition and operation timeouts instead of being chosen, so the
-deadline relationship that keeps native failure classification from being
-destroyed by a shorter outer deadline is library-owned rather than a caller
-instruction, and an executed negative control shows what it prevents. Maintenance
+ordinary running budget that preserves native failure classification is
+library-owned rather than a caller instruction, and an executed negative
+control shows what it prevents. An earlier initialization allowance or shutdown
+boundary can still interrupt classification; those existing periodic outcomes
+remain authoritative. Maintenance
 failures are always recoverable, so a transient database failure cannot drain
 the process, while `after_first_success` lets an application make a missing grant
 or schema fail startup.

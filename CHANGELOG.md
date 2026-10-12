@@ -27,7 +27,13 @@ contracts, capability facts and validation history.
   replica's cleanup still reads `ctid`, so narrow a provisioned role only after
   every replica runs this version. Until then, exact-role verification against
   a role provisioned from the old fragment reports the relation-level `SELECT`
-  as excess authority; `REVOKE SELECT ON TABLE ... runlimit_fixed_windows` also
+  as excess authority. If that verification gates readiness, temporarily add
+  relation-level `SELECT` on `runlimit_fixed_windows` to the application's
+  manifest with `DeclarationPurpose::AllowedOnly` (for example, through
+  `GrantFragment::with_relations`). Keep that allowance while upgrading every
+  replica, then narrow the role and remove the allowance. Perform the revocation
+  and replacement grants together in one transaction so running replicas never
+  observe missing column grants: `REVOKE SELECT ON TABLE ... runlimit_fixed_windows` also
   removes that table's column `SELECT` grants, so re-apply the newly rendered
   grant plan afterwards.
 
