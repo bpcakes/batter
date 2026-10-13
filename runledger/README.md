@@ -1465,7 +1465,7 @@ configuration from the environment. Worker settings come from
 | Variable | Purpose |
 | --- | --- |
 | `JOBS_WORKER_ID` | Worker identity; blank falls back to `worker-<uuidv7>` |
-| `JOBS_POLL_INTERVAL_MS` | Queue poll interval |
+| `JOBS_POLL_INTERVAL_MS` | Queue poll interval; a worker at capacity also claims when a local job exits |
 | `JOBS_CLAIM_BATCH_SIZE` | Jobs claimed per poll |
 | `JOBS_LEASE_TTL_SECONDS` | Lease duration; clamped to at least `10` |
 | `JOBS_MAX_GLOBAL_CONCURRENCY` | Max concurrent handler executions |

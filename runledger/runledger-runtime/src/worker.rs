@@ -23,6 +23,8 @@ use crate::observer::JobLifecycleObservers;
 use crate::registry::JobRegistry;
 use crate::shutdown;
 
+const STOPPED_BEFORE_START_REASON: &str = "WORKER_STOPPED_BEFORE_START";
+
 pub async fn run_worker_loop(
     pool: runledger_postgres::DbPool,
     registry: JobRegistry,
@@ -164,7 +166,7 @@ impl WorkerLoop {
 
         let available = self.available_capacity();
         if available == 0 {
-            if self.wait_for_shutdown_or_poll_interval().await {
+            if self.wait_for_shutdown_job_exit_or_poll_interval().await {
                 return WorkerLoopControl::Drain(RuntimeLoopExit::Shutdown);
             }
             return WorkerLoopControl::Continue;
@@ -176,6 +178,14 @@ impl WorkerLoop {
         if claimed.is_empty() {
             self.wait_for_shutdown_or_poll_interval().await;
             return WorkerLoopControl::Continue;
+        }
+
+        // A stop request can overtake an in-flight claim. Its jobs have not
+        // started, so return them to the queue rather than admitting new work
+        // into drain.
+        if shutdown::is_requested_or_closed(&self.shutdown) {
+            self.release_claims_overtaken_by_stop(claimed).await;
+            return WorkerLoopControl::Drain(RuntimeLoopExit::Shutdown);
         }
 
         let claimed_len = claimed.len();
@@ -214,6 +224,36 @@ impl WorkerLoop {
         }
     }
 
+    // Each release restores the attempt, deletes the unstarted attempt row and
+    // frees any execution-resource claim. A failed release leaves the lease to
+    // reaper recovery, as for any other unreleased claim.
+    async fn release_claims_overtaken_by_stop(&self, claimed: Vec<jobs::JobQueueRecord>) {
+        let mut released = 0_usize;
+        for job in &claimed {
+            let identity = jobs::JobLeaseIdentity::new(
+                job.id,
+                job.run_number,
+                job.attempt,
+                &self.config.worker_id,
+            );
+            match jobs::release_unstarted_job_claim(
+                &self.pool,
+                identity,
+                STOPPED_BEFORE_START_REASON,
+                0,
+            )
+            .await
+            {
+                Ok(()) => released += 1,
+                Err(source) => log_overtaken_claim_release_failure(job, source),
+            }
+        }
+        info!(
+            claimed = claimed.len(),
+            released, "stop request overtook a claim; released unstarted claims back to pending"
+        );
+    }
+
     fn available_capacity(&self) -> usize {
         self.config
             .max_global_concurrency
@@ -246,6 +286,24 @@ impl WorkerLoop {
         shutdown::wait_for_request_or_timeout(&mut self.shutdown, self.config.poll_interval).await
     }
 
+    // At capacity only a local job exit can make the next claim admissible, so
+    // observe that exit instead of waiting out the poll interval. The stop request
+    // is polled first: a simultaneous exit cannot defer drain, and the next
+    // iteration rechecks shutdown before any claim.
+    async fn wait_for_shutdown_job_exit_or_poll_interval(&mut self) -> bool {
+        tokio::select! {
+            biased;
+            stop = shutdown::wait_for_request_or_timeout(
+                &mut self.shutdown,
+                self.config.poll_interval,
+            ) => stop,
+            Some(result) = self.join_set.join_next() => {
+                log_finished_job_task_result(result);
+                false
+            }
+        }
+    }
+
     async fn drain(mut self, exit: RuntimeLoopExit) -> RuntimeLoopExit {
         self.log_drain_start(&exit);
         while let Some(result) = self.join_set.join_next().await {
@@ -271,6 +329,23 @@ impl WorkerLoop {
             log_finished_job_task_result(result);
         }
     }
+}
+
+fn log_overtaken_claim_release_failure(
+    job: &jobs::JobQueueRecord,
+    source: runledger_postgres::Error,
+) {
+    let error = WorkerError::ReleaseUnstartedClaim {
+        job_id: job.id,
+        attempt: job.attempt,
+        source,
+    };
+    warn!(
+        %error,
+        job_id = %job.id,
+        attempt = job.attempt,
+        "stop request overtook a claim; leaving the unstarted claim for reaper recovery"
+    );
 }
 
 fn log_worker_shutdown_drain() {

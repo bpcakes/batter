@@ -129,6 +129,22 @@ All notable changes to this workspace are documented here.
   terminal lease without a recorded owner, a state the claim path never
   produces, skips the hook with a warning rather than inventing an identity.
 
+- A worker whose `max_global_concurrency` slots are all occupied now claims
+  again as soon as one of its job tasks exits, instead of waiting out
+  `poll_interval`. A pending stop request still takes precedence over a
+  simultaneous exit, and the exit is observed and logged exactly as before; a
+  crashed job task still requests supervised shutdown. Empty and partial claims
+  still wait for `poll_interval`. Under a sustained backlog the worker issues
+  more, smaller claim transactions: measured at 0.35 to 0.66 extra commits per
+  job (about 2.2 rising to 2.5 to 2.9), with unchanged row writes per job.
+- A worker whose stop request arrives while a claim is in flight no longer
+  starts the jobs that claim returns. It releases each unstarted claim back to
+  `PENDING` with requeue reason `WORKER_STOPPED_BEFORE_START`: the attempt is
+  restored, the unstarted attempt row is deleted and any execution-resource
+  claim is freed, so another worker can claim the job immediately. A release
+  that fails is logged and left to reaper recovery. Jobs spawned before the
+  worker observed the stop still run to completion during drain.
+
 ## [0.13.0] - 2026-09-22
 
 [Release source](https://github.com/bpcakes/batter/tree/runledger-v0.13.0/runledger)
