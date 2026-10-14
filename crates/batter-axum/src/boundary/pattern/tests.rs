@@ -1,4 +1,4 @@
-use super::{Segment, SharedPath, parse, shared_path};
+use super::{Index, Segment, SharedPath, parse, shared_path};
 use axum::{
     Router,
     body::Body,
@@ -248,4 +248,68 @@ async fn shared_paths_agree_with_native_axum_routing() {
             }
         }
     }
+}
+
+/// Every router the index names for `path`, in the order dispatch offers them.
+fn candidates(index: &Index, path: &str) -> Vec<usize> {
+    let mut candidates = Vec::new();
+    while let Some(router) = index.candidate(path, candidates.last().map_or(0, |last| last + 1)) {
+        candidates.push(router);
+    }
+    candidates
+}
+
+/// With every pattern as its own router, the index names exactly the patterns
+/// that native Axum routing of each pattern alone matches, for every short
+/// path built from the segments a witness can contain.
+#[tokio::test]
+async fn index_names_exactly_the_patterns_native_axum_routing_matches() {
+    let index = Index::new(PATTERNS.iter().map(|pattern| [pattern]));
+    for path in candidate_paths() {
+        let mut routed = Vec::new();
+        for (router, pattern) in PATTERNS.iter().enumerate() {
+            if routes(pattern, &path).await {
+                routed.push(router);
+            }
+        }
+        assert_eq!(candidates(&index, &path), routed, "{path}");
+    }
+}
+
+#[test]
+fn index_names_each_router_once_and_unanalyzed_routers_always() {
+    let index = Index::new([
+        vec!["/items/{id}", "/items/{*rest}", "/items/{id}/parts"],
+        vec!["/{id}.json"],
+        vec!["/reports"],
+    ]);
+    assert_eq!(candidates(&index, "/items/7"), [0, 1]);
+    assert_eq!(candidates(&index, "/items/7/parts"), [0, 1]);
+    assert_eq!(candidates(&index, "/reports"), [1, 2]);
+    assert_eq!(candidates(&index, "/missing"), [1]);
+    assert_eq!(candidates(&index, "*"), [1]);
+    let analyzed = Index::new([["/items/{id}"], ["/reports"]]);
+    assert!(analyzed.candidate("/missing", 0).is_none());
+    assert!(analyzed.candidate("*", 0).is_none());
+}
+
+/// Lookup and teardown keep their stack use independent of how many static
+/// segments a pattern has: on a stack far smaller than a Tokio worker's, a
+/// pattern of 20,000 literal segments with all 25 captures between them
+/// matches, misses and drops.
+#[test]
+fn deep_static_patterns_match_and_drop_on_a_small_stack() {
+    let thread = std::thread::Builder::new().stack_size(128 * 1024);
+    let probe = thread.spawn(|| {
+        let run = "/a".repeat(800);
+        let pattern: String = (0..25).map(|index| format!("{run}/{{p{index}}}")).collect();
+        let path: String = (0..25).map(|_| format!("{run}/x")).collect();
+        let index = Index::new([vec![pattern.as_str()], vec!["/a/{id}"]]);
+        assert_eq!(candidates(&index, &path), [0]);
+        assert!(candidates(&index, &format!("{path}/b")).is_empty());
+        assert!(candidates(&index, &format!("{}/b", "/a".repeat(20_000))).is_empty());
+        assert_eq!(candidates(&index, "/a/7"), [1]);
+        drop(index);
+    });
+    probe.unwrap().join().unwrap();
 }

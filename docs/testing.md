@@ -1783,6 +1783,60 @@ including empty, lone-`*` and embedded-`*` parameter names and the 25-capture
 limit, with the pinned Axum router and requires the parser to agree; inventory
 construction rejects those names as `InvalidPattern`.
 
+Dispatch offers a request only to admitted routers whose declared patterns
+match its path, selected through an index of those patterns (`batter-myes`). A
+pattern unit test indexes every corpus pattern as its own router and requires
+the index to name exactly the patterns that native Axum routing of each pattern
+alone matches, over every short path built from the witness segments; another
+covers several patterns per router and an unanalyzed pattern, which names its
+router for every path. `admitted_dispatch.rs` serves through three admitted
+routers in the default and a named group: each serves only its declared paths,
+a router serves its declared path although an earlier router has an undeclared
+route for it, and a router's own undeclared literal inside its declared capture
+still answers with the default fallback. During implementation, letting a
+capture ending its pattern match an empty remainder, or requiring two wildcard
+bytes, made the comparison fail; an index naming no router failed seven
+admitted-router tests, and serving every named router without its inspection
+check failed three.
+
+Index lookup follows literal segments in a loop and recurses only through
+captures, at most 25 deep, and its nodes are dismantled from a work list
+(`batter-myes.1`). On a 128 KiB thread, a unit test indexes a pattern of
+20,000 literal segments with all 25 captures between them, matches it, misses
+one segment beyond it and at its last literal, and drops the index. On a 1 MiB
+thread, half a Tokio worker's default stack, `admitted_dispatch.rs` assembles
+a boundary whose admitted router declares a pattern of 20,000 literal segments,
+serves it, sends a request diverging at its last segment to the default
+fallback and drops the client. Both tests aborted with a stack overflow against
+the earlier recursive lookup, and again when only the recursive teardown was
+restored.
+
+`cargo bench -p batter-axum --bench declared_dispatch --locked` sends in-process
+requests through 1, 16 and 64 admitted routers; under `cargo test` it only sends
+each request once and checks its status. On 2026-10-14, on an Apple M4 Max with
+Rust 1.98.1 and other work running, six alternating runs of the previous
+sequential dispatch and the indexed dispatch gave these medians per request:
+
+| Admitted routers | Dispatch | Native route | First match | Last match | Miss |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | sequential | 3,812 ns | 4,732 ns | 4,670 ns | 4,215 ns |
+| 1 | indexed | 3,848 ns | 4,784 ns | 4,792 ns | 3,998 ns |
+| 16 | sequential | 3,667 ns | 4,569 ns | 8,719 ns | 8,296 ns |
+| 16 | indexed | 3,716 ns | 4,655 ns | 4,664 ns | 3,892 ns |
+| 64 | sequential | 3,663 ns | 4,551 ns | 22,328 ns | 21,749 ns |
+| 64 | indexed | 3,687 ns | 4,641 ns | 4,646 ns | 3,880 ns |
+
+Sequential last matches and misses grew by about 290 ns per admitted router.
+In this benchmark, whose admitted routers differ in a literal segment, indexed
+ones did not grow with the router count. Routers whose declared patterns differ
+only in a capture or wildcard prefix at the same position, such as `/r0-{id}`
+and `/r1-{id}`, still have each lookup compare those prefixes one by one; that
+case was not measured. With one router, indexed
+matches measured 50–120 ns (1–3%) slower, against 60 ns between the sequential
+first and last match, which are the same request at that count; an isolated
+lookup took about 30 ns for a match and 10 ns for a miss. These are
+single-host, in-process figures, not serving throughput or latency tails.
+
 ## Axum operational defaults
 
 `cargo test -p batter-axum --test operational --locked` exercises the actual

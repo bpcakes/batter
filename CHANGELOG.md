@@ -8,6 +8,18 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Index admitted-router dispatch in `batter-axum`: assembly indexes the
+  declared patterns of routers admitted through `GuardedRouter::from_router`,
+  so a request that no native route matches consults only the inspection copy
+  of an admitted router whose declared pattern matches its path, instead of
+  every admitted router's copy in turn. Which router serves, and which requests
+  reach the fallbacks, is unchanged. Such a request now costs at most one
+  inspection routing whatever the number of admitted routers; the index lookup
+  itself still compares, one by one, the capture and wildcard prefixes that
+  declared patterns place at the same position. Lookup and teardown use stack
+  bounded by the 25-capture limit, not by a pattern's literal depth. No public
+  signature changes.
+
 - Add `batter_runlimit::maintenance` (also `batter::runlimit::maintenance`,
   feature `runlimit-postgres`). `maintenance::register_in(target, name, limiter,
   ExpiryMaintenance::new(interval, maximum_rows, startup, shutdown)?)` registers
