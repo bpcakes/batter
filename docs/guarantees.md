@@ -1768,7 +1768,12 @@ reached through its root fallback routes, which capture nothing: a request that
 no native route matched goes through the inspection copies there, carrying no
 path parameters or matched path, and is forwarded unchanged to an admitted
 router, inside its group's policy and its own outermost correlation and
-observer, only when its copy reaches a declared pattern. Every other request
+observer, only when its copy reaches a declared pattern. An index of the
+declared patterns, built at assembly under the same matchit 0.8.4 rules as the
+overlap analysis, offers the request only to admitted routers with a declared
+pattern matching its path, in admission order; it may offer a router whose own
+undeclared route takes the path, and that router's copy then refuses it, but it
+never skips one with a matching declared pattern. Every other request
 continues to the selected fallback. Guarded root or nested fallbacks sit behind the
 dispatch with their policy and observer, because a nested fallback below a
 capture that matched first would add that capture to the forwarded request.
@@ -1779,8 +1784,11 @@ served router, so no request rebuilds their layers and state held by those
 layers is shared by all of their requests; native routes keep Axum's own
 preparation. Axum exposes no route enumeration, so the inventory remains
 application input: a route it omits is unreachable rather than verified. Each
-admitted router adds one inspection routing, outside the observer, to each
-request that no native route matches.
+admitted router offered a request adds one inspection routing, outside the
+observer. Under the analyzed rules, overlap rejection leaves at most one such
+router for any path, so a request that no native route matches costs at most
+one inspection routing whatever the number of admitted routers, and none when
+no declared pattern matches its path.
 
 `HttpBoundary::with_rendered_fallback` selects a synchronous metadata-only
 renderer outside every group's admission, while retaining server correlation

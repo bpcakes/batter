@@ -36,3 +36,7 @@ rustls = { version = "0.23.44", default-features = false, features = ["ring", "s
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util", "macros", "signal", "net", "io-util"] }
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[bench]]
+name = "declared_dispatch"
+harness = false

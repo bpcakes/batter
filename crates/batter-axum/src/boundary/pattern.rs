@@ -1,4 +1,5 @@
-//! Request paths shared by two Axum route patterns.
+//! Request paths shared by two Axum route patterns, and the routers whose
+//! patterns match a request path.
 //!
 //! This mirrors the matching rules of matchit 0.8.4, which the pinned Axum
 //! 0.8.9 router uses. A pattern splits at `/` into segments, and `{{` and `}}`
@@ -11,8 +12,11 @@
 //! first byte, where a `/` does not split the segment. A pattern has at most 25
 //! captures.
 
+mod index;
 #[cfg(test)]
 mod tests;
+
+pub(super) use index::Index;
 
 /// Filler for capture and wildcard remainders in a constructed path.
 const FILLER: u8 = b'x';

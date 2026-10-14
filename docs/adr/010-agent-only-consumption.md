@@ -345,8 +345,10 @@ example an OpenAPI document's paths plus any undocumented route, and a route it
 omits stays unreachable. Validation proves each declared pattern with one path
 filled with `{}`, so a route whose literal spells escaped braces could take that
 path and fail the inventory closed. Routes inside an opaque nested service of
-the admitted router cannot be declared. Each admitted router adds one
-library-owned inspection routing to each request that no native route matches.
+the admitted router cannot be declared. A request that no native route matches
+gains one library-owned inspection routing for each admitted router whose
+declared pattern matches its path; an index built at assembly selects those
+routers, so overlap rejection leaves at most one.
 Layer state inside an admitted router, and around the default group's
 fallbacks when admitted routers exist, is shared by all of their requests, as
 with Axum's make-service conversion, even where `axum::serve` would prepare a

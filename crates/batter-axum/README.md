@@ -250,12 +250,15 @@ group's fallback, and the admitted router's own fallback never runs, so declare
 fallbacks on the default `GuardedRouter`. Declared routes run inside their
 group's policy with native Axum routing, path parameters and `MatchedPath`, and
 each request still has one completion event. Only a request that no native
-route matches consults each admitted router's inspection copy, at the root
-fallback where it carries no path captures; the default group's root and nested
-fallbacks then answer the requests no admitted router serves. Assembly prepares
-an admitted router, and when there are any the default group's fallbacks, once,
-as a served router or an `InProcessClient` is prepared, so their layers are built
-once and their state is shared by all of their requests.
+route matches consults an inspection copy, at the root fallback where it
+carries no path captures, and only the copy of an admitted router with a
+declared pattern matching its path: assembly indexes the declared patterns, so
+that costs at most one inspection routing however many routers are admitted,
+and none for a path no declared pattern matches. The default group's root and
+nested fallbacks then answer the requests no admitted router serves. Assembly
+prepares an admitted router, and when there are any the default group's
+fallbacks, once, as a served router or an `InProcessClient` is prepared, so
+their layers are built once and their state is shared by all of their requests.
 
 ```rust
 use axum::Router;

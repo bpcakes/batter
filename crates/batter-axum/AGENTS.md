@@ -44,11 +44,13 @@ Windows support and non-Unix fallbacks are out of scope.
   `src/boundary/group.rs` owns `RouteGroup`, `GroupPolicy`, `BrowserPolicy` and
   the per-group layer order; `src/boundary/pattern.rs` decides whether two
   retained route patterns share a request path under the pinned matchit 0.8.4
-  rules, and `src/boundary/inventory.rs` confirms probe and group collisions
-  through inert routers. `src/boundary/probe.rs` owns `ProbePath` and the
-  handlers of application-rendered probes; the boundary's optional probe response
-  policy is layered around the probe routers in `src/boundary/assembly.rs`, before
-  anything is merged into them.
+  rules, `src/boundary/pattern/index.rs` indexes admitted routers' declared
+  patterns under the same rules so dispatch offers a request only to routers
+  with a matching declared pattern, and `src/boundary/inventory.rs` confirms
+  probe and group collisions through inert routers. `src/boundary/probe.rs`
+  owns `ProbePath` and the handlers of application-rendered probes; the
+  boundary's optional probe response policy is layered around the probe routers
+  in `src/boundary/assembly.rs`, before anything is merged into them.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
   private-response headers with a typed same-origin/no-referrer choice. They do
@@ -103,12 +105,16 @@ Windows support and non-Unix fallbacks are out of scope.
   groups, and one correlated observation, scoped dispatch and context
   cancellation across groups. The pattern unit tests compare the overlap
   analysis with native Axum routing over every short path a witness can use.
-  `tests/route_groups/admitted.rs` and `admitted_validation.rs` cover admitted
-  routers: declared routes inside their group's policy, unreachable undeclared
-  routes and fallbacks, layers reused across served requests, and probe,
-  inventory and overlap rejections without polling application code. The
-  pattern unit tests also compare the parser with Axum's own route
-  registration.
+  `tests/route_groups/admitted.rs`, `admitted_dispatch.rs` and
+  `admitted_validation.rs` cover admitted routers: declared routes inside their
+  group's policy, dispatch among several admitted routers, unreachable
+  undeclared routes and fallbacks, layers reused across served requests, and
+  probe, inventory and overlap rejections without polling application code.
+  The pattern unit tests also compare the parser with Axum's own route
+  registration, and the declared-pattern index with native routing.
+- `benches/declared_dispatch.rs` measures in-process request cost through
+  1, 16 and 64 admitted routers for the native route, first and last admitted
+  matches and a miss. Under `cargo test` it only sends each request once.
 - `tests/http_lifetime.rs` and `tests/http_lifetime/` own real HTTP/1.1 socket,
   handler/body, direct-server and cleanup comparisons. They reuse only private
   workspace `test-support/process/` mechanics, never another package's fixtures
@@ -169,9 +175,13 @@ fallback, where no capture has been added, keep the default group's fallbacks
 behind that dispatch, serve it, inside its group's policy and its own observer,
 only for requests its inspection copy routes to a declared pattern, and keep its
 declared patterns disjoint from probes, other groups and its own group's other
-routes. Prepare each admitted router, inspection copy and moved fallback router
-once at assembly so requests never rebuild their layers, and leave native routes
-to Axum's own preparation. Do not
+routes. Offer a request only to the admitted routers that the declared-pattern
+index names, in admission order: the index may name a router whose undeclared
+route takes the path, but must never omit one whose declared pattern matches,
+and naming never replaces the inspection copy's actual-match check. Prepare
+each admitted router, inspection copy and moved fallback router once at
+assembly so requests never rebuild their layers, and leave native routes to
+Axum's own preparation. Do not
 reintroduce raw probe patterns. Route groups keep one fixed order: correlation
 and the single observer outermost, then per group the private-response headers,
 admission with the group budget, mutation checks on non-safe methods, and the
@@ -186,7 +196,8 @@ overlap decisions confirmed by native routing of each pattern alone when its
 witness survives request URI construction unchanged; otherwise reject the
 overlap before native merging. Update
 the pattern analysis and its Axum comparison test whenever the Axum or matchit
-pin changes. Apply `low_level::observe_http` after
+pin changes, together with the declared-pattern index and its native-routing
+comparison. Apply `low_level::observe_http` after
 assembling routes/fallback; use `low_level::request_admission` inside it. If
 generated correlation is required, `low_level::operational_http` must be outside
 admission, `request_scope`, deadlines, authentication and any other
@@ -269,4 +280,5 @@ cargo test -p batter-axum --locked
 cargo build -p batter --features axum --example http_service --locked
 python3 scripts/smoke_http.py --binary target/debug/examples/http_service
 python3 scripts/test_matrix.py workspace
+cargo bench -p batter-axum --bench declared_dispatch --locked
 ```

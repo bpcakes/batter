@@ -1785,7 +1785,11 @@ private fallback parameter, so a nested fallback below a capture also adds that
 capture before its endpoint runs. The boundary therefore makes a library
 dispatch the native router's root fallback, whose routes capture nothing,
 consults inspection copies only there, forwards the request unchanged, and
-moves the default group's fallbacks behind the dispatch. `into_make_service`,
+moves the default group's fallbacks behind the dispatch. That dispatch consults
+only the copies of admitted routers whose declared patterns match the path
+under the analyzed matchit 0.8.4 rules, using an index built at assembly; the
+copy still decides, because route priority inside the admitted router can give
+the path to an undeclared route. `into_make_service`,
 `into_make_service_with_connect_info` and the `axum::serve` stream service each
 call `with_state(())` on the router they serve, which turns every boxed handler
 into a route once; a router called from inside another service is never

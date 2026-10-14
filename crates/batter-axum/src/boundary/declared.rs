@@ -2,7 +2,7 @@
 
 use super::{
     ProbePath,
-    pattern::{self, Segment},
+    pattern::{self, Index, Segment},
 };
 use axum::{
     Router,
@@ -338,17 +338,34 @@ impl Admitted {
 /// declared pattern, if one does, and otherwise to the default group's
 /// fallbacks. Those sit behind this service because a nested fallback matched
 /// first would add its path captures to the request.
+///
+/// Only the admitted routers that the index of declared patterns names for the
+/// path are offered the request, in admission order, so a path that no
+/// declared pattern matches reaches no inspection copy. A named router still
+/// serves only when its inspection copy routes the path to a declared pattern:
+/// its undeclared routes may take precedence there.
 #[derive(Clone)]
 pub(super) struct Dispatch {
-    admitted: Arc<[Admitted]>,
+    admitted: Arc<Indexed>,
     fallbacks: Router,
 }
 
+/// The admitted routers in admission order, indexed by declared pattern.
+struct Indexed {
+    routers: Box<[Admitted]>,
+    index: Index,
+}
+
 impl Dispatch {
-    /// Prepare `fallbacks` once, like the admitted routers.
+    /// Index the declared patterns and prepare `fallbacks` once, like the
+    /// admitted routers.
     pub(super) fn new(admitted: Vec<Admitted>, fallbacks: Router) -> Self {
+        let index = Index::new(admitted.iter().map(|router| &router.patterns));
         Self {
-            admitted: admitted.into(),
+            admitted: Arc::new(Indexed {
+                routers: admitted.into(),
+                index,
+            }),
             fallbacks: fallbacks.with_state(()),
         }
     }
@@ -369,10 +386,13 @@ impl Service<Request> for Dispatch {
             fallbacks,
         } = self.clone();
         Box::pin(async move {
-            for router in admitted.iter() {
+            let mut from = 0;
+            while let Some(position) = admitted.index.candidate(request.uri().path(), from) {
+                let router = &admitted.routers[position];
                 if router.serves(request.uri()).await {
                     return router.served.clone().oneshot(request).await;
                 }
+                from = position + 1;
             }
             fallbacks.oneshot(request).await
         })
