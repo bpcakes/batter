@@ -2770,6 +2770,33 @@ API and wrapping known rejections as uncertainty or terminal storage failures.
 
 ## Native Runledger workspace verification
 
+`cargo test -p runledger-postgres --locked --test claim_batch_writes` covers
+mixed direct/workflow batches through all four claim entry points. Statement
+triggers count one workflow update, one attempt insert and one event insert for
+both sixteen-job and single-job claims, and no additional writes for an empty
+claim. Checks retain per-job run/attempt/stage and worker metadata, both claim
+origins, resource ownership, workflow status guards and first-start timestamps.
+Injected failures after each batch write compare the full durable state before
+and after rollback, including leases, resources, workflow steps and audit rows.
+
+On Linux x86_64 with PostgreSQL 18.6 (2026-10-14, `batter-mn9t`), a focused
+SQL-phase probe compared the old and new statements for sixteen jobs, eight
+with workflow steps, using prepared psycopg 3.3.6 commands through a TCP delay
+proxy. Twelve alternating samples per version followed three warmup pairs;
+leasing preceded timing and rollback followed it. `pg_stat_statements` counted
+48 statements before and 3 after, with the same 40 affected rows (8 workflow
+updates, 16 attempts and 16 events). Median side-effect latency was:
+
+| Added proxy RTT | Observed `SELECT 1` median | Before | Batched |
+| --- | --- | --- | --- |
+| 0 ms | 0.31 ms | 20.53 ms | 4.34 ms |
+| 2 ms | 2.60 ms | 132.06 ms | 16.51 ms |
+| 5 ms | 5.41 ms | 294.97 ms | 36.20 ms |
+
+This measures the changed SQL phase under injected delay, not complete worker
+throughput, production network tails or SQLx driver overhead. The owning Bead
+records the probe command and verification results.
+
 The full workspace matrix now includes five native Runledger packages. Their
 default database and container-lifecycle tests require Docker and PostgreSQL 18
 (the default image is `postgres:18`). Provisioning belongs to the distinct native

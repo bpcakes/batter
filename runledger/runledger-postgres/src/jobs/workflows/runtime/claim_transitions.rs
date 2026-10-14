@@ -12,7 +12,7 @@ use super::super::errors::workflow_internal_state_error;
 
 pub(crate) async fn mark_workflow_step_running_for_claim_tx(
     tx: &mut DbTx<'_>,
-    job_id: Uuid,
+    job_ids: &[Uuid],
 ) -> Result<()> {
     sqlx::query!(
         "UPDATE workflow_steps
@@ -20,9 +20,9 @@ pub(crate) async fn mark_workflow_step_running_for_claim_tx(
              started_at = COALESCE(started_at, now()),
              output = NULL,
              updated_at = now()
-         WHERE job_id = $1
+         WHERE job_id = ANY($1::uuid[])
            AND status IN ('ENQUEUED', 'RUNNING')",
-        job_id,
+        job_ids,
     )
     .execute(&mut **tx)
     .await

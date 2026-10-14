@@ -1051,6 +1051,16 @@ examines a bounded resource-head window (1,024–16,384 eligible keyed jobs,
 scaled by requested batch size), so an unusually dense same-key prefix can also
 return a short batch instead of scanning an unbounded backlog. Resource inserts
 use consistent key order to reduce cross-filter deadlock risk.
+
+Claiming a nonempty batch writes its workflow transitions, attempts and `LEASED`
+events in three statements inside the same transaction as resource reservation
+and leasing. Each claimed job keeps its own audit rows, run/attempt identity,
+stage and worker metadata; direct and worker-prestart claim origins stay distinct.
+The workflow update only changes `ENQUEUED` or `RUNNING` steps, preserves their
+first start time and clears their output. A failure in any batch write rolls
+back the leases, resource reservations and all side effects together. Empty
+claims issue none of these three statements.
+
 Exclusivity is lease-scoped: the reaper releases an expired owner when it
 transitions the owning job, so provider-side operations must still be fenced or
 idempotent in case a handler outlives its lease after heartbeat loss. Successful

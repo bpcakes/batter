@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO job_events (\n            job_id,\n            run_number,\n            attempt,\n            event_type,\n            stage,\n            payload\n         )\n         SELECT id,\n                run_number,\n                attempt,\n                'LEASED',\n                stage,\n                jsonb_build_object('worker_id', $2::text, 'lease_duration_seconds', $3::int4)\n         FROM job_queue\n         WHERE id = ANY($1::uuid[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "06af93830ef1e7164dc6e34d130c9c0a44aaaec4d0e45dd657ef6c86b7e0fe10"
+}

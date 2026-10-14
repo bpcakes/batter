@@ -223,59 +223,58 @@ async fn record_claim_side_effects_tx(
     claimed: &[JobQueueRecord],
     request: &ClaimRequest<'_>,
 ) -> Result<()> {
-    for job in claimed {
-        on_claimed(tx, job.id).await?;
+    let job_ids = claimed.iter().map(|job| job.id).collect::<Vec<_>>();
+    on_claimed(tx, &job_ids).await?;
 
-        sqlx::query!(
-            "INSERT INTO job_attempts (
-                job_id,
+    // Candidate selection and leasing hold these job-row locks until commit.
+    // Read each row's run, attempt and stage directly, without parallel arrays
+    // or a round trip per job. Any side-effect failure rolls back the whole claim.
+    sqlx::query!(
+        "INSERT INTO job_attempts (
+            job_id,
+            run_number,
+            attempt,
+            worker_id,
+            leased_at,
+            started_at,
+            claim_origin,
+            execution_started_persisted_at
+         )
+         SELECT id, run_number, attempt, $2, now(), now(), $3, NULL
+         FROM job_queue
+         WHERE id = ANY($1::uuid[])",
+        &job_ids,
+        request.worker_id,
+        request.claim_origin.as_db_value(),
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("claim jobs attempt insert", error))?;
+
+    sqlx::query!(
+        "INSERT INTO job_events (
+            job_id,
+            run_number,
+            attempt,
+            event_type,
+            stage,
+            payload
+         )
+         SELECT id,
                 run_number,
                 attempt,
-                worker_id,
-                leased_at,
-                started_at,
-                claim_origin,
-                execution_started_persisted_at
-             )
-             VALUES ($1, $2, $3, $4, now(), now(), $5, NULL)",
-            job.id,
-            job.run_number,
-            job.attempt,
-            request.worker_id,
-            request.claim_origin.as_db_value(),
-        )
-        .execute(&mut **tx)
-        .await
-        .map_err(|error| Error::from_query_sqlx_with_context("claim jobs attempt insert", error))?;
-
-        sqlx::query!(
-            "INSERT INTO job_events (
-                job_id,
-                run_number,
-                attempt,
-                event_type,
-                stage,
-                payload
-             )
-             VALUES (
-                $1,
-                $2,
-                $3,
                 'LEASED',
-                $4,
-                jsonb_build_object('worker_id', $5::text, 'lease_duration_seconds', $6::int4)
-             )",
-            job.id,
-            job.run_number,
-            job.attempt,
-            job.stage.as_db_value(),
-            request.worker_id,
-            request.lease_duration_seconds,
-        )
-        .execute(&mut **tx)
-        .await
-        .map_err(|error| Error::from_query_sqlx_with_context("claim jobs event insert", error))?;
-    }
+                stage,
+                jsonb_build_object('worker_id', $2::text, 'lease_duration_seconds', $3::int4)
+         FROM job_queue
+         WHERE id = ANY($1::uuid[])",
+        &job_ids,
+        request.worker_id,
+        request.lease_duration_seconds,
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| Error::from_query_sqlx_with_context("claim jobs event insert", error))?;
 
     Ok(())
 }

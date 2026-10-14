@@ -4838,3 +4838,15 @@ one ordered array batch, then verifies the whole policy in a separate command.
 This preserves permission/check-hook semantics and detects value drift without
 repeating reset or clearing the statement cache. Native fast paths and already
 held leases retain their documented limits.
+
+## Runledger claim-write batching (2026-10-14)
+
+The workspace uses SQLx 0.9.0; checked-query metadata was generated with SQLx
+CLI 0.9.0 against PostgreSQL 18.6. PostgreSQL 18 documents
+[`INSERT ... SELECT`](https://www.postgresql.org/docs/18/sql-insert.html) as
+inserting the rows produced by its query, and
+[row locks](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-ROWS)
+as retained through transaction end. Claim selection and leasing already lock
+the exact queue rows before the batch inserts read their run, attempt and stage.
+The workflow update retains its `ENQUEUED`/`RUNNING` predicate. This is an internal
+statement-shape change; it adds no public API or remote-effect guarantee.
