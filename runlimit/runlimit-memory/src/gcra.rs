@@ -213,9 +213,9 @@ impl<C: Clock> GcraStore<C> {
     /// Fails closed when the target shard is poisoned or exact arithmetic
     /// cannot represent the caller-supplied clock value.
     pub fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, GcraCheckError> {
-        let started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_inner(check);
-        let elapsed = started.elapsed();
+        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
         match &result {
             Ok(evaluation) => {
                 self.observe_shard_effect(&evaluation.effect);
@@ -245,9 +245,9 @@ impl<C: Clock> GcraStore<C> {
             .map_err(|ArithmeticOverflow| GcraCheckError::ArithmeticOverflow)?;
         shard.record_observed_millis(now_millis);
         let cleanup_requested = self.config.max_expired_removals_per_check();
-        let cleanup_started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = cleanup_started.elapsed();
+        let cleanup_elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
 
         let decision = match evaluated {
             QuotaEvaluation::Allowed(allowance) => {
@@ -294,9 +294,9 @@ impl<C: Clock> GcraStore<C> {
         &self,
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, GcraBatchError> {
-        let started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_all_inner(checks);
-        let elapsed = started.elapsed();
+        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
         match &result {
             Ok(evaluation) => {
                 self.observe_shard_effects(&evaluation.effect);
@@ -354,12 +354,12 @@ impl<C: Clock> GcraStore<C> {
                 .config
                 .max_expired_removals_per_check()
                 .saturating_mul(check_count);
-            let cleanup_started = Instant::now();
+            let started = self.observer.as_ref().map(|_| Instant::now());
             let removed = shard.prune_expired(now_millis, requested);
             cleanup_effects.push(CleanupEffect {
                 requested,
                 removed,
-                elapsed: cleanup_started.elapsed(),
+                elapsed: started.map(|start| start.elapsed()).unwrap_or_default(),
             });
         }
 

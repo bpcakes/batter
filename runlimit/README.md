@@ -432,7 +432,9 @@ work. `Observation`, `AdmissionOperation`, `AdmissionOutcome`,
 `ConsumptionStatus`, and `CleanupOutcome` are exhaustive enums, so an observer
 that maps outcomes to metrics names every variant and a new outcome is a
 compile error rather than a silently unmetered wildcard arm. The memory stores
-also report per-shard capacity headroom. Observations intentionally omit
+also report per-shard capacity headroom. Without an observer, memory stores skip
+admission and cleanup duration measurements for single checks and batches; the
+authoritative quota clock and bounded expiry cleanup remain active. Observations intentionally omit
 subject keys, backend error text, and other sensitive high-cardinality values.
 
 `AdmissionOperation::Check` always carries an `AdmissionPolicy` with the
