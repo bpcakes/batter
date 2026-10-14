@@ -141,9 +141,12 @@ All notable changes to this workspace are documented here.
   starts the jobs that claim returns. It releases each unstarted claim back to
   `PENDING` with requeue reason `WORKER_STOPPED_BEFORE_START`: the attempt is
   restored, the unstarted attempt row is deleted and any execution-resource
-  claim is freed, so another worker can claim the job immediately. A release
-  that fails is logged and left to reaper recovery. Jobs spawned before the
-  worker observed the stop still run to completion during drain.
+  claim is freed, so another worker can claim the job immediately. A failed
+  release does not stop the releases after it. A release that no longer
+  applies, because the attempt was already recovered, reassigned or settled,
+  is logged as such; any other failure is logged and left to reaper recovery.
+  Jobs spawned before the worker observed the stop still run to completion
+  during drain.
 
 ## [0.13.0] - 2026-09-22
 

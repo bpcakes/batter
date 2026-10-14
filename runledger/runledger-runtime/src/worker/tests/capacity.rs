@@ -22,6 +22,8 @@ use runledger_postgres::jobs::{
     JobDefinitionUpsert, JobEnqueue, enqueue_job, get_job_by_id, upsert_job_definition_tx,
 };
 
+mod overtaken_claims;
+
 const UNUSED_LAZY_POOL_URL: &str =
     "postgres://postgres:postgres@127.0.0.1:65535/runledger_worker_capacity_test";
 const REFILL_JOB_TYPE: JobType<'static> = JobType::new("jobs.test.pre_run_lease_loss");
@@ -107,30 +109,6 @@ async fn enqueue_refill_jobs(pool: &PgPool, jobs: usize) -> Vec<uuid::Uuid> {
         );
     }
     job_ids
-}
-
-async fn wait_for_claim_to_block_on_queue_lock(pool: &PgPool) {
-    for _ in 0..100 {
-        let waiting = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (
-                 SELECT 1
-                 FROM pg_stat_activity
-                 WHERE datname = current_database()
-                   AND pid <> pg_backend_pid()
-                   AND wait_event_type = 'Lock'
-                   AND query LIKE '%eligible_resource_jobs%'
-                   AND query NOT LIKE '%pg_stat_activity%'
-             )",
-        )
-        .fetch_one(pool)
-        .await
-        .expect("query waiting claim activity");
-        if waiting {
-            return;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-    panic!("worker claim did not block on the queue table lock");
 }
 
 #[tokio::test]
@@ -320,78 +298,6 @@ async fn worker_refills_exhausted_capacity_on_job_exit_without_poll_delay() {
             .expect("refill job exists");
         assert_eq!(persisted.status, JobStatus::Succeeded);
     }
-
-    teardown_ephemeral_pool(pool, database).await;
-}
-
-#[tokio::test]
-async fn stop_overtaking_an_in_flight_claim_releases_unstarted_jobs() {
-    const JOBS: usize = 3;
-    let (pool, database) = setup_ephemeral_pool("jobs_worker_stop_overtakes_claim", 8).await;
-    let job_ids = enqueue_refill_jobs(&pool, JOBS).await;
-
-    // The loop checks for a stop before claiming; holding the queue table makes
-    // the stop arrive while the claim itself is in flight.
-    let mut queue_lock = pool.begin().await.expect("begin queue lock");
-    sqlx::query("LOCK TABLE job_queue IN EXCLUSIVE MODE")
-        .execute(&mut *queue_lock)
-        .await
-        .expect("lock job_queue");
-    let runs = Arc::new(AtomicUsize::new(0));
-    let mut registry = JobRegistry::new();
-    registry.register(CountingHandler { runs: runs.clone() });
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let worker = tokio::spawn(run_worker_loop(
-        pool.clone(),
-        registry,
-        capacity_config(4, Duration::from_secs(30)),
-        shutdown_rx,
-    ));
-    wait_for_claim_to_block_on_queue_lock(&pool).await;
-    shutdown_tx
-        .send(true)
-        .expect("worker receives the stop request");
-    queue_lock.commit().await.expect("release queue lock");
-
-    assert_eq!(
-        timeout(Duration::from_secs(5), worker)
-            .await
-            .expect("worker exits promptly after shutdown")
-            .expect("worker join succeeds"),
-        RuntimeLoopExit::Shutdown
-    );
-    assert_eq!(
-        runs.load(Ordering::SeqCst),
-        0,
-        "a claim overtaken by a stop request must not start its jobs"
-    );
-    for job_id in job_ids {
-        let job = get_job_by_id(&pool, None, job_id)
-            .await
-            .expect("load released job")
-            .expect("released job exists");
-        assert_eq!(job.status, JobStatus::Pending);
-        assert_eq!(job.attempt, 0, "release restores the attempt budget");
-        assert!(job.worker_id.is_none());
-    }
-    let attempts = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_attempts")
-        .fetch_one(&pool)
-        .await
-        .expect("count attempts");
-    assert_eq!(attempts, 0, "release deletes the unstarted attempt rows");
-    let released = sqlx::query_scalar::<_, i64>(
-        "SELECT count(*)
-         FROM job_events
-         WHERE event_type = 'REQUEUED'
-           AND payload->>'reason' = 'WORKER_STOPPED_BEFORE_START'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count release events");
-    assert_eq!(
-        released, JOBS as i64,
-        "the overtaken claim leased every job before releasing it"
-    );
 
     teardown_ephemeral_pool(pool, database).await;
 }

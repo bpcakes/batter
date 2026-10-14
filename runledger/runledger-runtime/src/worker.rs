@@ -14,7 +14,10 @@ mod execution_services;
 mod invocation;
 mod observers;
 
-use self::execution::ClaimedJobExecution;
+use self::execution::{
+    ClaimedJobExecution, is_lease_owner_mismatch_error,
+    is_unstarted_claim_release_not_applicable_error,
+};
 use self::observers::TerminalObserverTasks;
 use crate::RuntimeLoopExit;
 use crate::WorkerError;
@@ -335,17 +338,33 @@ fn log_overtaken_claim_release_failure(
     job: &jobs::JobQueueRecord,
     source: runledger_postgres::Error,
 ) {
+    let no_longer_applies = overtaken_claim_release_no_longer_applies(&source);
     let error = WorkerError::ReleaseUnstartedClaim {
         job_id: job.id,
         attempt: job.attempt,
         source,
     };
+    if no_longer_applies {
+        warn!(
+            %error,
+            job_id = %job.id,
+            attempt = job.attempt,
+            "stop request overtook a claim; the claimed attempt no longer holds its lease, so unstarted release does not apply"
+        );
+        return;
+    }
     warn!(
         %error,
         job_id = %job.id,
         attempt = job.attempt,
         "stop request overtook a claim; leaving the unstarted claim for reaper recovery"
     );
+}
+
+// A miss means the attempt was recovered, reassigned or settled before the
+// release ran, so this worker holds no claim for the reaper to recover.
+fn overtaken_claim_release_no_longer_applies(error: &runledger_postgres::Error) -> bool {
+    is_lease_owner_mismatch_error(error) || is_unstarted_claim_release_not_applicable_error(error)
 }
 
 fn log_worker_shutdown_drain() {
