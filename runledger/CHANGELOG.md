@@ -72,6 +72,10 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Job claims batch workflow updates, attempt inserts and lease-event inserts
+  into three statements per nonempty batch, retaining individual audit rows,
+  workflow status guards and the existing lease/resource transaction fences.
+
 - Breaking: `JobDeadLetterInfo` carries a typed `origin`
   (`JobDeadLetterOrigin::Worker` or `JobDeadLetterOrigin::Reaper`) naming the
   runtime component that dead-lettered the job and invoked the hook, and

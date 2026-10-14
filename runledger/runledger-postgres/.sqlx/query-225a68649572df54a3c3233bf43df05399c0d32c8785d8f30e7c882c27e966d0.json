@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO job_attempts (\n            job_id,\n            run_number,\n            attempt,\n            worker_id,\n            leased_at,\n            started_at,\n            claim_origin,\n            execution_started_persisted_at\n         )\n         SELECT id, run_number, attempt, $2, now(), now(), $3, NULL\n         FROM job_queue\n         WHERE id = ANY($1::uuid[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "225a68649572df54a3c3233bf43df05399c0d32c8785d8f30e7c882c27e966d0"
+}

@@ -11,8 +11,8 @@ use super::runtime::{
     process_workflow_step_terminal_by_job_id_tx,
 };
 
-pub(crate) async fn on_claimed(tx: &mut DbTx<'_>, job_id: Uuid) -> Result<()> {
-    mark_workflow_step_running_for_claim_tx(tx, job_id).await
+pub(crate) async fn on_claimed(tx: &mut DbTx<'_>, job_ids: &[Uuid]) -> Result<()> {
+    mark_workflow_step_running_for_claim_tx(tx, job_ids).await
 }
 
 pub(crate) async fn on_claim_released(
