@@ -609,7 +609,9 @@ fn is_postgres_lock_not_available_error(error: &runledger_postgres::Error) -> bo
     has_query_error_kind(error, QueryErrorKind::PostgresLockNotAvailable)
 }
 
-fn is_unstarted_claim_release_not_applicable_error(error: &runledger_postgres::Error) -> bool {
+pub(super) fn is_unstarted_claim_release_not_applicable_error(
+    error: &runledger_postgres::Error,
+) -> bool {
     has_query_error_kind(error, QueryErrorKind::JobUnstartedClaimReleaseNotApplicable)
 }
 

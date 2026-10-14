@@ -100,6 +100,11 @@ Generic runtime for durable execution: worker loop, scheduler loop, lease reaper
   boundary checks also inspect finished handles once: a delayed notification or
   concurrent collector must not hide an already-completed join. Do not replace
   this bounded check with an unbounded drain of newly arriving notifications.
+- A saturated worker waits for a stop request, a tracked job exit or the poll
+  interval, with the stop request polled first. A consumed exit is logged like
+  any other and its fatal classification still reaches the registry. Check the
+  stop request after every non-empty claim: spawning is admission, so release a
+  claim the stop overtook unstarted rather than starting its jobs in drain.
 
 ## Common commands
 - `cargo check -p runledger-runtime`
