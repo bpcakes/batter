@@ -11,6 +11,10 @@ use std::collections::HashMap;
 /// sends the path to another route; it never omits a router with a matching
 /// pattern. A pattern outside the analyzed syntax, which assembly rejects
 /// before indexing, would make its router a candidate for every path.
+///
+/// A lookup's stack holds at most one frame per capture, which parsing limits
+/// to 25 per pattern, and teardown uses constant stack, however many literal
+/// segments a pattern or path has.
 pub(in crate::boundary) struct Index {
     root: Node,
     unanalyzed: Vec<usize>,
@@ -111,31 +115,58 @@ impl Node {
     /// `rest`, the path after the `/` that starts the next segment.
     ///
     /// Each node is reached through one segment of the path, so a lookup
-    /// visits a node at most once and descends no deeper than its patterns.
-    fn collect(&self, rest: &[u8], from: usize, lowest: &mut Option<usize>) {
-        for (prefix, routers) in &self.wildcards {
-            // The wildcard takes the prefix and at least one more byte, `/` included.
-            if rest.len() > prefix.len() && rest.starts_with(prefix) {
-                lower(lowest, routers, from);
+    /// visits a node at most once. Literal segments are followed in a loop and
+    /// only a capture recurses, so the depth of recursion is at most the
+    /// number of captures in one pattern.
+    fn collect(&self, mut rest: &[u8], from: usize, lowest: &mut Option<usize>) {
+        let mut node = self;
+        loop {
+            for (prefix, routers) in &node.wildcards {
+                // The wildcard takes the prefix and at least one more byte, `/` included.
+                if rest.len() > prefix.len() && rest.starts_with(prefix) {
+                    lower(lowest, routers, from);
+                }
+            }
+            let (segment, next) = match rest.iter().position(|&byte| byte == b'/') {
+                Some(end) => (&rest[..end], Some(&rest[end + 1..])),
+                None => (rest, None),
+            };
+            for (prefix, capture) in &node.captures {
+                if !segment.starts_with(prefix) {
+                    continue;
+                }
+                match next {
+                    Some(next) => capture.collect(next, from, lowest),
+                    // A capture's remainder may be empty unless the capture ends the pattern.
+                    None if segment.len() > prefix.len() => lower(lowest, &capture.ends, from),
+                    None => {}
+                }
+            }
+            let Some(literal) = node.literals.get(segment) else {
+                return;
+            };
+            match next {
+                Some(next) => (node, rest) = (literal, next),
+                None => return lower(lowest, &literal.ends, from),
             }
         }
-        let (segment, next) = match rest.iter().position(|&byte| byte == b'/') {
-            Some(end) => (&rest[..end], Some(&rest[end + 1..])),
-            None => (rest, None),
-        };
-        let mut reach = |node: &Node, may_end: bool| match next {
-            Some(next) => node.collect(next, from, lowest),
-            None if may_end => lower(lowest, &node.ends, from),
-            None => {}
-        };
-        if let Some(node) = self.literals.get(segment) {
-            reach(node, true);
-        }
-        for (prefix, node) in &self.captures {
-            // A capture's remainder may be empty unless the capture ends the pattern.
-            if segment.starts_with(prefix) {
-                reach(node, segment.len() > prefix.len());
-            }
+    }
+
+    /// Move this node's children to `pending`, leaving it without any.
+    fn release_children(&mut self, pending: &mut Vec<Node>) {
+        pending.extend(self.literals.drain().map(|(_, node)| node));
+        pending.extend(self.captures.drain(..).map(|(_, node)| node));
+    }
+}
+
+impl Drop for Node {
+    /// Dismantle the subtree from a work list: dropping nested children in
+    /// place would recurse once per literal segment of the deepest pattern.
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        self.release_children(&mut pending);
+        while let Some(mut node) = pending.pop() {
+            node.release_children(&mut pending);
         }
     }
 }

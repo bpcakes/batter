@@ -292,3 +292,24 @@ fn index_names_each_router_once_and_unanalyzed_routers_always() {
     assert!(analyzed.candidate("/missing", 0).is_none());
     assert!(analyzed.candidate("*", 0).is_none());
 }
+
+/// Lookup and teardown keep their stack use independent of how many static
+/// segments a pattern has: on a stack far smaller than a Tokio worker's, a
+/// pattern of 20,000 literal segments with all 25 captures between them
+/// matches, misses and drops.
+#[test]
+fn deep_static_patterns_match_and_drop_on_a_small_stack() {
+    let thread = std::thread::Builder::new().stack_size(128 * 1024);
+    let probe = thread.spawn(|| {
+        let run = "/a".repeat(800);
+        let pattern: String = (0..25).map(|index| format!("{run}/{{p{index}}}")).collect();
+        let path: String = (0..25).map(|_| format!("{run}/x")).collect();
+        let index = Index::new([vec![pattern.as_str()], vec!["/a/{id}"]]);
+        assert_eq!(candidates(&index, &path), [0]);
+        assert!(candidates(&index, &format!("{path}/b")).is_empty());
+        assert!(candidates(&index, &format!("{}/b", "/a".repeat(20_000))).is_empty());
+        assert_eq!(candidates(&index, "/a/7"), [1]);
+        drop(index);
+    });
+    probe.unwrap().join().unwrap();
+}

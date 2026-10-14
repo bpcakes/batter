@@ -1773,7 +1773,9 @@ declared patterns, built at assembly under the same matchit 0.8.4 rules as the
 overlap analysis, offers the request only to admitted routers with a declared
 pattern matching its path, in admission order; it may offer a router whose own
 undeclared route takes the path, and that router's copy then refuses it, but it
-never skips one with a matching declared pattern. Every other request
+never skips one with a matching declared pattern. Its lookups and teardown use
+stack bounded by the 25-capture limit, not by a declared pattern's literal
+depth. Every other request
 continues to the selected fallback. Guarded root or nested fallbacks sit behind the
 dispatch with their policy and observer, because a nested fallback below a
 capture that matched first would add that capture to the forwarded request.

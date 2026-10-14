@@ -72,3 +72,47 @@ async fn each_admitted_router_serves_only_the_paths_it_declares() {
     }
     assert_eq!(count(&undeclared), 0);
 }
+
+/// A declared pattern of 20,000 literal segments serves, sends a request that
+/// leaves it at the last segment to the default fallback, and is dropped, all
+/// on half the stack of a Tokio worker thread.
+#[test]
+fn a_deep_static_admitted_route_serves_and_drops_on_a_small_stack() {
+    let thread = std::thread::Builder::new().stack_size(1024 * 1024);
+    let probe = thread.spawn(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let deep = "/a".repeat(20_000);
+            let router = Router::new().route(&deep, get(|| async { "deep" }));
+            let inventory = RouteInventory::new([deep.as_str()]).unwrap();
+            let default = GuardedRouter::from_router(router, inventory)
+                .merge(GuardedRouter::new().route("/native", get(|| async { "native" })))
+                .fallback(|| async { (StatusCode::NOT_FOUND, "default fallback") });
+            let handle = ready_handle();
+            let app = HttpBoundary::new(request_policy(&handle, SECOND))
+                .assemble(default)
+                .await
+                .unwrap()
+                .in_process();
+            let near_miss = format!("{}/b", "/a".repeat(19_999));
+            for (path, status, body) in [
+                (deep.as_str(), StatusCode::OK, "deep"),
+                (
+                    near_miss.as_str(),
+                    StatusCode::NOT_FOUND,
+                    "default fallback",
+                ),
+            ] {
+                let response = app.request(request(Method::GET, path)).await;
+                let actual = response.status();
+                let text = body_text(response).await;
+                assert_eq!((actual, text.as_str()), (status, body));
+            }
+            drop(app);
+        });
+    });
+    probe.unwrap().join().unwrap();
+}

@@ -178,7 +178,9 @@ declared patterns disjoint from probes, other groups and its own group's other
 routes. Offer a request only to the admitted routers that the declared-pattern
 index names, in admission order: the index may name a router whose undeclared
 route takes the path, but must never omit one whose declared pattern matches,
-and naming never replaces the inspection copy's actual-match check. Prepare
+and naming never replaces the inspection copy's actual-match check. Keep index
+lookup and teardown stack bounded by the 25-capture limit, never by the number
+of literal segments in a declared pattern or request path. Prepare
 each admitted router, inspection copy and moved fallback router once at
 assembly so requests never rebuild their layers, and leave native routes to
 Axum's own preparation. Do not
