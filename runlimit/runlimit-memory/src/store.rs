@@ -274,9 +274,9 @@ impl<C: Clock> MemoryStore<C> {
     /// Returns an error without allowing the request when the target shard is
     /// poisoned.
     pub fn check(&self, check: &Check<'_>) -> Result<Decision, PoisonedShardError> {
-        let started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_inner(check);
-        let elapsed = started.elapsed();
+        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
 
         match &result {
             Ok(evaluation) => {
@@ -305,9 +305,9 @@ impl<C: Clock> MemoryStore<C> {
         let now_millis = observed_millis.max(shard.latest_observed_millis());
         shard.record_observed_millis(now_millis);
         let cleanup_requested = self.config.max_expired_removals_per_check();
-        let cleanup_started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let cleanup_removed = shard.prune_expired(now_millis, cleanup_requested);
-        let cleanup_elapsed = cleanup_started.elapsed();
+        let cleanup_elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
 
         let decision = if let Some(denial) = shard.quota_denial(&prepared, now_millis) {
             if check.policy().quota_mode() == QuotaMode::Shadow {
@@ -348,9 +348,9 @@ impl<C: Clock> MemoryStore<C> {
     /// key, targets more distinct keys at one shard than that shard can ever
     /// store, or a touched shard is poisoned.
     pub fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, MemoryBatchError> {
-        let started = Instant::now();
+        let started = self.observer.as_ref().map(|_| Instant::now());
         let result = self.check_all_inner(checks);
-        let elapsed = started.elapsed();
+        let elapsed = started.map(|start| start.elapsed()).unwrap_or_default();
 
         match &result {
             Ok(evaluation) => {
@@ -401,12 +401,12 @@ impl<C: Clock> MemoryStore<C> {
                 .config
                 .max_expired_removals_per_check()
                 .saturating_mul(check_count);
-            let cleanup_started = Instant::now();
+            let started = self.observer.as_ref().map(|_| Instant::now());
             let removed = shard.prune_expired(now_millis, cleanup_limit);
             cleanup_effects.push(CleanupEffect {
                 requested: cleanup_limit,
                 removed,
-                elapsed: cleanup_started.elapsed(),
+                elapsed: started.map(|start| start.elapsed()).unwrap_or_default(),
             });
         }
 
