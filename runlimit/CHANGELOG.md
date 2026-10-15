@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- `MemoryAttemptLimiter::admit` borrows the subject's policy and clones it
+  only when it inserts a new subject; it no longer constructs an entry for an
+  occupied key. Its bounded expiry cleanup copies the at most 16 examined keys
+  into a fixed stack array instead of a heap vector. Busy, backoff and
+  storage-capacity denials and existing-subject admissions therefore allocate
+  nothing; the 16-entry scan bound, cursor progression and wrap, policy
+  fingerprints and public APIs are unchanged. Latency was not measured.
 - `PostgresLimiter::cleanup_expired` identifies expired windows by their
   primary key instead of the `ctid` system column. PostgreSQL checks a
   system-column read against relation-level `SELECT`, so a cleanup login no

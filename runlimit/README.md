@@ -561,8 +561,11 @@ consumers need no new tables. PostgreSQL enforces 256 shards with at most 65,536
 slots each using a checked slot range and unique `(capacity_shard, capacity_slot)`.
 `PostgresConfig` may lower the operational bound (4,096 slots by default).
 Admission reclaims at most 16 expired rows in its shard, never live rows. Memory
-storage has an explicit total capacity and similarly bounded cleanup. Full
-storage fails closed; quotas and failure state are never evicted to admit a key.
+storage has an explicit total capacity and similarly bounded cleanup: each
+admission examines at most 16 entries after a resumable cursor, copying their
+keys into stack scratch rather than allocating, and only a newly inserted
+subject clones its policy. Full storage fails closed; quotas and failure state
+are never evicted to admit a key.
 
 Standalone `complete` returns `AttemptCompletionResult` only after acknowledged
 commit. `CheckError` preserves uncertain-commit classification; never replay an

@@ -104,7 +104,7 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
         &self,
         subject: AttemptSubject<'_>,
     ) -> Result<AttemptAdmission<MemoryAttemptReceipt>, MemoryAttemptError> {
-        let policy = subject.policy().clone();
+        let policy = subject.policy();
         let key = (
             policy.fingerprint().into_bytes(),
             subject.into_unbound_subject_key().into_bytes(),
@@ -134,8 +134,8 @@ impl<C: Clock> MemoryAttemptLimiter<C> {
             .checked_add(1)
             .ok_or(MemoryAttemptError::SequenceExhausted)?;
         let generation = state.generation;
-        let entry = state.entries.entry(key).or_insert(Entry {
-            policy,
+        let entry = state.entries.entry(key).or_insert_with(|| Entry {
+            policy: policy.clone(),
             failures: 0,
             last_failure: now,
             retry_at: now,
@@ -237,24 +237,30 @@ fn deny(entry: &Entry, now: Duration) -> Option<AttemptDenial> {
         retry_after: Delay::new(entry.retry_at.saturating_sub(now)),
     })
 }
+/// Keys one admission's cleanup examines, and the size of its stack scratch.
+const CLEANUP_SCAN: usize = 16;
+/// Reclaims quiet-expired entries among the next keys after the cursor. The
+/// cursor rests on the last examined key, or wraps when nothing follows it.
 fn cleanup(state: &mut State, now: Duration) {
     use std::ops::Bound::{Excluded, Unbounded};
-    let keys: Vec<Key> = match state.cursor {
-        Some(cursor) => state
-            .entries
-            .range((Excluded(cursor), Unbounded))
-            .take(16)
-            .map(|(key, _)| *key)
-            .collect(),
-        None => state.entries.keys().take(16).copied().collect(),
-    };
+    let mut scratch = [([0; 32], [0; 32]); CLEANUP_SCAN];
+    let mut scanned = 0;
+    let start = state.cursor.map_or(Unbounded, Excluded);
+    for (slot, (key, _)) in scratch
+        .iter_mut()
+        .zip(state.entries.range((start, Unbounded)))
+    {
+        *slot = *key;
+        scanned += 1;
+    }
+    let keys = &scratch[..scanned];
     state.cursor = keys.last().copied();
     for key in keys {
-        if state.entries.get(&key).is_some_and(|entry| {
+        if state.entries.get(key).is_some_and(|entry| {
             let origin = entry.lease.map_or(entry.last_failure, |(_, until)| until);
             now >= origin.saturating_add(entry.policy.quiet_period().duration())
         }) {
-            state.entries.remove(&key);
+            state.entries.remove(key);
         }
     }
 }

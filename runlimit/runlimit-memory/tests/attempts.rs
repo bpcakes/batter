@@ -284,3 +284,66 @@ fn completion_error_can_only_report_poisoned_state() {
     );
     let MemoryAttemptCompletionError = store.complete(r, AttemptOutcome::Success).unwrap_err();
 }
+
+#[test]
+fn cleanup_examines_sixteen_keys_per_admission_then_resumes_and_wraps() {
+    // A 2000 ms lease keeps held reservations live for the whole test, while a
+    // completed failure becomes reclaimable 1000 ms after it is recorded.
+    let clock = TestClock::default();
+    let store = MemoryAttemptLimiter::with_clock(NonZeroUsize::new(20).unwrap(), clock.clone());
+    let policy = AttemptPolicy::new(
+        PolicyId::new("auth").unwrap(),
+        ScopeId::new("identifier").unwrap(),
+        period(10),
+        period(40),
+        period(1000),
+        period(2000),
+    )
+    .unwrap();
+    let hasher = KeyHasher::new([7; 32]).unwrap();
+    // Storage orders one policy's entries by opaque subject digest. Inserting in
+    // that order makes every setup cleanup examine exactly the previously inserted
+    // key, so the cursor rests on the second-largest key afterwards; the first
+    // admission into the empty store examines nothing.
+    let mut subjects: Vec<_> = (0..20u8)
+        .map(|index| hasher.hash_attempt_for(&policy, [index]))
+        .collect();
+    subjects.sort_by_key(|subject| subject.into_unbound_subject_key().into_bytes());
+    let (live, failed) = subjects.split_at(16);
+    let held: Vec<_> = live
+        .iter()
+        .map(|subject| receipt(store.admit(*subject).unwrap()))
+        .collect();
+    for subject in failed {
+        let reservation = receipt(store.admit(*subject).unwrap());
+        assert!(matches!(
+            store
+                .complete(reservation, AttemptOutcome::Failure)
+                .unwrap(),
+            AttemptCompletionResult::Applied(_)
+        ));
+    }
+    // Two busy re-admissions move the cursor onto the largest key, then wrap it.
+    for _ in 0..2 {
+        assert!(matches!(
+            store.admit(live[15]).unwrap(),
+            AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+        ));
+    }
+    clock.set(1000);
+    let newcomer = hasher.hash_attempt_for(&policy, b"newcomer");
+    // The wrapped scan examines only the sixteen smallest keys, all live leases,
+    // so the full store denies although four reclaimable entries follow them.
+    assert!(matches!(
+        store.admit(newcomer).unwrap(),
+        AttemptAdmission::Denied(AttemptDenial::StorageCapacity)
+    ));
+    // The next scan resumes after the sixteenth key and reclaims all four.
+    let admitted = receipt(store.admit(newcomer).unwrap());
+    assert!(matches!(
+        store.admit(live[0]).unwrap(),
+        AttemptAdmission::Denied(AttemptDenial::Busy { .. })
+    ));
+    drop(admitted);
+    drop(held);
+}
