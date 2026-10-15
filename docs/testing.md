@@ -430,7 +430,8 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target and the exact eleven-case
+migration target, the eight-case [managed-object](#managed-routines-and-triggers)
+target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
 The identity controls compare cross-schema multirange grants with native
@@ -710,6 +711,57 @@ The workspace enables `clippy::cognitive_complexity` and `clippy::too_many_lines
 at warning level in all workspace packages. Root `clippy.toml` sets their thresholds to
 20 and 100 respectively. The existing `-D warnings` verification step enforces
 both limits across libraries, examples, and tests.
+
+## Managed routines and triggers
+
+Offline contracts run in the ordinary `batter-sqlx` library suite
+(`cargo test -p batter-sqlx --lib managed`). Manifest tests cover every
+`ManagedObjectError` path: header kind and grammar (including `CREATE` without
+`OR REPLACE`, a procedure declared as a function, constraint triggers and
+malformed trigger events), unqualified, misnamed, three-part and case-folded
+identities, more than one statement, unterminated strings, quoted identifiers,
+dollar quotes and comments, NUL bytes, the 1 MiB source bound, temporary
+namespaces for entries, argument types, trigger tables, ledgers and
+retirements, the SQLx ledger name, empty manifests, duplicate entries
+(including a function and a procedure with one signature), duplicate
+retirements, retirements of declared identities, the 10,000-item bound (input
+iteration stops at the boundary) and the 64 MiB aggregate bound. Accepted
+sources cover comments, quoted names, case folding, nested dollar quotes,
+standard and escape strings and `BEGIN ATOMIC` bodies with `CASE ... END`.
+Digest tests require order independence, exclusion of the ledger name and
+sensitivity to the policy, any source and any retirement. Verification tests
+cover plan composition (duplicate manifests, equal managed and SQLx or generic
+ledgers, and a sequence declaration of the managed ledger, in both orders) and
+the pure ledger and catalog comparisons: missing, unexpected, kind- and
+checksum-mismatched rows, every way the set row can disagree, drift by hash,
+absence and kind, rows without a recorded hash, and present retirements.
+
+The ignored `managed_objects_live` target runs through
+`bash scripts/test_sqlx_live.sh`, or directly with
+`BATTER_SQLX_ADMIN_URL=... cargo test -p batter-sqlx --test managed_objects_live
+--locked -- --ignored --test-threads=1`. Each case provisions a unique schema
+owned by a migration login and a serving login with only schema `USAGE` and
+`SELECT` on tables the migration login creates, and drops them afterwards. The
+eight cases cover: a first apply after migrations, including a SQL routine
+validated against the migrated table, pool reuse, `PUBLIC` revocation and
+verification of both ledgers by the serving login; an idempotent re-apply whose
+routine and trigger rows, including `xmin`, and ledger rows are unchanged;
+retirement of a routine with its dependent trigger; a retirement blocked by a
+still-declared trigger (SQLSTATE `2BP01`) that retires the session and changes
+nothing; both `PUBLIC` policies, including an out-of-band grant reported and
+revoked again; out-of-band replacement and trigger removal reported as drift and
+repaired by replacing exactly those two objects; a missing ledger on a migrated
+database reported as one finding; and an undeclared overload (absent and
+pre-existing), an invalid SQL body (`42703`) and a foreign ledger relation, each
+refused without leaving objects or a ledger. Two mutation controls were run
+against this target during implementation: re-executing every entry failed the
+idempotence, drift and `PUBLIC` cases, and removing the `xmin` check failed the
+pre-existing-overload case.
+
+`examples/postgres-lifecycle` adds a fourth ignored live case,
+`schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
+other live tests, and the executable smoke runs the schema stages through the
+production entry point. Results are recorded in `batter-54d0`.
 
 ## Explicit reference compatibility probes
 
@@ -2365,9 +2417,11 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 84-case inventory: twenty-one owned atomic/snapshot cases, two migration
-cases, eleven PostgreSQL lease/disposition and read-only-verification cases,
-fourteen owned-pool cases and thirty-six authority-
+an exact 150-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, eight
+managed-object cases, eleven PostgreSQL lease/disposition and
+read-only-verification cases, fourteen owned-pool cases, thirteen facade
+grant-composition cases and thirty-six authority-
 and-protected-verification cases. Its verification controls use committed uniquely named
 fixture objects, exercise an explicitly allowed later migration,
 missing/checksum/unsuccessful rows, bounded oversized-ledger rejection,

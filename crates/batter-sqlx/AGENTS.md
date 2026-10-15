@@ -8,7 +8,13 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
 
 ## Key entrypoints
 
-- `src/lib.rs`: default-retiring lease, consuming native migration execution, bounded probe, pool cleanup registration.
+- `src/lib.rs`: default-retiring lease, consuming native migration execution
+  (`migrate`, and `migrate_and_apply` for managed objects), bounded probe, pool
+  cleanup registration.
+- `src/managed.rs` and `src/managed/`: the pure `ManagedObjectManifest`
+  (`source.rs` lexer and header validation), the migrate-then-apply transaction
+  (`apply.rs`) and the catalog resolution, ledger shape and canonical rendering
+  shared with verification (`catalog.rs`). ADR-013 owns the boundary.
 - `src/native_query.rs`, `src/pooled_query.rs`: sealed native query dispatch, fixed
   error mapping and parent-clamped query/cleanup budgets; retain observed results
   before pool-return cleanup without exposing the native owner.
@@ -24,15 +30,20 @@ PostgreSQL 18 is the minimum supported server, including legacy session profiles
   serving-authority inspection; validated policy construction and canonical
   limits are in the README.
 - `tests/postgres_live.rs`: explicitly selected external-database contracts.
+- `tests/managed_objects_live.rs`, `tests/managed_objects_fixture.rs`: managed
+  object apply/verify contracts on a self-provisioned schema and logins.
 
 ## Edit here for X
 
 Keep connection and transaction lifecycle mechanics here and migration selection,
 replay, domain SQL and provisioning policy in applications. Generic read-only
 verification owns its lease, snapshot and disposition. Non-empty protected plans can
-check exact SQLx 0.9 ledger shape/history, scoped definer `search_path`, and
-coarse reachable current-database ownership; migration selection, routine
-protocols and grant-manifest contents remain downstream. The pure
+check exact SQLx 0.9 ledger shape/history, scoped definer `search_path`,
+coarse reachable current-database ownership, and a managed-object ledger and
+its live definitions; migration selection, routine protocols, object source,
+ownership transfer and grant-manifest contents remain downstream. Batter applies
+a consumer-declared managed object set only through `migrate_and_apply`, after
+the consumer's migrator on the same lease; never add an apply-only path. The pure
 exact-role compiler and inert grant renderer live here; they must not acquire a
 connection, execute SQL or become a provisioner. The runnable
 consumer is `examples/postgres-lifecycle`.
@@ -105,6 +116,15 @@ Ledger inheritance is unsupported; standalone ledger reads use ONLY so planner
 inheritance refresh cannot mix relation membership with older snapshot rows.
 High-level SQLx ledgers additionally require the exact six-column and primary-key
 shape. Schema-setting checks remain independent of serving-role authority.
+Managed-object apply and verification share one catalog module: identities are
+resolved by catalog joins (never `regprocedure` input), definitions render under
+the fixed settings in `catalog.rs`, and apply requires every executed statement
+to have written its declared identity (`xmin` equals the current transaction).
+Apply re-executes only new, changed or drifted entries and drops only retired
+objects that exist, never with `CASCADE`; it locks the ledger `ACCESS EXCLUSIVE`
+and verification locks it `ACCESS SHARE` before its snapshot, because rendering
+reads catalog caches rather than the snapshot. The ledger is never the SQLx
+ledger and apply never writes migration history.
 New supported semantics require primary PostgreSQL18 evidence and native tests.
 
 ## Common commands

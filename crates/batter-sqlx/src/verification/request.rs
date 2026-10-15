@@ -196,6 +196,9 @@ impl<'a> MigrationInspection<'a> {
 }
 
 /// An invalid semantic composition in a [`VerificationPlan`].
+///
+/// Migration: exhaustive matches on `PlanError` must now handle
+/// `ManagedObjectsAlreadySelected` and `ConflictingLedger`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlanError {
     /// A generic authority policy or compiled exact role was already selected.

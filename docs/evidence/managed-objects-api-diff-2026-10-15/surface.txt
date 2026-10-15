@@ -1,0 +1,138 @@
+## batter-sqlx: 1153 -> 1287 entries; 0 removed, 134 added
++ ADDED   enum batter_sqlx::managed::ManagedApplyError
++ ADDED   enum batter_sqlx::managed::ManagedObjectError
++ ADDED   enum batter_sqlx::managed::ManagedObjectKind
++ ADDED   enum batter_sqlx::managed::PublicExecute
++ ADDED   function batter_sqlx::verification::verify_managed_objects
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: Clone
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: Copy
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: Debug
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: Eq
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: PartialEq
++ ADDED   impl batter_sqlx::managed::AppliedManagedObjects: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedApplyError: Debug
++ ADDED   impl batter_sqlx::managed::ManagedApplyError: Display
++ ADDED   impl batter_sqlx::managed::ManagedApplyError: Error
++ ADDED   impl batter_sqlx::managed::ManagedObject: Clone
++ ADDED   impl batter_sqlx::managed::ManagedObject: Debug
++ ADDED   impl batter_sqlx::managed::ManagedObject: Eq
++ ADDED   impl batter_sqlx::managed::ManagedObject: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObject: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Clone
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Copy
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Debug
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Display
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Eq
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: Hash
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectDigest: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: Clone
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: Debug
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: Display
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: Eq
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: Error
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectError: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Clone
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Copy
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Debug
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Eq
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Hash
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: Ord
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: PartialOrd
++ ADDED   impl batter_sqlx::managed::ManagedObjectKind: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectManifest: Clone
++ ADDED   impl batter_sqlx::managed::ManagedObjectManifest: Debug
++ ADDED   impl batter_sqlx::managed::ManagedObjectManifest: Eq
++ ADDED   impl batter_sqlx::managed::ManagedObjectManifest: PartialEq
++ ADDED   impl batter_sqlx::managed::ManagedObjectManifest: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::PublicExecute: Clone
++ ADDED   impl batter_sqlx::managed::PublicExecute: Copy
++ ADDED   impl batter_sqlx::managed::PublicExecute: Debug
++ ADDED   impl batter_sqlx::managed::PublicExecute: Eq
++ ADDED   impl batter_sqlx::managed::PublicExecute: Hash
++ ADDED   impl batter_sqlx::managed::PublicExecute: PartialEq
++ ADDED   impl batter_sqlx::managed::PublicExecute: StructuralPartialEq
++ ADDED   impl batter_sqlx::managed::Retirement: Clone
++ ADDED   impl batter_sqlx::managed::Retirement: Debug
++ ADDED   impl batter_sqlx::managed::Retirement: Eq
++ ADDED   impl batter_sqlx::managed::Retirement: Hash
++ ADDED   impl batter_sqlx::managed::Retirement: Ord
++ ADDED   impl batter_sqlx::managed::Retirement: PartialEq
++ ADDED   impl batter_sqlx::managed::Retirement: PartialOrd
++ ADDED   impl batter_sqlx::managed::Retirement: StructuralPartialEq
++ ADDED   method batter_sqlx::PgLease::migrate_and_apply
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::created_or_replaced
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::digest
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::retired
++ ADDED   method batter_sqlx::managed::AppliedManagedObjects::unchanged
++ ADDED   method batter_sqlx::managed::ManagedApplyError::native
++ ADDED   method batter_sqlx::managed::ManagedObject::checksum
++ ADDED   method batter_sqlx::managed::ManagedObject::function
++ ADDED   method batter_sqlx::managed::ManagedObject::identity
++ ADDED   method batter_sqlx::managed::ManagedObject::kind
++ ADDED   method batter_sqlx::managed::ManagedObject::procedure
++ ADDED   method batter_sqlx::managed::ManagedObject::source
++ ADDED   method batter_sqlx::managed::ManagedObject::trigger
++ ADDED   method batter_sqlx::managed::ManagedObjectDigest::as_bytes
++ ADDED   method batter_sqlx::managed::ManagedObjectKind::as_str
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::digest
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::ledger
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::new
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::objects
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::public_execute
++ ADDED   method batter_sqlx::managed::ManagedObjectManifest::retirements
++ ADDED   method batter_sqlx::managed::Retirement::function
++ ADDED   method batter_sqlx::managed::Retirement::identity
++ ADDED   method batter_sqlx::managed::Retirement::kind
++ ADDED   method batter_sqlx::managed::Retirement::procedure
++ ADDED   method batter_sqlx::managed::Retirement::trigger
++ ADDED   method batter_sqlx::verification::VerificationPlan::managed_objects
++ ADDED   method batter_sqlx::verification::VerificationPlan::with_managed_objects
++ ADDED   mod batter_sqlx::managed
++ ADDED   struct batter_sqlx::managed::AppliedManagedObjects
++ ADDED   struct batter_sqlx::managed::ManagedObject
++ ADDED   struct batter_sqlx::managed::ManagedObjectDigest
++ ADDED   struct batter_sqlx::managed::ManagedObjectManifest
++ ADDED   struct batter_sqlx::managed::Retirement
++ ADDED   use batter_sqlx::managed::AppliedManagedObjects <- apply::AppliedManagedObjects
++ ADDED   use batter_sqlx::managed::ManagedApplyError <- apply::ManagedApplyError
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::Capacity
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::CommitUnconfirmed
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::IdentityMismatch
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::LedgerShape
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::Migration
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::Statement
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::Capacity
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::DuplicateObject
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::DuplicateRetirement
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::EmptyManifest
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::ReservedLedger
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::RetiredObjectDeclared
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::SourceHeader
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::SourceIdentity
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::SourceStatement
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::SourceTooLarge
++ ADDED   variant batter_sqlx::managed::ManagedObjectError::TemporaryNamespace
++ ADDED   variant batter_sqlx::managed::ManagedObjectKind::Function
++ ADDED   variant batter_sqlx::managed::ManagedObjectKind::Procedure
++ ADDED   variant batter_sqlx::managed::ManagedObjectKind::Trigger
++ ADDED   variant batter_sqlx::managed::PublicExecute::Revoke
++ ADDED   variant batter_sqlx::managed::PublicExecute::Unmanaged
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectChecksumMismatch
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectDrift
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectLedgerShape
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectPublicExecute
++ ADDED   variant batter_sqlx::verification::FindingKind::ManagedObjectSetDigest
++ ADDED   variant batter_sqlx::verification::FindingKind::MissingManagedObject
++ ADDED   variant batter_sqlx::verification::FindingKind::MissingManagedObjectLedger
++ ADDED   variant batter_sqlx::verification::FindingKind::RetiredManagedObjectPresent
++ ADDED   variant batter_sqlx::verification::FindingKind::UnexpectedManagedObject
++ ADDED   variant batter_sqlx::verification::PlanError::ConflictingLedger
++ ADDED   variant batter_sqlx::verification::PlanError::ManagedObjectsAlreadySelected
++ ADDED   variant batter_sqlx::verification::SupportedSurface::ManagedObjects
++ ADDED   variant batter_sqlx::verification::UnsupportedSurface::UnprotectedManagedObjectLedger
+
+## batter: 17 -> 17 entries; 0 removed, 0 added
+

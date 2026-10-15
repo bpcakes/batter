@@ -15,6 +15,11 @@ pub enum VerificationStatus {
 }
 
 /// A stable category for a safe, non-native verification finding.
+///
+/// Migration: exhaustive matches on `FindingKind` must now handle the
+/// managed-object variants, from `MissingManagedObjectLedger` through
+/// `ManagedObjectPublicExecute`; they occur only when a plan selects a
+/// managed-object manifest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FindingKind {
     MissingMigration,
@@ -148,6 +153,9 @@ impl Finding {
 /// A PostgreSQL capability whose catalog/ACL semantics are captured by this
 /// generic verifier. Application-specific migration shape and security
 /// policies remain outside this list.
+///
+/// Migration: exhaustive matches on `SupportedSurface` must now handle
+/// `ManagedObjects`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SupportedSurface {
     /// Required privileges evaluated for current-role INHERIT/PUBLIC authority.
@@ -192,6 +200,9 @@ pub enum SupportedSurface {
 }
 
 /// A requested or known boundary that this generic checker does not prove.
+///
+/// Migration: exhaustive matches on `UnsupportedSurface` must now handle
+/// `UnprotectedManagedObjectLedger`, which always makes a report Incomplete.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UnsupportedSurface {
     /// A migration ledger participates in table inheritance in the captured
