@@ -311,8 +311,8 @@ impl PgLease {
     /// transfers ownership, grants anything, or touches the SQLx ledger.
     ///
     /// The lease is consumed and the connection stays private. Every error,
-    /// cancellation or deadline retires it, which ends the uncommitted
-    /// transaction and the session lock with the session. Success commits,
+    /// cancellation or deadline retires it. Any uncommitted transaction and the
+    /// session lock end when the server session ends. Success commits,
     /// unlocks and follows the normal idle-state proof before pool return; a
     /// failed unlock after commit still returns the committed result and retires
     /// the connection. Interruption while `COMMIT` is in flight leaves its

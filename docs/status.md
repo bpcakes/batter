@@ -4,8 +4,10 @@
 construction enforces aggregate source bytes during iteration, before reading
 retirements. Apply documentation distinguishes returned errors from interruption
 during or after commit. Four added live cases exercise apply/verifier lock
-ordering, late ledger creation, and malformed, row-secured or inherited ledgers.
-Execution outcomes are recorded in the owning Bead.
+ordering, late ledger creation, and malformed, row-secured or inherited ledgers;
+their canonical live inventory uses the runner's bare-name matching contract.
+Rustdoc explicitly conditions transaction and lock termination on server-session
+termination. Execution outcomes are recorded in the owning Bead.
 
 2026-10-15 managed database objects (`batter-54d0`): `batter_sqlx::managed`
 declares routines and the triggers that bind them as in-place source with
