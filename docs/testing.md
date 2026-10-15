@@ -652,6 +652,17 @@ example tests, and the process and operation examples passed locally. Jig plan
 `repo:contract`, and `repo:file-budget` after the test-module split. These are
 local results; hosted checks are reported separately by CI.
 
+For `batter-esla`, crypto unit tests in `crypto/tests/fixed_buffers.rs` check
+that the fixed-size data-key wrap produces the same version-1 ciphertext-then-tag
+bytes as the variable-size primitive, that both unwrap paths recover the key, and
+that every single-byte change of the 48 wrapper bytes and a mismatched key, nonce
+or AAD fail authentication. Zeroization of the stack scratch on error paths
+follows from its `Zeroizing` owner type and is not separately tested. Allocation
+counts and release timings were measured with a throwaway counting-allocator
+probe outside the repository and recorded in the status table and the owning
+Bead; they are measured evidence from one Linux machine, not a retained test or
+a promised speedup.
+
 Regular CI targets MSRV 1.94.0 and the pinned 1.98.1 toolchain. The weekly
 Linux verification job targets floating `stable`. CI requires the
 checked-in lockfile and uses the strict verification path; missing lockfiles fail

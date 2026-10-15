@@ -90,7 +90,10 @@ exact body slice from `encoded`; its `as_ref()` view opens through the same
 lets a storage adapter decrypt borrowed split columns or an object body without
 concatenating them. All three decoding/construction paths validate structure,
 not authentication. The decoded header can allocate small fields, and `open`
-allocates the authenticated plaintext buffer.
+allocates the authenticated plaintext buffer. Wrapping and unwrapping the
+fixed-size data key use zeroized stack scratch rather than heap buffers; the
+AAD and HKDF info buffers, the wrapper's key-ID copy and the owned outputs still
+allocate, so `seal`, `open` and rewrap are not allocation-free.
 
 See [`docs/format-v1.md`](docs/format-v1.md) for normative bytes and limits.
 

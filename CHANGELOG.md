@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Wrap and unwrap the `batter-at-rest` data key in fixed zeroizing stack
+  buffers: `Keyring::seal`, `open`, `rewrap_envelope` and `rewrap` no longer
+  allocate a temporary heap buffer for the 32-byte data key's ciphertext or
+  plaintext. Version-1 bytes, HKDF inputs, AAD, authentication and randomness
+  behavior are unchanged, as are the public API and persisted format. The AAD
+  and HKDF info buffers, key-ID copies and owned outputs still allocate.
+  Latency moved within a few percent in one local measurement and is not a
+  promised speedup.
+
 - Index admitted-router dispatch in `batter-axum`: assembly indexes the
   declared patterns of routers admitted through `GuardedRouter::from_router`,
   so a request that no native route matches consults only the inspection copy

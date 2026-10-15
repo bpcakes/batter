@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 use crate::BorrowedSealedPayload;
 
+mod fixed_buffers;
 mod rewrap;
 
 const FIXTURE: &str = include_str!("../../tests/fixtures/envelope-v1.txt");

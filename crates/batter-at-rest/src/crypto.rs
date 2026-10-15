@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 use crate::{
     ContentDescriptor, Context, Envelope, Error, FORMAT_VERSION, KeyId, Keyring,
     MAX_PLAINTEXT_BYTES, NONCE_BYTES, SECRET_KEY_BYTES, SealedPayload, SealedPayloadRef, TAG_BYTES,
-    WrappedKey, key::SecretKey,
+    WrappedKey, format::WRAPPED_DATA_KEY_BYTES, key::SecretKey,
 };
 
 const HKDF_SALT: &[u8] = b"at-rest:envelope:v1:wrapping-key:salt";
@@ -196,10 +196,7 @@ impl Keyring {
     ) -> Result<WrappedKey, Error> {
         let wrapping_key = derive_wrapping_key(master_key, context)?;
         let aad = wrapping_aad(context, descriptor, key_id);
-        let encrypted = encrypt_bytes(&wrapping_key, &wrapping_nonce, &aad, data_key)?;
-        let encrypted_data_key = encrypted
-            .try_into()
-            .map_err(|_| Error::CryptographicFailure)?;
+        let encrypted_data_key = encrypt_data_key(&wrapping_key, &wrapping_nonce, &aad, data_key)?;
         Ok(WrappedKey::new(
             key_id.clone(),
             wrapping_nonce,
@@ -216,18 +213,12 @@ impl Keyring {
         let master_key = self.key(wrapped_key.key_id())?;
         let wrapping_key = derive_wrapping_key(master_key, context)?;
         let aad = wrapping_aad(context, envelope.content_descriptor(), wrapped_key.key_id());
-        let plaintext = decrypt_bytes(
+        decrypt_data_key(
             &wrapping_key,
             wrapped_key.nonce(),
             &aad,
             wrapped_key.encrypted_data_key(),
-        )?;
-        if plaintext.len() != SECRET_KEY_BYTES {
-            return Err(Error::AuthenticationFailed);
-        }
-        let mut data_key = Zeroizing::new([0_u8; SECRET_KEY_BYTES]);
-        data_key.copy_from_slice(&plaintext);
-        Ok(data_key)
+        )
     }
 }
 
@@ -306,13 +297,19 @@ fn push_frame(target: &mut Vec<u8>, bytes: &[u8]) {
     target.extend_from_slice(bytes);
 }
 
+fn cipher(key: &[u8; SECRET_KEY_BYTES]) -> Result<Aes256Gcm, Error> {
+    Aes256Gcm::new_from_slice(key).map_err(|_| Error::CryptographicFailure)
+}
+
+/// Variable-size payload encryption: the ciphertext body and its appended tag
+/// are returned in one heap buffer that the caller owns.
 fn encrypt_bytes(
     key: &[u8; SECRET_KEY_BYTES],
     nonce: &[u8; NONCE_BYTES],
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| Error::CryptographicFailure)?;
+    let cipher = cipher(key)?;
     let capacity = plaintext
         .len()
         .checked_add(TAG_BYTES)
@@ -337,7 +334,7 @@ fn decrypt_bytes(
     }
     let split = ciphertext_and_tag.len() - TAG_BYTES;
     let (ciphertext, tag) = ciphertext_and_tag.split_at(split);
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| Error::CryptographicFailure)?;
+    let cipher = cipher(key)?;
     let mut plaintext = Zeroizing::new(ciphertext.to_vec());
     cipher
         .decrypt_in_place_detached(
@@ -348,6 +345,55 @@ fn decrypt_bytes(
         )
         .map_err(|_| Error::AuthenticationFailed)?;
     Ok(plaintext)
+}
+
+/// Fixed-size data-key wrapping: encrypts the 32 key bytes in place within a
+/// zeroizing stack scratch buffer and appends the detached tag, producing the
+/// same version-1 ciphertext-then-tag bytes as [`encrypt_bytes`] without a
+/// heap buffer. The scratch holds the plaintext key until encryption completes,
+/// so it is zeroized on return whether or not encryption succeeds; the returned
+/// array is ciphertext only.
+fn encrypt_data_key(
+    key: &[u8; SECRET_KEY_BYTES],
+    nonce: &[u8; NONCE_BYTES],
+    aad: &[u8],
+    data_key: &[u8; SECRET_KEY_BYTES],
+) -> Result<[u8; WRAPPED_DATA_KEY_BYTES], Error> {
+    let cipher = cipher(key)?;
+    let mut wrapped = Zeroizing::new([0_u8; WRAPPED_DATA_KEY_BYTES]);
+    let (body, tag_slot) = wrapped.split_at_mut(SECRET_KEY_BYTES);
+    body.copy_from_slice(data_key);
+    let tag = cipher
+        .encrypt_in_place_detached(Nonce::from_slice(nonce), aad, body)
+        .map_err(|_| Error::CryptographicFailure)?;
+    tag_slot.copy_from_slice(&tag);
+    Ok(*wrapped)
+}
+
+/// Fixed-size data-key unwrapping: authenticates and decrypts the 32 wrapped
+/// key bytes in place within the zeroizing buffer that is returned, reading the
+/// detached tag from the trailing 16 bytes. No heap buffer is used and no key
+/// bytes are returned before the tag authenticates; on failure the scratch is
+/// zeroized before the error returns.
+fn decrypt_data_key(
+    key: &[u8; SECRET_KEY_BYTES],
+    nonce: &[u8; NONCE_BYTES],
+    aad: &[u8],
+    wrapped: &[u8; WRAPPED_DATA_KEY_BYTES],
+) -> Result<Zeroizing<[u8; SECRET_KEY_BYTES]>, Error> {
+    let (ciphertext, tag) = wrapped.split_at(SECRET_KEY_BYTES);
+    let cipher = cipher(key)?;
+    let mut data_key = Zeroizing::new([0_u8; SECRET_KEY_BYTES]);
+    data_key.copy_from_slice(ciphertext);
+    cipher
+        .decrypt_in_place_detached(
+            Nonce::from_slice(nonce),
+            aad,
+            &mut data_key[..],
+            Tag::from_slice(tag),
+        )
+        .map_err(|_| Error::AuthenticationFailed)?;
+    Ok(data_key)
 }
 
 #[cfg(test)]
