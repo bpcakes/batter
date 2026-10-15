@@ -1,6 +1,8 @@
-//! Explicit live checks: external provisioning, no schema changes or test bypass.
+//! Explicit live checks: external provisioning and no test bypass. Only the
+//! schema-stage case applies the example's own migration and managed objects.
 //! Each pool is created inside protected startup through the example's owner.
 use super::*;
+use batter::sqlx::verification::FindingKind;
 use tokio::sync::oneshot;
 
 fn connection() -> PgConnectOptions {
@@ -154,4 +156,76 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
     let pool = owned_pool(published).await;
     assert_closed(&pool).await;
     assert_exit(result, ExitCode::FAILURE);
+}
+
+#[tokio::test]
+#[ignore = "requires an externally provisioned DATABASE_URL; run tests::live:: -- --ignored"]
+async fn schema_stage_applies_managed_objects_and_gates_readiness() {
+    let connection = connection();
+    let (publish, published) = oneshot::channel();
+    let result = owned_startup(supervisor(false), move |scope| {
+        Box::pin(async move {
+            let result: Result<(), BoxError> = async {
+                let pool = database_pool(scope, connection)?;
+                let _ = publish.send(pool.clone());
+                let context =
+                    batter::operation::OperationOwner::new(Duration::from_secs(10))?.into_context();
+                let objects = schema::managed_objects()?;
+                let _ = schema::apply(&pool, &context, &objects).await?;
+                schema::verify_release(&pool, &context, &objects).await?;
+                // The managed trigger keeps updated_at current.
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO lifecycle.records (note, updated_at)
+                     VALUES ('created', '2000-01-01') RETURNING id",
+                )
+                .fetch_one(&pool)
+                .await?;
+                let touched: bool = sqlx::query_scalar(
+                    "UPDATE lifecycle.records SET note = 'updated' WHERE id = $1
+                     RETURNING updated_at > '2000-01-01'",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await?;
+                if !touched {
+                    return Err("managed trigger did not run".into());
+                }
+                // A repeated startup re-executes nothing.
+                let again = schema::apply(&pool, &context, &objects).await?;
+                if again.created_or_replaced() != 0 {
+                    return Err("an unchanged startup re-executed managed objects".into());
+                }
+                // Out-of-band DDL fails the readiness gate until the next apply.
+                sqlx::query("DROP TRIGGER records_touch_updated_at ON lifecycle.records")
+                    .execute(&pool)
+                    .await?;
+                let refused = schema::verify_release(&pool, &context, &objects)
+                    .await
+                    .expect_err("drift must fail the readiness gate");
+                let mismatch = refused
+                    .downcast_ref::<schema::SchemaMismatch>()
+                    .ok_or("readiness gate failed for another reason")?;
+                if !mismatch
+                    .report
+                    .findings()
+                    .iter()
+                    .any(|finding| finding.kind == FindingKind::ManagedObjectDrift)
+                {
+                    return Err("dropped managed trigger was not reported as drift".into());
+                }
+                let repaired = schema::apply(&pool, &context, &objects).await?;
+                if repaired.created_or_replaced() != 1 {
+                    return Err("apply did not restore exactly the dropped trigger".into());
+                }
+                schema::verify_release(&pool, &context, &objects).await
+            }
+            .await;
+            process_result(result)
+        })
+    })
+    .await;
+    assert_success_before_pool_inspection(&result);
+    let pool = owned_pool(published).await;
+    assert_closed(&pool).await;
+    assert_exit(result, ExitCode::SUCCESS);
 }

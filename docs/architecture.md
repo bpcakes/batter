@@ -98,7 +98,11 @@ adapter test-support feature, selected by reference development dependencies.
 The external harness retains provisioning and template-cache ownership. The
 optional SQLx adapter owns opaque transaction and read-only snapshot scopes and
 exposes connection disposition only through its low-level APIs; application
-SQL, pools and policy remain native. The implemented optional
+SQL, pools and policy remain native. It also executes an application-selected
+migrator and then applies an application-declared manifest of managed routines
+and triggers on the same lease, and verifies that set read-only at readiness
+([ADR-013](adr/013-managed-database-objects.md)); the object source, migration
+selection, ownership transfer and grants remain application-owned. The implemented optional
 `batter-runledger` adapter adds a phase-scoped atomic enqueue runner and schema
 snapshots built on those SQLx scopes. It also translates owned native
 preparation, initialization, stop clocks and complete settlement into managed

@@ -127,6 +127,16 @@ async fn inspect_transaction(
             current_user,
         ));
     }
+    // Every ledger lock precedes the first snapshot-taking query. The managed
+    // ledger lock only issues SAVEPOINT, LOCK and RELEASE.
+    let managed_ledger = if let Some(manifest) = plan.managed_objects_manifest() {
+        Some((
+            manifest,
+            managed_objects::lock_before_snapshot(transaction, manifest.ledger()).await?,
+        ))
+    } else {
+        None
+    };
     let legacy_ledger = if let Some(policy) = plan.migration_policy() {
         Some((
             policy,
@@ -172,7 +182,14 @@ async fn inspect_transaction(
         .execute(&mut **transaction)
         .await
         .map_err(|error| VerificationError::Native(error.into()))?;
-    inspect_plan(transaction, plan, legacy_ledger, sqlx_ledger).await
+    inspect_plan(
+        transaction,
+        plan,
+        legacy_ledger,
+        sqlx_ledger,
+        managed_ledger,
+    )
+    .await
 }
 
 fn has_unprotected_ledger(
@@ -202,6 +219,10 @@ async fn inspect_plan(
     plan: VerificationPlan<'_>,
     legacy_ledger: Option<(&MigrationPolicy, migration::LedgerLock)>,
     sqlx_ledger: Option<(&SqlxMigrationManifest, migration::LedgerLock)>,
+    managed_ledger: Option<(
+        &crate::managed::ManagedObjectManifest,
+        managed_objects::ManagedLock,
+    )>,
 ) -> Result<VerificationReport, VerificationError> {
     let exact_role = plan.selected_exact_role();
     let mut evaluation = authority::Evaluation::new();
@@ -239,6 +260,9 @@ async fn inspect_plan(
     }
     if let Some(policy) = plan.schema() {
         fragments.push(schema_inspection::inspect(transaction, policy).await?);
+    }
+    if let Some((manifest, lock)) = managed_ledger {
+        fragments.push(managed_objects::inspect(transaction, manifest, lock).await?);
     }
     if exact_role.is_some_and(CompiledExactRole::denies_current_database_ownership) {
         fragments.push(authority::inspect_ownership(transaction, report.session_user()).await?);

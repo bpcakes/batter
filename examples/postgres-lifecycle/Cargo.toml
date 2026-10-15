@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 batter = { workspace = true, features = ["sqlx"] }
-sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "migrate", "macros"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 thiserror.workspace = true
 tracing.workspace = true

@@ -650,8 +650,8 @@ exceptions.
 `verify_sqlx_migrations`, `verify_exact_role`, and non-empty `VerificationPlan`
 composition reuse the same executor, lease, snapshot, rollback, and retirement
 contract as the focused entrypoints. A plan starts from an authority, migration,
-SQLx manifest, exact role, or schema-inspection constructor and rejects a second
-component of the same semantic kind. `AuthorityPolicyBuilder` is mutable
+SQLx manifest, exact role, schema-inspection or managed-object constructor and
+rejects a second component of the same semantic kind. `AuthorityPolicyBuilder` is mutable
 configuration input; only a successfully built immutable `AuthorityPolicy` is
 executable. Migration policies and the other plan components likewise validate
 at construction, before an operation future or database lease exists. The
@@ -730,6 +730,123 @@ executes each target serially, and bounds every child process.
 Cases can use up to six simultaneous server sessions, including retired sessions
 and session advisory locks. Provisioning stays external.
 
+## Managed routines and triggers
+
+A routine body kept as a copy inside append-only migrations hides every change
+in a restated whole definition, and two branches that restate one routine race
+silently. `batter_sqlx::managed` keeps routines and the triggers that bind them
+as source the application edits in place, applies them after the versioned
+migrations and verifies them at readiness. Migrations keep tables, columns,
+constraints, policies and data changes. See
+[ADR-013](../../docs/adr/013-managed-database-objects.md).
+
+```rust,no_run
+use batter_core::operation::OperationContext;
+use batter_sqlx::{PgLease, managed::{ManagedObject, ManagedObjectManifest, PublicExecute}};
+use batter_sqlx::verification::{
+    Identifier, QualifiedName, RoutineSignature, SqlxMigrationManifest, VerificationPlan,
+    VerificationStatus, verify,
+};
+# async fn run(pool: &sqlx::PgPool, setup: &OperationContext, ready: &OperationContext,
+#     migrator: &sqlx::migrate::Migrator, migrations: &SqlxMigrationManifest)
+#     -> Result<(), Box<dyn std::error::Error>> {
+let objects = ManagedObjectManifest::new(
+    QualifiedName::new("app", "managed_objects")?,
+    PublicExecute::Revoke,
+    [
+        ManagedObject::function(
+            RoutineSignature::new("app", "touch_updated_at", [])?,
+            "CREATE OR REPLACE FUNCTION app.touch_updated_at() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := now(); RETURN NEW; END $$;",
+        )?,
+        ManagedObject::trigger(
+            QualifiedName::new("app", "records")?,
+            Identifier::new("records_touch")?,
+            "CREATE OR REPLACE TRIGGER records_touch BEFORE UPDATE ON app.records
+             FOR EACH ROW EXECUTE FUNCTION app.touch_updated_at();",
+        )?,
+    ],
+    [],
+)?;
+
+// Setup: migrations, then objects, on one lease and one session lock.
+let lease = PgLease::acquire(pool, setup).await?;
+let applied = setup.run("schema.apply", |_| lease.migrate_and_apply(migrator, &objects)).await?;
+println!("managed objects {}", applied.digest());
+
+// Readiness: the same manifest value, read-only, under the serving role.
+let plan = VerificationPlan::sqlx_migrations(migrations).with_managed_objects(&objects)?;
+let report = verify(pool, ready, plan).await?;
+if report.status() != VerificationStatus::WithinDeclaredPolicy {
+    return Err("database schema is not this release's".into());
+}
+# Ok(()) }
+```
+
+The manifest is pure and bounded: at most 10,000 entries plus retirements, 1 MiB
+per source and 64 MiB in total. Each `ManagedObject` is exactly one
+`CREATE OR REPLACE FUNCTION`, `PROCEDURE` or `TRIGGER` statement whose header
+names its declared identity schema-qualified; the lexer recognizes comments,
+quotes, dollar quotes and `psql`'s `BEGIN ATOMIC` rule. Routine identities are
+structural `RoutineSignature`s; a trigger identity renders as
+`"name" ON "schema"."table"`. `Retirement` explicitly drops a routine or
+trigger; it cannot overlap an entry. `PublicExecute` has no default:
+`Revoke` removes PostgreSQL's default `PUBLIC` `EXECUTE` from every managed
+routine and verification checks it, while `Unmanaged` leaves it to the
+application. The ledger is an application-named relation, never
+`_sqlx_migrations`. `digest()` is a SHA-256 set digest over the policy, entries
+and retirements, suitable for release evidence.
+
+`PgLease::migrate_and_apply` is the only apply path. A session advisory lock
+keyed by the ledger spans the migrator and one apply transaction, which:
+creates the ledger when absent and locks it `ACCESS EXCLUSIVE`, refusing any
+relation that is not exactly `identity text PRIMARY KEY`, `kind text`,
+`source_checksum bytea`, `rendered_checksum bytea` and
+`applied_at timestamptz`, all `NOT NULL`, without row security or inheritance;
+drops retired triggers, then retired routines, that still exist as the retired
+kind (never `CASCADE`); executes each entry that is new, changed or drifted,
+routines before triggers, under `check_function_bodies = on` and the session's
+own settings, and requires each statement to have written exactly its declared
+identity and kind; revokes `PUBLIC` `EXECUTE` under `Revoke` and fails with
+`PublicExecuteRetained` if a grant from another grantor survives; and rewrites
+the ledger with each executed entry's
+source checksum, rendered-definition hash and `applied_at`, plus a `manifest`
+row holding the set digest. Entries whose ledger row and live rendered
+definition are unchanged are not re-executed, so a steady-state startup takes no
+trigger-table lock; `CREATE OR REPLACE TRIGGER` otherwise holds
+`SHARE ROW EXCLUSIVE` on its table until commit. Every error, cancellation or
+deadline retires the connection and the uncommitted transaction with it; only
+`ManagedApplyError::CommitUnconfirmed` leaves installation uncertain.
+
+`VerificationPlan::managed_objects`, `with_managed_objects` and
+`verify_managed_objects` take `ACCESS SHARE` on the ledger before the snapshot,
+then report `MissingManagedObjectLedger`, `ManagedObjectLedgerShape`,
+`LedgerRowSecurity`, `ManagedObjectSetDigest`, `MissingManagedObject`,
+`UnexpectedManagedObject`, `ManagedObjectChecksumMismatch`,
+`ManagedObjectDrift` (live definition absent, of another kind, or rendering to
+another hash), `RetiredManagedObjectPresent` and, under `Revoke`,
+`ManagedObjectPublicExecute`. A concurrently replaced or inherited ledger is
+`UnprotectedManagedObjectLedger` and Incomplete. Both phases render
+`pg_get_functiondef` and `pg_get_triggerdef` under fixed `search_path`,
+date/time, float, money and quoting settings, because that text qualifies names
+relative to the session search path; a trigger's hash also covers whether it is
+enabled, so disabling a managed trigger out of band is drift that apply repairs
+by re-enabling it. The serving role needs `USAGE` on the
+ledger schema and `SELECT` on the ledger, nothing else.
+
+Limits stay explicit. Batter does not choose source, transfer ownership (newly
+created routines belong to the applying login; run the application's owner
+policy after apply), grant anything beyond the `PUBLIC` policy, or touch the
+SQLx ledger. An entry removed without a retirement stays in the database
+unmanaged. Changing a routine's return type, `OUT` parameters or input parameter
+names, or removing a default, needs a migration that drops it first. An object
+that still depends on a retired routine (a trigger, or a `BEGIN ATOMIC` body
+being edited to stop using it) blocks that retirement in the same apply. Installation
+is last-writer-wins across releases, and a PostgreSQL upgrade that changes
+deparsed text reports drift until the next apply. Lexical validation does not
+prove a body correct. The runnable consumer is
+[`examples/postgres-lifecycle`](../../examples/postgres-lifecycle/src/schema.rs).
+
 ## Optional fixture support
 
 The `test-support` feature exposes `test_support::FixtureSuite`, declared native
@@ -796,6 +913,9 @@ The redacted `SqlxFailure` retains the original `MigrateError` inside
 `sqlx::Error::Migrate`; trusted diagnostics may inspect it. There is no raw
 connection callback, second migrator implementation or automatic migration on
 pool construction. No local result proves server-session termination.
+`PgLease::migrate_and_apply` runs the same migrator and then applies
+[managed routines and triggers](#managed-routines-and-triggers) on the same
+connection.
 
 ### Foundation dependency direction
 

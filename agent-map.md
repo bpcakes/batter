@@ -17,7 +17,8 @@ Fast jump index for agent-facing guidance in this repository.
 - [Axum adapter](./crates/batter-axum/AGENTS.md): HTTP policy, browser credential
   transport, probes, rendering, operational defaults, and HTTP observations.
 - [SQLx adapter](./crates/batter-sqlx/AGENTS.md): native PostgreSQL leases,
-  client retirement, bounded probes, explicit pool cleanup and opt-in isolated
+  client retirement, bounded probes, explicit pool cleanup, migrate-then-apply of
+  managed routines and triggers, read-only verification and opt-in isolated
   database fixture ownership.
 - [Native runtime adapter](./crates/batter-runledger/AGENTS.md): inert native preparation,
   initialization, stop-clock exchange, retained descendant settlement and

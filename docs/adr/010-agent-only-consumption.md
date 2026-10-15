@@ -1129,6 +1129,23 @@ default between `PgSessionProfile::with_timeouts` and `new` remains unresolved
 and needs a maintainer decision. The evidence README records each disposition.
 This is one run of one agent and does not establish population reliability.
 
+### Managed database objects assessment (`batter-54d0`)
+
+A downstream consumer restated whole routine bodies in append-only migrations;
+parallel branches restating one object raced silently, and keeping objects
+after migrations, pairing apply with verification and revoking `PUBLIC`
+`EXECUTE` were caller-memory obligations. The canonical path is now
+`PgLease::migrate_and_apply`, the only apply entry point, so applying objects
+before or without the application's migrator on the same lease is not
+expressible (compile-fail rustdocs), and the one `ManagedObjectManifest` value
+drives both apply and `VerificationPlan::with_managed_objects`. The `PUBLIC`
+policy is a required exhaustive argument, retirements are explicit, and every
+executed statement must write exactly its declared identity. The per-item
+review, the recorded deviation and the remaining obligations (last-writer-wins
+releases, migration-only return-type changes, two-release trigger rebinding and
+ownership transfer) are in [ADR-013](013-managed-database-objects.md).
+Fresh-agent usability evaluation is proposed and unexecuted.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

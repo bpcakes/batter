@@ -15,6 +15,11 @@ pub enum VerificationStatus {
 }
 
 /// A stable category for a safe, non-native verification finding.
+///
+/// Migration: exhaustive matches on `FindingKind` must now handle the
+/// managed-object variants, from `MissingManagedObjectLedger` through
+/// `ManagedObjectPublicExecute`; they occur only when a plan selects a
+/// managed-object manifest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FindingKind {
     MissingMigration,
@@ -22,12 +27,13 @@ pub enum FindingKind {
     UnsuccessfulMigration,
     UnexpectedMigration,
     DuplicateMigrationRow,
-    /// The ledger exceeded the verifier's bounded row capacity.
+    /// A migration or managed-object ledger exceeded the verifier's bounded
+    /// row capacity.
     MigrationLedgerLimit,
     MissingLedgerColumn,
     LedgerColumnShape,
-    /// Row-level security could filter migration rows and invalidate the
-    /// ledger comparison.
+    /// Row-level security could filter migration or managed-object ledger rows
+    /// and invalidate the ledger comparison.
     LedgerRowSecurity,
     RoleAttribute,
     RoleAdminOption,
@@ -50,6 +56,30 @@ pub enum FindingKind {
     SecurityDefinerSearchPath,
     /// A capability-reachable role owns the current database or an object in it.
     ReachableOwnership,
+    /// The managed-object ledger relation does not exist, so no managed object
+    /// set was applied to this database. `object` is the quoted ledger.
+    MissingManagedObjectLedger,
+    /// The managed-object ledger is not the exact relation apply creates: five
+    /// `NOT NULL` columns (`identity`, `kind`, `source_checksum`,
+    /// `rendered_checksum`, `applied_at`) and an `identity` primary key.
+    ManagedObjectLedgerShape,
+    /// A declared managed object has no ledger row. `object` is its identity.
+    MissingManagedObject,
+    /// A ledger row names an object the manifest does not declare.
+    UnexpectedManagedObject,
+    /// A ledger row records another kind or source checksum than the declared
+    /// entry, so a different source was applied.
+    ManagedObjectChecksumMismatch,
+    /// The live catalog definition is absent, of another kind, or no longer
+    /// renders to the hash apply recorded: out-of-band DDL changed it.
+    ManagedObjectDrift,
+    /// The ledger's set row is absent, records another manifest digest, or
+    /// disagrees with the recorded object rows. `object` is the quoted ledger.
+    ManagedObjectSetDigest,
+    /// A retired managed object still exists in the catalog.
+    RetiredManagedObjectPresent,
+    /// `PUBLIC` holds `EXECUTE` on a managed routine whose manifest revokes it.
+    ManagedObjectPublicExecute,
 }
 
 /// The exact non-inherited role attribute carried by a reachable execution
@@ -81,6 +111,8 @@ pub struct Finding {
     /// Declared routines use canonical `RoutineSignature` rendering; security-
     /// definer configuration findings instead append `#` and the snapshot-local
     /// routine OID to the quoted schema and name so overloads remain distinct.
+    /// Managed-object findings use the entry's canonical identity, which for a
+    /// trigger is `"name" ON "schema"."table"`, or the quoted ledger.
     /// Database, parameter and role names retain their category-specific spelling.
     pub object: Option<String>,
     /// Reachable role or PUBLIC identity, when the category has one.
@@ -121,6 +153,9 @@ impl Finding {
 /// A PostgreSQL capability whose catalog/ACL semantics are captured by this
 /// generic verifier. Application-specific migration shape and security
 /// policies remain outside this list.
+///
+/// Migration: exhaustive matches on `SupportedSurface` must now handle
+/// `ManagedObjects`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SupportedSurface {
     /// Required privileges evaluated for current-role INHERIT/PUBLIC authority.
@@ -159,9 +194,15 @@ pub enum SupportedSurface {
     SecurityDefinerConfiguration,
     /// Current-database ownership reachable from the authenticated login.
     CurrentDatabaseOwnership,
+    /// Managed-object ledger rows, set digest, live rendered definitions,
+    /// retirements and the declared `PUBLIC` `EXECUTE` policy.
+    ManagedObjects,
 }
 
 /// A requested or known boundary that this generic checker does not prove.
+///
+/// Migration: exhaustive matches on `UnsupportedSurface` must now handle
+/// `UnprotectedManagedObjectLedger`, which always makes a report Incomplete.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UnsupportedSurface {
     /// A migration ledger participates in table inheritance in the captured
@@ -215,6 +256,10 @@ pub enum UnsupportedSurface {
     /// Current-database ownership catalog evidence had an unknown form and
     /// could not safely be classified.
     OwnershipCatalog,
+    /// The managed-object ledger could not be coupled to the relation locked
+    /// before the snapshot (it appeared or was replaced concurrently), or it
+    /// participates in table inheritance. The report is Incomplete.
+    UnprotectedManagedObjectLedger,
 }
 
 /// A successful snapshot report.
@@ -303,6 +348,7 @@ impl VerificationReport {
                 surface,
                 UnsupportedSurface::UnprotectedMigrationLedger
                     | UnsupportedSurface::OwnershipCatalog
+                    | UnsupportedSurface::UnprotectedManagedObjectLedger
             )
         });
         let status = if parameter_unobservable || inherently_incomplete {

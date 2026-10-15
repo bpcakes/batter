@@ -6,6 +6,60 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL 18 managed routine and trigger semantics, 2026-10-15
+
+For `batter-54d0` ([ADR-013](adr/013-managed-database-objects.md)), rechecked:
+
+* [`CREATE FUNCTION`](https://www.postgresql.org/docs/18/sql-createfunction.html):
+  replacing keeps ownership and permissions and requires owning the function
+  (including membership in the owning role). It cannot change the name or
+  argument types (that creates another overload), the return type or `OUT`
+  parameter types, or the name of an existing input parameter. `BEGIN ATOMIC`
+  and `RETURN` bodies record dependencies; string bodies do not.
+* [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html):
+  `OR REPLACE` replaces every other property of the trigger named on its table;
+  it is not supported for constraint triggers. A trigger name cannot be
+  schema-qualified; its table may be.
+* [Explicit locking](https://www.postgresql.org/docs/18/explicit-locking.html):
+  `CREATE TRIGGER` takes `SHARE ROW EXCLUSIVE`; `ACCESS SHARE` conflicts only
+  with `ACCESS EXCLUSIVE`. Session-level advisory locks survive `ROLLBACK` and
+  are held until unlocked or the session ends.
+* [`check_function_bodies`](https://www.postgresql.org/docs/18/runtime-config-client.html):
+  when off, routine body strings are not validated during `CREATE FUNCTION` and
+  `CREATE PROCEDURE`; `pg_dump` turns it off.
+* [System information functions](https://www.postgresql.org/docs/18/functions-info.html):
+  `pg_get_functiondef` returns a decompiled `CREATE OR REPLACE FUNCTION` or
+  `PROCEDURE` statement and `pg_get_triggerdef` a decompiled trigger command;
+  `pg_current_xact_id` assigns and returns the top-level transaction id. The
+  page does not say whether these read the transaction snapshot.
+
+Executed evidence, PostgreSQL **18.6** (`postgres:18` container, Linux x86_64):
+re-applying an unchanged `CREATE OR REPLACE FUNCTION` or `TRIGGER` keeps oid,
+owner and ACL and sets the row's `xmin` to `pg_current_xact_id()::xid`, which
+identifies rows a transaction wrote. `pg_get_functiondef` and
+`pg_get_triggerdef` qualify type and function names relative to `search_path`
+(`mood` versus `public.mood`, `trg_fn()` versus `public.trg_fn()`).
+`CREATE OR REPLACE TRIGGER` on an unchanged trigger held `SHARE ROW EXCLUSIVE`
+on its table until commit, dropping an existing trigger held
+`ACCESS EXCLUSIVE`, `DROP TRIGGER IF EXISTS` for an absent trigger held no table
+lock and emitted a notice, and `CREATE OR REPLACE FUNCTION` held none.
+`pg_get_triggerdef` renders the same text for an enabled and a disabled
+trigger, and `CREATE OR REPLACE TRIGGER` resets `tgenabled` from `D` or `R` to
+`O`. Multi-argument `unnest` in `FROM` is parser syntax that cannot be
+schema-qualified; `ROWS FROM (pg_catalog.unnest(...), ...)` is its qualified
+form.
+`DROP ... IF EXISTS` skips a missing schema, argument type or table with a
+notice. Removing a parameter default is refused ("cannot remove parameter
+defaults from existing function"), changing one is accepted, changing a
+routine's kind is refused, and replacing a routine a trigger depends on is
+allowed while dropping it is refused with SQLSTATE `2BP01`. With
+`check_function_bodies` on, a SQL string body referencing a missing column
+fails at creation with `42703`; with it off, creation succeeds. In a
+`REPEATABLE READ` transaction, `pg_proc.prosrc` kept the snapshot's body while
+`pg_get_functiondef` returned a body committed afterwards by another session,
+so rendering reads current catalog state; the verifier's pre-snapshot ledger
+lock exists for that reason. These probes do not cover other server versions.
+
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 
 For `batter-z4m9.1`, rechecked PostgreSQL 18's

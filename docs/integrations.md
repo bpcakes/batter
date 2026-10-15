@@ -570,8 +570,9 @@ Use `SqlxMigrationManifest` for an exact or installed-subset SQLx 0.9 ledger and
 `SchemaInspectionPolicy` for the exact stored `search_path` on every definer in
 explicit existing schemas. Unrelated stored settings are accepted only within
 the bounded captured configuration inventory. A non-empty `VerificationPlan`
-has three independently optional axes: generic authority or a compiled exact role, generic
-or SQLx migration inspection, and optional schema inspection. Any supported
+has four independently optional axes: generic authority or a compiled exact role, generic
+or SQLx migration inspection, optional schema inspection, and a managed-object
+manifest ([below](#sqlx-managed-routines-and-triggers)). Any supported
 combination runs in one protected transaction; schema inspection may also be the
 required first component under setup credentials. A second component on the
 same axis is rejected during plan composition. A migration ledger is a relation;
@@ -609,6 +610,42 @@ not acquire independent default PUBLIC grants. Requested parameters with hidden
 metadata produce `Incomplete` with `ParameterVisibility`, preserving known findings.
 Unknown custom-parameter definitions likewise cannot satisfy required privileges;
 their conservative potential SET authority remains separate from positive proof.
+
+### SQLx: managed routines and triggers
+
+Keep routine and trigger bodies as source files the application edits in place,
+not as copies restated in migrations. Declare them in one
+`batter_sqlx::managed::ManagedObjectManifest`: each `ManagedObject` is one
+complete `CREATE OR REPLACE` statement whose header must name its declared
+schema-qualified identity, each `Retirement` explicitly drops an object the
+application no longer declares, and `PublicExecute` states without a default
+whether Batter revokes PostgreSQL's default `PUBLIC` `EXECUTE`. At setup, call
+`PgLease::migrate_and_apply(&migrator, &manifest)` inside the setup operation
+budget: it runs the application-selected SQLx migrator and then applies the
+manifest in one transaction on the same connection, so objects always follow
+the migrations they depend on. There is no apply-only entry point. At readiness,
+pass the same manifest value to `VerificationPlan::with_managed_objects` (or
+`verify_managed_objects`) under the serving role, which needs only `USAGE` on
+the ledger schema and `SELECT` on the ledger.
+
+Batter owns ordering, the ledger, atomicity, the identity check on every
+executed statement, the `PUBLIC` policy and read-only verification. The
+application owns the source, migration selection, ownership transfer (run its
+owner policy after apply), every other grant and provisioning. Apply never
+infers a drop: an entry removed without a retirement stays in the database
+unmanaged. Changing a routine's return type, `OUT` parameters or input
+parameter names, or removing a default, needs a migration that drops it before
+the next apply recreates it, and an object that still depends on a routine
+retired in the same manifest (a trigger being rebound, or a `BEGIN ATOMIC` body
+being edited) blocks the retirement until a later release or a migration.
+Managed triggers are always re-created enabled; disabling one is drift. Installation is
+last-writer-wins across releases; verification of newer replicas reports an
+older release's apply as a set-digest mismatch. See
+[ADR-013](adr/013-managed-database-objects.md), the
+[adapter README](../crates/batter-sqlx/README.md#managed-routines-and-triggers)
+and the [lifecycle example](../examples/postgres-lifecycle/src/schema.rs).
+
+### SQLx: durable reference path
 
 For the durable reference path, application writes and Runledger submission must
 use the same database transaction through Batter's opaque transaction capability.
@@ -1277,7 +1314,9 @@ targets.
 
 ## Owned native database composition
 
-Use `PgLease::migrate` for application-selected SQLx migrations. For Runledger,
+Use `PgLease::migrate` for application-selected SQLx migrations, or
+`PgLease::migrate_and_apply` when the application also declares managed
+routines and triggers. For Runledger,
 construct `RunledgerDatabase` with an explicit `PgSessionProfile`, then use
 `verify_schema(&database)` and `run_atomic(&database, async |scope| ...)`.
 The database owns mandatory acquisition hooks for role/schema/timeout/tenant

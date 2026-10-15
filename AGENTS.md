@@ -176,6 +176,10 @@ credential meaning, authorization, CORS or application error envelopes.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and pool-close registration; `session.rs` owns opaque SQL execution
 and transaction completion without native replacement; server-session termination remains separate.
+`managed.rs` and `managed/` own the pure managed routine/trigger manifest and
+`PgLease::migrate_and_apply`, which applies it only after the application's
+migrator on the same lease; `verification/managed_objects.rs` verifies it
+read-only ([ADR-013](docs/adr/013-managed-database-objects.md)).
 `crates/batter-runledger/src/lib.rs` consumes owned inert native preparation and
 translates native initialization, stop clocks and complete settlement into managed
 process ownership, and reexports Runledger's phase-scoped atomic runner and schema snapshot APIs. Native descendant supervision remains in Runledger.

@@ -115,7 +115,10 @@ principal quota boundary; it is not the pre-authentication runner.
 
 Consumers explicitly install Runlimit's additive attempts/GCRA migrations or
 vendor their SQL into forward-only application migrations. Batter does not
-provision, migrate, prepare or maintain a database. Existing `Quota`/`HttpQuota`
+provision a database or select or author its migrations or objects: it executes
+only the bundle and managed objects an application passes to `PgLease::migrate`
+or `PgLease::migrate_and_apply`, and never installs Runlimit's migrations on its
+own. Existing `Quota`/`HttpQuota`
 workflow semantics stay unchanged. Updating the older Runlimit pin requires source
 adaptation for native types (`CheckAllError`, bound subjects, exhaustive `Denial`,
 validated capacities and batch errors); the attempt feature itself is additive.

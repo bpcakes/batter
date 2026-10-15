@@ -8,6 +8,66 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `batter_sqlx::managed` (also `batter::sqlx::managed`, feature `sqlx`):
+  managed routines and the triggers that bind them, kept as source edited in
+  place instead of whole bodies restated in migrations
+  ([ADR-013](docs/adr/013-managed-database-objects.md)).
+  `ManagedObjectManifest::new(ledger, PublicExecute::Revoke, objects,
+  retirements)?` validates without a connection: each
+  `ManagedObject::{function, procedure, trigger}` is exactly one
+  `CREATE OR REPLACE` statement naming its declared schema-qualified identity,
+  `Retirement::{function, procedure, trigger}` drops an object explicitly,
+  `PublicExecute` has no default, and `digest()` is a SHA-256 set digest for
+  release evidence. `PgLease::migrate_and_apply(&migrator, &manifest)` is the
+  only apply path: it runs the application's SQLx migrator and then one apply
+  transaction on the same connection, re-executing only new, changed or drifted
+  entries, so an unchanged set executes no DDL. `VerificationPlan::managed_objects`,
+  `with_managed_objects` and `verification::verify_managed_objects` verify the ledger,
+  set digest, live rendered definitions, retirements and `PUBLIC` `EXECUTE`
+  read-only. `batter-sqlx` gains a direct `sha2` dependency already in the
+  lockfile. The PostgreSQL lifecycle example now migrates, applies one routine
+  and one trigger, and gates readiness on both ledgers. Additive apart from the
+  enum variants in the next entry.
+
+- Breaking: add managed-object outcomes to four intentionally exhaustive
+  verification enums. `FindingKind` gains `MissingManagedObjectLedger`,
+  `ManagedObjectLedgerShape`, `MissingManagedObject`,
+  `UnexpectedManagedObject`, `ManagedObjectChecksumMismatch`,
+  `ManagedObjectDrift`, `ManagedObjectSetDigest`,
+  `RetiredManagedObjectPresent` and `ManagedObjectPublicExecute`;
+  `SupportedSurface` gains `ManagedObjects`; `UnsupportedSurface` gains
+  `UnprotectedManagedObjectLedger`; `PlanError` gains
+  `ManagedObjectsAlreadySelected` and `ConflictingLedger`. A plan without a
+  managed-object manifest never produces them, but exhaustive matches no longer
+  compile:
+
+  ```rust,ignore
+  // Before
+  match error {
+      PlanError::AuthorityAlreadySelected => "authority",
+      PlanError::MigrationAlreadySelected => "migration",
+      PlanError::SchemaInspectionAlreadySelected => "schema",
+      PlanError::ConflictingRelationKind => "relation kind",
+  }
+  // After
+  match error {
+      PlanError::AuthorityAlreadySelected => "authority",
+      PlanError::MigrationAlreadySelected => "migration",
+      PlanError::SchemaInspectionAlreadySelected => "schema",
+      PlanError::ConflictingRelationKind => "relation kind",
+      PlanError::ManagedObjectsAlreadySelected => "managed objects",
+      PlanError::ConflictingLedger => "ledger",
+  }
+  ```
+
+  A `FindingKind`, `SupportedSurface` or `UnsupportedSurface` match adds the
+  listed variants the same way, or a wildcard arm where the caller treats every
+  finding alike. No one-release deprecated shim is kept: no alias or function
+  can make an old exhaustive match cover a new variant, and reporting these
+  outcomes as migration-ledger variants would misstate what was checked. The
+  enums stay exhaustive so consumers review new outcomes; each enum's rustdoc
+  carries a `Migration:` note. No runtime behavior changes for existing plans.
+
 - Wrap and unwrap the `batter-at-rest` data key in fixed zeroizing stack
   buffers: `Keyring::seal`, `open`, `rewrap_envelope` and `rewrap` no longer
   allocate a temporary heap buffer for the 32-byte data key's ciphertext or
