@@ -3,6 +3,15 @@ members = ["crates/batter-otlp", "crates/batter", "crates/batter-at-rest", "crat
 default-members = ["crates/batter", "crates/batter-core", "crates/batter-axum", "crates/batter-test-support"]
 resolver = "3"
 
+# Keep file/line backtraces while reducing local build artifacts. The test
+# profile inherits these settings; debug assertions remain enabled.
+[profile.dev]
+debug = "line-tables-only"
+
+# Non-workspace dependencies do not need debug information for routine builds.
+[profile.dev.package."*"]
+debug = false
+
 # Keep the full 64 MiB encryption boundary test practical without optimizing
 # unrelated workspace tests. Level 2 avoids sharing unoptimized generic code
 # from dependencies; assertions and integer overflow checks remain enabled.
