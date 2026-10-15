@@ -724,8 +724,9 @@ dollar quotes and comments, NUL bytes, the 1 MiB source bound, temporary
 namespaces for entries, argument types, trigger tables, ledgers and
 retirements, the SQLx ledger name, empty manifests, duplicate entries
 (including a function and a procedure with one signature), duplicate
-retirements, retirements of declared identities, the 10,000-item bound (input
-iteration stops at the boundary) and the 64 MiB aggregate bound (a lazy iterator
+retirements, retirements of declared identities, the 10,000-item bound (both
+object and retirement iterators stop at the first excess item, and object
+overflow prevents retirement consumption) and the 64 MiB aggregate bound (a lazy iterator
 must stop at the first over-limit source without consuming retirements). Accepted
 sources cover comments, quoted names, case folding, nested dollar quotes,
 standard and escape strings and `BEGIN ATOMIC` bodies with `CASE ... END`.
@@ -2438,8 +2439,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 153-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, eleven
+an exact 157-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, fifteen
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

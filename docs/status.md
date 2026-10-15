@@ -7,7 +7,10 @@ during or after commit. Four added live cases exercise apply/verifier lock
 ordering, late ledger creation, and malformed, row-secured or inherited ledgers;
 their canonical live inventory uses the runner's bare-name matching contract.
 Rustdoc explicitly conditions transaction and lock termination on server-session
-termination. Execution outcomes are recorded in the owning Bead.
+termination. Follow-up `batter-54d0.2` adds a lazy object-count boundary
+regression, aligns the live-runner summary with its 157 cases, and cites the
+precise PostgreSQL lock-before-snapshot rule. Execution outcomes are recorded
+in the owning Beads.
 
 2026-10-15 managed database objects (`batter-54d0`): `batter_sqlx::managed`
 declares routines and the triggers that bind them as in-place source with

@@ -15,7 +15,9 @@ contracts, capability facts and validation history.
   row-secured or inherited ledgers (`batter-54d0.1`). Match their canonical live
   inventory entries to the runner's bare-name parser. Rustdoc ties transaction
   and session-lock termination to server-session termination. Public call shapes
-  and persisted ledger formats are unchanged.
+  and persisted ledger formats are unchanged. Add a lazy object-count boundary
+  regression, correct the live-runner summary to 157 cases, and clarify the
+  PostgreSQL lock-before-snapshot reference (`batter-54d0.2`).
 
 - Add `batter_sqlx::managed` (also `batter::sqlx::managed`, feature `sqlx`):
   managed routines and the triggers that bind them, kept as source edited in
