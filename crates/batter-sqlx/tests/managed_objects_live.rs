@@ -307,7 +307,7 @@ async fn managed_objects_public_execute_policy_is_applied_and_verified() -> Resu
                 && report.findings().len() == 1
                 && report.findings()[0].kind == FindingKind::ManagedObjectPublicExecute
                 && report.findings()[0].object.as_deref() == Some(identity.as_str())
-                && report.findings()[0].subject.as_deref() == Some("PUBLIC")
+                && report.findings()[0].subject.as_deref() == Some("public")
                 && report.findings()[0].privilege == Some(ObjectPrivilege::Execute),
             "PUBLIC EXECUTE on a revoked routine was not reported",
         )?;
@@ -551,6 +551,170 @@ async fn managed_objects_reject_undeclared_identities_and_foreign_ledgers() -> R
         require(
             catalog_state(&migrator, &schema).await? == catalog,
             "a rejected apply changed the catalog",
+        )
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_objects_disabled_trigger_is_drift_and_reenabled() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        let objects = fixture.objects(PublicExecute::Revoke);
+        let migrator = fixture.pool(Role::Migrator).await?;
+        let reader = fixture.pool(Role::Reader).await?;
+        let _ = fixture.apply(&migrator, &objects.manifest).await?;
+        // pg_get_triggerdef does not render whether a trigger fires.
+        fixture
+            .admin(&format!(
+                "ALTER TABLE {schema}.records DISABLE TRIGGER records_touch"
+            ))
+            .await?;
+        let report = fixture
+            .verify(
+                &reader,
+                VerificationPlan::managed_objects(&objects.manifest),
+            )
+            .await?;
+        let trigger = format!("\"records_touch\" ON \"{schema}\".\"records\"");
+        require(
+            report.status() == VerificationStatus::Violations
+                && report.findings().len() == 1
+                && report.findings()[0].kind == FindingKind::ManagedObjectDrift
+                && report.findings()[0].object.as_deref() == Some(trigger.as_str()),
+            "a disabled managed trigger was not reported as drift",
+        )?;
+        let repaired = fixture.apply(&migrator, &objects.manifest).await?;
+        require(
+            repaired.created_or_replaced() == 1,
+            "apply did not replace exactly the disabled trigger",
+        )?;
+        let enabled: String = sqlx::query_scalar(
+            "SELECT t.tgenabled::text FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND t.tgname = 'records_touch'",
+        )
+        .bind(&schema)
+        .fetch_one(&migrator)
+        .await?;
+        require(enabled == "O", "apply did not re-enable the trigger")?;
+        let report = fixture
+            .verify(
+                &reader,
+                VerificationPlan::managed_objects(&objects.manifest),
+            )
+            .await?;
+        require(
+            report.status() == VerificationStatus::WithinDeclaredPolicy,
+            "a re-enabled trigger did not verify",
+        )
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_objects_public_execute_from_another_grantor_fails_apply() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        let delegate = fixture.delegate().to_owned();
+        let objects = fixture.objects(PublicExecute::Revoke);
+        let migrator = fixture.pool(Role::Migrator).await?;
+        let reader = fixture.pool(Role::Reader).await?;
+        let _ = fixture.apply(&migrator, &objects.manifest).await?;
+        // The owner's revoke cannot remove a grant another grantor made.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "GRANT EXECUTE ON FUNCTION {schema}.{RECORD_TOTAL} TO {delegate} WITH GRANT OPTION"
+        )))
+        .execute(&migrator)
+        .await?;
+        fixture
+            .admin(&format!(
+                "SET ROLE {delegate};
+                 GRANT EXECUTE ON FUNCTION {schema}.{RECORD_TOTAL} TO PUBLIC;
+                 RESET ROLE"
+            ))
+            .await?;
+        let failing_pid = pid(&migrator).await?;
+        let error = fixture
+            .apply(&migrator, &objects.manifest)
+            .await
+            .expect_err("a retained PUBLIC grant must fail a revoking apply");
+        let identity = RoutineSignature::new(
+            &schema,
+            "record_total",
+            [RoutineType::new("pg_catalog", "int8")?],
+        )?;
+        require(
+            matches!(&error, ManagedApplyError::PublicExecuteRetained { identity: retained }
+                if retained == identity.as_str()),
+            "apply committed while PUBLIC kept EXECUTE",
+        )?;
+        require(
+            pid(&migrator).await? != failing_pid,
+            "failed apply returned its session to the pool",
+        )?;
+        let report = fixture
+            .verify(
+                &reader,
+                VerificationPlan::managed_objects(&objects.manifest),
+            )
+            .await?;
+        require(
+            report
+                .findings()
+                .iter()
+                .all(|finding| finding.kind == FindingKind::ManagedObjectPublicExecute)
+                && report.findings().len() == 1,
+            "verification did not report exactly the retained PUBLIC grant",
+        )
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_objects_retirement_of_another_kind_is_left_alone() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        let migrator = fixture.pool(Role::Migrator).await?;
+        let reader = fixture.pool(Role::Reader).await?;
+        fixture.migrate_only(&migrator).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE PROCEDURE {schema}.legacy() LANGUAGE sql BEGIN ATOMIC SELECT 1; END"
+        )))
+        .execute(&migrator)
+        .await?;
+        // The retired function does not exist; the procedure of the same
+        // identity is a different object and must survive.
+        let objects = fixture.objects_with(
+            PublicExecute::Revoke,
+            fixture.standard_objects(),
+            [Retirement::function(RoutineSignature::new(
+                &schema,
+                "legacy",
+                [],
+            )?)],
+        )?;
+        let applied = fixture.apply(&migrator, &objects.manifest).await?;
+        require(
+            applied.retired() == 0,
+            "a procedure was retired as a function",
+        )?;
+        require(
+            fixture.exists(&migrator, "legacy").await?,
+            "the procedure was dropped",
+        )?;
+        let report = fixture
+            .verify(
+                &reader,
+                VerificationPlan::managed_objects(&objects.manifest),
+            )
+            .await?;
+        require(
+            report.status() == VerificationStatus::WithinDeclaredPolicy,
+            "a procedure was reported as the retired function",
         )
     })
     .await

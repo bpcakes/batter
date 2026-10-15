@@ -40,6 +40,7 @@ pub(crate) struct Fixture {
     schema: String,
     migrator: String,
     reader: String,
+    delegate: String,
     pools: Vec<PgPool>,
 }
 
@@ -83,6 +84,7 @@ impl Fixture {
             schema: format!("batter_mo_{suffix}"),
             migrator: format!("batter_mo_migrator_{suffix}"),
             reader: format!("batter_mo_reader_{suffix}"),
+            delegate: format!("batter_mo_delegate_{suffix}"),
             pools: Vec::new(),
         };
         let provisioned = fixture.provision().await;
@@ -95,12 +97,14 @@ impl Fixture {
 
     async fn provision(&mut self) -> Result {
         let (schema, migrator, reader) = (&self.schema, &self.migrator, &self.reader);
+        let delegate = &self.delegate;
         let password = self.password.replace('\'', "''");
         for statement in [
             format!("CREATE ROLE {migrator} LOGIN PASSWORD '{password}'"),
             format!("CREATE ROLE {reader} LOGIN PASSWORD '{password}'"),
+            format!("CREATE ROLE {delegate} NOLOGIN"),
             format!("CREATE SCHEMA {schema} AUTHORIZATION {migrator}"),
-            format!("GRANT USAGE ON SCHEMA {schema} TO {reader}"),
+            format!("GRANT USAGE ON SCHEMA {schema} TO {reader}, {delegate}"),
             format!(
                 "ALTER DEFAULT PRIVILEGES FOR ROLE {migrator} IN SCHEMA {schema}
                  GRANT SELECT ON TABLES TO {reader}"
@@ -118,11 +122,13 @@ impl Fixture {
             result = support::combine(result, bounded(pool.close()).await);
         }
         let (schema, migrator, reader) = (&self.schema, &self.migrator, &self.reader);
+        let delegate = &self.delegate;
         for statement in [
             format!("DROP SCHEMA IF EXISTS {schema} CASCADE"),
-            format!("DROP OWNED BY {migrator}, {reader}"),
+            format!("DROP OWNED BY {migrator}, {reader}, {delegate}"),
             format!("DROP ROLE IF EXISTS {migrator}"),
             format!("DROP ROLE IF EXISTS {reader}"),
+            format!("DROP ROLE IF EXISTS {delegate}"),
         ] {
             let outcome =
                 bounded(sqlx::raw_sql(sqlx::AssertSqlSafe(statement)).execute(&mut self.admin))
@@ -135,6 +141,11 @@ impl Fixture {
 
     pub(crate) fn schema(&self) -> &str {
         &self.schema
+    }
+
+    /// A non-login role with schema `USAGE` that tests may give grant options.
+    pub(crate) fn delegate(&self) -> &str {
+        &self.delegate
     }
 
     /// A one-connection pool whose session search path is the fixture schema,

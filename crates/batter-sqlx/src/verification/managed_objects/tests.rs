@@ -230,7 +230,7 @@ fn catalog_comparison_detects_drift_absence_kind_and_present_retirements() {
         retired.clone(),
         LiveObject {
             oid: 7,
-            kind: Some(ManagedObjectKind::Procedure),
+            kind: Some(ManagedObjectKind::Function),
             touched: false,
         },
     );
@@ -243,6 +243,15 @@ fn catalog_comparison_detects_drift_absence_kind_and_present_retirements() {
             Some(retired.as_str())
         )]
     );
+
+    // A procedure or aggregate under the retired function's identity is a
+    // different object, not the retired one.
+    for kind in [Some(ManagedObjectKind::Procedure), None] {
+        present.get_mut(&retired).unwrap().kind = kind;
+        let mut findings = Vec::new();
+        compare_catalog(&manifest, &rows, &present, &hashes, &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
 }
 
 #[test]

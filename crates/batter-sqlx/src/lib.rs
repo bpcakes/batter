@@ -294,16 +294,20 @@ impl PgLease {
     ///
     /// Apply then runs one transaction. It creates the ledger when absent,
     /// locks it `ACCESS EXCLUSIVE` and refuses any other relation of that name.
-    /// It drops each retired object that still exists (triggers first, never
-    /// `CASCADE`), executes each entry's source (routines before triggers)
-    /// unless its ledger row and live rendered definition show it is already
-    /// installed, requires each executed statement to have written exactly its
-    /// declared identity and kind, applies the [`managed::PublicExecute`]
-    /// policy, and rewrites the ledger: undeclared rows are deleted, executed
-    /// entries record their source checksum, rendered-definition hash and
-    /// `applied_at`, and a `manifest` row records the set digest. An unchanged,
-    /// undrifted set therefore executes no DDL and takes no table lock, while a
-    /// definition changed out of band is replaced. Apply never chooses source,
+    /// It drops each retired object that still exists as the retired kind
+    /// (triggers first, never `CASCADE`), executes each entry's source
+    /// (routines before triggers) unless its ledger row and live rendered
+    /// definition show it is already installed, requires each executed
+    /// statement to have written exactly its declared identity and kind,
+    /// applies the [`managed::PublicExecute`] policy and confirms `PUBLIC` no
+    /// longer holds `EXECUTE`, and rewrites the ledger: undeclared rows are
+    /// deleted, executed entries record their source checksum,
+    /// rendered-definition hash and `applied_at`, and a `manifest` row records
+    /// the set digest. Library statements run under fixed canonical session
+    /// settings; each source runs under the session's own. An unchanged,
+    /// undrifted set therefore executes no DDL and locks no managed trigger's
+    /// table (only the ledger), while a definition changed out of band,
+    /// including a disabled trigger, is replaced. Apply never chooses source,
     /// transfers ownership, grants anything, or touches the SQLx ledger.
     ///
     /// The lease is consumed and the connection stays private. Every error,

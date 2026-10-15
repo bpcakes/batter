@@ -635,8 +635,10 @@ owner policy after apply), every other grant and provisioning. Apply never
 infers a drop: an entry removed without a retirement stays in the database
 unmanaged. Changing a routine's return type, `OUT` parameters or input
 parameter names, or removing a default, needs a migration that drops it before
-the next apply recreates it, and rebinding a trigger away from a routine retired
-in the same manifest takes two releases or a migration. Installation is
+the next apply recreates it, and an object that still depends on a routine
+retired in the same manifest (a trigger being rebound, or a `BEGIN ATOMIC` body
+being edited) blocks the retirement until a later release or a migration.
+Managed triggers are always re-created enabled; disabling one is drift. Installation is
 last-writer-wins across releases; verification of newer replicas reports an
 older release's apply as a set-digest mismatch. See
 [ADR-013](adr/013-managed-database-objects.md), the

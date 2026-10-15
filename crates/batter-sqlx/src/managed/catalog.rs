@@ -11,8 +11,10 @@ use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 use std::collections::{HashMap, HashSet};
 
-/// Rows any one catalog read may return before capacity is exceeded.
-const MAX_CATALOG_ROWS: usize = 10_000;
+/// Rows one catalog read may return before capacity is exceeded. Routine
+/// resolution returns every overload of every declared or retired name, so this
+/// is ten times the manifest bound.
+const MAX_CATALOG_ROWS: usize = 100_000;
 
 /// A bounded catalog read failed natively or exceeded its row capacity.
 #[derive(Debug)]
@@ -30,11 +32,14 @@ impl From<sqlx::Error> for CatalogError {
 /// Session settings that change `pg_get_functiondef`/`pg_get_triggerdef` text.
 ///
 /// Type and function names are qualified relative to `search_path`; constants
-/// in defaults and `WHEN` clauses render through date, interval, time zone,
-/// float and string settings; `quote_all_identifiers` changes quoting. Apply
-/// and verification render under these fixed values so session or role
-/// defaults cannot turn an unchanged definition into drift.
-const RENDER_SETTINGS: [(&str, &str); 8] = [
+/// in defaults, bodies and `WHEN` clauses render through date, interval, time
+/// zone, float, money and string settings; `quote_all_identifiers` changes
+/// quoting. Apply and verification render under these fixed values so session
+/// or role defaults cannot turn an unchanged definition into drift. Apply also
+/// runs every library-built statement under them, so a session search path
+/// cannot redirect a catalog helper; only application sources run under the
+/// session's own values.
+const RENDER_SETTINGS: [(&str, &str); 9] = [
     ("search_path", "pg_catalog, pg_temp"),
     ("datestyle", "ISO, YMD"),
     ("intervalstyle", "postgres"),
@@ -43,31 +48,41 @@ const RENDER_SETTINGS: [(&str, &str); 8] = [
     ("bytea_output", "hex"),
     ("standard_conforming_strings", "on"),
     ("quote_all_identifiers", "off"),
+    ("lc_monetary", "C"),
 ];
 
-/// Transaction-local canonical rendering settings and the values they replaced.
+/// Transaction-local canonical settings and the session values they replaced.
 #[must_use = "restore the saved settings before running application SQL"]
 pub(crate) struct RenderSettings {
     saved: Vec<String>,
 }
 
 impl RenderSettings {
+    /// Save the current values and switch to the canonical ones.
     pub(crate) async fn apply(connection: &mut PgConnection) -> Result<Self, sqlx::Error> {
         let names = RENDER_SETTINGS.map(|(name, _)| name);
         let saved = sqlx::query_scalar::<_, Vec<String>>(
             "SELECT ARRAY(
                  SELECT pg_catalog.current_setting(setting.name)
-                 FROM unnest($1::text[]) WITH ORDINALITY AS setting(name, position)
+                 FROM pg_catalog.unnest($1::pg_catalog.text[])
+                      WITH ORDINALITY AS setting(name, position)
                  ORDER BY setting.position)",
         )
         .bind(names.as_slice())
         .fetch_one(&mut *connection)
         .await?;
-        set_local(connection, &RENDER_SETTINGS.map(|(_, value)| value)).await?;
-        Ok(Self { saved })
+        let settings = Self { saved };
+        settings.reapply(connection).await?;
+        Ok(settings)
     }
 
-    pub(crate) async fn restore(self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+    /// Switch back to the canonical values after [`Self::restore`].
+    pub(crate) async fn reapply(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
+        set_local(connection, &RENDER_SETTINGS.map(|(_, value)| value)).await
+    }
+
+    /// Return to the saved session values, for example to run application SQL.
+    pub(crate) async fn restore(&self, connection: &mut PgConnection) -> Result<(), sqlx::Error> {
         set_local(connection, &self.saved).await
     }
 }
@@ -80,7 +95,9 @@ async fn set_local(
     let values = values.iter().map(AsRef::as_ref).collect::<Vec<_>>();
     sqlx::query(
         "SELECT pg_catalog.set_config(setting.name, setting.value, true)
-         FROM unnest($1::text[], $2::text[]) AS setting(name, value)",
+         FROM ROWS FROM (pg_catalog.unnest($1::pg_catalog.text[]),
+                         pg_catalog.unnest($2::pg_catalog.text[]))
+              AS setting(name, value)",
     )
     .bind(names.as_slice())
     .bind(values)
@@ -367,7 +384,7 @@ macro_rules! concat_routines {
              WHERE (n.nspname, p.proname) IN (
                        SELECT requested.schema_name, requested.routine_name
                        FROM unnest($1::text[], $2::text[]) AS requested(schema_name, routine_name))
-             LIMIT 10001"
+             LIMIT 100001"
         )
     };
 }
@@ -435,7 +452,7 @@ macro_rules! concat_triggers {
                        SELECT requested.schema_name, requested.table_name, requested.trigger_name
                        FROM unnest($1::text[], $2::text[], $3::text[])
                             AS requested(schema_name, table_name, trigger_name))
-             LIMIT 10001"
+             LIMIT 100001"
         )
     };
 }
@@ -499,9 +516,13 @@ pub(crate) async fn render_hashes(
         ),
         (
             triggers,
+            // pg_get_triggerdef omits whether the trigger fires; apply's
+            // CREATE OR REPLACE TRIGGER always leaves it enabled ('O').
             "SELECT r.oid, pg_catalog.sha256(pg_catalog.convert_to(
-                 pg_catalog.pg_get_triggerdef(r.oid::pg_catalog.oid), 'UTF8'))
-             FROM unnest($1::bigint[]) AS r(oid)",
+                 pg_catalog.pg_get_triggerdef(t.oid) || E'\\nenabled=' || t.tgenabled::pg_catalog.text,
+                 'UTF8'))
+             FROM unnest($1::bigint[]) AS r(oid)
+             JOIN pg_catalog.pg_trigger AS t ON t.oid = r.oid::pg_catalog.oid",
         ),
     ] {
         if oids.is_empty() {

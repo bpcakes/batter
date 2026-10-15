@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the eight-case [managed-object](#managed-routines-and-triggers)
+migration target, the eleven-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -741,22 +741,29 @@ The ignored `managed_objects_live` target runs through
 `BATTER_SQLX_ADMIN_URL=... cargo test -p batter-sqlx --test managed_objects_live
 --locked -- --ignored --test-threads=1`. Each case provisions a unique schema
 owned by a migration login and a serving login with only schema `USAGE` and
-`SELECT` on tables the migration login creates, and drops them afterwards. The
-eight cases cover: a first apply after migrations, including a SQL routine
+`SELECT` on tables the migration login creates, plus a non-login delegate role
+for grant-option scenarios, and drops them afterwards. The eleven cases cover:
+a first apply after migrations, including a SQL routine
 validated against the migrated table, pool reuse, `PUBLIC` revocation and
 verification of both ledgers by the serving login; an idempotent re-apply whose
 routine and trigger rows, including `xmin`, and ledger rows are unchanged;
 retirement of a routine with its dependent trigger; a retirement blocked by a
 still-declared trigger (SQLSTATE `2BP01`) that retires the session and changes
-nothing; both `PUBLIC` policies, including an out-of-band grant reported and
-revoked again; out-of-band replacement and trigger removal reported as drift and
-repaired by replacing exactly those two objects; a missing ledger on a migrated
+nothing; a retired function whose identity a procedure holds, which apply
+leaves alone and verification does not report; both `PUBLIC` policies,
+including an out-of-band grant reported and revoked again; a `PUBLIC` grant
+made by another grantor, which the owner's revoke cannot remove, failing apply
+with `PublicExecuteRetained`; out-of-band replacement and trigger removal
+reported as drift and repaired by replacing exactly those two objects; a
+trigger disabled out of band reported as drift and re-enabled by apply; a missing ledger on a migrated
 database reported as one finding; and an undeclared overload (absent and
 pre-existing), an invalid SQL body (`42703`) and a foreign ledger relation, each
 refused without leaving objects or a ledger. Two mutation controls were run
 against this target during implementation: re-executing every entry failed the
 idempotence, drift and `PUBLIC` cases, and removing the `xmin` check failed the
-pre-existing-overload case.
+pre-existing-overload case. An independent code review then found the
+disabled-trigger, retained-`PUBLIC`, retirement-kind and `lc_monetary` gaps;
+the three new live cases were added with their fixes.
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2417,8 +2424,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 150-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, eight
+an exact 153-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, eleven
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

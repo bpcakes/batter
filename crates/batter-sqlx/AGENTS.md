@@ -121,7 +121,10 @@ resolved by catalog joins (never `regprocedure` input), definitions render under
 the fixed settings in `catalog.rs`, and apply requires every executed statement
 to have written its declared identity (`xmin` equals the current transaction).
 Apply re-executes only new, changed or drifted entries and drops only retired
-objects that exist, never with `CASCADE`; it locks the ledger `ACCESS EXCLUSIVE`
+objects that exist as the retired kind, never with `CASCADE`; library
+statements run under the canonical settings and sources under the session's;
+a revoke is re-read because PostgreSQL only warns when it removes nothing;
+trigger hashes include `tgenabled`; it locks the ledger `ACCESS EXCLUSIVE`
 and verification locks it `ACCESS SHARE` before its snapshot, because rendering
 reads catalog caches rather than the snapshot. The ledger is never the SQLx
 ledger and apply never writes migration history.

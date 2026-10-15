@@ -103,6 +103,9 @@ TARGETS = {
         "managed_objects_out_of_band_drift_is_reported_and_repaired",
         "managed_objects_missing_ledger_is_a_finding",
         "managed_objects_reject_undeclared_identities_and_foreign_ledgers",
+        "managed_objects_disabled_trigger_is_drift_and_reenabled",
+        "managed_objects_public_execute_from_another_grantor_fails_apply",
+        "managed_objects_retirement_of_another_kind_is_left_alone",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

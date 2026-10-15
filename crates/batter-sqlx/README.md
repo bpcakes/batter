@@ -803,11 +803,13 @@ creates the ledger when absent and locks it `ACCESS EXCLUSIVE`, refusing any
 relation that is not exactly `identity text PRIMARY KEY`, `kind text`,
 `source_checksum bytea`, `rendered_checksum bytea` and
 `applied_at timestamptz`, all `NOT NULL`, without row security or inheritance;
-drops retired triggers, then retired routines, that still exist (never
-`CASCADE`); executes each entry that is new, changed or drifted, routines before
-triggers, under `check_function_bodies = on`, and requires each statement to
-have written exactly its declared identity and kind; revokes `PUBLIC`
-`EXECUTE` under `Revoke`; and rewrites the ledger with each executed entry's
+drops retired triggers, then retired routines, that still exist as the retired
+kind (never `CASCADE`); executes each entry that is new, changed or drifted,
+routines before triggers, under `check_function_bodies = on` and the session's
+own settings, and requires each statement to have written exactly its declared
+identity and kind; revokes `PUBLIC` `EXECUTE` under `Revoke` and fails with
+`PublicExecuteRetained` if a grant from another grantor survives; and rewrites
+the ledger with each executed entry's
 source checksum, rendered-definition hash and `applied_at`, plus a `manifest`
 row holding the set digest. Entries whose ledger row and live rendered
 definition are unchanged are not re-executed, so a steady-state startup takes no
@@ -826,8 +828,10 @@ another hash), `RetiredManagedObjectPresent` and, under `Revoke`,
 `ManagedObjectPublicExecute`. A concurrently replaced or inherited ledger is
 `UnprotectedManagedObjectLedger` and Incomplete. Both phases render
 `pg_get_functiondef` and `pg_get_triggerdef` under fixed `search_path`,
-date/time, float and quoting settings, because that text qualifies names
-relative to the session search path. The serving role needs `USAGE` on the
+date/time, float, money and quoting settings, because that text qualifies names
+relative to the session search path; a trigger's hash also covers whether it is
+enabled, so disabling a managed trigger out of band is drift that apply repairs
+by re-enabling it. The serving role needs `USAGE` on the
 ledger schema and `SELECT` on the ledger, nothing else.
 
 Limits stay explicit. Batter does not choose source, transfer ownership (newly
@@ -835,8 +839,9 @@ created routines belong to the applying login; run the application's owner
 policy after apply), grant anything beyond the `PUBLIC` policy, or touch the
 SQLx ledger. An entry removed without a retirement stays in the database
 unmanaged. Changing a routine's return type, `OUT` parameters or input parameter
-names, or removing a default, needs a migration that drops it first. A trigger
-cannot be rebound away from a routine retired in the same manifest. Installation
+names, or removing a default, needs a migration that drops it first. An object
+that still depends on a retired routine (a trigger, or a `BEGIN ATOMIC` body
+being edited to stop using it) blocks that retirement in the same apply. Installation
 is last-writer-wins across releases, and a PostgreSQL upgrade that changes
 deparsed text reports drift until the next apply. Lexical validation does not
 prove a body correct. The runnable consumer is

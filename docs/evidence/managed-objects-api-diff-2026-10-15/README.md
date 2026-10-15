@@ -30,7 +30,7 @@ detected. No existing signature was edited by this change.
 
 | Package | Entries old to new | Removed | Classification |
 | --- | --- | --- | --- |
-| batter-sqlx | 1153 to 1287 | 0 | 134 additions. All are new items in the new `managed` module, `PgLease::migrate_and_apply`, `VerificationPlan::{managed_objects, with_managed_objects}` and `verification::verify_managed_objects`, except 13 variants added to existing exhaustive enums: nine `FindingKind`, two `PlanError`, one `SupportedSurface` and one `UnsupportedSurface`. Those break exhaustive matches; `CHANGELOG.md` has the `Breaking:` entry with before/after code and the shim decision, and each enum's rustdoc carries a `Migration:` note. |
+| batter-sqlx | 1153 to 1288 | 0 | 135 additions. All are new items in the new `managed` module, `PgLease::migrate_and_apply`, `VerificationPlan::{managed_objects, with_managed_objects}` and `verification::verify_managed_objects`, except 13 variants added to existing exhaustive enums: nine `FindingKind`, two `PlanError`, one `SupportedSurface` and one `UnsupportedSurface`. Those break exhaustive matches; `CHANGELOG.md` has the `Breaking:` entry with before/after code and the shim decision, and each enum's rustdoc carries a `Migration:` note. |
 | batter | 17 to 17 | 0 | The `sqlx` namespace re-exports `batter_sqlx::*`, so the new module is reachable as `batter::sqlx::managed` without a facade entry change. |
 
 The full output for both packages is [`surface.txt`](surface.txt).

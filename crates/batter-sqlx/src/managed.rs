@@ -88,7 +88,9 @@ pub enum ManagedObjectKind {
     Function,
     /// A routine created with `CREATE OR REPLACE PROCEDURE`.
     Procedure,
-    /// A table trigger created with `CREATE OR REPLACE TRIGGER`.
+    /// A table trigger created with `CREATE OR REPLACE TRIGGER`. Replacing a
+    /// trigger leaves it enabled for origin sessions; a disabled, replica or
+    /// always state set afterwards is drift.
     Trigger,
 }
 
@@ -296,9 +298,11 @@ impl fmt::Debug for ManagedObject {
 /// An explicit instruction to drop a routine or trigger the application no longer declares.
 ///
 /// Removing an entry from a manifest only stops managing it; the object stays
-/// in the database. Apply drops a retired object only when it still exists,
-/// triggers before routines, and never with `CASCADE`, so an undeclared
-/// dependent object makes the whole apply fail instead of disappearing.
+/// in the database. Apply drops a retired object only when it still exists as
+/// the retired kind (a procedure or aggregate under a retired function's
+/// identity is left alone), triggers before routines, and never with
+/// `CASCADE`, so any object that still depends on it, declared or not, makes
+/// the whole apply fail instead of disappearing.
 /// A retirement may not name an identity the same manifest declares: replacing
 /// a routine whose return type or argument names change belongs in a versioned
 /// migration that drops it, after which apply creates the new definition.

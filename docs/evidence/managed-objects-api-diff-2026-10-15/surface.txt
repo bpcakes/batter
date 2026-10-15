@@ -1,4 +1,4 @@
-## batter-sqlx: 1153 -> 1287 entries; 0 removed, 134 added
+## batter-sqlx: 1153 -> 1288 entries; 0 removed, 135 added
 + ADDED   enum batter_sqlx::managed::ManagedApplyError
 + ADDED   enum batter_sqlx::managed::ManagedObjectError
 + ADDED   enum batter_sqlx::managed::ManagedObjectKind
@@ -103,6 +103,7 @@
 + ADDED   variant batter_sqlx::managed::ManagedApplyError::IdentityMismatch
 + ADDED   variant batter_sqlx::managed::ManagedApplyError::LedgerShape
 + ADDED   variant batter_sqlx::managed::ManagedApplyError::Migration
++ ADDED   variant batter_sqlx::managed::ManagedApplyError::PublicExecuteRetained
 + ADDED   variant batter_sqlx::managed::ManagedApplyError::Statement
 + ADDED   variant batter_sqlx::managed::ManagedObjectError::Capacity
 + ADDED   variant batter_sqlx::managed::ManagedObjectError::DuplicateObject

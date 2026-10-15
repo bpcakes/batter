@@ -89,14 +89,21 @@ and requires its exact shape (`identity text PRIMARY KEY`, `kind text`,
 all `NOT NULL`, no row security, no inheritance). Any other relation of that
 name, such as a SQLx ledger, is refused before anything is written. Then:
 retired triggers that still exist are dropped, then retired routines that still
-exist (never `CASCADE`); entries are executed, routines before triggers; each
-executed statement must have written exactly its declared identity and kind in
-this transaction (its catalog row's `xmin` is the current transaction id); the
-`PUBLIC` policy is applied; and the ledger is rewritten: undeclared rows are
-deleted, executed entries record their source checksum, the SHA-256 of their
-rendered definition and `applied_at`, and a `manifest` row records the set
-digest and a digest of all rendered hashes. `check_function_bodies` is forced
-on for the transaction.
+exist (never `CASCADE`), each only when the live object is of the retired kind,
+so a procedure or aggregate under a retired function's identity is left alone;
+entries are executed, routines before triggers; each executed statement must
+have written exactly its declared identity and kind in this transaction (its
+catalog row's `xmin` is the current transaction id); under `Revoke`, `PUBLIC`'s
+`EXECUTE` is revoked and then re-read, and apply fails with
+`PublicExecuteRetained` when it remains, because PostgreSQL only warns when a
+revoke by a role that did not grant the privilege removes nothing; and the
+ledger is rewritten: undeclared rows are deleted, executed entries record their
+source checksum, the SHA-256 of their rendered definition and `applied_at`, and
+a `manifest` row records the set digest and a digest of all rendered hashes.
+`check_function_bodies` is forced on for the transaction. Every library-built
+statement runs under the fixed rendering settings below, so a session search
+path cannot redirect a catalog helper; each source runs under the session's own
+settings, restored around it.
 
 Deviation from the brief, recorded in the Bead: the brief listed
 `CREATE OR REPLACE` for every entry and a drop for every retirement on every
@@ -118,8 +125,13 @@ routines kept in migrations today.
 
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
-`extra_float_digits`, `bytea_output`, `standard_conforming_strings` and
-`quote_all_identifiers` values in both apply and verification. Executed live,
+`extra_float_digits`, `bytea_output`, `standard_conforming_strings`,
+`quote_all_identifiers` and `lc_monetary` values in both apply and
+verification. `pg_get_triggerdef` omits whether a trigger fires, so a trigger's
+hash also covers `pg_trigger.tgenabled`; `CREATE OR REPLACE TRIGGER` resets it
+to enabled, so a trigger disabled out of band is drift that the next apply
+repairs. Managed triggers are therefore always enabled for origin sessions; a
+deliberately replica-only or always-firing trigger is not expressible. Executed live,
 the rendered text qualifies type and function names relative to the session
 search path, so without the fixed settings a role default would turn an
 unchanged definition into drift. Source statements themselves run under the
@@ -200,6 +212,15 @@ Executed for every new public item before delivery.
   a `Breaking:` entry with before/after matches. This is the one place the
   delivery is not purely additive.
 
+An independent read-only review of the implementation found four defects that
+are now fixed and covered: a disabled trigger was invisible to the hash, a
+no-op revoke let apply commit with `PUBLIC` still holding `EXECUTE`,
+retirements ignored the live object's kind, and `lc_monetary` was missing from
+the rendering settings. It also led to qualifying the settings helper, running
+library statements under the canonical settings, and raising the catalog row
+bound to 100,000 so undeclared overloads of declared names cannot exhaust it at
+the manifest bound.
+
 Remaining obligations are explicit and not claimed as local guarantees. (5)
 Which release's manifest is installed is last-writer-wins: an older release
 that applies after a newer one reverts objects, unless the newer release added
@@ -208,9 +229,11 @@ case it fails with `VersionMissing` before apply; verification on the newer
 replicas then reports the digest mismatch. A routine whose return type, `OUT` parameters or input parameter
 names change, or whose defaults are removed, cannot be replaced in place: a
 versioned migration drops it, and the next apply creates it. Because
-retirements precede creation, a trigger cannot be rebound away from a routine
-retired in the same manifest; rebinding and retiring take two releases, or a
-migration that drops the trigger. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
+retirements precede creation, an object that still depends on a retired
+routine in the database, such as a trigger or a `BEGIN ATOMIC`/`RETURN` body
+being edited to stop using it, blocks that retirement in the same apply;
+rebinding and retiring take two releases, or a migration that drops the
+dependent first. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
 changes rendering reports drift until the next apply re-executes and re-records
 those entries. Ownership of newly created routines is the applying login's;
 replacing an object requires ownership or membership in its owner role, and
@@ -222,13 +245,15 @@ granted, as with `migrate`.
 ## Evidence
 
 Offline unit tests cover every manifest rejection, the lexer, the digest, plan
-composition and the ledger and catalog comparisons. Eight PostgreSQL 18.6 live
-cases in `crates/batter-sqlx/tests/managed_objects_live.rs` cover first apply
-after migrations, an idempotent re-apply with an identical catalog including
-`xmin`, retirement with a dependent trigger, a blocked retirement that changes
-nothing, both `PUBLIC` policies, out-of-band drift and its repair, a missing
-ledger finding, undeclared overloads (absent and pre-existing), an invalid SQL
-body and a foreign ledger. Mutation controls that re-executed every entry, or
+composition and the ledger and catalog comparisons. Eleven PostgreSQL 18.6
+live cases in `crates/batter-sqlx/tests/managed_objects_live.rs` cover first
+apply after migrations, an idempotent re-apply with an identical catalog
+including `xmin`, retirement with a dependent trigger, a blocked retirement
+that changes nothing, a retirement whose identity is held by another kind, both
+`PUBLIC` policies, a `PUBLIC` grant from another grantor failing apply,
+out-of-band drift (replacement, removal and a disabled trigger) and its repair,
+a missing ledger finding, undeclared overloads (absent and pre-existing), an
+invalid SQL body and a foreign ledger. Mutation controls that re-executed every entry, or
 dropped the `xmin` check, failed the suite. The PostgreSQL lifecycle example is
 the consumer contract and has its own live case. Fresh-agent implementation and
 modification evaluations are proposed and unexecuted.

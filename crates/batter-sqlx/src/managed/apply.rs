@@ -77,6 +77,14 @@ pub enum ManagedApplyError {
         /// The declared canonical identity the statement failed to produce.
         identity: String,
     },
+    /// Under [`PublicExecute::Revoke`], `PUBLIC` still holds `EXECUTE` on a
+    /// managed routine after its revoke. PostgreSQL revokes only grants the
+    /// revoking role made (as owner), so this happens when the applying login
+    /// does not own the routine or another grantor gave `PUBLIC` the privilege.
+    PublicExecuteRetained {
+        /// The canonical identity `PUBLIC` can still execute.
+        identity: String,
+    },
     /// `COMMIT` was sent but its outcome was not acknowledged. The objects may
     /// or may not be installed; verification of the ledger decides.
     CommitUnconfirmed(SqlxFailure),
@@ -95,6 +103,10 @@ impl fmt::Display for ManagedApplyError {
                 formatter,
                 "managed object source did not create its declared identity: {identity}"
             ),
+            Self::PublicExecuteRetained { identity } => write!(
+                formatter,
+                "PUBLIC still holds EXECUTE on a managed routine: {identity}"
+            ),
             Self::CommitUnconfirmed(_) => {
                 formatter.write_str("managed object commit was not acknowledged")
             }
@@ -110,6 +122,7 @@ impl fmt::Debug for ManagedApplyError {
             Self::LedgerShape => "ManagedApplyError::LedgerShape",
             Self::Capacity => "ManagedApplyError::Capacity",
             Self::IdentityMismatch { .. } => "ManagedApplyError::IdentityMismatch",
+            Self::PublicExecuteRetained { .. } => "ManagedApplyError::PublicExecuteRetained",
             Self::CommitUnconfirmed(_) => "ManagedApplyError::CommitUnconfirmed",
         })
     }
@@ -121,7 +134,10 @@ impl std::error::Error for ManagedApplyError {
             Self::Migration(error) | Self::Statement(error) | Self::CommitUnconfirmed(error) => {
                 Some(error)
             }
-            Self::LedgerShape | Self::Capacity | Self::IdentityMismatch { .. } => None,
+            Self::LedgerShape
+            | Self::Capacity
+            | Self::IdentityMismatch { .. }
+            | Self::PublicExecuteRetained { .. } => None,
         }
     }
 }
@@ -133,7 +149,10 @@ impl ManagedApplyError {
             Self::Migration(error) | Self::Statement(error) | Self::CommitUnconfirmed(error) => {
                 Some(error)
             }
-            Self::LedgerShape | Self::Capacity | Self::IdentityMismatch { .. } => None,
+            Self::LedgerShape
+            | Self::Capacity
+            | Self::IdentityMismatch { .. }
+            | Self::PublicExecuteRetained { .. } => None,
         }
     }
 }
@@ -204,17 +223,16 @@ async fn apply(
     execute(connection, "SET LOCAL check_function_bodies = on")
         .await
         .map_err(statement)?;
+    // Library statements and rendering run under the canonical settings;
+    // `create` restores the session's own values around each source.
+    let settings = RenderSettings::apply(connection).await.map_err(statement)?;
     let rows = lock_ledger(connection, manifest).await?;
     let recorded = rows
         .iter()
         .map(|row| (row.identity.as_str(), row))
         .collect::<HashMap<_, _>>();
-
-    let render = RenderSettings::apply(connection).await.map_err(statement)?;
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
-    render.restore(connection).await.map_err(statement)?;
-
     let pending = manifest
         .objects()
         .iter()
@@ -239,24 +257,24 @@ async fn apply(
             .iter()
             .filter(|object| (object.kind() == ManagedObjectKind::Trigger) == kind_is_trigger)
         {
-            create(connection, object).await?;
+            create(connection, &settings, object).await?;
         }
     }
 
-    let render = RenderSettings::apply(connection).await.map_err(statement)?;
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
-    render.restore(connection).await.map_err(statement)?;
     let mut installed = Vec::with_capacity(manifest.objects().len());
     for object in manifest.objects() {
-        let hash = live
+        let current = live
             .get(object.identity())
             .filter(|live| live.kind == Some(object.kind()))
-            .and_then(|live| hashes.get(&live.oid))
-            .ok_or_else(|| ManagedApplyError::IdentityMismatch {
+            .and_then(|live| hashes.get(&live.oid).map(|hash| (live.oid, *hash)));
+        let Some((oid, hash)) = current else {
+            return Err(ManagedApplyError::IdentityMismatch {
                 identity: object.identity().to_owned(),
-            })?;
-        installed.push((object, live[object.identity()].oid, *hash));
+            });
+        };
+        installed.push((object, oid, hash));
     }
     if manifest.public_execute() == PublicExecute::Revoke {
         revoke_public_execute(connection, &installed).await?;
@@ -330,9 +348,13 @@ async fn retire(
 ) -> Result<usize, ManagedApplyError> {
     let mut retired = 0;
     for kind_is_trigger in [true, false] {
+        // An object of another kind under the same identity (a procedure for
+        // a retired function, or an aggregate) is not the retired object.
         for retirement in manifest.retirements().iter().filter(|retirement| {
             (retirement.kind() == ManagedObjectKind::Trigger) == kind_is_trigger
-                && live.contains_key(retirement.identity())
+                && live
+                    .get(retirement.identity())
+                    .is_some_and(|live| live.kind == Some(retirement.kind()))
         }) {
             let sql = match retirement.structural_identity() {
                 Identity::Trigger { table, name } => {
@@ -364,11 +386,14 @@ const fn routine_keyword(kind: ManagedObjectKind) -> &'static str {
 /// declared identity, of its declared kind, in this transaction.
 async fn create(
     connection: &mut PgConnection,
+    settings: &RenderSettings,
     object: &ManagedObject,
 ) -> Result<(), ManagedApplyError> {
+    settings.restore(connection).await.map_err(statement)?;
     execute(connection, AssertSqlSafe(object.source()))
         .await
         .map_err(statement)?;
+    settings.reapply(connection).await.map_err(statement)?;
     let written = match object.structural_identity() {
         Identity::Routine(signature) => {
             catalog::resolve_routines(
@@ -399,6 +424,9 @@ async fn create(
     }
 }
 
+/// Revoke `PUBLIC` `EXECUTE` where `PUBLIC` holds it, then require that it no
+/// longer does: a revoke by a role that did not grant the privilege succeeds
+/// with only a warning.
 async fn revoke_public_execute(
     connection: &mut PgConnection,
     installed: &[(&ManagedObject, i64, [u8; 32])],
@@ -424,7 +452,15 @@ async fn revoke_public_execute(
             .await
             .map_err(statement)?;
     }
-    Ok(())
+    let retained = catalog::public_execute_holders(connection, &routines)
+        .await
+        .map_err(statement)?;
+    match installed.iter().find(|(_, oid, _)| retained.contains(oid)) {
+        Some((object, _, _)) => Err(ManagedApplyError::PublicExecuteRetained {
+            identity: object.identity().to_owned(),
+        }),
+        None => Ok(()),
+    }
 }
 
 /// Replace ledger rows: drop undeclared rows, upsert re-executed entries and

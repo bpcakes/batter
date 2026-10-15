@@ -43,6 +43,11 @@ identifies rows a transaction wrote. `pg_get_functiondef` and
 on its table until commit, dropping an existing trigger held
 `ACCESS EXCLUSIVE`, `DROP TRIGGER IF EXISTS` for an absent trigger held no table
 lock and emitted a notice, and `CREATE OR REPLACE FUNCTION` held none.
+`pg_get_triggerdef` renders the same text for an enabled and a disabled
+trigger, and `CREATE OR REPLACE TRIGGER` resets `tgenabled` from `D` or `R` to
+`O`. Multi-argument `unnest` in `FROM` is parser syntax that cannot be
+schema-qualified; `ROWS FROM (pg_catalog.unnest(...), ...)` is its qualified
+form.
 `DROP ... IF EXISTS` skips a missing schema, argument type or table with a
 notice. Removing a parameter default is refused ("cannot remove parameter
 defaults from existing function"), changing one is accepted, changing a

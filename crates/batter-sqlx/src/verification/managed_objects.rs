@@ -215,7 +215,7 @@ async fn inspect_catalog(
         fragment.findings.push(Finding::new(
             FindingKind::ManagedObjectPublicExecute,
             Some((*identity).to_owned()),
-            Some("PUBLIC".to_owned()),
+            Some("public".to_owned()),
             Some(super::ObjectPrivilege::Execute),
         ));
     }
@@ -346,7 +346,11 @@ pub(super) fn compare_catalog(
         }
     }
     for retirement in manifest.retirements() {
-        if live.contains_key(retirement.identity()) {
+        // Another kind under the same identity is not the retired object.
+        if live
+            .get(retirement.identity())
+            .is_some_and(|live| live.kind == Some(retirement.kind()))
+        {
             findings.push(object_finding(
                 FindingKind::RetiredManagedObjectPresent,
                 retirement.identity(),
