@@ -8,6 +8,11 @@ The initializer parses the application-owned `DATABASE_URL` into native
 which publishes awaited close before returning the lazy pool. Construction does
 not contact PostgreSQL: the following `postgres.probe` stage runs the adapter's
 bounded probe under a five-second child of the root's 15-second startup context.
+The `postgres.schema` stage then runs the example's one versioned migration and
+applies its managed routine and trigger through
+`PgLease::migrate_and_apply`, and the `postgres.verify` stage gates readiness on
+`VerificationPlan::sqlx_migrations(..).with_managed_objects(..)`; see
+[managed objects](#managed-objects).
 A long-running application component keeps this a service, not a finite command.
 Its executable is `postgres_lifecycle`.
 The executable keeps concrete startup and shutdown reports behind a fixed,
@@ -23,8 +28,9 @@ DATABASE_URL='postgres://user:password@localhost/database' \
   cargo run -p batter-example-postgres-lifecycle --bin postgres_lifecycle
 ```
 
-The example runs `SELECT 1`; it does not provision a server/database, apply
-migrations, submit durable work, or retry a transaction. SQLx remains a native
+The example runs `SELECT 1`, applies its own migration and managed objects to
+the database it is given, and verifies them; it does not provision a
+server/database, submit durable work, or retry a transaction. SQLx remains a native
 dependency of this executable and is not part of the foundation's library API.
 Live checks exercise real queries and pool closure; they do not establish
 transaction commit/cancellation behavior.
@@ -55,12 +61,35 @@ python3 scripts/smoke_postgres.py --binary target/debug/postgres_lifecycle --sig
 ```
 
 These commands require `DATABASE_URL`; missing configuration fails the selected
-check. The three live tests are labelled ignored in ordinary database-independent
+check. The four live tests are labelled ignored in ordinary database-independent
 runs. Each creates its pool inside protected startup through the same `pool_in`
-helper, then uses `SELECT 1` and division-by-zero errors to verify retained causes
-and awaited pool closure after success, startup failure and task failure. They
-do not create a database or modify its schema. The smoke commands require actual
+helper. Three use `SELECT 1` and division-by-zero errors to verify retained causes
+and awaited pool closure after success, startup failure and task failure, and do
+not modify the schema. The fourth runs the schema stage: it applies the migration
+and managed objects, checks that the managed trigger maintains `updated_at`, that
+a repeated apply executes nothing, that an out-of-band `DROP TRIGGER` fails the
+readiness gate with a drift finding, and that the next apply restores it. None
+of them creates a database. The smoke commands require actual
 readiness, successful pool cleanup and exit code 0 after the chosen signal.
+
+## Managed objects
+
+`migrations/` holds forward-only history: the `lifecycle` schema and its
+`records` table. `objects/` holds the managed routine
+`lifecycle.touch_updated_at()` and the trigger `records_touch_updated_at` that
+binds it, each as one `CREATE OR REPLACE` statement edited in place.
+`src/schema.rs` declares them in one `ManagedObjectManifest` with
+`PublicExecute::Revoke` and the ledger `lifecycle.managed_objects`, and derives
+the expected SQLx history from the same embedded migrator. Startup passes that
+one manifest value to both setup and the readiness gate, so the applied set and
+the verified set cannot diverge. A repeated startup with unchanged files
+executes no DDL; a release that edits a file replaces only that object. A
+verification failure keeps the complete report in `schema::SchemaMismatch` for
+a trusted sink and prints only the fixed process diagnostic. The SQLx ledger is
+expected in `public`, the first schema of a default search path. The login in
+`DATABASE_URL` therefore needs to create the schema, own its objects and read
+both ledgers; production roots usually split the migration login from the
+serving login, and Batter does not transfer ownership or grant anything.
 
 Version 0.1.0; Rust 1.94 minimum, required by SQLx 0.9.0; publishing disabled.
 MIT licensed.

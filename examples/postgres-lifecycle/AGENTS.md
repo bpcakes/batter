@@ -11,7 +11,11 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Key entrypoints
 
 - `src/main.rs` selects protected startup and Unix signals, creates the pool with
-  `batter::sqlx::pool_in` (`database_pool`), probes it, and observes startup.
+  `batter::sqlx::pool_in` (`database_pool`), probes it, applies and verifies the
+  schema, and observes startup.
+- `src/schema.rs` owns the embedded migrator, the managed-object manifest built
+  from `objects/`, the expected SQLx history, the `migrate_and_apply` setup call
+  and the verification readiness gate. `migrations/` holds versioned history only.
 - Its private `serve` and `report_exit` functions retain failures and
   determine the executable outcome; `src/tests.rs` tests those same paths.
 - `src/tests/live.rs` contains explicitly selected tests against an externally
@@ -26,7 +30,9 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Edit here for X
 
 Keep pool configuration, schema checks, and application teardown in this
-composition root. Lease-owned transactions use Batter's opaque SQLx transaction
+composition root. Edit a routine or trigger in its `objects/` file; add a
+migration only for tables, columns, constraints, data, or to drop a routine
+whose return type or argument names change. Lease-owned transactions use Batter's opaque SQLx transaction
 capability; application-owned pools may still use native SQLx transaction values.
 Shared lease disposition, bounded probe and close registration belong in `batter::sqlx`.
 Keep application fixture helpers beside their integration tests.
@@ -38,7 +44,9 @@ before the pool is returned; the started owner drives it through startup failure
 pool proves nothing until the explicit bounded probe, whose context is a child of
 the root startup context. Live tests create pools inside protected startup too.
 Preserve original causes and the cleanup report without printing raw secrets.
-No hidden migrations, automatic transaction replay, database provisioning, or
+Migrations and managed objects run only through the explicit `postgres.schema`
+stage, and readiness requires the `postgres.verify` stage to pass with the same
+manifest value. No automatic transaction replay, database provisioning, or
 generic pool/transaction abstraction. A timeout does not prove rollback.
 Do not import or relocate the external PostgreSQL harness as part of this package.
 

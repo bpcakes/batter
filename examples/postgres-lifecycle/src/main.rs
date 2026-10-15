@@ -1,5 +1,8 @@
 //! Native SQLx pool lifecycle and error-preserving partial-startup cleanup.
-//! No Runledger schema is created here. No business transaction is retried.
+//! Startup migrates and applies managed objects, then verifies both before
+//! readiness. No Runledger schema is created here. No business transaction is
+//! retried.
+mod schema;
 mod support;
 #[cfg(test)]
 mod tests;
@@ -72,6 +75,19 @@ async fn run() -> Result<(), BoxError> {
                     // The pool is lazy: this bounded probe establishes connectivity.
                     let probe = probe_parent.child(Duration::from_secs(5))?.into_context();
                     batter::sqlx::probe(&pool, &probe).await?;
+                    // Setup and readiness share one manifest value.
+                    let objects = schema::managed_objects()?;
+                    scope.stage("postgres.schema")?;
+                    let setup = probe_parent.child(Duration::from_secs(10))?.into_context();
+                    let applied = schema::apply(&pool, &setup, &objects).await?;
+                    tracing::info!(
+                        digest = %applied.digest(),
+                        changed = applied.created_or_replaced(),
+                        "managed objects applied"
+                    );
+                    scope.stage("postgres.verify")?;
+                    let gate = probe_parent.child(Duration::from_secs(5))?.into_context();
+                    schema::verify_release(&pool, &gate, &objects).await?;
                     scope
                         .registration()
                         .register("application", |startup| async move {
