@@ -815,8 +815,14 @@ row holding the set digest. Entries whose ledger row and live rendered
 definition are unchanged are not re-executed, so a steady-state startup takes no
 trigger-table lock; `CREATE OR REPLACE TRIGGER` otherwise holds
 `SHARE ROW EXCLUSIVE` on its table until commit. Every error, cancellation or
-deadline retires the connection and the uncommitted transaction with it; only
-`ManagedApplyError::CommitUnconfirmed` leaves installation uncertain.
+deadline retires the connection. Any uncommitted transaction ends when the
+server session ends. Among returned `ManagedApplyError` variants, only
+`CommitUnconfirmed` leaves installation uncertain. Interruption while `COMMIT`
+is in flight also leaves its outcome unknown, and interruption during the
+subsequent unlock or pool-return cleanup can discard an already committed
+result. Neither interruption nor retirement proves rollback or authorizes
+replay. Read-only verification inspects the current installed state; it does not
+acknowledge termination of a retired session still completing work.
 
 `VerificationPlan::managed_objects`, `with_managed_objects` and
 `verify_managed_objects` take `ACCESS SHARE` on the ledger before the snapshot,

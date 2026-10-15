@@ -8,6 +8,13 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Enforce managed manifests' 64 MiB source limit while consuming their object
+  iterators, before consuming retirements. Clarify that interrupted apply may
+  have committed even when it returns no result. Add live managed-verifier
+  regressions for concurrent apply, late ledger creation and malformed,
+  row-secured or inherited ledgers (`batter-54d0.1`). Public call shapes and
+  persisted ledger formats are unchanged.
+
 - Add `batter_sqlx::managed` (also `batter::sqlx::managed`, feature `sqlx`):
   managed routines and the triggers that bind them, kept as source edited in
   place instead of whole bodies restated in migrations

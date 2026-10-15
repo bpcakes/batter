@@ -315,7 +315,11 @@ impl PgLease {
     /// transaction and the session lock with the session. Success commits,
     /// unlocks and follows the normal idle-state proof before pool return; a
     /// failed unlock after commit still returns the committed result and retires
-    /// the connection. Await inside the caller's operation budget. A retired
+    /// the connection. Interruption while `COMMIT` is in flight leaves its
+    /// outcome unknown; interruption during unlock or pool-return cleanup can
+    /// discard the result of an already committed installation. Neither
+    /// interruption nor retirement proves rollback or authorizes replay.
+    /// Await inside the caller's operation budget. A retired
     /// session still waiting on a lock remains on the server until the lock is
     /// granted; no automatic replay or provisioning policy is introduced.
     ///
@@ -360,9 +364,12 @@ impl PgLease {
     ///
     /// # Errors
     /// Returns [`managed::ManagedApplyError`], retaining native causes behind
-    /// redacted diagnostics. Only
+    /// redacted diagnostics. Among returned error variants, only
     /// [`managed::ManagedApplyError::CommitUnconfirmed`] leaves the managed
-    /// objects' installation uncertain; verification decides it.
+    /// objects' installation uncertain. An interrupted future returns no
+    /// `ManagedApplyError` and may also leave installation uncertain, as above.
+    /// Read-only verification can inspect the current installed state; it does
+    /// not acknowledge termination of a retired session still completing work.
     pub async fn migrate_and_apply(
         self,
         migrator: &sqlx::migrate::Migrator,

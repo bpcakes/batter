@@ -106,6 +106,10 @@ TARGETS = {
         "managed_objects_disabled_trigger_is_drift_and_reenabled",
         "managed_objects_public_execute_from_another_grantor_fails_apply",
         "managed_objects_retirement_of_another_kind_is_left_alone",
+        "verification::managed_verifier_waits_for_apply_before_snapshot",
+        "verification::managed_verifier_holds_apply_until_inspection_ends",
+        "verification::managed_verifier_rejects_ledger_created_after_lock_attempt",
+        "verification::managed_verifier_rejects_misshapen_row_secured_and_inherited_ledgers",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",
