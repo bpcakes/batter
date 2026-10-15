@@ -93,6 +93,17 @@ TARGETS = {
         "migration_preserves_native_history_and_retires_checksum_failure",
         "interrupted_migration_retires_without_waiting_for_server_lock",
     },
+    # Provisions its own schema and logins through BATTER_SQLX_ADMIN_URL.
+    "managed_objects_live": {
+        "managed_objects_apply_after_migrations_and_verify_within_policy",
+        "managed_objects_reapply_is_idempotent_and_executes_no_ddl",
+        "managed_objects_retire_signatures_with_dependent_triggers",
+        "managed_objects_retirement_blocked_by_a_declared_trigger_changes_nothing",
+        "managed_objects_public_execute_policy_is_applied_and_verified",
+        "managed_objects_out_of_band_drift_is_reported_and_repaired",
+        "managed_objects_missing_ledger_is_a_finding",
+        "managed_objects_reject_undeclared_identities_and_foreign_ledgers",
+    },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",
         "blocked_deadline_releases_capacity",

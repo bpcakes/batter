@@ -53,6 +53,7 @@ mod profiled_pool;
 mod session;
 mod snapshot;
 
+pub mod managed;
 pub mod verification;
 
 pub use atomic::{
@@ -278,6 +279,94 @@ impl PgLease {
                 .map_err(SqlxFailure::from)
         })
         .await
+    }
+
+    /// Run an application-selected SQLx migrator, then apply a managed object
+    /// manifest, on this one connection.
+    ///
+    /// This is the only way to apply a [`managed::ManagedObjectManifest`], so
+    /// managed routines and triggers always follow the versioned migrations on
+    /// the same session: SQL-language bodies are validated against the migrated
+    /// catalog, never before it. A session advisory lock keyed by the ledger
+    /// spans both phases, so concurrent appliers of one ledger serialize and
+    /// one's apply cannot land between another's migrations and objects.
+    /// Native SQLx keeps migration selection, locking, history and checksums.
+    ///
+    /// Apply then runs one transaction. It creates the ledger when absent,
+    /// locks it `ACCESS EXCLUSIVE` and refuses any other relation of that name.
+    /// It drops each retired object that still exists (triggers first, never
+    /// `CASCADE`), executes each entry's source (routines before triggers)
+    /// unless its ledger row and live rendered definition show it is already
+    /// installed, requires each executed statement to have written exactly its
+    /// declared identity and kind, applies the [`managed::PublicExecute`]
+    /// policy, and rewrites the ledger: undeclared rows are deleted, executed
+    /// entries record their source checksum, rendered-definition hash and
+    /// `applied_at`, and a `manifest` row records the set digest. An unchanged,
+    /// undrifted set therefore executes no DDL and takes no table lock, while a
+    /// definition changed out of band is replaced. Apply never chooses source,
+    /// transfers ownership, grants anything, or touches the SQLx ledger.
+    ///
+    /// The lease is consumed and the connection stays private. Every error,
+    /// cancellation or deadline retires it, which ends the uncommitted
+    /// transaction and the session lock with the session. Success commits,
+    /// unlocks and follows the normal idle-state proof before pool return; a
+    /// failed unlock after commit still returns the committed result and retires
+    /// the connection. Await inside the caller's operation budget. A retired
+    /// session still waiting on a lock remains on the server until the lock is
+    /// granted; no automatic replay or provisioning policy is introduced.
+    ///
+    /// ```no_run
+    /// use batter_core::operation::OperationContext;
+    /// use batter_sqlx::{PgLease, managed::ManagedObjectManifest};
+    /// # async fn setup(pool: &sqlx::PgPool, context: &OperationContext,
+    /// # migrator: &sqlx::migrate::Migrator, objects: &ManagedObjectManifest)
+    /// # -> Result<(), Box<dyn std::error::Error>> {
+    /// let lease = PgLease::acquire(pool, context).await?;
+    /// let applied = context
+    ///     .run("schema.apply", |_| lease.migrate_and_apply(migrator, objects))
+    ///     .await?;
+    /// println!("managed objects {} ({} changed)", applied.digest(), applied.created_or_replaced());
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Objects cannot be applied without the migrator on the same lease; there
+    /// is no apply-only method:
+    ///
+    /// ```compile_fail,E0599
+    /// fn cannot_apply_without_migrating(
+    ///     lease: batter_sqlx::PgLease,
+    ///     objects: &batter_sqlx::managed::ManagedObjectManifest,
+    /// ) {
+    ///     let _ = lease.apply(objects);
+    /// }
+    /// ```
+    ///
+    /// and a lease consumed by [`Self::migrate`] cannot apply afterwards:
+    ///
+    /// ```compile_fail,E0382
+    /// async fn migrate_then_apply_separately(
+    ///     lease: batter_sqlx::PgLease,
+    ///     migrator: &sqlx::migrate::Migrator,
+    ///     objects: &batter_sqlx::managed::ManagedObjectManifest,
+    /// ) {
+    ///     let _ = lease.migrate(migrator).await;
+    ///     let _ = lease.migrate_and_apply(migrator, objects).await;
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`managed::ManagedApplyError`], retaining native causes behind
+    /// redacted diagnostics. Only
+    /// [`managed::ManagedApplyError::CommitUnconfirmed`] leaves the managed
+    /// objects' installation uncertain; verification decides it.
+    pub async fn migrate_and_apply(
+        self,
+        migrator: &sqlx::migrate::Migrator,
+        manifest: &managed::ManagedObjectManifest,
+    ) -> Result<managed::AppliedManagedObjects, managed::ManagedApplyError> {
+        let operation: SendFuture<'_, _> =
+            Box::pin(managed::migrate_and_apply(self, migrator, manifest));
+        operation.await
     }
 
     /// Native SQLx pool return after acknowledged successful completion.

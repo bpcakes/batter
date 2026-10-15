@@ -3,6 +3,7 @@ use super::{
     PolicyError, QualifiedName,
     policy::{MAX_MIGRATION_CHECKSUM_BYTES, MAX_MIGRATION_LEDGER_ROWS},
 };
+use crate::managed::ManagedObjectManifest;
 use std::collections::HashSet;
 use std::fmt;
 
@@ -203,9 +204,14 @@ pub enum PlanError {
     MigrationAlreadySelected,
     /// A schema-inspection policy was already selected.
     SchemaInspectionAlreadySelected,
-    /// Authority requires the migration ledger's schema-qualified identity to
-    /// be a sequence, while migration verification requires a relation.
+    /// Authority requires the migration or managed-object ledger's
+    /// schema-qualified identity to be a sequence, while ledger verification
+    /// requires a relation.
     ConflictingRelationKind,
+    /// A managed-object manifest was already selected.
+    ManagedObjectsAlreadySelected,
+    /// The managed-object ledger and the migration ledger are one relation.
+    ConflictingLedger,
 }
 
 impl fmt::Display for PlanError {
@@ -216,8 +222,12 @@ impl fmt::Display for PlanError {
             Self::SchemaInspectionAlreadySelected => {
                 "verification schema inspection is already selected"
             }
-            Self::ConflictingRelationKind => {
-                "migration ledger identity conflicts with authority object kind"
+            Self::ConflictingRelationKind => "ledger identity conflicts with authority object kind",
+            Self::ManagedObjectsAlreadySelected => {
+                "verification managed object manifest is already selected"
+            }
+            Self::ConflictingLedger => {
+                "managed object ledger and migration ledger are the same relation"
             }
         })
     }
@@ -228,13 +238,14 @@ impl std::error::Error for PlanError {}
 /// A non-empty selection of already validated verification components.
 ///
 /// Every constructor selects the first component, so an empty plan cannot be
-/// represented. Composition rejects a second authority, migration, or schema
-/// component instead of silently replacing the earlier selection. The three
-/// semantic axes are independently optional: either authority form may be
-/// combined with either migration form and with schema inspection in one
-/// snapshot. Composition rejects an authority policy that declares the
-/// migration ledger's identity as a sequence because PostgreSQL relations and
-/// sequences share one schema namespace.
+/// represented. Composition rejects a second authority, migration, schema or
+/// managed-object component instead of silently replacing the earlier
+/// selection. The four semantic axes are independently optional: either
+/// authority form may be combined with either migration form, schema
+/// inspection and a managed-object manifest in one snapshot. Composition
+/// rejects an authority policy that declares a ledger's identity as a sequence
+/// because PostgreSQL relations and sequences share one schema namespace, and
+/// a managed-object ledger that is also the migration ledger.
 ///
 /// ```compile_fail
 /// use batter_sqlx::verification::VerificationPlan;
@@ -247,6 +258,7 @@ pub struct VerificationPlan<'a> {
     pub(crate) authority: Option<AuthorityInspection<'a>>,
     pub(crate) migration: Option<MigrationInspection<'a>>,
     pub(crate) schema: Option<&'a SchemaInspectionPolicy>,
+    pub(crate) managed: Option<&'a ManagedObjectManifest>,
 }
 
 impl<'a> VerificationPlan<'a> {
@@ -256,6 +268,7 @@ impl<'a> VerificationPlan<'a> {
             authority: Some(AuthorityInspection::Policy(policy)),
             migration: None,
             schema: None,
+            managed: None,
         }
     }
 
@@ -265,6 +278,7 @@ impl<'a> VerificationPlan<'a> {
             authority: None,
             migration: Some(MigrationInspection::Generic(policy)),
             schema: None,
+            managed: None,
         }
     }
 
@@ -274,6 +288,7 @@ impl<'a> VerificationPlan<'a> {
             authority: Some(AuthorityInspection::ExactRole(role)),
             migration: None,
             schema: None,
+            managed: None,
         }
     }
 
@@ -283,6 +298,7 @@ impl<'a> VerificationPlan<'a> {
             authority: None,
             migration: Some(MigrationInspection::Sqlx(manifest)),
             schema: None,
+            managed: None,
         }
     }
 
@@ -292,6 +308,39 @@ impl<'a> VerificationPlan<'a> {
             authority: None,
             migration: None,
             schema: Some(policy),
+            managed: None,
+        }
+    }
+
+    /// Verify one managed-object manifest's ledger and live catalog definitions.
+    ///
+    /// The ledger is locked in `ACCESS SHARE` mode before the snapshot, so the
+    /// verifying role needs `USAGE` on the ledger schema and `SELECT` on the
+    /// ledger, plus catalog reads; it needs no ownership. Findings cover a
+    /// missing or misshapen ledger, the set digest, missing, unexpected and
+    /// checksum-mismatched rows, drift of live definitions from the hashes
+    /// apply recorded, retired objects that still exist, and `PUBLIC`
+    /// `EXECUTE` on managed routines under [`crate::managed::PublicExecute::Revoke`].
+    ///
+    /// ```no_run
+    /// use batter_sqlx::verification::{verify, VerificationPlan, VerificationStatus};
+    /// # async fn check(pool: &sqlx::PgPool, context: &batter_core::operation::OperationContext,
+    /// # migrations: &batter_sqlx::verification::SqlxMigrationManifest,
+    /// # objects: &batter_sqlx::managed::ManagedObjectManifest)
+    /// # -> Result<(), Box<dyn std::error::Error>> {
+    /// let plan = VerificationPlan::sqlx_migrations(migrations).with_managed_objects(objects)?;
+    /// let report = verify(pool, context, plan).await?;
+    /// if report.status() != VerificationStatus::WithinDeclaredPolicy {
+    ///     return Err("database schema is not the released schema".into());
+    /// }
+    /// # Ok(()) }
+    /// ```
+    pub const fn managed_objects(manifest: &'a ManagedObjectManifest) -> Self {
+        Self {
+            authority: None,
+            migration: None,
+            schema: None,
+            managed: Some(manifest),
         }
     }
 
@@ -334,6 +383,31 @@ impl<'a> VerificationPlan<'a> {
         Ok(self)
     }
 
+    /// Add a managed-object manifest; see [`Self::managed_objects`].
+    pub fn with_managed_objects(
+        mut self,
+        manifest: &'a ManagedObjectManifest,
+    ) -> Result<Self, PlanError> {
+        if self.managed.is_some() {
+            return Err(PlanError::ManagedObjectsAlreadySelected);
+        }
+        if self
+            .migration
+            .is_some_and(|migration| migration.ledger() == manifest.ledger())
+        {
+            return Err(PlanError::ConflictingLedger);
+        }
+        if self.authority.is_some_and(|authority| {
+            authority
+                .policy()
+                .requires_sequence_identity(manifest.ledger())
+        }) {
+            return Err(PlanError::ConflictingRelationKind);
+        }
+        self.managed = Some(manifest);
+        Ok(self)
+    }
+
     fn select_authority(&mut self, authority: AuthorityInspection<'a>) -> Result<(), PlanError> {
         if self.authority.is_some() {
             return Err(PlanError::AuthorityAlreadySelected);
@@ -342,6 +416,10 @@ impl<'a> VerificationPlan<'a> {
             authority
                 .policy()
                 .requires_sequence_identity(migration.ledger())
+        }) || self.managed.is_some_and(|managed| {
+            authority
+                .policy()
+                .requires_sequence_identity(managed.ledger())
         }) {
             return Err(PlanError::ConflictingRelationKind);
         }
@@ -352,6 +430,12 @@ impl<'a> VerificationPlan<'a> {
     fn select_migration(&mut self, migration: MigrationInspection<'a>) -> Result<(), PlanError> {
         if self.migration.is_some() {
             return Err(PlanError::MigrationAlreadySelected);
+        }
+        if self
+            .managed
+            .is_some_and(|managed| managed.ledger() == migration.ledger())
+        {
+            return Err(PlanError::ConflictingLedger);
         }
         if self.authority.is_some_and(|authority| {
             authority
@@ -395,6 +479,10 @@ impl<'a> VerificationPlan<'a> {
 
     pub(crate) const fn schema(self) -> Option<&'a SchemaInspectionPolicy> {
         self.schema
+    }
+
+    pub(crate) const fn managed_objects_manifest(self) -> Option<&'a ManagedObjectManifest> {
+        self.managed
     }
 }
 

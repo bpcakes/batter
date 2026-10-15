@@ -491,6 +491,7 @@ dependencies = [
  "batter-test-support",
  "futures-util",
  "postgres-test-harness",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
  "tracing",

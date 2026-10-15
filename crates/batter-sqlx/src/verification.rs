@@ -7,6 +7,7 @@
 
 mod authority;
 mod executor;
+mod managed_objects;
 mod manifest;
 mod migration;
 mod policy;
@@ -36,6 +37,8 @@ pub use report::{
 pub use request::{
     PlanError, SchemaInspectionPolicy, SqlxLedgerMode, SqlxMigrationManifest, VerificationPlan,
 };
+
+pub(crate) use policy::coverage::temporary_namespace;
 
 use batter_core::operation::{OperationContext, OperationError};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -231,6 +234,25 @@ pub async fn verify_sqlx_migrations(
     manifest: &SqlxMigrationManifest,
 ) -> Result<VerificationReport, OperationError<VerificationError>> {
     verify(pool, context, VerificationPlan::sqlx_migrations(manifest)).await
+}
+
+/// Verify only one managed-object manifest through the protected verifier executor.
+///
+/// Use this at readiness of a role that serves from a database whose objects a
+/// separate setup stage applied with [`crate::PgLease::migrate_and_apply`].
+/// The report covers only [`SupportedSurface::ManagedObjects`]; see
+/// [`VerificationPlan::managed_objects`] for the findings. Verification never
+/// applies, repairs or drops anything.
+///
+/// # Errors
+/// Returns the same typed database, rollback, and interruption errors
+/// as [`verify`].
+pub async fn verify_managed_objects(
+    pool: &PgPool,
+    context: &OperationContext,
+    manifest: &crate::managed::ManagedObjectManifest,
+) -> Result<VerificationReport, OperationError<VerificationError>> {
+    verify(pool, context, VerificationPlan::managed_objects(manifest)).await
 }
 
 /// Verify a compiled exact role, including its selected ownership safeguard.
