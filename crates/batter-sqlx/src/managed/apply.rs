@@ -1,5 +1,10 @@
 //! Library-ordered migrate-then-apply on one leased connection.
 
+mod drops;
+
+#[cfg(test)]
+pub(super) use drops::{drop_statement, drops_before_create};
+
 use super::catalog::{
     self, CatalogError, LedgerShape, LiveObject, RenderSettings, Touched, create_ledger_sql,
 };
@@ -7,8 +12,8 @@ use super::{
     Identity, ManagedObject, ManagedObjectDigest, ManagedObjectKind, ManagedObjectManifest,
     PublicExecute, SET_ROW,
 };
-use crate::verification::{Identifier, QualifiedName};
 use crate::{PgLease, SqlxFailure};
+use drops::{Retired, drop_holder, lock_drop_tables, retire};
 use sqlx::{AssertSqlSafe, Connection, PgConnection, SqlSafeStr};
 use std::{collections::HashMap, fmt};
 
@@ -246,20 +251,100 @@ async fn apply(
         .iter()
         .map(|row| (row.identity.as_str(), row))
         .collect::<HashMap<_, _>>();
+    let (pending, retired) = execute_changes(connection, &settings, manifest, &recorded).await?;
+    let installed = installed_objects(connection, manifest).await?;
+    if manifest.public_execute() == PublicExecute::Revoke {
+        revoke_public_execute(connection, &installed).await?;
+    }
+    record(connection, manifest, &pending, &installed).await?;
+    Ok(AppliedManagedObjects {
+        digest: manifest.digest(),
+        created_or_replaced: pending.len(),
+        unchanged: manifest.objects().len() - pending.len(),
+        retired: retired.triggers + retired.routines,
+    })
+}
+
+/// Retire, drop and execute what this apply changes, and return the executed
+/// entries and the retired counts.
+async fn execute_changes<'m>(
+    connection: &mut PgConnection,
+    settings: &RenderSettings,
+    manifest: &'m ManagedObjectManifest,
+    recorded: &HashMap<&str, &catalog::LedgerRow>,
+) -> Result<(Vec<&'m ManagedObject>, Retired), ManagedApplyError> {
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
+    let pending = pending_entries(manifest, recorded, &live, &hashes);
+    lock_drop_tables(connection, manifest, &live, &pending).await?;
     let retired = retire(connection, manifest, &live).await?;
     // Dropping a partitioned table's trigger also drops its clones on the
     // partitions, and a clone can hold a declared identity, so the pending
-    // set is decided from a catalog read after any trigger retirement.
+    // set is decided again from a catalog read after any trigger retirement.
     // Retirements only drop, so the surviving objects keep the oids and
-    // renderings hashed above.
-    let live = if retired.triggers > 0 {
-        catalog::resolve_live(connection, manifest).await?
+    // renderings hashed above, and no new drop can become necessary.
+    let (live, pending) = if retired.triggers > 0 {
+        let live = catalog::resolve_live(connection, manifest).await?;
+        let pending = pending_entries(manifest, recorded, &live, &hashes);
+        (live, pending)
     } else {
-        live
+        (live, pending)
     };
-    let pending = manifest
+
+    // Every drop runs before the weaker table locks taken below, by a routine
+    // body's validation and by `CREATE OR REPLACE TRIGGER`; taking
+    // `ACCESS EXCLUSIVE` after them on the same table, or a partition of it,
+    // would upgrade a lock apply holds, which a concurrent reader that turns
+    // writer can deadlock with. `live` only proposes a drop; `drop_holder`
+    // decides it under the table's lock, which `lock_drop_tables` took.
+    for object in &pending {
+        let holder = live.get(object.identity()).and_then(|live| live.kind);
+        drop_holder(connection, object, holder).await?;
+    }
+    // Routines first, so a trigger of either kind binds the body this
+    // transaction installs.
+    for trigger_phase in [false, true] {
+        for object in pending
+            .iter()
+            .filter(|object| object.kind().is_trigger() == trigger_phase)
+        {
+            create(connection, settings, object).await?;
+        }
+    }
+    Ok((pending, retired))
+}
+
+/// Every declared object as installed now, with its oid and rendered hash;
+/// an object absent or of another kind fails the apply.
+async fn installed_objects<'m>(
+    connection: &mut PgConnection,
+    manifest: &'m ManagedObjectManifest,
+) -> Result<Vec<(&'m ManagedObject, i64, [u8; 32])>, ManagedApplyError> {
+    let live = catalog::resolve_live(connection, manifest).await?;
+    let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
+    manifest
+        .objects()
+        .iter()
+        .map(|object| {
+            live.get(object.identity())
+                .filter(|live| live.kind == Some(object.kind()))
+                .and_then(|live| hashes.get(&live.oid).map(|hash| (object, live.oid, *hash)))
+                .ok_or_else(|| ManagedApplyError::IdentityMismatch {
+                    identity: object.identity().to_owned(),
+                })
+        })
+        .collect()
+}
+
+/// The entries whose ledger row is absent, whose kind or source checksum
+/// changed, or whose live definition no longer renders to the recorded hash.
+fn pending_entries<'m>(
+    manifest: &'m ManagedObjectManifest,
+    recorded: &HashMap<&str, &catalog::LedgerRow>,
+    live: &HashMap<String, LiveObject>,
+    hashes: &HashMap<i64, [u8; 32]>,
+) -> Vec<&'m ManagedObject> {
+    manifest
         .objects()
         .iter()
         .filter(|object| {
@@ -275,54 +360,7 @@ async fn apply(
             });
             !installed
         })
-        .collect::<Vec<_>>();
-
-    // Every `ACCESS EXCLUSIVE` lock apply takes on a trigger's table comes
-    // before the weaker table locks taken below, by a routine body's
-    // validation and by `CREATE OR REPLACE TRIGGER`. Taking one after them on
-    // the same table, or a partition of it, would upgrade a lock apply holds,
-    // which a concurrent reader that turns writer can deadlock with. `live`
-    // only proposes a drop; `drop_holder` decides it under the table's lock.
-    for object in &pending {
-        let holder = live.get(object.identity()).and_then(|live| live.kind);
-        drop_holder(connection, object, holder).await?;
-    }
-    // Routines first, so a trigger of either kind binds the body this
-    // transaction installs.
-    for trigger_phase in [false, true] {
-        for object in pending
-            .iter()
-            .filter(|object| object.kind().is_trigger() == trigger_phase)
-        {
-            create(connection, &settings, object).await?;
-        }
-    }
-
-    let live = catalog::resolve_live(connection, manifest).await?;
-    let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
-    let mut installed = Vec::with_capacity(manifest.objects().len());
-    for object in manifest.objects() {
-        let current = live
-            .get(object.identity())
-            .filter(|live| live.kind == Some(object.kind()))
-            .and_then(|live| hashes.get(&live.oid).map(|hash| (live.oid, *hash)));
-        let Some((oid, hash)) = current else {
-            return Err(ManagedApplyError::IdentityMismatch {
-                identity: object.identity().to_owned(),
-            });
-        };
-        installed.push((object, oid, hash));
-    }
-    if manifest.public_execute() == PublicExecute::Revoke {
-        revoke_public_execute(connection, &installed).await?;
-    }
-    record(connection, manifest, &pending, &installed).await?;
-    Ok(AppliedManagedObjects {
-        digest: manifest.digest(),
-        created_or_replaced: pending.len(),
-        unchanged: manifest.objects().len() - pending.len(),
-        retired: retired.triggers + retired.routines,
-    })
+        .collect()
 }
 
 fn live_kinds(
@@ -374,217 +412,6 @@ async fn lock_ledger(
         return Err(ManagedApplyError::LedgerShape);
     }
     Ok(catalog::load_ledger_rows(connection, ledger).await?)
-}
-
-/// How many retired objects `retire` dropped, by phase.
-struct Retired {
-    triggers: usize,
-    routines: usize,
-}
-
-/// Drop every retired object that still exists as its kind: triggers of both
-/// kinds before the routines they may bind. `RESTRICT` semantics keep
-/// undeclared dependents fatal; only a trigger's own partition clones go with
-/// it. `DROP FUNCTION` and `DROP PROCEDURE` refuse the other routine kind
-/// themselves, but `DROP TRIGGER` removes either trigger kind by name, so a
-/// trigger is dropped only when the trigger read under its table's lock is
-/// of the retired kind.
-async fn retire(
-    connection: &mut PgConnection,
-    manifest: &ManagedObjectManifest,
-    live: &HashMap<String, LiveObject>,
-) -> Result<Retired, ManagedApplyError> {
-    let mut retired = Retired {
-        triggers: 0,
-        routines: 0,
-    };
-    for trigger_phase in [true, false] {
-        // An object of another kind under the same identity (a procedure for
-        // a retired function, an aggregate, or the other trigger kind) is not
-        // the retired object.
-        for retirement in manifest.retirements().iter().filter(|retirement| {
-            retirement.kind().is_trigger() == trigger_phase
-                && live
-                    .get(retirement.identity())
-                    .is_some_and(|live| live.kind == Some(retirement.kind()))
-        }) {
-            if let Identity::Trigger { table, name } = retirement.structural_identity() {
-                let Some(holder) = locked_trigger(connection, table, name).await? else {
-                    continue;
-                };
-                if holder.kind != Some(retirement.kind()) {
-                    continue;
-                }
-                drop_trigger(
-                    connection,
-                    retirement.structural_identity(),
-                    retirement.identity(),
-                    holder,
-                )
-                .await?;
-            } else {
-                let sql = drop_statement(retirement.kind(), retirement.structural_identity());
-                execute(connection, AssertSqlSafe(sql))
-                    .await
-                    .map_err(statement)?;
-            }
-            if trigger_phase {
-                retired.triggers += 1;
-            } else {
-                retired.routines += 1;
-            }
-        }
-    }
-    Ok(retired)
-}
-
-/// `DROP` of `identity` as an existing object of `kind`, without `CASCADE`.
-pub(super) fn drop_statement(kind: ManagedObjectKind, identity: &Identity) -> String {
-    let target = match identity {
-        Identity::Trigger { table, name } => format!("{} ON {}", name.quoted(), table.quoted()),
-        Identity::Routine(signature) => signature.quoted().to_owned(),
-    };
-    format!("DROP {} {target}", kind.sql_keyword())
-}
-
-/// Whether a pending entry must first drop the live object holding its
-/// identity: PostgreSQL replaces neither a constraint trigger in place nor one
-/// trigger kind with the other, while `CREATE OR REPLACE` keeps routines and
-/// plain triggers in place.
-pub(super) const fn drops_before_create(
-    declared: ManagedObjectKind,
-    holder: ManagedObjectKind,
-) -> bool {
-    use ManagedObjectKind::{ConstraintTrigger, Function, Procedure, Trigger};
-    match (declared, holder) {
-        (Function | Procedure, _) | (Trigger, Trigger) => false,
-        (Trigger | ConstraintTrigger, ConstraintTrigger) | (ConstraintTrigger, Trigger) => true,
-        // Routine and trigger identities never collide.
-        (Trigger | ConstraintTrigger, Function | Procedure) => false,
-    }
-}
-
-/// The relation a trigger drop is decided on, and the kind of the trigger
-/// holding the name there.
-#[derive(Clone, Copy)]
-struct Holder {
-    relation: i64,
-    kind: Option<ManagedObjectKind>,
-}
-
-/// Lock a trigger's table in `ACCESS EXCLUSIVE` mode, the lock `DROP TRIGGER`
-/// needs anyway, then read the kind of the trigger that holds `name` on it now.
-/// `None` means no relation holds the table's name.
-///
-/// `DROP TRIGGER` removes either kind by name, so a kind read before the lock
-/// could describe a trigger another session has since replaced. Under the
-/// lock no other session can create or drop a trigger on the table, and the
-/// READ COMMITTED read sees every replacement committed before it. `ONLY`
-/// keeps inheritance children and partitions out of this lock; dropping a
-/// partitioned table's trigger then locks its partitions as well. Views and
-/// foreign tables cannot hold constraint triggers, and `LOCK TABLE` would
-/// also lock a view's base relations or refuse a foreign table, so their
-/// trigger is read without the lock; [`drop_trigger`] then rejects a drop that
-/// reached a relation replaced under the same name.
-async fn locked_trigger(
-    connection: &mut PgConnection,
-    table: &QualifiedName,
-    name: &Identifier,
-) -> Result<Option<Holder>, ManagedApplyError> {
-    let Some((relation, relkind)) = catalog::named_relation(connection, table)
-        .await
-        .map_err(statement)?
-    else {
-        return Ok(None);
-    };
-    if relkind == "r" || relkind == "p" {
-        execute(
-            connection,
-            AssertSqlSafe(format!(
-                "LOCK TABLE ONLY {} IN ACCESS EXCLUSIVE MODE",
-                table.quoted()
-            )),
-        )
-        .await
-        .map_err(statement)?;
-    }
-    let current = catalog::resolve_triggers(
-        connection,
-        &[(table.schema(), table.name(), name.as_str())],
-        Touched::Ignore,
-    )
-    .await?;
-    Ok(Some(Holder {
-        relation,
-        kind: current.into_values().next().and_then(|live| live.kind),
-    }))
-}
-
-/// Drop the trigger that `holder` describes under `identity` (rendered as
-/// `rendered`), and require that the drop reached the relation the decision
-/// was read from.
-///
-/// `DROP TRIGGER` resolves the table by name and keeps it locked until
-/// commit, so after the drop the name resolves to the relation it acted on.
-/// Another session can replace a view or foreign table, which apply reads
-/// without locking, by an ordinary table of the same name that holds a
-/// constraint trigger; that drop must not stand, so apply fails with
-/// [`ManagedApplyError::IdentityMismatch`] and the transaction rolls back.
-async fn drop_trigger(
-    connection: &mut PgConnection,
-    identity: &Identity,
-    rendered: &str,
-    holder: Holder,
-) -> Result<(), ManagedApplyError> {
-    let (Identity::Trigger { table, .. }, Some(kind)) = (identity, holder.kind) else {
-        return Ok(());
-    };
-    execute(connection, AssertSqlSafe(drop_statement(kind, identity)))
-        .await
-        .map_err(statement)?;
-    let dropped_on = catalog::named_relation(connection, table)
-        .await
-        .map_err(statement)?;
-    if dropped_on.is_some_and(|(relation, _)| relation == holder.relation) {
-        Ok(())
-    } else {
-        Err(ManagedApplyError::IdentityMismatch {
-            identity: rendered.to_owned(),
-        })
-    }
-}
-
-/// Drop the trigger holding a pending entry's name when PostgreSQL cannot
-/// replace it in place. `holder` is the kind that held the identity when
-/// apply read the catalog; it only proposes the drop, which is decided from
-/// the trigger read under the table's lock.
-async fn drop_holder(
-    connection: &mut PgConnection,
-    object: &ManagedObject,
-    holder: Option<ManagedObjectKind>,
-) -> Result<(), ManagedApplyError> {
-    let Identity::Trigger { table, name } = object.structural_identity() else {
-        return Ok(());
-    };
-    if !holder.is_some_and(|holder| drops_before_create(object.kind(), holder)) {
-        return Ok(());
-    }
-    match locked_trigger(connection, table, name).await? {
-        Some(current)
-            if current
-                .kind
-                .is_some_and(|holder| drops_before_create(object.kind(), holder)) =>
-        {
-            drop_trigger(
-                connection,
-                object.structural_identity(),
-                object.identity(),
-                current,
-            )
-            .await
-        }
-        _ => Ok(()),
-    }
 }
 
 /// Execute one source statement and require that it wrote exactly its

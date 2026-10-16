@@ -265,6 +265,26 @@ a concurrent reader that turned writer deadlocked with it (`40P01`). With the
 drops first, PostgreSQL queues such a writer ahead of apply's waiting request,
 and both commit.
 
+A further review found that drops taken in identity order could also lock a
+partition before its partitioned table, when the partition's identity sorted
+first. A write routed through the partitioned table locks it before the
+partition it reaches, as `DROP TRIGGER` on a partitioned table does, so such a
+write deadlocked with apply (`40P01`). Before any retirement or drop, apply
+therefore takes every `ACCESS EXCLUSIVE` lock a drop may need, in one
+`LOCK TABLE` statement. Partitioned tables come before their partitions,
+ordered by how many relations `pg_partition_ancestors` lists. A partitioned
+table is locked with its partitions, which is the footprint `DROP TRIGGER` on
+it takes; other tables are locked `ONLY`. The candidates are the trigger
+retirements the catalog read shows as present and the pending entries whose
+holder must be dropped. Each lock is one that entry's drop decision takes
+anyway, and no later statement of the apply takes `ACCESS EXCLUSIVE`. The
+locked re-read and the drops-before-creates order are unchanged. Apply cannot
+order its locks to match an application's own order across unrelated tables,
+so a transaction that locks two such tables in the other order can still
+deadlock with an apply that drops triggers on both; PostgreSQL then aborts one
+of them, and a `lock_timeout` and a quiet window remain the application's
+choice.
+
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
 `extra_float_digits`, `bytea_output`, `standard_conforming_strings`,
@@ -502,4 +522,10 @@ apply that replaces a plain trigger and drops a constraint trigger, on one
 table or across a partitioned table and its partition. Accepting a drop on
 whatever relation it reached failed both replacement races. Taking each drop
 just before its own entry's create, in identity order, failed both lock-order
-races with `40P01`.
+races with `40P01` at `f5ceae9`. Two further cases, in
+`tests/managed_objects_live/trigger_lock_order.rs`, race writes routed
+through a partitioned table against drops and a retirement whose partition
+identity sorts first. Removing the up-front lock step failed both
+(`40P01`). Removing it and interleaving the drops failed all four lock-order
+races, while interleaving alone passes them, because the lock step already
+holds every `ACCESS EXCLUSIVE` lock a drop takes.

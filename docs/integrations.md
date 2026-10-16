@@ -658,7 +658,10 @@ constraint trigger, now leaves one in place. Apply decides every trigger drop
 from the trigger it reads under the table's `ACCESS EXCLUSIVE` lock, in a
 transaction pinned to READ COMMITTED, so a trigger another session replaced
 with the other kind is never dropped by a retirement, and a drop that reaches
-a relation replaced under the same name fails the apply instead of standing. A drop waiting behind a
+a relation replaced under the same name fails the apply instead of standing.
+Apply takes those locks first, partitioned tables before their partitions as
+routed writes take them; a transaction that locks two managed tables in
+another order than apply can still deadlock with it. A drop waiting behind a
 long transaction stalls the table's other readers and writers; Batter sets no
 `lock_timeout`. Declare and retire a partitioned table's trigger on the
 partitioned table, not on its partitions' clones, and retire a constraint

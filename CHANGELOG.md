@@ -34,10 +34,13 @@ contracts, capability facts and validation history.
   session default. A drop must also reach the relation apply read: when another
   session replaces a view or foreign table, which apply reads without
   `LOCK TABLE`, by a same-named table holding a constraint trigger, apply fails
-  with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Every drop
-  now precedes the routine sources and trigger creates, so apply never upgrades
-  a `SHARE ROW EXCLUSIVE` lock it holds, which a reader turning writer could
-  deadlock. Verification reports kind and checksum mismatches, drift (including
+  with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Before any
+  retirement or drop, apply takes every `ACCESS EXCLUSIVE` lock a drop may need
+  in one `LOCK TABLE`, partitioned tables (with their partitions) before any
+  partition, and every drop precedes the routine sources and trigger creates.
+  Apply therefore never upgrades a `SHARE ROW EXCLUSIVE` lock it holds, which a
+  reader turning writer could deadlock, and never locks a partition before its
+  partitioned table, which a routed write could deadlock. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and
   the digests of existing kinds are unchanged; the new kind is recorded as

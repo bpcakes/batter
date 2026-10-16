@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the thirty-two-case [managed-object](#managed-routines-and-triggers)
+migration target, the thirty-four-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -825,8 +825,9 @@ drop-before-create direction, ran triggers before routines, retired routines
 first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
 
-Eight cases in `tests/managed_objects_live/trigger_drops.rs` cover trigger drops
-decided under the table lock.
+Six cases in `tests/managed_objects_live/trigger_drops.rs` and four in
+`tests/managed_objects_live/trigger_lock_order.rs` cover trigger drops decided
+under the table lock and the order of apply's locks.
 `managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
 two changes in one manifest: a retirement of a partitioned table's constraint
 trigger, which a migration created and PostgreSQL cloned onto a partition, and
@@ -879,11 +880,26 @@ partitioned table and the constraint trigger on one of its partitions. Another
 transaction reads the table before apply starts, and writes once apply waits
 for its `ACCESS EXCLUSIVE` request. Both must commit.
 
-Mutation controls against these four cases:
+`managed_trigger_drops_lock_partitioned_tables_before_their_partitions` and
+`managed_trigger_retirements_lock_partitioned_tables_before_their_partitions`
+give a constraint trigger on a partition a name that sorts before one on its
+partitioned table. In the first case both change; in the second the
+partition's trigger is retired. Another transaction writes through the
+partitioned table to another partition before apply starts. Once apply waits
+for the partitioned table, it writes through the partitioned table to that
+partition. Both must commit.
+
+Mutation controls against these cases:
 - Accepting a drop whatever relation it reached failed both replacement races.
-- Taking each drop just before its own entry's create, in identity order,
-  failed both lock-order races with a deadlock (`40P01`), raised for apply in
-  one layout and for the writer in the other.
+- Removing the up-front lock step failed both partition-order races with a
+  deadlock (`40P01`).
+- Removing it and also taking each drop just before its own entry's create,
+  in identity order, failed all four lock-order races with `40P01`, raised
+  for apply or for the writer.
+- Interleaving the drops alone passes all four, because the lock step already
+  holds every `ACCESS EXCLUSIVE` lock a drop takes. At `f5ceae9`, before the
+  lock step existed, the interleaved order failed both earlier lock-order
+  races.
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2547,8 +2563,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 174-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-two
+an exact 176-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-four
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

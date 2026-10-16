@@ -175,6 +175,15 @@ Rechecked on 18.6 for the follow-up after review (same day):
     proceeds. If apply already holds `SHARE ROW EXCLUSIVE` on the table, or on
     the partitioned table of the partition it waits for, the two deadlock
     (`40P01`).
+  * A write routed through a partitioned table locks it before the partition
+    it reaches. An apply holding `ACCESS EXCLUSIVE` on that partition while
+    waiting for the partitioned table deadlocks with it (`40P01`); locking the
+    partitioned table first lets the write finish.
+  * Probed: `LOCK TABLE` without `ONLY` on a partitioned table takes
+    `ACCESS EXCLUSIVE` on it and every partition, including a foreign-table
+    partition, as `DROP TRIGGER` on it does. A constraint trigger cannot be
+    created on a partitioned table with a foreign partition ("... is a foreign
+    table").
 
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 

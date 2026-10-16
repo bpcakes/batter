@@ -1,8 +1,7 @@
 //! Trigger drops decided from the trigger read under its table's lock: a
 //! retirement or a drop before create never acts on a catalog read that another
 //! session's committed replacement, an earlier retirement's cascade or a
-//! relation replaced under the same name has made stale, and every drop's
-//! `ACCESS EXCLUSIVE` lock precedes the weaker locks of trigger replacements.
+//! relation replaced under the same name has made stale.
 
 use super::constraint_triggers::{
     DEFERRED, IMMEDIATE, check_body, check_function, check_log, check_trigger, fired, holder,
@@ -19,22 +18,22 @@ use batter_sqlx::managed::{
 use batter_sqlx::verification::{Identifier, QualifiedName};
 use sqlx::{AssertSqlSafe, PgPool};
 use std::time::Duration;
-use tokio::time::{Instant, sleep, timeout};
+use tokio::time::{Instant, sleep};
 
 /// A failed apply as a test error naming only its SQLSTATE.
-fn with_sqlstate(error: ManagedApplyError) -> BoxError {
+pub(super) fn with_sqlstate(error: ManagedApplyError) -> BoxError {
     std::io::Error::other(format!("apply failed with SQLSTATE {:?}", sqlstate(&error))).into()
 }
 
 /// One applying session, one session that races it and one observer.
-struct RacePools {
-    applying: PgPool,
-    blocker: PgPool,
-    observer: PgPool,
+pub(super) struct RacePools {
+    pub(super) applying: PgPool,
+    pub(super) blocker: PgPool,
+    pub(super) observer: PgPool,
 }
 
 impl RacePools {
-    async fn new(fixture: &mut Fixture, settings: &[(&str, &str)]) -> Result<Self> {
+    pub(super) async fn new(fixture: &mut Fixture, settings: &[(&str, &str)]) -> Result<Self> {
         Ok(Self {
             applying: fixture.pool_with(Role::Migrator, settings).await?,
             blocker: fixture.pool(Role::Migrator).await?,
@@ -535,165 +534,6 @@ async fn managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_
             .await;
         // Report the race's own failure first; cleanup still ran.
         raced.and(cleanup)
-    })
-    .await
-}
-
-/// Apply `change`, which replaces the plain trigger `audit` and drops the
-/// constraint trigger on `table`, while another transaction that read `read`
-/// before apply started runs `write` once apply waits for its
-/// `ACCESS EXCLUSIVE` request on `table`, then commits. PostgreSQL lets that
-/// write ahead of the queued request, unless apply already holds a lock it
-/// conflicts with: both transactions must commit.
-async fn lock_order_race(
-    fixture: &mut Fixture,
-    install: &ManagedObjectManifest,
-    change: &ManagedObjectManifest,
-    table: &str,
-    read: String,
-    write: String,
-) -> Result {
-    let pools = RacePools::new(fixture, &[]).await?;
-    let _ = fixture
-        .apply(&pools.applying, install)
-        .await
-        .map_err(with_sqlstate)?;
-    let schema = fixture.schema();
-    let apply_pid = pid(&pools.applying).await?;
-    let mut reader = pools.blocker.begin().await?;
-    bounded(sqlx::query(AssertSqlSafe(read)).execute(&mut *reader)).await??;
-    let apply = async {
-        fixture
-            .apply(&pools.applying, change)
-            .await
-            .map_err(with_sqlstate)
-    };
-    let writer = async {
-        wait_for_lock(
-            &pools.observer,
-            apply_pid,
-            schema,
-            table,
-            "AccessExclusiveLock",
-            false,
-        )
-        .await?;
-        let written = timeout(
-            Duration::from_secs(10),
-            sqlx::query(AssertSqlSafe(write)).execute(&mut *reader),
-        )
-        .await?;
-        if let Err(error) = written {
-            let code = error
-                .as_database_error()
-                .and_then(|error| error.code())
-                .map(|code| code.into_owned());
-            return Err(std::io::Error::other(format!(
-                "the concurrent write failed with SQLSTATE {code:?}"
-            ))
-            .into());
-        }
-        reader.commit().await?;
-        Ok::<_, BoxError>(())
-    };
-    let (applied, ()) = tokio::try_join!(apply, writer)?;
-    require(
-        applied.created_or_replaced() == 2,
-        "apply did not replace the plain trigger and re-create the constraint trigger",
-    )
-}
-
-/// A plain trigger and a constraint trigger, both changed, on one table, or
-/// on a partitioned table and one of its partitions.
-fn lock_order_objects(
-    fixture: &Fixture,
-    plain: (&str, &str),
-    constraint: (&str, &str),
-    events: &str,
-    deferral: &str,
-) -> Result<ManagedObjectManifest> {
-    let schema = fixture.schema();
-    let (plain_table, plain_name) = plain;
-    let (constraint_table, constraint_name) = constraint;
-    Ok(fixture
-        .objects_with(
-            PublicExecute::Revoke,
-            [
-                check_function(schema, "v1")?,
-                ManagedObject::trigger(
-                    QualifiedName::new(schema, plain_table)?,
-                    Identifier::new(plain_name)?,
-                    format!(
-                        "CREATE OR REPLACE TRIGGER {plain_name} AFTER {events} ON {schema}.{plain_table}
-                         FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
-                    ),
-                )?,
-                ManagedObject::constraint_trigger(
-                    QualifiedName::new(schema, constraint_table)?,
-                    Identifier::new(constraint_name)?,
-                    format!(
-                        "CREATE CONSTRAINT TRIGGER {constraint_name} AFTER INSERT
-                         ON {schema}.{constraint_table}
-                         {deferral} FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
-                    ),
-                )?,
-            ],
-            [],
-        )?
-        .manifest)
-}
-
-/// The plain trigger sorts first, so a drop taken in identity order would
-/// follow its `SHARE ROW EXCLUSIVE` lock on the same table.
-#[tokio::test]
-#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
-async fn managed_trigger_drops_precede_replacements_on_one_table() -> Result {
-    Fixture::run(async |fixture| {
-        let schema = fixture.schema().to_owned();
-        fixture.add_migration(check_log(&schema));
-        let (plain, constraint) = (("records", "records_audit"), ("records", "records_check"));
-        let install = lock_order_objects(fixture, plain, constraint, "INSERT", DEFERRED)?;
-        let change = lock_order_objects(fixture, plain, constraint, "INSERT OR UPDATE", IMMEDIATE)?;
-        lock_order_race(
-            fixture,
-            &install,
-            &change,
-            "records",
-            format!("SELECT count(*) FROM {schema}.records"),
-            format!("INSERT INTO {schema}.records (note) VALUES ('raced')"),
-        )
-        .await
-    })
-    .await
-}
-
-/// The plain trigger on a partitioned table sorts first and locks its
-/// partitions too, so a drop taken in identity order on one of them would
-/// follow that `SHARE ROW EXCLUSIVE` lock.
-#[tokio::test]
-#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
-async fn managed_trigger_drops_precede_replacements_across_a_partition() -> Result {
-    Fixture::run(async |fixture| {
-        let schema = fixture.schema().to_owned();
-        fixture.add_migration(check_log(&schema));
-        fixture.add_migration(format!(
-            "CREATE TABLE {schema}.parted (id bigint NOT NULL, region text NOT NULL)
-                 PARTITION BY LIST (region);
-             CREATE TABLE {schema}.parted_east PARTITION OF {schema}.parted
-                 FOR VALUES IN ('east');"
-        ));
-        let (plain, constraint) = (("parted", "parted_audit"), ("parted_east", "parted_check"));
-        let install = lock_order_objects(fixture, plain, constraint, "INSERT", DEFERRED)?;
-        let change = lock_order_objects(fixture, plain, constraint, "INSERT OR UPDATE", IMMEDIATE)?;
-        lock_order_race(
-            fixture,
-            &install,
-            &change,
-            "parted_east",
-            format!("SELECT count(*) FROM {schema}.parted_east"),
-            format!("INSERT INTO {schema}.parted (id, region) VALUES (1, 'east')"),
-        )
-        .await
     })
     .await
 }

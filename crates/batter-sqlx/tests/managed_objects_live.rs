@@ -20,6 +20,9 @@ mod constraint_triggers;
 #[path = "managed_objects_live/trigger_drops.rs"]
 mod trigger_drops;
 
+#[path = "managed_objects_live/trigger_lock_order.rs"]
+mod trigger_lock_order;
+
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{
     FindingKind, Identifier, ObjectPrivilege, QualifiedName, RoutineSignature, RoutineType,

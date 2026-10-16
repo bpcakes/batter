@@ -127,6 +127,8 @@ TARGETS = {
         "managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_drop",
         "managed_trigger_drops_precede_replacements_on_one_table",
         "managed_trigger_drops_precede_replacements_across_a_partition",
+        "managed_trigger_drops_lock_partitioned_tables_before_their_partitions",
+        "managed_trigger_retirements_lock_partitioned_tables_before_their_partitions",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

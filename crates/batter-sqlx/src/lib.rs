@@ -316,9 +316,11 @@ impl PgLease {
     /// before a create, first takes that lock and reads the trigger again,
     /// acts only on the kind it finds under the lock, and fails with
     /// [`managed::ManagedApplyError::IdentityMismatch`] if the drop reached
-    /// another relation than the one apply read. Every drop precedes the
-    /// routine sources and trigger creates, so apply never upgrades a table
-    /// lock it already holds. An unchanged,
+    /// another relation than the one apply read. Before any drop, apply takes
+    /// every `ACCESS EXCLUSIVE` lock a drop may need, partitioned tables
+    /// before their partitions as routed writes lock them, and every drop
+    /// precedes the routine sources and trigger creates, so apply never
+    /// upgrades a table lock it already holds. An unchanged,
     /// undrifted set therefore executes no DDL and locks no managed trigger's
     /// table (only the ledger), while a definition changed out of band,
     /// including a disabled trigger, is replaced. Apply never chooses source,
