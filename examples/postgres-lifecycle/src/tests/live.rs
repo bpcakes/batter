@@ -158,6 +158,29 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
     assert_exit(result, ExitCode::FAILURE);
 }
 
+/// The managed constraint trigger checks a note when its writer commits, so a
+/// transaction can still correct a blank note, while a blank commit fails.
+async fn note_checked_at_commit(pool: &sqlx::PgPool) -> Result<(), BoxError> {
+    let mut transaction = pool.begin().await?;
+    let id: i64 =
+        sqlx::query_scalar("INSERT INTO lifecycle.records (note) VALUES ('') RETURNING id")
+            .fetch_one(&mut *transaction)
+            .await?;
+    sqlx::query("UPDATE lifecycle.records SET note = 'corrected' WHERE id = $1")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    let blank = sqlx::query("INSERT INTO lifecycle.records (note) VALUES (' ')")
+        .execute(pool)
+        .await
+        .expect_err("a blank note must fail when its transaction commits");
+    match blank.as_database_error().and_then(|error| error.code()) {
+        Some(code) if code == "23514" => Ok(()),
+        _ => Err("the managed constraint trigger did not reject a blank note".into()),
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires an externally provisioned DATABASE_URL; run tests::live:: -- --ignored"]
 async fn schema_stage_applies_managed_objects_and_gates_readiness() {
@@ -190,6 +213,7 @@ async fn schema_stage_applies_managed_objects_and_gates_readiness() {
                 if !touched {
                     return Err("managed trigger did not run".into());
                 }
+                note_checked_at_commit(&pool).await?;
                 // A repeated startup re-executes nothing.
                 let again = schema::apply(&pool, &context, &objects).await?;
                 if again.created_or_replaced() != 0 {
