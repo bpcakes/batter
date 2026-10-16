@@ -35,12 +35,15 @@ contracts, capability facts and validation history.
   session replaces a view or foreign table, which apply reads without
   `LOCK TABLE`, by a same-named table holding a constraint trigger, apply fails
   with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Before any
-  retirement or drop, apply takes every `ACCESS EXCLUSIVE` lock a drop may need
-  in one `LOCK TABLE`, partitioned tables (with their partitions) before any
-  partition, and every drop precedes the routine sources and trigger creates.
-  Apply therefore never upgrades a `SHARE ROW EXCLUSIVE` lock it holds, which a
-  reader turning writer could deadlock, and never locks a partition before its
-  partitioned table, which a routed write could deadlock. Verification reports kind and checksum mismatches, drift (including
+  retirement or drop, apply takes every lock its trigger statements need on
+  application tables as one set: `ACCESS EXCLUSIVE` for drops and retirements,
+  `SHARE ROW EXCLUSIVE` for other pending triggers, a partitioned table with
+  its partitions. It uses `NOWAIT` in a savepoint and, when a table refuses,
+  rolls back and waits for that table alone. It never waits while holding part
+  of the set, so neither a reader turning writer nor a write routed through a
+  partitioned table can deadlock with it. A session `lock_timeout` bounds each
+  wait, and apply gives up after 32 rounds with the last refusal (`55P03`).
+  Every drop precedes the routine sources and trigger creates. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and
   the digests of existing kinds are unchanged; the new kind is recorded as

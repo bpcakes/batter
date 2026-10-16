@@ -118,7 +118,10 @@ async fn managed_objects_reapply_is_idempotent_and_executes_no_ddl() -> Result {
         let _ = fixture.apply(&migrator, &objects.manifest).await?;
         let catalog = catalog_state(&migrator, fixture.schema()).await?;
         let ledger = fixture.object_rows(&migrator).await?;
-        let again = fixture.apply(&migrator, &objects.manifest).await?;
+        // A writer holding the trigger's table does not delay the re-apply.
+        let again = fixture
+            .apply_beside_writer(&migrator, &objects.manifest, "records")
+            .await?;
         require(
             again.created_or_replaced() == 0 && again.unchanged() == 4 && again.retired() == 0,
             "repeated apply re-executed an unchanged object",

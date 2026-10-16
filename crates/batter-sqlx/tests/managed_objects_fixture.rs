@@ -324,6 +324,33 @@ impl Fixture {
         .expect("apply completed within thirty seconds")
     }
 
+    /// Apply `manifest` while another transaction holds `ROW EXCLUSIVE` on
+    /// `table`, which every lock a trigger statement takes conflicts with,
+    /// and require the apply to finish within ten seconds. An unchanged set
+    /// must take no lock on the table, so it never waits for that writer.
+    pub(crate) async fn apply_beside_writer(
+        &mut self,
+        pool: &PgPool,
+        manifest: &ManagedObjectManifest,
+        table: &str,
+    ) -> Result<AppliedManagedObjects> {
+        let writers = self.pool(Role::Migrator).await?;
+        let mut writer = writers.begin().await?;
+        bounded(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "LOCK TABLE {}.{table} IN ROW EXCLUSIVE MODE",
+                self.schema
+            )))
+            .execute(&mut *writer),
+        )
+        .await??;
+        let applied = tokio::time::timeout(Duration::from_secs(10), self.apply(pool, manifest))
+            .await
+            .map_err(|_| std::io::Error::other("an apply waited for a table a writer held"))?;
+        writer.rollback().await?;
+        Ok(applied?)
+    }
+
     pub(crate) async fn migrate_only(&self, pool: &PgPool) -> Result {
         let lease = PgLease::acquire(pool, &context()).await?;
         lease.migrate(&self.migrator_bundle()).await?;

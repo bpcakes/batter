@@ -184,6 +184,19 @@ Rechecked on 18.6 for the follow-up after review (same day):
     partition, as `DROP TRIGGER` on it does. A constraint trigger cannot be
     created on a partitioned table with a foreign partition ("... is a foreign
     table").
+* **`NOWAIT` and savepoints (probed).**
+  * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
+    once with `55P03` ("could not obtain lock on relation").
+  * `ROLLBACK TO SAVEPOINT` releases every lock taken after the savepoint,
+    while `RELEASE SAVEPOINT` keeps them.
+  * A wait ended by `lock_timeout` also reports `55P03`, so apply tells the
+    two apart by the statement it ran.
+  * Validating a SQL-language routine body takes `ACCESS SHARE` on the tables
+    it reads, and waits behind an `ACCESS EXCLUSIVE` holder.
+  * sqlx 0.9's nested `rollback()` sends `ROLLBACK TO SAVEPOINT` without
+    `RELEASE`, which left later statements in a subtransaction whose rows
+    failed the `xmin` identity check, so apply issues its own savepoint
+    statements.
 
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 

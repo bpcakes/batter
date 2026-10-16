@@ -843,13 +843,20 @@ triggers are read again without `LOCK TABLE`, which would also lock a view's
 base relations and refuses foreign tables. Every drop must then reach the
 relation apply read: if another session replaced the view or foreign table by
 a same-named table, apply fails with `IdentityMismatch` and rolls the drop
-back. Before any retirement or drop, apply takes every `ACCESS EXCLUSIVE` lock
-a drop may need in one `LOCK TABLE`, with partitioned tables, together with
-their partitions, before any partition, as routed writes and `DROP TRIGGER`
-lock them. All drops then run before any routine source or trigger create.
-Apply therefore never upgrades a lock it holds, and never locks a partition
-before its partitioned table; a transaction that locks unrelated managed
-tables in another order than apply can still deadlock with it.
+back. Before any retirement or drop, apply takes every lock its trigger
+statements need on application tables as one set:
+- `ACCESS EXCLUSIVE` for retirements and drops;
+- `SHARE ROW EXCLUSIVE` for other pending triggers;
+- a partitioned table together with its partitions.
+
+It runs each `LOCK TABLE` with `NOWAIT` in a savepoint. When one is refused, it
+rolls the whole round back and waits for that table alone before trying again.
+It never waits while holding part of the set, so no lock order of other
+transactions, such as a routed write or a partition read before a write through
+its partitioned table, can deadlock with it. A session `lock_timeout` bounds
+each wait, and apply gives up after 32 rounds. All drops still run before any
+routine source or trigger create. Locks that routine validation takes, and
+triggers on views and foreign tables, are not part of the set.
 Declare a constraint trigger in the manifest rather than in a migration: a
 migration commits before apply and could bind only the previously installed
 body, or no body at all on a fresh database. Every error, cancellation or

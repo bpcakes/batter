@@ -13,7 +13,7 @@ use super::{
     PublicExecute, SET_ROW,
 };
 use crate::{PgLease, SqlxFailure};
-use drops::{Retired, drop_holder, lock_drop_tables, retire};
+use drops::{Retired, drop_holder, lock_trigger_tables, retire};
 use sqlx::{AssertSqlSafe, Connection, PgConnection, SqlSafeStr};
 use std::{collections::HashMap, fmt};
 
@@ -276,7 +276,7 @@ async fn execute_changes<'m>(
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
     let pending = pending_entries(manifest, recorded, &live, &hashes);
-    lock_drop_tables(connection, manifest, &live, &pending).await?;
+    lock_trigger_tables(connection, manifest, &live, &pending).await?;
     let retired = retire(connection, manifest, &live).await?;
     // Dropping a partitioned table's trigger also drops its clones on the
     // partitions, and a clone can hold a declared identity, so the pending
@@ -296,7 +296,7 @@ async fn execute_changes<'m>(
     // `ACCESS EXCLUSIVE` after them on the same table, or a partition of it,
     // would upgrade a lock apply holds, which a concurrent reader that turns
     // writer can deadlock with. `live` only proposes a drop; `drop_holder`
-    // decides it under the table's lock, which `lock_drop_tables` took.
+    // decides it under the table's lock, which `lock_trigger_tables` took.
     for object in &pending {
         let holder = live.get(object.identity()).and_then(|live| live.kind);
         drop_holder(connection, object, holder).await?;

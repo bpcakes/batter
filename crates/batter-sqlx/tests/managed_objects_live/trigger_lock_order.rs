@@ -4,13 +4,15 @@
 //! concurrent reader turning writer, or a write routed through a partitioned
 //! table, cannot deadlock with an apply that drops triggers.
 
-use super::constraint_triggers::{DEFERRED, IMMEDIATE, check_function, check_log};
-use super::trigger_drops::{RacePools, with_sqlstate};
+use super::constraint_triggers::{DEFERRED, IMMEDIATE, check_function, check_log, check_trigger};
+use super::trigger_drops::{RacePools, wait_for_any_lock_wait, with_sqlstate};
 use super::verification::wait_for_lock;
-use super::{Fixture, pid};
+use super::{Fixture, Role, catalog_state, pid, sqlstate};
 use crate::support::{Result, bounded, require};
 use batter_core::BoxError;
-use batter_sqlx::managed::{ManagedObject, ManagedObjectManifest, PublicExecute, Retirement};
+use batter_sqlx::managed::{
+    ManagedApplyError, ManagedObject, ManagedObjectManifest, PublicExecute, Retirement,
+};
 use batter_sqlx::verification::{Identifier, QualifiedName};
 use sqlx::AssertSqlSafe;
 use std::time::Duration;
@@ -27,8 +29,8 @@ fn partitions(schema: &str) -> String {
 }
 
 /// Apply `change` while another transaction, which ran `before` before apply
-/// started, runs `write` once apply waits for its `ACCESS EXCLUSIVE` request on
-/// `table`, then commits. PostgreSQL lets that write ahead of the queued
+/// started, runs `write` once apply waits for a lock on `table`, in `mode` or
+/// any mode, then commits. PostgreSQL lets that write ahead of the queued
 /// request unless apply already holds a lock it conflicts with, so both
 /// transactions must commit, and apply must report `expected` created or
 /// replaced and retired counts.
@@ -36,7 +38,7 @@ async fn lock_order_race(
     fixture: &mut Fixture,
     install: &ManagedObjectManifest,
     change: &ManagedObjectManifest,
-    table: &str,
+    (table, mode): (&str, Option<&str>),
     statements: (String, String),
     expected: (usize, usize),
 ) -> Result {
@@ -57,15 +59,12 @@ async fn lock_order_race(
             .map_err(with_sqlstate)
     };
     let writer = async {
-        wait_for_lock(
-            &pools.observer,
-            apply_pid,
-            schema,
-            table,
-            "AccessExclusiveLock",
-            false,
-        )
-        .await?;
+        match mode {
+            Some(mode) => {
+                wait_for_lock(&pools.observer, apply_pid, schema, table, mode, false).await?;
+            }
+            None => wait_for_any_lock_wait(&pools.observer, apply_pid, schema, table).await?,
+        }
         let written = timeout(
             Duration::from_secs(10),
             sqlx::query(AssertSqlSafe(write)).execute(&mut *reader),
@@ -146,7 +145,7 @@ async fn managed_trigger_drops_precede_replacements_on_one_table() -> Result {
             fixture,
             &install,
             &change,
-            "records",
+            ("records", Some("AccessExclusiveLock")),
             (
                 format!("SELECT count(*) FROM {schema}.records"),
                 format!("INSERT INTO {schema}.records (note) VALUES ('raced')"),
@@ -175,7 +174,7 @@ async fn managed_trigger_drops_precede_replacements_across_a_partition() -> Resu
             fixture,
             &install,
             &change,
-            "parted_east",
+            ("parted_east", Some("AccessExclusiveLock")),
             (
                 format!("SELECT count(*) FROM {schema}.parted_east"),
                 format!("INSERT INTO {schema}.parted (id, region) VALUES (1, 'east')"),
@@ -247,7 +246,7 @@ async fn managed_trigger_drops_lock_partitioned_tables_before_their_partitions()
             fixture,
             &install,
             &change,
-            "parted",
+            ("parted", Some("AccessExclusiveLock")),
             routed_writes(&schema),
             (2, 0),
         )
@@ -271,11 +270,105 @@ async fn managed_trigger_retirements_lock_partitioned_tables_before_their_partit
             fixture,
             &install,
             &change,
-            "parted",
+            ("parted", Some("AccessExclusiveLock")),
             routed_writes(&schema),
             (1, 1),
         )
         .await
+    })
+    .await
+}
+
+/// A plain trigger on `parted` changes and a constraint trigger on its
+/// partition `parted_east` must be dropped, while a write routed through
+/// `parted` holds it before apply starts and reaches `parted_east` once apply
+/// waits for `parted`. With `managed_trigger_drops_precede_replacements_across_a_partition`,
+/// whose transaction holds the partition first, no fixed lock order serves
+/// both, so apply never waits while holding part of its locks.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_mixed_partition_trigger_changes_let_a_routed_writer_finish() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        fixture.add_migration(partitions(&schema));
+        let (plain, constraint) = (("parted", "parted_audit"), ("parted_east", "parted_check"));
+        let install = lock_order_objects(fixture, plain, constraint, "INSERT", DEFERRED)?;
+        let change = lock_order_objects(fixture, plain, constraint, "INSERT OR UPDATE", IMMEDIATE)?;
+        lock_order_race(
+            fixture,
+            &install,
+            &change,
+            ("parted", None),
+            routed_writes(&schema),
+            (2, 0),
+        )
+        .await
+    })
+    .await
+}
+
+/// Waiting for a refused table is an ordinary lock wait: a session
+/// `lock_timeout` bounds it, and the apply then fails before `COMMIT` without
+/// changing anything.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_lock_wait_honours_the_session_lock_timeout() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        let declare = |deferral| {
+            fixture.objects_with(
+                PublicExecute::Revoke,
+                [
+                    check_function(&schema, "v1")?,
+                    check_trigger(&schema, deferral)?,
+                ],
+                [],
+            )
+        };
+        let (install, change) = (declare(DEFERRED)?, declare(IMMEDIATE)?);
+        let applying = fixture
+            .pool_with(Role::Migrator, &[("lock_timeout", "300ms")])
+            .await?;
+        let blocker = fixture.pool(Role::Migrator).await?;
+        let observer = fixture.pool(Role::Migrator).await?;
+        let _ = fixture
+            .apply(&applying, &install.manifest)
+            .await
+            .map_err(with_sqlstate)?;
+        let catalog = catalog_state(&observer, &schema).await?;
+        let mut reader = blocker.begin().await?;
+        bounded(
+            sqlx::query(AssertSqlSafe(format!(
+                "LOCK TABLE {schema}.records IN ACCESS SHARE MODE"
+            )))
+            .execute(&mut *reader),
+        )
+        .await??;
+        let outcome = timeout(
+            Duration::from_secs(10),
+            fixture.apply(&applying, &change.manifest),
+        )
+        .await?;
+        reader.rollback().await?;
+        require(
+            matches!(&outcome, Err(error @ ManagedApplyError::Statement(_))
+                if sqlstate(error).as_deref() == Some("55P03")),
+            "the lock wait did not end at the session lock_timeout",
+        )?;
+        require(
+            catalog_state(&observer, &schema).await? == catalog,
+            "an apply that timed out changed the catalog",
+        )?;
+        let applied = fixture
+            .apply(&applying, &change.manifest)
+            .await
+            .map_err(with_sqlstate)?;
+        require(
+            applied.created_or_replaced() == 1,
+            "apply did not re-create the constraint trigger once the table was free",
+        )
     })
     .await
 }

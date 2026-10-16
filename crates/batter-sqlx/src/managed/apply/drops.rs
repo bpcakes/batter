@@ -2,33 +2,45 @@
 //!
 //! `DROP TRIGGER` removes either trigger kind by name, so every drop here is
 //! decided from the trigger read again under the table's `ACCESS EXCLUSIVE`
-//! lock, must reach the relation that read named, and takes its lock before
-//! any weaker lock apply takes, partitioned tables before their partitions.
+//! lock and must reach the relation that read named. Every lock the trigger
+//! statements need is taken first, as one set, without waiting while holding
+//! part of it.
 
 use super::{execute, statement};
 use crate::managed::catalog::{self, LiveObject, Touched};
 use crate::managed::{
     Identity, ManagedApplyError, ManagedObject, ManagedObjectKind, ManagedObjectManifest,
-    Retirement,
 };
 use crate::verification::{Identifier, QualifiedName};
 use sqlx::{AssertSqlSafe, PgConnection};
 use std::collections::{BTreeMap, HashMap};
 
-/// Take every `ACCESS EXCLUSIVE` lock a trigger drop in this apply may need,
-/// partitioned tables before their partitions, before any drop runs.
+/// Rounds of taking the whole lock set before apply gives up with the last
+/// `NOWAIT` refusal. Every round after the first first waits for the table
+/// that refused, so rounds repeat only while other transactions keep holding
+/// a different table of the set.
+const LOCK_ROUNDS: usize = 32;
+
+/// Take every lock apply's trigger statements need on application tables
+/// before any of them runs, without ever waiting while holding part of them.
 ///
-/// A write routed through a partitioned table locks it before the partition
-/// it reaches, and so does `DROP TRIGGER` on a partitioned table. Locking a
-/// partition first, for a drop whose identity sorts before one on its
-/// partitioned table, could deadlock with such a write. The candidates are
-/// the trigger retirements the catalog shows as present and the pending
-/// entries whose holder must be dropped. Each takes the lock its drop takes
-/// anyway: a table `ONLY`, and a partitioned table with its partitions, as
-/// `DROP TRIGGER` on it locks them. With every such lock held first, no later
-/// statement of the apply upgrades a lock it holds. Views and foreign tables
-/// are not locked, as in [`locked_trigger`].
-pub(super) async fn lock_drop_tables(
+/// A trigger retirement or drop needs `ACCESS EXCLUSIVE`, and every other
+/// pending trigger `SHARE ROW EXCLUSIVE`, on its table: `ONLY` a table, and a
+/// partitioned table with its partitions, as the trigger statements lock
+/// them. No fixed order is deadlock-free: a write routed through a
+/// partitioned table locks it before the partition it reaches, while a
+/// transaction that read a partition and then writes through its partitioned
+/// table already holds the partition. Apply therefore takes the whole set
+/// with `NOWAIT` inside a savepoint, partitioned tables first. When a table
+/// refuses, it rolls the savepoint back, releasing everything the round took,
+/// and starts the next round by waiting for that table alone. It never waits
+/// while holding another lock of the set, so it cannot complete a deadlock
+/// with such transactions; a session `lock_timeout` still bounds each wait.
+/// The candidates are the trigger retirements the catalog shows as present
+/// and every pending trigger entry, exclusive when its holder must be
+/// dropped. Views and foreign tables are not locked, as in
+/// [`locked_trigger`].
+pub(super) async fn lock_trigger_tables(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
     live: &HashMap<String, LiveObject>,
@@ -42,44 +54,112 @@ pub(super) async fn lock_drop_tables(
             retirement.kind().is_trigger()
                 && holder(retirement.identity()) == Some(retirement.kind())
         })
-        .map(Retirement::structural_identity);
+        .map(|retirement| (retirement.structural_identity(), true));
     let replaced = pending
         .iter()
-        .filter(|object| {
-            holder(object.identity())
-                .is_some_and(|holder| drops_before_create(object.kind(), holder))
-        })
-        .map(|object| object.structural_identity());
+        .filter(|object| object.kind().is_trigger())
+        .map(|object| {
+            let drops = holder(object.identity())
+                .is_some_and(|holder| drops_before_create(object.kind(), holder));
+            (object.structural_identity(), drops)
+        });
     let mut tables = BTreeMap::new();
-    for identity in retired.chain(replaced) {
+    for (identity, exclusive) in retired.chain(replaced) {
         if let Identity::Trigger { table, .. } = identity {
-            tables.insert((table.schema(), table.name()), table);
+            let entry = tables
+                .entry((table.schema(), table.name()))
+                .or_insert((table, false));
+            entry.1 |= exclusive;
         }
     }
     let keys = tables.keys().copied().collect::<Vec<_>>();
     let ordered = catalog::lockable_tables_in_lock_order(connection, &keys)
         .await
         .map_err(statement)?;
-    let list = ordered
+    let statements = ordered
         .iter()
         .filter_map(|(schema, name, relkind)| {
-            let table = tables.get(&(schema.as_str(), name.as_str()))?;
+            let (table, exclusive) = tables.get(&(schema.as_str(), name.as_str()))?;
             let only = if relkind == "p" { "" } else { "ONLY " };
-            Some(format!("{only}{}", table.quoted()))
+            let mode = if *exclusive {
+                "ACCESS EXCLUSIVE"
+            } else {
+                "SHARE ROW EXCLUSIVE"
+            };
+            Some(format!(
+                "LOCK TABLE {only}{} IN {mode} MODE",
+                table.quoted()
+            ))
         })
         .collect::<Vec<_>>();
-    if list.is_empty() {
+    take_all(connection, &statements).await
+}
+
+/// Run every `LOCK TABLE` in `statements` in one savepoint, with `NOWAIT`,
+/// as described for [`lock_trigger_tables`].
+///
+/// The savepoint is always released, after a rollback to it when a table
+/// refused, so the apply's later statements run in its top-level transaction
+/// and write rows whose `xmin` the identity check compares with it.
+async fn take_all(
+    connection: &mut PgConnection,
+    statements: &[String],
+) -> Result<(), ManagedApplyError> {
+    if statements.is_empty() {
         return Ok(());
     }
-    execute(
-        connection,
-        AssertSqlSafe(format!(
-            "LOCK TABLE {} IN ACCESS EXCLUSIVE MODE",
-            list.join(", ")
-        )),
-    )
-    .await
-    .map_err(statement)
+    let mut busy: Option<usize> = None;
+    let mut rounds = 0;
+    loop {
+        rounds += 1;
+        execute(connection, "SAVEPOINT batter_managed_locks")
+            .await
+            .map_err(statement)?;
+        if let Some(index) = busy {
+            // Wait for the table that refused, holding none of the others.
+            execute(connection, AssertSqlSafe(statements[index].as_str()))
+                .await
+                .map_err(statement)?;
+        }
+        let mut refused = None;
+        for (index, sql) in statements.iter().enumerate() {
+            if Some(index) == busy {
+                continue;
+            }
+            match execute(connection, AssertSqlSafe(format!("{sql} NOWAIT"))).await {
+                Ok(()) => {}
+                Err(error) if lock_not_available(&error) => {
+                    refused = Some((index, error));
+                    break;
+                }
+                Err(error) => return Err(statement(error)),
+            }
+        }
+        let Some((index, error)) = refused else {
+            return execute(connection, "RELEASE SAVEPOINT batter_managed_locks")
+                .await
+                .map_err(statement);
+        };
+        for sql in [
+            "ROLLBACK TO SAVEPOINT batter_managed_locks",
+            "RELEASE SAVEPOINT batter_managed_locks",
+        ] {
+            execute(connection, sql).await.map_err(statement)?;
+        }
+        if rounds == LOCK_ROUNDS {
+            return Err(statement(error));
+        }
+        busy = Some(index);
+    }
+}
+
+/// `LOCK TABLE ... NOWAIT` refused because another transaction holds a
+/// conflicting lock (SQLSTATE `55P03`).
+fn lock_not_available(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .is_some_and(|code| code == "55P03")
 }
 
 /// How many retired objects `retire` dropped, by phase.
@@ -188,7 +268,7 @@ struct Holder {
 /// READ COMMITTED read sees every replacement committed before it. `ONLY`
 /// keeps inheritance children and partitions out of this lock; dropping a
 /// partitioned table's trigger then locks its partitions as well. The lock is
-/// normally held already, taken in partition order by [`lock_drop_tables`].
+/// normally held already, taken by [`lock_trigger_tables`].
 /// Views and
 /// foreign tables cannot hold constraint triggers, and `LOCK TABLE` would
 /// also lock a view's base relations or refuse a foreign table, so their

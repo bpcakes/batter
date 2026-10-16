@@ -129,10 +129,11 @@ the kind, so every trigger drop takes `LOCK TABLE ONLY ... ACCESS EXCLUSIVE`
 (tables and partitioned tables), re-reads that trigger and acts on the fresh
 kind, then checks that the table's name still resolves to the relation it
 read (views and foreign tables are read unlocked); apply pins READ COMMITTED
-so the re-read sees committed replacements, takes every `ACCESS EXCLUSIVE`
-lock a drop may need first in one statement (partitioned tables with their
-partitions, before any partition), and runs every drop before any routine
-source or trigger create, so it never upgrades a held table lock;
+so the re-read sees committed replacements, takes every lock its trigger
+statements need first as one set (`NOWAIT` in a savepoint, waiting only for a
+refused table while holding none of the others; partitioned tables with their
+partitions), and runs every drop before any routine source or trigger create,
+so it never upgrades a held table lock or waits while holding part of the set;
 classify kinds through
 `ManagedObjectKind::is_trigger`/`is_routine`/`sql_keyword`, never by comparing
 with one variant; ledger kind names never change; library

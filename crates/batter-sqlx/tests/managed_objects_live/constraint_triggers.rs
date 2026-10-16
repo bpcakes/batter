@@ -194,7 +194,10 @@ async fn managed_constraint_trigger_reapply_executes_no_ddl() -> Result {
         let _ = fixture.apply(&migrator, &objects.manifest).await?;
         let catalog = catalog_state(&migrator, &schema).await?;
         let ledger = fixture.object_rows(&migrator).await?;
-        let again = fixture.apply(&migrator, &objects.manifest).await?;
+        // A writer holding the trigger's table does not delay the re-apply.
+        let again = fixture
+            .apply_beside_writer(&migrator, &objects.manifest, "records")
+            .await?;
         require(
             again.created_or_replaced() == 0 && again.unchanged() == 2 && again.retired() == 0,
             "a repeated apply re-executed an unchanged constraint trigger",
@@ -580,19 +583,19 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
             [],
         )?;
         // The next release changes the body and the constraint trigger, and
-        // adds a trigger that sorts after it on a table the test holds, which
-        // pauses apply after the re-creation and before its commit.
+        // adds a SQL routine reading a table the test holds. Validating its
+        // body waits for that table, which pauses apply after the constraint
+        // trigger's drop, with the table's lock held, and before its commit.
         let changed = fixture.objects_with(
             PublicExecute::Revoke,
             [
                 check_function(&schema, "v2")?,
                 check_trigger(&schema, IMMEDIATE)?,
-                ManagedObject::trigger(
-                    QualifiedName::new(&schema, "gate")?,
-                    Identifier::new("zz_gate")?,
+                ManagedObject::function(
+                    RoutineSignature::new(&schema, "gate_probe", [])?,
                     format!(
-                        "CREATE OR REPLACE TRIGGER zz_gate AFTER INSERT ON {schema}.gate
-                         FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+                        "CREATE OR REPLACE FUNCTION {schema}.gate_probe() RETURNS bigint
+                         LANGUAGE sql STABLE AS $$ SELECT count(*) FROM {schema}.gate $$;"
                     ),
                 )?,
             ],
@@ -608,7 +611,7 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
         let mut gate = blocker.begin().await?;
         bounded(
             sqlx::query(AssertSqlSafe(format!(
-                "LOCK TABLE {schema}.gate IN SHARE MODE"
+                "LOCK TABLE {schema}.gate IN ACCESS EXCLUSIVE MODE"
             )))
             .execute(&mut *gate),
         )
@@ -617,12 +620,12 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
             Ok::<_, batter_core::BoxError>(fixture.apply(&applying, &changed.manifest).await?)
         };
         let race = async {
-            wait_for_lock(&observer, apply_pid, &schema, "gate", "ShareRowExclusiveLock", false)
+            wait_for_lock(&observer, apply_pid, &schema, "gate", "AccessShareLock", false)
                 .await?;
             wait_for_lock(&observer, apply_pid, &schema, "records", "AccessExclusiveLock", true)
                 .await?;
-            // The re-created trigger is not visible before commit, under
-            // either body: the write waits on the table lock.
+            // Neither the dropped trigger nor the re-created one is visible
+            // before commit, under either body: the write waits on the lock.
             let write = insert(&writer, &schema);
             tokio::pin!(write);
             tokio::select! {
@@ -638,7 +641,7 @@ async fn managed_constraint_trigger_and_its_new_body_commit_together() -> Result
         let (applied, ()) = tokio::try_join!(apply, race)?;
         require(
             applied.created_or_replaced() == 3,
-            "apply did not install the changed body, its trigger and the gate",
+            "apply did not install the changed body, its trigger and the gate routine",
         )?;
         require(
             fired(&observer, &schema).await? == ["v1", "v2"],

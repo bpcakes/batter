@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the thirty-four-case [managed-object](#managed-routines-and-triggers)
+migration target, the thirty-six-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -825,7 +825,7 @@ drop-before-create direction, ran triggers before routines, retired routines
 first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
 
-Six cases in `tests/managed_objects_live/trigger_drops.rs` and four in
+Six cases in `tests/managed_objects_live/trigger_drops.rs` and six in
 `tests/managed_objects_live/trigger_lock_order.rs` cover trigger drops decided
 under the table lock and the order of apply's locks.
 `managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
@@ -900,6 +900,28 @@ Mutation controls against these cases:
   holds every `ACCESS EXCLUSIVE` lock a drop takes. At `f5ceae9`, before the
   lock step existed, the interleaved order failed both earlier lock-order
   races.
+
+`managed_mixed_partition_trigger_changes_let_a_routed_writer_finish` changes a
+plain trigger on the partitioned table and drops a constraint trigger on its
+partition, against a write routed through the partitioned table that holds it
+before apply starts. Together with the reader-turned-writer case across a
+partition, it shows no fixed lock order is safe: apply takes the whole lock set
+with `NOWAIT` in a savepoint and waits only for a refused table while holding
+none of the others. `managed_trigger_lock_wait_honours_the_session_lock_timeout`
+requires a session `lock_timeout` to end that wait with `55P03` before `COMMIT`,
+with the catalog unchanged. The idempotence cases
+`managed_objects_reapply_is_idempotent_and_executes_no_ddl` and
+`managed_constraint_trigger_reapply_executes_no_ddl` now re-apply while another
+transaction holds `ROW EXCLUSIVE` on the trigger table, and require the apply
+to finish within ten seconds.
+
+Controls on the final code:
+- Taking the same set by blocking statements in partition order deadlocked
+  the reader-turned-writer case across a partition (`40P01`).
+- Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
+  routed-writer case.
+- Locking every declared trigger's table made both idempotence cases wait for
+  the writer.
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2563,8 +2585,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 176-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-four
+an exact 178-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-six
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

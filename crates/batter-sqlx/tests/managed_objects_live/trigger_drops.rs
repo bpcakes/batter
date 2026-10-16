@@ -20,9 +20,14 @@ use sqlx::{AssertSqlSafe, PgPool};
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
 
-/// A failed apply as a test error naming only its SQLSTATE.
+/// A failed apply as a test error naming only its redacted variant and
+/// SQLSTATE.
 pub(super) fn with_sqlstate(error: ManagedApplyError) -> BoxError {
-    std::io::Error::other(format!("apply failed with SQLSTATE {:?}", sqlstate(&error))).into()
+    std::io::Error::other(format!(
+        "apply failed: {error:?} with SQLSTATE {:?}",
+        sqlstate(&error)
+    ))
+    .into()
 }
 
 /// One applying session, one session that races it and one observer.
@@ -44,7 +49,7 @@ impl RacePools {
 
 /// Wait until `backend` waits for any lock on `schema.relation`, as the
 /// catalog visible to `observer` names it.
-async fn wait_for_any_lock_wait(
+pub(super) async fn wait_for_any_lock_wait(
     observer: &PgPool,
     backend: i32,
     schema: &str,

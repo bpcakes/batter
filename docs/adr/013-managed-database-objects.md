@@ -269,21 +269,52 @@ A further review found that drops taken in identity order could also lock a
 partition before its partitioned table, when the partition's identity sorted
 first. A write routed through the partitioned table locks it before the
 partition it reaches, as `DROP TRIGGER` on a partitioned table does, so such a
-write deadlocked with apply (`40P01`). Before any retirement or drop, apply
-therefore takes every `ACCESS EXCLUSIVE` lock a drop may need, in one
-`LOCK TABLE` statement. Partitioned tables come before their partitions,
-ordered by how many relations `pg_partition_ancestors` lists. A partitioned
-table is locked with its partitions, which is the footprint `DROP TRIGGER` on
-it takes; other tables are locked `ONLY`. The candidates are the trigger
-retirements the catalog read shows as present and the pending entries whose
-holder must be dropped. Each lock is one that entry's drop decision takes
-anyway, and no later statement of the apply takes `ACCESS EXCLUSIVE`. The
-locked re-read and the drops-before-creates order are unchanged. Apply cannot
-order its locks to match an application's own order across unrelated tables,
-so a transaction that locks two such tables in the other order can still
-deadlock with an apply that drops triggers on both; PostgreSQL then aborts one
-of them, and a `lock_timeout` and a quiet window remain the application's
-choice.
+write deadlocked with apply (`40P01`). Locking every drop's table up front,
+partitioned tables first, fixed that schedule, but a later review showed that
+no fixed lock order is deadlock-free. A plain trigger's replacement on a
+partitioned table still took `SHARE ROW EXCLUSIVE` after the up-front lock on
+a partition, so apply could hold the partition while waiting for its
+partitioned table, which a routed writer held; it deadlocked (`40P01`). Locking
+the partitioned table first instead would deadlock with a transaction that
+read the partition and then writes through the partitioned table, as the
+earlier lock-upgrade case showed.
+
+Before any retirement or drop, apply therefore takes, as one set, every lock
+its trigger statements need on application tables, and never waits while
+holding part of the set:
+- `ACCESS EXCLUSIVE` for a trigger retirement the catalog read shows as
+  present, and for a pending entry whose holder must be dropped;
+- `SHARE ROW EXCLUSIVE` for every other pending trigger entry;
+- a partitioned table with its partitions, which is the footprint its trigger
+  statements take (probed, foreign partitions included), and other tables
+  `ONLY`, ordered by how many relations `pg_partition_ancestors` lists.
+
+Within a savepoint, apply runs each `LOCK TABLE` with `NOWAIT`. When one is
+refused (`55P03`), it rolls back to the savepoint, which releases every lock
+the round took, and releases it. It then starts the next round by waiting for
+the refused table alone, before taking the rest with `NOWAIT`. A round
+therefore waits only while holding no other lock of the set, so apply cannot
+complete a deadlock with transactions that lock these tables in any order.
+Because apply waits in the lock queue, a busy table does not starve it the way
+repeated `NOWAIT` attempts alone could. The savepoint is always released, so
+later statements run in the top-level transaction whose id the `xmin` identity
+check compares with.
+
+After 32 rounds, apply fails with the last refusal. A round repeats only while
+another transaction holds a different table of the set; the cap itself has no
+live test. A session
+`lock_timeout` bounds each wait, and the apply then fails before `COMMIT`
+without changing anything (probed). Later statements need no new lock on these
+tables, so no statement of the apply upgrades one. The locked re-read, the
+relation check and the drops-before-creates order are unchanged.
+
+Not covered by the set are the locks a routine body's validation takes on the
+tables it reads (`ACCESS SHARE`, which conflicts only with
+`ACCESS EXCLUSIVE`), a constraint trigger's `FROM` table, and triggers on views
+and foreign tables. Nor can the set match an application's own lock order on
+tables apply does not lock. A deadlock involving those remains possible;
+PostgreSQL then aborts one transaction, and a `lock_timeout` and a quiet window
+remain the application's choice.
 
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
@@ -514,18 +545,35 @@ race (`42704`). Taking no lock, with the racing session committing at the
 drop's own lock request, failed the same cases. Removing the READ COMMITTED pin
 failed only the REPEATABLE READ race. Removing both the read under the lock
 and the post-retirement catalog read failed the partition case (`42704`);
-either one alone passes it. Four more cases in the same file follow a later
-review. Two race a plain trigger's retirement on a view and on a foreign table
-against a racing session that replaces the relation by a same-named table
-with a constraint trigger. Two race a reader that turns writer against an
-apply that replaces a plain trigger and drops a constraint trigger, on one
-table or across a partitioned table and its partition. Accepting a drop on
-whatever relation it reached failed both replacement races. Taking each drop
-just before its own entry's create, in identity order, failed both lock-order
-races with `40P01` at `f5ceae9`. Two further cases, in
-`tests/managed_objects_live/trigger_lock_order.rs`, race writes routed
-through a partitioned table against drops and a retirement whose partition
-identity sorts first. Removing the up-front lock step failed both
-(`40P01`). Removing it and interleaving the drops failed all four lock-order
-races, while interleaving alone passes them, because the lock step already
-holds every `ACCESS EXCLUSIVE` lock a drop takes.
+either one alone passes it.
+
+Later reviews added more cases. `trigger_drops.rs` now holds six cases and
+`trigger_lock_order.rs` six:
+- In `trigger_drops.rs`, two cases race a plain trigger's retirement on a view
+  and on a foreign table against a racing session that replaces the relation
+  by a same-named table with a constraint trigger. Accepting a drop on
+  whatever relation it reached failed both.
+- `trigger_lock_order.rs` races other transactions against an apply whose
+  trigger changes span one table, or a partitioned table and its partition:
+  - a reader that turns writer;
+  - writes routed through the partitioned table, against drops and a
+    retirement whose partition identity sorts first;
+  - a routed writer against a plain trigger's replacement on the partitioned
+    table together with a drop on its partition.
+
+  Its sixth case requires a session `lock_timeout` to end the wait for a
+  refused table, with the catalog unchanged.
+
+Mutation controls against those cases:
+- Taking each drop just before its own entry's create, in identity order,
+  failed the two reader-turned-writer races at `f5ceae9`.
+- With the set taken by blocking `LOCK TABLE` statements in partition order,
+  the reader that turns writer across a partition deadlocked (`40P01`).
+- With only the drop targets in the set, which was `00c8abc`'s behaviour, the
+  mixed routed-writer race deadlocked (`40P01`).
+- Removing the lock step altogether and interleaving the drops failed the two
+  reader-turned-writer races and the two partition-order races (`40P01`).
+- Locking every declared trigger's table instead of only the pending ones made
+  both idempotence cases wait for a concurrent writer. Those cases now apply an
+  unchanged set while another transaction holds `ROW EXCLUSIVE` on the trigger
+  table, and require it to finish within ten seconds.
