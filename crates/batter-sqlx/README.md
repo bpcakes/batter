@@ -844,19 +844,26 @@ base relations and refuses foreign tables. Every drop must then reach the
 relation apply read: if another session replaced the view or foreign table by
 a same-named table, apply fails with `IdentityMismatch` and rolls the drop
 back. Before any retirement or drop, apply takes every lock its trigger
-statements need on application tables as one set:
+statements need on application tables:
 - `ACCESS EXCLUSIVE` for retirements and drops;
 - `SHARE ROW EXCLUSIVE` for other pending triggers;
-- a partitioned table together with its partitions.
+- on each trigger's table and, for a partitioned table, on every partition of
+  its tree, which a row trigger's statements lock as well.
 
-It runs each `LOCK TABLE` with `NOWAIT` in a savepoint. When one is refused, it
-rolls the whole round back and waits for that table alone before trying again.
-It never waits while holding part of the set, so no lock order of other
-transactions, such as a routed write or a partition read before a write through
-its partitioned table, can deadlock with it. A session `lock_timeout` bounds
-each wait, and apply gives up after 32 rounds. All drops still run before any
-routine source or trigger create. Locks that routine validation takes, and
-triggers on views and foreign tables, are not part of the set.
+It locks each relation on its own with `LOCK TABLE ONLY ... NOWAIT` in a
+savepoint, partitioned tables before their partitions. When one is refused, it
+rolls the whole round back and waits for that relation alone before trying
+again. It waits for one relation at a time while holding none of the others,
+so no lock order of other transactions, such as a routed write or a partition
+read before a write through its partitioned table, can deadlock with it. A
+session `lock_timeout` bounds each wait, and apply gives up after 32 rounds.
+All drops still run before any routine source or trigger create. Locks that
+routine validation takes, and triggers on views and foreign tables, are not
+part of the set. Nor are foreign partitions, which `LOCK TABLE ONLY` refuses: a
+plain row trigger statement on their partitioned table locks them while holding
+the rest of the set, so a transaction holding a foreign partition can still
+deadlock with that apply. A constraint trigger cannot exist on a partition tree
+with a foreign partition.
 Declare a constraint trigger in the manifest rather than in a migration: a
 migration commits before apply and could bind only the previously installed
 body, or no body at all on a fresh database. Every error, cancellation or

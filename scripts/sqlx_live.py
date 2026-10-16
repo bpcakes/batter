@@ -129,6 +129,8 @@ TARGETS = {
         "managed_trigger_drops_precede_replacements_across_a_partition",
         "managed_trigger_drops_lock_partitioned_tables_before_their_partitions",
         "managed_trigger_retirements_lock_partitioned_tables_before_their_partitions",
+        "managed_trigger_drops_wait_for_one_partition_at_a_time",
+        "managed_trigger_retirements_wait_for_one_partition_at_a_time",
         "managed_mixed_partition_trigger_changes_let_a_routed_writer_finish",
         "managed_trigger_lock_wait_honours_the_session_lock_timeout",
     },

@@ -471,35 +471,59 @@ macro_rules! concat_triggers {
 const TRIGGERS: &str = concat_triggers!("false");
 const TRIGGERS_TOUCHED: &str = concat_triggers!("t.xmin = pg_catalog.pg_current_xact_id()::xid");
 
-/// The tables and partitioned tables among `names`, with their `relkind`,
-/// ordered so that every partitioned table precedes its partitions: by how
-/// many relations `pg_partition_ancestors` lists (a partition with its
-/// ancestors, nothing for a table outside any partition tree), then by name.
-/// Views and foreign tables, which `LOCK TABLE` would extend to base relations
-/// or refuse, are left out.
+/// The relations apply's trigger statements lock for `requests`, each a
+/// table with whether a trigger on it is dropped, as quoted `LOCK TABLE ONLY`
+/// targets with whether any request needs `ACCESS EXCLUSIVE` on them.
+///
+/// A requested ordinary or partitioned table stands for itself and, when
+/// partitioned, every partition of its tree, which a row trigger's statements
+/// lock as well. The tree is walked through `pg_inherits`, because
+/// `pg_partition_tree` would take `ACCESS SHARE` on every partition and hold
+/// it until commit. The relations are ordered so that every partitioned table
+/// precedes its partitions: by how many relations `pg_partition_ancestors`
+/// lists (a partition with its ancestors, nothing for a table outside any
+/// partition tree), then by name. Views and foreign tables, including foreign
+/// partitions, are left out: `LOCK TABLE` would extend to a view's base
+/// relations and refuses a foreign table.
 pub(crate) async fn lockable_tables_in_lock_order(
     connection: &mut PgConnection,
-    names: &[(&str, &str)],
-) -> Result<Vec<(String, String, String)>, sqlx::Error> {
-    if names.is_empty() {
+    requests: &[(&str, &str, bool)],
+) -> Result<Vec<(String, bool)>, sqlx::Error> {
+    if requests.is_empty() {
         return Ok(Vec::new());
     }
-    let schemas = names.iter().map(|(schema, _)| *schema).collect::<Vec<_>>();
-    let tables = names.iter().map(|(_, table)| *table).collect::<Vec<_>>();
+    let schemas = requests.iter().map(|request| request.0).collect::<Vec<_>>();
+    let tables = requests.iter().map(|request| request.1).collect::<Vec<_>>();
+    let exclusive = requests.iter().map(|request| request.2).collect::<Vec<_>>();
     sqlx::query_as(
-        "SELECT n.nspname::text, c.relname::text, c.relkind::text
-         FROM pg_catalog.pg_class AS c
+        "WITH RECURSIVE tree AS (
+             SELECT c.oid AS relid, requested.exclusive
+             FROM unnest($1::text[], $2::text[], $3::bool[])
+                  AS requested(schema_name, table_name, exclusive)
+             JOIN pg_catalog.pg_namespace AS n ON n.nspname = requested.schema_name
+             JOIN pg_catalog.pg_class AS c
+               ON c.relnamespace = n.oid AND c.relname = requested.table_name
+             WHERE c.relkind IN ('r', 'p')
+             UNION ALL
+             SELECT i.inhrelid, tree.exclusive
+             FROM tree
+             JOIN pg_catalog.pg_class AS parent
+               ON parent.oid = tree.relid AND parent.relkind = 'p'
+             JOIN pg_catalog.pg_inherits AS i ON i.inhparent = tree.relid)
+         SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname),
+                pg_catalog.bool_or(tree.exclusive)
+         FROM tree
+         JOIN pg_catalog.pg_class AS c ON c.oid = tree.relid
          JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
          WHERE c.relkind IN ('r', 'p')
-           AND (n.nspname, c.relname) IN (
-                   SELECT requested.schema_name, requested.table_name
-                   FROM unnest($1::text[], $2::text[]) AS requested(schema_name, table_name))
+         GROUP BY c.oid, n.nspname, c.relname
          ORDER BY (SELECT pg_catalog.count(*)
                    FROM pg_catalog.pg_partition_ancestors(c.oid::pg_catalog.regclass)),
                   n.nspname, c.relname",
     )
     .bind(schemas)
     .bind(tables)
+    .bind(exclusive)
     .fetch_all(connection)
     .await
 }

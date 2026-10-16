@@ -659,10 +659,13 @@ from the trigger it reads under the table's `ACCESS EXCLUSIVE` lock, in a
 transaction pinned to READ COMMITTED, so a trigger another session replaced
 with the other kind is never dropped by a retirement, and a drop that reaches
 a relation replaced under the same name fails the apply instead of standing.
-Apply takes all its trigger-table locks first, as one set that it never holds
-partly while waiting, so routed writes and readers turning writers cannot
-deadlock with it. A session `lock_timeout` on the applying login bounds each
-wait. A drop waiting behind a
+Apply takes all its trigger-table locks first, each table and partition with
+its own `LOCK TABLE ONLY`, and waits for one relation at a time while holding
+none of the others, so routed writes and readers turning writers cannot
+deadlock with it. Only a foreign partition, which cannot be locked on its own,
+is locked later, by a plain row trigger's statement on its partitioned table
+while apply holds the rest. A session `lock_timeout` on the applying login
+bounds each wait. A drop waiting behind a
 long transaction stalls the table's other readers and writers; Batter sets no
 `lock_timeout`. Declare and retire a partitioned table's trigger on the
 partitioned table, not on its partitions' clones, and retire a constraint

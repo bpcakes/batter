@@ -11,11 +11,14 @@ trigger drop is decided from the trigger read again under its table's
 concurrent replacement of the other kind nor a partition clone a retirement
 already removed is acted on. A drop that reached a relation replaced under the
 same name fails the apply. Every lock the trigger statements need is taken
-first as one set, with `NOWAIT` in a savepoint, waiting only for a refused
-table while holding none of the others, so apply cannot complete a deadlock
-with routed writes or readers turning writers. Twenty-one PostgreSQL 18.6 live
-cases and offline tests pass locally. The managed live inventory has
-thirty-six cases and the SQLx live runner 178. The amendment and
+first, each table and every partition of a partitioned table's tree with its
+own `LOCK TABLE ONLY ... NOWAIT` in a savepoint, and apply waits for one
+relation at a time while holding none of the others, so it cannot complete a
+deadlock with routed writes or readers turning writers. Foreign partitions,
+which cannot be locked on their own, remain a documented residual for plain
+row triggers. Twenty-three PostgreSQL 18.6 live cases and offline tests pass
+locally. The managed live inventory has thirty-eight cases and the SQLx live
+runner 180. The amendment and
 its limits are in [ADR-013](adr/013-managed-database-objects.md); executed
 verification belongs to the owning Bead.
 

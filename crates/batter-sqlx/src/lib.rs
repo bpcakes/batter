@@ -317,10 +317,14 @@ impl PgLease {
     /// acts only on the kind it finds under the lock, and fails with
     /// [`managed::ManagedApplyError::IdentityMismatch`] if the drop reached
     /// another relation than the one apply read. Before any drop, apply takes
-    /// every lock its trigger statements need on application tables as one
-    /// set, with `NOWAIT` in a savepoint, waiting only for a refused table
-    /// while holding none of the others, so it cannot complete a deadlock
-    /// whatever order other transactions lock those tables in. A session
+    /// every lock its trigger statements need on application tables: each
+    /// trigger's table and every partition of a partitioned table's tree,
+    /// each with its own `LOCK TABLE ONLY ... NOWAIT` in a savepoint. It
+    /// waits for one refused relation at a time while holding none of the
+    /// others, so it cannot complete a deadlock whatever order other
+    /// transactions lock those relations in. Foreign partitions cannot be
+    /// locked on their own: a plain row trigger statement on their
+    /// partitioned table locks them later, while holding the rest. A session
     /// `lock_timeout` bounds each wait. Every drop precedes the routine
     /// sources and trigger creates. An unchanged,
     /// undrifted set therefore executes no DDL and locks no managed trigger's

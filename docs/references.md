@@ -184,6 +184,37 @@ Rechecked on 18.6 for the follow-up after review (same day):
     partition, as `DROP TRIGGER` on it does. A constraint trigger cannot be
     created on a partitioned table with a foreign partition ("... is a foreign
     table").
+  * In a waiting round, that recursive `LOCK TABLE` takes the partitioned
+    table and then waits for a partition another transaction read. When that
+    transaction then writes through the partitioned table, the two deadlock
+    (`40P01`); waiting with `LOCK TABLE ONLY` on the partition alone lets the
+    write finish.
+* **Partition-tree footprints (probed, 2026-10-16).** On a tree of a
+  partitioned table, a partitioned partition with two partitions, and an
+  ordinary partition:
+  * `DROP TRIGGER` on the partitioned table, for a constraint or plain row
+    trigger, takes `ACCESS EXCLUSIVE` on every member and also `ACCESS SHARE`
+    on the table it names. `CREATE CONSTRAINT TRIGGER` and
+    `CREATE OR REPLACE TRIGGER ... FOR EACH ROW` take `SHARE ROW EXCLUSIVE` on
+    every member. On the partitioned partition, the same statements lock only
+    its own subtree.
+  * `LOCK TABLE ONLY` on each member, as apply's walk lists them, yields
+    exactly those relations and modes. An ordinary table's inheritance child
+    is in neither footprint.
+  * A statement-level trigger has no partition clones. Its `DROP TRIGGER` and
+    `CREATE OR REPLACE TRIGGER` lock only the partitioned table.
+  * `pg_partition_tree` takes `ACCESS SHARE` on every partition below the
+    relation it is given and keeps it until the transaction ends.
+    `pg_partition_ancestors` takes no lock.
+  * A plain row trigger on a partitioned table is cloned onto a foreign
+    partition, and its `DROP TRIGGER` and `CREATE OR REPLACE TRIGGER` lock that
+    partition (`ACCESS EXCLUSIVE`, `SHARE ROW EXCLUSIVE`). `LOCK TABLE ONLY` on
+    the foreign partition fails ("cannot lock relation", "This operation is not
+    supported for foreign tables"). A constraint trigger cannot be created on a
+    partitioned table with a foreign partition. Under an existing constraint
+    trigger, `CREATE FOREIGN TABLE ... PARTITION OF` and `ATTACH PARTITION` of
+    a foreign table both fail ("... is a foreign table", "Foreign tables cannot
+    have constraint triggers").
 * **`NOWAIT` and savepoints (probed).**
   * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
     once with `55P03` ("could not obtain lock on relation").

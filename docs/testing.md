@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the thirty-six-case [managed-object](#managed-routines-and-triggers)
+migration target, the thirty-eight-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -906,8 +906,19 @@ plain trigger on the partitioned table and drops a constraint trigger on its
 partition, against a write routed through the partitioned table that holds it
 before apply starts. Together with the reader-turned-writer case across a
 partition, it shows no fixed lock order is safe: apply takes the whole lock set
-with `NOWAIT` in a savepoint and waits only for a refused table while holding
-none of the others. `managed_trigger_lock_wait_honours_the_session_lock_timeout`
+with `NOWAIT` in a savepoint and waits only for a refused relation while
+holding none of the others.
+
+`managed_trigger_drops_wait_for_one_partition_at_a_time` changes a constraint
+trigger on the partitioned table, and
+`managed_trigger_retirements_wait_for_one_partition_at_a_time` retires one.
+Either drop locks every partition. Another transaction reads one partition
+before apply starts. Once apply waits for that partition's
+`ACCESS EXCLUSIVE` lock, the transaction writes through the partitioned table.
+Both must commit, and apply must report one replacement or one retirement.
+Every race in `trigger_lock_order.rs` also records, while apply waits, the
+tables of the schema other than its ledger on which apply holds a lock, and
+requires none. `managed_trigger_lock_wait_honours_the_session_lock_timeout`
 requires a session `lock_timeout` to end that wait with `55P03` before `COMMIT`,
 with the catalog unchanged. The idempotence cases
 `managed_objects_reapply_is_idempotent_and_executes_no_ddl` and
@@ -917,7 +928,12 @@ to finish within ten seconds.
 
 Controls on the final code:
 - Taking the same set by blocking statements in partition order deadlocked
-  the reader-turned-writer case across a partition (`40P01`).
+  the reader-turned-writer case across a partition and both partition-wait
+  cases (`40P01`).
+- Locking a partitioned table with one recursive `LOCK TABLE`, as `74c7ee5`
+  did, deadlocked both partition-wait cases (`40P01`).
+- Expanding the tree with `pg_partition_tree` failed all six partition races,
+  because apply waited while holding `ACCESS SHARE` on both partitions.
 - Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
   routed-writer case.
 - Locking every declared trigger's table made both idempotence cases wait for
@@ -2585,8 +2601,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 178-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-six
+an exact 180-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-eight
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

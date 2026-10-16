@@ -130,10 +130,14 @@ the kind, so every trigger drop takes `LOCK TABLE ONLY ... ACCESS EXCLUSIVE`
 kind, then checks that the table's name still resolves to the relation it
 read (views and foreign tables are read unlocked); apply pins READ COMMITTED
 so the re-read sees committed replacements, takes every lock its trigger
-statements need first as one set (`NOWAIT` in a savepoint, waiting only for a
-refused table while holding none of the others; partitioned tables with their
-partitions), and runs every drop before any routine source or trigger create,
-so it never upgrades a held table lock or waits while holding part of the set;
+statements need first (`LOCK TABLE ONLY ... NOWAIT` in a savepoint for each
+table and each partition of a partitioned table's tree, walked through
+`pg_inherits` because `pg_partition_tree` takes locks, waiting for one refused
+relation at a time while holding none of the others; foreign partitions cannot
+be locked and stay out), and runs every drop before any routine source or
+trigger create, so it never upgrades a held table lock or waits while holding
+part of the set, except that a plain row trigger statement locks a foreign
+partition while holding the rest;
 classify kinds through
 `ManagedObjectKind::is_trigger`/`is_routine`/`sql_keyword`, never by comparing
 with one variant; ledger kind names never change; library

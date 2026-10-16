@@ -1,8 +1,9 @@
-//! The order of apply's table locks. Every `ACCESS EXCLUSIVE` lock a trigger
-//! drop needs precedes the weaker locks of trigger replacements and routine
-//! sources, and partitioned tables are locked before their partitions, so a
-//! concurrent reader turning writer, or a write routed through a partitioned
-//! table, cannot deadlock with an apply that drops triggers.
+//! The order of apply's table locks. Every lock a trigger statement needs is
+//! taken before the first of them runs, partitioned tables before their
+//! partitions, and apply waits for one relation at a time while holding none
+//! of the others, so a concurrent reader turning writer, or a write routed
+//! through a partitioned table, cannot deadlock with an apply that drops
+//! triggers.
 
 use super::constraint_triggers::{DEFERRED, IMMEDIATE, check_function, check_log, check_trigger};
 use super::trigger_drops::{RacePools, wait_for_any_lock_wait, with_sqlstate};
@@ -14,7 +15,7 @@ use batter_sqlx::managed::{
     ManagedApplyError, ManagedObject, ManagedObjectManifest, PublicExecute, Retirement,
 };
 use batter_sqlx::verification::{Identifier, QualifiedName};
-use sqlx::AssertSqlSafe;
+use sqlx::{AssertSqlSafe, PgPool};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -28,12 +29,48 @@ fn partitions(schema: &str) -> String {
     )
 }
 
+/// The tables of `schema` other than `ledger` on which `backend` holds a
+/// granted lock, as `table:mode`.
+async fn held_table_locks(
+    observer: &PgPool,
+    backend: i32,
+    schema: &str,
+    ledger: &str,
+) -> Result<Vec<String>> {
+    Ok(bounded(
+        sqlx::query_scalar(
+            "SELECT c.relname::text || ':' || l.mode
+             FROM pg_catalog.pg_locks AS l
+             JOIN pg_catalog.pg_class AS c ON c.oid = l.relation
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+             WHERE l.pid = $1 AND l.granted AND n.nspname = $2
+               AND c.relkind IN ('r', 'p') AND c.relname <> $3
+             ORDER BY 1",
+        )
+        .bind(backend)
+        .bind(schema)
+        .bind(ledger)
+        .fetch_all(observer),
+    )
+    .await??)
+}
+
+/// A transaction that reads `parted_east` before apply starts and writes
+/// through `parted` once apply waits for `parted_east`.
+fn partition_reader(schema: &str) -> (String, String) {
+    (
+        format!("SELECT count(*) FROM {schema}.parted_east"),
+        format!("INSERT INTO {schema}.parted (id, region) VALUES (1, 'east')"),
+    )
+}
+
 /// Apply `change` while another transaction, which ran `before` before apply
 /// started, runs `write` once apply waits for a lock on `table`, in `mode` or
 /// any mode, then commits. PostgreSQL lets that write ahead of the queued
 /// request unless apply already holds a lock it conflicts with, so both
 /// transactions must commit, and apply must report `expected` created or
-/// replaced and retired counts.
+/// replaced and retired counts. While it waits, apply must hold no lock on a
+/// table of the schema other than its ledger.
 async fn lock_order_race(
     fixture: &mut Fixture,
     install: &ManagedObjectManifest,
@@ -50,6 +87,7 @@ async fn lock_order_race(
         .map_err(with_sqlstate)?;
     let schema = fixture.schema();
     let apply_pid = pid(&pools.applying).await?;
+    let ledger = change.ledger().name();
     let mut reader = pools.blocker.begin().await?;
     bounded(sqlx::query(AssertSqlSafe(before)).execute(&mut *reader)).await??;
     let apply = async {
@@ -65,6 +103,7 @@ async fn lock_order_race(
             }
             None => wait_for_any_lock_wait(&pools.observer, apply_pid, schema, table).await?,
         }
+        let held = held_table_locks(&pools.observer, apply_pid, schema, ledger).await?;
         let written = timeout(
             Duration::from_secs(10),
             sqlx::query(AssertSqlSafe(write)).execute(&mut *reader),
@@ -81,9 +120,15 @@ async fn lock_order_race(
             .into());
         }
         reader.commit().await?;
-        Ok::<_, BoxError>(())
+        Ok::<_, BoxError>(held)
     };
-    let (applied, ()) = tokio::try_join!(apply, writer)?;
+    let (applied, held) = tokio::try_join!(apply, writer)?;
+    if !held.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "apply waited for {table} while holding {held:?}"
+        ))
+        .into());
+    }
     require(
         (applied.created_or_replaced(), applied.retired()) == expected,
         "apply did not execute exactly the changed entries and retirements",
@@ -175,10 +220,7 @@ async fn managed_trigger_drops_precede_replacements_across_a_partition() -> Resu
             &install,
             &change,
             ("parted_east", Some("AccessExclusiveLock")),
-            (
-                format!("SELECT count(*) FROM {schema}.parted_east"),
-                format!("INSERT INTO {schema}.parted (id, region) VALUES (1, 'east')"),
-            ),
+            partition_reader(&schema),
             (2, 0),
         )
         .await
@@ -273,6 +315,81 @@ async fn managed_trigger_retirements_lock_partitioned_tables_before_their_partit
             ("parted", Some("AccessExclusiveLock")),
             routed_writes(&schema),
             (1, 1),
+        )
+        .await
+    })
+    .await
+}
+
+/// The constraint trigger on `parted`, declared with `deferral` or retired.
+fn parted_check_objects(
+    fixture: &Fixture,
+    deferral: Option<&str>,
+) -> Result<ManagedObjectManifest> {
+    let schema = fixture.schema();
+    let table = QualifiedName::new(schema, "parted")?;
+    let name = Identifier::new("parted_check")?;
+    let mut objects = vec![check_function(schema, "v1")?];
+    let mut retirements = Vec::new();
+    match deferral {
+        Some(deferral) => objects.push(ManagedObject::constraint_trigger(
+            table,
+            name,
+            format!(
+                "CREATE CONSTRAINT TRIGGER parted_check AFTER INSERT ON {schema}.parted
+                 {deferral} FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+            ),
+        )?),
+        None => retirements.push(Retirement::constraint_trigger(table, name)),
+    }
+    Ok(fixture
+        .objects_with(PublicExecute::Revoke, objects, retirements)?
+        .manifest)
+}
+
+/// Dropping the changed constraint trigger on `parted` locks every partition
+/// as well. Apply waits for `parted_east` alone, so the reader's write through
+/// `parted` does not queue behind a lock apply already took on `parted`.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_drops_wait_for_one_partition_at_a_time() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        fixture.add_migration(partitions(&schema));
+        let install = parted_check_objects(fixture, Some(DEFERRED))?;
+        let change = parted_check_objects(fixture, Some(IMMEDIATE))?;
+        lock_order_race(
+            fixture,
+            &install,
+            &change,
+            ("parted_east", Some("AccessExclusiveLock")),
+            partition_reader(&schema),
+            (1, 0),
+        )
+        .await
+    })
+    .await
+}
+
+/// Retiring the constraint trigger on `parted` drops its partition clones,
+/// so it locks every partition as well, one at a time.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_retirements_wait_for_one_partition_at_a_time() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        fixture.add_migration(partitions(&schema));
+        let install = parted_check_objects(fixture, Some(DEFERRED))?;
+        let change = parted_check_objects(fixture, None)?;
+        lock_order_race(
+            fixture,
+            &install,
+            &change,
+            ("parted_east", Some("AccessExclusiveLock")),
+            partition_reader(&schema),
+            (0, 1),
         )
         .await
     })

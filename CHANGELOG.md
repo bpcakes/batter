@@ -36,13 +36,17 @@ contracts, capability facts and validation history.
   `LOCK TABLE`, by a same-named table holding a constraint trigger, apply fails
   with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Before any
   retirement or drop, apply takes every lock its trigger statements need on
-  application tables as one set: `ACCESS EXCLUSIVE` for drops and retirements,
-  `SHARE ROW EXCLUSIVE` for other pending triggers, a partitioned table with
-  its partitions. It uses `NOWAIT` in a savepoint and, when a table refuses,
-  rolls back and waits for that table alone. It never waits while holding part
-  of the set, so neither a reader turning writer nor a write routed through a
-  partitioned table can deadlock with it. A session `lock_timeout` bounds each
-  wait, and apply gives up after 32 rounds with the last refusal (`55P03`).
+  application tables: `ACCESS EXCLUSIVE` for drops and retirements and
+  `SHARE ROW EXCLUSIVE` for other pending triggers, on each trigger's table and
+  every partition of a partitioned table's tree, each with its own
+  `LOCK TABLE ONLY`. It uses `NOWAIT` in a savepoint and, when a relation
+  refuses, rolls back and waits for that relation alone. It never waits for one
+  relation while holding another of the set, so neither a reader turning writer
+  nor a write routed through a partitioned table can deadlock with it. Foreign
+  partitions cannot be locked on their own; a plain row trigger statement on
+  their partitioned table locks them later, while holding the rest. A session
+  `lock_timeout` bounds each wait, and apply gives up after 32 rounds with the
+  last refusal (`55P03`).
   Every drop precedes the routine sources and trigger creates. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and
