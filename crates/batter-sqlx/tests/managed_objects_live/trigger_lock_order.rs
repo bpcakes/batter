@@ -67,7 +67,7 @@ fn partition_reader(schema: &str) -> (String, String) {
 
 /// Run `write` in `transaction` within ten seconds, reporting the SQLSTATE of
 /// a failure, such as a deadlock (`40P01`).
-async fn concurrent_write(transaction: &mut PgConnection, write: String) -> Result {
+pub(super) async fn concurrent_write(transaction: &mut PgConnection, write: String) -> Result {
     let written = timeout(
         Duration::from_secs(10),
         sqlx::query(AssertSqlSafe(write)).execute(transaction),

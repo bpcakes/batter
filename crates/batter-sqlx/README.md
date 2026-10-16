@@ -862,6 +862,13 @@ its partitioned table, apply releases the set and takes the new one, so no
 trigger statement locks a partition outside the set. A session `lock_timeout`
 bounds each wait. After 32 rounds apply gives up, with the last refusal
 (`55P03`), or with `Capacity` when the trees still changed in the last round.
+After a trigger retirement apply reads the catalog again, because retiring a
+partitioned table's trigger also drops its partition clones. If another
+session replaced a managed trigger meanwhile, that read can add work on a table
+outside the set, or a drop where the set holds only `SHARE ROW EXCLUSIVE`.
+Apply then fails with `IdentityMismatch` for that trigger before requesting
+another lock, and the retirements roll back with the rest. Run it again once
+the concurrent change has settled.
 All drops still run before any routine source or trigger create. Locks that
 routine validation takes, and triggers on views and foreign tables, are not
 part of the set. Nor are foreign partitions, which `LOCK TABLE ONLY` refuses: a

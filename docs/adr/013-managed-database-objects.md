@@ -331,6 +331,27 @@ took, apply rolls the round back and takes the new set. A partition dropped or
 renamed while apply waits for that very partition ends the wait with `42P01`
 (probed). Apply then fails before any change and can be run again.
 
+The catalog read after a trigger retirement can find more than the clones the
+retirement removed. Every partition of a retired trigger's table is in the set
+in `ACCESS EXCLUSIVE` mode, so work on those clones' identities is covered.
+But another session may replace a managed trigger after apply's first read.
+The second read then wants work the set does not cover: a drop on a table
+apply did not lock, or one where it holds only `SHARE ROW EXCLUSIVE`. A later
+review reproduced the consequence. Apply waited for that table while holding
+the retired trigger's table, and a reader of the other table that then wrote
+the first deadlocked with it (`40P01`).
+
+Apply now keeps the set it acquired, each relation with its mode. It checks
+every trigger entry of the second read against that set before any drop or
+create:
+- it walks the entry's partition tree without a lock;
+- it requires every member to be held, in `ACCESS EXCLUSIVE` mode when the
+  entry's holder must be dropped.
+
+Uncovered work fails the apply with `IdentityMismatch` for that entry, before
+apply requests another lock. The retirements roll back with the transaction,
+and apply does not replay them; the next apply locks for the new state.
+
 Every `LOCK TABLE` needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its
 relation. The trigger statements need less there:
 - `CREATE TRIGGER`, in either form, needs `TRIGGER` on the table, and on every
@@ -598,7 +619,8 @@ and the post-retirement catalog read failed the partition case (`42704`);
 either one alone passes it.
 
 Later reviews added more cases. `trigger_drops.rs` now holds six cases,
-`trigger_lock_order.rs` nine and `trigger_privileges.rs` two:
+`trigger_lock_order.rs` nine, `trigger_privileges.rs` two and
+`trigger_lock_coverage.rs` two:
 - In `trigger_drops.rs`, two cases race a plain trigger's retirement on a view
   and on a foreign table against a racing session that replaces the relation
   by a same-named table with a constraint trigger. Accepting a drop on
@@ -624,6 +646,15 @@ Later reviews added more cases. `trigger_drops.rs` now holds six cases,
   another role owns, or makes another role own one partition of a partitioned
   table the login owns. Apply must fail with `42501` and leave the catalog
   unchanged. Once the owner grants `MAINTAIN`, apply must succeed.
+- `trigger_lock_coverage.rs` retires a trigger on one table while another
+  session replaces a managed plain trigger on a second table with a
+  constraint trigger. In one case the second table is outside the set. In the
+  other, apply holds it only in `SHARE ROW EXCLUSIVE` mode, because its plain
+  trigger changes. In both:
+  - apply must fail with `IdentityMismatch` for that trigger;
+  - a reader of the second table that then writes the first must commit;
+  - the retirement must roll back;
+  - the next apply must converge.
 
 Mutation controls against those cases:
 - Taking each drop just before its own entry's create, in identity order,
@@ -643,6 +674,9 @@ Mutation controls against those cases:
 - Skipping the second read of the set deadlocked the attach race (`40P01`)
   and left the other races passing.
 - Removing the lock step let both privilege cases apply without the grant.
+- Skipping the coverage check deadlocked both coverage races (`40P01`).
+  Checking relations but not modes deadlocked only the race on the table held
+  in `SHARE ROW EXCLUSIVE` mode.
 - Removing the lock step altogether and interleaving the drops failed the two
   reader-turned-writer races and the two partition-order races (`40P01`).
 - Locking every declared trigger's table instead of only the pending ones made

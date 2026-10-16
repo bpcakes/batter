@@ -49,7 +49,12 @@ contracts, capability facts and validation history.
   locks them later, while holding the rest. A session `lock_timeout` bounds
   each wait. Apply gives up after 32 rounds, with the last refusal (`55P03`),
   or with `ManagedApplyError::Capacity`, whose rustdoc now covers this, when
-  the trees still changed in the last round.
+  the trees still changed in the last round. After a trigger retirement,
+  apply reads the catalog again. If another session replaced a managed
+  trigger meanwhile, that read can add work outside the lock set, or a drop
+  where the set holds only `SHARE ROW EXCLUSIVE`. Apply refuses such work
+  with `ManagedApplyError::IdentityMismatch`, whose rustdoc now covers this,
+  before requesting another lock, and the whole apply rolls back.
 
   Each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation,
   partitions included. Earlier releases needed only what the trigger
@@ -63,7 +68,10 @@ contracts, capability facts and validation history.
   the digests of existing kinds are unchanged; the new kind is recorded as
   `constraint_trigger`. `ManagedObjectError::SourceHeader` now describes either
   header form. The PostgreSQL lifecycle example adds a deferred constraint
-  trigger. Additive apart from the enum variant in the next entry.
+  trigger. The Rust API change is additive apart from the enum variant in the
+  next entry. The runtime changes above are not: the `READ COMMITTED` pin,
+  and the lock privileges that existing deployments may need to grant first.
+  Their migration guidance is above; no Rust shim applies to them.
 
 - Breaking: `batter_sqlx::managed::ManagedObjectKind` (also
   `batter::sqlx::managed::ManagedObjectKind`) gains `ConstraintTrigger`. Values

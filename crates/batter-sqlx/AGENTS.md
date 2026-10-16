@@ -134,7 +134,9 @@ statements need first (`LOCK TABLE ONLY ... NOWAIT` in a savepoint for each
 table and each partition of a partitioned table's tree, walked through
 `pg_inherits` because `pg_partition_tree` takes locks, waiting for one refused
 relation at a time while holding none of the others, then re-reading the trees
-and retaking a changed set; foreign partitions cannot be locked and stay out),
+and retaking a changed set; foreign partitions cannot be locked and stay out;
+work the post-retirement catalog read adds beyond that set is refused before
+any further lock),
 and runs every drop before any routine source or trigger create, so it never
 upgrades a held table lock or waits while holding part of the set, except that
 a plain row trigger statement locks a foreign partition while holding the

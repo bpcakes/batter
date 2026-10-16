@@ -13,7 +13,7 @@ use super::{
     PublicExecute, SET_ROW,
 };
 use crate::{PgLease, SqlxFailure};
-use drops::{Retired, drop_holder, lock_trigger_tables, retire};
+use drops::{Retired, drop_holder, lock_trigger_tables, require_covered, retire};
 use sqlx::{AssertSqlSafe, Connection, PgConnection, SqlSafeStr};
 use std::{collections::HashMap, fmt};
 
@@ -87,8 +87,11 @@ pub enum ManagedApplyError {
     /// argument list declares other types than the entry's signature, or a
     /// trigger drop reached another relation than the one apply read, because
     /// another session replaced the trigger's view or foreign table by a
-    /// relation of the same name. The drop is rolled back with the rest of
-    /// the transaction.
+    /// relation of the same name. Apply also reports a trigger here when
+    /// another session replaced it while apply ran, so that the catalog read
+    /// after a retirement needs a lock on it that apply did not take; apply
+    /// refuses that work instead of requesting the lock. Everything the
+    /// transaction did is rolled back.
     IdentityMismatch {
         /// The canonical identity of the entry or retirement concerned.
         identity: String,
@@ -279,16 +282,18 @@ async fn execute_changes<'m>(
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
     let pending = pending_entries(manifest, recorded, &live, &hashes);
-    lock_trigger_tables(connection, manifest, &live, &pending).await?;
+    let locks = lock_trigger_tables(connection, manifest, &live, &pending).await?;
     let retired = retire(connection, manifest, &live).await?;
     // Dropping a partitioned table's trigger also drops its clones on the
     // partitions, and a clone can hold a declared identity, so the pending
     // set is decided again from a catalog read after any trigger retirement.
-    // Retirements only drop, so the surviving objects keep the oids and
-    // renderings hashed above, and no new drop can become necessary.
+    // An object another session replaced since the first read has a new oid
+    // and so counts as changed; `require_covered` refuses work that needs a
+    // lock the set does not hold.
     let (live, pending) = if retired.triggers > 0 {
         let live = catalog::resolve_live(connection, manifest).await?;
         let pending = pending_entries(manifest, recorded, &live, &hashes);
+        require_covered(connection, &locks, &pending, &live).await?;
         (live, pending)
     } else {
         (live, pending)

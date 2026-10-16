@@ -250,6 +250,11 @@ Rechecked on 18.6 for the follow-up after review (same day):
     partition was missing from a set read only once. The later `DROP TRIGGER`
     waited for it while holding the rest and deadlocked with the transaction
     holding it (`40P01`).
+  * Library live cases: after a retirement, a managed trigger that another
+    session had replaced on a table outside the set, or on one held only in
+    `SHARE ROW EXCLUSIVE` mode, made apply's drop wait for that table while
+    holding the retired trigger's table. A reader of the table that then
+    wrote the other deadlocked with it (`40P01`).
 * **`NOWAIT` and savepoints (probed).**
   * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
     once with `55P03` ("could not obtain lock on relation").

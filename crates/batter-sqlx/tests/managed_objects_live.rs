@@ -26,6 +26,9 @@ mod trigger_lock_order;
 #[path = "managed_objects_live/trigger_privileges.rs"]
 mod trigger_privileges;
 
+#[path = "managed_objects_live/trigger_lock_coverage.rs"]
+mod trigger_lock_coverage;
+
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{
     FindingKind, Identifier, ObjectPrivilege, QualifiedName, RoutineSignature, RoutineType,

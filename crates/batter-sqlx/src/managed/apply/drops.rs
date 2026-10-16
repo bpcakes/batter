@@ -62,12 +62,15 @@ const LOCK_ROUNDS: usize = 32;
 /// `CREATE TRIGGER` needs `TRIGGER`, and `DROP TRIGGER` ownership of the
 /// named table only. A missing lock privilege fails the apply before any
 /// trigger statement runs; Batter grants nothing.
+///
+/// The returned set is what apply holds until commit. [`require_covered`]
+/// checks later trigger work against it.
 pub(super) async fn lock_trigger_tables(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
     live: &HashMap<String, LiveObject>,
     pending: &[&ManagedObject],
-) -> Result<(), ManagedApplyError> {
+) -> Result<LockSet, ManagedApplyError> {
     let holder = |identity: &str| live.get(identity).and_then(|live| live.kind);
     let retired = manifest
         .retirements()
@@ -95,33 +98,99 @@ pub(super) async fn lock_trigger_tables(
     take_all(connection, &requests).await
 }
 
-/// The `LOCK TABLE ONLY` statements for every relation `requests` stand for
-/// now, in lock order.
-async fn lock_statements(
+/// A relation to lock, quoted as `LOCK TABLE ONLY` takes it, and whether
+/// `ACCESS EXCLUSIVE` (rather than `SHARE ROW EXCLUSIVE`) is needed on it.
+type Target = (String, bool);
+
+/// The relations apply holds for its trigger statements until commit.
+pub(super) struct LockSet(HashMap<String, bool>);
+
+impl LockSet {
+    /// Whether the set holds everything the trigger statements on `table`
+    /// lock: every relation of its partition tree, in `ACCESS EXCLUSIVE` mode
+    /// when `exclusive`. Reading the tree takes no lock.
+    async fn covers(
+        &self,
+        connection: &mut PgConnection,
+        table: &QualifiedName,
+        exclusive: bool,
+    ) -> Result<bool, ManagedApplyError> {
+        let needed = catalog::lockable_tables_in_lock_order(
+            connection,
+            &[(table.schema(), table.name(), exclusive)],
+        )
+        .await
+        .map_err(statement)?;
+        Ok(needed.iter().all(|(relation, needs_exclusive)| {
+            self.0
+                .get(relation)
+                .is_some_and(|held_exclusive| *held_exclusive || !*needs_exclusive)
+        }))
+    }
+}
+
+/// Refuse trigger work in `pending` that `locks` does not cover, before any
+/// of it requests a lock.
+///
+/// `pending` and `live` come from the catalog read after the trigger
+/// retirements. Clones those retirements removed lie on partitions of a
+/// retired trigger's table, which the set holds in `ACCESS EXCLUSIVE` mode.
+/// Another session can have replaced a managed trigger since apply's first
+/// read, though. Its work may lie on a table outside the set, or need a drop
+/// where the set holds only `SHARE ROW EXCLUSIVE`, and requesting that lock
+/// while holding the set could complete a deadlock. Apply therefore fails
+/// with [`ManagedApplyError::IdentityMismatch`] for the first such entry. The
+/// retirements roll back with the transaction, and nothing is retried
+/// automatically.
+pub(super) async fn require_covered(
+    connection: &mut PgConnection,
+    locks: &LockSet,
+    pending: &[&ManagedObject],
+    live: &HashMap<String, LiveObject>,
+) -> Result<(), ManagedApplyError> {
+    for object in pending {
+        let Identity::Trigger { table, .. } = object.structural_identity() else {
+            continue;
+        };
+        let exclusive = live
+            .get(object.identity())
+            .and_then(|live| live.kind)
+            .is_some_and(|holder| drops_before_create(object.kind(), holder));
+        if !locks.covers(connection, table, exclusive).await? {
+            return Err(ManagedApplyError::IdentityMismatch {
+                identity: object.identity().to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The relations `requests` stand for now, in lock order.
+async fn lock_targets(
     connection: &mut PgConnection,
     requests: &[(&str, &str, bool)],
-) -> Result<Vec<String>, ManagedApplyError> {
-    Ok(catalog::lockable_tables_in_lock_order(connection, requests)
+) -> Result<Vec<Target>, ManagedApplyError> {
+    catalog::lockable_tables_in_lock_order(connection, requests)
         .await
-        .map_err(statement)?
-        .into_iter()
-        .map(|(relation, exclusive)| {
-            let mode = if exclusive {
-                "ACCESS EXCLUSIVE"
-            } else {
-                "SHARE ROW EXCLUSIVE"
-            };
-            format!("LOCK TABLE ONLY {relation} IN {mode} MODE")
-        })
-        .collect())
+        .map_err(statement)
+}
+
+/// The `LOCK TABLE ONLY` statement for `target`, without `NOWAIT`.
+fn lock_sql((relation, exclusive): &Target) -> String {
+    let mode = if *exclusive {
+        "ACCESS EXCLUSIVE"
+    } else {
+        "SHARE ROW EXCLUSIVE"
+    };
+    format!("LOCK TABLE ONLY {relation} IN {mode} MODE")
 }
 
 /// Why a lock round ended without leaving apply holding the whole set.
 enum Retry {
     /// A relation refused `NOWAIT`. The next round waits for it alone.
-    Refused(String, sqlx::Error),
+    Refused(Target, sqlx::Error),
     /// The set changed before apply held it. The next round takes this one.
-    Changed(Vec<String>),
+    Changed(Vec<Target>),
 }
 
 /// Take the lock set `requests` stand for in savepoint rounds, as described
@@ -134,26 +203,27 @@ enum Retry {
 async fn take_all(
     connection: &mut PgConnection,
     requests: &[(&str, &str, bool)],
-) -> Result<(), ManagedApplyError> {
-    let mut statements = lock_statements(connection, requests).await?;
-    let mut busy: Option<String> = None;
+) -> Result<LockSet, ManagedApplyError> {
+    let mut targets = lock_targets(connection, requests).await?;
+    let mut busy: Option<Target> = None;
     for round in 1..=LOCK_ROUNDS {
-        if statements.is_empty() {
-            return Ok(());
+        if targets.is_empty() {
+            return Ok(LockSet(HashMap::new()));
         }
         execute(connection, "SAVEPOINT batter_managed_locks")
             .await
             .map_err(statement)?;
-        let retry = match take_round(connection, &statements, busy.as_deref()).await? {
+        let retry = match take_round(connection, &targets, busy.as_ref()).await? {
             Some(refused) => refused,
             None => {
                 // Holding the set, apply sees partition trees that no other
                 // session can change before commit.
-                let current = lock_statements(connection, requests).await?;
-                if current == statements {
-                    return execute(connection, "RELEASE SAVEPOINT batter_managed_locks")
+                let current = lock_targets(connection, requests).await?;
+                if current == targets {
+                    execute(connection, "RELEASE SAVEPOINT batter_managed_locks")
                         .await
-                        .map_err(statement);
+                        .map_err(statement)?;
+                    return Ok(LockSet(targets.into_iter().collect()));
                 }
                 Retry::Changed(current)
             }
@@ -166,11 +236,11 @@ async fn take_all(
         }
         match retry {
             Retry::Refused(_, error) if round == LOCK_ROUNDS => return Err(statement(error)),
-            Retry::Refused(sql, _) => busy = Some(sql),
+            Retry::Refused(target, _) => busy = Some(target),
             // Every requested table is gone: there is nothing left to lock.
-            Retry::Changed(current) if current.is_empty() => return Ok(()),
+            Retry::Changed(current) if current.is_empty() => return Ok(LockSet(HashMap::new())),
             Retry::Changed(current) => {
-                statements = current;
+                targets = current;
                 busy = None;
             }
         }
@@ -179,27 +249,32 @@ async fn take_all(
 }
 
 /// One lock round inside the savepoint: wait for `busy` alone, then take
-/// every other statement with `NOWAIT`. `Some` reports the relation that
+/// every other target with `NOWAIT`. `Some` reports the relation that
 /// refused.
 async fn take_round(
     connection: &mut PgConnection,
-    statements: &[String],
-    busy: Option<&str>,
+    targets: &[Target],
+    busy: Option<&Target>,
 ) -> Result<Option<Retry>, ManagedApplyError> {
-    if let Some(sql) = busy {
+    if let Some(target) = busy {
         // Wait for the relation that refused, holding none of the others.
-        execute(connection, AssertSqlSafe(sql))
+        execute(connection, AssertSqlSafe(lock_sql(target)))
             .await
             .map_err(statement)?;
     }
-    for sql in statements {
-        if busy == Some(sql.as_str()) {
+    for target in targets {
+        if busy == Some(target) {
             continue;
         }
-        match execute(connection, AssertSqlSafe(format!("{sql} NOWAIT"))).await {
+        match execute(
+            connection,
+            AssertSqlSafe(format!("{} NOWAIT", lock_sql(target))),
+        )
+        .await
+        {
             Ok(()) => {}
             Err(error) if lock_not_available(&error) => {
-                return Ok(Some(Retry::Refused(sql.clone(), error)));
+                return Ok(Some(Retry::Refused(target.clone(), error)));
             }
             Err(error) => return Err(statement(error)),
         }

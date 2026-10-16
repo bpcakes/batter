@@ -136,6 +136,8 @@ TARGETS = {
         "managed_trigger_lock_wait_honours_the_session_lock_timeout",
         "managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table",
         "managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_partition",
+        "managed_trigger_retirement_refuses_new_work_on_an_unlocked_table",
+        "managed_trigger_retirement_refuses_new_work_needing_a_stronger_lock",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

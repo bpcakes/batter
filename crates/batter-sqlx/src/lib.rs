@@ -324,7 +324,11 @@ impl PgLease {
     /// others, so it cannot complete a deadlock whatever order other
     /// transactions lock those relations in. Once it holds the set, it reads
     /// the partition trees again and takes a new set if a partition was
-    /// attached or removed meanwhile. Foreign partitions cannot be locked on
+    /// attached or removed meanwhile. After a trigger retirement it reads the
+    /// catalog again. Work that this read adds beyond the set, because
+    /// another session replaced a managed trigger meanwhile, fails the apply
+    /// with [`managed::ManagedApplyError::IdentityMismatch`] before it
+    /// requests a lock. Foreign partitions cannot be locked on
     /// their own: a plain row trigger statement on their partitioned table
     /// locks them later, while holding the rest. A session `lock_timeout`
     /// bounds each wait. Each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or

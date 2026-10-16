@@ -663,7 +663,10 @@ Apply takes all its trigger-table locks first, each table and partition with
 its own `LOCK TABLE ONLY`, and waits for one relation at a time while holding
 none of the others, so routed writes and readers turning writers cannot
 deadlock with it. Once it holds the set, it reads the partition trees again
-and takes a new set if a partition was attached or removed meanwhile. Only a
+and takes a new set if a partition was attached or removed meanwhile. When a
+retirement's second catalog read finds trigger work outside the set, because
+another session replaced a managed trigger meanwhile, apply fails with
+`IdentityMismatch` instead of requesting more locks; run it again. Only a
 foreign partition, which cannot be locked on its own, is locked later, by a
 plain row trigger's statement on its partitioned table while apply holds the
 rest. A session `lock_timeout` on the applying login bounds each wait. Every

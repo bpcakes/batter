@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the forty-one-case [managed-object](#managed-routines-and-triggers)
+migration target, the forty-three-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -827,10 +827,12 @@ first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
 
 Six cases in `tests/managed_objects_live/trigger_drops.rs`, nine in
-`tests/managed_objects_live/trigger_lock_order.rs` and two in
-`tests/managed_objects_live/trigger_privileges.rs` cover trigger drops decided
-under the table lock, the order and membership of apply's locks, and the
-privileges those locks need.
+`tests/managed_objects_live/trigger_lock_order.rs`, two in
+`tests/managed_objects_live/trigger_privileges.rs` and two in
+`tests/managed_objects_live/trigger_lock_coverage.rs` cover:
+- trigger drops decided under the table lock;
+- the order, membership and coverage of apply's locks;
+- the privileges those locks need.
 `managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
 two changes in one manifest: a retirement of a partitioned table's constraint
 trigger, which a migration created and PostgreSQL cloned onto a partition, and
@@ -953,6 +955,24 @@ Each apply must fail with `Statement` (`42501`) and leave the catalog
 unchanged. Once the superuser, standing in for the owner, grants `MAINTAIN`,
 the next apply must create or retire the trigger.
 
+The cases in `trigger_lock_coverage.rs` retire `alpha_audit` on `alpha` and
+declare a plain `beta_audit` on `beta`. In
+`managed_trigger_retirement_refuses_new_work_on_an_unlocked_table`,
+`beta_audit` is unchanged, so `beta` is outside the lock set. In
+`managed_trigger_retirement_refuses_new_work_needing_a_stronger_lock`, it
+changes, so apply holds `beta` only in `SHARE ROW EXCLUSIVE` mode. Both run
+this schedule:
+1. a reader of `alpha` makes apply wait for `alpha` alone;
+2. another session replaces `beta_audit` by a constraint trigger;
+3. a second transaction reads `beta`, and the first reader commits;
+4. once apply has finished or waits for `beta`, the second transaction writes
+   `alpha` and commits.
+
+Apply's catalog read after the retirement then wants `beta_audit` dropped.
+Apply must fail with `IdentityMismatch` naming it, and `alpha_audit` must
+still exist. The next apply must retire `alpha_audit` and restore the plain
+`beta_audit`.
+
 Controls on the final code:
 - Taking the same set by blocking statements in partition order deadlocked
   the reader-turned-writer case across a partition and both partition-wait
@@ -966,6 +986,9 @@ Controls on the final code:
 - Skipping the second read of the set deadlocked the attach case (`40P01`);
   every other lock-order case passed.
 - Removing the lock step let both privilege cases apply without the grant.
+- Skipping the coverage check deadlocked both coverage cases (`40P01`).
+  Checking relations but ignoring modes deadlocked only the
+  stronger-lock case.
 - Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
   routed-writer case.
 - Locking every declared trigger's table made both idempotence cases wait for
@@ -2633,8 +2656,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 183-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-one
+an exact 185-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-three
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-
