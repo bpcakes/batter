@@ -290,6 +290,14 @@ holding another of the set:
   `LOCK TABLE ONLY` in the strongest mode any entry needs, ordered by how many
   relations `pg_partition_ancestors` lists, then by name.
 
+Requests are coalesced by table before the walk, each keeping the strongest
+mode, and the lock step's types accept only coalesced requests. The walk
+starts once from every request it receives, so a table that many triggers
+share used to be expanded once per trigger, both before the rounds and again
+in the second read while the set is held. Probed with 1,000 requests on a
+table with 1,000 partitions, the query expanded 1,001,000 rows in 3.07 s;
+coalesced, it expanded 1,001 rows in 8 ms.
+
 For a partition tree without foreign partitions, the set equals what the row
 trigger statements on the partitioned table lock (probed with `pg_locks`, on a
 two-level tree and on a partitioned partition): `DROP TRIGGER` takes
@@ -693,6 +701,9 @@ Mutation controls against those cases:
   - Reporting the last uncovered entry failed the ordering test, and
     checking only a tree's first member failed the tree test.
   - Discarding the walk's rows deadlocked both coverage races (`40P01`).
+- Coalescing lock requests by table is pinned by a fifth unit test. Keeping
+  the first request's mode instead of the strongest failed that test and
+  deadlocked the one-table drop race (`40P01`).
 - Removing the lock step altogether and interleaving the drops failed the two
   reader-turned-writer races and the two partition-order races (`40P01`).
 - Locking every declared trigger's table instead of only the pending ones made

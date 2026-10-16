@@ -978,6 +978,10 @@ tests in `crates/batter-sqlx/src/managed/apply/drops/tests.rs` decide offline:
 - every member of a partition tree;
 - entries whose table has no lockable members.
 
+A fifth unit test there pins how lock requests are coalesced by table before
+the partition walk. Each table is walked once, in the strongest mode any
+request needs.
+
 Controls on the final code:
 - Taking the same set by blocking statements in partition order deadlocked
   the reader-turned-writer case across a partition and both partition-wait
@@ -998,6 +1002,9 @@ Controls on the final code:
   mode unit test and the stronger-lock case. Reporting the last uncovered
   entry, or checking only a tree's first member, failed the matching unit
   test. Discarding the walk's rows deadlocked both coverage cases.
+- Keeping the first request's mode for a table instead of the strongest
+  failed the coalescing unit test and deadlocked
+  `managed_trigger_drops_precede_replacements_on_one_table` (`40P01`).
 - Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
   routed-writer case.
 - Locking every declared trigger's table made both idempotence cases wait for

@@ -260,6 +260,10 @@ Rechecked on 18.6 for the follow-up after review (same day):
     412 ms through `psql` over loopback. One batched walk over the same 200
     tables took 71 to 87 ms, including the same client startup. This was a
     focused query probe, not an application benchmark.
+  * Probed cost of uncoalesced lock requests: the lock-set query, given 1,000
+    requests for one table with 1,000 partitions, expanded 1,001,000
+    recursive rows into 1,001 targets in 3.07 s. Given one request, it
+    expanded 1,001 rows in 8 ms. These are isolated query measurements.
 * **`NOWAIT` and savepoints (probed).**
   * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
     once with `55P03` ("could not obtain lock on relation").

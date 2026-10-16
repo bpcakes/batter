@@ -1,5 +1,6 @@
-use super::{LockSet, first_uncovered};
-use std::collections::HashMap;
+use super::{LockSet, coalesce, first_uncovered};
+use crate::verification::QualifiedName;
+use std::collections::{BTreeMap, HashMap};
 
 /// `parted` and its partition `parted_east` held exclusively, `records` only
 /// in `SHARE ROW EXCLUSIVE` mode.
@@ -85,5 +86,28 @@ fn entries_without_lockable_members_are_covered() {
     assert_eq!(
         first_uncovered(&locks, &trees, &[("trigger on a view", 3, true)]),
         None
+    );
+}
+
+#[test]
+fn lock_requests_coalesce_by_table_keeping_the_strongest_mode() {
+    let parted = QualifiedName::new("s", "parted").unwrap();
+    let records = QualifiedName::new("s", "records").unwrap();
+    let elsewhere = QualifiedName::new("t", "records").unwrap();
+    // Several triggers share `parted`; one of them needs a drop.
+    let requests = coalesce([
+        (&parted, false),
+        (&records, false),
+        (&parted, true),
+        (&parted, false),
+        (&elsewhere, true),
+    ]);
+    assert_eq!(
+        requests,
+        BTreeMap::from([
+            (("s", "parted"), true),
+            (("s", "records"), false),
+            (("t", "records"), true),
+        ])
     );
 }

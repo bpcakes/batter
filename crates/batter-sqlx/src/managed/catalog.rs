@@ -9,7 +9,7 @@ use super::{Identity, MAX_MANAGED_OBJECTS, ManagedObjectKind, ManagedObjectManif
 use crate::verification::{QualifiedName, RoutineSignature, RoutineType};
 use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Rows one catalog read may return before capacity is exceeded. Routine
 /// resolution returns every overload of every declared or retired name, so this
@@ -471,9 +471,12 @@ macro_rules! concat_triggers {
 const TRIGGERS: &str = concat_triggers!("false");
 const TRIGGERS_TOUCHED: &str = concat_triggers!("t.xmin = pg_catalog.pg_current_xact_id()::xid");
 
-/// The relations apply's trigger statements lock for `requests`, each a
-/// table with whether a trigger on it is dropped, as quoted `LOCK TABLE ONLY`
-/// targets with whether any request needs `ACCESS EXCLUSIVE` on them.
+/// The relations apply's trigger statements lock for `requests`, which maps
+/// each table, by schema and name, to whether a trigger on it is dropped, as
+/// quoted `LOCK TABLE ONLY` targets with whether any request needs
+/// `ACCESS EXCLUSIVE` on them. The walk starts once from every request, so a
+/// map keyed by table keeps a table that several triggers share from
+/// multiplying the rows it expands.
 ///
 /// A requested ordinary or partitioned table stands for itself and, when
 /// partitioned, every partition of its tree, which a row trigger's statements
@@ -487,14 +490,14 @@ const TRIGGERS_TOUCHED: &str = concat_triggers!("t.xmin = pg_catalog.pg_current_
 /// relations and refuses a foreign table.
 pub(crate) async fn lockable_tables_in_lock_order(
     connection: &mut PgConnection,
-    requests: &[(&str, &str, bool)],
+    requests: &BTreeMap<(&str, &str), bool>,
 ) -> Result<Vec<(String, bool)>, sqlx::Error> {
     if requests.is_empty() {
         return Ok(Vec::new());
     }
-    let schemas = requests.iter().map(|request| request.0).collect::<Vec<_>>();
-    let tables = requests.iter().map(|request| request.1).collect::<Vec<_>>();
-    let exclusive = requests.iter().map(|request| request.2).collect::<Vec<_>>();
+    let schemas = requests.keys().map(|table| table.0).collect::<Vec<_>>();
+    let tables = requests.keys().map(|table| table.1).collect::<Vec<_>>();
+    let exclusive = requests.values().copied().collect::<Vec<_>>();
     sqlx::query_as(
         "WITH RECURSIVE tree AS (
              SELECT c.oid AS relid, requested.exclusive

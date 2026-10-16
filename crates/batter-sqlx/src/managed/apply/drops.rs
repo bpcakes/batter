@@ -13,7 +13,7 @@ use crate::managed::{
 };
 use crate::verification::{Identifier, QualifiedName};
 use sqlx::{AssertSqlSafe, PgConnection};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[cfg(test)]
 mod tests;
@@ -91,14 +91,34 @@ pub(super) async fn lock_trigger_tables(
                 .is_some_and(|holder| drops_before_create(object.kind(), holder));
             (object.structural_identity(), drops)
         });
-    let requests = retired
-        .chain(replaced)
-        .filter_map(|(identity, exclusive)| match identity {
-            Identity::Trigger { table, .. } => Some((table.schema(), table.name(), exclusive)),
-            Identity::Routine(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let requests =
+        coalesce(
+            retired
+                .chain(replaced)
+                .filter_map(|(identity, exclusive)| match identity {
+                    Identity::Trigger { table, .. } => Some((table, exclusive)),
+                    Identity::Routine(_) => None,
+                }),
+        );
     take_all(connection, &requests).await
+}
+
+/// Lock requests by table, by schema and name: whether any trigger statement
+/// on the table needs `ACCESS EXCLUSIVE`.
+type Requests<'m> = BTreeMap<(&'m str, &'m str), bool>;
+
+/// Coalesce `requests` by table before the partition walk, keeping
+/// `ACCESS EXCLUSIVE` when any request for the table needs it. Several
+/// pending triggers and retirements can share a table, and the walk starts
+/// once from every request it receives.
+fn coalesce<'m>(requests: impl IntoIterator<Item = (&'m QualifiedName, bool)>) -> Requests<'m> {
+    let mut coalesced = Requests::new();
+    for (table, exclusive) in requests {
+        *coalesced
+            .entry((table.schema(), table.name()))
+            .or_insert(false) |= exclusive;
+    }
+    coalesced
 }
 
 /// A relation to lock, quoted as `LOCK TABLE ONLY` takes it, and whether
@@ -208,7 +228,7 @@ pub(super) async fn require_covered(
 /// The relations `requests` stand for now, in lock order.
 async fn lock_targets(
     connection: &mut PgConnection,
-    requests: &[(&str, &str, bool)],
+    requests: &Requests<'_>,
 ) -> Result<Vec<Target>, ManagedApplyError> {
     catalog::lockable_tables_in_lock_order(connection, requests)
         .await
@@ -242,7 +262,7 @@ enum Retry {
 /// it.
 async fn take_all(
     connection: &mut PgConnection,
-    requests: &[(&str, &str, bool)],
+    requests: &Requests<'_>,
 ) -> Result<LockSet, ManagedApplyError> {
     let mut targets = lock_targets(connection, requests).await?;
     let mut busy: Option<Target> = None;
