@@ -146,9 +146,15 @@ impl Fixture {
         &self.schema
     }
 
-    /// A non-login role with schema `USAGE` that tests may give grant options.
+    /// A non-login role with schema `USAGE` that tests may give grant options
+    /// or table ownership.
     pub(crate) fn delegate(&self) -> &str {
         &self.delegate
+    }
+
+    /// The login that runs migrations and applies managed objects.
+    pub(crate) fn migrator(&self) -> &str {
+        &self.migrator
     }
 
     /// A one-connection pool whose session search path is the fixture schema,

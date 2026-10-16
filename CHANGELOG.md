@@ -42,11 +42,21 @@ contracts, capability facts and validation history.
   `LOCK TABLE ONLY`. It uses `NOWAIT` in a savepoint and, when a relation
   refuses, rolls back and waits for that relation alone. It never waits for one
   relation while holding another of the set, so neither a reader turning writer
-  nor a write routed through a partitioned table can deadlock with it. Foreign
-  partitions cannot be locked on their own; a plain row trigger statement on
-  their partitioned table locks them later, while holding the rest. A session
-  `lock_timeout` bounds each wait, and apply gives up after 32 rounds with the
-  last refusal (`55P03`).
+  nor a write routed through a partitioned table can deadlock with it. Once it
+  holds the set, it reads the partition trees again and takes a new set when a
+  partition was attached or removed meanwhile. Foreign partitions cannot be
+  locked on their own; a plain row trigger statement on their partitioned table
+  locks them later, while holding the rest. A session `lock_timeout` bounds
+  each wait. Apply gives up after 32 rounds, with the last refusal (`55P03`),
+  or with `ManagedApplyError::Capacity`, whose rustdoc now covers this, when
+  the trees still changed in the last round.
+
+  Each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation,
+  partitions included. Earlier releases needed only what the trigger
+  statements need. An applying login that holds only `TRIGGER` on a table,
+  which lets it create or replace plain triggers, now fails with `42501`
+  before any change, as does one that owns a partitioned table but not all of
+  its partitions. The owners must grant it `MAINTAIN`; Batter grants nothing.
   Every drop precedes the routine sources and trigger creates. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and

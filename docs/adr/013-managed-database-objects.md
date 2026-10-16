@@ -317,9 +317,38 @@ partitioned table and then waited for a partition, so a transaction that had
 read the partition and then wrote through the partitioned table deadlocked
 with it (`40P01`). Locking every member on its own removed that wait.
 
-After 32 rounds, apply fails with the last refusal. A round repeats only while
-another transaction holds a different relation of the set; the cap itself has
-no live test. A session
+The walk read the partition trees once, before the first round. A later review
+found that a partition attached while apply waited for a relation was missing
+from the set. The trigger statements then locked it later while holding the
+rest, so a transaction holding the new partition, which then wrote through the
+partitioned table, deadlocked with apply (`40P01`). Apply therefore reads the
+set again once a round holds all of it. Attaching, creating, detaching or
+dropping a partition locks its partitioned table in `SHARE UPDATE EXCLUSIVE` or
+`ACCESS EXCLUSIVE` mode, and renaming one locks the partition, so while apply
+holds the set, its trees and names cannot change (probed). The second read
+therefore stays exact until commit. When it differs from the set the round
+took, apply rolls the round back and takes the new set. A partition dropped or
+renamed while apply waits for that very partition ends the wait with `42P01`
+(probed). Apply then fails before any change and can be run again.
+
+Every `LOCK TABLE` needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its
+relation. The trigger statements need less there:
+- `CREATE TRIGGER`, in either form, needs `TRIGGER` on the table, and on every
+  partition for a row trigger on a partitioned table;
+- `DROP TRIGGER` needs ownership of the named table only, including for the
+  clones it drops on partitions another role owns (probed).
+
+Earlier releases needed only those. Since the lock step, a login that holds
+only `TRIGGER` on a table, or owns a partitioned table but not all its
+partitions, fails with `42501` before any change. Batter keeps the locks and
+grants nothing. The owners grant `MAINTAIN`, which allows no data changes, on
+each table and partition, including partitions added later. Those grants
+belong to the owners' own provisioning or migrations.
+
+After 32 rounds, apply fails with the last refusal, or with `Capacity` when
+the set still changed in the last round. A round repeats only while another
+transaction holds a different relation of the set or changes its partition
+trees; the cap itself has no live test. A session
 `lock_timeout` bounds each wait, and the apply then fails before `COMMIT`
 without changing anything (probed). Later statements need no new lock on these
 tables, so no statement of the apply upgrades one. The locked re-read, the
@@ -568,8 +597,8 @@ failed only the REPEATABLE READ race. Removing both the read under the lock
 and the post-retirement catalog read failed the partition case (`42704`);
 either one alone passes it.
 
-Later reviews added more cases. `trigger_drops.rs` now holds six cases and
-`trigger_lock_order.rs` eight:
+Later reviews added more cases. `trigger_drops.rs` now holds six cases,
+`trigger_lock_order.rs` nine and `trigger_privileges.rs` two:
 - In `trigger_drops.rs`, two cases race a plain trigger's retirement on a view
   and on a foreign table against a racing session that replaces the relation
   by a same-named table with a constraint trigger. Accepting a drop on
@@ -583,25 +612,37 @@ Later reviews added more cases. `trigger_drops.rs` now holds six cases and
     table together with a drop on its partition;
   - a reader of a partition that writes through the partitioned table while
     apply waits for that partition, against a changed constraint trigger and
-    against a retirement on the partitioned table.
+    against a retirement on the partitioned table;
+  - a partition attached while apply waits for another, whose holder then
+    writes through the partitioned table.
 
   Each of those races also requires that apply, while it waits, holds no lock
   on a table of the schema other than its ledger. The remaining case requires a
   session `lock_timeout` to end the wait for a refused relation, with the
   catalog unchanged.
+- `trigger_privileges.rs` gives the applying login only `TRIGGER` on a table
+  another role owns, or makes another role own one partition of a partitioned
+  table the login owns. Apply must fail with `42501` and leave the catalog
+  unchanged. Once the owner grants `MAINTAIN`, apply must succeed.
 
 Mutation controls against those cases:
 - Taking each drop just before its own entry's create, in identity order,
   failed the two reader-turned-writer races at `f5ceae9`.
 - With the set taken by blocking `LOCK TABLE` statements in partition order,
-  the reader that turns writer across a partition deadlocked (`40P01`), and on
-  the final code both partition-wait races did too.
+  the reader that turns writer across a partition deadlocked (`40P01`). On the
+  final code both partition-wait races did too, and the attach race's `ATTACH`
+  waited behind the partitioned table apply held.
 - With only the drop targets in the set, which was `00c8abc`'s behaviour, the
   mixed routed-writer race deadlocked (`40P01`).
 - With each partitioned table locked by one recursive `LOCK TABLE`, which was
-  `74c7ee5`'s behaviour, both partition-wait races deadlocked (`40P01`).
-- Expanding the tree with `pg_partition_tree` failed all six partition races:
-  apply waited while holding `ACCESS SHARE` on both partitions.
+  `74c7ee5`'s behaviour, both partition-wait races deadlocked (`40P01`), and
+  the attach race's `ATTACH` waited behind the held partitioned table.
+- Expanding the tree with `pg_partition_tree` failed every partition race,
+  six at first and seven with the attach race: apply waited while holding
+  `ACCESS SHARE` on both partitions.
+- Skipping the second read of the set deadlocked the attach race (`40P01`)
+  and left the other races passing.
+- Removing the lock step let both privilege cases apply without the grant.
 - Removing the lock step altogether and interleaving the drops failed the two
   reader-turned-writer races and the two partition-order races (`40P01`).
 - Locking every declared trigger's table instead of only the pending ones made

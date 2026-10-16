@@ -77,7 +77,10 @@ pub enum ManagedApplyError {
     /// ledger: another kind or shape (such as a SQLx migration ledger), row-level
     /// security, or inheritance. Nothing was written.
     LedgerShape,
-    /// The ledger or a catalog read exceeded its bounded capacity.
+    /// The ledger or a catalog read exceeded its bounded capacity, or the
+    /// partition trees of the trigger tables apply locks kept changing: other
+    /// sessions attached, detached, created or dropped partitions in each of
+    /// apply's bounded lock rounds. Nothing was changed.
     Capacity,
     /// A statement did not act on exactly its declared identity and kind: a
     /// source statement did not create or replace it, for example because its

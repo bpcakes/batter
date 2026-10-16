@@ -131,8 +131,11 @@ TARGETS = {
         "managed_trigger_retirements_lock_partitioned_tables_before_their_partitions",
         "managed_trigger_drops_wait_for_one_partition_at_a_time",
         "managed_trigger_retirements_wait_for_one_partition_at_a_time",
+        "managed_trigger_lock_set_follows_a_partition_attached_during_its_wait",
         "managed_mixed_partition_trigger_changes_let_a_routed_writer_finish",
         "managed_trigger_lock_wait_honours_the_session_lock_timeout",
+        "managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table",
+        "managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_partition",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

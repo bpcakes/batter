@@ -662,10 +662,18 @@ a relation replaced under the same name fails the apply instead of standing.
 Apply takes all its trigger-table locks first, each table and partition with
 its own `LOCK TABLE ONLY`, and waits for one relation at a time while holding
 none of the others, so routed writes and readers turning writers cannot
-deadlock with it. Only a foreign partition, which cannot be locked on its own,
-is locked later, by a plain row trigger's statement on its partitioned table
-while apply holds the rest. A session `lock_timeout` on the applying login
-bounds each wait. A drop waiting behind a
+deadlock with it. Once it holds the set, it reads the partition trees again
+and takes a new set if a partition was attached or removed meanwhile. Only a
+foreign partition, which cannot be locked on its own, is locked later, by a
+plain row trigger's statement on its partitioned table while apply holds the
+rest. A session `lock_timeout` on the applying login bounds each wait. Every
+lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation,
+partitions included, which `TRIGGER` alone, or owning only the partitioned
+table, does not give. Without it apply fails with `42501` before changing
+anything. An applying login that does not own every trigger table and
+partition therefore needs the owners to grant it `MAINTAIN` on each of them,
+including partitions added later. That grant belongs to the owners'
+provisioning or migrations; Batter grants nothing. A drop waiting behind a
 long transaction stalls the table's other readers and writers; Batter sets no
 `lock_timeout`. Declare and retire a partitioned table's trigger on the
 partitioned table, not on its partitions' clones, and retire a constraint

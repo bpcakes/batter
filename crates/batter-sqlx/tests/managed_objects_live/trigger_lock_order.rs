@@ -1,9 +1,10 @@
-//! The order of apply's table locks. Every lock a trigger statement needs is
-//! taken before the first of them runs, partitioned tables before their
-//! partitions, and apply waits for one relation at a time while holding none
-//! of the others, so a concurrent reader turning writer, or a write routed
-//! through a partitioned table, cannot deadlock with an apply that drops
-//! triggers.
+//! The order and membership of apply's table locks. Every lock a trigger
+//! statement needs is taken before the first of them runs, partitioned tables
+//! before their partitions. Apply waits for one relation at a time while
+//! holding none of the others, and reads the set again once it holds it. A
+//! concurrent reader turning writer, a write routed through a partitioned
+//! table, or a partition attached meanwhile therefore cannot make it deadlock
+//! with an apply that drops triggers.
 
 use super::constraint_triggers::{DEFERRED, IMMEDIATE, check_function, check_log, check_trigger};
 use super::trigger_drops::{RacePools, wait_for_any_lock_wait, with_sqlstate};
@@ -15,12 +16,12 @@ use batter_sqlx::managed::{
     ManagedApplyError, ManagedObject, ManagedObjectManifest, PublicExecute, Retirement,
 };
 use batter_sqlx::verification::{Identifier, QualifiedName};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::{AssertSqlSafe, PgConnection, PgPool};
 use std::time::Duration;
 use tokio::time::timeout;
 
 /// A partitioned table with two partitions.
-fn partitions(schema: &str) -> String {
+pub(super) fn partitions(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.parted (id bigint NOT NULL, region text NOT NULL)
              PARTITION BY LIST (region);
@@ -64,6 +65,36 @@ fn partition_reader(schema: &str) -> (String, String) {
     )
 }
 
+/// Run `write` in `transaction` within ten seconds, reporting the SQLSTATE of
+/// a failure, such as a deadlock (`40P01`).
+async fn concurrent_write(transaction: &mut PgConnection, write: String) -> Result {
+    let written = timeout(
+        Duration::from_secs(10),
+        sqlx::query(AssertSqlSafe(write)).execute(transaction),
+    )
+    .await?;
+    if let Err(error) = written {
+        let code = error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .map(|code| code.into_owned());
+        return Err(std::io::Error::other(format!(
+            "the concurrent write failed with SQLSTATE {code:?}"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+/// Fail unless apply held no table of the schema but its ledger while it
+/// waited.
+fn require_waited_holding_nothing(table: &str, held: &[String]) -> Result {
+    if held.is_empty() {
+        return Ok(());
+    }
+    Err(std::io::Error::other(format!("apply waited for {table} while holding {held:?}")).into())
+}
+
 /// Apply `change` while another transaction, which ran `before` before apply
 /// started, runs `write` once apply waits for a lock on `table`, in `mode` or
 /// any mode, then commits. PostgreSQL lets that write ahead of the queued
@@ -104,31 +135,12 @@ async fn lock_order_race(
             None => wait_for_any_lock_wait(&pools.observer, apply_pid, schema, table).await?,
         }
         let held = held_table_locks(&pools.observer, apply_pid, schema, ledger).await?;
-        let written = timeout(
-            Duration::from_secs(10),
-            sqlx::query(AssertSqlSafe(write)).execute(&mut *reader),
-        )
-        .await?;
-        if let Err(error) = written {
-            let code = error
-                .as_database_error()
-                .and_then(|error| error.code())
-                .map(|code| code.into_owned());
-            return Err(std::io::Error::other(format!(
-                "the concurrent write failed with SQLSTATE {code:?}"
-            ))
-            .into());
-        }
+        concurrent_write(&mut reader, write).await?;
         reader.commit().await?;
         Ok::<_, BoxError>(held)
     };
     let (applied, held) = tokio::try_join!(apply, writer)?;
-    if !held.is_empty() {
-        return Err(std::io::Error::other(format!(
-            "apply waited for {table} while holding {held:?}"
-        ))
-        .into());
-    }
+    require_waited_holding_nothing(table, &held)?;
     require(
         (applied.created_or_replaced(), applied.retired()) == expected,
         "apply did not execute exactly the changed entries and retirements",
@@ -322,7 +334,7 @@ async fn managed_trigger_retirements_lock_partitioned_tables_before_their_partit
 }
 
 /// The constraint trigger on `parted`, declared with `deferral` or retired.
-fn parted_check_objects(
+pub(super) fn parted_check_objects(
     fixture: &Fixture,
     deferral: Option<&str>,
 ) -> Result<ManagedObjectManifest> {
@@ -392,6 +404,108 @@ async fn managed_trigger_retirements_wait_for_one_partition_at_a_time() -> Resul
             (0, 1),
         )
         .await
+    })
+    .await
+}
+
+/// Another session attaches `parted_north` to `parted` while apply waits for
+/// `parted_east`, so the partition tree apply read no longer lists every
+/// partition its `DROP TRIGGER` locks. A transaction holding `parted_north`
+/// then writes through `parted`. Apply reads the set again once it holds it,
+/// takes the new partition with the rest, and waits for it alone, so both
+/// must commit.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_lock_set_follows_a_partition_attached_during_its_wait() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        fixture.add_migration(partitions(&schema));
+        fixture.add_migration(format!(
+            "CREATE TABLE {schema}.parted_north (id bigint NOT NULL, region text NOT NULL)"
+        ));
+        let install = parted_check_objects(fixture, Some(DEFERRED))?;
+        let change = parted_check_objects(fixture, Some(IMMEDIATE))?;
+        let pools = RacePools::new(fixture, &[]).await?;
+        let holding = fixture.pool(Role::Migrator).await?;
+        let _ = fixture
+            .apply(&pools.applying, &install)
+            .await
+            .map_err(with_sqlstate)?;
+        let apply_pid = pid(&pools.applying).await?;
+        let ledger = change.ledger().name();
+        let (reader_sql, write) = partition_reader(&schema);
+        let mut reader = pools.blocker.begin().await?;
+        bounded(sqlx::query(AssertSqlSafe(reader_sql)).execute(&mut *reader)).await??;
+        let apply = async {
+            fixture
+                .apply(&pools.applying, &change)
+                .await
+                .map_err(with_sqlstate)
+        };
+        let others = async {
+            let observer = &pools.observer;
+            wait_for_lock(
+                observer,
+                apply_pid,
+                &schema,
+                "parted_east",
+                "AccessExclusiveLock",
+                false,
+            )
+            .await?;
+            bounded(
+                sqlx::query(AssertSqlSafe(format!(
+                    "ALTER TABLE {schema}.parted ATTACH PARTITION {schema}.parted_north
+                     FOR VALUES IN ('north')"
+                )))
+                .execute(observer),
+            )
+            .await??;
+            let mut holder = holding.begin().await?;
+            bounded(
+                sqlx::query(AssertSqlSafe(format!(
+                    "SELECT count(*) FROM {schema}.parted_north"
+                )))
+                .execute(&mut *holder),
+            )
+            .await??;
+            reader.commit().await?;
+            wait_for_lock(
+                observer,
+                apply_pid,
+                &schema,
+                "parted_north",
+                "AccessExclusiveLock",
+                false,
+            )
+            .await?;
+            let held = held_table_locks(observer, apply_pid, &schema, ledger).await?;
+            concurrent_write(&mut holder, write.replace("'east'", "'north'")).await?;
+            holder.commit().await?;
+            Ok::<_, BoxError>(held)
+        };
+        let (applied, held) = tokio::try_join!(apply, others)?;
+        require_waited_holding_nothing("parted_north", &held)?;
+        require(
+            (applied.created_or_replaced(), applied.retired()) == (1, 0),
+            "apply did not re-create exactly the changed constraint trigger",
+        )?;
+        let triggers: i64 = bounded(
+            sqlx::query_scalar(
+                "SELECT count(*) FROM pg_catalog.pg_trigger AS t
+                 JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+                 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                 WHERE n.nspname = $1 AND t.tgname = 'parted_check' AND t.tginitdeferred = false",
+            )
+            .bind(&schema)
+            .fetch_one(&pools.observer),
+        )
+        .await??;
+        require(
+            triggers == 4,
+            "the re-created trigger does not cover the partitioned table and all three partitions",
+        )
     })
     .await
 }

@@ -14,11 +14,15 @@ same name fails the apply. Every lock the trigger statements need is taken
 first, each table and every partition of a partitioned table's tree with its
 own `LOCK TABLE ONLY ... NOWAIT` in a savepoint, and apply waits for one
 relation at a time while holding none of the others, so it cannot complete a
-deadlock with routed writes or readers turning writers. Foreign partitions,
-which cannot be locked on their own, remain a documented residual for plain
-row triggers. Twenty-three PostgreSQL 18.6 live cases and offline tests pass
-locally. The managed live inventory has thirty-eight cases and the SQLx live
-runner 180. The amendment and
+deadlock with routed writes or readers turning writers. Once it holds the set,
+apply reads the partition trees again and takes a new set if a partition was
+attached or removed meanwhile. Foreign partitions, which cannot be locked on
+their own, remain a documented residual for plain row triggers. Each lock
+needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation, partitions
+included. Batter documents that grant for logins that do not own every
+relation, and never makes it. Twenty-six PostgreSQL 18.6 live cases and
+offline tests pass locally. The managed live inventory has forty-one cases and
+the SQLx live runner 183. The amendment and
 its limits are in [ADR-013](adr/013-managed-database-objects.md); executed
 verification belongs to the owning Bead.
 

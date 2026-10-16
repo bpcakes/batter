@@ -215,6 +215,41 @@ Rechecked on 18.6 for the follow-up after review (same day):
     trigger, `CREATE FOREIGN TABLE ... PARTITION OF` and `ATTACH PARTITION` of
     a foreign table both fail ("... is a foreign table", "Foreign tables cannot
     have constraint triggers").
+* **Lock privileges (PostgreSQL 18 documentation, probed 2026-10-16).**
+  * [`LOCK`](https://www.postgresql.org/docs/18/sql-lock.html) permits any mode
+    with `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on the table.
+    [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html)
+    needs `TRIGGER` on the table and `EXECUTE` on the function.
+    [`DROP TRIGGER`](https://www.postgresql.org/docs/18/sql-droptrigger.html)
+    needs ownership of the table.
+  * A login holding only `TRIGGER` on another role's table can run
+    `CREATE TRIGGER`, `CREATE OR REPLACE TRIGGER` and
+    `CREATE CONSTRAINT TRIGGER`. `DROP TRIGGER` fails ("must be owner of
+    relation"), and `LOCK TABLE ONLY` fails ("permission denied for table").
+    After `GRANT MAINTAIN`, or with membership in `pg_maintain`, it locks in
+    `SHARE ROW EXCLUSIVE` and `ACCESS EXCLUSIVE` mode.
+  * A login that owns a partitioned table, but not one of its partitions:
+    * creating a row trigger on the partitioned table fails with "permission
+      denied for table" naming the partition, until it holds `TRIGGER` there;
+    * `DROP TRIGGER` on the partitioned table removes the partition's clone
+      without any privilege on the partition;
+    * `LOCK TABLE ONLY` on the partition fails, also with `TRIGGER` granted
+      there, until it holds `MAINTAIN`;
+    * a recursive `LOCK TABLE` on the partitioned table checks no privilege
+      on the partition.
+* **Partition membership changes (probed 2026-10-16).**
+  * `ATTACH PARTITION` takes `SHARE UPDATE EXCLUSIVE` on the partitioned
+    table and `ACCESS EXCLUSIVE` on the attached table.
+  * `CREATE TABLE ... PARTITION OF`, `DETACH PARTITION` and `DROP TABLE` of a
+    partition each take `ACCESS EXCLUSIVE` on the partitioned table.
+  * Renaming a partition takes `ACCESS EXCLUSIVE` on the partition.
+  * A `LOCK TABLE ONLY` waiting for a partition that the holder then drops or
+    renames fails at the holder's commit with `42P01` ("relation ... does not
+    exist").
+  * Library live case: a partition attached while apply waits for another
+    partition was missing from a set read only once. The later `DROP TRIGGER`
+    waited for it while holding the rest and deadlocked with the transaction
+    holding it (`40P01`).
 * **`NOWAIT` and savepoints (probed).**
   * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
     once with `55P03` ("could not obtain lock on relation").

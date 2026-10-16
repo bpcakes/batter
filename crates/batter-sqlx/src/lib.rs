@@ -322,10 +322,16 @@ impl PgLease {
     /// each with its own `LOCK TABLE ONLY ... NOWAIT` in a savepoint. It
     /// waits for one refused relation at a time while holding none of the
     /// others, so it cannot complete a deadlock whatever order other
-    /// transactions lock those relations in. Foreign partitions cannot be
-    /// locked on their own: a plain row trigger statement on their
-    /// partitioned table locks them later, while holding the rest. A session
-    /// `lock_timeout` bounds each wait. Every drop precedes the routine
+    /// transactions lock those relations in. Once it holds the set, it reads
+    /// the partition trees again and takes a new set if a partition was
+    /// attached or removed meanwhile. Foreign partitions cannot be locked on
+    /// their own: a plain row trigger statement on their partitioned table
+    /// locks them later, while holding the rest. A session `lock_timeout`
+    /// bounds each wait. Each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or
+    /// `TRUNCATE` on its relation, partitions included, which the trigger
+    /// statements alone do not need; without it apply fails with
+    /// [`managed::ManagedApplyError::Statement`] (SQLSTATE `42501`) before
+    /// any change, and Batter grants nothing. Every drop precedes the routine
     /// sources and trigger creates. An unchanged,
     /// undrifted set therefore executes no DDL and locks no managed trigger's
     /// table (only the ledger), while a definition changed out of band,

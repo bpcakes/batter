@@ -855,8 +855,13 @@ savepoint, partitioned tables before their partitions. When one is refused, it
 rolls the whole round back and waits for that relation alone before trying
 again. It waits for one relation at a time while holding none of the others,
 so no lock order of other transactions, such as a routed write or a partition
-read before a write through its partitioned table, can deadlock with it. A
-session `lock_timeout` bounds each wait, and apply gives up after 32 rounds.
+read before a write through its partitioned table, can deadlock with it. Once
+apply holds the whole set, it reads the partition trees again. If another
+session attached, created, detached or dropped a partition before apply locked
+its partitioned table, apply releases the set and takes the new one, so no
+trigger statement locks a partition outside the set. A session `lock_timeout`
+bounds each wait. After 32 rounds apply gives up, with the last refusal
+(`55P03`), or with `Capacity` when the trees still changed in the last round.
 All drops still run before any routine source or trigger create. Locks that
 routine validation takes, and triggers on views and foreign tables, are not
 part of the set. Nor are foreign partitions, which `LOCK TABLE ONLY` refuses: a
@@ -864,6 +869,27 @@ plain row trigger statement on their partitioned table locks them while holding
 the rest of the set, so a transaction holding a foreign partition can still
 deadlock with that apply. A constraint trigger cannot exist on a partition tree
 with a foreign partition.
+
+The lock step needs privileges that the trigger statements alone do not:
+- `CREATE [OR REPLACE] TRIGGER` needs `TRIGGER` on the table, and on every
+  partition for a row trigger on a partitioned table;
+- `DROP TRIGGER` needs ownership of the named table only;
+- each `LOCK TABLE` needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its
+  relation, partitions included.
+
+An applying login that owns every trigger table and partition already holds
+these. Otherwise apply fails with `ManagedApplyError::Statement`
+(SQLSTATE `42501`) before changing anything. That happens, for example, when
+the login holds only `TRIGGER` on a table, or when another role owns a
+partition. Batter grants nothing. The owner of each relation grants
+`MAINTAIN`, which allows no data changes, in its own provisioning or
+migrations. Grant it on each table and on each partition, including
+partitions added later:
+
+```sql
+GRANT MAINTAIN ON TABLE app.events, app.events_east, app.events_west TO app_migrator;
+```
+
 Declare a constraint trigger in the manifest rather than in a migration: a
 migration commits before apply and could bind only the previously installed
 body, or no body at all on a fresh database. Every error, cancellation or

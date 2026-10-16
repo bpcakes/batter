@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the thirty-eight-case [managed-object](#managed-routines-and-triggers)
+migration target, the forty-one-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -816,18 +816,21 @@ depends on), `managed_trigger_retirements_leave_the_other_trigger_kind_alone`
 (in both directions), `managed_trigger_kind_changes_converge_in_both_directions`
 (plain to constraint and back, ledger kind updated, verified, and a further
 re-apply executes no DDL), and
-`managed_constraint_trigger_and_its_new_body_commit_together`: a later plain
-trigger on a table the test holds pauses apply after the constraint trigger is
-dropped and re-created; a concurrent `INSERT` is observed waiting for its
-`RowExclusiveLock` on the table, and after the gate is released it fires the
-new body under the new definition. Mutation controls that removed either
+`managed_constraint_trigger_and_its_new_body_commit_together`: a new SQL
+routine whose body reads a gate table the test holds `ACCESS EXCLUSIVE` pauses
+apply in routine validation, after the constraint trigger's drop and before its
+re-creation, while apply holds `records` `ACCESS EXCLUSIVE`. A concurrent
+`INSERT` into `records` is observed waiting for its `RowExclusiveLock`. Once the
+gate is released, it fires the new body under the new definition. Mutation controls that removed either
 drop-before-create direction, ran triggers before routines, retired routines
 first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
 
-Six cases in `tests/managed_objects_live/trigger_drops.rs` and six in
-`tests/managed_objects_live/trigger_lock_order.rs` cover trigger drops decided
-under the table lock and the order of apply's locks.
+Six cases in `tests/managed_objects_live/trigger_drops.rs`, nine in
+`tests/managed_objects_live/trigger_lock_order.rs` and two in
+`tests/managed_objects_live/trigger_privileges.rs` cover trigger drops decided
+under the table lock, the order and membership of apply's locks, and the
+privileges those locks need.
 `managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
 two changes in one manifest: a retirement of a partitioned table's constraint
 trigger, which a migration created and PostgreSQL cloned onto a partition, and
@@ -916,6 +919,16 @@ Either drop locks every partition. Another transaction reads one partition
 before apply starts. Once apply waits for that partition's
 `ACCESS EXCLUSIVE` lock, the transaction writes through the partitioned table.
 Both must commit, and apply must report one replacement or one retirement.
+`managed_trigger_lock_set_follows_a_partition_attached_during_its_wait` follows
+the same schedule for a changed constraint trigger on the partitioned table:
+- once apply waits for `parted_east`, another session attaches `parted_north`;
+- a third transaction reads `parted_north`, and the reader commits;
+- once apply waits for `parted_north`, the third transaction writes through the
+  partitioned table.
+
+Both transactions must commit. Apply must re-create the trigger on the
+partitioned table and all three partitions.
+
 Every race in `trigger_lock_order.rs` also records, while apply waits, the
 tables of the schema other than its ledger on which apply holds a lock, and
 requires none. `managed_trigger_lock_wait_honours_the_session_lock_timeout`
@@ -926,14 +939,33 @@ with the catalog unchanged. The idempotence cases
 transaction holds `ROW EXCLUSIVE` on the trigger table, and require the apply
 to finish within ten seconds.
 
+The cases in `trigger_privileges.rs` run apply as a login that does not own
+every relation it locks:
+- `managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table` gives it
+  only `TRIGGER` on a table another role owns, enough for
+  `CREATE OR REPLACE TRIGGER`;
+- `managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_partition`
+  retires a constraint trigger on a partitioned table it owns, after another
+  role took ownership of one partition. `DROP TRIGGER` alone would remove that
+  partition's clone.
+
+Each apply must fail with `Statement` (`42501`) and leave the catalog
+unchanged. Once the superuser, standing in for the owner, grants `MAINTAIN`,
+the next apply must create or retire the trigger.
+
 Controls on the final code:
 - Taking the same set by blocking statements in partition order deadlocked
   the reader-turned-writer case across a partition and both partition-wait
-  cases (`40P01`).
+  cases (`40P01`). The attach case's `ATTACH` waited behind the partitioned
+  table apply held.
 - Locking a partitioned table with one recursive `LOCK TABLE`, as `74c7ee5`
-  did, deadlocked both partition-wait cases (`40P01`).
-- Expanding the tree with `pg_partition_tree` failed all six partition races,
-  because apply waited while holding `ACCESS SHARE` on both partitions.
+  did, deadlocked both partition-wait cases (`40P01`). Again the attach case's
+  `ATTACH` waited.
+- Expanding the tree with `pg_partition_tree` failed all seven partition
+  races, because apply waited while holding `ACCESS SHARE` on both partitions.
+- Skipping the second read of the set deadlocked the attach case (`40P01`);
+  every other lock-order case passed.
+- Removing the lock step let both privilege cases apply without the grant.
 - Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
   routed-writer case.
 - Locking every declared trigger's table made both idempotence cases wait for
@@ -2601,8 +2633,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 180-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-eight
+an exact 183-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-one
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-
