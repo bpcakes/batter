@@ -23,7 +23,15 @@ contracts, capability facts and validation history.
   between a migration's commit and apply's, and bootstraps with a new function
   on a fresh database. A changed, drifted or adopted constraint trigger holds
   `ACCESS EXCLUSIVE` on its table until commit; an unchanged set still executes
-  no DDL. Verification reports kind and checksum mismatches, drift (including
+  no DDL. Because `DROP TRIGGER` removes either kind by name, every trigger drop,
+  retirement or drop-before-create, first takes that `ACCESS EXCLUSIVE` lock with
+  `LOCK TABLE ONLY` (on tables and partitioned tables), reads the trigger again
+  and acts only on the kind it finds, so a trigger another session replaced with
+  the other kind is never dropped by a retirement, and a partition clone that a
+  retired parent's trigger took with it is simply not there. The apply
+  transaction now runs at READ COMMITTED whatever the session default, which a
+  REPEATABLE READ default would otherwise defeat; earlier releases ran it at the
+  session default. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and
   the digests of existing kinds are unchanged; the new kind is recorded as

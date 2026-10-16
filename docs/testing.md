@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the twenty-four-case [managed-object](#managed-routines-and-triggers)
+migration target, the twenty-eight-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -824,6 +824,39 @@ new body under the new definition. Mutation controls that removed either
 drop-before-create direction, ran triggers before routines, retired routines
 first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
+
+Four cases in `tests/managed_objects_live/trigger_drops.rs` cover trigger drops
+decided under the table lock.
+`managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
+two changes in one manifest: a retirement of a partitioned table's constraint
+trigger, which a migration created and PostgreSQL cloned onto a partition, and
+a same-named constraint trigger declared on that partition. One apply retires
+the parent and creates the partition trigger, a write to the partition fires
+the managed body once, and a re-apply executes nothing.
+`managed_constraint_trigger_retirement_spares_a_concurrent_plain_replacement`
+and `managed_trigger_retirement_spares_a_concurrent_constraint_replacement`
+retire each kind while a racing session runs the same steps in each case:
+1. It takes `ACCESS EXCLUSIVE` on the table before apply starts.
+2. It replaces the trigger with the other kind inside its transaction.
+3. It commits only once apply is observed waiting for its own
+   `ACCESS EXCLUSIVE` request.
+
+Apply must report `retired() == 0` and leave the replacement in place.
+Verification, also kind-exact, must report no finding. The second race runs the
+applying login under a REPEATABLE READ default.
+`managed_triggers_converge_over_any_concurrent_holder` declares a constraint
+trigger and then a plain trigger over an installed constraint trigger. In each,
+the racing session replaces the holder with either kind or removes it, and the
+declaration must converge to its kind and verify.
+
+Mutation controls against these cases:
+- Ignoring the read under the lock failed both retirement races and the
+  removed-holder race (`42704`).
+- Taking no lock, with the racing session committing at the drop's own lock
+  request, failed the same cases.
+- Removing the READ COMMITTED pin failed only the REPEATABLE READ race.
+- Removing both the read under the lock and the post-retirement catalog read
+  failed the partition case (`42704`).
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2487,8 +2520,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 166-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, twenty-four
+an exact 170-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, twenty-eight
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

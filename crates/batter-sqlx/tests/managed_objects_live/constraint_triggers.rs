@@ -10,11 +10,11 @@ use batter_sqlx::verification::{
 };
 use sqlx::{AssertSqlSafe, PgExecutor, PgPool};
 
-const DEFERRED: &str = "DEFERRABLE INITIALLY DEFERRED";
-const IMMEDIATE: &str = "DEFERRABLE INITIALLY IMMEDIATE";
+pub(super) const DEFERRED: &str = "DEFERRABLE INITIALLY DEFERRED";
+pub(super) const IMMEDIATE: &str = "DEFERRABLE INITIALLY IMMEDIATE";
 
 /// The table every firing of `check_record` appends its body version to.
-fn check_log(schema: &str) -> String {
+pub(super) fn check_log(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.check_log (
              id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -22,7 +22,7 @@ fn check_log(schema: &str) -> String {
     )
 }
 
-fn check_body(schema: &str, version: &str) -> String {
+pub(super) fn check_body(schema: &str, version: &str) -> String {
     format!(
         "RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
              INSERT INTO {schema}.check_log (version) VALUES ('{version}');
@@ -31,7 +31,7 @@ fn check_body(schema: &str, version: &str) -> String {
     )
 }
 
-fn check_function(schema: &str, version: &str) -> Result<ManagedObject> {
+pub(super) fn check_function(schema: &str, version: &str) -> Result<ManagedObject> {
     Ok(ManagedObject::function(
         RoutineSignature::new(schema, "check_record", [])?,
         format!(
@@ -41,7 +41,7 @@ fn check_function(schema: &str, version: &str) -> Result<ManagedObject> {
     )?)
 }
 
-fn check_trigger(schema: &str, deferral: &str) -> Result<ManagedObject> {
+pub(super) fn check_trigger(schema: &str, deferral: &str) -> Result<ManagedObject> {
     Ok(ManagedObject::constraint_trigger(
         QualifiedName::new(schema, "records")?,
         Identifier::new("records_check")?,
@@ -52,7 +52,7 @@ fn check_trigger(schema: &str, deferral: &str) -> Result<ManagedObject> {
     )?)
 }
 
-fn plain_check_trigger(schema: &str) -> Result<ManagedObject> {
+pub(super) fn plain_check_trigger(schema: &str) -> Result<ManagedObject> {
     Ok(ManagedObject::trigger(
         QualifiedName::new(schema, "records")?,
         Identifier::new("records_check")?,
@@ -64,7 +64,7 @@ fn plain_check_trigger(schema: &str) -> Result<ManagedObject> {
 }
 
 /// Body versions in firing order.
-async fn fired<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result<Vec<String>> {
+pub(super) async fn fired<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(AssertSqlSafe(format!(
         "SELECT version FROM {schema}.check_log ORDER BY id"
     )))
@@ -72,7 +72,7 @@ async fn fired<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result<Vec<St
     .await?)
 }
 
-async fn insert<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result {
+pub(super) async fn insert<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result {
     sqlx::query(AssertSqlSafe(format!(
         "INSERT INTO {schema}.records (note) VALUES ('checked')"
     )))
@@ -83,7 +83,7 @@ async fn insert<'e>(executor: impl PgExecutor<'e>, schema: &str) -> Result {
 
 /// The trigger holding `records_check`: oid, whether it is a constraint
 /// trigger, its enabled state and its definition.
-async fn holder(pool: &PgPool, schema: &str) -> Result<(i64, bool, String, String)> {
+pub(super) async fn holder(pool: &PgPool, schema: &str) -> Result<(i64, bool, String, String)> {
     Ok(sqlx::query_as(
         "SELECT t.oid::bigint, t.tgconstraint <> 0, t.tgenabled::text, pg_get_triggerdef(t.oid)
          FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
@@ -96,7 +96,10 @@ async fn holder(pool: &PgPool, schema: &str) -> Result<(i64, bool, String, Strin
 }
 
 /// The ledger row of `records_check`: kind, source checksum and rendered hash.
-async fn ledger_row(fixture: &Fixture, pool: &PgPool) -> Result<(String, Vec<u8>, Vec<u8>)> {
+pub(super) async fn ledger_row(
+    fixture: &Fixture,
+    pool: &PgPool,
+) -> Result<(String, Vec<u8>, Vec<u8>)> {
     let identity = format!("\"records_check\" ON \"{}\".\"records\"", fixture.schema());
     fixture
         .object_rows(pool)
@@ -107,7 +110,7 @@ async fn ledger_row(fixture: &Fixture, pool: &PgPool) -> Result<(String, Vec<u8>
         .ok_or_else(|| std::io::Error::other("the ledger has no row for records_check").into())
 }
 
-async fn verifies(
+pub(super) async fn verifies(
     fixture: &Fixture,
     reader: &PgPool,
     manifest: &ManagedObjectManifest,

@@ -97,7 +97,7 @@ pub(super) async fn inspect(
         ManagedLock::Missing => {
             // A ledger visible now was created after the lock attempt and is
             // not protected; absence in the snapshot is a finding.
-            if managed::ledger_relation(connection, ledger)
+            if managed::named_relation(connection, ledger)
                 .await
                 .map_err(native)?
                 .is_some()

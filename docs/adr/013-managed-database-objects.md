@@ -108,8 +108,9 @@ second one rejects reusing a lease consumed by `migrate`.
 
 ### Apply
 
-One transaction creates the ledger when absent, locks it `ACCESS EXCLUSIVE`
-and requires its exact shape (`identity text PRIMARY KEY`, `kind text`,
+One transaction (pinned to READ COMMITTED since 2026-10-16; see "Trigger drops
+decided under the table lock" below) creates the ledger when absent, locks it
+`ACCESS EXCLUSIVE` and requires its exact shape (`identity text PRIMARY KEY`, `kind text`,
 `source_checksum bytea`, `rendered_checksum bytea`, `applied_at timestamptz`,
 all `NOT NULL`, no row security, no inheritance). Any other relation of that
 name, such as a SQLx ledger, is refused before anything is written. Then:
@@ -177,9 +178,9 @@ release after its function protects only databases that deploy every release.
 Apply therefore manages the kind. Pending detection is unchanged: the ledger
 row is absent, its kind or source checksum changed, or the live definition no
 longer renders to the recorded hash. Executing a pending constraint trigger
-drops any non-internal trigger that holds its identity, found in the live
-catalog map read at the start of the transaction (so no `IF EXISTS` notice),
-and then runs its source. Symmetrically, a pending plain trigger whose name a
+drops the non-internal trigger that holds its identity, if one does, and then
+runs its source; whether to drop is decided under the table's lock (next
+subsection), so there is no `IF EXISTS` notice. Symmetrically, a pending plain trigger whose name a
 constraint trigger holds is dropped before its `CREATE OR REPLACE TRIGGER`,
 which PostgreSQL would otherwise refuse. A declared trigger of either kind thus
 converges whatever currently holds its name, while a retirement still drops
@@ -190,9 +191,10 @@ example one a migration created) and verification reported it until then. Such
 a retirement is now left in place without a finding, as a function retirement
 leaves a procedure; it must become `Retirement::constraint_trigger`, which
 changes the set digest. Keeping retirements kind-exact means a stale
-retirement can never drop an object of another kind that later took the name. Routines execute before both trigger
-kinds, and retirements drop both trigger kinds before routines with the same
-`DROP TRIGGER`. The touched-identity check is unchanged: after the drop and
+retirement can never drop an object of another kind that later took the name;
+for triggers this holds under the table lock described in the next subsection.
+Routines execute before both trigger kinds, and retirements drop both trigger
+kinds before routines with the same `DROP TRIGGER`. The touched-identity check is unchanged: after the drop and
 create, the new `pg_trigger` row's `xmin` is the current transaction, and
 catalog resolution reports a trigger with a `pg_constraint` row
 (`tgconstraint <> 0`) as a constraint trigger, never an internal one. Because
@@ -201,6 +203,47 @@ can read or write the table, or fire the trigger, between the drop and the
 commit that installs both the trigger and the body it binds. Kind decisions go
 through small helpers with exhaustive matches, so a future kind cannot be
 missed by a comparison against one variant.
+
+#### Trigger drops decided under the table lock, 2026-10-16
+
+Two reviews of the first amendment, an independent read-only review and a
+separate Codex review, found that a drop decided from the catalog read at the
+start of the transaction can act on a trigger that no longer holds the name.
+`DROP TRIGGER` removes a trigger by name whatever its kind, and nothing locked
+the table between that read and the drop. Another session could drop the
+trigger and re-create it as the other kind in between, and a kind-exact
+retirement would then remove the replacement, possibly a constraint trigger
+enforcing an invariant; the Codex review verified this with a two-session
+PostgreSQL 18.6 probe. Retiring a partitioned table's trigger also drops its
+clones on the partitions, so a constraint trigger declared under a clone's name
+on a partition met a holder that no longer existed, and every apply failed with
+SQLSTATE `42704`.
+
+Every trigger drop, whether a retirement or a drop before a create, is
+therefore decided under the table's lock. Apply takes
+`LOCK TABLE ONLY ... IN ACCESS EXCLUSIVE MODE`, the lock `DROP TRIGGER` needs
+anyway (`DROP TRIGGER` itself first requests `ACCESS SHARE` and then upgrades),
+reads that one trigger again, and acts on the kind it finds: a retirement drops
+only a trigger of the retired kind, and a pending entry drops only a holder its
+kind cannot replace in place. Kind-exact trigger retirement holds under that
+lock; `DROP FUNCTION` and `DROP PROCEDURE` refuse the other routine kind
+themselves. `ONLY` keeps inheritance children and partitions out of this lock,
+and dropping a partitioned table's trigger then locks its partitions as well.
+Views and foreign tables cannot hold constraint triggers, while `LOCK TABLE`
+also locks a view's base relations and refuses a foreign table, so a trigger
+there is read again without the lock. The transaction is pinned to READ
+COMMITTED as its first statement: under a session or database default of
+REPEATABLE READ the read under the lock would return the transaction's first
+snapshot while `DROP TRIGGER` finds the newer trigger.
+
+The lock is taken only where the catalog read at the start of the transaction
+proposes a drop, so an unchanged, undrifted set still takes no table lock. A
+trigger that another session creates under a declared name after that read
+makes the create fail before `COMMIT`; one created under a retired name is left
+for the next apply. Neither is a drop of the wrong kind. The pending set is
+decided after the retirements, from a catalog read again when one dropped a
+trigger, so a declared object that went with a retired parent's clones is
+re-created rather than reported missing.
 
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
@@ -277,7 +320,9 @@ Executed for every new public item before delivery.
   to replace a constraint trigger is not a caller step: there is no "drop
   then create" pairing, migration ordering or two-release rule left to
   remember, because apply owns the drop, its ordering after routines and its
-  transaction. (2) A kind change needs no retirement and cannot be expressed
+  transaction, and decides every trigger drop from the trigger it reads under
+  the table's lock, so a replacement of the other kind is never dropped by
+  name. (2) A kind change needs no retirement and cannot be expressed
   as one (`RetiredObjectDeclared`). Deferrability, `FROM` and `WHEN` are
   PostgreSQL's to validate, as for plain triggers. (4) There is still no
   apply-only path. The new variant breaks exhaustive matches over
@@ -341,7 +386,20 @@ being edited to stop using it, blocks that retirement in the same apply;
 rebinding and retiring take two releases, or a migration that drops the
 dependent first. PostgreSQL also gives a constraint trigger a `pg_constraint`
 row named after it, so its name must differ from every other constraint on its
-table; a collision fails apply. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
+table; a collision fails apply. Renaming a constraint trigger out of band
+renames only the trigger: its `pg_constraint` row keeps the old name, so
+verification reports the declared trigger missing and every apply that
+re-creates it fails with SQLSTATE `23505`. Retiring the renamed trigger under its
+new name with `Retirement::constraint_trigger` in the same manifest repairs it,
+because retirements run first and free the name; dropping it out of band works
+too. Partitioned tables: a trigger declared on a partitioned table is cloned
+onto every partition, and only the declared table's own definition and enabled
+state are hashed, so a clone disabled on one partition is not drift. Dropping
+a partitioned table's trigger holds `ACCESS EXCLUSIVE` on the table and every
+partition until commit; creating one holds `SHARE ROW EXCLUSIVE` on all of them.
+A clone belongs to its partitioned table and cannot be declared or retired on a
+partition: PostgreSQL refuses to drop, replace or create a trigger under a
+clone's name, so such an apply fails. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
 changes rendering reports drift until the next apply re-executes and re-records
 those entries. Ownership of newly created routines is the applying login's;
 replacing an object requires ownership or membership in its owner role, and
@@ -401,3 +459,19 @@ found no apply or verification defect; it led to recording the
 exhaustive kind helpers, to an example trigger that fires on every insert and
 update so a key change cannot bypass its check, and to the `WHEN` drift and
 post-kind-change assertions. Execution results belong to `batter-n2s1`.
+
+Follow-up after both reviews (2026-10-16): four live cases in
+`tests/managed_objects_live/trigger_drops.rs` cover the drop decisions. In
+one, a parent trigger's retirement and a same-named constraint trigger
+declared on its partition go in one manifest. Two cases race a retirement of
+each kind against a racing session that holds `ACCESS EXCLUSIVE` on the table
+before apply starts, replaces the trigger with the other kind and commits only
+once apply waits on its lock. One of the two runs under a REPEATABLE READ
+session default. The last case declares each trigger kind over a holder the
+racing session replaces with either kind or removes. Mutation controls: ignoring
+the read under the lock failed both retirement races and the removed-holder
+race (`42704`). Taking no lock, with the racing session committing at the
+drop's own lock request, failed the same cases. Removing the READ COMMITTED pin
+failed only the REPEATABLE READ race. Removing both the read under the lock
+and the post-retirement catalog read failed the partition case (`42704`);
+either one alone passes it.

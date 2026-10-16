@@ -124,7 +124,11 @@ Apply re-executes only new, changed or drifted entries and drops only retired
 objects that exist as the retired kind, never with `CASCADE`. A pending
 constraint trigger, which PostgreSQL cannot replace, and a pending plain trigger
 whose name a constraint trigger holds, drop the live holder and run their
-source inside the apply transaction, after routines; classify kinds through
+source inside the apply transaction, after routines. `DROP TRIGGER` ignores
+the kind, so every trigger drop takes `LOCK TABLE ONLY ... ACCESS EXCLUSIVE`
+(tables and partitioned tables), re-reads that trigger and acts on the fresh
+kind, and apply pins READ COMMITTED so the re-read sees committed
+replacements; classify kinds through
 `ManagedObjectKind::is_trigger`/`is_routine`/`sql_keyword`, never by comparing
 with one variant; ledger kind names never change; library
 statements run under the canonical settings and sources under the session's;

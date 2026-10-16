@@ -830,6 +830,17 @@ and a drop waiting behind a long transaction stalls new readers and writers of
 that table until it is granted. Batter sets no `lock_timeout`. A
 pending plain trigger whose name a constraint trigger holds is dropped first
 too, so a kind change converges in either direction without a retirement.
+`DROP TRIGGER` removes either kind by name, so every trigger drop, a
+retirement or a drop before a create, is decided under the table's lock: apply
+takes `LOCK TABLE ONLY ... IN ACCESS EXCLUSIVE MODE`, the lock the drop needs
+anyway, reads that trigger again and acts on the kind it finds. A retirement
+drops only a trigger of its kind, so kind-exact retirement holds under the
+lock even when another session replaced the trigger after apply first read the
+catalog. The apply transaction is pinned to READ COMMITTED, because a
+REPEATABLE READ default would make that read return the transaction's first
+snapshot. Views and foreign tables cannot hold constraint triggers, so their
+triggers are read again without `LOCK TABLE`, which would also lock a view's
+base relations and refuses foreign tables.
 Declare a constraint trigger in the manifest rather than in a migration: a
 migration commits before apply and could bind only the previously installed
 body, or no body at all on a fresh database. Every error, cancellation or
@@ -869,10 +880,18 @@ names, or removing a default, needs a migration that drops it first. An object
 that still depends on a retired routine (a trigger, or a `BEGIN ATOMIC` body
 being edited to stop using it) blocks that retirement in the same apply. A
 constraint trigger's name must also differ from every other constraint on its
-table, because PostgreSQL records it in `pg_constraint`. A retirement drops only
-its own kind: `Retirement::trigger` no longer drops a constraint trigger of its
-identity, which earlier releases reported as a plain trigger; use
-`Retirement::constraint_trigger`. Installation
+table, because PostgreSQL records it in `pg_constraint`; for the same reason a
+constraint trigger renamed out of band keeps its old constraint name, and
+re-creating the declared trigger then fails (`23505`) until the renamed one is
+retired under its new name in the same manifest or dropped. A retirement drops
+only its own kind: `Retirement::trigger` no longer drops a constraint trigger of
+its identity, which earlier releases reported as a plain trigger; use
+`Retirement::constraint_trigger`. On a partitioned table, PostgreSQL clones a
+declared trigger onto every partition. Only the declared table's own definition
+and enabled state are hashed, so a clone disabled on one partition is not
+drift. The drop's lock covers every partition until commit. A clone cannot be
+declared or retired on a partition; declare and retire it on the partitioned
+table. Installation
 is last-writer-wins across releases, and a PostgreSQL upgrade that changes
 deparsed text reports drift until the next apply. Lexical validation does not
 prove a body correct. The runnable consumer is

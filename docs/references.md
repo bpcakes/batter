@@ -128,6 +128,44 @@ due to lock timeout"); the same `SELECT` succeeded once the drop finished. A
 `DROP TRIGGER` run under `SET lock_timeout = '500ms'` behind such a reader
 failed with the same error.
 
+Rechecked on 18.6 for the follow-up after review (same day):
+* **Partitions.** A constraint trigger on a partitioned table is cloned onto
+  each partition (`tgparentid <> 0`, `tgisinternal = false`,
+  `tgconstraint <> 0`). For a clone, `DROP TRIGGER` fails ("... requires it"),
+  `CREATE OR REPLACE TRIGGER` fails ("is an internal or a child trigger") and
+  `CREATE CONSTRAINT TRIGGER` fails ("already exists"). Creating a parent
+  trigger whose name a partition already holds fails with "already exists".
+* **Partition clone drops and locks.** Dropping the parent's trigger drops its
+  clones, so a later `DROP TRIGGER` on the partition fails with "does not
+  exist" (`42704`). Dropping it and creating a same-named constraint trigger on
+  the partition in one transaction succeeds. `DROP TRIGGER` on the parent holds
+  `ACCESS EXCLUSIVE` on the parent and every partition, and
+  `CREATE CONSTRAINT TRIGGER` on the parent holds `SHARE ROW EXCLUSIVE` on all
+  of them. `ALTER TABLE partition DISABLE TRIGGER` disables only the clone; the
+  parent stays `O`.
+* **Rename.** `ALTER TRIGGER ... RENAME` keeps the `pg_constraint` name, so
+  re-creating the old name fails on
+  `pg_constraint_conrelid_contypid_conname_index`. Dropping the renamed trigger
+  first, in the same transaction, makes it succeed.
+* **Views and foreign tables.** `CREATE CONSTRAINT TRIGGER` on a view fails
+  ("is a view") and on a foreign table ("is a foreign table"). `LOCK TABLE`
+  refuses a foreign table ("cannot lock relation"). `LOCK TABLE ONLY` on a view
+  also takes `ACCESS EXCLUSIVE` on its base table, while `DROP TRIGGER` on a
+  view locks only the view.
+* **Lock scope and order.** `LOCK TABLE ONLY` on an inheritance or partitioned
+  parent locks only that table, and `DROP TRIGGER` on an inheritance parent
+  locks only the parent. Behind another session's `ACCESS EXCLUSIVE`,
+  `DROP TRIGGER` waits first for `ACCESS SHARE`.
+* **Routine kinds.** `DROP FUNCTION` refuses a procedure ("is not a function")
+  and `DROP PROCEDURE` refuses a function.
+* **Two-session re-read.** One session holds `ACCESS EXCLUSIVE` and replaces a
+  plain trigger with a same-named constraint trigger. A second session reads
+  the trigger, waits in `LOCK TABLE ONLY ... IN ACCESS EXCLUSIVE MODE`, then
+  reads it again:
+  * under REPEATABLE READ the second read still shows the plain trigger, while
+    `DROP TRIGGER` then drops the constraint replacement;
+  * under READ COMMITTED the second read shows the constraint trigger.
+
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 
 For `batter-z4m9.1`, rechecked PostgreSQL 18's

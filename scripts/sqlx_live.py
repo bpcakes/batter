@@ -119,6 +119,10 @@ TARGETS = {
         "managed_trigger_retirements_leave_the_other_trigger_kind_alone",
         "managed_trigger_kind_changes_converge_in_both_directions",
         "managed_constraint_trigger_and_its_new_body_commit_together",
+        "managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply",
+        "managed_constraint_trigger_retirement_spares_a_concurrent_plain_replacement",
+        "managed_trigger_retirement_spares_a_concurrent_constraint_replacement",
+        "managed_triggers_converge_over_any_concurrent_holder",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

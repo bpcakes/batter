@@ -154,6 +154,16 @@ impl Fixture {
     /// A one-connection pool whose session search path is the fixture schema,
     /// so the SQLx ledger `_sqlx_migrations` lands there.
     pub(crate) async fn pool(&mut self, role: Role) -> Result<PgPool> {
+        self.pool_with(role, &[]).await
+    }
+
+    /// [`Self::pool`] with additional session settings, such as another
+    /// default transaction isolation.
+    pub(crate) async fn pool_with(
+        &mut self,
+        role: Role,
+        settings: &[(&str, &str)],
+    ) -> Result<PgPool> {
         let login = match role {
             Role::Migrator => &self.migrator,
             Role::Reader => &self.reader,
@@ -161,7 +171,8 @@ impl Fixture {
         let options = PgConnectOptions::from_str(&self.url)?
             .username(login)
             .password(&self.password)
-            .options([("search_path", self.schema.as_str())]);
+            .options([("search_path", self.schema.as_str())])
+            .options(settings.iter().copied());
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .min_connections(0)

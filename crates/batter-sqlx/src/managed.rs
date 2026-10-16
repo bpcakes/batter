@@ -84,7 +84,7 @@ pub(crate) use apply::migrate_and_apply;
 pub use apply::{AppliedManagedObjects, ManagedApplyError};
 pub(crate) use catalog::{
     CatalogError, LedgerRow, LedgerShape, LiveObject, RenderSettings, inspect_ledger_shape,
-    ledger_relation, load_ledger_rows, public_execute_holders, render_hashes, rendered_set_digest,
+    load_ledger_rows, named_relation, public_execute_holders, render_hashes, rendered_set_digest,
     resolve_live,
 };
 pub use error::ManagedObjectError;
@@ -120,9 +120,9 @@ pub enum ManagedObjectKind {
     Trigger,
     /// A constraint trigger created with `CREATE CONSTRAINT TRIGGER`.
     /// PostgreSQL cannot replace one in place, so apply drops the trigger
-    /// holding its name and re-creates it from source, in the transaction that
-    /// installs the routines it binds; the drop holds `ACCESS EXCLUSIVE` on the
-    /// table, blocking reads and writes, until commit. Like [`Self::Trigger`],
+    /// holding its name, as read under the table's lock, and re-creates it
+    /// from source in the transaction that installs the routines it binds;
+    /// the lock is `ACCESS EXCLUSIVE`, blocking reads and writes, until commit. Like [`Self::Trigger`],
     /// it is always re-created enabled for origin sessions, and its
     /// deferrability is part of its rendered definition. It shares
     /// PostgreSQL's per-table trigger name space and its identity form with
@@ -308,19 +308,23 @@ impl ManagedObject {
     /// Declare a constraint trigger from its complete `CREATE CONSTRAINT TRIGGER`
     /// statement.
     ///
-    /// The header must be `CREATE CONSTRAINT TRIGGER name AFTER event [OR ...]
-    /// ON schema.table`; `OR REPLACE`, which PostgreSQL refuses for constraint
-    /// triggers, is rejected. As for [`Self::trigger`], the lexer checks only
-    /// that a timing keyword and events precede `ON`: PostgreSQL rejects the
-    /// `BEFORE`, `INSTEAD OF` and statement-level forms when apply runs the
-    /// statement, and validates `FROM`, deferrability, `WHEN` and the function. PostgreSQL cannot replace a
-    /// constraint trigger in place, so apply drops any trigger holding `name`
-    /// on `table` and runs this statement in the transaction that installs the
-    /// manifest's routines, after them; no other session observes the
-    /// re-created trigger bound to an earlier body of a routine the manifest
-    /// declares. Only a new, changed or drifted entry executes: its drop holds
-    /// `ACCESS EXCLUSIVE` on `table` until commit, blocking reads and writes,
-    /// and creating it without a drop holds `SHARE ROW EXCLUSIVE`.
+    /// The header must be `CREATE CONSTRAINT TRIGGER name timing event
+    /// [OR ...] ON schema.table`; `OR REPLACE`, which PostgreSQL refuses for
+    /// constraint triggers, is rejected. This pure check is looser than
+    /// PostgreSQL's: like [`Self::trigger`] it accepts `BEFORE`, `AFTER` or
+    /// `INSTEAD OF` as the timing, while PostgreSQL accepts only `AFTER` and
+    /// `FOR EACH ROW` and rejects the other forms when apply runs the
+    /// statement, before `COMMIT`. `FROM`, deferrability, `WHEN` and the
+    /// function are PostgreSQL's to validate as well.
+    ///
+    /// PostgreSQL cannot replace a constraint trigger in place, so apply drops
+    /// whichever trigger holds `name` on `table`, as read under the table's
+    /// `ACCESS EXCLUSIVE` lock, and runs this statement in the transaction that
+    /// installs the manifest's routines, after them; no other session observes
+    /// the re-created trigger bound to an earlier body of a routine the
+    /// manifest declares. Only a new, changed or drifted entry executes: its
+    /// drop holds `ACCESS EXCLUSIVE` on `table` until commit, blocking reads
+    /// and writes, and creating it without a drop holds `SHARE ROW EXCLUSIVE`.
     ///
     /// ```
     /// use batter_sqlx::managed::{ManagedObject, ManagedObjectError, ManagedObjectKind};
@@ -432,7 +436,12 @@ impl fmt::Debug for ManagedObject {
 /// identity, or a plain trigger under a retired constraint trigger's, is left
 /// alone), triggers of both kinds before routines, and never with `CASCADE`,
 /// so any object that still depends on it, declared or not, makes the whole
-/// apply fail instead of disappearing.
+/// apply fail instead of disappearing. `DROP TRIGGER` removes either trigger
+/// kind by name, so apply decides a trigger retirement from the trigger it
+/// reads under the table's `ACCESS EXCLUSIVE` lock: the retirement is
+/// kind-exact even when another session replaced the trigger after apply first
+/// read the catalog. A trigger cloned onto a partition belongs to its
+/// partitioned table and is retired there.
 /// A retirement may not name an identity the same manifest declares: replacing
 /// a routine whose return type or argument names change belongs in a versioned
 /// migration that drops it, after which apply creates the new definition.
@@ -454,7 +463,13 @@ impl Retirement {
         Self::new(ManagedObjectKind::Procedure, Identity::Routine(signature))
     }
 
-    /// Retire a trigger by its table and name.
+    /// Retire a plain trigger by its table and name.
+    ///
+    /// Only a plain trigger is dropped, decided under the table's lock; a
+    /// constraint trigger holding the name is left in place, and verification
+    /// does not report it. Migration: earlier releases reported constraint
+    /// triggers as plain triggers, so a `Retirement::trigger` aimed at one
+    /// dropped it; retire it with [`Self::constraint_trigger`].
     pub fn trigger(table: QualifiedName, name: Identifier) -> Self {
         Self::new(
             ManagedObjectKind::Trigger,
@@ -464,8 +479,9 @@ impl Retirement {
 
     /// Retire a constraint trigger by its table and name.
     ///
-    /// Apply drops it with `DROP TRIGGER`, which takes `ACCESS EXCLUSIVE` on
-    /// `table` until commit, only while a constraint trigger holds that name.
+    /// Apply drops it with `DROP TRIGGER`, holding `ACCESS EXCLUSIVE` on
+    /// `table` until commit, only when the trigger it reads under that lock is
+    /// a constraint trigger; a plain trigger holding the name is left alone.
     pub fn constraint_trigger(table: QualifiedName, name: Identifier) -> Self {
         Self::new(
             ManagedObjectKind::ConstraintTrigger,

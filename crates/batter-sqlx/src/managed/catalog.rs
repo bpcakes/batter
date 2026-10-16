@@ -138,8 +138,9 @@ pub(crate) fn create_ledger_sql(ledger: &QualifiedName) -> String {
     )
 }
 
-/// Resolve a relation by exact schema and name in the current catalog snapshot.
-pub(crate) async fn ledger_relation(
+/// Resolve a relation's oid and `relkind` by exact schema and name in the
+/// current catalog snapshot: the managed ledger, or a managed trigger's table.
+pub(crate) async fn named_relation(
     connection: &mut PgConnection,
     ledger: &QualifiedName,
 ) -> Result<Option<(i64, String)>, sqlx::Error> {

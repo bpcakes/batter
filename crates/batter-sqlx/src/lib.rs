@@ -292,8 +292,10 @@ impl PgLease {
     /// one's apply cannot land between another's migrations and objects.
     /// Native SQLx keeps migration selection, locking, history and checksums.
     ///
-    /// Apply then runs one transaction. It creates the ledger when absent,
-    /// locks it `ACCESS EXCLUSIVE` and refuses any other relation of that name.
+    /// Apply then runs one transaction, pinned to READ COMMITTED whatever the
+    /// session default, so each statement reads what committed before it. It
+    /// creates the ledger when absent, locks it `ACCESS EXCLUSIVE` and refuses
+    /// any other relation of that name.
     /// It drops each retired object that still exists as the retired kind
     /// (triggers of both kinds first, never `CASCADE`), executes each entry's
     /// source (routines before triggers) unless its ledger row and live
@@ -309,7 +311,10 @@ impl PgLease {
     /// trigger first drops the trigger holding its name, as does a plain
     /// trigger whose name a constraint trigger holds; the drop holds
     /// `ACCESS EXCLUSIVE` on the table until commit, so the re-created trigger
-    /// and the routine body it binds become visible together. An unchanged,
+    /// and the routine body it binds become visible together. `DROP TRIGGER`
+    /// removes either trigger kind by name, so every trigger drop, retired or
+    /// before a create, first takes that lock and reads the trigger again,
+    /// and acts only on the kind it finds under the lock. An unchanged,
     /// undrifted set therefore executes no DDL and locks no managed trigger's
     /// table (only the ledger), while a definition changed out of band,
     /// including a disabled trigger, is replaced. Apply never chooses source,

@@ -654,9 +654,14 @@ of that table wait and then see the new trigger with the new body. A kind change
 `ManagedObject::trigger` and `ManagedObject::constraint_trigger` needs no
 retirement; `Retirement::constraint_trigger` drops only a live constraint
 trigger, and `Retirement::trigger`, which earlier releases also let drop a
-constraint trigger, now leaves one in place. A drop waiting behind a long
-transaction stalls the table's other readers and writers; Batter sets no
-`lock_timeout`. An adopted constraint trigger previously created by a migration is
+constraint trigger, now leaves one in place. Apply decides every trigger drop
+from the trigger it reads under the table's `ACCESS EXCLUSIVE` lock, in a
+transaction pinned to READ COMMITTED, so a trigger another session replaced
+with the other kind is never dropped by a retirement. A drop waiting behind a
+long transaction stalls the table's other readers and writers; Batter sets no
+`lock_timeout`. Declare and retire a partitioned table's trigger on the
+partitioned table, not on its partitions' clones, and retire a constraint
+trigger renamed out of band under its new name. An adopted constraint trigger previously created by a migration is
 re-created on the first apply that declares it. Installation is
 last-writer-wins across releases; verification of newer replicas reports an
 older release's apply as a set-digest mismatch. See
