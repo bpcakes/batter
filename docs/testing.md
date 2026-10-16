@@ -971,7 +971,12 @@ this schedule:
 Apply's catalog read after the retirement then wants `beta_audit` dropped.
 Apply must fail with `IdentityMismatch` naming it, and `alpha_audit` must
 still exist. The next apply must retire `alpha_audit` and restore the plain
-`beta_audit`.
+`beta_audit`. One catalog query serves the whole check, which the four unit
+tests in `crates/batter-sqlx/src/managed/apply/drops/tests.rs` decide offline:
+- each entry's mode over a table that several entries share;
+- the first uncovered entry, in manifest order;
+- every member of a partition tree;
+- entries whose table has no lockable members.
 
 Controls on the final code:
 - Taking the same set by blocking statements in partition order deadlocked
@@ -989,6 +994,10 @@ Controls on the final code:
 - Skipping the coverage check deadlocked both coverage cases (`40P01`).
   Checking relations but ignoring modes deadlocked only the
   stronger-lock case.
+- With the check batched into one catalog walk, ignoring modes failed the
+  mode unit test and the stronger-lock case. Reporting the last uncovered
+  entry, or checking only a tree's first member, failed the matching unit
+  test. Discarding the walk's rows deadlocked both coverage cases.
 - Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
   routed-writer case.
 - Locking every declared trigger's table made both idempotence cases wait for

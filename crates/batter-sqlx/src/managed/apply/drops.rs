@@ -15,6 +15,9 @@ use crate::verification::{Identifier, QualifiedName};
 use sqlx::{AssertSqlSafe, PgConnection};
 use std::collections::HashMap;
 
+#[cfg(test)]
+mod tests;
+
 /// Rounds of taking the whole lock set before apply gives up. A round after a
 /// refusal first waits for the relation that refused, so rounds repeat only
 /// while other transactions keep holding a different relation of the set, or
@@ -106,27 +109,38 @@ type Target = (String, bool);
 pub(super) struct LockSet(HashMap<String, bool>);
 
 impl LockSet {
-    /// Whether the set holds everything the trigger statements on `table`
-    /// lock: every relation of its partition tree, in `ACCESS EXCLUSIVE` mode
-    /// when `exclusive`. Reading the tree takes no lock.
-    async fn covers(
-        &self,
-        connection: &mut PgConnection,
-        table: &QualifiedName,
-        exclusive: bool,
-    ) -> Result<bool, ManagedApplyError> {
-        let needed = catalog::lockable_tables_in_lock_order(
-            connection,
-            &[(table.schema(), table.name(), exclusive)],
-        )
-        .await
-        .map_err(statement)?;
-        Ok(needed.iter().all(|(relation, needs_exclusive)| {
-            self.0
-                .get(relation)
-                .is_some_and(|held_exclusive| *held_exclusive || !*needs_exclusive)
-        }))
+    /// Whether the set holds `relation`, in `ACCESS EXCLUSIVE` mode when
+    /// `exclusive`.
+    fn holds(&self, relation: &str, exclusive: bool) -> bool {
+        self.0
+            .get(relation)
+            .is_some_and(|held_exclusive| *held_exclusive || !exclusive)
     }
+}
+
+/// A pending trigger entry checked by [`require_covered`]: its identity, the
+/// position of its table among the walked trees, and whether its drop needs
+/// `ACCESS EXCLUSIVE`.
+type Coverage<'m> = (&'m str, usize, bool);
+
+/// The first entry of `entries` with a member of its table's tree, in
+/// `trees`, that `locks` does not hold in the entry's mode. An entry whose
+/// table is no ordinary or partitioned table has no members and is covered.
+fn first_uncovered<'m>(
+    locks: &LockSet,
+    trees: &[Vec<String>],
+    entries: &[Coverage<'m>],
+) -> Option<&'m str> {
+    entries
+        .iter()
+        .find(|(_, tree, exclusive)| {
+            !trees.get(*tree).is_none_or(|members| {
+                members
+                    .iter()
+                    .all(|relation| locks.holds(relation, *exclusive))
+            })
+        })
+        .map(|(identity, ..)| *identity)
 }
 
 /// Refuse trigger work in `pending` that `locks` does not cover, before any
@@ -141,28 +155,54 @@ impl LockSet {
 /// while holding the set could complete a deadlock. Apply therefore fails
 /// with [`ManagedApplyError::IdentityMismatch`] for the first such entry. The
 /// retirements roll back with the transaction, and nothing is retried
-/// automatically.
+/// automatically. One catalog query walks the trees of all pending trigger
+/// tables, each table once, so the check adds a single round trip while the
+/// set's `ACCESS EXCLUSIVE` locks are held.
 pub(super) async fn require_covered(
     connection: &mut PgConnection,
     locks: &LockSet,
     pending: &[&ManagedObject],
     live: &HashMap<String, LiveObject>,
 ) -> Result<(), ManagedApplyError> {
+    let mut tables = Vec::new();
+    let mut positions = HashMap::new();
+    let mut entries = Vec::new();
     for object in pending {
         let Identity::Trigger { table, .. } = object.structural_identity() else {
             continue;
         };
+        let key = (table.schema(), table.name());
+        let tree = *positions.entry(key).or_insert_with(|| {
+            tables.push(key);
+            tables.len() - 1
+        });
         let exclusive = live
             .get(object.identity())
             .and_then(|live| live.kind)
             .is_some_and(|holder| drops_before_create(object.kind(), holder));
-        if !locks.covers(connection, table, exclusive).await? {
-            return Err(ManagedApplyError::IdentityMismatch {
-                identity: object.identity().to_owned(),
-            });
+        entries.push((object.identity(), tree, exclusive));
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut trees = vec![Vec::new(); tables.len()];
+    for (ordinal, relation) in catalog::partition_tree_members(connection, &tables)
+        .await
+        .map_err(statement)?
+    {
+        let position = usize::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| ordinal.checked_sub(1));
+        if let Some(members) = position.and_then(|position| trees.get_mut(position)) {
+            members.push(relation);
         }
     }
-    Ok(())
+    match first_uncovered(locks, &trees, &entries) {
+        Some(identity) => Err(ManagedApplyError::IdentityMismatch {
+            identity: identity.to_owned(),
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The relations `requests` stand for now, in lock order.

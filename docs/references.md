@@ -255,6 +255,11 @@ Rechecked on 18.6 for the follow-up after review (same day):
     `SHARE ROW EXCLUSIVE` mode, made apply's drop wait for that table while
     holding the retired trigger's table. A reader of the table that then
     wrote the other deadlocked with it (`40P01`).
+  * Probed cost of the walk that the coverage check runs: 600 separate walks,
+    three per table over 100 plain and 100 two-partition tables, took 293 to
+    412 ms through `psql` over loopback. One batched walk over the same 200
+    tables took 71 to 87 ms, including the same client startup. This was a
+    focused query probe, not an application benchmark.
 * **`NOWAIT` and savepoints (probed).**
   * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
     once with `55P03` ("could not obtain lock on relation").

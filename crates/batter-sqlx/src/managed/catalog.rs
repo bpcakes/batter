@@ -528,6 +528,48 @@ pub(crate) async fn lockable_tables_in_lock_order(
     .await
 }
 
+/// The ordinary and partitioned tables of each partition tree among
+/// `tables`, as the 1-based position of the requested table and the member's
+/// quoted name: the requested table itself and, below a partitioned table,
+/// every partition, walked through `pg_inherits` without taking a lock, as in
+/// [`lockable_tables_in_lock_order`]. One query serves every table.
+pub(crate) async fn partition_tree_members(
+    connection: &mut PgConnection,
+    tables: &[(&str, &str)],
+) -> Result<Vec<(i64, String)>, sqlx::Error> {
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let schemas = tables.iter().map(|table| table.0).collect::<Vec<_>>();
+    let names = tables.iter().map(|table| table.1).collect::<Vec<_>>();
+    sqlx::query_as(
+        "WITH RECURSIVE tree AS (
+             SELECT requested.ordinal, c.oid AS relid
+             FROM unnest($1::text[], $2::text[]) WITH ORDINALITY
+                  AS requested(schema_name, table_name, ordinal)
+             JOIN pg_catalog.pg_namespace AS n ON n.nspname = requested.schema_name
+             JOIN pg_catalog.pg_class AS c
+               ON c.relnamespace = n.oid AND c.relname = requested.table_name
+             WHERE c.relkind IN ('r', 'p')
+             UNION ALL
+             SELECT tree.ordinal, i.inhrelid
+             FROM tree
+             JOIN pg_catalog.pg_class AS parent
+               ON parent.oid = tree.relid AND parent.relkind = 'p'
+             JOIN pg_catalog.pg_inherits AS i ON i.inhparent = tree.relid)
+         SELECT tree.ordinal,
+                pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname)
+         FROM tree
+         JOIN pg_catalog.pg_class AS c ON c.oid = tree.relid
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p')",
+    )
+    .bind(schemas)
+    .bind(names)
+    .fetch_all(connection)
+    .await
+}
+
 /// Resolve every declared entry and retirement of `manifest`.
 pub(crate) async fn resolve_live(
     connection: &mut PgConnection,

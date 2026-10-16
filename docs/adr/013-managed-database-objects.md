@@ -344,9 +344,17 @@ the first deadlocked with it (`40P01`).
 Apply now keeps the set it acquired, each relation with its mode. It checks
 every trigger entry of the second read against that set before any drop or
 create:
-- it walks the entry's partition tree without a lock;
-- it requires every member to be held, in `ACCESS EXCLUSIVE` mode when the
-  entry's holder must be dropped.
+- one catalog query walks the partition trees of all pending trigger tables,
+  each table once, without a lock;
+- every member of an entry's tree must be held, in `ACCESS EXCLUSIVE` mode
+  when the entry's holder must be dropped.
+
+The first version of the check walked one tree per pending trigger, repeating
+tables that several triggers share. It did so while the set's
+`ACCESS EXCLUSIVE` locks blocked the tables' readers. In a probe, 600 such
+walks over 200 tables took about 300 ms more than one batched walk over
+loopback. The batched walk keeps each entry's mode and reports the first
+uncovered entry in manifest order.
 
 Uncovered work fails the apply with `IdentityMismatch` for that entry, before
 apply requests another lock. The retirements roll back with the transaction,
@@ -677,6 +685,14 @@ Mutation controls against those cases:
 - Skipping the coverage check deadlocked both coverage races (`40P01`).
   Checking relations but not modes deadlocked only the race on the table held
   in `SHARE ROW EXCLUSIVE` mode.
+- With the walk batched, four unit tests in `managed/apply/drops/tests.rs`
+  pin the coverage decision. They check entry modes over shared tables, the
+  first uncovered entry, every member of a tree, and tables without members.
+  - Ignoring modes failed the mode test and the live stronger-lock race
+    (`40P01`).
+  - Reporting the last uncovered entry failed the ordering test, and
+    checking only a tree's first member failed the tree test.
+  - Discarding the walk's rows deadlocked both coverage races (`40P01`).
 - Removing the lock step altogether and interleaving the drops failed the two
   reader-turned-writer races and the two partition-order races (`40P01`).
 - Locking every declared trigger's table instead of only the pending ones made
