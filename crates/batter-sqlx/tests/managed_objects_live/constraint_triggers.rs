@@ -351,12 +351,16 @@ async fn managed_constraint_trigger_drift_is_reported_and_repaired() -> Result {
         let reader = fixture.pool(Role::Reader).await?;
         let _ = fixture.apply(&migrator, &objects.manifest).await?;
         let identity = format!("\"records_check\" ON \"{schema}\".\"records\"");
-        for drift in [
+        let recreate = |clauses: &str| {
             format!(
                 "DROP TRIGGER records_check ON {schema}.records;
                  CREATE CONSTRAINT TRIGGER records_check AFTER INSERT OR UPDATE ON {schema}.records
-                 NOT DEFERRABLE FOR EACH ROW EXECUTE FUNCTION {schema}.check_record()"
-            ),
+                 {clauses} EXECUTE FUNCTION {schema}.check_record()"
+            )
+        };
+        for drift in [
+            recreate("NOT DEFERRABLE FOR EACH ROW"),
+            recreate(&format!("{DEFERRED} FOR EACH ROW WHEN (NEW.note <> '')")),
             format!("ALTER TABLE {schema}.records DISABLE TRIGGER records_check"),
         ] {
             fixture.admin(&drift).await?;
@@ -542,6 +546,14 @@ async fn managed_trigger_kind_changes_converge_in_both_directions() -> Result {
             require(
                 verifies(fixture, &reader, &objects.manifest).await?,
                 "a converged kind change did not verify",
+            )?;
+            require(
+                fixture
+                    .apply(&migrator, &objects.manifest)
+                    .await?
+                    .created_or_replaced()
+                    == 0,
+                "a re-apply after a kind change executed DDL",
             )?;
         }
         Ok(())

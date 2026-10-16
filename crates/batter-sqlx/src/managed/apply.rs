@@ -392,10 +392,12 @@ pub(super) const fn drops_before_create(
     declared: ManagedObjectKind,
     holder: ManagedObjectKind,
 ) -> bool {
-    match declared {
-        ManagedObjectKind::Function | ManagedObjectKind::Procedure => false,
-        ManagedObjectKind::Trigger => matches!(holder, ManagedObjectKind::ConstraintTrigger),
-        ManagedObjectKind::ConstraintTrigger => holder.is_trigger(),
+    use ManagedObjectKind::{ConstraintTrigger, Function, Procedure, Trigger};
+    match (declared, holder) {
+        (Function | Procedure, _) | (Trigger, Trigger) => false,
+        (Trigger | ConstraintTrigger, ConstraintTrigger) | (ConstraintTrigger, Trigger) => true,
+        // Routine and trigger identities never collide.
+        (Trigger | ConstraintTrigger, Function | Procedure) => false,
     }
 }
 

@@ -809,12 +809,13 @@ rendered hash, and fires within the statement),
 constraint trigger that ran the migration's body is re-created and recorded,
 then runs the managed body),
 `managed_constraint_trigger_drift_is_reported_and_repaired` (re-creation as
-`NOT DEFERRABLE` and `DISABLE TRIGGER` are each one drift finding, repaired by
-re-creating exactly that entry), `managed_constraint_trigger_retires_before_its_routine`
+`NOT DEFERRABLE` or with an added `WHEN` clause, and `DISABLE TRIGGER`, are each
+one drift finding, repaired by re-creating exactly that entry), `managed_constraint_trigger_retires_before_its_routine`
 (both retirements succeed, so the trigger was dropped before the function it
 depends on), `managed_trigger_retirements_leave_the_other_trigger_kind_alone`
 (in both directions), `managed_trigger_kind_changes_converge_in_both_directions`
-(plain to constraint and back, ledger kind updated, verified), and
+(plain to constraint and back, ledger kind updated, verified, and a further
+re-apply executes no DDL), and
 `managed_constraint_trigger_and_its_new_body_commit_together`: a later plain
 trigger on a table the test holds pauses apply after the constraint trigger is
 dropped and re-created; a concurrent `INSERT` is observed waiting for its
@@ -829,8 +830,8 @@ cases. Execution evidence is recorded in `batter-n2s1`.
 other live tests, and the executable smoke runs the schema stages through the
 production entry point. Results are recorded in `batter-54d0`. Since
 `batter-n2s1` the case also requires the managed deferred constraint trigger to
-reject a blank note at commit (`23514`) and to accept one corrected earlier in
-the same transaction.
+reject a blank note at commit (`23514`), also after the row's key changed in
+that transaction, and to accept one corrected earlier in the same transaction.
 
 ## Explicit reference compatibility probes
 

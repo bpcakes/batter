@@ -58,6 +58,24 @@ contracts, capability facts and validation history.
   consumers review every kind apply can execute; its rustdoc carries a
   `Migration:` note. No existing call shape changes.
 
+  Behaviour change in the same entry: catalog resolution used to report a
+  constraint trigger as a plain trigger, so `Retirement::trigger` dropped a
+  constraint trigger holding its name (for example one a migration created),
+  and verification reported `RetiredManagedObjectPresent` until it did. A
+  retirement now drops only a live object of its own kind, so that manifest
+  leaves the constraint trigger in place and reports nothing. Retire it as its
+  kind (the set digest changes with the retirement's kind):
+
+  ```rust,ignore
+  // Before
+  Retirement::trigger(QualifiedName::new("app", "records")?, Identifier::new("records_check")?)
+  // After
+  Retirement::constraint_trigger(QualifiedName::new("app", "records")?, Identifier::new("records_check")?)
+  ```
+
+  No shim: making `Retirement::trigger` drop either kind would let a stale
+  retirement drop a constraint trigger that later took the name.
+
 - Enforce managed manifests' 64 MiB source limit while consuming their object
   iterators, before consuming retirements. Clarify that interrupted apply may
   have committed even when it returns no result. Add live managed-verifier

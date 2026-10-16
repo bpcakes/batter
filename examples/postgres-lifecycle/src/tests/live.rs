@@ -159,7 +159,8 @@ async fn task_database_error_survives_shutdown_and_pool_close() {
 }
 
 /// The managed constraint trigger checks a note when its writer commits, so a
-/// transaction can still correct a blank note, while a blank commit fails.
+/// transaction can still correct a blank note, while a blank commit fails,
+/// including one whose row key changed after the blank insert.
 async fn note_checked_at_commit(pool: &sqlx::PgPool) -> Result<(), BoxError> {
     let mut transaction = pool.begin().await?;
     let id: i64 =
@@ -171,14 +172,31 @@ async fn note_checked_at_commit(pool: &sqlx::PgPool) -> Result<(), BoxError> {
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await?;
-    let blank = sqlx::query("INSERT INTO lifecycle.records (note) VALUES (' ')")
-        .execute(pool)
-        .await
-        .expect_err("a blank note must fail when its transaction commits");
-    match blank.as_database_error().and_then(|error| error.code()) {
-        Some(code) if code == "23514" => Ok(()),
-        _ => Err("the managed constraint trigger did not reject a blank note".into()),
+    // A blank note fails at commit, also when the row's key moved after insert.
+    for moves_key in [false, true] {
+        let mut transaction = pool.begin().await?;
+        sqlx::query("INSERT INTO lifecycle.records (note) VALUES (' ')")
+            .execute(&mut *transaction)
+            .await?;
+        if moves_key {
+            sqlx::query("UPDATE lifecycle.records SET id = DEFAULT WHERE btrim(note) = ''")
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let refused = transaction
+            .commit()
+            .await
+            .expect_err("a blank note must fail when its transaction commits");
+        if refused
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref()
+            != Some("23514")
+        {
+            return Err("the managed constraint trigger did not reject a blank note".into());
+        }
     }
+    Ok(())
 }
 
 #[tokio::test]

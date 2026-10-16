@@ -653,7 +653,10 @@ drop holds `ACCESS EXCLUSIVE` on the table until commit, so readers and writers
 of that table wait and then see the new trigger with the new body. A kind change between
 `ManagedObject::trigger` and `ManagedObject::constraint_trigger` needs no
 retirement; `Retirement::constraint_trigger` drops only a live constraint
-trigger. An adopted constraint trigger previously created by a migration is
+trigger, and `Retirement::trigger`, which earlier releases also let drop a
+constraint trigger, now leaves one in place. A drop waiting behind a long
+transaction stalls the table's other readers and writers; Batter sets no
+`lock_timeout`. An adopted constraint trigger previously created by a migration is
 re-created on the first apply that declares it. Installation is
 last-writer-wins across releases; verification of newer replicas reports an
 older release's apply as a set-digest mismatch. See

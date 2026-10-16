@@ -825,7 +825,9 @@ trigger holds its name) and re-created from its source in the same
 transaction, after the routines it binds. The drop holds `ACCESS EXCLUSIVE` on
 the table until that commit, so no other session can read or write the table,
 or fire the trigger, between the drop and the commit that installs it with its
-routine body; unlike `CREATE OR REPLACE TRIGGER`, this blocks plain reads too. A
+routine body; unlike `CREATE OR REPLACE TRIGGER`, this blocks plain reads too,
+and a drop waiting behind a long transaction stalls new readers and writers of
+that table until it is granted. Batter sets no `lock_timeout`. A
 pending plain trigger whose name a constraint trigger holds is dropped first
 too, so a kind change converges in either direction without a retirement.
 Declare a constraint trigger in the manifest rather than in a migration: a
@@ -867,7 +869,10 @@ names, or removing a default, needs a migration that drops it first. An object
 that still depends on a retired routine (a trigger, or a `BEGIN ATOMIC` body
 being edited to stop using it) blocks that retirement in the same apply. A
 constraint trigger's name must also differ from every other constraint on its
-table, because PostgreSQL records it in `pg_constraint`. Installation
+table, because PostgreSQL records it in `pg_constraint`. A retirement drops only
+its own kind: `Retirement::trigger` no longer drops a constraint trigger of its
+identity, which earlier releases reported as a plain trigger; use
+`Retirement::constraint_trigger`. Installation
 is last-writer-wins across releases, and a PostgreSQL upgrade that changes
 deparsed text reports drift until the next apply. Lexical validation does not
 prove a body correct. The runnable consumer is

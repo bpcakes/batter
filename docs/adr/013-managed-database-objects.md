@@ -152,9 +152,13 @@ Amended 2026-10-16: a changed, drifted or adopted constraint trigger is dropped
 and re-created (next subsection), so it holds `ACCESS EXCLUSIVE` on its table
 from its drop until the apply commits, the same cost a retired trigger already
 has, rather than the `SHARE ROW EXCLUSIVE` of `CREATE OR REPLACE TRIGGER`;
-unlike that lock it also blocks plain reads of the table. A
-kind change under one identity costs the same. An unchanged, undrifted set
-still executes no DDL and locks no table other than the ledger.
+unlike that lock it also blocks plain reads of the table. PostgreSQL queues
+later lock requests behind a waiting one, so a drop that waits behind a long
+transaction on the table also stalls new readers and writers until it is
+granted. Batter sets no `lock_timeout`; bounding that wait on the applying
+login is the application's choice, and a timed-out drop fails the whole apply
+before `COMMIT`. A kind change under one identity costs the same. An unchanged,
+undrifted set still executes no DDL and locks no table other than the ledger.
 
 #### Constraint triggers, 2026-10-16
 
@@ -179,7 +183,14 @@ and then runs its source. Symmetrically, a pending plain trigger whose name a
 constraint trigger holds is dropped before its `CREATE OR REPLACE TRIGGER`,
 which PostgreSQL would otherwise refuse. A declared trigger of either kind thus
 converges whatever currently holds its name, while a retirement still drops
-only a live object of the retired kind. Routines execute before both trigger
+only a live object of the retired kind. This changes one existing outcome:
+catalog resolution used to report a constraint trigger as a plain trigger, so
+`Retirement::trigger` dropped a constraint trigger holding its name (for
+example one a migration created) and verification reported it until then. Such
+a retirement is now left in place without a finding, as a function retirement
+leaves a procedure; it must become `Retirement::constraint_trigger`, which
+changes the set digest. Keeping retirements kind-exact means a stale
+retirement can never drop an object of another kind that later took the name. Routines execute before both trigger
 kinds, and retirements drop both trigger kinds before routines with the same
 `DROP TRIGGER`. The touched-identity check is unchanged: after the drop and
 create, the new `pg_trigger` row's `xmin` is the current transaction, and
@@ -187,11 +198,9 @@ catalog resolution reports a trigger with a `pg_constraint` row
 (`tgconstraint <> 0`) as a constraint trigger, never an internal one. Because
 the drop holds `ACCESS EXCLUSIVE` on the table until commit, no other session
 can read or write the table, or fire the trigger, between the drop and the
-commit that installs both the trigger and the body it binds; this also blocks
-plain reads, and a drop waiting behind a long transaction queues new readers
-and writers behind it. Kind decisions go through
-small helpers with exhaustive matches, so a future kind cannot be missed by a
-comparison against one variant.
+commit that installs both the trigger and the body it binds. Kind decisions go
+through small helpers with exhaustive matches, so a future kind cannot be
+missed by a comparison against one variant.
 
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
@@ -378,11 +387,17 @@ and `PUBLIC` `EXECUTE` candidates excluding both trigger kinds. Nine PostgreSQL
 bootstrap of a new function and a `DEFERRABLE INITIALLY DEFERRED` constraint
 trigger in one apply, an idempotent re-apply, a source change, adoption of a
 migration-created constraint trigger, drift by re-creation as `NOT DEFERRABLE`
-and by `DISABLE TRIGGER`, retirement before the bound routine, a retirement of
+or with a `WHEN` clause and by `DISABLE TRIGGER`, retirement before the bound
+routine, a retirement of
 the other trigger kind left alone in both directions, kind changes in both
-directions, and a concurrent write that waits on the table lock until the
+directions followed by a re-apply without DDL, and a concurrent write that waits on the table lock until the
 changed body and constraint trigger commit together and then fires the new
 body. Mutation controls that removed either drop-before-create direction, ran
 triggers before routines, retired routines first, or resolved every trigger as
 the plain kind each failed the expected cases. The lifecycle example applies a
-deferred constraint trigger. Execution results belong to `batter-n2s1`.
+deferred constraint trigger. An independent read-only review of the amendment
+found no apply or verification defect; it led to recording the
+`Retirement::trigger` behaviour change and the lock-queue caveat above, to
+exhaustive kind helpers, to an example trigger that fires on every insert and
+update so a key change cannot bypass its check, and to the `WHEN` drift and
+post-kind-change assertions. Execution results belong to `batter-n2s1`.

@@ -120,7 +120,13 @@ statement-level forms are syntax errors for `CREATE CONSTRAINT TRIGGER`. A
 deferred row trigger queued by an `INSERT` and fired at commit received the
 inserted row version (`NEW.note` empty) even though a later statement in the
 transaction updated the row, so a deferred check that must see committed state
-reads the row again.
+reads the row again. With one session holding `ACCESS SHARE` in an open
+transaction, a second session's `DROP TRIGGER` of a constraint trigger waited
+ungranted, and a third session's plain `SELECT` of the table then waited behind
+it until its `lock_timeout` of one second cancelled it ("canceling statement
+due to lock timeout"); the same `SELECT` succeeded once the drop finished. A
+`DROP TRIGGER` run under `SET lock_timeout = '500ms'` behind such a reader
+failed with the same error.
 
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 

@@ -511,10 +511,9 @@ pub(crate) async fn render_hashes(
 ) -> Result<HashMap<i64, [u8; 32]>, CatalogError> {
     let (mut routines, mut triggers) = (Vec::new(), Vec::new());
     for (oid, kind) in objects {
-        if kind.is_trigger() {
-            triggers.push(oid);
-        } else {
-            routines.push(oid);
+        match kind {
+            ManagedObjectKind::Function | ManagedObjectKind::Procedure => routines.push(oid),
+            ManagedObjectKind::Trigger | ManagedObjectKind::ConstraintTrigger => triggers.push(oid),
         }
     }
     let mut hashes = HashMap::with_capacity(routines.len() + triggers.len());

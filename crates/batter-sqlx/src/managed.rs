@@ -155,7 +155,10 @@ impl ManagedObjectKind {
 
     /// Whether the kind is a function or procedure, which can hold `EXECUTE`.
     pub(crate) const fn is_routine(self) -> bool {
-        !self.is_trigger()
+        match self {
+            Self::Function | Self::Procedure => true,
+            Self::Trigger | Self::ConstraintTrigger => false,
+        }
     }
 
     /// The object keyword of `DROP` (and, for routines, of `REVOKE ... ON`).
@@ -305,11 +308,12 @@ impl ManagedObject {
     /// Declare a constraint trigger from its complete `CREATE CONSTRAINT TRIGGER`
     /// statement.
     ///
-    /// The header must be `CREATE CONSTRAINT TRIGGER name {BEFORE | AFTER |
-    /// INSTEAD OF} event [OR ...] ON schema.table`; `OR REPLACE`, which
-    /// PostgreSQL refuses for constraint triggers, is rejected. `FROM`,
-    /// deferrability, `FOR EACH ROW`, `WHEN`, the timing PostgreSQL allows and
-    /// the function are left to PostgreSQL. PostgreSQL cannot replace a
+    /// The header must be `CREATE CONSTRAINT TRIGGER name AFTER event [OR ...]
+    /// ON schema.table`; `OR REPLACE`, which PostgreSQL refuses for constraint
+    /// triggers, is rejected. As for [`Self::trigger`], the lexer checks only
+    /// that a timing keyword and events precede `ON`: PostgreSQL rejects the
+    /// `BEFORE`, `INSTEAD OF` and statement-level forms when apply runs the
+    /// statement, and validates `FROM`, deferrability, `WHEN` and the function. PostgreSQL cannot replace a
     /// constraint trigger in place, so apply drops any trigger holding `name`
     /// on `table` and runs this statement in the transaction that installs the
     /// manifest's routines, after them; no other session observes the
