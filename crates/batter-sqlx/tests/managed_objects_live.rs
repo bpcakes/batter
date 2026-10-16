@@ -11,6 +11,9 @@ mod support;
 
 mod managed_objects_fixture;
 
+#[path = "managed_objects_live/verification.rs"]
+mod verification;
+
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{
     FindingKind, Identifier, ObjectPrivilege, QualifiedName, RoutineSignature, RoutineType,

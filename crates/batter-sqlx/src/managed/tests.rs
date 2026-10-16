@@ -386,22 +386,55 @@ fn manifests_stop_consuming_at_the_capacity_boundary() {
 }
 
 #[test]
-fn manifests_bound_the_total_source_size() {
-    let padding = "x".repeat(MAX_SOURCE_BYTES - 512);
-    let objects = (0..=(MAX_MANIFEST_SOURCE_BYTES / (MAX_SOURCE_BYTES - 512))).map(|index| {
-        let name = format!("total_{index}");
-        ManagedObject::function(
-            signature("app", &name, &[]),
-            format!(
-                "CREATE OR REPLACE FUNCTION app.{name}() RETURNS bigint LANGUAGE sql RETURN 1;\n-- {padding}"
-            ),
-        )
-        .unwrap()
+fn manifests_stop_consuming_at_the_object_count_boundary() {
+    let mut produced = 0usize;
+    let objects = std::iter::from_fn(|| {
+        produced += 1;
+        assert!(
+            produced <= MAX_MANAGED_OBJECTS + 1,
+            "consumed past the first excess object"
+        );
+        let name = format!("total_{produced}");
+        let source = format!(
+            "CREATE OR REPLACE FUNCTION app.{name}() RETURNS bigint LANGUAGE sql RETURN 1;"
+        );
+        Some(ManagedObject::function(signature("app", &name, &[]), source).unwrap())
+    });
+    let retirements = std::iter::from_fn(|| -> Option<Retirement> {
+        panic!("retirements were consumed after objects exceeded their count bound")
     });
     assert_eq!(
-        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, objects, []),
+        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, objects, retirements),
         Err(ManagedObjectError::Capacity)
     );
+    assert_eq!(produced, MAX_MANAGED_OBJECTS + 1);
+}
+
+#[test]
+fn manifests_stop_consuming_at_the_total_source_boundary() {
+    let allowed = MAX_MANIFEST_SOURCE_BYTES / MAX_SOURCE_BYTES;
+    let mut produced = 0usize;
+    let objects = std::iter::from_fn(|| {
+        produced += 1;
+        assert!(
+            produced <= allowed + 1,
+            "consumed past the first excess source"
+        );
+        let name = format!("total_{produced}");
+        let mut source = format!(
+            "CREATE OR REPLACE FUNCTION app.{name}() RETURNS bigint LANGUAGE sql RETURN 1;\n-- "
+        );
+        source.push_str(&"x".repeat(MAX_SOURCE_BYTES - source.len()));
+        Some(ManagedObject::function(signature("app", &name, &[]), source).unwrap())
+    });
+    let retirements = std::iter::from_fn(|| -> Option<Retirement> {
+        panic!("retirements were consumed after objects exceeded their byte bound")
+    });
+    assert_eq!(
+        ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, objects, retirements),
+        Err(ManagedObjectError::Capacity)
+    );
+    assert_eq!(produced, allowed + 1);
 }
 
 fn manifest(

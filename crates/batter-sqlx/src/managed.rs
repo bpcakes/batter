@@ -466,7 +466,8 @@ impl ManagedObjectManifest {
     /// Validate a complete managed object set.
     ///
     /// Inputs are consumed only up to the combined capacity of 10,000 objects
-    /// plus retirements. Sources may total at most 64 MiB.
+    /// plus retirements. Sources may total at most 64 MiB. Collection stops at
+    /// the first object exceeding either bound, before consuming retirements.
     ///
     /// # Errors
     /// Returns [`ManagedObjectError`] for an empty set, a SQLx-reserved or
@@ -484,19 +485,25 @@ impl ManagedObjectManifest {
         if temporary_namespace(ledger.schema()) {
             return Err(ManagedObjectError::TemporaryNamespace);
         }
-        let mut objects = collect_bounded(objects, MAX_MANAGED_OBJECTS)?;
+        let mut source_bytes = 0usize;
+        let mut collected = Vec::new();
+        for object in objects {
+            if collected.len() == MAX_MANAGED_OBJECTS {
+                return Err(ManagedObjectError::Capacity);
+            }
+            source_bytes = source_bytes
+                .checked_add(object.source.len())
+                .filter(|bytes| *bytes <= MAX_MANIFEST_SOURCE_BYTES)
+                .ok_or(ManagedObjectError::Capacity)?;
+            collected.push(object);
+        }
+        let mut objects = collected;
         let mut retirements = collect_bounded(
             retirements,
             MAX_MANAGED_OBJECTS.saturating_sub(objects.len()),
         )?;
         if objects.is_empty() && retirements.is_empty() {
             return Err(ManagedObjectError::EmptyManifest);
-        }
-        let source_bytes = objects.iter().try_fold(0usize, |total, object| {
-            total.checked_add(object.source.len())
-        });
-        if source_bytes.is_none_or(|bytes| bytes > MAX_MANIFEST_SOURCE_BYTES) {
-            return Err(ManagedObjectError::Capacity);
         }
         objects.sort_by(|left, right| left.rendered.cmp(&right.rendered));
         retirements.sort_by(|left, right| left.rendered.cmp(&right.rendered));

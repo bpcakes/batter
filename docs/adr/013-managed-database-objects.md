@@ -199,8 +199,14 @@ Executed for every new public item before delivery.
   canonical lease entry points do.
 - `AppliedManagedObjects`. `#[must_use]` evidence with read-only accessors.
 - `ManagedApplyError`. Redacted `Display`/`Debug`; native causes through
-  `source` and `native`. Only `CommitUnconfirmed` represents an uncertain
-  outcome; every other variant was raised before `COMMIT` was sent.
+  `source` and `native`. Among returned variants, only `CommitUnconfirmed`
+  represents an uncertain outcome; every other variant was raised before
+  `COMMIT` was sent. Interruption returns no variant: while `COMMIT` is in
+  flight its outcome is unknown, and during subsequent unlock or pool-return
+  cleanup the installation is already committed even if its result is lost.
+  Neither interruption nor retirement proves rollback or authorizes replay.
+  Verification inspects current installed state without acknowledging that a
+  retired server session has terminated.
 - `VerificationPlan::managed_objects`, `with_managed_objects`,
   `verify_managed_objects`. (1) Duplicate selection, ledger conflicts and
   sequence/relation conflicts are composition errors before execution.
@@ -245,7 +251,10 @@ granted, as with `migrate`.
 ## Evidence
 
 Offline unit tests cover every manifest rejection, the lexer, the digest, plan
-composition and the ledger and catalog comparisons. Eleven PostgreSQL 18.6
+composition and the ledger and catalog comparisons. The aggregate byte-bound
+regression uses a lazy iterator that fails if construction asks for a second
+over-limit object or consumes any retirement after the byte limit is exceeded.
+Eleven original PostgreSQL 18.6
 live cases in `crates/batter-sqlx/tests/managed_objects_live.rs` cover first
 apply after migrations, an idempotent re-apply with an identical catalog
 including `xmin`, retirement with a dependent trigger, a blocked retirement
@@ -257,3 +266,10 @@ invalid SQL body and a foreign ledger. Mutation controls that re-executed every 
 dropped the `xmin` check, failed the suite. The PostgreSQL lifecycle example is
 the consumer contract and has its own live case. Fresh-agent implementation and
 modification evaluations are proposed and unexecuted.
+
+The `batter-54d0.1` follow-up adds four live verifier cases using observed
+PostgreSQL lock requests: both directions of apply/verification serialization,
+a ledger created after the missing-lock attempt, and malformed, row-secured and
+inherited ledger rejection with restored-ledger controls. The existing public
+API and persisted format remain unchanged. Execution and mutation-control
+results belong to that Bead.

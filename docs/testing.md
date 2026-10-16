@@ -724,8 +724,10 @@ dollar quotes and comments, NUL bytes, the 1 MiB source bound, temporary
 namespaces for entries, argument types, trigger tables, ledgers and
 retirements, the SQLx ledger name, empty manifests, duplicate entries
 (including a function and a procedure with one signature), duplicate
-retirements, retirements of declared identities, the 10,000-item bound (input
-iteration stops at the boundary) and the 64 MiB aggregate bound. Accepted
+retirements, retirements of declared identities, the 10,000-item bound (both
+object and retirement iterators stop at the first excess item, and object
+overflow prevents retirement consumption) and the 64 MiB aggregate bound (a lazy iterator
+must stop at the first over-limit source without consuming retirements). Accepted
 sources cover comments, quoted names, case folding, nested dollar quotes,
 standard and escape strings and `BEGIN ATOMIC` bodies with `CASE ... END`.
 Digest tests require order independence, exclusion of the ledger name and
@@ -742,7 +744,7 @@ The ignored `managed_objects_live` target runs through
 --locked -- --ignored --test-threads=1`. Each case provisions a unique schema
 owned by a migration login and a serving login with only schema `USAGE` and
 `SELECT` on tables the migration login creates, plus a non-login delegate role
-for grant-option scenarios, and drops them afterwards. The eleven cases cover:
+for grant-option scenarios, and drops them afterwards. The original eleven cases cover:
 a first apply after migrations, including a SQL routine
 validated against the migrated table, pool reuse, `PUBLIC` revocation and
 verification of both ledgers by the serving login; an idempotent re-apply whose
@@ -764,6 +766,19 @@ idempotence, drift and `PUBLIC` cases, and removing the `xmin` check failed the
 pre-existing-overload case. An independent code review then found the
 disabled-trigger, retained-`PUBLIC`, retirement-kind and `lc_monetary` gaps;
 the three new live cases were added with their fixes.
+
+Four follow-up cases in `tests/managed_objects_live/verification.rs` exercise
+the database inspection boundary. They observe granted and waiting `pg_locks`
+entries: a trigger-table lock pauses an apply while verification waits on its
+managed ledger, and a separate migration-ledger lock pauses verification while
+another apply waits on the managed ledger. The first verifier must observe the
+newly committed set; the second must finish with the previous set before apply
+can proceed. A ledger created between the missing-lock attempt and the snapshot
+must yield `Incomplete`; a subsequent verification is the passing control.
+Shape tests add an extra column, enable row security and attach an inheriting
+table, require the respective finding or `Incomplete`, and verify each restored
+ledger. These tests use bounded database observations without public test hooks
+or detached test tasks. Execution evidence is recorded in `batter-54d0.1`.
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2424,8 +2439,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 153-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, eleven
+an exact 157-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, fifteen
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

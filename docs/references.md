@@ -24,6 +24,16 @@ For `batter-54d0` ([ADR-013](adr/013-managed-database-objects.md)), rechecked:
   `CREATE TRIGGER` takes `SHARE ROW EXCLUSIVE`; `ACCESS SHARE` conflicts only
   with `ACCESS EXCLUSIVE`. Session-level advisory locks survive `ROLLBACK` and
   are held until unlocked or the session ends.
+* Rechecked for `batter-54d0.1`: the same lock table shows that `SHARE` blocks
+  the trigger's `SHARE ROW EXCLUSIVE` request. The
+  [`pg_locks` view](https://www.postgresql.org/docs/18/view-pg-locks.html) exposes
+  backend, relation, mode and grant state, allowing the concurrency tests to
+  wait for an actual conflicting request. PostgreSQL 18's
+  [`LOCK` contract](https://www.postgresql.org/docs/18/sql-lock.html) requires
+  `LOCK TABLE` before the first `SELECT` or data-modification statement in a
+  repeatable-read transaction: that first query or modification freezes its
+  view of data. `LOCK TABLE` itself does not establish the snapshot. The tests
+  verify the managed ledger is locked before snapshot-taking queries.
 * [`check_function_bodies`](https://www.postgresql.org/docs/18/runtime-config-client.html):
   when off, routine body strings are not validated during `CREATE FUNCTION` and
   `CREATE PROCEDURE`; `pg_dump` turns it off.
