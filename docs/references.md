@@ -70,6 +70,58 @@ fails at creation with `42703`; with it off, creation succeeds. In a
 so rendering reads current catalog state; the verifier's pre-snapshot ledger
 lock exists for that reason. These probes do not cover other server versions.
 
+## PostgreSQL 18 constraint trigger semantics, 2026-10-16
+
+For `batter-n2s1` ([ADR-013](adr/013-managed-database-objects.md), amended),
+rechecked:
+
+* [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html):
+  `CONSTRAINT` creates a constraint trigger, "the same as a regular trigger
+  except that the timing of the trigger firing can be adjusted using
+  `SET CONSTRAINTS`"; constraint triggers "must be `AFTER ROW` triggers on
+  plain tables"; `FROM`, `DEFERRABLE` and `INITIALLY` "can only be specified
+  for constraint triggers"; a trigger name "must be distinct from the name of
+  any other trigger for the same table"; and "Currently, the `OR REPLACE`
+  option is not supported for constraint triggers." For constraint triggers
+  the `WHEN` condition is evaluated immediately, not deferred.
+* [`DROP TRIGGER`](https://www.postgresql.org/docs/18/sql-droptrigger.html):
+  the only removal path documented for a trigger; it requires owning the table
+  and defaults to `RESTRICT`. The page does not state its lock level.
+* [`pg_trigger`](https://www.postgresql.org/docs/18/catalog-pg-trigger.html):
+  `tgconstraint` is "the `pg_constraint` entry associated with the trigger
+  (zero if trigger is not for a constraint)"; `tgisinternal` is "True if
+  trigger is internally generated (usually, to enforce the constraint
+  identified by `tgconstraint`)"; `tgdeferrable` and `tginitdeferred` describe
+  a constraint trigger's deferrability; `tgenabled` controls the
+  `session_replication_role` modes in which it fires.
+
+Executed evidence, PostgreSQL **18.6** (local `postgres:18` container, Linux
+x86_64): `CREATE OR REPLACE CONSTRAINT TRIGGER` fails with
+"CREATE OR REPLACE CONSTRAINT TRIGGER is not supported"; a user constraint
+trigger has `tgconstraint <> 0`, `tgisinternal = false` and a `pg_constraint`
+row with `contype = 't'` named after the trigger, so creating one whose name
+another constraint on the table already uses fails with a duplicate key on
+`pg_constraint_conrelid_contypid_conname_index`. `CREATE OR REPLACE TRIGGER`
+over a constraint trigger fails with "trigger ... is a constraint trigger", and
+`CREATE CONSTRAINT TRIGGER` under a plain trigger's name fails with "already
+exists". `ALTER TABLE ... DROP CONSTRAINT` is refused because the trigger
+requires the constraint, and `ALTER TABLE ... ALTER CONSTRAINT` is refused for
+it. `DROP TRIGGER` of a constraint trigger held `ACCESS EXCLUSIVE` on its table
+until commit; `CREATE CONSTRAINT TRIGGER` alone held `SHARE ROW EXCLUSIVE`; after
+both in one transaction the new `pg_trigger` row's `xmin` equalled
+`pg_current_xact_id()::xid`. Under the canonical rendering settings
+`pg_get_triggerdef` returned `CREATE CONSTRAINT TRIGGER ct AFTER INSERT ON
+probe_ct.t FROM probe_ct.r DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN
+((new.id > 0)) EXECUTE FUNCTION probe_ct.f()`, and `... NOT DEFERRABLE INITIALLY
+IMMEDIATE ...` for a non-deferrable one, so deferrability, `FROM` and `WHEN` are
+in the rendered hash while `tgenabled` is not. `ALTER TABLE ... DISABLE
+TRIGGER` sets a constraint trigger's `tgenabled` to `D`. `BEFORE` and
+statement-level forms are syntax errors for `CREATE CONSTRAINT TRIGGER`. A
+deferred row trigger queued by an `INSERT` and fired at commit received the
+inserted row version (`NEW.note` empty) even though a later statement in the
+transaction updated the row, so a deferred check that must see committed state
+reads the row again.
+
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 
 For `batter-z4m9.1`, rechecked PostgreSQL 18's

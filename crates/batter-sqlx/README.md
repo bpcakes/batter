@@ -734,10 +734,10 @@ and session advisory locks. Provisioning stays external.
 
 A routine body kept as a copy inside append-only migrations hides every change
 in a restated whole definition, and two branches that restate one routine race
-silently. `batter_sqlx::managed` keeps routines and the triggers that bind them
-as source the application edits in place, applies them after the versioned
-migrations and verifies them at readiness. Migrations keep tables, columns,
-constraints, policies and data changes. See
+silently. `batter_sqlx::managed` keeps routines and the triggers and
+constraint triggers that bind them as source the application edits in place,
+applies them after the versioned migrations and verifies them at readiness.
+Migrations keep tables, columns, constraints, policies and data changes. See
 [ADR-013](../../docs/adr/013-managed-database-objects.md).
 
 ```rust,no_run
@@ -785,12 +785,17 @@ if report.status() != VerificationStatus::WithinDeclaredPolicy {
 
 The manifest is pure and bounded: at most 10,000 entries plus retirements, 1 MiB
 per source and 64 MiB in total. Each `ManagedObject` is exactly one
-`CREATE OR REPLACE FUNCTION`, `PROCEDURE` or `TRIGGER` statement whose header
-names its declared identity schema-qualified; the lexer recognizes comments,
-quotes, dollar quotes and `psql`'s `BEGIN ATOMIC` rule. Routine identities are
-structural `RoutineSignature`s; a trigger identity renders as
-`"name" ON "schema"."table"`. `Retirement` explicitly drops a routine or
-trigger; it cannot overlap an entry. `PublicExecute` has no default:
+`CREATE OR REPLACE FUNCTION`, `PROCEDURE` or `TRIGGER` statement, or one
+`CREATE CONSTRAINT TRIGGER` statement (`ManagedObject::constraint_trigger`;
+PostgreSQL has no `OR REPLACE` form for it, so that header is rejected), whose
+header names its declared identity schema-qualified; the lexer recognizes
+comments, quotes, dollar quotes and `psql`'s `BEGIN ATOMIC` rule. Routine
+identities are structural `RoutineSignature`s; a trigger identity, plain or
+constraint, renders as `"name" ON "schema"."table"`, and the two trigger kinds
+share it as PostgreSQL shares their names, so declaring both is a duplicate.
+`Retirement` explicitly drops a routine, trigger or constraint trigger; it
+cannot overlap an entry. The ledger `kind` names are `function`, `procedure`,
+`trigger` and `constraint_trigger`. `PublicExecute` has no default:
 `Revoke` removes PostgreSQL's default `PUBLIC` `EXECUTE` from every managed
 routine and verification checks it, while `Unmanaged` leaves it to the
 application. The ledger is an application-named relation, never
@@ -803,18 +808,29 @@ creates the ledger when absent and locks it `ACCESS EXCLUSIVE`, refusing any
 relation that is not exactly `identity text PRIMARY KEY`, `kind text`,
 `source_checksum bytea`, `rendered_checksum bytea` and
 `applied_at timestamptz`, all `NOT NULL`, without row security or inheritance;
-drops retired triggers, then retired routines, that still exist as the retired
-kind (never `CASCADE`); executes each entry that is new, changed or drifted,
-routines before triggers, under `check_function_bodies = on` and the session's
-own settings, and requires each statement to have written exactly its declared
-identity and kind; revokes `PUBLIC` `EXECUTE` under `Revoke` and fails with
+drops retired triggers of both kinds, then retired routines, that still exist
+as the retired kind (never `CASCADE`); executes each entry that is new, changed
+or drifted, routines before triggers of both kinds, under
+`check_function_bodies = on` and the session's own settings, and requires each
+statement to have written exactly its declared identity and kind; revokes `PUBLIC` `EXECUTE` under `Revoke` and fails with
 `PublicExecuteRetained` if a grant from another grantor survives; and rewrites
 the ledger with each executed entry's
 source checksum, rendered-definition hash and `applied_at`, plus a `manifest`
 row holding the set digest. Entries whose ledger row and live rendered
 definition are unchanged are not re-executed, so a steady-state startup takes no
 trigger-table lock; `CREATE OR REPLACE TRIGGER` otherwise holds
-`SHARE ROW EXCLUSIVE` on its table until commit. Every error, cancellation or
+`SHARE ROW EXCLUSIVE` on its table until commit. PostgreSQL cannot replace a
+constraint trigger in place, so a pending constraint trigger is dropped (when a
+trigger holds its name) and re-created from its source in the same
+transaction, after the routines it binds. The drop holds `ACCESS EXCLUSIVE` on
+the table until that commit, so no other session can read or write the table,
+or fire the trigger, between the drop and the commit that installs it with its
+routine body; unlike `CREATE OR REPLACE TRIGGER`, this blocks plain reads too. A
+pending plain trigger whose name a constraint trigger holds is dropped first
+too, so a kind change converges in either direction without a retirement.
+Declare a constraint trigger in the manifest rather than in a migration: a
+migration commits before apply and could bind only the previously installed
+body, or no body at all on a fresh database. Every error, cancellation or
 deadline retires the connection. Any uncommitted transaction ends when the
 server session ends. Among returned `ManagedApplyError` variants, only
 `CommitUnconfirmed` leaves installation uncertain. Interruption while `COMMIT`
@@ -837,7 +853,9 @@ another hash), `RetiredManagedObjectPresent` and, under `Revoke`,
 date/time, float, money and quoting settings, because that text qualifies names
 relative to the session search path; a trigger's hash also covers whether it is
 enabled, so disabling a managed trigger out of band is drift that apply repairs
-by re-enabling it. The serving role needs `USAGE` on the
+by re-enabling it. A constraint trigger's rendering includes its `FROM` table,
+deferrability and `WHEN` clause, so re-creating it out of band as
+`NOT DEFERRABLE` is drift too. The serving role needs `USAGE` on the
 ledger schema and `SELECT` on the ledger, nothing else.
 
 Limits stay explicit. Batter does not choose source, transfer ownership (newly
@@ -847,7 +865,9 @@ SQLx ledger. An entry removed without a retirement stays in the database
 unmanaged. Changing a routine's return type, `OUT` parameters or input parameter
 names, or removing a default, needs a migration that drops it first. An object
 that still depends on a retired routine (a trigger, or a `BEGIN ATOMIC` body
-being edited to stop using it) blocks that retirement in the same apply. Installation
+being edited to stop using it) blocks that retirement in the same apply. A
+constraint trigger's name must also differ from every other constraint on its
+table, because PostgreSQL records it in `pg_constraint`. Installation
 is last-writer-wins across releases, and a PostgreSQL upgrade that changes
 deparsed text reports drift until the next apply. Lexical validation does not
 prove a body correct. The runnable consumer is

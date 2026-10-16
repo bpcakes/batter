@@ -122,10 +122,11 @@ pub enum ManagedObjectKind {
     /// PostgreSQL cannot replace one in place, so apply drops the trigger
     /// holding its name and re-creates it from source, in the transaction that
     /// installs the routines it binds; the drop holds `ACCESS EXCLUSIVE` on the
-    /// table until commit. Like [`Self::Trigger`], it is always re-created
-    /// enabled for origin sessions, and its deferrability is part of its
-    /// rendered definition. It shares PostgreSQL's per-table trigger name
-    /// space and its identity form with [`Self::Trigger`].
+    /// table, blocking reads and writes, until commit. Like [`Self::Trigger`],
+    /// it is always re-created enabled for origin sessions, and its
+    /// deferrability is part of its rendered definition. It shares
+    /// PostgreSQL's per-table trigger name space and its identity form with
+    /// [`Self::Trigger`].
     ConstraintTrigger,
 }
 
@@ -311,10 +312,11 @@ impl ManagedObject {
     /// the function are left to PostgreSQL. PostgreSQL cannot replace a
     /// constraint trigger in place, so apply drops any trigger holding `name`
     /// on `table` and runs this statement in the transaction that installs the
-    /// manifest's routines; a constraint trigger therefore never runs a
-    /// function body other than the one installed with it. The drop holds
-    /// `ACCESS EXCLUSIVE` on `table` until commit, but only when the entry is
-    /// new, changed or drifted.
+    /// manifest's routines, after them; no other session observes the
+    /// re-created trigger bound to an earlier body of a routine the manifest
+    /// declares. Only a new, changed or drifted entry executes: its drop holds
+    /// `ACCESS EXCLUSIVE` on `table` until commit, blocking reads and writes,
+    /// and creating it without a drop holds `SHARE ROW EXCLUSIVE`.
     ///
     /// ```
     /// use batter_sqlx::managed::{ManagedObject, ManagedObjectError, ManagedObjectKind};

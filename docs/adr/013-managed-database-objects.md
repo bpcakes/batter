@@ -6,6 +6,11 @@ Accepted, 2026-10-15. Owning Bead: `batter-54d0`. The repository owner approved
 the design direction before implementation; this record fixes the API shape
 under [ADR-010](010-agent-only-consumption.md).
 
+Amended 2026-10-16 (`batter-n2s1`, approved by the repository owner): constraint
+triggers become a managed kind. The amendment extends the same decision, so it
+is recorded in place, in subsections and paragraphs dated 2026-10-16 under the
+headings it changes.
+
 ## Context
 
 The main downstream consumer keeps every PostgreSQL routine body inside
@@ -43,7 +48,8 @@ library must own rather than leave as repeated caller instructions.
 ## Decision
 
 Batter applies and verifies a consumer-declared set of managed routines and
-triggers. The source of each object, ownership transfer, grants beyond the
+triggers, including (since 2026-10-16) constraint triggers. The source of each
+object, ownership transfer, grants beyond the
 declared `PUBLIC` `EXECUTE` policy, migration selection and provisioning stay
 downstream. Migrations keep tables, columns, constraints, policies and data
 changes. The capability lives in `batter-sqlx` beside the lease and verifier,
@@ -66,6 +72,25 @@ the SQLx ledger: Batter never reads or writes migration history for it.
 - `PgLease::migrate_and_apply(migrator, &manifest)` is the only apply path.
 - `VerificationPlan::managed_objects(&manifest)`, `with_managed_objects` and
   `verify_managed_objects` add a fourth, read-only verification axis.
+
+#### Constraint triggers in the shape, 2026-10-16
+
+- `ManagedObjectKind::ConstraintTrigger`, declared by
+  `ManagedObject::constraint_trigger(table, name, source)` and retired by
+  `Retirement::constraint_trigger(table, name)`. Its ledger and digest name is
+  `constraint_trigger`; like the other kind names it never changes, and the
+  names and digests of existing kinds are unaffected.
+- It reuses the trigger identity, `"name" ON "schema"."table"`. PostgreSQL
+  keeps plain and constraint triggers in one per-table name space, so a plain
+  and a constraint trigger of one identity are `DuplicateObject`, two
+  retirements of it are `DuplicateRetirement`, and declaring one kind while
+  retiring the other is `RetiredObjectDeclared`.
+- Its source header must be exactly `CREATE CONSTRAINT TRIGGER name timing
+  events ON schema.table`. `OR REPLACE`, which PostgreSQL refuses for this
+  kind, is `SourceHeader`; the plain kind still rejects `CONSTRAINT`. As for
+  plain triggers, the allowed timing, `FROM`, deferrability, `FOR EACH ROW`,
+  `WHEN` and the function are left to PostgreSQL, and the trigger
+  single-statement rule applies (no `BEGIN ATOMIC` body).
 
 ### Ordering: one combined entry point
 
@@ -123,6 +148,51 @@ DDL. The cost is that an unchanged SQL-language body is not re-validated
 against a schema a later migration changed, which matches the behaviour of
 routines kept in migrations today.
 
+Amended 2026-10-16: a changed, drifted or adopted constraint trigger is dropped
+and re-created (next subsection), so it holds `ACCESS EXCLUSIVE` on its table
+from its drop until the apply commits, the same cost a retired trigger already
+has, rather than the `SHARE ROW EXCLUSIVE` of `CREATE OR REPLACE TRIGGER`;
+unlike that lock it also blocks plain reads of the table. A
+kind change under one identity costs the same. An unchanged, undrifted set
+still executes no DDL and locks no table other than the ledger.
+
+#### Constraint triggers, 2026-10-16
+
+Constraint triggers were first left in the consumer's migrations because
+PostgreSQL cannot replace them in place (`CREATE OR REPLACE CONSTRAINT TRIGGER`
+is refused). That split is unsound for a constraint trigger bound to a managed
+routine. Migrations commit before the apply transaction, so a migration can
+bind only a function body that is already installed: on a fresh database, a
+new constraint trigger on a new managed function cannot be created at all, and
+on a live database the trigger runs the previous body from the migration's
+commit until apply commits, or until a fixed release if apply fails. A
+downstream consumer met the second form: every write to two tables failed with
+SQLSTATE `42703` for that window. A rule that a new constraint trigger ships a
+release after its function protects only databases that deploy every release.
+
+Apply therefore manages the kind. Pending detection is unchanged: the ledger
+row is absent, its kind or source checksum changed, or the live definition no
+longer renders to the recorded hash. Executing a pending constraint trigger
+drops any non-internal trigger that holds its identity, found in the live
+catalog map read at the start of the transaction (so no `IF EXISTS` notice),
+and then runs its source. Symmetrically, a pending plain trigger whose name a
+constraint trigger holds is dropped before its `CREATE OR REPLACE TRIGGER`,
+which PostgreSQL would otherwise refuse. A declared trigger of either kind thus
+converges whatever currently holds its name, while a retirement still drops
+only a live object of the retired kind. Routines execute before both trigger
+kinds, and retirements drop both trigger kinds before routines with the same
+`DROP TRIGGER`. The touched-identity check is unchanged: after the drop and
+create, the new `pg_trigger` row's `xmin` is the current transaction, and
+catalog resolution reports a trigger with a `pg_constraint` row
+(`tgconstraint <> 0`) as a constraint trigger, never an internal one. Because
+the drop holds `ACCESS EXCLUSIVE` on the table until commit, no other session
+can read or write the table, or fire the trigger, between the drop and the
+commit that installs both the trigger and the body it binds; this also blocks
+plain reads, and a drop waiting behind a long transaction queues new readers
+and writers behind it. Kind decisions go through
+small helpers with exhaustive matches, so a future kind cannot be missed by a
+comparison against one variant.
+
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
 `extra_float_digits`, `bytea_output`, `standard_conforming_strings`,
@@ -131,7 +201,11 @@ verification. `pg_get_triggerdef` omits whether a trigger fires, so a trigger's
 hash also covers `pg_trigger.tgenabled`; `CREATE OR REPLACE TRIGGER` resets it
 to enabled, so a trigger disabled out of band is drift that the next apply
 repairs. Managed triggers are therefore always enabled for origin sessions; a
-deliberately replica-only or always-firing trigger is not expressible. Executed live,
+deliberately replica-only or always-firing trigger is not expressible.
+Amended 2026-10-16: the same holds for constraint triggers, whose re-creation
+also leaves them enabled; `pg_get_triggerdef` renders their `FROM` table,
+deferrability and `WHEN` clause, so a constraint trigger re-created out of band
+as `NOT DEFERRABLE`, or disabled, is drift that apply repairs. Executed live,
 the rendered text qualifies type and function names relative to the session
 search path, so without the fixed settings a role default would turn an
 unchanged definition into drift. Source statements themselves run under the
@@ -179,11 +253,28 @@ Executed for every new public item before delivery.
   statement (quotes, nested comments, dollar quotes and `psql`'s `BEGIN ATOMIC`
   rule), `CREATE OR REPLACE` of the declared kind, and a schema-qualified header
   naming the declared identity; `CREATE CONSTRAINT TRIGGER`, which PostgreSQL
-  cannot replace, is rejected. Argument lists are not parsed: type spellings
+  cannot replace, is rejected for the trigger kind (amended 2026-10-16: it is
+  the required header of `constraint_trigger`, which rejects `OR REPLACE`).
+  Argument lists are not parsed: type spellings
   such as `int` and `integer` cannot be compared purely, so apply checks the
   written catalog row instead and a mismatch never commits. (3) The value is
   opaque; its checksum is derived, not supplied.
 - `ManagedObjectKind`, `PublicExecute`. Exhaustive enums without defaults.
+- 2026-10-16: `ManagedObject::constraint_trigger`,
+  `Retirement::constraint_trigger` and `ManagedObjectKind::ConstraintTrigger`.
+  (1) The known-invalid forms are unrepresentable or rejected purely: an
+  `OR REPLACE` header, a plain trigger statement declared as a constraint
+  trigger and the reverse, and both kinds under one identity. The drop needed
+  to replace a constraint trigger is not a caller step: there is no "drop
+  then create" pairing, migration ordering or two-release rule left to
+  remember, because apply owns the drop, its ordering after routines and its
+  transaction. (2) A kind change needs no retirement and cannot be expressed
+  as one (`RetiredObjectDeclared`). Deferrability, `FROM` and `WHEN` are
+  PostgreSQL's to validate, as for plain triggers. (4) There is still no
+  apply-only path. The new variant breaks exhaustive matches over
+  `ManagedObjectKind`; no shim can make an old match cover it, so the
+  changelog records a `Breaking:` entry with before/after code and the enum's
+  rustdoc a `Migration:` note.
 - `Retirement`. Constructors are infallible because their identities are
   already validated structural types; temporary namespaces and overlaps are
   rejected when a manifest is built, the only place a retirement can be used.
@@ -239,7 +330,9 @@ retirements precede creation, an object that still depends on a retired
 routine in the database, such as a trigger or a `BEGIN ATOMIC`/`RETURN` body
 being edited to stop using it, blocks that retirement in the same apply;
 rebinding and retiring take two releases, or a migration that drops the
-dependent first. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
+dependent first. PostgreSQL also gives a constraint trigger a `pg_constraint`
+row named after it, so its name must differ from every other constraint on its
+table; a collision fails apply. Rendered hashes depend on PostgreSQL's deparser: a server upgrade that
 changes rendering reports drift until the next apply re-executes and re-records
 those entries. Ownership of newly created routines is the applying login's;
 replacing an object requires ownership or membership in its owner role, and
@@ -273,3 +366,23 @@ a ledger created after the missing-lock attempt, and malformed, row-secured and
 inherited ledger rejection with restored-ledger controls. The existing public
 API and persisted format remain unchanged. Execution and mutation-control
 results belong to that Bead.
+
+2026-10-16 (`batter-n2s1`): offline tests cover the constraint-trigger header
+(accepted forms, `OR REPLACE`, the other kind's header, misnamed identities,
+trailing statements and an unterminated `WHEN` string), identity rendering,
+duplicates and overlaps across both trigger kinds, the retirement constructors,
+stable kind names, digest sensitivity to the kind string, the drop-before-create
+decision for every pair of kinds, row and catalog comparisons with the new kind,
+and `PUBLIC` `EXECUTE` candidates excluding both trigger kinds. Nine PostgreSQL
+18.6 live cases in `tests/managed_objects_live/constraint_triggers.rs` cover a
+bootstrap of a new function and a `DEFERRABLE INITIALLY DEFERRED` constraint
+trigger in one apply, an idempotent re-apply, a source change, adoption of a
+migration-created constraint trigger, drift by re-creation as `NOT DEFERRABLE`
+and by `DISABLE TRIGGER`, retirement before the bound routine, a retirement of
+the other trigger kind left alone in both directions, kind changes in both
+directions, and a concurrent write that waits on the table lock until the
+changed body and constraint trigger commit together and then fires the new
+body. Mutation controls that removed either drop-before-create direction, ran
+triggers before routines, retired routines first, or resolved every trigger as
+the plain kind each failed the expected cases. The lifecycle example applies a
+deferred constraint trigger. Execution results belong to `batter-n2s1`.

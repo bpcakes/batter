@@ -1146,6 +1146,15 @@ releases, migration-only return-type changes, two-release trigger rebinding and
 ownership transfer) are in [ADR-013](013-managed-database-objects.md).
 Fresh-agent usability evaluation is proposed and unexecuted.
 
+2026-10-16 (`batter-n2s1`): constraint triggers had stayed in migrations,
+because PostgreSQL cannot replace them, which left the consumer a written
+ordering rule (ship a new constraint trigger a release after its function)
+that protected only databases deploying every release. That instruction was
+the design-debt signal above. `ManagedObject::constraint_trigger` now makes
+the kind managed: apply owns the drop, its order after routines and the
+transaction that installs the trigger with the body it binds, so the rule is
+no longer needed. The review is in ADR-013.
+
 ## Recurring example review defects
 
 The implementation agent must initiate an assessment when the same confirmed

@@ -405,8 +405,8 @@ pub(super) const fn drops_before_create(
 /// `holder` is the kind of the live object holding the identity before this
 /// apply. A trigger that must be dropped first is dropped in this transaction,
 /// which holds `ACCESS EXCLUSIVE` on its table until commit, so no other
-/// session observes the table without it or with the new trigger bound to an
-/// earlier routine body.
+/// session reads or writes the table while the trigger is absent or observes
+/// the new trigger bound to an earlier routine body.
 async fn create(
     connection: &mut PgConnection,
     settings: &RenderSettings,

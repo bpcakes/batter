@@ -121,7 +121,12 @@ resolved by catalog joins (never `regprocedure` input), definitions render under
 the fixed settings in `catalog.rs`, and apply requires every executed statement
 to have written its declared identity (`xmin` equals the current transaction).
 Apply re-executes only new, changed or drifted entries and drops only retired
-objects that exist as the retired kind, never with `CASCADE`; library
+objects that exist as the retired kind, never with `CASCADE`. A pending
+constraint trigger, which PostgreSQL cannot replace, and a pending plain trigger
+whose name a constraint trigger holds, drop the live holder and run their
+source inside the apply transaction, after routines; classify kinds through
+`ManagedObjectKind::is_trigger`/`is_routine`/`sql_keyword`, never by comparing
+with one variant; ledger kind names never change; library
 statements run under the canonical settings and sources under the session's;
 a revoke is re-read because PostgreSQL only warns when it removes nothing;
 trigger hashes include `tgenabled`; it locks the ledger `ACCESS EXCLUSIVE`

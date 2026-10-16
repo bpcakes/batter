@@ -1,0 +1,8 @@
+## batter-sqlx: 1288 -> 1292 entries; 0 removed, 4 added
++ ADDED   method batter_sqlx::managed::ManagedObject::constraint_trigger
++ ADDED   method batter_sqlx::managed::Retirement::constraint_trigger
++ ADDED   use batter_sqlx::managed::ManagedObjectError <- error::ManagedObjectError
++ ADDED   variant batter_sqlx::managed::ManagedObjectKind::ConstraintTrigger
+
+## batter: 17 -> 17 entries; 0 removed, 0 added
+

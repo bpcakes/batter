@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the eleven-case [managed-object](#managed-routines-and-triggers)
+migration target, the twenty-four-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -717,7 +717,8 @@ both limits across libraries, examples, and tests.
 Offline contracts run in the ordinary `batter-sqlx` library suite
 (`cargo test -p batter-sqlx --lib managed`). Manifest tests cover every
 `ManagedObjectError` path: header kind and grammar (including `CREATE` without
-`OR REPLACE`, a procedure declared as a function, constraint triggers and
+`OR REPLACE`, a procedure declared as a function, a constraint trigger declared
+as a plain trigger and the reverse, `OR REPLACE` on a constraint trigger and
 malformed trigger events), unqualified, misnamed, three-part and case-folded
 identities, more than one statement, unterminated strings, quoted identifiers,
 dollar quotes and comments, NUL bytes, the 1 MiB source bound, temporary
@@ -730,13 +731,26 @@ overflow prevents retirement consumption) and the 64 MiB aggregate bound (a lazy
 must stop at the first over-limit source without consuming retirements). Accepted
 sources cover comments, quoted names, case folding, nested dollar quotes,
 standard and escape strings and `BEGIN ATOMIC` bodies with `CASE ... END`.
-Digest tests require order independence, exclusion of the ledger name and
-sensitivity to the policy, any source and any retirement. Verification tests
+Constraint-trigger sources are accepted with `FROM`, every deferrability form,
+`WHEN`, quoted and case-folded names and comments, and rejected for a misnamed
+trigger or table, an unqualified or three-part table, a trailing statement
+(trigger sources have no `BEGIN ATOMIC` body), an unterminated `WHEN` string
+and a temporary table. A plain and a constraint trigger of one identity are a
+duplicate entry, a duplicate retirement, or a retirement of a declared
+identity. Digest tests require order independence, exclusion of the ledger name and
+sensitivity to the policy, any source, any retirement and a retirement's kind
+string; the four ledger kind names are pinned. The drop-before-create decision
+is checked for every pair of declared and live kinds, with the rendered `DROP`
+statements. Verification tests
 cover plan composition (duplicate manifests, equal managed and SQLx or generic
 ledgers, and a sequence declaration of the managed ledger, in both orders) and
 the pure ledger and catalog comparisons: missing, unexpected, kind- and
 checksum-mismatched rows, every way the set row can disagree, drift by hash,
-absence and kind, rows without a recorded hash, and present retirements.
+absence and kind, rows without a recorded hash, and present retirements. The
+same comparisons run with a constraint trigger (a row recorded as `trigger`, a
+changed rendering, absence and a plain trigger holding the name are findings;
+a plain trigger under a retired constraint trigger's identity is not), and
+`PUBLIC` `EXECUTE` candidates exclude both trigger kinds.
 
 The ignored `managed_objects_live` target runs through
 `bash scripts/test_sqlx_live.sh`, or directly with
@@ -780,10 +794,43 @@ table, require the respective finding or `Incomplete`, and verify each restored
 ledger. These tests use bounded database observations without public test hooks
 or detached test tasks. Execution evidence is recorded in `batter-54d0.1`.
 
+Nine constraint-trigger cases in `tests/managed_objects_live/constraint_triggers.rs`
+add fixture migrations for a `check_log` table that the bound function appends
+its body version to:
+`managed_constraint_trigger_bootstraps_with_its_new_function` (one apply
+installs a new function and a `DEFERRABLE INITIALLY DEFERRED` constraint
+trigger, which fires the installed body at a later transaction's commit and not
+before), `managed_constraint_trigger_reapply_executes_no_ddl` (catalog state
+including the trigger's oid and `xmin`, and ledger rows including `applied_at`,
+are unchanged), `managed_constraint_trigger_source_change_recreates_it`
+(`INITIALLY IMMEDIATE` replaces the old definition, oid, source checksum and
+rendered hash, and fires within the statement),
+`managed_constraint_trigger_from_a_migration_is_adopted` (a migration-created
+constraint trigger that ran the migration's body is re-created and recorded,
+then runs the managed body),
+`managed_constraint_trigger_drift_is_reported_and_repaired` (re-creation as
+`NOT DEFERRABLE` and `DISABLE TRIGGER` are each one drift finding, repaired by
+re-creating exactly that entry), `managed_constraint_trigger_retires_before_its_routine`
+(both retirements succeed, so the trigger was dropped before the function it
+depends on), `managed_trigger_retirements_leave_the_other_trigger_kind_alone`
+(in both directions), `managed_trigger_kind_changes_converge_in_both_directions`
+(plain to constraint and back, ledger kind updated, verified), and
+`managed_constraint_trigger_and_its_new_body_commit_together`: a later plain
+trigger on a table the test holds pauses apply after the constraint trigger is
+dropped and re-created; a concurrent `INSERT` is observed waiting for its
+`RowExclusiveLock` on the table, and after the gate is released it fires the
+new body under the new definition. Mutation controls that removed either
+drop-before-create direction, ran triggers before routines, retired routines
+first, or resolved every trigger as the plain kind each failed the expected
+cases. Execution evidence is recorded in `batter-n2s1`.
+
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
 other live tests, and the executable smoke runs the schema stages through the
-production entry point. Results are recorded in `batter-54d0`.
+production entry point. Results are recorded in `batter-54d0`. Since
+`batter-n2s1` the case also requires the managed deferred constraint trigger to
+reject a blank note at commit (`23514`) and to accept one corrected earlier in
+the same transaction.
 
 ## Explicit reference compatibility probes
 
@@ -2439,8 +2486,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 157-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, fifteen
+an exact 166-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, twenty-four
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

@@ -8,6 +8,56 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Manage constraint triggers with the routines they bind (`batter-n2s1`,
+  [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
+  `ManagedObject::constraint_trigger(table, name, source)` declares one
+  `CREATE CONSTRAINT TRIGGER` statement (`OR REPLACE` is rejected, as
+  PostgreSQL rejects it) and `Retirement::constraint_trigger(table, name)`
+  retires one; both reuse the trigger identity `"name" ON "schema"."table"`, so
+  a plain and a constraint trigger of one identity are a duplicate. PostgreSQL
+  cannot replace a constraint trigger, so apply drops the trigger holding a
+  pending entry's name and re-creates it from source in the apply transaction,
+  after the routines it binds; a pending plain trigger whose name a constraint
+  trigger holds is dropped first too, so a kind change converges without a
+  retirement. A constraint trigger therefore never binds an earlier body
+  between a migration's commit and apply's, and bootstraps with a new function
+  on a fresh database. A changed, drifted or adopted constraint trigger holds
+  `ACCESS EXCLUSIVE` on its table until commit; an unchanged set still executes
+  no DDL. Verification reports kind and checksum mismatches, drift (including
+  deferrability, `WHEN` and a disabled trigger) and present retirements for the
+  new kind with the existing findings. Ledger kind names, the ledger shape and
+  the digests of existing kinds are unchanged; the new kind is recorded as
+  `constraint_trigger`. `ManagedObjectError::SourceHeader` now describes either
+  header form. The PostgreSQL lifecycle example adds a deferred constraint
+  trigger. Additive apart from the enum variant in the next entry.
+
+- Breaking: `batter_sqlx::managed::ManagedObjectKind` (also
+  `batter::sqlx::managed::ManagedObjectKind`) gains `ConstraintTrigger`. Values
+  of the new kind appear only for manifests that declare or retire a
+  constraint trigger, but exhaustive matches no longer compile:
+
+  ```rust,ignore
+  // Before
+  let label = match object.kind() {
+      ManagedObjectKind::Function => "function",
+      ManagedObjectKind::Procedure => "procedure",
+      ManagedObjectKind::Trigger => "trigger",
+  };
+  // After
+  let label = match object.kind() {
+      ManagedObjectKind::Function => "function",
+      ManagedObjectKind::Procedure => "procedure",
+      ManagedObjectKind::Trigger => "trigger",
+      ManagedObjectKind::ConstraintTrigger => "constraint trigger",
+  };
+  ```
+
+  No one-release deprecated shim is kept: no alias or function can make an old
+  exhaustive match cover a new variant, and reporting constraint triggers as
+  `Trigger` would misstate how apply replaces them. The enum stays exhaustive so
+  consumers review every kind apply can execute; its rustdoc carries a
+  `Migration:` note. No existing call shape changes.
+
 - Enforce managed manifests' 64 MiB source limit while consuming their object
   iterators, before consuming retirements. Clarify that interrupted apply may
   have committed even when it returns no result. Add live managed-verifier

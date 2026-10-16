@@ -285,8 +285,8 @@ impl PgLease {
     /// manifest, on this one connection.
     ///
     /// This is the only way to apply a [`managed::ManagedObjectManifest`], so
-    /// managed routines and triggers always follow the versioned migrations on
-    /// the same session: SQL-language bodies are validated against the migrated
+    /// managed routines, triggers and constraint triggers always follow the
+    /// versioned migrations on the same session: SQL-language bodies are validated against the migrated
     /// catalog, never before it. A session advisory lock keyed by the ledger
     /// spans both phases, so concurrent appliers of one ledger serialize and
     /// one's apply cannot land between another's migrations and objects.
@@ -295,16 +295,21 @@ impl PgLease {
     /// Apply then runs one transaction. It creates the ledger when absent,
     /// locks it `ACCESS EXCLUSIVE` and refuses any other relation of that name.
     /// It drops each retired object that still exists as the retired kind
-    /// (triggers first, never `CASCADE`), executes each entry's source
-    /// (routines before triggers) unless its ledger row and live rendered
-    /// definition show it is already installed, requires each executed
+    /// (triggers of both kinds first, never `CASCADE`), executes each entry's
+    /// source (routines before triggers) unless its ledger row and live
+    /// rendered definition show it is already installed, requires each executed
     /// statement to have written exactly its declared identity and kind,
     /// applies the [`managed::PublicExecute`] policy and confirms `PUBLIC` no
     /// longer holds `EXECUTE`, and rewrites the ledger: undeclared rows are
     /// deleted, executed entries record their source checksum,
     /// rendered-definition hash and `applied_at`, and a `manifest` row records
     /// the set digest. Library statements run under fixed canonical session
-    /// settings; each source runs under the session's own. An unchanged,
+    /// settings; each source runs under the session's own. PostgreSQL cannot
+    /// replace a constraint trigger in place, so an executed constraint
+    /// trigger first drops the trigger holding its name, as does a plain
+    /// trigger whose name a constraint trigger holds; the drop holds
+    /// `ACCESS EXCLUSIVE` on the table until commit, so the re-created trigger
+    /// and the routine body it binds become visible together. An unchanged,
     /// undrifted set therefore executes no DDL and locks no managed trigger's
     /// table (only the ledger), while a definition changed out of band,
     /// including a disabled trigger, is replaced. Apply never chooses source,
