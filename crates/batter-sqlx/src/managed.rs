@@ -440,8 +440,9 @@ impl fmt::Debug for ManagedObject {
 /// kind by name, so apply decides a trigger retirement from the trigger it
 /// reads under the table's `ACCESS EXCLUSIVE` lock: the retirement is
 /// kind-exact even when another session replaced the trigger after apply first
-/// read the catalog. A trigger cloned onto a partition belongs to its
-/// partitioned table and is retired there.
+/// read the catalog, and a drop that reached a relation replaced under the same
+/// name fails the apply instead of standing. A trigger cloned onto a partition
+/// belongs to its partitioned table and is retired there.
 /// A retirement may not name an identity the same manifest declares: replacing
 /// a routine whose return type or argument names change belongs in a versioned
 /// migration that drops it, after which apply creates the new definition.

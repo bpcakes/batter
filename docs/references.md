@@ -165,6 +165,16 @@ Rechecked on 18.6 for the follow-up after review (same day):
   * under REPEATABLE READ the second read still shows the plain trigger, while
     `DROP TRIGGER` then drops the constraint replacement;
   * under READ COMMITTED the second read shows the constraint trigger.
+* **Relation replacement and lock order (library live cases).**
+  * A `DROP TRIGGER` that waits for the lock of a view or foreign table follows
+    the name once another session commits a same-named ordinary table, and
+    removes that table's constraint trigger. Without a relation check, apply
+    retired it.
+  * A transaction holding `ACCESS SHARE` whose write request conflicts only
+    with apply's waiting `ACCESS EXCLUSIVE` request is queued ahead of it and
+    proceeds. If apply already holds `SHARE ROW EXCLUSIVE` on the table, or on
+    the partitioned table of the partition it waits for, the two deadlock
+    (`40P01`).
 
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 

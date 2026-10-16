@@ -31,7 +31,13 @@ contracts, capability facts and validation history.
   retired parent's trigger took with it is simply not there. The apply
   transaction now runs at READ COMMITTED whatever the session default, which a
   REPEATABLE READ default would otherwise defeat; earlier releases ran it at the
-  session default. Verification reports kind and checksum mismatches, drift (including
+  session default. A drop must also reach the relation apply read: when another
+  session replaces a view or foreign table, which apply reads without
+  `LOCK TABLE`, by a same-named table holding a constraint trigger, apply fails
+  with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Every drop
+  now precedes the routine sources and trigger creates, so apply never upgrades
+  a `SHARE ROW EXCLUSIVE` lock it holds, which a reader turning writer could
+  deadlock. Verification reports kind and checksum mismatches, drift (including
   deferrability, `WHEN` and a disabled trigger) and present retirements for the
   new kind with the existing findings. Ledger kind names, the ledger shape and
   the digests of existing kinds are unchanged; the new kind is recorded as

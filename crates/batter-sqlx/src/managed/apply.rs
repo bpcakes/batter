@@ -74,11 +74,15 @@ pub enum ManagedApplyError {
     LedgerShape,
     /// The ledger or a catalog read exceeded its bounded capacity.
     Capacity,
-    /// A source statement did not create or replace exactly its declared
-    /// identity and kind, for example because its argument list declares
-    /// other types than the entry's signature.
+    /// A statement did not act on exactly its declared identity and kind: a
+    /// source statement did not create or replace it, for example because its
+    /// argument list declares other types than the entry's signature, or a
+    /// trigger drop reached another relation than the one apply read, because
+    /// another session replaced the trigger's view or foreign table by a
+    /// relation of the same name. The drop is rolled back with the rest of
+    /// the transaction.
     IdentityMismatch {
-        /// The declared canonical identity the statement failed to produce.
+        /// The canonical identity of the entry or retirement concerned.
         identity: String,
     },
     /// Under [`PublicExecute::Revoke`], `PUBLIC` still holds `EXECUTE` on a
@@ -273,16 +277,24 @@ async fn apply(
         })
         .collect::<Vec<_>>();
 
+    // Every `ACCESS EXCLUSIVE` lock apply takes on a trigger's table comes
+    // before the weaker table locks taken below, by a routine body's
+    // validation and by `CREATE OR REPLACE TRIGGER`. Taking one after them on
+    // the same table, or a partition of it, would upgrade a lock apply holds,
+    // which a concurrent reader that turns writer can deadlock with. `live`
+    // only proposes a drop; `drop_holder` decides it under the table's lock.
+    for object in &pending {
+        let holder = live.get(object.identity()).and_then(|live| live.kind);
+        drop_holder(connection, object, holder).await?;
+    }
     // Routines first, so a trigger of either kind binds the body this
-    // transaction installs. `live` only proposes a drop; `create` decides it
-    // from the trigger read again under its table's lock.
+    // transaction installs.
     for trigger_phase in [false, true] {
         for object in pending
             .iter()
             .filter(|object| object.kind().is_trigger() == trigger_phase)
         {
-            let holder = live.get(object.identity()).and_then(|live| live.kind);
-            create(connection, &settings, object, holder).await?;
+            create(connection, &settings, object).await?;
         }
     }
 
@@ -396,15 +408,26 @@ async fn retire(
                     .get(retirement.identity())
                     .is_some_and(|live| live.kind == Some(retirement.kind()))
         }) {
-            if let Identity::Trigger { table, name } = retirement.structural_identity()
-                && locked_trigger_kind(connection, table, name).await? != Some(retirement.kind())
-            {
-                continue;
+            if let Identity::Trigger { table, name } = retirement.structural_identity() {
+                let Some(holder) = locked_trigger(connection, table, name).await? else {
+                    continue;
+                };
+                if holder.kind != Some(retirement.kind()) {
+                    continue;
+                }
+                drop_trigger(
+                    connection,
+                    retirement.structural_identity(),
+                    retirement.identity(),
+                    holder,
+                )
+                .await?;
+            } else {
+                let sql = drop_statement(retirement.kind(), retirement.structural_identity());
+                execute(connection, AssertSqlSafe(sql))
+                    .await
+                    .map_err(statement)?;
             }
-            let sql = drop_statement(retirement.kind(), retirement.structural_identity());
-            execute(connection, AssertSqlSafe(sql))
-                .await
-                .map_err(statement)?;
             if trigger_phase {
                 retired.triggers += 1;
             } else {
@@ -441,8 +464,17 @@ pub(super) const fn drops_before_create(
     }
 }
 
+/// The relation a trigger drop is decided on, and the kind of the trigger
+/// holding the name there.
+#[derive(Clone, Copy)]
+struct Holder {
+    relation: i64,
+    kind: Option<ManagedObjectKind>,
+}
+
 /// Lock a trigger's table in `ACCESS EXCLUSIVE` mode, the lock `DROP TRIGGER`
 /// needs anyway, then read the kind of the trigger that holds `name` on it now.
+/// `None` means no relation holds the table's name.
 ///
 /// `DROP TRIGGER` removes either kind by name, so a kind read before the lock
 /// could describe a trigger another session has since replaced. Under the
@@ -452,16 +484,20 @@ pub(super) const fn drops_before_create(
 /// partitioned table's trigger then locks its partitions as well. Views and
 /// foreign tables cannot hold constraint triggers, and `LOCK TABLE` would
 /// also lock a view's base relations or refuse a foreign table, so their
-/// trigger is read without the lock.
-async fn locked_trigger_kind(
+/// trigger is read without the lock; [`drop_trigger`] then rejects a drop that
+/// reached a relation replaced under the same name.
+async fn locked_trigger(
     connection: &mut PgConnection,
     table: &QualifiedName,
     name: &Identifier,
-) -> Result<Option<ManagedObjectKind>, ManagedApplyError> {
-    let relation = catalog::named_relation(connection, table)
+) -> Result<Option<Holder>, ManagedApplyError> {
+    let Some((relation, relkind)) = catalog::named_relation(connection, table)
         .await
-        .map_err(statement)?;
-    if relation.is_some_and(|(_, kind)| kind == "r" || kind == "p") {
+        .map_err(statement)?
+    else {
+        return Ok(None);
+    };
+    if relkind == "r" || relkind == "p" {
         execute(
             connection,
             AssertSqlSafe(format!(
@@ -478,35 +514,92 @@ async fn locked_trigger_kind(
         Touched::Ignore,
     )
     .await?;
-    Ok(current.into_values().next().and_then(|live| live.kind))
+    Ok(Some(Holder {
+        relation,
+        kind: current.into_values().next().and_then(|live| live.kind),
+    }))
+}
+
+/// Drop the trigger that `holder` describes under `identity` (rendered as
+/// `rendered`), and require that the drop reached the relation the decision
+/// was read from.
+///
+/// `DROP TRIGGER` resolves the table by name and keeps it locked until
+/// commit, so after the drop the name resolves to the relation it acted on.
+/// Another session can replace a view or foreign table, which apply reads
+/// without locking, by an ordinary table of the same name that holds a
+/// constraint trigger; that drop must not stand, so apply fails with
+/// [`ManagedApplyError::IdentityMismatch`] and the transaction rolls back.
+async fn drop_trigger(
+    connection: &mut PgConnection,
+    identity: &Identity,
+    rendered: &str,
+    holder: Holder,
+) -> Result<(), ManagedApplyError> {
+    let (Identity::Trigger { table, .. }, Some(kind)) = (identity, holder.kind) else {
+        return Ok(());
+    };
+    execute(connection, AssertSqlSafe(drop_statement(kind, identity)))
+        .await
+        .map_err(statement)?;
+    let dropped_on = catalog::named_relation(connection, table)
+        .await
+        .map_err(statement)?;
+    if dropped_on.is_some_and(|(relation, _)| relation == holder.relation) {
+        Ok(())
+    } else {
+        Err(ManagedApplyError::IdentityMismatch {
+            identity: rendered.to_owned(),
+        })
+    }
+}
+
+/// Drop the trigger holding a pending entry's name when PostgreSQL cannot
+/// replace it in place. `holder` is the kind that held the identity when
+/// apply read the catalog; it only proposes the drop, which is decided from
+/// the trigger read under the table's lock.
+async fn drop_holder(
+    connection: &mut PgConnection,
+    object: &ManagedObject,
+    holder: Option<ManagedObjectKind>,
+) -> Result<(), ManagedApplyError> {
+    let Identity::Trigger { table, name } = object.structural_identity() else {
+        return Ok(());
+    };
+    if !holder.is_some_and(|holder| drops_before_create(object.kind(), holder)) {
+        return Ok(());
+    }
+    match locked_trigger(connection, table, name).await? {
+        Some(current)
+            if current
+                .kind
+                .is_some_and(|holder| drops_before_create(object.kind(), holder)) =>
+        {
+            drop_trigger(
+                connection,
+                object.structural_identity(),
+                object.identity(),
+                current,
+            )
+            .await
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Execute one source statement and require that it wrote exactly its
 /// declared identity, of its declared kind, in this transaction.
 ///
-/// `holder` is the kind of the live object that held the identity when apply
-/// read the catalog; it only proposes a drop. A trigger is dropped first only
-/// when the trigger read under its table's lock still requires it, and the
-/// drop holds `ACCESS EXCLUSIVE` on the table until commit, so no other
-/// session reads or writes the table while the trigger is absent or observes
-/// the new trigger bound to an earlier routine body.
+/// A trigger that PostgreSQL cannot replace in place was dropped by
+/// [`drop_holder`] earlier in this transaction, which holds `ACCESS EXCLUSIVE`
+/// on its table until commit, so no other session reads or writes the table
+/// while the trigger is absent or observes the new trigger bound to an
+/// earlier routine body.
 async fn create(
     connection: &mut PgConnection,
     settings: &RenderSettings,
     object: &ManagedObject,
-    holder: Option<ManagedObjectKind>,
 ) -> Result<(), ManagedApplyError> {
-    if holder.is_some_and(|holder| drops_before_create(object.kind(), holder))
-        && let Identity::Trigger { table, name } = object.structural_identity()
-        && let Some(holder) = locked_trigger_kind(connection, table, name)
-            .await?
-            .filter(|holder| drops_before_create(object.kind(), *holder))
-    {
-        let sql = drop_statement(holder, object.structural_identity());
-        execute(connection, AssertSqlSafe(sql))
-            .await
-            .map_err(statement)?;
-    }
     settings.restore(connection).await.map_err(statement)?;
     execute(connection, AssertSqlSafe(object.source()))
         .await

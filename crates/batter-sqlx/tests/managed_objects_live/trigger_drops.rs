@@ -1,7 +1,8 @@
 //! Trigger drops decided from the trigger read under its table's lock: a
 //! retirement or a drop before create never acts on a catalog read that another
-//! session's committed replacement, or an earlier retirement's cascade, has
-//! made stale.
+//! session's committed replacement, an earlier retirement's cascade or a
+//! relation replaced under the same name has made stale, and every drop's
+//! `ACCESS EXCLUSIVE` lock precedes the weaker locks of trigger replacements.
 
 use super::constraint_triggers::{
     DEFERRED, IMMEDIATE, check_body, check_function, check_log, check_trigger, fired, holder,
@@ -17,6 +18,8 @@ use batter_sqlx::managed::{
 };
 use batter_sqlx::verification::{Identifier, QualifiedName};
 use sqlx::{AssertSqlSafe, PgPool};
+use std::time::Duration;
+use tokio::time::{Instant, sleep, timeout};
 
 /// A failed apply as a test error naming only its SQLSTATE.
 fn with_sqlstate(error: ManagedApplyError) -> BoxError {
@@ -40,6 +43,80 @@ impl RacePools {
     }
 }
 
+/// Wait until `backend` waits for any lock on `schema.relation`, as the
+/// catalog visible to `observer` names it.
+async fn wait_for_any_lock_wait(
+    observer: &PgPool,
+    backend: i32,
+    schema: &str,
+    relation: &str,
+) -> Result {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let waiting: bool = bounded(
+            sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM pg_catalog.pg_locks l
+                     JOIN pg_catalog.pg_class c ON c.oid = l.relation
+                     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                     WHERE l.pid = $1 AND n.nspname = $2 AND c.relname = $3
+                       AND NOT l.granted)",
+            )
+            .bind(backend)
+            .bind(schema)
+            .bind(relation)
+            .fetch_one(observer),
+        )
+        .await??;
+        if waiting {
+            return Ok(());
+        }
+        require(
+            Instant::now() < deadline,
+            "apply never waited for a lock on the raced relation",
+        )?;
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Apply `manifest` while the racing session's transaction, which ran
+/// `gate_sql` before apply started, commits only once apply waits for a lock
+/// on `relation`: its `ACCESS EXCLUSIVE` request when `exclusive`, otherwise
+/// any request.
+async fn race(
+    fixture: &Fixture,
+    pools: &RacePools,
+    manifest: &ManagedObjectManifest,
+    gate_sql: &str,
+    relation: &str,
+    exclusive: bool,
+) -> Result<std::result::Result<AppliedManagedObjects, ManagedApplyError>> {
+    let schema = fixture.schema();
+    let apply_pid = pid(&pools.applying).await?;
+    let mut gate = pools.blocker.begin().await?;
+    bounded(sqlx::raw_sql(AssertSqlSafe(gate_sql.to_owned())).execute(&mut *gate)).await??;
+    let apply = async { Ok::<_, BoxError>(fixture.apply(&pools.applying, manifest).await) };
+    let release = async {
+        if exclusive {
+            wait_for_lock(
+                &pools.observer,
+                apply_pid,
+                schema,
+                relation,
+                "AccessExclusiveLock",
+                false,
+            )
+            .await?;
+        } else {
+            wait_for_any_lock_wait(&pools.observer, apply_pid, schema, relation).await?;
+        }
+        gate.commit().await?;
+        Ok::<_, BoxError>(())
+    };
+    let (outcome, ()) = tokio::try_join!(apply, release)?;
+    Ok(outcome)
+}
+
 /// Apply `manifest` while another session's transaction, which took
 /// `ACCESS EXCLUSIVE` on `records` and ran `replacement` before apply started,
 /// commits only once apply has read the catalog and waits for its own
@@ -51,37 +128,10 @@ async fn apply_racing(
     replacement: &str,
 ) -> Result<AppliedManagedObjects> {
     let schema = fixture.schema();
-    let apply_pid = pid(&pools.applying).await?;
-    let mut gate = pools.blocker.begin().await?;
-    bounded(
-        sqlx::query(AssertSqlSafe(format!(
-            "LOCK TABLE {schema}.records IN ACCESS EXCLUSIVE MODE"
-        )))
-        .execute(&mut *gate),
-    )
-    .await??;
-    bounded(sqlx::raw_sql(AssertSqlSafe(replacement.to_owned())).execute(&mut *gate)).await??;
-    let apply = async {
-        fixture
-            .apply(&pools.applying, manifest)
-            .await
-            .map_err(with_sqlstate)
-    };
-    let release = async {
-        wait_for_lock(
-            &pools.observer,
-            apply_pid,
-            schema,
-            "records",
-            "AccessExclusiveLock",
-            false,
-        )
-        .await?;
-        gate.commit().await?;
-        Ok::<_, BoxError>(())
-    };
-    let (applied, ()) = tokio::try_join!(apply, release)?;
-    Ok(applied)
+    let gate = format!("LOCK TABLE {schema}.records IN ACCESS EXCLUSIVE MODE; {replacement}");
+    race(fixture, pools, manifest, &gate, "records", true)
+        .await?
+        .map_err(with_sqlstate)
 }
 
 /// SQL for the racing session: drop `records_check`, then re-create it as a
@@ -342,6 +392,308 @@ async fn managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply
             again.created_or_replaced() == 0 && again.retired() == 0,
             "a repeated apply executed DDL",
         )
+    })
+    .await
+}
+
+/// Whether `records_check` on `schema.relation` is a constraint trigger, or
+/// `None` when the relation holds no trigger of that name.
+async fn relation_holder(pool: &PgPool, schema: &str, relation: &str) -> Result<Option<bool>> {
+    Ok(sqlx::query_scalar(
+        "SELECT t.tgconstraint <> 0 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = 'records_check'",
+    )
+    .bind(schema)
+    .bind(relation)
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// Retire the managed plain trigger `records_check` on `relation`, a view or
+/// foreign table that cannot hold a constraint trigger, while the racing
+/// session drops the relation and creates an ordinary table of the same name
+/// whose constraint trigger holds the name. It commits once the drop waits
+/// for the old relation's lock; apply must then refuse the drop it reached.
+async fn replaced_relation_race(
+    fixture: &mut Fixture,
+    relation: &str,
+    create: String,
+    timing: &str,
+    drop: String,
+) -> Result {
+    let schema = fixture.schema().to_owned();
+    fixture.add_migration(check_log(&schema));
+    fixture.add_migration(create);
+    let (table, name) = (
+        QualifiedName::new(&schema, relation)?,
+        Identifier::new("records_check")?,
+    );
+    let install = fixture.objects_with(
+        PublicExecute::Revoke,
+        [
+            check_function(&schema, "v1")?,
+            ManagedObject::trigger(
+                table.clone(),
+                name.clone(),
+                format!(
+                    "CREATE OR REPLACE TRIGGER records_check {timing} INSERT ON {schema}.{relation}
+                     FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+                ),
+            )?,
+        ],
+        [],
+    )?;
+    let retirement = Retirement::trigger(table, name);
+    let identity = retirement.identity().to_owned();
+    let retire = fixture.objects_with(
+        PublicExecute::Revoke,
+        [check_function(&schema, "v1")?],
+        [retirement],
+    )?;
+    let pools = RacePools::new(fixture, &[]).await?;
+    let _ = fixture
+        .apply(&pools.applying, &install.manifest)
+        .await
+        .map_err(with_sqlstate)?;
+    let replace = format!(
+        "{drop}; CREATE TABLE {schema}.{relation} (id bigint, note text);
+         CREATE CONSTRAINT TRIGGER records_check AFTER INSERT ON {schema}.{relation}
+         {DEFERRED} FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+    );
+    let outcome = race(fixture, &pools, &retire.manifest, &replace, relation, false).await?;
+    require(
+        matches!(&outcome, Err(ManagedApplyError::IdentityMismatch { identity: refused })
+            if *refused == identity),
+        "a drop that reached a replaced relation was not refused",
+    )?;
+    require(
+        relation_holder(&pools.observer, &schema, relation).await? == Some(true),
+        "the replacement's constraint trigger did not survive",
+    )?;
+    // The retirement is kind-exact: the replacement is not the retired object.
+    let again = fixture
+        .apply(&pools.applying, &retire.manifest)
+        .await
+        .map_err(with_sqlstate)?;
+    require(
+        again.retired() == 0
+            && relation_holder(&pools.observer, &schema, relation).await? == Some(true),
+        "a plain trigger retirement dropped the replacement's constraint trigger",
+    )?;
+    let reader = fixture.pool(Role::Reader).await?;
+    require(
+        verifies(fixture, &reader, &retire.manifest).await?,
+        "the replacement was reported as the retired object",
+    )
+}
+
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_retirement_refuses_a_view_replaced_during_its_drop() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        replaced_relation_race(
+            fixture,
+            "records_view",
+            format!("CREATE VIEW {schema}.records_view AS SELECT id, note FROM {schema}.records"),
+            "INSTEAD OF",
+            format!("DROP VIEW {schema}.records_view"),
+        )
+        .await
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_drop() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        let (wrapper, server) = (format!("{schema}_fdw"), format!("{schema}_srv"));
+        fixture
+            .admin(&format!(
+                "CREATE FOREIGN DATA WRAPPER {wrapper};
+                 CREATE SERVER {server} FOREIGN DATA WRAPPER {wrapper};
+                 GRANT USAGE ON FOREIGN SERVER {server} TO PUBLIC"
+            ))
+            .await?;
+        let raced = replaced_relation_race(
+            fixture,
+            "records_remote",
+            format!(
+                "CREATE FOREIGN TABLE {schema}.records_remote (id bigint, note text) SERVER {server}"
+            ),
+            "AFTER",
+            format!("DROP FOREIGN TABLE {schema}.records_remote"),
+        )
+        .await;
+        let cleanup = fixture
+            .admin(&format!(
+                "DROP SERVER {server} CASCADE; DROP FOREIGN DATA WRAPPER {wrapper} CASCADE"
+            ))
+            .await;
+        // Report the race's own failure first; cleanup still ran.
+        raced.and(cleanup)
+    })
+    .await
+}
+
+/// Apply `change`, which replaces the plain trigger `audit` and drops the
+/// constraint trigger on `table`, while another transaction that read `read`
+/// before apply started runs `write` once apply waits for its
+/// `ACCESS EXCLUSIVE` request on `table`, then commits. PostgreSQL lets that
+/// write ahead of the queued request, unless apply already holds a lock it
+/// conflicts with: both transactions must commit.
+async fn lock_order_race(
+    fixture: &mut Fixture,
+    install: &ManagedObjectManifest,
+    change: &ManagedObjectManifest,
+    table: &str,
+    read: String,
+    write: String,
+) -> Result {
+    let pools = RacePools::new(fixture, &[]).await?;
+    let _ = fixture
+        .apply(&pools.applying, install)
+        .await
+        .map_err(with_sqlstate)?;
+    let schema = fixture.schema();
+    let apply_pid = pid(&pools.applying).await?;
+    let mut reader = pools.blocker.begin().await?;
+    bounded(sqlx::query(AssertSqlSafe(read)).execute(&mut *reader)).await??;
+    let apply = async {
+        fixture
+            .apply(&pools.applying, change)
+            .await
+            .map_err(with_sqlstate)
+    };
+    let writer = async {
+        wait_for_lock(
+            &pools.observer,
+            apply_pid,
+            schema,
+            table,
+            "AccessExclusiveLock",
+            false,
+        )
+        .await?;
+        let written = timeout(
+            Duration::from_secs(10),
+            sqlx::query(AssertSqlSafe(write)).execute(&mut *reader),
+        )
+        .await?;
+        if let Err(error) = written {
+            let code = error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .map(|code| code.into_owned());
+            return Err(std::io::Error::other(format!(
+                "the concurrent write failed with SQLSTATE {code:?}"
+            ))
+            .into());
+        }
+        reader.commit().await?;
+        Ok::<_, BoxError>(())
+    };
+    let (applied, ()) = tokio::try_join!(apply, writer)?;
+    require(
+        applied.created_or_replaced() == 2,
+        "apply did not replace the plain trigger and re-create the constraint trigger",
+    )
+}
+
+/// A plain trigger and a constraint trigger, both changed, on one table, or
+/// on a partitioned table and one of its partitions.
+fn lock_order_objects(
+    fixture: &Fixture,
+    plain: (&str, &str),
+    constraint: (&str, &str),
+    events: &str,
+    deferral: &str,
+) -> Result<ManagedObjectManifest> {
+    let schema = fixture.schema();
+    let (plain_table, plain_name) = plain;
+    let (constraint_table, constraint_name) = constraint;
+    Ok(fixture
+        .objects_with(
+            PublicExecute::Revoke,
+            [
+                check_function(schema, "v1")?,
+                ManagedObject::trigger(
+                    QualifiedName::new(schema, plain_table)?,
+                    Identifier::new(plain_name)?,
+                    format!(
+                        "CREATE OR REPLACE TRIGGER {plain_name} AFTER {events} ON {schema}.{plain_table}
+                         FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+                    ),
+                )?,
+                ManagedObject::constraint_trigger(
+                    QualifiedName::new(schema, constraint_table)?,
+                    Identifier::new(constraint_name)?,
+                    format!(
+                        "CREATE CONSTRAINT TRIGGER {constraint_name} AFTER INSERT
+                         ON {schema}.{constraint_table}
+                         {deferral} FOR EACH ROW EXECUTE FUNCTION {schema}.check_record();"
+                    ),
+                )?,
+            ],
+            [],
+        )?
+        .manifest)
+}
+
+/// The plain trigger sorts first, so a drop taken in identity order would
+/// follow its `SHARE ROW EXCLUSIVE` lock on the same table.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_drops_precede_replacements_on_one_table() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        let (plain, constraint) = (("records", "records_audit"), ("records", "records_check"));
+        let install = lock_order_objects(fixture, plain, constraint, "INSERT", DEFERRED)?;
+        let change = lock_order_objects(fixture, plain, constraint, "INSERT OR UPDATE", IMMEDIATE)?;
+        lock_order_race(
+            fixture,
+            &install,
+            &change,
+            "records",
+            format!("SELECT count(*) FROM {schema}.records"),
+            format!("INSERT INTO {schema}.records (note) VALUES ('raced')"),
+        )
+        .await
+    })
+    .await
+}
+
+/// The plain trigger on a partitioned table sorts first and locks its
+/// partitions too, so a drop taken in identity order on one of them would
+/// follow that `SHARE ROW EXCLUSIVE` lock.
+#[tokio::test]
+#[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
+async fn managed_trigger_drops_precede_replacements_across_a_partition() -> Result {
+    Fixture::run(async |fixture| {
+        let schema = fixture.schema().to_owned();
+        fixture.add_migration(check_log(&schema));
+        fixture.add_migration(format!(
+            "CREATE TABLE {schema}.parted (id bigint NOT NULL, region text NOT NULL)
+                 PARTITION BY LIST (region);
+             CREATE TABLE {schema}.parted_east PARTITION OF {schema}.parted
+                 FOR VALUES IN ('east');"
+        ));
+        let (plain, constraint) = (("parted", "parted_audit"), ("parted_east", "parted_check"));
+        let install = lock_order_objects(fixture, plain, constraint, "INSERT", DEFERRED)?;
+        let change = lock_order_objects(fixture, plain, constraint, "INSERT OR UPDATE", IMMEDIATE)?;
+        lock_order_race(
+            fixture,
+            &install,
+            &change,
+            "parted_east",
+            format!("SELECT count(*) FROM {schema}.parted_east"),
+            format!("INSERT INTO {schema}.parted (id, region) VALUES (1, 'east')"),
+        )
+        .await
     })
     .await
 }

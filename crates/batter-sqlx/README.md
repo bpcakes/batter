@@ -840,7 +840,12 @@ catalog. The apply transaction is pinned to READ COMMITTED, because a
 REPEATABLE READ default would make that read return the transaction's first
 snapshot. Views and foreign tables cannot hold constraint triggers, so their
 triggers are read again without `LOCK TABLE`, which would also lock a view's
-base relations and refuses foreign tables.
+base relations and refuses foreign tables. Every drop must then reach the
+relation apply read: if another session replaced the view or foreign table by
+a same-named table, apply fails with `IdentityMismatch` and rolls the drop
+back. All drops run before any routine source or trigger create, so apply
+never upgrades a weaker lock it holds on a trigger's table to
+`ACCESS EXCLUSIVE`, which a concurrent reader turning writer could deadlock.
 Declare a constraint trigger in the manifest rather than in a migration: a
 migration commits before apply and could bind only the previously installed
 body, or no body at all on a fresh database. Every error, cancellation or

@@ -123,6 +123,10 @@ TARGETS = {
         "managed_constraint_trigger_retirement_spares_a_concurrent_plain_replacement",
         "managed_trigger_retirement_spares_a_concurrent_constraint_replacement",
         "managed_triggers_converge_over_any_concurrent_holder",
+        "managed_trigger_retirement_refuses_a_view_replaced_during_its_drop",
+        "managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_drop",
+        "managed_trigger_drops_precede_replacements_on_one_table",
+        "managed_trigger_drops_precede_replacements_across_a_partition",
     },
     "postgres_live": {
         "blocked_cancellation_releases_capacity",

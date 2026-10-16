@@ -231,7 +231,16 @@ themselves. `ONLY` keeps inheritance children and partitions out of this lock,
 and dropping a partitioned table's trigger then locks its partitions as well.
 Views and foreign tables cannot hold constraint triggers, while `LOCK TABLE`
 also locks a view's base relations and refuses a foreign table, so a trigger
-there is read again without the lock. The transaction is pinned to READ
+there is read again without the lock. A further review then showed that
+another session can replace such a view or foreign table by an ordinary table
+of the same name whose constraint trigger holds the name. A waiting
+`DROP TRIGGER` then follows the name and removes that constraint trigger
+(reproduced for both relation kinds on PostgreSQL 18.6). Every drop therefore
+also checks the relation it reached. `DROP TRIGGER` keeps the relation it
+resolved locked until commit, so afterwards apply requires the table's name to
+resolve to the relation it read before the drop. Otherwise apply fails with
+`IdentityMismatch`, and the drop is rolled back before `COMMIT`. The
+transaction is pinned to READ
 COMMITTED as its first statement: under a session or database default of
 REPEATABLE READ the read under the lock would return the transaction's first
 snapshot while `DROP TRIGGER` finds the newer trigger.
@@ -244,6 +253,17 @@ for the next apply. Neither is a drop of the wrong kind. The pending set is
 decided after the retirements, from a catalog read again when one dropped a
 trigger, so a declared object that went with a retired parent's clones is
 re-created rather than reported missing.
+
+Every `ACCESS EXCLUSIVE` lock apply takes on a trigger's table precedes its
+weaker table locks: trigger retirements run first, then every pending entry's
+drop, and only then the routine sources and trigger creates, whose
+`SHARE ROW EXCLUSIVE` and body-validation locks are weaker. The same review
+found that drops taken in identity order could follow a plain trigger's
+`CREATE OR REPLACE TRIGGER` on the same table, or on a partitioned table whose
+partition held the constraint trigger. Apply then upgraded a lock it held, and
+a concurrent reader that turned writer deadlocked with it (`40P01`). With the
+drops first, PostgreSQL queues such a writer ahead of apply's waiting request,
+and both commit.
 
 Definitions are rendered with `pg_get_functiondef` and `pg_get_triggerdef`
 under fixed `search_path`, `DateStyle`, `IntervalStyle`, `TimeZone`,
@@ -474,4 +494,12 @@ race (`42704`). Taking no lock, with the racing session committing at the
 drop's own lock request, failed the same cases. Removing the READ COMMITTED pin
 failed only the REPEATABLE READ race. Removing both the read under the lock
 and the post-retirement catalog read failed the partition case (`42704`);
-either one alone passes it.
+either one alone passes it. Four more cases in the same file follow a later
+review. Two race a plain trigger's retirement on a view and on a foreign table
+against a racing session that replaces the relation by a same-named table
+with a constraint trigger. Two race a reader that turns writer against an
+apply that replaces a plain trigger and drops a constraint trigger, on one
+table or across a partitioned table and its partition. Accepting a drop on
+whatever relation it reached failed both replacement races. Taking each drop
+just before its own entry's create, in identity order, failed both lock-order
+races with `40P01`.

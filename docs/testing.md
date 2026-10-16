@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the twenty-eight-case [managed-object](#managed-routines-and-triggers)
+migration target, the thirty-two-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -825,7 +825,7 @@ drop-before-create direction, ran triggers before routines, retired routines
 first, or resolved every trigger as the plain kind each failed the expected
 cases. Execution evidence is recorded in `batter-n2s1`.
 
-Four cases in `tests/managed_objects_live/trigger_drops.rs` cover trigger drops
+Eight cases in `tests/managed_objects_live/trigger_drops.rs` cover trigger drops
 decided under the table lock.
 `managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
 two changes in one manifest: a retirement of a partitioned table's constraint
@@ -857,6 +857,33 @@ Mutation controls against these cases:
 - Removing the READ COMMITTED pin failed only the REPEATABLE READ race.
 - Removing both the read under the lock and the post-retirement catalog read
   failed the partition case (`42704`).
+
+Two further pairs of cases cover the relation each drop reaches and the order
+of apply's locks.
+`managed_trigger_retirement_refuses_a_view_replaced_during_its_drop` and
+`managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_drop`
+retire a managed plain trigger on a view, or on a foreign table of a test-only
+foreign data wrapper. Neither relation can hold a constraint trigger, so apply
+reads them without `LOCK TABLE`. The racing session drops the relation inside
+its transaction and creates an ordinary table of the same name, whose
+constraint trigger holds the name. It commits once apply's `DROP TRIGGER` waits
+for the old relation's lock. Apply must then fail with `IdentityMismatch`,
+leave the replacement's constraint trigger in place, and on the next apply
+retire nothing and verify.
+
+`managed_trigger_drops_precede_replacements_on_one_table` and
+`managed_trigger_drops_precede_replacements_across_a_partition` change a plain
+trigger that sorts first and a constraint trigger that must be dropped. The
+first case puts both on one table. The second puts the plain trigger on a
+partitioned table and the constraint trigger on one of its partitions. Another
+transaction reads the table before apply starts, and writes once apply waits
+for its `ACCESS EXCLUSIVE` request. Both must commit.
+
+Mutation controls against these four cases:
+- Accepting a drop whatever relation it reached failed both replacement races.
+- Taking each drop just before its own entry's create, in identity order,
+  failed both lock-order races with a deadlock (`40P01`), raised for apply in
+  one layout and for the writer in the other.
 
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
@@ -2520,8 +2547,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 170-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, twenty-eight
+an exact 174-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, thirty-two
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-
