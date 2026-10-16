@@ -41,6 +41,8 @@ pub(crate) struct Fixture {
     migrator: String,
     reader: String,
     delegate: String,
+    /// Migrations after the `records` table, as versions 2, 3, ...
+    migrations: Vec<String>,
     pools: Vec<PgPool>,
 }
 
@@ -85,6 +87,7 @@ impl Fixture {
             migrator: format!("batter_mo_migrator_{suffix}"),
             reader: format!("batter_mo_reader_{suffix}"),
             delegate: format!("batter_mo_delegate_{suffix}"),
+            migrations: Vec::new(),
             pools: Vec::new(),
         };
         let provisioned = fixture.provision().await;
@@ -175,22 +178,40 @@ impl Fixture {
         Ok(())
     }
 
+    /// Append a versioned migration that every later apply and SQLx
+    /// manifest of this fixture includes.
+    pub(crate) fn add_migration(&mut self, sql: String) {
+        self.migrations.push(sql);
+    }
+
     fn migrator_bundle(&self) -> Migrator {
-        Migrator::with_migrations(vec![Migration::new(
-            1,
-            "records".into(),
-            MigrationType::Simple,
-            sqlx::AssertSqlSafe(format!(
-                "CREATE TABLE {}.records (
-                     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                     note text NOT NULL,
-                     amount bigint NOT NULL DEFAULT 0,
-                     updated_at timestamptz NOT NULL DEFAULT now())",
-                self.schema
-            ))
-            .into_sql_str(),
-            false,
-        )])
+        let records = format!(
+            "CREATE TABLE {}.records (
+                 id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                 note text NOT NULL,
+                 amount bigint NOT NULL DEFAULT 0,
+                 updated_at timestamptz NOT NULL DEFAULT now())",
+            self.schema
+        );
+        Migrator::with_migrations(
+            std::iter::once(("records".to_owned(), records))
+                .chain(
+                    (2..)
+                        .zip(&self.migrations)
+                        .map(|(version, sql)| (format!("step_{version}"), sql.clone())),
+                )
+                .zip(1..)
+                .map(|((description, sql), version)| {
+                    Migration::new(
+                        version,
+                        description.into(),
+                        MigrationType::Simple,
+                        sqlx::AssertSqlSafe(sql).into_sql_str(),
+                        false,
+                    )
+                })
+                .collect(),
+        )
     }
 
     /// The four standard entries: a trigger routine, a SQL routine reading the

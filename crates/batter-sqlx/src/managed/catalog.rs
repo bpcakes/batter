@@ -393,6 +393,10 @@ const ROUTINES: &str = concat_routines!("false");
 const ROUTINES_TOUCHED: &str = concat_routines!("p.xmin = pg_catalog.pg_current_xact_id()::xid");
 
 /// Resolve every named user trigger and key it by canonical identity.
+///
+/// A trigger with a `pg_constraint` row (`tgconstraint <> 0`) is a constraint
+/// trigger; internal triggers, such as those enforcing foreign keys, are
+/// excluded.
 pub(crate) async fn resolve_triggers(
     connection: &mut PgConnection,
     keys: &[(&str, &str, &str)],
@@ -408,7 +412,7 @@ pub(crate) async fn resolve_triggers(
         Touched::Report => TRIGGERS_TOUCHED,
         Touched::Ignore => TRIGGERS,
     };
-    let rows = sqlx::query_as::<_, (i64, String, String, String, bool)>(query)
+    let rows = sqlx::query_as::<_, (i64, String, String, String, bool, bool)>(query)
         .bind(schemas)
         .bind(tables)
         .bind(names)
@@ -418,7 +422,7 @@ pub(crate) async fn resolve_triggers(
         return Err(CatalogError::Capacity);
     }
     let mut resolved = HashMap::with_capacity(rows.len());
-    for (oid, schema, table, name, touched) in rows {
+    for (oid, schema, table, name, constraint, touched) in rows {
         let (Ok(table), Ok(name)) = (
             QualifiedName::new(schema, table),
             crate::verification::Identifier::new(name),
@@ -426,11 +430,16 @@ pub(crate) async fn resolve_triggers(
             continue;
         };
         let identity = Identity::Trigger { table, name }.render();
+        let kind = if constraint {
+            ManagedObjectKind::ConstraintTrigger
+        } else {
+            ManagedObjectKind::Trigger
+        };
         resolved.insert(
             identity,
             LiveObject {
                 oid,
-                kind: Some(ManagedObjectKind::Trigger),
+                kind: Some(kind),
                 touched,
             },
         );
@@ -441,7 +450,8 @@ pub(crate) async fn resolve_triggers(
 macro_rules! concat_triggers {
     ($touched:literal) => {
         concat!(
-            "SELECT t.oid::bigint, n.nspname::text, c.relname::text, t.tgname::text, ",
+            "SELECT t.oid::bigint, n.nspname::text, c.relname::text, t.tgname::text,
+                    t.tgconstraint <> 0, ",
             $touched,
             "
              FROM pg_catalog.pg_trigger AS t
@@ -501,9 +511,10 @@ pub(crate) async fn render_hashes(
 ) -> Result<HashMap<i64, [u8; 32]>, CatalogError> {
     let (mut routines, mut triggers) = (Vec::new(), Vec::new());
     for (oid, kind) in objects {
-        match kind {
-            ManagedObjectKind::Function | ManagedObjectKind::Procedure => routines.push(oid),
-            ManagedObjectKind::Trigger => triggers.push(oid),
+        if kind.is_trigger() {
+            triggers.push(oid);
+        } else {
+            routines.push(oid);
         }
     }
     let mut hashes = HashMap::with_capacity(routines.len() + triggers.len());
@@ -517,7 +528,9 @@ pub(crate) async fn render_hashes(
         (
             triggers,
             // pg_get_triggerdef omits whether the trigger fires; apply's
-            // CREATE OR REPLACE TRIGGER always leaves it enabled ('O').
+            // CREATE OR REPLACE TRIGGER and CREATE CONSTRAINT TRIGGER always
+            // leave it enabled ('O'). Constraint triggers render their
+            // deferrability, FROM table and WHEN clause in the definition.
             "SELECT r.oid, pg_catalog.sha256(pg_catalog.convert_to(
                  pg_catalog.pg_get_triggerdef(t.oid) || E'\\nenabled=' || t.tgenabled::pg_catalog.text,
                  'UTF8'))

@@ -34,7 +34,7 @@ fn changed_objects(fixture: &Fixture) -> Result<ManagedObjectManifest> {
         .manifest)
 }
 
-async fn wait_for_lock(
+pub(super) async fn wait_for_lock(
     observer: &PgPool,
     backend: i32,
     schema: &str,

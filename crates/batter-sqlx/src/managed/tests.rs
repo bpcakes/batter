@@ -33,6 +33,8 @@ const TOTAL: &str = "CREATE OR REPLACE FUNCTION app.total(amount bigint) RETURNS
     LANGUAGE sql IMMUTABLE RETURN amount * 2;";
 const TOUCH: &str = "CREATE OR REPLACE TRIGGER records_touch BEFORE UPDATE ON app.records
     FOR EACH ROW EXECUTE FUNCTION app.touch_updated_at();";
+const CHECK: &str = "CREATE CONSTRAINT TRIGGER records_touch AFTER INSERT OR UPDATE ON app.records
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.require_note();";
 
 fn function(source: &'static str) -> Result<ManagedObject, ManagedObjectError> {
     ManagedObject::function(total(), source)
@@ -40,6 +42,10 @@ fn function(source: &'static str) -> Result<ManagedObject, ManagedObjectError> {
 
 fn trigger(source: &'static str) -> Result<ManagedObject, ManagedObjectError> {
     ManagedObject::trigger(table(), trigger_name(), source)
+}
+
+fn constraint_trigger(source: &'static str) -> Result<ManagedObject, ManagedObjectError> {
+    ManagedObject::constraint_trigger(table(), trigger_name(), source)
 }
 
 #[test]
@@ -101,6 +107,7 @@ fn headers_must_be_create_or_replace_of_the_declared_kind() {
     for source in [
         "CREATE OR REPLACE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.records
          FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        CHECK,
         "CREATE TRIGGER records_touch BEFORE UPDATE ON app.records EXECUTE FUNCTION app.audit();",
         "CREATE OR REPLACE TRIGGER records_touch ON app.records EXECUTE FUNCTION app.audit();",
         "CREATE OR REPLACE TRIGGER records_touch BEFORE MERGE ON app.records EXECUTE FUNCTION app.audit();",
@@ -435,6 +442,215 @@ fn manifests_stop_consuming_at_the_total_source_boundary() {
         Err(ManagedObjectError::Capacity)
     );
     assert_eq!(produced, allowed + 1);
+}
+
+#[test]
+fn constraint_trigger_sources_use_their_own_header_and_trigger_rules() {
+    for source in [
+        CHECK,
+        "create constraint trigger records_touch after update of note, \"Amount\" or delete
+         on app.records from app.accounts not deferrable for each row
+         when (old.note is distinct from new.note) execute function app.audit('a;b')",
+        "-- leading comment; with a semicolon\n\
+         CREATE CONSTRAINT TRIGGER \"records_touch\" AFTER INSERT ON \"app\".\"records\"
+         DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE PROCEDURE app.audit() /* end */",
+        // Timing restrictions are PostgreSQL's, as for plain triggers.
+        "CREATE CONSTRAINT TRIGGER records_touch BEFORE TRUNCATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+    ] {
+        let object = constraint_trigger(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        assert_eq!(object.kind(), ManagedObjectKind::ConstraintTrigger);
+        assert_eq!(
+            object.identity(),
+            "\"records_touch\" ON \"app\".\"records\""
+        );
+    }
+    // PostgreSQL refuses OR REPLACE for constraint triggers; so does the
+    // manifest. A plain trigger header is not a constraint trigger either.
+    for source in [
+        "CREATE OR REPLACE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        TOUCH,
+        "CREATE TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE \"CONSTRAINT\" TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER records_touch ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER MERGE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+    ] {
+        assert_eq!(
+            constraint_trigger(source),
+            Err(ManagedObjectError::SourceHeader),
+            "{source}"
+        );
+    }
+    for source in [
+        "CREATE CONSTRAINT TRIGGER other_check AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.accounts
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON db.app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+        "CREATE CONSTRAINT TRIGGER \"Records_Touch\" AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit();",
+    ] {
+        assert_eq!(
+            constraint_trigger(source),
+            Err(ManagedObjectError::SourceIdentity),
+            "{source}"
+        );
+    }
+    // Trigger statements have no BEGIN ATOMIC body: a later statement is
+    // another statement.
+    for source in [
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit(); BEGIN; END;",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW EXECUTE FUNCTION app.audit(); DROP TABLE app.records;",
+        "CREATE CONSTRAINT TRIGGER records_touch AFTER UPDATE ON app.records
+         FOR EACH ROW WHEN (new.note <> 'x) EXECUTE FUNCTION app.audit();",
+    ] {
+        assert_eq!(
+            constraint_trigger(source),
+            Err(ManagedObjectError::SourceStatement),
+            "{source}"
+        );
+    }
+    assert_eq!(
+        ManagedObject::constraint_trigger(
+            QualifiedName::new("pg_temp", "records").unwrap(),
+            trigger_name(),
+            CHECK,
+        ),
+        Err(ManagedObjectError::TemporaryNamespace)
+    );
+}
+
+#[test]
+fn both_trigger_kinds_share_one_identity_space() {
+    let identity = "\"records_touch\" ON \"app\".\"records\"".to_owned();
+    let plain = Retirement::trigger(table(), trigger_name());
+    let constraint = Retirement::constraint_trigger(table(), trigger_name());
+    assert_eq!(plain.kind(), ManagedObjectKind::Trigger);
+    assert_eq!(constraint.kind(), ManagedObjectKind::ConstraintTrigger);
+    assert_eq!(constraint.identity(), identity);
+    assert_eq!(constraint.identity(), plain.identity());
+    assert_ne!(constraint, plain);
+    assert_eq!(
+        ManagedObjectManifest::new(
+            ledger(),
+            PublicExecute::Revoke,
+            [trigger(TOUCH).unwrap(), constraint_trigger(CHECK).unwrap()],
+            [],
+        ),
+        Err(ManagedObjectError::DuplicateObject {
+            identity: identity.clone()
+        })
+    );
+    assert_eq!(
+        ManagedObjectManifest::new(
+            ledger(),
+            PublicExecute::Revoke,
+            [],
+            [plain.clone(), constraint.clone()],
+        ),
+        Err(ManagedObjectError::DuplicateRetirement {
+            identity: identity.clone()
+        })
+    );
+    for (object, retirement) in [
+        (constraint_trigger(CHECK).unwrap(), plain),
+        (trigger(TOUCH).unwrap(), constraint),
+    ] {
+        assert_eq!(
+            ManagedObjectManifest::new(ledger(), PublicExecute::Revoke, [object], [retirement]),
+            Err(ManagedObjectError::RetiredObjectDeclared {
+                identity: identity.clone()
+            })
+        );
+    }
+}
+
+#[test]
+fn kind_names_are_stable_and_the_digest_covers_them() {
+    assert_eq!(
+        [
+            ManagedObjectKind::Function,
+            ManagedObjectKind::Procedure,
+            ManagedObjectKind::Trigger,
+            ManagedObjectKind::ConstraintTrigger,
+        ]
+        .map(ManagedObjectKind::as_str),
+        ["function", "procedure", "trigger", "constraint_trigger"]
+    );
+    // One identity retired as either trigger kind: only the kind string differs.
+    let retired = |retirement| manifest(PublicExecute::Revoke, Vec::new(), vec![retirement]);
+    let plain = retired(Retirement::trigger(table(), trigger_name()));
+    let constraint = retired(Retirement::constraint_trigger(table(), trigger_name()));
+    assert_ne!(plain.digest(), constraint.digest());
+    assert_eq!(
+        constraint.digest(),
+        retired(Retirement::constraint_trigger(table(), trigger_name())).digest()
+    );
+    let declared = manifest(
+        PublicExecute::Revoke,
+        vec![constraint_trigger(CHECK).unwrap()],
+        Vec::new(),
+    );
+    assert_eq!(declared.objects()[0].kind().as_str(), "constraint_trigger");
+    assert_ne!(declared.digest(), constraint.digest());
+}
+
+#[test]
+fn pending_triggers_drop_the_name_holder_only_where_postgresql_cannot_replace_it() {
+    use super::apply::{drop_statement, drops_before_create};
+    use ManagedObjectKind::{ConstraintTrigger, Function, Procedure, Trigger};
+    let kinds = [Function, Procedure, Trigger, ConstraintTrigger];
+    for declared in kinds {
+        for holder in kinds {
+            let expected = matches!(
+                (declared, holder),
+                (Trigger, ConstraintTrigger) | (ConstraintTrigger, Trigger | ConstraintTrigger)
+            );
+            assert_eq!(
+                drops_before_create(declared, holder),
+                expected,
+                "{declared:?} over {holder:?}"
+            );
+        }
+    }
+    assert_eq!(
+        kinds.map(|kind| (kind.is_trigger(), kind.is_routine(), kind.sql_keyword())),
+        [
+            (false, true, "FUNCTION"),
+            (false, true, "PROCEDURE"),
+            (true, false, "TRIGGER"),
+            (true, false, "TRIGGER"),
+        ]
+    );
+    let trigger = Identity::Trigger {
+        table: table(),
+        name: trigger_name(),
+    };
+    for kind in [Trigger, ConstraintTrigger] {
+        assert_eq!(
+            drop_statement(kind, &trigger),
+            "DROP TRIGGER \"records_touch\" ON \"app\".\"records\""
+        );
+    }
+    assert_eq!(
+        drop_statement(
+            Procedure,
+            &Identity::Routine(signature("app", "settle", &["int4"]))
+        ),
+        "DROP PROCEDURE \"app\".\"settle\"(\"pg_catalog\".\"int4\")"
+    );
 }
 
 fn manifest(

@@ -14,9 +14,12 @@ use std::{collections::HashMap, fmt};
 /// Evidence that a committed apply installed one manifest.
 ///
 /// The counts describe what this apply executed. An entry is re-executed only
-/// when its ledger row is absent, its source checksum changed, or its live
-/// catalog definition no longer renders to the hash apply last recorded, so a
-/// repeated apply of an unchanged, undrifted set executes no DDL.
+/// when its ledger row is absent, its kind or source checksum changed, or its
+/// live catalog definition no longer renders to the hash apply last recorded,
+/// so a repeated apply of an unchanged, undrifted set executes no DDL. A
+/// constraint trigger dropped and re-created from its source, like a trigger
+/// whose name the other trigger kind held, counts as created or replaced, not
+/// as retired.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use = "an applied manifest is release evidence; log or inspect its digest"]
 pub struct AppliedManagedObjects {
@@ -252,12 +255,16 @@ async fn apply(
         .collect::<Vec<_>>();
 
     let retired = retire(connection, manifest, &live).await?;
-    for kind_is_trigger in [false, true] {
+    // Routines first, so a trigger of either kind binds the body this
+    // transaction installs. `live` still describes every declared identity:
+    // retirements cannot name one, and no other statement here drops a trigger.
+    for trigger_phase in [false, true] {
         for object in pending
             .iter()
-            .filter(|object| (object.kind() == ManagedObjectKind::Trigger) == kind_is_trigger)
+            .filter(|object| object.kind().is_trigger() == trigger_phase)
         {
-            create(connection, &settings, object).await?;
+            let holder = live.get(object.identity()).and_then(|live| live.kind);
+            create(connection, &settings, object, holder).await?;
         }
     }
 
@@ -339,33 +346,26 @@ async fn lock_ledger(
     Ok(catalog::load_ledger_rows(connection, ledger).await?)
 }
 
-/// Drop every retired object that still exists: triggers before the routines
-/// they may bind. `RESTRICT` semantics keep undeclared dependents fatal.
+/// Drop every retired object that still exists: triggers of both kinds before
+/// the routines they may bind. `RESTRICT` semantics keep undeclared dependents
+/// fatal.
 async fn retire(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
     live: &HashMap<String, LiveObject>,
 ) -> Result<usize, ManagedApplyError> {
     let mut retired = 0;
-    for kind_is_trigger in [true, false] {
+    for trigger_phase in [true, false] {
         // An object of another kind under the same identity (a procedure for
-        // a retired function, or an aggregate) is not the retired object.
+        // a retired function, an aggregate, or the other trigger kind) is not
+        // the retired object.
         for retirement in manifest.retirements().iter().filter(|retirement| {
-            (retirement.kind() == ManagedObjectKind::Trigger) == kind_is_trigger
+            retirement.kind().is_trigger() == trigger_phase
                 && live
                     .get(retirement.identity())
                     .is_some_and(|live| live.kind == Some(retirement.kind()))
         }) {
-            let sql = match retirement.structural_identity() {
-                Identity::Trigger { table, name } => {
-                    format!("DROP TRIGGER {} ON {}", name.quoted(), table.quoted())
-                }
-                Identity::Routine(signature) => format!(
-                    "DROP {} {}",
-                    routine_keyword(retirement.kind()),
-                    signature.quoted()
-                ),
-            };
+            let sql = drop_statement(retirement.kind(), retirement.structural_identity());
             execute(connection, AssertSqlSafe(sql))
                 .await
                 .map_err(statement)?;
@@ -375,20 +375,50 @@ async fn retire(
     Ok(retired)
 }
 
-const fn routine_keyword(kind: ManagedObjectKind) -> &'static str {
-    match kind {
-        ManagedObjectKind::Procedure => "PROCEDURE",
-        ManagedObjectKind::Function | ManagedObjectKind::Trigger => "FUNCTION",
+/// `DROP` of `identity` as an existing object of `kind`, without `CASCADE`.
+pub(super) fn drop_statement(kind: ManagedObjectKind, identity: &Identity) -> String {
+    let target = match identity {
+        Identity::Trigger { table, name } => format!("{} ON {}", name.quoted(), table.quoted()),
+        Identity::Routine(signature) => signature.quoted().to_owned(),
+    };
+    format!("DROP {} {target}", kind.sql_keyword())
+}
+
+/// Whether a pending entry must first drop the live object holding its
+/// identity: PostgreSQL replaces neither a constraint trigger in place nor one
+/// trigger kind with the other, while `CREATE OR REPLACE` keeps routines and
+/// plain triggers in place.
+pub(super) const fn drops_before_create(
+    declared: ManagedObjectKind,
+    holder: ManagedObjectKind,
+) -> bool {
+    match declared {
+        ManagedObjectKind::Function | ManagedObjectKind::Procedure => false,
+        ManagedObjectKind::Trigger => matches!(holder, ManagedObjectKind::ConstraintTrigger),
+        ManagedObjectKind::ConstraintTrigger => holder.is_trigger(),
     }
 }
 
 /// Execute one source statement and require that it wrote exactly its
 /// declared identity, of its declared kind, in this transaction.
+///
+/// `holder` is the kind of the live object holding the identity before this
+/// apply. A trigger that must be dropped first is dropped in this transaction,
+/// which holds `ACCESS EXCLUSIVE` on its table until commit, so no other
+/// session observes the table without it or with the new trigger bound to an
+/// earlier routine body.
 async fn create(
     connection: &mut PgConnection,
     settings: &RenderSettings,
     object: &ManagedObject,
+    holder: Option<ManagedObjectKind>,
 ) -> Result<(), ManagedApplyError> {
+    if let Some(holder) = holder.filter(|holder| drops_before_create(object.kind(), *holder)) {
+        let sql = drop_statement(holder, object.structural_identity());
+        execute(connection, AssertSqlSafe(sql))
+            .await
+            .map_err(statement)?;
+    }
     settings.restore(connection).await.map_err(statement)?;
     execute(connection, AssertSqlSafe(object.source()))
         .await
@@ -433,7 +463,7 @@ async fn revoke_public_execute(
 ) -> Result<(), ManagedApplyError> {
     let routines = installed
         .iter()
-        .filter(|(object, _, _)| object.kind() != ManagedObjectKind::Trigger)
+        .filter(|(object, _, _)| object.kind().is_routine())
         .map(|(_, oid, _)| *oid)
         .collect::<Vec<_>>();
     let holders = catalog::public_execute_holders(connection, &routines)
@@ -445,7 +475,7 @@ async fn revoke_public_execute(
         };
         let sql = format!(
             "REVOKE EXECUTE ON {} {} FROM PUBLIC",
-            routine_keyword(object.kind()),
+            object.kind().sql_keyword(),
             signature.quoted()
         );
         execute(connection, AssertSqlSafe(sql))

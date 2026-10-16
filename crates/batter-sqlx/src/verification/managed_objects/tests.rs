@@ -321,3 +321,130 @@ fn plans_reject_duplicate_and_conflicting_managed_ledgers() {
     assert!(combined.managed_objects_manifest().is_some());
     assert!(combined.sqlx_migration().is_some());
 }
+
+fn with_constraint_trigger(policy: PublicExecute) -> ManagedObjectManifest {
+    ManagedObjectManifest::new(
+        ledger(),
+        policy,
+        [
+            ManagedObject::function(
+                total(),
+                "CREATE OR REPLACE FUNCTION app.total() RETURNS bigint LANGUAGE sql RETURN 1;",
+            )
+            .unwrap(),
+            ManagedObject::constraint_trigger(
+                QualifiedName::new("app", "records").unwrap(),
+                Identifier::new("records_check").unwrap(),
+                "CREATE CONSTRAINT TRIGGER records_check AFTER INSERT ON app.records
+                 DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.check();",
+            )
+            .unwrap(),
+        ],
+        [Retirement::constraint_trigger(
+            QualifiedName::new("app", "records").unwrap(),
+            Identifier::new("records_old_check").unwrap(),
+        )],
+    )
+    .unwrap()
+}
+
+#[test]
+fn constraint_triggers_compare_like_every_other_kind() {
+    let manifest = with_constraint_trigger(PublicExecute::Revoke);
+    let check = manifest.objects()[1].identity().to_owned();
+    assert_eq!(
+        manifest.objects()[1].kind(),
+        ManagedObjectKind::ConstraintTrigger
+    );
+    let rows = applied_rows(&manifest);
+    let (live_objects, hashes) = live(&manifest);
+    let mut findings = Vec::new();
+    compare_rows(&manifest, &rows, &mut findings);
+    compare_catalog(&manifest, &rows, &live_objects, &hashes, &mut findings);
+    assert!(findings.is_empty(), "{findings:?}");
+
+    // A row recorded as a plain trigger is a kind mismatch.
+    let mut plain_row = rows.clone();
+    plain_row
+        .iter_mut()
+        .find(|row| row.identity == check)
+        .unwrap()
+        .kind = "trigger".to_owned();
+    let mut findings = Vec::new();
+    compare_rows(&manifest, &plain_row, &mut findings);
+    assert_eq!(
+        kinds(&findings),
+        [(
+            FindingKind::ManagedObjectChecksumMismatch,
+            Some(check.as_str())
+        )]
+    );
+
+    // Another rendering (for example re-created NOT DEFERRABLE, or disabled),
+    // absence, and a plain trigger holding the name are all drift.
+    let oid = live_objects[&check].oid;
+    let mut changed = hashes.clone();
+    changed.get_mut(&oid).unwrap()[0] ^= 1;
+    let mut absent = live_objects.clone();
+    absent.remove(&check);
+    let mut plain = live_objects.clone();
+    plain.get_mut(&check).unwrap().kind = Some(ManagedObjectKind::Trigger);
+    for (live_objects, hashes) in [
+        (&live_objects, &changed),
+        (&absent, &hashes),
+        (&plain, &hashes),
+    ] {
+        let mut findings = Vec::new();
+        compare_catalog(&manifest, &rows, live_objects, hashes, &mut findings);
+        assert_eq!(
+            kinds(&findings),
+            [(FindingKind::ManagedObjectDrift, Some(check.as_str()))]
+        );
+    }
+
+    // A retired constraint trigger is present only as a constraint trigger.
+    let retired = manifest.retirements()[0].identity().to_owned();
+    let mut present = live_objects.clone();
+    present.insert(
+        retired.clone(),
+        LiveObject {
+            oid: 7,
+            kind: Some(ManagedObjectKind::ConstraintTrigger),
+            touched: false,
+        },
+    );
+    let mut findings = Vec::new();
+    compare_catalog(&manifest, &rows, &present, &hashes, &mut findings);
+    assert_eq!(
+        kinds(&findings),
+        [(
+            FindingKind::RetiredManagedObjectPresent,
+            Some(retired.as_str())
+        )]
+    );
+    present.get_mut(&retired).unwrap().kind = Some(ManagedObjectKind::Trigger);
+    let mut findings = Vec::new();
+    compare_catalog(&manifest, &rows, &present, &hashes, &mut findings);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn public_execute_candidates_are_live_routines_of_their_declared_kind() {
+    // Plain and constraint triggers never hold EXECUTE.
+    let plain = manifest(PublicExecute::Revoke);
+    let (plain_live, _) = live(&plain);
+    assert_eq!(
+        public_execute_candidates(&plain, &plain_live),
+        HashMap::from([(100, plain.objects()[0].identity())])
+    );
+    let constraint = with_constraint_trigger(PublicExecute::Revoke);
+    let (mut live_objects, _) = live(&constraint);
+    let total = constraint.objects()[0].identity();
+    assert_eq!(
+        public_execute_candidates(&constraint, &live_objects),
+        HashMap::from([(100, total)])
+    );
+    // A procedure under the declared function's identity is not a candidate.
+    live_objects.get_mut(total).unwrap().kind = Some(ManagedObjectKind::Procedure);
+    assert!(public_execute_candidates(&constraint, &live_objects).is_empty());
+}

@@ -1,5 +1,5 @@
-//! PostgreSQL 18 contracts for managed routines and triggers applied after
-//! migrations and verified read-only.
+//! PostgreSQL 18 contracts for managed routines, triggers and constraint
+//! triggers applied after migrations and verified read-only.
 //!
 //! Each case provisions a uniquely named schema, a migration login that owns it
 //! and a serving login with only schema `USAGE` and table `SELECT`, through the
@@ -13,6 +13,9 @@ mod managed_objects_fixture;
 
 #[path = "managed_objects_live/verification.rs"]
 mod verification;
+
+#[path = "managed_objects_live/constraint_triggers.rs"]
+mod constraint_triggers;
 
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{

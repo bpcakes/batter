@@ -3,9 +3,14 @@
 //! A routine body edited as a copy inside an append-only migration log hides
 //! every change in a restated whole definition, and two branches that restate
 //! one routine silently race. A [`ManagedObjectManifest`] instead declares the
-//! current source of each managed routine and of each trigger that binds one,
-//! plus explicit [`Retirement`]s. Versioned migrations keep tables, columns,
-//! constraints, policies and data changes.
+//! current source of each managed routine and of each trigger or constraint
+//! trigger that binds one, plus explicit [`Retirement`]s. Versioned migrations
+//! keep tables, columns, constraints, policies and data changes.
+//!
+//! A constraint trigger belongs in the manifest, not in a migration: a
+//! migration commits before the apply transaction, so it could bind only a
+//! function body that is already installed. Apply instead drops and re-creates
+//! a pending constraint trigger in the transaction that installs its function.
 //!
 //! The manifest is pure: it validates every entry without a connection. The
 //! same value then drives both library-owned phases:
@@ -42,6 +47,20 @@
 //!             "CREATE OR REPLACE TRIGGER records_touch BEFORE UPDATE ON app.records
 //!              FOR EACH ROW EXECUTE FUNCTION app.touch_updated_at();",
 //!         )?,
+//!         ManagedObject::function(
+//!             RoutineSignature::new("app", "require_note", [])?,
+//!             "CREATE OR REPLACE FUNCTION app.require_note() RETURNS trigger
+//!              LANGUAGE plpgsql AS $$ BEGIN
+//!                  IF NEW.note = '' THEN RAISE check_violation USING MESSAGE = 'note required'; END IF;
+//!                  RETURN NULL;
+//!              END $$;",
+//!         )?,
+//!         ManagedObject::constraint_trigger(
+//!             QualifiedName::new("app", "records")?,
+//!             Identifier::new("records_note_present")?,
+//!             "CREATE CONSTRAINT TRIGGER records_note_present AFTER INSERT OR UPDATE ON app.records
+//!              DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.require_note();",
+//!         )?,
 //!     ],
 //!     [Retirement::function(RoutineSignature::new(
 //!         "app",
@@ -49,13 +68,14 @@
 //!         [RoutineType::new("pg_catalog", "int8")?],
 //!     )?)],
 //! )?;
-//! assert_eq!(manifest.objects().len(), 2);
+//! assert_eq!(manifest.objects().len(), 4);
 //! println!("managed object set {}", manifest.digest());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 mod apply;
 mod catalog;
+mod error;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -67,6 +87,7 @@ pub(crate) use catalog::{
     ledger_relation, load_ledger_rows, public_execute_holders, render_hashes, rendered_set_digest,
     resolve_live,
 };
+pub use error::ManagedObjectError;
 
 use crate::verification::{Identifier, QualifiedName, RoutineSignature, temporary_namespace};
 use sha2::{Digest, Sha256};
@@ -82,6 +103,11 @@ pub(crate) const MAX_MANIFEST_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const SET_ROW: &str = "manifest";
 
 /// The PostgreSQL object kind a managed entry or retirement names.
+///
+/// The enum is exhaustive so consumers review every kind apply can execute.
+/// Migration: [`Self::ConstraintTrigger`] was added after `Function`,
+/// `Procedure` and `Trigger`; an exhaustive `match` over those three adds a
+/// `ManagedObjectKind::ConstraintTrigger` arm, usually beside `Trigger`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ManagedObjectKind {
     /// A routine created with `CREATE OR REPLACE FUNCTION`.
@@ -92,15 +118,51 @@ pub enum ManagedObjectKind {
     /// trigger leaves it enabled for origin sessions; a disabled, replica or
     /// always state set afterwards is drift.
     Trigger,
+    /// A constraint trigger created with `CREATE CONSTRAINT TRIGGER`.
+    /// PostgreSQL cannot replace one in place, so apply drops the trigger
+    /// holding its name and re-creates it from source, in the transaction that
+    /// installs the routines it binds; the drop holds `ACCESS EXCLUSIVE` on the
+    /// table until commit. Like [`Self::Trigger`], it is always re-created
+    /// enabled for origin sessions, and its deferrability is part of its
+    /// rendered definition. It shares PostgreSQL's per-table trigger name
+    /// space and its identity form with [`Self::Trigger`].
+    ConstraintTrigger,
 }
 
 impl ManagedObjectKind {
     /// Return the lowercase name recorded in the ledger's `kind` column.
+    ///
+    /// These names enter ledgers and set digests and never change:
+    /// `function`, `procedure`, `trigger` and `constraint_trigger`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Function => "function",
             Self::Procedure => "procedure",
             Self::Trigger => "trigger",
+            Self::ConstraintTrigger => "constraint_trigger",
+        }
+    }
+
+    /// Whether the kind is a table trigger of either form, identified by its
+    /// table and name; otherwise it is a routine identified by its signature.
+    pub(crate) const fn is_trigger(self) -> bool {
+        match self {
+            Self::Function | Self::Procedure => false,
+            Self::Trigger | Self::ConstraintTrigger => true,
+        }
+    }
+
+    /// Whether the kind is a function or procedure, which can hold `EXECUTE`.
+    pub(crate) const fn is_routine(self) -> bool {
+        !self.is_trigger()
+    }
+
+    /// The object keyword of `DROP` (and, for routines, of `REVOKE ... ON`).
+    pub(crate) const fn sql_keyword(self) -> &'static str {
+        match self {
+            Self::Function => "FUNCTION",
+            Self::Procedure => "PROCEDURE",
+            Self::Trigger | Self::ConstraintTrigger => "TRIGGER",
         }
     }
 }
@@ -140,15 +202,17 @@ impl Identity {
 /// One validated managed routine or trigger and its complete source statement.
 ///
 /// Construction checks, without a connection, that the source is exactly one
-/// `CREATE OR REPLACE` statement of the declared kind whose header names the
-/// declared, schema-qualified identity. Quotes, comments, dollar quotes and
+/// statement of the declared kind whose header names the declared,
+/// schema-qualified identity: `CREATE OR REPLACE` for functions, procedures and
+/// triggers, and `CREATE CONSTRAINT TRIGGER` (which has no `OR REPLACE` form)
+/// for constraint triggers. Quotes, comments, dollar quotes and
 /// `BEGIN ATOMIC` bodies are recognized the way PostgreSQL and `psql` do;
 /// argument lists, return types and bodies are left to PostgreSQL, and apply
 /// rejects a statement that does not create exactly the declared identity.
 ///
 /// A routine identity is the structural [`RoutineSignature`] PostgreSQL uses to
 /// tell overloads apart, so it lists the exact catalog types of the input
-/// arguments. A trigger identity is its table and name.
+/// arguments. A trigger identity, plain or constraint, is its table and name.
 ///
 /// ```
 /// use batter_sqlx::managed::{ManagedObject, ManagedObjectError};
@@ -218,8 +282,9 @@ impl ManagedObject {
 
     /// Declare a trigger from its complete `CREATE OR REPLACE TRIGGER` statement.
     ///
-    /// The statement's `ON` clause must name `table` schema-qualified. Constraint
-    /// triggers cannot be replaced in place by PostgreSQL and are rejected.
+    /// The statement's `ON` clause must name `table` schema-qualified. A
+    /// `CREATE CONSTRAINT TRIGGER` statement is rejected here; declare it with
+    /// [`Self::constraint_trigger`].
     ///
     /// # Errors
     /// Returns a source or namespace [`ManagedObjectError`] when the statement is
@@ -231,6 +296,64 @@ impl ManagedObject {
     ) -> Result<Self, ManagedObjectError> {
         Self::new(
             ManagedObjectKind::Trigger,
+            Identity::Trigger { table, name },
+            source.into(),
+        )
+    }
+
+    /// Declare a constraint trigger from its complete `CREATE CONSTRAINT TRIGGER`
+    /// statement.
+    ///
+    /// The header must be `CREATE CONSTRAINT TRIGGER name {BEFORE | AFTER |
+    /// INSTEAD OF} event [OR ...] ON schema.table`; `OR REPLACE`, which
+    /// PostgreSQL refuses for constraint triggers, is rejected. `FROM`,
+    /// deferrability, `FOR EACH ROW`, `WHEN`, the timing PostgreSQL allows and
+    /// the function are left to PostgreSQL. PostgreSQL cannot replace a
+    /// constraint trigger in place, so apply drops any trigger holding `name`
+    /// on `table` and runs this statement in the transaction that installs the
+    /// manifest's routines; a constraint trigger therefore never runs a
+    /// function body other than the one installed with it. The drop holds
+    /// `ACCESS EXCLUSIVE` on `table` until commit, but only when the entry is
+    /// new, changed or drifted.
+    ///
+    /// ```
+    /// use batter_sqlx::managed::{ManagedObject, ManagedObjectError, ManagedObjectKind};
+    /// use batter_sqlx::verification::{Identifier, QualifiedName};
+    ///
+    /// let table = QualifiedName::new("app", "records")?;
+    /// let name = Identifier::new("records_note_present")?;
+    /// let object = ManagedObject::constraint_trigger(
+    ///     table.clone(),
+    ///     name.clone(),
+    ///     "CREATE CONSTRAINT TRIGGER records_note_present AFTER INSERT ON app.records
+    ///      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION app.require_note();",
+    /// )?;
+    /// assert_eq!(object.kind(), ManagedObjectKind::ConstraintTrigger);
+    /// assert_eq!(object.identity(), r#""records_note_present" ON "app"."records""#);
+    ///
+    /// // PostgreSQL has no OR REPLACE form for constraint triggers.
+    /// assert_eq!(
+    ///     ManagedObject::constraint_trigger(
+    ///         table,
+    ///         name,
+    ///         "CREATE OR REPLACE CONSTRAINT TRIGGER records_note_present AFTER INSERT
+    ///          ON app.records FOR EACH ROW EXECUTE FUNCTION app.require_note();",
+    ///     ),
+    ///     Err(ManagedObjectError::SourceHeader),
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Returns a source or namespace [`ManagedObjectError`] when the statement is
+    /// not exactly one constraint trigger definition naming `name` on `table`.
+    pub fn constraint_trigger(
+        table: QualifiedName,
+        name: Identifier,
+        source: impl Into<Cow<'static, str>>,
+    ) -> Result<Self, ManagedObjectError> {
+        Self::new(
+            ManagedObjectKind::ConstraintTrigger,
             Identity::Trigger { table, name },
             source.into(),
         )
@@ -262,8 +385,8 @@ impl ManagedObject {
 
     /// Return the canonical identity recorded in the ledger and in findings.
     ///
-    /// Routines use [`RoutineSignature::as_str`]; triggers use
-    /// `"name" ON "schema"."table"` with every identifier quoted.
+    /// Routines use [`RoutineSignature::as_str`]; triggers and constraint
+    /// triggers use `"name" ON "schema"."table"` with every identifier quoted.
     pub fn identity(&self) -> &str {
         &self.rendered
     }
@@ -300,9 +423,10 @@ impl fmt::Debug for ManagedObject {
 /// Removing an entry from a manifest only stops managing it; the object stays
 /// in the database. Apply drops a retired object only when it still exists as
 /// the retired kind (a procedure or aggregate under a retired function's
-/// identity is left alone), triggers before routines, and never with
-/// `CASCADE`, so any object that still depends on it, declared or not, makes
-/// the whole apply fail instead of disappearing.
+/// identity, or a plain trigger under a retired constraint trigger's, is left
+/// alone), triggers of both kinds before routines, and never with `CASCADE`,
+/// so any object that still depends on it, declared or not, makes the whole
+/// apply fail instead of disappearing.
 /// A retirement may not name an identity the same manifest declares: replacing
 /// a routine whose return type or argument names change belongs in a versioned
 /// migration that drops it, after which apply creates the new definition.
@@ -328,6 +452,17 @@ impl Retirement {
     pub fn trigger(table: QualifiedName, name: Identifier) -> Self {
         Self::new(
             ManagedObjectKind::Trigger,
+            Identity::Trigger { table, name },
+        )
+    }
+
+    /// Retire a constraint trigger by its table and name.
+    ///
+    /// Apply drops it with `DROP TRIGGER`, which takes `ACCESS EXCLUSIVE` on
+    /// `table` until commit, only while a constraint trigger holds that name.
+    pub fn constraint_trigger(table: QualifiedName, name: Identifier) -> Self {
+        Self::new(
+            ManagedObjectKind::ConstraintTrigger,
             Identity::Trigger { table, name },
         )
     }
@@ -623,87 +758,3 @@ fn set_digest(
     }
     ManagedObjectDigest(hasher.finalize().into())
 }
-
-/// Invalid managed object input, rejected before any connection work.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ManagedObjectError {
-    /// The source is not a `CREATE OR REPLACE` statement of the declared kind
-    /// with a recognizable header. `CREATE CONSTRAINT TRIGGER`, which
-    /// PostgreSQL cannot replace in place, is rejected here.
-    SourceHeader,
-    /// The header names another object than declared, or does not
-    /// schema-qualify the routine name or trigger table.
-    SourceIdentity,
-    /// The source has an unterminated quote, comment or dollar quote, contains
-    /// a NUL byte, or continues after its one statement.
-    SourceStatement,
-    /// One source exceeds 1 MiB.
-    SourceTooLarge,
-    /// An entry, retirement or the ledger lives in a session-local temporary
-    /// namespace (`pg_temp`, `pg_temp_*` or `pg_toast_temp_*`), including a
-    /// routine argument type.
-    TemporaryNamespace,
-    /// The ledger uses SQLx's reserved `_sqlx_migrations` relation name.
-    ReservedLedger,
-    /// Two entries share one identity. Functions and procedures share
-    /// PostgreSQL's routine identities.
-    DuplicateObject {
-        /// The canonical identity declared twice.
-        identity: String,
-    },
-    /// Two retirements share one identity.
-    DuplicateRetirement {
-        /// The canonical identity retired twice.
-        identity: String,
-    },
-    /// A retirement names an identity the same manifest declares.
-    RetiredObjectDeclared {
-        /// The canonical identity both declared and retired.
-        identity: String,
-    },
-    /// More than 10,000 entries plus retirements, or more than 64 MiB of source.
-    Capacity,
-    /// The manifest declares no object and no retirement.
-    EmptyManifest,
-}
-
-impl fmt::Display for ManagedObjectError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SourceHeader => {
-                formatter.write_str("managed object source is not CREATE OR REPLACE of its kind")
-            }
-            Self::SourceIdentity => formatter.write_str(
-                "managed object source names another or unqualified object than declared",
-            ),
-            Self::SourceStatement => {
-                formatter.write_str("managed object source is not exactly one complete statement")
-            }
-            Self::SourceTooLarge => formatter.write_str("managed object source exceeds 1 MiB"),
-            Self::TemporaryNamespace => {
-                formatter.write_str("managed object names a temporary namespace")
-            }
-            Self::ReservedLedger => {
-                formatter.write_str("managed object ledger uses the SQLx migration ledger name")
-            }
-            Self::DuplicateObject { identity } => {
-                write!(formatter, "managed object is declared twice: {identity}")
-            }
-            Self::DuplicateRetirement { identity } => {
-                write!(formatter, "managed object is retired twice: {identity}")
-            }
-            Self::RetiredObjectDeclared { identity } => {
-                write!(
-                    formatter,
-                    "managed object is both declared and retired: {identity}"
-                )
-            }
-            Self::Capacity => formatter.write_str("managed object manifest capacity exceeded"),
-            Self::EmptyManifest => {
-                formatter.write_str("managed object manifest declares no object or retirement")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ManagedObjectError {}
