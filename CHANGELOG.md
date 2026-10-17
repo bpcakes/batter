@@ -8,6 +8,12 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Update the locked `rustls` to 0.23.46 (`batter-ddc`). RUSTSEC-2026-0285,
+  -0346, -0347, -0348 and -0349 affect 0.23.44, which the workspace reached
+  through `sqlx-core`, `reqwest` and `bollard`; the update is lock-only and
+  within every dependent's semver range. The
+  [publication dossier](docs/evidence/publication-dossier-2026-10-17.md)
+  records the remaining gates; nothing is published.
 - Manage constraint triggers with the routines they bind (`batter-n2s1`,
   [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
   `ManagedObject::constraint_trigger(table, name, source)` declares one
