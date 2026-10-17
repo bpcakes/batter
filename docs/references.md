@@ -5122,3 +5122,28 @@ as retained through transaction end. Claim selection and leasing already lock
 the exact queue rows before the batch inserts read their run, attempt and stage.
 The workflow update retains its `ENQUEUED`/`RUNNING` predicate. This is an internal
 statement-shape change; it adds no public API or remote-effect guarantee.
+
+## Publication dossier sources (2026-10-17)
+
+The [publication dossier](evidence/publication-dossier-2026-10-17.md) checked
+crate-name state through the crates.io HTTP API (`/api/v1/crates/<name>` and
+`/owners`) with the descriptive user agent that the
+[crates.io data-access policy](https://crates.io/data-access) requires.
+Advisory data came from the
+[RustSec database](https://github.com/rustsec/advisory-db) through
+`cargo audit` 0.22.2 and `cargo deny` 0.19.7: rustls advisories
+[RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285),
+[-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346),
+[-0347](https://rustsec.org/advisories/RUSTSEC-2026-0347),
+[-0348](https://rustsec.org/advisories/RUSTSEC-2026-0348) and
+[-0349](https://rustsec.org/advisories/RUSTSEC-2026-0349) are patched in
+rustls 0.23.46, and [RUSTSEC-2026-0205](https://rustsec.org/advisories/RUSTSEC-2026-0205)
+for `scc` is patched in 3.8.4, outside the `^2.1` requirement of
+`metrics-exporter-otel` 0.3.1. Cargo's
+[publishing reference](https://doc.rust-lang.org/cargo/reference/publishing.html)
+documents that `path` and `git` keys are removed from published manifests and
+the `version` requirement is used instead, and that development dependencies
+that declare a version are kept; the observed `batter-core` dry-run failure
+matches that rule. GitHub's
+[private vulnerability reporting API](https://docs.github.com/en/rest/repos/repos#check-if-private-vulnerability-reporting-is-enabled-for-a-repository)
+returned `enabled: false` for the repository on that date.
