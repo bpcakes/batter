@@ -1,5 +1,5 @@
-//! PostgreSQL 18 contracts for managed routines and triggers applied after
-//! migrations and verified read-only.
+//! PostgreSQL 18 contracts for managed routines, triggers and constraint
+//! triggers applied after migrations and verified read-only.
 //!
 //! Each case provisions a uniquely named schema, a migration login that owns it
 //! and a serving login with only schema `USAGE` and table `SELECT`, through the
@@ -13,6 +13,21 @@ mod managed_objects_fixture;
 
 #[path = "managed_objects_live/verification.rs"]
 mod verification;
+
+#[path = "managed_objects_live/constraint_triggers.rs"]
+mod constraint_triggers;
+
+#[path = "managed_objects_live/trigger_drops.rs"]
+mod trigger_drops;
+
+#[path = "managed_objects_live/trigger_lock_order.rs"]
+mod trigger_lock_order;
+
+#[path = "managed_objects_live/trigger_privileges.rs"]
+mod trigger_privileges;
+
+#[path = "managed_objects_live/trigger_lock_coverage.rs"]
+mod trigger_lock_coverage;
 
 use batter_sqlx::managed::{ManagedApplyError, ManagedObject, PublicExecute, Retirement};
 use batter_sqlx::verification::{
@@ -109,7 +124,10 @@ async fn managed_objects_reapply_is_idempotent_and_executes_no_ddl() -> Result {
         let _ = fixture.apply(&migrator, &objects.manifest).await?;
         let catalog = catalog_state(&migrator, fixture.schema()).await?;
         let ledger = fixture.object_rows(&migrator).await?;
-        let again = fixture.apply(&migrator, &objects.manifest).await?;
+        // A writer holding the trigger's table does not delay the re-apply.
+        let again = fixture
+            .apply_beside_writer(&migrator, &objects.manifest, "records")
+            .await?;
         require(
             again.created_or_replaced() == 0 && again.unchanged() == 4 && again.retired() == 0,
             "repeated apply re-executed an unchanged object",

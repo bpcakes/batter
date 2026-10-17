@@ -121,7 +121,30 @@ resolved by catalog joins (never `regprocedure` input), definitions render under
 the fixed settings in `catalog.rs`, and apply requires every executed statement
 to have written its declared identity (`xmin` equals the current transaction).
 Apply re-executes only new, changed or drifted entries and drops only retired
-objects that exist as the retired kind, never with `CASCADE`; library
+objects that exist as the retired kind, never with `CASCADE`. A pending
+constraint trigger, which PostgreSQL cannot replace, and a pending plain trigger
+whose name a constraint trigger holds, drop the live holder and run their
+source inside the apply transaction, after routines. `DROP TRIGGER` ignores
+the kind, so every trigger drop takes `LOCK TABLE ONLY ... ACCESS EXCLUSIVE`
+(tables and partitioned tables), re-reads that trigger and acts on the fresh
+kind, then checks that the table's name still resolves to the relation it
+read (views and foreign tables are read unlocked); apply pins READ COMMITTED
+so the re-read sees committed replacements, takes every lock its trigger
+statements need first (`LOCK TABLE ONLY ... NOWAIT` in a savepoint for each
+table and each partition of a partitioned table's tree, walked through
+`pg_inherits` because `pg_partition_tree` takes locks, waiting for one refused
+relation at a time while holding none of the others, then re-reading the trees
+and retaking a changed set; foreign partitions cannot be locked and stay out;
+work the post-retirement catalog read adds beyond that set is refused before
+any further lock),
+and runs every drop before any routine source or trigger create, so it never
+upgrades a held table lock or waits while holding part of the set, except that
+a plain row trigger statement locks a foreign partition while holding the
+rest; each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its
+relation, partitions included, and Batter never grants it;
+classify kinds through
+`ManagedObjectKind::is_trigger`/`is_routine`/`sql_keyword`, never by comparing
+with one variant; ledger kind names never change; library
 statements run under the canonical settings and sources under the session's;
 a revoke is re-read because PostgreSQL only warns when it removes nothing;
 trigger hashes include `tgenabled`; it locks the ledger `ACCESS EXCLUSIVE`

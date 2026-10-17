@@ -34,7 +34,7 @@ pub(super) fn validate(
     }
     let tokens = scan(source)?;
     header(kind, identity, &tokens)?;
-    single_statement(&tokens, kind != ManagedObjectKind::Trigger)
+    single_statement(&tokens, kind.is_routine())
 }
 
 pub(super) fn scan(source: &str) -> Result<Vec<Token<'_>>, ManagedObjectError> {
@@ -212,12 +212,15 @@ fn header(
     tokens: &[Token<'_>],
 ) -> Result<(), ManagedObjectError> {
     let mut cursor = Cursor { tokens, index: 0 };
-    let keyword = match kind {
-        ManagedObjectKind::Function => "function",
-        ManagedObjectKind::Procedure => "procedure",
-        ManagedObjectKind::Trigger => "trigger",
+    // PostgreSQL has no `CREATE OR REPLACE CONSTRAINT TRIGGER`, and a plain
+    // trigger's `OR REPLACE` header cannot name a constraint trigger.
+    let keywords: &[&str] = match kind {
+        ManagedObjectKind::Function => &["create", "or", "replace", "function"],
+        ManagedObjectKind::Procedure => &["create", "or", "replace", "procedure"],
+        ManagedObjectKind::Trigger => &["create", "or", "replace", "trigger"],
+        ManagedObjectKind::ConstraintTrigger => &["create", "constraint", "trigger"],
     };
-    for expected in ["create", "or", "replace", keyword] {
+    for expected in keywords {
         if !cursor.keyword(expected) {
             return Err(ManagedObjectError::SourceHeader);
         }

@@ -97,7 +97,7 @@ pub(super) async fn inspect(
         ManagedLock::Missing => {
             // A ledger visible now was created after the lock attempt and is
             // not protected; absence in the snapshot is a finding.
-            if managed::ledger_relation(connection, ledger)
+            if managed::named_relation(connection, ledger)
                 .await
                 .map_err(native)?
                 .is_some()
@@ -190,18 +190,7 @@ async fn inspect_catalog(
     if manifest.public_execute() != PublicExecute::Revoke {
         return Ok(());
     }
-    let routines = manifest
-        .objects()
-        .iter()
-        .filter_map(|object| {
-            live.get(object.identity())
-                .filter(|live| {
-                    live.kind == Some(object.kind())
-                        && object.kind() != managed::ManagedObjectKind::Trigger
-                })
-                .map(|live| (live.oid, object.identity()))
-        })
-        .collect::<HashMap<_, _>>();
+    let routines = public_execute_candidates(manifest, &live);
     let oids = routines.keys().copied().collect::<Vec<_>>();
     let holders = managed::public_execute_holders(connection, &oids)
         .await
@@ -220,6 +209,24 @@ async fn inspect_catalog(
         ));
     }
     Ok(())
+}
+
+/// Live managed routines of their declared kind, keyed by oid: the only
+/// objects that can hold `EXECUTE`. Triggers of either kind are excluded.
+pub(super) fn public_execute_candidates<'m>(
+    manifest: &'m ManagedObjectManifest,
+    live: &HashMap<String, LiveObject>,
+) -> HashMap<i64, &'m str> {
+    manifest
+        .objects()
+        .iter()
+        .filter(|object| object.kind().is_routine())
+        .filter_map(|object| {
+            live.get(object.identity())
+                .filter(|live| live.kind == Some(object.kind()))
+                .map(|live| (live.oid, object.identity()))
+        })
+        .collect()
 }
 
 /// The ledger's oid when the snapshot-visible relation is the one locked

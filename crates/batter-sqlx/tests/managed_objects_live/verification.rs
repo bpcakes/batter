@@ -16,7 +16,10 @@ use tokio::time::{Instant, sleep};
 fn changed_objects(fixture: &Fixture) -> Result<ManagedObjectManifest> {
     let schema = fixture.schema();
     let mut objects = fixture.standard_objects();
-    objects.retain(|object| object.kind() != ManagedObjectKind::Trigger);
+    objects.retain(|object| match object.kind() {
+        ManagedObjectKind::Function | ManagedObjectKind::Procedure => true,
+        ManagedObjectKind::Trigger | ManagedObjectKind::ConstraintTrigger => false,
+    });
     objects.push(ManagedObject::function(
         RoutineSignature::new(schema, "release_number", [])?,
         format!("CREATE OR REPLACE FUNCTION {schema}.release_number() RETURNS int LANGUAGE sql RETURN 2;"),
@@ -34,7 +37,7 @@ fn changed_objects(fixture: &Fixture) -> Result<ManagedObjectManifest> {
         .manifest)
 }
 
-async fn wait_for_lock(
+pub(super) async fn wait_for_lock(
     observer: &PgPool,
     backend: i32,
     schema: &str,

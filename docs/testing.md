@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the eleven-case [managed-object](#managed-routines-and-triggers)
+migration target, the forty-three-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -717,7 +717,8 @@ both limits across libraries, examples, and tests.
 Offline contracts run in the ordinary `batter-sqlx` library suite
 (`cargo test -p batter-sqlx --lib managed`). Manifest tests cover every
 `ManagedObjectError` path: header kind and grammar (including `CREATE` without
-`OR REPLACE`, a procedure declared as a function, constraint triggers and
+`OR REPLACE`, a procedure declared as a function, a constraint trigger declared
+as a plain trigger and the reverse, `OR REPLACE` on a constraint trigger and
 malformed trigger events), unqualified, misnamed, three-part and case-folded
 identities, more than one statement, unterminated strings, quoted identifiers,
 dollar quotes and comments, NUL bytes, the 1 MiB source bound, temporary
@@ -730,13 +731,26 @@ overflow prevents retirement consumption) and the 64 MiB aggregate bound (a lazy
 must stop at the first over-limit source without consuming retirements). Accepted
 sources cover comments, quoted names, case folding, nested dollar quotes,
 standard and escape strings and `BEGIN ATOMIC` bodies with `CASE ... END`.
-Digest tests require order independence, exclusion of the ledger name and
-sensitivity to the policy, any source and any retirement. Verification tests
+Constraint-trigger sources are accepted with `FROM`, every deferrability form,
+`WHEN`, quoted and case-folded names and comments, and rejected for a misnamed
+trigger or table, an unqualified or three-part table, a trailing statement
+(trigger sources have no `BEGIN ATOMIC` body), an unterminated `WHEN` string
+and a temporary table. A plain and a constraint trigger of one identity are a
+duplicate entry, a duplicate retirement, or a retirement of a declared
+identity. Digest tests require order independence, exclusion of the ledger name and
+sensitivity to the policy, any source, any retirement and a retirement's kind
+string; the four ledger kind names are pinned. The drop-before-create decision
+is checked for every pair of declared and live kinds, with the rendered `DROP`
+statements. Verification tests
 cover plan composition (duplicate manifests, equal managed and SQLx or generic
 ledgers, and a sequence declaration of the managed ledger, in both orders) and
 the pure ledger and catalog comparisons: missing, unexpected, kind- and
 checksum-mismatched rows, every way the set row can disagree, drift by hash,
-absence and kind, rows without a recorded hash, and present retirements.
+absence and kind, rows without a recorded hash, and present retirements. The
+same comparisons run with a constraint trigger (a row recorded as `trigger`, a
+changed rendering, absence and a plain trigger holding the name are findings;
+a plain trigger under a retired constraint trigger's identity is not), and
+`PUBLIC` `EXECUTE` candidates exclude both trigger kinds.
 
 The ignored `managed_objects_live` target runs through
 `bash scripts/test_sqlx_live.sh`, or directly with
@@ -780,10 +794,229 @@ table, require the respective finding or `Incomplete`, and verify each restored
 ledger. These tests use bounded database observations without public test hooks
 or detached test tasks. Execution evidence is recorded in `batter-54d0.1`.
 
+Nine constraint-trigger cases in `tests/managed_objects_live/constraint_triggers.rs`
+add fixture migrations for a `check_log` table that the bound function appends
+its body version to:
+`managed_constraint_trigger_bootstraps_with_its_new_function` (one apply
+installs a new function and a `DEFERRABLE INITIALLY DEFERRED` constraint
+trigger, which fires the installed body at a later transaction's commit and not
+before), `managed_constraint_trigger_reapply_executes_no_ddl` (catalog state
+including the trigger's oid and `xmin`, and ledger rows including `applied_at`,
+are unchanged), `managed_constraint_trigger_source_change_recreates_it`
+(`INITIALLY IMMEDIATE` replaces the old definition, oid, source checksum and
+rendered hash, and fires within the statement),
+`managed_constraint_trigger_from_a_migration_is_adopted` (a migration-created
+constraint trigger that ran the migration's body is re-created and recorded,
+then runs the managed body),
+`managed_constraint_trigger_drift_is_reported_and_repaired` (re-creation as
+`NOT DEFERRABLE` or with an added `WHEN` clause, and `DISABLE TRIGGER`, are each
+one drift finding, repaired by re-creating exactly that entry), `managed_constraint_trigger_retires_before_its_routine`
+(both retirements succeed, so the trigger was dropped before the function it
+depends on), `managed_trigger_retirements_leave_the_other_trigger_kind_alone`
+(in both directions), `managed_trigger_kind_changes_converge_in_both_directions`
+(plain to constraint and back, ledger kind updated, verified, and a further
+re-apply executes no DDL), and
+`managed_constraint_trigger_and_its_new_body_commit_together`: a new SQL
+routine whose body reads a gate table the test holds `ACCESS EXCLUSIVE` pauses
+apply in routine validation, after the constraint trigger's drop and before its
+re-creation, while apply holds `records` `ACCESS EXCLUSIVE`. A concurrent
+`INSERT` into `records` is observed waiting for its `RowExclusiveLock`. Once the
+gate is released, it fires the new body under the new definition. Mutation controls that removed either
+drop-before-create direction, ran triggers before routines, retired routines
+first, or resolved every trigger as the plain kind each failed the expected
+cases. Execution evidence is recorded in `batter-n2s1`.
+
+Six cases in `tests/managed_objects_live/trigger_drops.rs`, nine in
+`tests/managed_objects_live/trigger_lock_order.rs`, two in
+`tests/managed_objects_live/trigger_privileges.rs` and two in
+`tests/managed_objects_live/trigger_lock_coverage.rs` cover:
+- trigger drops decided under the table lock;
+- the order, membership and coverage of apply's locks;
+- the privileges those locks need.
+`managed_constraint_trigger_replaces_a_retired_parent_clone_in_one_apply` puts
+two changes in one manifest: a retirement of a partitioned table's constraint
+trigger, which a migration created and PostgreSQL cloned onto a partition, and
+a same-named constraint trigger declared on that partition. One apply retires
+the parent and creates the partition trigger, a write to the partition fires
+the managed body once, and a re-apply executes nothing.
+`managed_constraint_trigger_retirement_spares_a_concurrent_plain_replacement`
+and `managed_trigger_retirement_spares_a_concurrent_constraint_replacement`
+retire each kind while a racing session runs the same steps in each case:
+1. It takes `ACCESS EXCLUSIVE` on the table before apply starts.
+2. It replaces the trigger with the other kind inside its transaction.
+3. It commits only once apply is observed waiting for its own
+   `ACCESS EXCLUSIVE` request.
+
+Apply must report `retired() == 0` and leave the replacement in place.
+Verification, also kind-exact, must report no finding. The second race runs the
+applying login under a REPEATABLE READ default.
+`managed_triggers_converge_over_any_concurrent_holder` declares a constraint
+trigger and then a plain trigger over an installed constraint trigger. In each,
+the racing session replaces the holder with either kind or removes it, and the
+declaration must converge to its kind and verify.
+
+Mutation controls against these cases:
+- Ignoring the read under the lock failed both retirement races and the
+  removed-holder race (`42704`).
+- Taking no lock, with the racing session committing at the drop's own lock
+  request, failed the same cases.
+- Removing the READ COMMITTED pin failed only the REPEATABLE READ race.
+- Removing both the read under the lock and the post-retirement catalog read
+  failed the partition case (`42704`).
+
+Two further pairs of cases cover the relation each drop reaches and the order
+of apply's locks.
+`managed_trigger_retirement_refuses_a_view_replaced_during_its_drop` and
+`managed_trigger_retirement_refuses_a_foreign_table_replaced_during_its_drop`
+retire a managed plain trigger on a view, or on a foreign table of a test-only
+foreign data wrapper. Neither relation can hold a constraint trigger, so apply
+reads them without `LOCK TABLE`. The racing session drops the relation inside
+its transaction and creates an ordinary table of the same name, whose
+constraint trigger holds the name. It commits once apply's `DROP TRIGGER` waits
+for the old relation's lock. Apply must then fail with `IdentityMismatch`,
+leave the replacement's constraint trigger in place, and on the next apply
+retire nothing and verify.
+
+`managed_trigger_drops_precede_replacements_on_one_table` and
+`managed_trigger_drops_precede_replacements_across_a_partition` change a plain
+trigger that sorts first and a constraint trigger that must be dropped. The
+first case puts both on one table. The second puts the plain trigger on a
+partitioned table and the constraint trigger on one of its partitions. Another
+transaction reads the table before apply starts, and writes once apply waits
+for its `ACCESS EXCLUSIVE` request. Both must commit.
+
+`managed_trigger_drops_lock_partitioned_tables_before_their_partitions` and
+`managed_trigger_retirements_lock_partitioned_tables_before_their_partitions`
+give a constraint trigger on a partition a name that sorts before one on its
+partitioned table. In the first case both change; in the second the
+partition's trigger is retired. Another transaction writes through the
+partitioned table to another partition before apply starts. Once apply waits
+for the partitioned table, it writes through the partitioned table to that
+partition. Both must commit.
+
+Mutation controls against these cases:
+- Accepting a drop whatever relation it reached failed both replacement races.
+- Removing the up-front lock step failed both partition-order races with a
+  deadlock (`40P01`).
+- Removing it and also taking each drop just before its own entry's create,
+  in identity order, failed all four lock-order races with `40P01`, raised
+  for apply or for the writer.
+- Interleaving the drops alone passes all four, because the lock step already
+  holds every `ACCESS EXCLUSIVE` lock a drop takes. At `f5ceae9`, before the
+  lock step existed, the interleaved order failed both earlier lock-order
+  races.
+
+`managed_mixed_partition_trigger_changes_let_a_routed_writer_finish` changes a
+plain trigger on the partitioned table and drops a constraint trigger on its
+partition, against a write routed through the partitioned table that holds it
+before apply starts. Together with the reader-turned-writer case across a
+partition, it shows no fixed lock order is safe: apply takes the whole lock set
+with `NOWAIT` in a savepoint and waits only for a refused relation while
+holding none of the others.
+
+`managed_trigger_drops_wait_for_one_partition_at_a_time` changes a constraint
+trigger on the partitioned table, and
+`managed_trigger_retirements_wait_for_one_partition_at_a_time` retires one.
+Either drop locks every partition. Another transaction reads one partition
+before apply starts. Once apply waits for that partition's
+`ACCESS EXCLUSIVE` lock, the transaction writes through the partitioned table.
+Both must commit, and apply must report one replacement or one retirement.
+`managed_trigger_lock_set_follows_a_partition_attached_during_its_wait` follows
+the same schedule for a changed constraint trigger on the partitioned table:
+- once apply waits for `parted_east`, another session attaches `parted_north`;
+- a third transaction reads `parted_north`, and the reader commits;
+- once apply waits for `parted_north`, the third transaction writes through the
+  partitioned table.
+
+Both transactions must commit. Apply must re-create the trigger on the
+partitioned table and all three partitions.
+
+Every race in `trigger_lock_order.rs` also records, while apply waits, the
+tables of the schema other than its ledger on which apply holds a lock, and
+requires none. `managed_trigger_lock_wait_honours_the_session_lock_timeout`
+requires a session `lock_timeout` to end that wait with `55P03` before `COMMIT`,
+with the catalog unchanged. The idempotence cases
+`managed_objects_reapply_is_idempotent_and_executes_no_ddl` and
+`managed_constraint_trigger_reapply_executes_no_ddl` now re-apply while another
+transaction holds `ROW EXCLUSIVE` on the trigger table, and require the apply
+to finish within ten seconds.
+
+The cases in `trigger_privileges.rs` run apply as a login that does not own
+every relation it locks:
+- `managed_trigger_locks_need_a_lock_privilege_on_a_delegated_table` gives it
+  only `TRIGGER` on a table another role owns, enough for
+  `CREATE OR REPLACE TRIGGER`;
+- `managed_trigger_locks_need_a_lock_privilege_on_a_separately_owned_partition`
+  retires a constraint trigger on a partitioned table it owns, after another
+  role took ownership of one partition. `DROP TRIGGER` alone would remove that
+  partition's clone.
+
+Each apply must fail with `Statement` (`42501`) and leave the catalog
+unchanged. Once the superuser, standing in for the owner, grants `MAINTAIN`,
+the next apply must create or retire the trigger.
+
+The cases in `trigger_lock_coverage.rs` retire `alpha_audit` on `alpha` and
+declare a plain `beta_audit` on `beta`. In
+`managed_trigger_retirement_refuses_new_work_on_an_unlocked_table`,
+`beta_audit` is unchanged, so `beta` is outside the lock set. In
+`managed_trigger_retirement_refuses_new_work_needing_a_stronger_lock`, it
+changes, so apply holds `beta` only in `SHARE ROW EXCLUSIVE` mode. Both run
+this schedule:
+1. a reader of `alpha` makes apply wait for `alpha` alone;
+2. another session replaces `beta_audit` by a constraint trigger;
+3. a second transaction reads `beta`, and the first reader commits;
+4. once apply has finished or waits for `beta`, the second transaction writes
+   `alpha` and commits.
+
+Apply's catalog read after the retirement then wants `beta_audit` dropped.
+Apply must fail with `IdentityMismatch` naming it, and `alpha_audit` must
+still exist. The next apply must retire `alpha_audit` and restore the plain
+`beta_audit`. One catalog query serves the whole check, which the four unit
+tests in `crates/batter-sqlx/src/managed/apply/drops/tests.rs` decide offline:
+- each entry's mode over a table that several entries share;
+- the first uncovered entry, in manifest order;
+- every member of a partition tree;
+- entries whose table has no lockable members.
+
+A fifth unit test there pins how lock requests are coalesced by table before
+the partition walk. Each table is walked once, in the strongest mode any
+request needs.
+
+Controls on the final code:
+- Taking the same set by blocking statements in partition order deadlocked
+  the reader-turned-writer case across a partition and both partition-wait
+  cases (`40P01`). The attach case's `ATTACH` waited behind the partitioned
+  table apply held.
+- Locking a partitioned table with one recursive `LOCK TABLE`, as `74c7ee5`
+  did, deadlocked both partition-wait cases (`40P01`). Again the attach case's
+  `ATTACH` waited.
+- Expanding the tree with `pg_partition_tree` failed all seven partition
+  races, because apply waited while holding `ACCESS SHARE` on both partitions.
+- Skipping the second read of the set deadlocked the attach case (`40P01`);
+  every other lock-order case passed.
+- Removing the lock step let both privilege cases apply without the grant.
+- Skipping the coverage check deadlocked both coverage cases (`40P01`).
+  Checking relations but ignoring modes deadlocked only the
+  stronger-lock case.
+- With the check batched into one catalog walk, ignoring modes failed the
+  mode unit test and the stronger-lock case. Reporting the last uncovered
+  entry, or checking only a tree's first member, failed the matching unit
+  test. Discarding the walk's rows deadlocked both coverage cases.
+- Keeping the first request's mode for a table instead of the strongest
+  failed the coalescing unit test and deadlocked
+  `managed_trigger_drops_precede_replacements_on_one_table` (`40P01`).
+- Leaving the `SHARE ROW EXCLUSIVE` targets out deadlocked the mixed
+  routed-writer case.
+- Locking every declared trigger's table made both idempotence cases wait for
+  the writer.
+
 `examples/postgres-lifecycle` adds a fourth ignored live case,
 `schema_stage_applies_managed_objects_and_gates_readiness`, selected with its
 other live tests, and the executable smoke runs the schema stages through the
-production entry point. Results are recorded in `batter-54d0`.
+production entry point. Results are recorded in `batter-54d0`. Since
+`batter-n2s1` the case also requires the managed deferred constraint trigger to
+reject a blank note at commit (`23514`), also after the row's key changed in
+that transaction, and to accept one corrected earlier in the same transaction.
 
 ## Explicit reference compatibility probes
 
@@ -2439,8 +2672,8 @@ requires empty stdout. The process wrapper retains concrete sources and prints
 only its known, redacted Display; the exit handler never formats unknown causes.
 
 The `batter-sqlx` adapter's separate `scripts/test_sqlx_live.sh` runner requires
-an exact 157-case inventory across eight targets: two function-ACL profile
-cases, sixty-four owned atomic/snapshot cases, two migration cases, fifteen
+an exact 185-case inventory across eight targets: two function-ACL profile
+cases, sixty-four owned atomic/snapshot cases, two migration cases, forty-three
 managed-object cases, eleven PostgreSQL lease/disposition and
 read-only-verification cases, fourteen owned-pool cases, thirteen facade
 grant-composition cases and thirty-six authority-

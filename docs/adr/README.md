@@ -19,7 +19,7 @@ These decisions govern the source implementation and future work.
 
 | [012](012-native-runlimit-workspace.md) | Keep native Runlimit packages local while preserving policy, storage and transport ownership. |
 
-| [013](013-managed-database-objects.md) | Apply consumer-declared routines and triggers after migrations and verify them; source, ownership and grants stay downstream. |
+| [013](013-managed-database-objects.md) | Apply consumer-declared routines, triggers and constraint triggers after migrations and verify them; source, ownership and grants stay downstream. |
 
 Changes to these decisions require a new or amended ADR, corresponding contract
 tests, an update to the implemented status, and executed checks recorded in the

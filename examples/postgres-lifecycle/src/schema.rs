@@ -1,8 +1,9 @@
 //! Application-owned schema: versioned migrations plus managed objects.
 //!
 //! `migrations/` keeps tables and data changes as forward-only history. The
-//! routine and trigger in `objects/` are edited in place; each release applies
-//! them after the migrations and verifies both ledgers before readiness.
+//! routines, trigger and constraint trigger in `objects/` are edited in place;
+//! each release applies them after the migrations and verifies both ledgers
+//! before readiness.
 
 use batter::{
     BoxError,
@@ -23,7 +24,8 @@ use std::fmt;
 /// Every versioned migration this release ships.
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// The managed routine and the trigger that binds it.
+/// The managed routines, the trigger that keeps `updated_at` current and the
+/// deferred constraint trigger that requires a note at commit.
 pub fn managed_objects() -> Result<ManagedObjectManifest, BoxError> {
     Ok(ManagedObjectManifest::new(
         QualifiedName::new("lifecycle", "managed_objects")?,
@@ -37,6 +39,15 @@ pub fn managed_objects() -> Result<ManagedObjectManifest, BoxError> {
                 QualifiedName::new("lifecycle", "records")?,
                 Identifier::new("records_touch_updated_at")?,
                 include_str!("../objects/records_touch_updated_at.sql"),
+            )?,
+            ManagedObject::function(
+                RoutineSignature::new("lifecycle", "require_note", [])?,
+                include_str!("../objects/require_note.sql"),
+            )?,
+            ManagedObject::constraint_trigger(
+                QualifiedName::new("lifecycle", "records")?,
+                Identifier::new("records_note_present")?,
+                include_str!("../objects/records_note_present.sql"),
             )?,
         ],
         [],

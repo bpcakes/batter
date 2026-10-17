@@ -9,7 +9,7 @@ use super::{Identity, MAX_MANAGED_OBJECTS, ManagedObjectKind, ManagedObjectManif
 use crate::verification::{QualifiedName, RoutineSignature, RoutineType};
 use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Rows one catalog read may return before capacity is exceeded. Routine
 /// resolution returns every overload of every declared or retired name, so this
@@ -138,8 +138,9 @@ pub(crate) fn create_ledger_sql(ledger: &QualifiedName) -> String {
     )
 }
 
-/// Resolve a relation by exact schema and name in the current catalog snapshot.
-pub(crate) async fn ledger_relation(
+/// Resolve a relation's oid and `relkind` by exact schema and name in the
+/// current catalog snapshot: the managed ledger, or a managed trigger's table.
+pub(crate) async fn named_relation(
     connection: &mut PgConnection,
     ledger: &QualifiedName,
 ) -> Result<Option<(i64, String)>, sqlx::Error> {
@@ -393,6 +394,10 @@ const ROUTINES: &str = concat_routines!("false");
 const ROUTINES_TOUCHED: &str = concat_routines!("p.xmin = pg_catalog.pg_current_xact_id()::xid");
 
 /// Resolve every named user trigger and key it by canonical identity.
+///
+/// A trigger with a `pg_constraint` row (`tgconstraint <> 0`) is a constraint
+/// trigger; internal triggers, such as those enforcing foreign keys, are
+/// excluded.
 pub(crate) async fn resolve_triggers(
     connection: &mut PgConnection,
     keys: &[(&str, &str, &str)],
@@ -408,7 +413,7 @@ pub(crate) async fn resolve_triggers(
         Touched::Report => TRIGGERS_TOUCHED,
         Touched::Ignore => TRIGGERS,
     };
-    let rows = sqlx::query_as::<_, (i64, String, String, String, bool)>(query)
+    let rows = sqlx::query_as::<_, (i64, String, String, String, bool, bool)>(query)
         .bind(schemas)
         .bind(tables)
         .bind(names)
@@ -418,7 +423,7 @@ pub(crate) async fn resolve_triggers(
         return Err(CatalogError::Capacity);
     }
     let mut resolved = HashMap::with_capacity(rows.len());
-    for (oid, schema, table, name, touched) in rows {
+    for (oid, schema, table, name, constraint, touched) in rows {
         let (Ok(table), Ok(name)) = (
             QualifiedName::new(schema, table),
             crate::verification::Identifier::new(name),
@@ -426,11 +431,16 @@ pub(crate) async fn resolve_triggers(
             continue;
         };
         let identity = Identity::Trigger { table, name }.render();
+        let kind = if constraint {
+            ManagedObjectKind::ConstraintTrigger
+        } else {
+            ManagedObjectKind::Trigger
+        };
         resolved.insert(
             identity,
             LiveObject {
                 oid,
-                kind: Some(ManagedObjectKind::Trigger),
+                kind: Some(kind),
                 touched,
             },
         );
@@ -441,7 +451,8 @@ pub(crate) async fn resolve_triggers(
 macro_rules! concat_triggers {
     ($touched:literal) => {
         concat!(
-            "SELECT t.oid::bigint, n.nspname::text, c.relname::text, t.tgname::text, ",
+            "SELECT t.oid::bigint, n.nspname::text, c.relname::text, t.tgname::text,
+                    t.tgconstraint <> 0, ",
             $touched,
             "
              FROM pg_catalog.pg_trigger AS t
@@ -459,6 +470,108 @@ macro_rules! concat_triggers {
 
 const TRIGGERS: &str = concat_triggers!("false");
 const TRIGGERS_TOUCHED: &str = concat_triggers!("t.xmin = pg_catalog.pg_current_xact_id()::xid");
+
+/// The relations apply's trigger statements lock for `requests`, which maps
+/// each table, by schema and name, to whether a trigger on it is dropped, as
+/// quoted `LOCK TABLE ONLY` targets with whether any request needs
+/// `ACCESS EXCLUSIVE` on them. The walk starts once from every request, so a
+/// map keyed by table keeps a table that several triggers share from
+/// multiplying the rows it expands.
+///
+/// A requested ordinary or partitioned table stands for itself and, when
+/// partitioned, every partition of its tree, which a row trigger's statements
+/// lock as well. The tree is walked through `pg_inherits`, because
+/// `pg_partition_tree` would take `ACCESS SHARE` on every partition and hold
+/// it until commit. The relations are ordered so that every partitioned table
+/// precedes its partitions: by how many relations `pg_partition_ancestors`
+/// lists (a partition with its ancestors, nothing for a table outside any
+/// partition tree), then by name. Views and foreign tables, including foreign
+/// partitions, are left out: `LOCK TABLE` would extend to a view's base
+/// relations and refuses a foreign table.
+pub(crate) async fn lockable_tables_in_lock_order(
+    connection: &mut PgConnection,
+    requests: &BTreeMap<(&str, &str), bool>,
+) -> Result<Vec<(String, bool)>, sqlx::Error> {
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+    let schemas = requests.keys().map(|table| table.0).collect::<Vec<_>>();
+    let tables = requests.keys().map(|table| table.1).collect::<Vec<_>>();
+    let exclusive = requests.values().copied().collect::<Vec<_>>();
+    sqlx::query_as(
+        "WITH RECURSIVE tree AS (
+             SELECT c.oid AS relid, requested.exclusive
+             FROM unnest($1::text[], $2::text[], $3::bool[])
+                  AS requested(schema_name, table_name, exclusive)
+             JOIN pg_catalog.pg_namespace AS n ON n.nspname = requested.schema_name
+             JOIN pg_catalog.pg_class AS c
+               ON c.relnamespace = n.oid AND c.relname = requested.table_name
+             WHERE c.relkind IN ('r', 'p')
+             UNION ALL
+             SELECT i.inhrelid, tree.exclusive
+             FROM tree
+             JOIN pg_catalog.pg_class AS parent
+               ON parent.oid = tree.relid AND parent.relkind = 'p'
+             JOIN pg_catalog.pg_inherits AS i ON i.inhparent = tree.relid)
+         SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname),
+                pg_catalog.bool_or(tree.exclusive)
+         FROM tree
+         JOIN pg_catalog.pg_class AS c ON c.oid = tree.relid
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p')
+         GROUP BY c.oid, n.nspname, c.relname
+         ORDER BY (SELECT pg_catalog.count(*)
+                   FROM pg_catalog.pg_partition_ancestors(c.oid::pg_catalog.regclass)),
+                  n.nspname, c.relname",
+    )
+    .bind(schemas)
+    .bind(tables)
+    .bind(exclusive)
+    .fetch_all(connection)
+    .await
+}
+
+/// The ordinary and partitioned tables of each partition tree among
+/// `tables`, as the 1-based position of the requested table and the member's
+/// quoted name: the requested table itself and, below a partitioned table,
+/// every partition, walked through `pg_inherits` without taking a lock, as in
+/// [`lockable_tables_in_lock_order`]. One query serves every table.
+pub(crate) async fn partition_tree_members(
+    connection: &mut PgConnection,
+    tables: &[(&str, &str)],
+) -> Result<Vec<(i64, String)>, sqlx::Error> {
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let schemas = tables.iter().map(|table| table.0).collect::<Vec<_>>();
+    let names = tables.iter().map(|table| table.1).collect::<Vec<_>>();
+    sqlx::query_as(
+        "WITH RECURSIVE tree AS (
+             SELECT requested.ordinal, c.oid AS relid
+             FROM unnest($1::text[], $2::text[]) WITH ORDINALITY
+                  AS requested(schema_name, table_name, ordinal)
+             JOIN pg_catalog.pg_namespace AS n ON n.nspname = requested.schema_name
+             JOIN pg_catalog.pg_class AS c
+               ON c.relnamespace = n.oid AND c.relname = requested.table_name
+             WHERE c.relkind IN ('r', 'p')
+             UNION ALL
+             SELECT tree.ordinal, i.inhrelid
+             FROM tree
+             JOIN pg_catalog.pg_class AS parent
+               ON parent.oid = tree.relid AND parent.relkind = 'p'
+             JOIN pg_catalog.pg_inherits AS i ON i.inhparent = tree.relid)
+         SELECT tree.ordinal,
+                pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname)
+         FROM tree
+         JOIN pg_catalog.pg_class AS c ON c.oid = tree.relid
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p')",
+    )
+    .bind(schemas)
+    .bind(names)
+    .fetch_all(connection)
+    .await
+}
 
 /// Resolve every declared entry and retirement of `manifest`.
 pub(crate) async fn resolve_live(
@@ -503,7 +616,7 @@ pub(crate) async fn render_hashes(
     for (oid, kind) in objects {
         match kind {
             ManagedObjectKind::Function | ManagedObjectKind::Procedure => routines.push(oid),
-            ManagedObjectKind::Trigger => triggers.push(oid),
+            ManagedObjectKind::Trigger | ManagedObjectKind::ConstraintTrigger => triggers.push(oid),
         }
     }
     let mut hashes = HashMap::with_capacity(routines.len() + triggers.len());
@@ -517,7 +630,9 @@ pub(crate) async fn render_hashes(
         (
             triggers,
             // pg_get_triggerdef omits whether the trigger fires; apply's
-            // CREATE OR REPLACE TRIGGER always leaves it enabled ('O').
+            // CREATE OR REPLACE TRIGGER and CREATE CONSTRAINT TRIGGER always
+            // leave it enabled ('O'). Constraint triggers render their
+            // deferrability, FROM table and WHEN clause in the definition.
             "SELECT r.oid, pg_catalog.sha256(pg_catalog.convert_to(
                  pg_catalog.pg_get_triggerdef(t.oid) || E'\\nenabled=' || t.tgenabled::pg_catalog.text,
                  'UTF8'))

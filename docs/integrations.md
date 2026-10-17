@@ -613,11 +613,13 @@ their conservative potential SET authority remains separate from positive proof.
 
 ### SQLx: managed routines and triggers
 
-Keep routine and trigger bodies as source files the application edits in place,
-not as copies restated in migrations. Declare them in one
-`batter_sqlx::managed::ManagedObjectManifest`: each `ManagedObject` is one
-complete `CREATE OR REPLACE` statement whose header must name its declared
-schema-qualified identity, each `Retirement` explicitly drops an object the
+Keep routine, trigger and constraint trigger bodies as source files the
+application edits in place, not as copies restated in migrations. Declare them
+in one `batter_sqlx::managed::ManagedObjectManifest`: each `ManagedObject` is
+one complete `CREATE OR REPLACE` statement, or for
+`ManagedObject::constraint_trigger` one `CREATE CONSTRAINT TRIGGER` statement
+without `OR REPLACE`, whose header must name its declared schema-qualified
+identity, each `Retirement` explicitly drops an object the
 application no longer declares, and `PublicExecute` states without a default
 whether Batter revokes PostgreSQL's default `PUBLIC` `EXECUTE`. At setup, call
 `PgLease::migrate_and_apply(&migrator, &manifest)` inside the setup operation
@@ -638,7 +640,48 @@ parameter names, or removing a default, needs a migration that drops it before
 the next apply recreates it, and an object that still depends on a routine
 retired in the same manifest (a trigger being rebound, or a `BEGIN ATOMIC` body
 being edited) blocks the retirement until a later release or a migration.
-Managed triggers are always re-created enabled; disabling one is drift. Installation is
+Managed triggers are always re-created enabled; disabling one is drift.
+
+Declare every constraint trigger that binds a managed routine in the manifest,
+never in a migration. A migration commits before apply, so a constraint
+trigger it creates binds only the previously installed body (on a fresh
+database it cannot bind a new managed function at all) until apply commits.
+PostgreSQL cannot replace a constraint trigger, so whenever its source, kind or
+rendered definition changes apply drops the trigger holding its name and
+re-creates it after the routines, in the transaction that installs them; the
+drop holds `ACCESS EXCLUSIVE` on the table until commit, so readers and writers
+of that table wait and then see the new trigger with the new body. A kind change between
+`ManagedObject::trigger` and `ManagedObject::constraint_trigger` needs no
+retirement; `Retirement::constraint_trigger` drops only a live constraint
+trigger, and `Retirement::trigger`, which earlier releases also let drop a
+constraint trigger, now leaves one in place. Apply decides every trigger drop
+from the trigger it reads under the table's `ACCESS EXCLUSIVE` lock, in a
+transaction pinned to READ COMMITTED, so a trigger another session replaced
+with the other kind is never dropped by a retirement, and a drop that reaches
+a relation replaced under the same name fails the apply instead of standing.
+Apply takes all its trigger-table locks first, each table and partition with
+its own `LOCK TABLE ONLY`, and waits for one relation at a time while holding
+none of the others, so routed writes and readers turning writers cannot
+deadlock with it. Once it holds the set, it reads the partition trees again
+and takes a new set if a partition was attached or removed meanwhile. When a
+retirement's second catalog read finds trigger work outside the set, because
+another session replaced a managed trigger meanwhile, apply fails with
+`IdentityMismatch` instead of requesting more locks; run it again. Only a
+foreign partition, which cannot be locked on its own, is locked later, by a
+plain row trigger's statement on its partitioned table while apply holds the
+rest. A session `lock_timeout` on the applying login bounds each wait. Every
+lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation,
+partitions included, which `TRIGGER` alone, or owning only the partitioned
+table, does not give. Without it apply fails with `42501` before changing
+anything. An applying login that does not own every trigger table and
+partition therefore needs the owners to grant it `MAINTAIN` on each of them,
+including partitions added later. That grant belongs to the owners'
+provisioning or migrations; Batter grants nothing. A drop waiting behind a
+long transaction stalls the table's other readers and writers; Batter sets no
+`lock_timeout`. Declare and retire a partitioned table's trigger on the
+partitioned table, not on its partitions' clones, and retire a constraint
+trigger renamed out of band under its new name. An adopted constraint trigger previously created by a migration is
+re-created on the first apply that declares it. Installation is
 last-writer-wins across releases; verification of newer replicas reports an
 older release's apply as a set-digest mismatch. See
 [ADR-013](adr/013-managed-database-objects.md), the

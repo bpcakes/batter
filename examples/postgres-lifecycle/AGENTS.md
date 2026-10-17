@@ -30,9 +30,11 @@ Windows support and non-Unix fallbacks are out of scope.
 ## Edit here for X
 
 Keep pool configuration, schema checks, and application teardown in this
-composition root. Edit a routine or trigger in its `objects/` file; add a
-migration only for tables, columns, constraints, data, or to drop a routine
-whose return type or argument names change. Lease-owned transactions use Batter's opaque SQLx transaction
+composition root. Edit a routine, trigger or constraint trigger in its
+`objects/` file; add a migration only for tables, columns, constraints, data,
+or to drop a routine whose return type or argument names change. Never create
+a constraint trigger in a migration: it would bind the previously applied
+routine body until apply commits. Lease-owned transactions use Batter's opaque SQLx transaction
 capability; application-owned pools may still use native SQLx transaction values.
 Shared lease disposition, bounded probe and close registration belong in `batter::sqlx`.
 Keep application fixture helpers beside their integration tests.

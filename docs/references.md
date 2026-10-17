@@ -70,6 +70,214 @@ fails at creation with `42703`; with it off, creation succeeds. In a
 so rendering reads current catalog state; the verifier's pre-snapshot ledger
 lock exists for that reason. These probes do not cover other server versions.
 
+## PostgreSQL 18 constraint trigger semantics, 2026-10-16
+
+For `batter-n2s1` ([ADR-013](adr/013-managed-database-objects.md), amended),
+rechecked:
+
+* [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html):
+  `CONSTRAINT` creates a constraint trigger, "the same as a regular trigger
+  except that the timing of the trigger firing can be adjusted using
+  `SET CONSTRAINTS`"; constraint triggers "must be `AFTER ROW` triggers on
+  plain tables"; `FROM`, `DEFERRABLE` and `INITIALLY` "can only be specified
+  for constraint triggers"; a trigger name "must be distinct from the name of
+  any other trigger for the same table"; and "Currently, the `OR REPLACE`
+  option is not supported for constraint triggers." For constraint triggers
+  the `WHEN` condition is evaluated immediately, not deferred.
+* [`DROP TRIGGER`](https://www.postgresql.org/docs/18/sql-droptrigger.html):
+  the only removal path documented for a trigger; it requires owning the table
+  and defaults to `RESTRICT`. The page does not state its lock level.
+* [`pg_trigger`](https://www.postgresql.org/docs/18/catalog-pg-trigger.html):
+  `tgconstraint` is "the `pg_constraint` entry associated with the trigger
+  (zero if trigger is not for a constraint)"; `tgisinternal` is "True if
+  trigger is internally generated (usually, to enforce the constraint
+  identified by `tgconstraint`)"; `tgdeferrable` and `tginitdeferred` describe
+  a constraint trigger's deferrability; `tgenabled` controls the
+  `session_replication_role` modes in which it fires.
+
+Executed evidence, PostgreSQL **18.6** (local `postgres:18` container, Linux
+x86_64): `CREATE OR REPLACE CONSTRAINT TRIGGER` fails with
+"CREATE OR REPLACE CONSTRAINT TRIGGER is not supported"; a user constraint
+trigger has `tgconstraint <> 0`, `tgisinternal = false` and a `pg_constraint`
+row with `contype = 't'` named after the trigger, so creating one whose name
+another constraint on the table already uses fails with a duplicate key on
+`pg_constraint_conrelid_contypid_conname_index`. `CREATE OR REPLACE TRIGGER`
+over a constraint trigger fails with "trigger ... is a constraint trigger", and
+`CREATE CONSTRAINT TRIGGER` under a plain trigger's name fails with "already
+exists". `ALTER TABLE ... DROP CONSTRAINT` is refused because the trigger
+requires the constraint, and `ALTER TABLE ... ALTER CONSTRAINT` is refused for
+it. `DROP TRIGGER` of a constraint trigger held `ACCESS EXCLUSIVE` on its table
+until commit; `CREATE CONSTRAINT TRIGGER` alone held `SHARE ROW EXCLUSIVE`; after
+both in one transaction the new `pg_trigger` row's `xmin` equalled
+`pg_current_xact_id()::xid`. Under the canonical rendering settings
+`pg_get_triggerdef` returned `CREATE CONSTRAINT TRIGGER ct AFTER INSERT ON
+probe_ct.t FROM probe_ct.r DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN
+((new.id > 0)) EXECUTE FUNCTION probe_ct.f()`, and `... NOT DEFERRABLE INITIALLY
+IMMEDIATE ...` for a non-deferrable one, so deferrability, `FROM` and `WHEN` are
+in the rendered hash while `tgenabled` is not. `ALTER TABLE ... DISABLE
+TRIGGER` sets a constraint trigger's `tgenabled` to `D`. `BEFORE` and
+statement-level forms are syntax errors for `CREATE CONSTRAINT TRIGGER`. A
+deferred row trigger queued by an `INSERT` and fired at commit received the
+inserted row version (`NEW.note` empty) even though a later statement in the
+transaction updated the row, so a deferred check that must see committed state
+reads the row again. With one session holding `ACCESS SHARE` in an open
+transaction, a second session's `DROP TRIGGER` of a constraint trigger waited
+ungranted, and a third session's plain `SELECT` of the table then waited behind
+it until its `lock_timeout` of one second cancelled it ("canceling statement
+due to lock timeout"); the same `SELECT` succeeded once the drop finished. A
+`DROP TRIGGER` run under `SET lock_timeout = '500ms'` behind such a reader
+failed with the same error.
+
+Rechecked on 18.6 for the follow-up after review (same day):
+* **Partitions.** A constraint trigger on a partitioned table is cloned onto
+  each partition (`tgparentid <> 0`, `tgisinternal = false`,
+  `tgconstraint <> 0`). For a clone, `DROP TRIGGER` fails ("... requires it"),
+  `CREATE OR REPLACE TRIGGER` fails ("is an internal or a child trigger") and
+  `CREATE CONSTRAINT TRIGGER` fails ("already exists"). Creating a parent
+  trigger whose name a partition already holds fails with "already exists".
+* **Partition clone drops and locks.** Dropping the parent's trigger drops its
+  clones, so a later `DROP TRIGGER` on the partition fails with "does not
+  exist" (`42704`). Dropping it and creating a same-named constraint trigger on
+  the partition in one transaction succeeds. `DROP TRIGGER` on the parent holds
+  `ACCESS EXCLUSIVE` on the parent and every partition, and
+  `CREATE CONSTRAINT TRIGGER` on the parent holds `SHARE ROW EXCLUSIVE` on all
+  of them. `ALTER TABLE partition DISABLE TRIGGER` disables only the clone; the
+  parent stays `O`.
+* **Rename.** `ALTER TRIGGER ... RENAME` keeps the `pg_constraint` name, so
+  re-creating the old name fails on
+  `pg_constraint_conrelid_contypid_conname_index`. Dropping the renamed trigger
+  first, in the same transaction, makes it succeed.
+* **Views and foreign tables.** `CREATE CONSTRAINT TRIGGER` on a view fails
+  ("is a view") and on a foreign table ("is a foreign table"). `LOCK TABLE`
+  refuses a foreign table ("cannot lock relation"). `LOCK TABLE ONLY` on a view
+  also takes `ACCESS EXCLUSIVE` on its base table, while `DROP TRIGGER` on a
+  view locks only the view.
+* **Lock scope and order.** `LOCK TABLE ONLY` on an inheritance or partitioned
+  parent locks only that table, and `DROP TRIGGER` on an inheritance parent
+  locks only the parent. Behind another session's `ACCESS EXCLUSIVE`,
+  `DROP TRIGGER` waits first for `ACCESS SHARE`.
+* **Routine kinds.** `DROP FUNCTION` refuses a procedure ("is not a function")
+  and `DROP PROCEDURE` refuses a function.
+* **Two-session re-read.** One session holds `ACCESS EXCLUSIVE` and replaces a
+  plain trigger with a same-named constraint trigger. A second session reads
+  the trigger, waits in `LOCK TABLE ONLY ... IN ACCESS EXCLUSIVE MODE`, then
+  reads it again:
+  * under REPEATABLE READ the second read still shows the plain trigger, while
+    `DROP TRIGGER` then drops the constraint replacement;
+  * under READ COMMITTED the second read shows the constraint trigger.
+* **Relation replacement and lock order (library live cases).**
+  * A `DROP TRIGGER` that waits for the lock of a view or foreign table follows
+    the name once another session commits a same-named ordinary table, and
+    removes that table's constraint trigger. Without a relation check, apply
+    retired it.
+  * A transaction holding `ACCESS SHARE` whose write request conflicts only
+    with apply's waiting `ACCESS EXCLUSIVE` request is queued ahead of it and
+    proceeds. If apply already holds `SHARE ROW EXCLUSIVE` on the table, or on
+    the partitioned table of the partition it waits for, the two deadlock
+    (`40P01`).
+  * A write routed through a partitioned table locks it before the partition
+    it reaches. An apply holding `ACCESS EXCLUSIVE` on that partition while
+    waiting for the partitioned table deadlocks with it (`40P01`); locking the
+    partitioned table first lets the write finish.
+  * Probed: `LOCK TABLE` without `ONLY` on a partitioned table takes
+    `ACCESS EXCLUSIVE` on it and every partition, including a foreign-table
+    partition, as `DROP TRIGGER` on it does. A constraint trigger cannot be
+    created on a partitioned table with a foreign partition ("... is a foreign
+    table").
+  * In a waiting round, that recursive `LOCK TABLE` takes the partitioned
+    table and then waits for a partition another transaction read. When that
+    transaction then writes through the partitioned table, the two deadlock
+    (`40P01`); waiting with `LOCK TABLE ONLY` on the partition alone lets the
+    write finish.
+* **Partition-tree footprints (probed, 2026-10-16).** On a tree of a
+  partitioned table, a partitioned partition with two partitions, and an
+  ordinary partition:
+  * `DROP TRIGGER` on the partitioned table, for a constraint or plain row
+    trigger, takes `ACCESS EXCLUSIVE` on every member and also `ACCESS SHARE`
+    on the table it names. `CREATE CONSTRAINT TRIGGER` and
+    `CREATE OR REPLACE TRIGGER ... FOR EACH ROW` take `SHARE ROW EXCLUSIVE` on
+    every member. On the partitioned partition, the same statements lock only
+    its own subtree.
+  * `LOCK TABLE ONLY` on each member, as apply's walk lists them, yields
+    exactly those relations and modes. An ordinary table's inheritance child
+    is in neither footprint.
+  * A statement-level trigger has no partition clones. Its `DROP TRIGGER` and
+    `CREATE OR REPLACE TRIGGER` lock only the partitioned table.
+  * `pg_partition_tree` takes `ACCESS SHARE` on every partition below the
+    relation it is given and keeps it until the transaction ends.
+    `pg_partition_ancestors` takes no lock.
+  * A plain row trigger on a partitioned table is cloned onto a foreign
+    partition, and its `DROP TRIGGER` and `CREATE OR REPLACE TRIGGER` lock that
+    partition (`ACCESS EXCLUSIVE`, `SHARE ROW EXCLUSIVE`). `LOCK TABLE ONLY` on
+    the foreign partition fails ("cannot lock relation", "This operation is not
+    supported for foreign tables"). A constraint trigger cannot be created on a
+    partitioned table with a foreign partition. Under an existing constraint
+    trigger, `CREATE FOREIGN TABLE ... PARTITION OF` and `ATTACH PARTITION` of
+    a foreign table both fail ("... is a foreign table", "Foreign tables cannot
+    have constraint triggers").
+* **Lock privileges (PostgreSQL 18 documentation, probed 2026-10-16).**
+  * [`LOCK`](https://www.postgresql.org/docs/18/sql-lock.html) permits any mode
+    with `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on the table.
+    [`CREATE TRIGGER`](https://www.postgresql.org/docs/18/sql-createtrigger.html)
+    needs `TRIGGER` on the table and `EXECUTE` on the function.
+    [`DROP TRIGGER`](https://www.postgresql.org/docs/18/sql-droptrigger.html)
+    needs ownership of the table.
+  * A login holding only `TRIGGER` on another role's table can run
+    `CREATE TRIGGER`, `CREATE OR REPLACE TRIGGER` and
+    `CREATE CONSTRAINT TRIGGER`. `DROP TRIGGER` fails ("must be owner of
+    relation"), and `LOCK TABLE ONLY` fails ("permission denied for table").
+    After `GRANT MAINTAIN`, or with membership in `pg_maintain`, it locks in
+    `SHARE ROW EXCLUSIVE` and `ACCESS EXCLUSIVE` mode.
+  * A login that owns a partitioned table, but not one of its partitions:
+    * creating a row trigger on the partitioned table fails with "permission
+      denied for table" naming the partition, until it holds `TRIGGER` there;
+    * `DROP TRIGGER` on the partitioned table removes the partition's clone
+      without any privilege on the partition;
+    * `LOCK TABLE ONLY` on the partition fails, also with `TRIGGER` granted
+      there, until it holds `MAINTAIN`;
+    * a recursive `LOCK TABLE` on the partitioned table checks no privilege
+      on the partition.
+* **Partition membership changes (probed 2026-10-16).**
+  * `ATTACH PARTITION` takes `SHARE UPDATE EXCLUSIVE` on the partitioned
+    table and `ACCESS EXCLUSIVE` on the attached table.
+  * `CREATE TABLE ... PARTITION OF`, `DETACH PARTITION` and `DROP TABLE` of a
+    partition each take `ACCESS EXCLUSIVE` on the partitioned table.
+  * Renaming a partition takes `ACCESS EXCLUSIVE` on the partition.
+  * A `LOCK TABLE ONLY` waiting for a partition that the holder then drops or
+    renames fails at the holder's commit with `42P01` ("relation ... does not
+    exist").
+  * Library live case: a partition attached while apply waits for another
+    partition was missing from a set read only once. The later `DROP TRIGGER`
+    waited for it while holding the rest and deadlocked with the transaction
+    holding it (`40P01`).
+  * Library live cases: after a retirement, a managed trigger that another
+    session had replaced on a table outside the set, or on one held only in
+    `SHARE ROW EXCLUSIVE` mode, made apply's drop wait for that table while
+    holding the retired trigger's table. A reader of the table that then
+    wrote the other deadlocked with it (`40P01`).
+  * Probed cost of the walk that the coverage check runs: 600 separate walks,
+    three per table over 100 plain and 100 two-partition tables, took 293 to
+    412 ms through `psql` over loopback. One batched walk over the same 200
+    tables took 71 to 87 ms, including the same client startup. This was a
+    focused query probe, not an application benchmark.
+  * Probed cost of uncoalesced lock requests: the lock-set query, given 1,000
+    requests for one table with 1,000 partitions, expanded 1,001,000
+    recursive rows into 1,001 targets in 3.07 s. Given one request, it
+    expanded 1,001 rows in 8 ms. These are isolated query measurements.
+* **`NOWAIT` and savepoints (probed).**
+  * `LOCK TABLE ... NOWAIT` on a table another transaction holds fails at
+    once with `55P03` ("could not obtain lock on relation").
+  * `ROLLBACK TO SAVEPOINT` releases every lock taken after the savepoint,
+    while `RELEASE SAVEPOINT` keeps them.
+  * A wait ended by `lock_timeout` also reports `55P03`, so apply tells the
+    two apart by the statement it ran.
+  * Validating a SQL-language routine body takes `ACCESS SHARE` on the tables
+    it reads, and waits behind an `ACCESS EXCLUSIVE` holder.
+  * sqlx 0.9's nested `rollback()` sends `ROLLBACK TO SAVEPOINT` without
+    `RELEASE`, which left later statements in a subtransaction whose rows
+    failed the `xmin` identity check, so apply issues its own savepoint
+    statements.
+
 ## PostgreSQL cleanup prepared-plan selection, 2026-10-12
 
 For `batter-z4m9.1`, rechecked PostgreSQL 18's

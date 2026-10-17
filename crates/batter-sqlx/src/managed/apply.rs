@@ -1,5 +1,10 @@
 //! Library-ordered migrate-then-apply on one leased connection.
 
+mod drops;
+
+#[cfg(test)]
+pub(super) use drops::{drop_statement, drops_before_create};
+
 use super::catalog::{
     self, CatalogError, LedgerShape, LiveObject, RenderSettings, Touched, create_ledger_sql,
 };
@@ -8,15 +13,19 @@ use super::{
     PublicExecute, SET_ROW,
 };
 use crate::{PgLease, SqlxFailure};
+use drops::{Retired, drop_holder, lock_trigger_tables, require_covered, retire};
 use sqlx::{AssertSqlSafe, Connection, PgConnection, SqlSafeStr};
 use std::{collections::HashMap, fmt};
 
 /// Evidence that a committed apply installed one manifest.
 ///
 /// The counts describe what this apply executed. An entry is re-executed only
-/// when its ledger row is absent, its source checksum changed, or its live
-/// catalog definition no longer renders to the hash apply last recorded, so a
-/// repeated apply of an unchanged, undrifted set executes no DDL.
+/// when its ledger row is absent, its kind or source checksum changed, or its
+/// live catalog definition no longer renders to the hash apply last recorded,
+/// so a repeated apply of an unchanged, undrifted set executes no DDL. A
+/// constraint trigger dropped and re-created from its source, like a trigger
+/// whose name the other trigger kind held, counts as created or replaced, not
+/// as retired.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use = "an applied manifest is release evidence; log or inspect its digest"]
 pub struct AppliedManagedObjects {
@@ -68,13 +77,23 @@ pub enum ManagedApplyError {
     /// ledger: another kind or shape (such as a SQLx migration ledger), row-level
     /// security, or inheritance. Nothing was written.
     LedgerShape,
-    /// The ledger or a catalog read exceeded its bounded capacity.
+    /// The ledger or a catalog read exceeded its bounded capacity, or the
+    /// partition trees of the trigger tables apply locks kept changing: other
+    /// sessions attached, detached, created or dropped partitions in each of
+    /// apply's bounded lock rounds. Nothing was changed.
     Capacity,
-    /// A source statement did not create or replace exactly its declared
-    /// identity and kind, for example because its argument list declares
-    /// other types than the entry's signature.
+    /// A statement did not act on exactly its declared identity and kind: a
+    /// source statement did not create or replace it, for example because its
+    /// argument list declares other types than the entry's signature, or a
+    /// trigger drop reached another relation than the one apply read, because
+    /// another session replaced the trigger's view or foreign table by a
+    /// relation of the same name. Apply also reports a trigger here when
+    /// another session replaced it while apply ran, so that the catalog read
+    /// after a retirement needs a lock on it that apply did not take; apply
+    /// refuses that work instead of requesting the lock. Everything the
+    /// transaction did is rolled back.
     IdentityMismatch {
-        /// The declared canonical identity the statement failed to produce.
+        /// The canonical identity of the entry or retirement concerned.
         identity: String,
     },
     /// Under [`PublicExecute::Revoke`], `PUBLIC` still holds `EXECUTE` on a
@@ -218,6 +237,13 @@ async fn apply(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
 ) -> Result<AppliedManagedObjects, ManagedApplyError> {
+    // Every statement must see what committed before it ran, whatever the
+    // session default: a trigger's kind is read again after its table is
+    // locked, and under REPEATABLE READ that read would return the
+    // transaction's first snapshot while `DROP TRIGGER` finds a newer trigger.
+    execute(connection, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .await
+        .map_err(statement)?;
     // Validate SQL-language bodies against the migrated catalog regardless of
     // the session default.
     execute(connection, "SET LOCAL check_function_bodies = on")
@@ -231,9 +257,102 @@ async fn apply(
         .iter()
         .map(|row| (row.identity.as_str(), row))
         .collect::<HashMap<_, _>>();
+    let (pending, retired) = execute_changes(connection, &settings, manifest, &recorded).await?;
+    let installed = installed_objects(connection, manifest).await?;
+    if manifest.public_execute() == PublicExecute::Revoke {
+        revoke_public_execute(connection, &installed).await?;
+    }
+    record(connection, manifest, &pending, &installed).await?;
+    Ok(AppliedManagedObjects {
+        digest: manifest.digest(),
+        created_or_replaced: pending.len(),
+        unchanged: manifest.objects().len() - pending.len(),
+        retired: retired.triggers + retired.routines,
+    })
+}
+
+/// Retire, drop and execute what this apply changes, and return the executed
+/// entries and the retired counts.
+async fn execute_changes<'m>(
+    connection: &mut PgConnection,
+    settings: &RenderSettings,
+    manifest: &'m ManagedObjectManifest,
+    recorded: &HashMap<&str, &catalog::LedgerRow>,
+) -> Result<(Vec<&'m ManagedObject>, Retired), ManagedApplyError> {
     let live = catalog::resolve_live(connection, manifest).await?;
     let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
-    let pending = manifest
+    let pending = pending_entries(manifest, recorded, &live, &hashes);
+    let locks = lock_trigger_tables(connection, manifest, &live, &pending).await?;
+    let retired = retire(connection, manifest, &live).await?;
+    // Dropping a partitioned table's trigger also drops its clones on the
+    // partitions, and a clone can hold a declared identity, so the pending
+    // set is decided again from a catalog read after any trigger retirement.
+    // An object another session replaced since the first read has a new oid
+    // and so counts as changed; `require_covered` refuses work that needs a
+    // lock the set does not hold.
+    let (live, pending) = if retired.triggers > 0 {
+        let live = catalog::resolve_live(connection, manifest).await?;
+        let pending = pending_entries(manifest, recorded, &live, &hashes);
+        require_covered(connection, &locks, &pending, &live).await?;
+        (live, pending)
+    } else {
+        (live, pending)
+    };
+
+    // Every drop runs before the weaker table locks taken below, by a routine
+    // body's validation and by `CREATE OR REPLACE TRIGGER`; taking
+    // `ACCESS EXCLUSIVE` after them on the same table, or a partition of it,
+    // would upgrade a lock apply holds, which a concurrent reader that turns
+    // writer can deadlock with. `live` only proposes a drop; `drop_holder`
+    // decides it under the table's lock, which `lock_trigger_tables` took.
+    for object in &pending {
+        let holder = live.get(object.identity()).and_then(|live| live.kind);
+        drop_holder(connection, object, holder).await?;
+    }
+    // Routines first, so a trigger of either kind binds the body this
+    // transaction installs.
+    for trigger_phase in [false, true] {
+        for object in pending
+            .iter()
+            .filter(|object| object.kind().is_trigger() == trigger_phase)
+        {
+            create(connection, settings, object).await?;
+        }
+    }
+    Ok((pending, retired))
+}
+
+/// Every declared object as installed now, with its oid and rendered hash;
+/// an object absent or of another kind fails the apply.
+async fn installed_objects<'m>(
+    connection: &mut PgConnection,
+    manifest: &'m ManagedObjectManifest,
+) -> Result<Vec<(&'m ManagedObject, i64, [u8; 32])>, ManagedApplyError> {
+    let live = catalog::resolve_live(connection, manifest).await?;
+    let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
+    manifest
+        .objects()
+        .iter()
+        .map(|object| {
+            live.get(object.identity())
+                .filter(|live| live.kind == Some(object.kind()))
+                .and_then(|live| hashes.get(&live.oid).map(|hash| (object, live.oid, *hash)))
+                .ok_or_else(|| ManagedApplyError::IdentityMismatch {
+                    identity: object.identity().to_owned(),
+                })
+        })
+        .collect()
+}
+
+/// The entries whose ledger row is absent, whose kind or source checksum
+/// changed, or whose live definition no longer renders to the recorded hash.
+fn pending_entries<'m>(
+    manifest: &'m ManagedObjectManifest,
+    recorded: &HashMap<&str, &catalog::LedgerRow>,
+    live: &HashMap<String, LiveObject>,
+    hashes: &HashMap<i64, [u8; 32]>,
+) -> Vec<&'m ManagedObject> {
+    manifest
         .objects()
         .iter()
         .filter(|object| {
@@ -249,43 +368,7 @@ async fn apply(
             });
             !installed
         })
-        .collect::<Vec<_>>();
-
-    let retired = retire(connection, manifest, &live).await?;
-    for kind_is_trigger in [false, true] {
-        for object in pending
-            .iter()
-            .filter(|object| (object.kind() == ManagedObjectKind::Trigger) == kind_is_trigger)
-        {
-            create(connection, &settings, object).await?;
-        }
-    }
-
-    let live = catalog::resolve_live(connection, manifest).await?;
-    let hashes = catalog::render_hashes(connection, live_kinds(&live)).await?;
-    let mut installed = Vec::with_capacity(manifest.objects().len());
-    for object in manifest.objects() {
-        let current = live
-            .get(object.identity())
-            .filter(|live| live.kind == Some(object.kind()))
-            .and_then(|live| hashes.get(&live.oid).map(|hash| (live.oid, *hash)));
-        let Some((oid, hash)) = current else {
-            return Err(ManagedApplyError::IdentityMismatch {
-                identity: object.identity().to_owned(),
-            });
-        };
-        installed.push((object, oid, hash));
-    }
-    if manifest.public_execute() == PublicExecute::Revoke {
-        revoke_public_execute(connection, &installed).await?;
-    }
-    record(connection, manifest, &pending, &installed).await?;
-    Ok(AppliedManagedObjects {
-        digest: manifest.digest(),
-        created_or_replaced: pending.len(),
-        unchanged: manifest.objects().len() - pending.len(),
-        retired,
-    })
+        .collect()
 }
 
 fn live_kinds(
@@ -302,7 +385,7 @@ async fn lock_ledger(
     manifest: &ManagedObjectManifest,
 ) -> Result<Vec<catalog::LedgerRow>, ManagedApplyError> {
     let ledger = manifest.ledger();
-    match catalog::ledger_relation(connection, ledger)
+    match catalog::named_relation(connection, ledger)
         .await
         .map_err(statement)?
     {
@@ -323,7 +406,7 @@ async fn lock_ledger(
     )
     .await
     .map_err(statement)?;
-    let Some((oid, _)) = catalog::ledger_relation(connection, ledger)
+    let Some((oid, _)) = catalog::named_relation(connection, ledger)
         .await
         .map_err(statement)?
     else {
@@ -339,51 +422,14 @@ async fn lock_ledger(
     Ok(catalog::load_ledger_rows(connection, ledger).await?)
 }
 
-/// Drop every retired object that still exists: triggers before the routines
-/// they may bind. `RESTRICT` semantics keep undeclared dependents fatal.
-async fn retire(
-    connection: &mut PgConnection,
-    manifest: &ManagedObjectManifest,
-    live: &HashMap<String, LiveObject>,
-) -> Result<usize, ManagedApplyError> {
-    let mut retired = 0;
-    for kind_is_trigger in [true, false] {
-        // An object of another kind under the same identity (a procedure for
-        // a retired function, or an aggregate) is not the retired object.
-        for retirement in manifest.retirements().iter().filter(|retirement| {
-            (retirement.kind() == ManagedObjectKind::Trigger) == kind_is_trigger
-                && live
-                    .get(retirement.identity())
-                    .is_some_and(|live| live.kind == Some(retirement.kind()))
-        }) {
-            let sql = match retirement.structural_identity() {
-                Identity::Trigger { table, name } => {
-                    format!("DROP TRIGGER {} ON {}", name.quoted(), table.quoted())
-                }
-                Identity::Routine(signature) => format!(
-                    "DROP {} {}",
-                    routine_keyword(retirement.kind()),
-                    signature.quoted()
-                ),
-            };
-            execute(connection, AssertSqlSafe(sql))
-                .await
-                .map_err(statement)?;
-            retired += 1;
-        }
-    }
-    Ok(retired)
-}
-
-const fn routine_keyword(kind: ManagedObjectKind) -> &'static str {
-    match kind {
-        ManagedObjectKind::Procedure => "PROCEDURE",
-        ManagedObjectKind::Function | ManagedObjectKind::Trigger => "FUNCTION",
-    }
-}
-
 /// Execute one source statement and require that it wrote exactly its
 /// declared identity, of its declared kind, in this transaction.
+///
+/// A trigger that PostgreSQL cannot replace in place was dropped by
+/// [`drop_holder`] earlier in this transaction, which holds `ACCESS EXCLUSIVE`
+/// on its table until commit, so no other session reads or writes the table
+/// while the trigger is absent or observes the new trigger bound to an
+/// earlier routine body.
 async fn create(
     connection: &mut PgConnection,
     settings: &RenderSettings,
@@ -433,7 +479,7 @@ async fn revoke_public_execute(
 ) -> Result<(), ManagedApplyError> {
     let routines = installed
         .iter()
-        .filter(|(object, _, _)| object.kind() != ManagedObjectKind::Trigger)
+        .filter(|(object, _, _)| object.kind().is_routine())
         .map(|(_, oid, _)| *oid)
         .collect::<Vec<_>>();
     let holders = catalog::public_execute_holders(connection, &routines)
@@ -445,7 +491,7 @@ async fn revoke_public_execute(
         };
         let sql = format!(
             "REVOKE EXECUTE ON {} {} FROM PUBLIC",
-            routine_keyword(object.kind()),
+            object.kind().sql_keyword(),
             signature.quoted()
         );
         execute(connection, AssertSqlSafe(sql))

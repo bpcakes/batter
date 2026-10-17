@@ -8,6 +8,116 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Manage constraint triggers with the routines they bind (`batter-n2s1`,
+  [ADR-013](docs/adr/013-managed-database-objects.md), amended 2026-10-16).
+  `ManagedObject::constraint_trigger(table, name, source)` declares one
+  `CREATE CONSTRAINT TRIGGER` statement (`OR REPLACE` is rejected, as
+  PostgreSQL rejects it) and `Retirement::constraint_trigger(table, name)`
+  retires one; both reuse the trigger identity `"name" ON "schema"."table"`, so
+  a plain and a constraint trigger of one identity are a duplicate. PostgreSQL
+  cannot replace a constraint trigger, so apply drops the trigger holding a
+  pending entry's name and re-creates it from source in the apply transaction,
+  after the routines it binds; a pending plain trigger whose name a constraint
+  trigger holds is dropped first too, so a kind change converges without a
+  retirement. A constraint trigger therefore never binds an earlier body
+  between a migration's commit and apply's, and bootstraps with a new function
+  on a fresh database. A changed, drifted or adopted constraint trigger holds
+  `ACCESS EXCLUSIVE` on its table until commit; an unchanged set still executes
+  no DDL. Because `DROP TRIGGER` removes either kind by name, every trigger drop,
+  retirement or drop-before-create, first takes that `ACCESS EXCLUSIVE` lock with
+  `LOCK TABLE ONLY` (on tables and partitioned tables), reads the trigger again
+  and acts only on the kind it finds, so a trigger another session replaced with
+  the other kind is never dropped by a retirement, and a partition clone that a
+  retired parent's trigger took with it is simply not there. The apply
+  transaction now runs at READ COMMITTED whatever the session default, which a
+  REPEATABLE READ default would otherwise defeat; earlier releases ran it at the
+  session default. A drop must also reach the relation apply read: when another
+  session replaces a view or foreign table, which apply reads without
+  `LOCK TABLE`, by a same-named table holding a constraint trigger, apply fails
+  with `ManagedApplyError::IdentityMismatch` and rolls the drop back. Before any
+  retirement or drop, apply takes every lock its trigger statements need on
+  application tables: `ACCESS EXCLUSIVE` for drops and retirements and
+  `SHARE ROW EXCLUSIVE` for other pending triggers, on each trigger's table and
+  every partition of a partitioned table's tree, each with its own
+  `LOCK TABLE ONLY`. It uses `NOWAIT` in a savepoint and, when a relation
+  refuses, rolls back and waits for that relation alone. It never waits for one
+  relation while holding another of the set, so neither a reader turning writer
+  nor a write routed through a partitioned table can deadlock with it. Once it
+  holds the set, it reads the partition trees again and takes a new set when a
+  partition was attached or removed meanwhile. Foreign partitions cannot be
+  locked on their own; a plain row trigger statement on their partitioned table
+  locks them later, while holding the rest. A session `lock_timeout` bounds
+  each wait. Apply gives up after 32 rounds, with the last refusal (`55P03`),
+  or with `ManagedApplyError::Capacity`, whose rustdoc now covers this, when
+  the trees still changed in the last round. After a trigger retirement,
+  apply reads the catalog again. If another session replaced a managed
+  trigger meanwhile, that read can add work outside the lock set, or a drop
+  where the set holds only `SHARE ROW EXCLUSIVE`. Apply refuses such work
+  with `ManagedApplyError::IdentityMismatch`, whose rustdoc now covers this,
+  before requesting another lock, and the whole apply rolls back.
+
+  Each lock needs `MAINTAIN`, `UPDATE`, `DELETE` or `TRUNCATE` on its relation,
+  partitions included. Earlier releases needed only what the trigger
+  statements need. An applying login that holds only `TRIGGER` on a table,
+  which lets it create or replace plain triggers, now fails with `42501`
+  before any change, as does one that owns a partitioned table but not all of
+  its partitions. The owners must grant it `MAINTAIN`; Batter grants nothing.
+  Every drop precedes the routine sources and trigger creates. Verification reports kind and checksum mismatches, drift (including
+  deferrability, `WHEN` and a disabled trigger) and present retirements for the
+  new kind with the existing findings. Ledger kind names, the ledger shape and
+  the digests of existing kinds are unchanged; the new kind is recorded as
+  `constraint_trigger`. `ManagedObjectError::SourceHeader` now describes either
+  header form. The PostgreSQL lifecycle example adds a deferred constraint
+  trigger. The Rust API change is additive apart from the enum variant in the
+  next entry. The runtime changes above are not: the `READ COMMITTED` pin,
+  and the lock privileges that existing deployments may need to grant first.
+  Their migration guidance is above; no Rust shim applies to them.
+
+- Breaking: `batter_sqlx::managed::ManagedObjectKind` (also
+  `batter::sqlx::managed::ManagedObjectKind`) gains `ConstraintTrigger`. Values
+  of the new kind appear only for manifests that declare or retire a
+  constraint trigger, but exhaustive matches no longer compile:
+
+  ```rust,ignore
+  // Before
+  let label = match object.kind() {
+      ManagedObjectKind::Function => "function",
+      ManagedObjectKind::Procedure => "procedure",
+      ManagedObjectKind::Trigger => "trigger",
+  };
+  // After
+  let label = match object.kind() {
+      ManagedObjectKind::Function => "function",
+      ManagedObjectKind::Procedure => "procedure",
+      ManagedObjectKind::Trigger => "trigger",
+      ManagedObjectKind::ConstraintTrigger => "constraint trigger",
+  };
+  ```
+
+  No one-release deprecated shim is kept: no alias or function can make an old
+  exhaustive match cover a new variant, and reporting constraint triggers as
+  `Trigger` would misstate how apply replaces them. The enum stays exhaustive so
+  consumers review every kind apply can execute; its rustdoc carries a
+  `Migration:` note. No existing call shape changes.
+
+  Behaviour change in the same entry: catalog resolution used to report a
+  constraint trigger as a plain trigger, so `Retirement::trigger` dropped a
+  constraint trigger holding its name (for example one a migration created),
+  and verification reported `RetiredManagedObjectPresent` until it did. A
+  retirement now drops only a live object of its own kind, so that manifest
+  leaves the constraint trigger in place and reports nothing. Retire it as its
+  kind (the set digest changes with the retirement's kind):
+
+  ```rust,ignore
+  // Before
+  Retirement::trigger(QualifiedName::new("app", "records")?, Identifier::new("records_check")?)
+  // After
+  Retirement::constraint_trigger(QualifiedName::new("app", "records")?, Identifier::new("records_check")?)
+  ```
+
+  No shim: making `Retirement::trigger` drop either kind would let a stale
+  retirement drop a constraint trigger that later took the name.
+
 - Enforce managed manifests' 64 MiB source limit while consuming their object
   iterators, before consuming retirements. Clarify that interrupted apply may
   have committed even when it returns no result. Add live managed-verifier
