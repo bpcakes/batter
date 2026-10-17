@@ -171,8 +171,10 @@ caller-ordered middleware and registration helpers, which have no crate-root
 alias; `admitted.rs` owns the privately recorded
 `AdmittedRequest` that guarded handlers extract instead of raw extensions;
 `crates/batter-axum/src/browser.rs` and `browser/` own browser origin, opaque
-cookie, mutation-signal and private-response header mechanics without owning
-credential meaning, authorization, CORS or application error envelopes.
+cookie, mutation-signal and private-response header mechanics, and the
+`BrowserCredentials` extractor that presents cookies only where the route
+group's browser policy accepts them, without owning credential meaning,
+authorization, CORS or application error envelopes.
 `crates/batter-sqlx/src/lib.rs` owns optional native PostgreSQL client disposition,
 bounded probes and pool-close registration; `session.rs` owns opaque SQL execution
 and transaction completion without native replacement; server-session termination remains separate.

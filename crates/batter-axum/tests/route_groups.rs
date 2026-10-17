@@ -11,6 +11,8 @@ mod browser;
 mod capture;
 #[path = "route_groups/consumer.rs"]
 mod consumer;
+#[path = "route_groups/credentials.rs"]
+mod credentials;
 #[path = "route_groups/guarantees.rs"]
 mod guarantees;
 #[path = "route_groups/support.rs"]

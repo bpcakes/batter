@@ -1717,7 +1717,8 @@ and `with_group` adds a `RouteGroup` with its own `RequestPolicy` and optional
 routes then receive, from the outside in, the group's `PrivateResponsePolicy`
 headers when it has a browser policy, lifecycle admission with the group's
 response-construction deadline, `MutationPolicy` checks on every method except
-GET, HEAD, OPTIONS and TRACE when configured, and the application's own layers.
+GET, HEAD, OPTIONS and TRACE when configured, together with the credential
+decision that `BrowserCredentials` reads, and the application's own layers.
 The private headers therefore cover that group's admission, deadline,
 method-fallback and mutation rejections. A mutation rejection is rendered by the
 application's renderer from the sanitized `MutationRejection` and the admitted
@@ -2067,6 +2068,25 @@ paths, queries and fragments before URL recovery or path normalization can erase
 them. It canonicalizes accepted values with `url` 2.5.8 and never derives
 authority from Host, Forwarded, or request Origin fields. Loopback HTTP is
 limited to loopback IPs and `localhost` names.
+
+Handlers read incoming cookies through `BrowserCredentials`, which only the
+gate a route group's `BrowserPolicy` installs can grant. The gate runs inside
+the group's admission, before the application's layers, and decides from the
+method the request arrived with: every safe method (GET, HEAD, OPTIONS, TRACE)
+is granted; any other method is granted after `with_mutation_checks` passes,
+or under `without_mutation_checks` with
+`MutationCheckWaiver::ApplicationChecksMutations`, and refused under
+`MutationCheckWaiver::NoAmbientCredentials`. A group without a browser policy,
+a lower-level composition and a bare router record nothing, so extraction there
+is refused on every method. Refusals do not depend on whether a Cookie field is
+present, answer the fixed sanitized 500 Problem JSON of `HttpFailure::Internal`,
+and are typed `UncheckedMutation` or `NoBrowserPolicy` for an application that
+extracts the `Result`. The record's type is private to the adapter, an
+application layer that rewrites the method cannot change the decision, and
+renderer metadata never carries it. Copying a whole extension map into another
+request copies the record with it. A handler parsing the raw `Cookie` field, or
+calling `low_level::read_unchecked_cookie`, bypasses the gate and keeps the
+forgery check itself.
 
 Incoming cookie reads scan every Cookie field. Target names are exact and
 case-sensitive; duplicate targets, non-UTF8 fields, invalid opaque target values,

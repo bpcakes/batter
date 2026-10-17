@@ -24,8 +24,12 @@ SameSite, HttpOnly visibility, and lifetime explicit. Setting and removal
 append `Set-Cookie` fields instead of replacing siblings, but reject an
 existing field with the same case-sensitive cookie name before mutation.
 
-`read_cookie` examines every Cookie field, rejects duplicate target names and
-non-UTF8 fields, and returns the unchanged borrowed opaque value. `Strict`
+Handlers read cookies by extracting `BrowserCredentials`, which a route
+group's `BrowserPolicy` grants only where it accepts ambient browser
+credentials (see [HTTP boundary and route groups](#http-boundary-and-route-groups)), and calling
+`credentials.cookie(&name, policy)`. The read examines every Cookie field,
+rejects duplicate target names and non-UTF8 fields, and returns the unchanged
+borrowed opaque value. `Strict`
 uses Batter's narrower unquoted token/value subset for every pair, so it is
 appropriate only when the application controls the whole cookie jar and can
 reject otherwise RFC-valid quoted values. `TargetOnly` ignores invalid
@@ -129,8 +133,28 @@ therefore cover the group's admission, deadline, method and mutation
 rejections, and the mutation renderer receives the admitted request's
 metadata. `BrowserPolicy::with_mutation_checks` takes the application's
 renderer for the sanitized `MutationRejection`;
-`BrowserPolicy::without_mutation_checks` states that the group's mutating
-routes rely on other authentication. There is no empty browser policy.
+`BrowserPolicy::without_mutation_checks` takes a `MutationCheckWaiver` stating
+why the group needs no check. There is no empty browser policy and no unstated
+waiver.
+
+The same choice decides which requests may present cookies through the
+`BrowserCredentials` extractor. The group's gate records its decision from the
+method the request arrived with, before any application layer runs:
+
+| Group policy | Safe methods | Other methods |
+| --- | --- | --- |
+| `with_mutation_checks` | presented | presented once the checks pass |
+| `without_mutation_checks(_, ApplicationChecksMutations)` | presented | presented; the application verifies the request |
+| `without_mutation_checks(_, NoAmbientCredentials)` | presented | refused: `UncheckedMutation` |
+| no browser policy, or outside every group | refused: `NoBrowserPolicy` | refused: `NoBrowserPolicy` |
+
+A refusal is a composition error and answers the sanitized 500 Problem JSON,
+whether or not the request carried a cookie; extract
+`Result<BrowserCredentials, BrowserCredentialsRejection>` to render it in the
+application's envelope. A cookie session on a group without mutation checks
+therefore needs the visible `ApplicationChecksMutations` waiver.
+`low_level::read_unchecked_cookie` reads any header map without that decision
+and leaves the forgery check with the caller.
 
 Only the default group may declare a root or nested fallback, so every
 unmatched path reaches the default fallback inside the default group's
@@ -367,7 +391,8 @@ their meaning; route groups are additive.
 - Replace per-handler Origin, Fetch Metadata or custom-marker checks with one
   `BrowserPolicy::with_mutation_checks` on the group that owns those routes, and
   move the rejection envelope into its renderer. Handlers no longer call
-  `MutationPolicy::check`.
+  `MutationPolicy::check`, and read the session cookie through
+  `BrowserCredentials` instead of the request headers.
 - Replace hand-written private-response middleware, or `private_response`
   layered around a route group, with `GroupPolicy::browser` and the chosen
   `PrivateResponsePolicy`. The boundary places the headers outside the group's

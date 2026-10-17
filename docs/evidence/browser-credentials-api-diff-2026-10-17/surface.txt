@@ -1,0 +1,35 @@
+## batter-axum: 563 -> 590 entries; 2 removed, 29 added
+- REMOVED function batter_axum::browser::read_cookie
+- REMOVED use batter_axum::browser::read_cookie <- cookie_transport::read_cookie
++ ADDED   enum batter_axum::MutationCheckWaiver
++ ADDED   enum batter_axum::browser::BrowserCredentialsRejection
++ ADDED   function batter_axum::low_level::read_unchecked_cookie
++ ADDED   impl batter_axum::MutationCheckWaiver: Clone
++ ADDED   impl batter_axum::MutationCheckWaiver: Copy
++ ADDED   impl batter_axum::MutationCheckWaiver: Debug
++ ADDED   impl batter_axum::MutationCheckWaiver: Eq
++ ADDED   impl batter_axum::MutationCheckWaiver: PartialEq
++ ADDED   impl batter_axum::MutationCheckWaiver: StructuralPartialEq
++ ADDED   impl batter_axum::browser::BrowserCredentials: Debug
++ ADDED   impl batter_axum::browser::BrowserCredentials: FromRequestParts
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Clone
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Copy
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Debug
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Display
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Eq
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: Error
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: IntoResponse
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: PartialEq
++ ADDED   impl batter_axum::browser::BrowserCredentialsRejection: StructuralPartialEq
++ ADDED   method batter_axum::browser::BrowserCredentials::cookie
++ ADDED   struct batter_axum::browser::BrowserCredentials
++ ADDED   use batter_axum::MutationCheckWaiver <- boundary::MutationCheckWaiver
++ ADDED   use batter_axum::browser::BrowserCredentials <- credentials::BrowserCredentials
++ ADDED   use batter_axum::browser::BrowserCredentialsRejection <- credentials::BrowserCredentialsRejection
++ ADDED   variant batter_axum::MutationCheckWaiver::ApplicationChecksMutations
++ ADDED   variant batter_axum::MutationCheckWaiver::NoAmbientCredentials
++ ADDED   variant batter_axum::browser::BrowserCredentialsRejection::NoBrowserPolicy
++ ADDED   variant batter_axum::browser::BrowserCredentialsRejection::UncheckedMutation
+
+## batter: 17 -> 17 entries; 0 removed, 0 added
+

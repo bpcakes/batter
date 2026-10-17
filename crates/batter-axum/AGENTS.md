@@ -21,7 +21,9 @@ Windows support and non-Unix fallbacks are out of scope.
   handlers, plus re-exports of `operational_http`,
   `operational_http_with_quota`, `dependency_readiness` and the three
   `register_http*` helpers. These eleven items have no crate-root alias; keep
-  them reachable only here, and keep the supported types, `AdmittedRequest`,
+  them reachable only here. `read_unchecked_cookie` is the deliberately
+  unchecked cookie reader that replaced `browser::read_cookie`; keep it here,
+  under a name distinct from the removed one, with no `browser` alias, and keep the supported types, `AdmittedRequest`,
   `CorrelationId`, `render_infrastructure_failure`, `readiness_status`,
   `default_readiness_level`, the `browser` primitives and `quota_observation`
   at the root, where the canonical path uses them.
@@ -53,7 +55,10 @@ Windows support and non-Unix fallbacks are out of scope.
   in `src/boundary/assembly.rs`, before anything is merged into them.
 - `src/browser.rs` and `src/browser/` own trusted browser-origin validation,
   duplicate-aware named-cookie transport, exact mutation-signal checks, and
-  private-response headers with a typed same-origin/no-referrer choice. They do
+  private-response headers with a typed same-origin/no-referrer choice.
+  `src/browser/credentials.rs` owns the private credential record and the
+  `BrowserCredentials` extractor that reads only it; the gate that records it
+  per group lives with `BrowserPolicy` in `src/boundary/group.rs`. They do
   not own account/session state, CSRF token protocols, route selection, CORS,
   or application error rendering.
 - `src/observation.rs` privately owns response observation and tracing lifetime;
@@ -110,6 +115,9 @@ Windows support and non-Unix fallbacks are out of scope.
   group's policy, dispatch among several admitted routers, unreachable
   undeclared routes and fallbacks, layers reused across served requests, and
   probe, inventory and overlap rejections without polling application code.
+  `tests/route_groups/credentials.rs` covers every row of the credential
+  decision, method rewriting by an application layer, an admitted router and
+  lower-level compositions.
   The pattern unit tests also compare the parser with Axum's own route
   registration, and the declared-pattern index with native routing.
 - `benches/declared_dispatch.rs` measures in-process request cost through
@@ -264,7 +272,11 @@ available application parent. Never discover a fallback parent at Drop or record
 HTTP fields into the application span. Handler panics propagate; an unwind before
 a response is observed as dropped, with no invented status or logged panic payload.
 Browser origins come only from validated operator configuration, never Host or
-forwarding headers. Scan every Cookie field and reject target ambiguity. Keep
+forwarding headers. Scan every Cookie field and reject target ambiguity. Present
+cookies on the canonical path only through `BrowserCredentials`, decided by the
+group's gate from the arrival method before application layers; never derive
+the decision from a header the browser may omit, and never let an unchecked
+group's mutation present them without the `ApplicationChecksMutations` waiver. Keep
 cookie/url dependency types private. Mutation checks are browser signals, not
 authentication or complete CSRF protection. Apply one `PrivateResponsePolicy`
 layer, or the same-origin compatibility `private_response`, outside application

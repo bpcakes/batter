@@ -10,8 +10,9 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, InProcessClient, ProbePath,
-    ReadinessPolicy, RequestPolicy, ResponseConstructionBudget, browser::PrivateResponsePolicy,
+    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, InProcessClient, MutationCheckWaiver,
+    ProbePath, ReadinessPolicy, RequestPolicy, ResponseConstructionBudget,
+    browser::PrivateResponsePolicy,
 };
 use batter_core::lifecycle::ShutdownHandle;
 use std::time::Duration;
@@ -45,7 +46,7 @@ async fn private_boundary(
     let private = PrivateResponsePolicy::NoReferrer;
     let group = GroupPolicy::browser(
         request_policy(handle),
-        BrowserPolicy::without_mutation_checks(private),
+        BrowserPolicy::without_mutation_checks(private, MutationCheckWaiver::NoAmbientCredentials),
     );
     let mut boundary = HttpBoundary::new(group);
     if let Some(policy) = probe_policy {
