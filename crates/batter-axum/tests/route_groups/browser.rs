@@ -13,8 +13,8 @@ use axum::{
     routing::get,
 };
 use batter_axum::{
-    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, InProcessClient, ProbePath,
-    RouteGroup,
+    BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary, InProcessClient, MutationCheckWaiver,
+    ProbePath, RouteGroup,
     browser::{FetchSitePolicy, PrivateResponsePolicy},
 };
 use batter_core::{lifecycle::ShutdownHandle, operation::OperationContext};
@@ -210,7 +210,10 @@ async fn a_group_without_mutation_checks_only_adds_private_headers() {
     let handle = ready_handle();
     let policy = GroupPolicy::browser(
         request_policy(&handle, SECOND),
-        BrowserPolicy::without_mutation_checks(PrivateResponsePolicy::NoReferrer),
+        BrowserPolicy::without_mutation_checks(
+            PrivateResponsePolicy::NoReferrer,
+            MutationCheckWaiver::NoAmbientCredentials,
+        ),
     );
     let reports = GuardedRouter::new().route(
         "/reports",

@@ -1,6 +1,7 @@
 use axum::http::{HeaderMap, HeaderValue, header};
-use batter_axum::browser::{
-    CookieHeaderError, CookieHeaderPolicy, CookieName, CookieValue, read_cookie,
+use batter_axum::{
+    browser::{CookieHeaderError, CookieHeaderPolicy, CookieName, CookieValue},
+    low_level::read_unchecked_cookie,
 };
 
 fn headers(values: &[&str]) -> HeaderMap {
@@ -16,7 +17,7 @@ fn read(
     policy: CookieHeaderPolicy,
 ) -> Result<Option<&str>, CookieHeaderError> {
     let name = CookieName::new("session").unwrap();
-    read_cookie(headers, &name, policy).map(|value| value.map(CookieValue::as_str))
+    read_unchecked_cookie(headers, &name, policy).map(|value| value.map(CookieValue::as_str))
 }
 
 #[test]

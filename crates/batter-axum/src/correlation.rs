@@ -24,7 +24,10 @@ struct OperationalScope(CorrelationId);
 /// request's observation, operational ownership or admission. A renderer can
 /// clone Parts into another request and run supported middleware, so removing
 /// only the direct quota writer would leave shared observation mutation
-/// reachable, and a kept admission record would admit the new request.
+/// reachable, and a kept admission record would admit the new request. A kept
+/// browser credential record would let the new request present cookies under
+/// the original request's decision; no current renderer runs after a group's
+/// gate records one, so its removal guards future layer orders.
 /// Keep public correlation and application extensions available for rendering.
 pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
     parts
@@ -33,6 +36,9 @@ pub(crate) fn renderer_parts(mut parts: Parts) -> Parts {
     parts.extensions.remove::<ObservationState>();
     parts.extensions.remove::<OperationalScope>();
     parts.extensions.remove::<crate::admitted::Admission>();
+    parts
+        .extensions
+        .remove::<crate::browser::CredentialAccess>();
     parts
 }
 

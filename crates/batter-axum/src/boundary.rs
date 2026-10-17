@@ -25,7 +25,7 @@ mod tests;
 pub use assembled::AssembledHttp;
 pub use client::InProcessClient;
 pub use declared::{RouteInventory, RouteInventoryError};
-pub use group::{BrowserPolicy, GroupPolicy, RouteGroup, RouteGroupError};
+pub use group::{BrowserPolicy, GroupPolicy, MutationCheckWaiver, RouteGroup, RouteGroupError};
 pub use guarded::GuardedRouter;
 pub use probe::{ProbePath, ProbePathError, ProbeRegistrationError};
 

@@ -3,7 +3,10 @@
 use super::GuardedRouter;
 use crate::{
     RequestPolicy,
-    browser::{MutationPolicy, MutationRejection, PrivateResponsePolicy},
+    browser::{
+        CredentialAccess, MutationPolicy, MutationRejection, PrivateResponsePolicy,
+        record_credential_access,
+    },
     correlation,
     low_level::request_admission,
 };
@@ -29,8 +32,17 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 /// The constructor names the mutation choice: [`Self::with_mutation_checks`]
 /// checks a [`MutationPolicy`] on every request whose method is not `GET`,
 /// `HEAD`, `OPTIONS` or `TRACE`, and [`Self::without_mutation_checks`] states
-/// that the group relies on application authentication instead. An empty
-/// browser policy cannot be constructed.
+/// in a [`MutationCheckWaiver`] why the group needs no check. An empty browser
+/// policy cannot be constructed.
+///
+/// The choice also decides which requests may present ambient browser
+/// credentials. Handlers read cookies only through
+/// [`BrowserCredentials`](crate::browser::BrowserCredentials), which the
+/// group's policy grants on every safe-method request, on a mutation that
+/// passed its checks, and on a mutation the application declared it verifies
+/// itself, but refuses on a mutation in a group whose mutating routes accept
+/// no ambient credentials. Cookie sessions on an unchecked group are therefore
+/// a visible waiver, not a silent default.
 ///
 /// The checks are browser signals, not authentication, authorization, CORS or
 /// complete CSRF protection. Batter selects no rejection body: the renderer
@@ -45,7 +57,7 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 /// ```
 /// use axum::response::IntoResponse;
 /// use batter_axum::{
-///     BrowserPolicy,
+///     BrowserPolicy, MutationCheckWaiver,
 ///     browser::{BrowserOrigin, MutationPolicy, PrivateResponsePolicy},
 /// };
 ///
@@ -55,7 +67,10 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 ///     MutationPolicy::exact_origin(origin),
 ///     |rejection, _parts| (rejection.status(), rejection.code()).into_response(),
 /// );
-/// let reports = BrowserPolicy::without_mutation_checks(PrivateResponsePolicy::NoReferrer);
+/// let reports = BrowserPolicy::without_mutation_checks(
+///     PrivateResponsePolicy::NoReferrer,
+///     MutationCheckWaiver::NoAmbientCredentials,
+/// );
 /// # let _ = (account, reports);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -65,11 +80,26 @@ type RejectionRenderer = dyn Fn(MutationRejection, &Parts) -> Response + Send + 
 /// ```compile_fail,E0599
 /// let empty = batter_axum::BrowserPolicy::default();
 /// ```
+///
+/// and no unchecked policy that does not state its waiver:
+///
+/// ```compile_fail,E0061
+/// use batter_axum::{BrowserPolicy, browser::PrivateResponsePolicy};
+///
+/// let unstated = BrowserPolicy::without_mutation_checks(PrivateResponsePolicy::NoReferrer);
+/// ```
 #[derive(Clone)]
 #[must_use = "pass the browser policy to GroupPolicy::browser"]
 pub struct BrowserPolicy {
     response: PrivateResponsePolicy,
-    mutation: Option<Arc<MutationGuard>>,
+    mutation: MutationGate,
+}
+
+/// What a browser group does with a request whose method is not safe.
+#[derive(Clone)]
+enum MutationGate {
+    Checked(Arc<MutationGuard>),
+    Waived(MutationCheckWaiver),
 }
 
 struct MutationGuard {
@@ -77,15 +107,62 @@ struct MutationGuard {
     render: Box<RejectionRenderer>,
 }
 
-impl BrowserPolicy {
-    /// Apply private-response headers without checking browser mutation signals.
+/// Why a route group's browser policy checks no browser mutation signals.
+///
+/// [`BrowserPolicy::without_mutation_checks`] requires one, so every unchecked
+/// browser group records its reason at the call site, and the reason decides
+/// whether the group's mutations may present ambient browser credentials
+/// through [`BrowserCredentials`](crate::browser::BrowserCredentials).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationCheckWaiver {
+    /// The group's mutating routes accept no ambient browser credentials: they
+    /// authenticate with credentials a cross-site page cannot make the browser
+    /// attach, such as a bearer token.
     ///
-    /// Choose this only when the group's mutating routes do not accept ambient
-    /// browser credentials, or the application authenticates them otherwise.
-    pub fn without_mutation_checks(response: PrivateResponsePolicy) -> Self {
+    /// Batter enforces the claim for cookies it presents: extracting
+    /// [`BrowserCredentials`](crate::browser::BrowserCredentials) on any method
+    /// other than `GET`, `HEAD`, `OPTIONS` or `TRACE` in this group answers
+    /// [`BrowserCredentialsRejection::UncheckedMutation`](crate::browser::BrowserCredentialsRejection::UncheckedMutation),
+    /// a sanitized 500. Safe-method requests still present cookies.
+    NoAmbientCredentials,
+    /// The application verifies every mutating request in the group that
+    /// presents ambient credentials through its own protocol, for example a
+    /// synchronizer token it issues and compares, or a cross-site form post
+    /// that it verifies against its own state value.
+    ///
+    /// Mutations in this group present cookies through
+    /// [`BrowserCredentials`](crate::browser::BrowserCredentials) without any
+    /// Batter check. The verification is application policy that Batter
+    /// neither performs nor observes; prefer
+    /// [`BrowserPolicy::with_mutation_checks`] whenever a [`MutationPolicy`]
+    /// can express the request's legitimate origin.
+    ApplicationChecksMutations,
+}
+
+impl BrowserPolicy {
+    /// Apply private-response headers without checking browser mutation
+    /// signals, for the reason `waiver` states.
+    ///
+    /// With [`MutationCheckWaiver::NoAmbientCredentials`] the group's mutations
+    /// cannot read cookies through
+    /// [`BrowserCredentials`](crate::browser::BrowserCredentials); with
+    /// [`MutationCheckWaiver::ApplicationChecksMutations`] they can, and the
+    /// application owns their verification.
+    ///
+    /// Migration: the one-argument `without_mutation_checks(response)` now
+    /// takes the waiver as its second argument. Pass
+    /// `MutationCheckWaiver::NoAmbientCredentials` when the group's mutating
+    /// routes read no cookie; when they authenticate with a cookie, prefer
+    /// [`Self::with_mutation_checks`], and pass
+    /// `MutationCheckWaiver::ApplicationChecksMutations` only when the
+    /// application verifies those requests itself.
+    pub fn without_mutation_checks(
+        response: PrivateResponsePolicy,
+        waiver: MutationCheckWaiver,
+    ) -> Self {
         Self {
             response,
-            mutation: None,
+            mutation: MutationGate::Waived(waiver),
         }
     }
 
@@ -93,6 +170,8 @@ impl BrowserPolicy {
     ///
     /// `render` runs synchronously for a rejected request inside the group's
     /// admission and private-response headers, and must not block the runtime.
+    /// A request that passes the checks may present cookies through
+    /// [`BrowserCredentials`](crate::browser::BrowserCredentials).
     pub fn with_mutation_checks<F>(
         response: PrivateResponsePolicy,
         mutation: MutationPolicy,
@@ -103,7 +182,7 @@ impl BrowserPolicy {
     {
         Self {
             response,
-            mutation: Some(Arc::new(MutationGuard {
+            mutation: MutationGate::Checked(Arc::new(MutationGuard {
                 policy: mutation,
                 render: Box::new(render),
             })),
@@ -142,15 +221,16 @@ impl GroupPolicy {
     /// Install this policy around every route and fallback in `router`.
     ///
     /// Layers added later run outside earlier ones, so the order is: private
-    /// response headers, then admission, then mutation checks, then the
-    /// application's own layers and handler.
+    /// response headers, then admission, then the browser gate, which checks
+    /// mutations and records whether the request may present credentials, then
+    /// the application's own layers and handler.
     pub(super) fn apply(self, mut router: Router) -> Router {
         let Self { request, browser } = self;
-        if let Some(guard) = browser
-            .as_ref()
-            .and_then(|browser| browser.mutation.clone())
-        {
-            router = router.layer(middleware::from_fn_with_state(guard, check_mutation));
+        if let Some(browser) = &browser {
+            router = router.layer(middleware::from_fn_with_state(
+                browser.mutation.clone(),
+                browser_gate,
+            ));
         }
         router = router.layer(middleware::from_fn_with_state(request, request_admission));
         match browser {
@@ -168,22 +248,35 @@ impl From<RequestPolicy> for GroupPolicy {
 
 // The boundary's outermost `operational_http` already scopes the dispatch for
 // polling and destruction of this nested future.
-async fn check_mutation(
-    State(guard): State<Arc<MutationGuard>>,
-    request: Request,
+async fn browser_gate(
+    State(gate): State<MutationGate>,
+    mut request: Request,
     next: Next,
 ) -> Response {
-    if is_safe(request.method()) {
-        return next.run(request).await;
-    }
-    match guard.policy.check(request.headers()) {
-        Ok(()) => next.run(request).await,
-        Err(rejection) => {
-            let (parts, body) = request.into_parts();
-            drop(body);
-            (guard.render)(rejection, &correlation::renderer_parts(parts))
+    // Decided from the method the request arrived with, before any application
+    // layer can rewrite it.
+    let access = if is_safe(request.method()) {
+        CredentialAccess::Accepted
+    } else {
+        match &gate {
+            MutationGate::Checked(guard) => match guard.policy.check(request.headers()) {
+                Ok(()) => CredentialAccess::Accepted,
+                Err(rejection) => {
+                    let (parts, body) = request.into_parts();
+                    drop(body);
+                    return (guard.render)(rejection, &correlation::renderer_parts(parts));
+                }
+            },
+            MutationGate::Waived(MutationCheckWaiver::ApplicationChecksMutations) => {
+                CredentialAccess::Accepted
+            }
+            MutationGate::Waived(MutationCheckWaiver::NoAmbientCredentials) => {
+                CredentialAccess::Refused
+            }
         }
-    }
+    };
+    record_credential_access(request.extensions_mut(), access);
+    next.run(request).await
 }
 
 /// RFC 9110 safe methods; every other method, including extensions, is checked.
