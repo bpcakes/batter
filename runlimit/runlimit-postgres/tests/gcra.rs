@@ -698,7 +698,10 @@ async fn shard_lock_timeout_is_not_consumed_and_releases_connection() {
     assert_eq!(error.consumption(), ConsumptionStatus::NotConsumed);
     blocker.rollback().await.unwrap();
     assert_eq!(db.row_count().await, 0);
-    assert!(limiter.check(&check).await.unwrap().permits_request());
+    // Admission after the blocker is gone is not a timing assertion, so it uses
+    // the default budget: a commit on a loaded runner can outlast 70 ms. Only
+    // the timeout path above depends on the tight budget.
+    assert!(db.limiter().check(&check).await.unwrap().permits_request());
     db.teardown().await;
 }
 
