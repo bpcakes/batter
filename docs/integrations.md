@@ -190,7 +190,10 @@ no dependency observation, not healthy remote connectivity.
 
 Import browser-carried credential mechanics from `batter_axum::browser`.
 `BrowserOrigin` validates trusted HTTPS or explicit loopback configuration;
-`read_cookie` scans every Cookie field for one exact target; `BrowserCookie`
+`BrowserCredentials`, extracted where the route group's `BrowserPolicy`
+accepts ambient credentials, scans every Cookie field for one exact target
+(`low_level::read_unchecked_cookie` reads any header map without that decision);
+`BrowserCookie`
 appends fixed host-only/root-path set and removal fields; `MutationPolicy` checks
 configured exact Origin/custom-marker signals with optional Fetch Metadata on
 origin-only policies, automatic strict same-origin Fetch Metadata on every

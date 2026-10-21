@@ -249,9 +249,11 @@ rejections, per-group deadlines, headers on every rejection, the fallback owner,
 and removal of each ordering or overlap rule.
 
 Remaining boundaries are explicit. Browser signals are not authentication,
-authorization, CORS or complete CSRF protection; choosing
-`without_mutation_checks` for cookie-authenticated mutations, or letting a safe
-method change state, stays application policy. Group membership is path-level,
+authorization, CORS or complete CSRF protection, and letting a safe method
+change state stays application policy. Choosing `without_mutation_checks` for
+cookie-authenticated mutations was also left to application policy here; the
+browser credential gate assessment below (`batter-52s3`) replaces that with an
+enforced or visibly waived decision. Group membership is path-level,
 so one path served with two budgets by method must use one group, and unmatched
 paths under a named group's prefix receive the default group's policy. The
 overlap analysis mirrors the pinned matchit 0.8.4 rules and needs its Axum
@@ -1154,6 +1156,71 @@ the design-debt signal above. `ManagedObject::constraint_trigger` now makes
 the kind managed: apply owns the drop, its order after routines and the
 transaction that installs the trigger with the body it binds, so the rule is
 no longer needed. The review is in ADR-013.
+
+### Browser credential gate assessment (`batter-52s3`)
+
+`BrowserPolicy::without_mutation_checks(response)` was guarded only by its
+rustdoc, which asked callers to choose it only when the group's mutating routes
+accept no ambient browser credentials or authenticate them otherwise.
+`browser::read_cookie` read any header map, so a cookie session on an unchecked
+group compiled and ran exactly like the protected composition. One downstream
+service ran every browser group without checks while issuing cookie sessions;
+its forgery protection rested on about 129 state-changing handlers each calling
+one of four hand-written origin helpers, one of which read only the first
+`Origin` value, so a duplicated field passed. Its repair was the
+`with_mutation_checks(.., MutationPolicy::exact_origin(..), ..)` Batter already
+shipped. Under the review questions above this is design debt: a known-invalid
+composition looked equivalent to the protected path (question 4), and the
+invariant lived in each handler's memory (question 2).
+
+Gating cookie issuance was considered and rejected: `BrowserCookie` emits a
+host-only `Path=/` cookie, so a browser attaches a cookie minted on a checked
+group to every request to the host, including an unchecked group's. The
+invariant belongs where a credential is accepted, which is where a handler
+reads it. Each browser group therefore installs a gate inside its admission,
+in the position the mutation check already held, that records privately
+whether the request may present cookies, decided from the method it arrived
+with: safe methods always, other methods after the group's checks pass, under
+`MutationCheckWaiver::ApplicationChecksMutations`, and never under
+`MutationCheckWaiver::NoAmbientCredentials`. `without_mutation_checks` now
+requires that waiver, so an unchecked browser group states its reason at the
+call site (compile-fail rustdoc for the one-argument form). The canonical
+reader is the `BrowserCredentials` extractor, which reads only the gate's
+record. Where the gate refused, or where no browser group recorded anything,
+including a plain group, the default group without a browser policy, a
+lower-level composition and a bare router, extraction answers a typed
+`BrowserCredentialsRejection` that renders as the sanitized 500 of
+`HttpFailure::Internal`, as `AdmittedRequestRejection` does for the same class
+of composition error. The decision ignores whether a Cookie field is present,
+so a misplaced handler fails on its first request of that method rather than
+only when a browser sends a cookie. The value has no constructor and is not
+`Clone` (compile-fail rustdocs), and `browser::read_cookie` no longer resolves
+(compile-fail rustdoc).
+
+Batter cannot make the misplacement a compile error. Axum's handler traits do
+not expose which extractors a handler uses, and routes are type-erased before a
+group receives them, so the decision is library-owned execution, not a type
+state. `ApplicationChecksMutations` stays a supported choice because some
+mutations legitimately present ambient credentials without a check
+`MutationPolicy` can express, such as a cross-site form post verified against
+the application's own state value or a synchronizer-token protocol; it is now
+named, searchable, and documented as an application obligation Batter neither
+performs nor observes. `low_level::read_unchecked_cookie` keeps the old reader
+for compositions that own the check themselves. It has a new name so that the
+compiler's import suggestion for the removed `browser::read_cookie` cannot
+silently move a canonical consumer onto it. A handler that parses the raw
+`Cookie` field bypasses the gate, and copying a whole extension map carries the
+record, as it carries the admission record. Tests cover every row of the
+decision, refusal with and without a cookie on four standard methods and an
+extension method, the response shape inside the group's private headers, an
+application layer rewriting the method in both directions, an admitted router,
+the default group and two lower-level compositions; negative controls that
+accept the waived refusal, decide from the rewritten method, accept a missing
+record, or skip recording after a passed check each fail a test. The shared
+renderer filter also removes the record; no current renderer runs after a gate
+records one, so that removal is unexercised defense against a future layer
+order. Fresh-agent usability evaluation and the downstream port are proposed
+and unexecuted.
 
 ## Recurring example review defects
 

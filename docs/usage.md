@@ -497,7 +497,13 @@ group receives its `PrivateResponsePolicy` headers on every response, including
 admission, deadline and mutation rejections, and checks its `MutationPolicy`
 inside admission on every method except GET, HEAD, OPTIONS and TRACE, rendering
 rejections through the application's renderer.
-`BrowserPolicy::without_mutation_checks` names the header-only choice. The routes
+`BrowserPolicy::without_mutation_checks(response, waiver)` names the
+header-only choice and why: `MutationCheckWaiver::NoAmbientCredentials` for
+mutating routes that read no cookie, `ApplicationChecksMutations` only when the
+application verifies those requests itself. Handlers read cookies by extracting
+`browser::BrowserCredentials`, which a checked group grants after its checks
+pass, `NoAmbientCredentials` refuses on every unsafe method, and a group without
+a browser policy refuses on every method, each refusal a sanitized 500. The routes
 passed to `assemble` form the `default` group, which alone declares fallbacks.
 Assembly rejects groups whose routes can match one request path, even with
 different methods, and probe paths that any group can match. To migrate a manual

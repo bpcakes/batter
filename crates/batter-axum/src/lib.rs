@@ -6,7 +6,9 @@
 //! by dropping the handler future. Bodies, proxy trust and auth remain
 //! application-owned. Trusted request correlation is explicitly opt-in. The
 //! [`browser`] module supplies validated cookie/header mechanics without an
-//! account, session, authorization, CORS, or CSRF-token model.
+//! account, session, authorization, CORS, or CSRF-token model; a group's
+//! [`BrowserPolicy`] decides whether its requests may present cookies through
+//! [`browser::BrowserCredentials`].
 //!
 //! [`HttpBoundary`] is the canonical composition: it keeps probes outside
 //! admission and installs correlation with the single HTTP observer outermost,
@@ -42,8 +44,8 @@ pub mod browser;
 pub use admitted::{AdmittedRequest, AdmittedRequestRejection};
 pub use boundary::{
     AssembledHttp, BoundaryAssemblyError, BrowserPolicy, GroupPolicy, GuardedRouter, HttpBoundary,
-    InProcessClient, ProbePath, ProbePathError, ProbeRegistrationError, RouteGroup,
-    RouteGroupError, RouteInventory, RouteInventoryError,
+    InProcessClient, MutationCheckWaiver, ProbePath, ProbePathError, ProbeRegistrationError,
+    RouteGroup, RouteGroupError, RouteInventory, RouteInventoryError,
 };
 pub use correlation::{CorrelationId, render_infrastructure_failure};
 pub use readiness::{

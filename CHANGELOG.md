@@ -8,6 +8,73 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Breaking: browser cookies are presented only where the route group's
+  browser policy accepts ambient credentials (`batter-52s3`,
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#browser-credential-gate-assessment-batter-52s3)).
+  `batter_axum::browser::read_cookie` (also `batter::axum::browser::read_cookie`)
+  is removed, and `BrowserPolicy::without_mutation_checks` takes a required
+  `MutationCheckWaiver`. Every browser group now installs a gate, in the
+  position its mutation check held, that records privately from the arrival
+  method whether the request may present cookies; the new
+  `browser::BrowserCredentials` extractor reads only that record. Safe methods
+  are always granted; other methods are granted after `with_mutation_checks`
+  passes or under `MutationCheckWaiver::ApplicationChecksMutations`, and refused
+  under `MutationCheckWaiver::NoAmbientCredentials`. Requests outside a browser
+  group, including a group or default group without a browser policy, a
+  lower-level composition and a bare router, are refused on every method. A
+  refusal is the typed `BrowserCredentialsRejection` (`UncheckedMutation` or
+  `NoBrowserPolicy`), which renders as the sanitized 500 Problem JSON of
+  `HttpFailure::Internal`. Responses, checks and headers of routes that read no
+  cookie are unchanged.
+
+  Reading a cookie in a handler:
+
+  ```rust,ignore
+  // Before
+  async fn save(parts: Parts) -> Response {
+      let session = read_cookie(&parts.headers, &name, CookieHeaderPolicy::TargetOnly)?;
+      // ...
+  }
+
+  // After: the route sits in a group whose BrowserPolicy accepts credentials
+  async fn save(credentials: BrowserCredentials) -> Response {
+      let session = credentials.cookie(&name, CookieHeaderPolicy::TargetOnly)?;
+      // ...
+  }
+  ```
+
+  Choosing an unchecked browser group:
+
+  ```rust,ignore
+  // Before
+  let reports = BrowserPolicy::without_mutation_checks(PrivateResponsePolicy::NoReferrer);
+
+  // After: mutating routes that read no cookie
+  let reports = BrowserPolicy::without_mutation_checks(
+      PrivateResponsePolicy::NoReferrer,
+      MutationCheckWaiver::NoAmbientCredentials,
+  );
+  ```
+
+  A group whose mutations authenticate with a cookie should move to
+  `BrowserPolicy::with_mutation_checks(.., MutationPolicy::exact_origin(..), ..)`;
+  `MutationCheckWaiver::ApplicationChecksMutations` is for an application that
+  verifies those requests itself, such as a cross-site form post checked against
+  its own state value. A composition that owns the forgery check itself, or
+  installs no route group, can read any header map with the deliberately
+  unchecked `low_level::read_unchecked_cookie`, which has the old function's
+  parser, results and errors.
+
+  No one-release deprecated shim is kept for either change: a `read_cookie`
+  alias or a one-argument `without_mutation_checks` would restore exactly the
+  unchecked cookie session this change removes. The escape hatch has a new name
+  so that the compiler's import suggestion cannot move a canonical consumer onto
+  it silently. `BrowserCredentials::cookie`, `without_mutation_checks`,
+  `read_unchecked_cookie` and the `browser` module carry `Migration:` notes, and
+  compile-fail rustdocs reject the removed import, the one-argument form, and
+  constructing or inserting `BrowserCredentials`. The public-API surface diff is
+  [recorded](docs/evidence/browser-credentials-api-diff-2026-10-17/README.md).
+
 - Update the locked `rustls` to 0.23.46 (`batter-ddc`). RUSTSEC-2026-0285,
   -0346, -0347, -0348 and -0349 affect 0.23.44, which the workspace reached
   through `sqlx-core`, `reqwest` and `bollard`; the update is lock-only and

@@ -17,6 +17,10 @@
 //! Supported value and policy types are *not* here: they stay at the crate
 //! root, where the canonical path also uses them.
 //!
+//! [`read_unchecked_cookie`] is the one reader here rather than middleware: it
+//! reads a cookie from any header map without the route group's decision that
+//! [`BrowserCredentials`](crate::browser::BrowserCredentials) enforces.
+//!
 //! Migration: before assembly was sealed, every helper in this module was
 //! exported at the crate root. A `use batter_axum::<helper>` or
 //! `batter::axum::<helper>` import now fails to resolve; the replacement is the
@@ -75,14 +79,25 @@
 //! ```compile_fail,E0432
 //! use batter_axum::register_http_with_connect_info_in;
 //! ```
+//!
+//! The unchecked cookie reader stays out of both canonical namespaces:
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::read_unchecked_cookie;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::browser::read_unchecked_cookie;
+//! ```
 
 use crate::{
     HttpFailure, RequestInterruptionResponder, RequestPolicy, admitted,
+    browser::{CookieHeaderError, CookieHeaderPolicy, CookieName, CookieValue, read_fields},
     observation::observe_response,
 };
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header},
     middleware::Next,
     response::Response,
 };
@@ -293,4 +308,50 @@ pub async fn readiness(State(status): State<LifecycleStatus>) -> StatusCode {
 /// `batter_axum::low_level::liveness` with the same caller obligations.
 pub async fn liveness() -> StatusCode {
     StatusCode::OK
+}
+
+/// Read one exact named cookie from any header map, without the route group's
+/// decision about ambient browser credentials.
+///
+/// This is the deliberately unchecked counterpart of
+/// [`BrowserCredentials::cookie`](crate::browser::BrowserCredentials::cookie),
+/// with the same parser, policy, results and errors. It accepts headers from
+/// any request, including a mutation on a route group with no browser policy
+/// or one that waived its checks because it accepts no ambient credentials,
+/// and from lower-level compositions that install no group at all. Choosing it
+/// leaves with the caller the obligation [`BrowserPolicy`](crate::BrowserPolicy)
+/// otherwise owns: a mutation authenticated by the cookie it returns must be
+/// checked against cross-site request forgery before it changes state, for
+/// example by a [`MutationPolicy`](crate::browser::MutationPolicy) checked on
+/// the same request. Prefer extracting
+/// [`BrowserCredentials`](crate::browser::BrowserCredentials) inside an
+/// [`HttpBoundary`](crate::HttpBoundary) group.
+///
+/// ```
+/// use axum::http::{HeaderMap, HeaderValue, header};
+/// use batter_axum::{
+///     browser::{CookieHeaderPolicy, CookieName},
+///     low_level::read_unchecked_cookie,
+/// };
+///
+/// let mut headers = HeaderMap::new();
+/// headers.append(header::COOKIE, HeaderValue::from_static("other=x"));
+/// headers.append(header::COOKIE, HeaderValue::from_static("session=opaque"));
+/// let name = CookieName::new("session")?;
+/// let value = read_unchecked_cookie(&headers, &name, CookieHeaderPolicy::TargetOnly)?;
+/// assert_eq!(value.unwrap().as_str(), "opaque");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Migration: `batter_axum::browser::read_cookie` is removed rather than moved
+/// under its old name, so an import fix cannot silently keep an unchecked read.
+/// Extract [`BrowserCredentials`](crate::browser::BrowserCredentials) on the
+/// canonical path; this function keeps the old behavior for compositions that
+/// own the mutation check themselves.
+pub fn read_unchecked_cookie<'a>(
+    headers: &'a HeaderMap,
+    name: &CookieName,
+    policy: CookieHeaderPolicy,
+) -> Result<Option<CookieValue<'a>>, CookieHeaderError> {
+    read_fields(headers.get_all(header::COOKIE).iter(), name, policy)
 }

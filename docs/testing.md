@@ -2061,6 +2061,28 @@ mutation checks outside admission, private headers inside admission, dropping
 the overlap check and merging the default group first each made the target
 fail.
 
+The same target covers the credential gate (`batter-52s3`). A checked group
+presents the cookie to `BrowserCredentials` on GET and on POST and DELETE from
+the exact origin, keeps the parser's duplicate and absent results, and never
+runs the reading handler after a failed check. Separate Cookie fields exercise
+the canonical extractor's collection step: a target in a later field is read,
+duplicate targets across fields return `DuplicateTarget`, and a later non-UTF8
+field returns `NonUtf8`. Separate compile-fail doctests reject imports of
+`read_unchecked_cookie` from the crate root and the `browser` namespace, keeping
+the unchecked reader in `low_level` (`batter-52s3.1`). A `NoAmbientCredentials` group
+presents it on all four safe methods and refuses POST, PUT, PATCH, DELETE and an
+extension method, from the exact origin and without any cookie, while a route
+that reads none keeps serving them; the plain extractor answers the fixed
+Problem JSON 500 inside the group's private headers. An
+`ApplicationChecksMutations` group presents it on a cross-site POST. A plain
+named group, the default group without a browser policy, a lower-level
+`operational_http` plus `request_admission` composition and a bare router
+refuse on every method. An application layer that swaps GET and POST cannot
+change the decision, and an admitted router receives its group's decision.
+Accepting the waived refusal, deciding from the rewritten method, accepting a
+missing record, and recording nothing after a passed check each made the
+target fail.
+
 The same target covers routers admitted through `GuardedRouter::from_router`.
 A stateful router with an undeclared route inside its declared paths, another
 outside them and its own fallback serves `/items` and `/items/{id}` in a private

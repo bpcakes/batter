@@ -104,32 +104,17 @@ pub enum CookieHeaderPolicy {
     TargetOnly,
 }
 
-/// Read one exact named cookie across every Cookie field.
+/// Read one exact named cookie across the given Cookie fields.
 ///
-/// Duplicate target cookies, non-UTF8 fields, and malformed target values are
-/// always rejected. `TargetOnly` relaxes only unrelated malformed pairs. An
-/// empty target value is returned as present and unchanged; the application
-/// credential parser decides whether that value is meaningful.
-///
-/// ```
-/// use axum::http::{HeaderMap, HeaderValue, header};
-/// use batter_axum::browser::{CookieHeaderPolicy, CookieName, read_cookie};
-///
-/// let mut headers = HeaderMap::new();
-/// headers.append(header::COOKIE, HeaderValue::from_static("other=x"));
-/// headers.append(header::COOKIE, HeaderValue::from_static("session=opaque"));
-/// let name = CookieName::new("session")?;
-/// let value = read_cookie(&headers, &name, CookieHeaderPolicy::TargetOnly)?;
-/// assert_eq!(value.unwrap().as_str(), "opaque");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn read_cookie<'a>(
-    headers: &'a HeaderMap,
+/// [`BrowserCredentials::cookie`](super::BrowserCredentials::cookie) and
+/// [`crate::low_level::read_unchecked_cookie`] share this parser.
+pub(crate) fn read_fields<'a>(
+    fields: impl Iterator<Item = &'a HeaderValue>,
     name: &CookieName,
     policy: CookieHeaderPolicy,
 ) -> Result<Option<CookieValue<'a>>, CookieHeaderError> {
     let mut found = None;
-    for field in headers.get_all(header::COOKIE) {
+    for field in fields {
         let field =
             std::str::from_utf8(field.as_bytes()).map_err(|_| CookieHeaderError::NonUtf8)?;
         for fragment in field.split(';') {
