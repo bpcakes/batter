@@ -9,7 +9,7 @@ use axum::{
     Router,
     body::Body,
     extract::Request,
-    http::{Method, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::Response,
     routing::{any, get},
@@ -113,6 +113,29 @@ async fn a_checked_group_presents_cookies_only_after_its_mutation_checks() {
     assert_eq!(read(&app, duplicate).await, ok("cookie:DuplicateTarget"));
     let absent = from_site(Method::POST, "/account", ORIGIN, "other=x");
     assert_eq!(read(&app, absent).await, ok("session:absent"));
+
+    // The extractor must preserve every Cookie field before parsing.
+    for (first, later, expected) in [
+        (
+            "other=x",
+            HeaderValue::from_static("session=late"),
+            "session:late",
+        ),
+        (
+            "session=a",
+            HeaderValue::from_static("session=b"),
+            "cookie:DuplicateTarget",
+        ),
+        (
+            "session=a",
+            HeaderValue::from_bytes(b"\xff").unwrap(),
+            "cookie:NonUtf8",
+        ),
+    ] {
+        let mut request = from_site(Method::POST, "/account", ORIGIN, first);
+        request.headers_mut().append(header::COOKIE, later);
+        assert_eq!(read(&app, request).await, ok(expected), "{expected}");
+    }
 }
 
 #[tokio::test]

@@ -79,6 +79,16 @@
 //! ```compile_fail,E0432
 //! use batter_axum::register_http_with_connect_info_in;
 //! ```
+//!
+//! The unchecked cookie reader stays out of both canonical namespaces:
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::read_unchecked_cookie;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use batter_axum::browser::read_unchecked_cookie;
+//! ```
 
 use crate::{
     HttpFailure, RequestInterruptionResponder, RequestPolicy, admitted,
