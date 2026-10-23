@@ -348,9 +348,10 @@ pub use error::{
 };
 pub use migration_identity::{MigrationBundle, RUNLEDGER_POSTGRES_VERSION, migration_bundle};
 pub use migrations::{
-    MIGRATOR, SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic,
-    WorkflowJobLinkTriggerProblem, ensure_schema_compatible_after_idempotency_cutover,
-    migrate_after_idempotency_cutover,
+    MIGRATOR, OnlineIndexPreparation, OnlineIndexProblem, SchemaCompatibilityError,
+    WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
+    ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
+    prepare_online_indexes_for_external_migrator,
 };
 #[allow(
     deprecated,
@@ -455,12 +456,14 @@ pub mod prelude {
     };
     pub use crate::{
         AcceptedIntentOutcome, AcceptedIntentState, DbPool, DbTx, FrameworkConstraintSpec,
-        MIGRATOR, PgAtomicError, PgAtomicUncertainty, PgFailurePolicy, PgIntentScope,
-        PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope, PgScopeFailure, PgScopeLoss,
-        PgSessionProfile, QueryError, QueryErrorCategory, QueryErrorKind, RequiredIntentError,
-        RunledgerDatabase, SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic,
-        WorkflowJobLinkTriggerProblem, ensure_schema_compatible_after_idempotency_cutover,
-        migrate_after_idempotency_cutover, run_atomic, run_atomic_fail_fast_with, run_atomic_with,
+        MIGRATOR, OnlineIndexPreparation, OnlineIndexProblem, PgAtomicError, PgAtomicUncertainty,
+        PgFailurePolicy, PgIntentScope, PgPolicyIntentScope, PgPolicyQueueScope, PgQueueScope,
+        PgScopeFailure, PgScopeLoss, PgSessionProfile, QueryError, QueryErrorCategory,
+        QueryErrorKind, RequiredIntentError, RunledgerDatabase, SchemaCompatibilityError,
+        WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
+        ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
+        prepare_online_indexes_for_external_migrator, run_atomic, run_atomic_fail_fast_with,
+        run_atomic_with,
     };
 }
 

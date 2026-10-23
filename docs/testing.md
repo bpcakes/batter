@@ -1540,6 +1540,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3111,6 +3112,55 @@ not invoke SQL or replace that cause; caught cancellation remains explicitly
 API and wrapping known rejections as uncertainty or terminal storage failures.
 
 ## Native Runledger workspace verification
+
+`cargo test -p runledger-postgres --locked --test online_indexes` covers the
+online index builds of the protected migration runner on PostgreSQL 18.6
+(2026-10-23, `batter-fnj8`). A fresh protected run records the same
+`_sqlx_migrations` rows and leaves the same `pg_get_indexdef` catalog as the
+raw canonical migrator. External preparation prebuilds only the two
+`IF NOT EXISTS` cutover indexes, reports the three others as blocking under
+external tooling, defers the adoptable pair while still reporting the other
+three as blocking on a database applied only through `202604100001` whose
+tables lack the snapshot columns, and the canonical SQL
+adopts the prebuilt pair unchanged. A
+dropped index and a concurrent build cancelled by `statement_timeout` while a
+writer transaction is open are reported by read-only verification as
+`Missing` and `Invalid`, then rebuilt by the next protected startup. A foreign
+`idx_job_queue_created_id` is refused with `DefinitionMismatch` before the
+migration is recorded, as is a same-named index on `job_attempts`, which the
+table-filtered lookup previously read as missing, and an `INVALID` leftover of
+a different definition, which is refused rather than dropped. The
+concurrent-startup case holds a writer lock so the first build waits, starts
+the second starter during that wait and asserts no ungranted advisory lock
+exists before releasing. With a writer transaction
+holding `ROW EXCLUSIVE` on
+`job_queue`, the protected build waits in `pg_stat_progress_create_index` as
+`CREATE INDEX CONCURRENTLY` while a second writer still acquires its lock,
+whereas the raw canonical build queues an ungranted `ShareLock` and the second
+writer fails with `55P03` under a 1.5-second `lock_timeout`. Two protected
+startups run concurrently against the pending pagination migration and both
+succeed with the migration recorded once; before the polling lock the second
+starter's blocking `pg_advisory_lock` wait held a snapshot and PostgreSQL
+aborted one side with `40P01`. With SQLx's own `Migrate::lock` held on another
+connection, external preparation waits without any ungranted advisory lock or
+snapshot-holding lock waiter in the catalog and completes after release, so
+Runledger's derived key matches SQLx's, and under a 250 ms `lock_timeout`
+profile, or a 500 ms `statement_timeout` with `lock_timeout` 0, the same held
+SQLx lock makes the protected runner fail with `Incompatible` within a few
+seconds instead of waiting forever. Under a profile with a 250 ms lock
+timeout and a 2 s statement timeout, the concurrent build waits more than three
+seconds for an open writer and then completes, whereas before the build session
+lifted those timeouts the runner was cancelled early. While the protected
+runner's build waits for a writer, read-only verification from another session
+reports `BuildInProgress` instead of `Invalid` and passes after the build ends;
+a missing index verifies as `BuildInProgress` while another session holds
+SQLx's migration lock and as `Missing` after release. A database-backed
+unit test on a 250 ms `lock_timeout` profile session shows both timeouts read
+`0` while lifted and return to the profile's exact values after the build
+restores them, so the cutover validation that follows keeps its bounds; a
+conflicting lock queued behind the build cannot show this end to end because
+any waiting session holds a snapshot the build waits for. Build durations on
+populated tables were not measured.
 
 `cargo test -p runledger-postgres --locked --test claim_batch_writes` covers
 mixed direct/workflow batches through all four claim entry points. Statement

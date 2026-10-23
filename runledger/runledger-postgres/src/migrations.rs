@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use sqlx::migrate::{AppliedMigration, Migrate, MigrateError, Migrator};
+use sqlx::migrate::{AppliedMigration, MigrateError, Migrator};
 
 use crate::{PgQueryExecutor, RunledgerDatabase};
 
@@ -17,9 +17,12 @@ use crate::{PgQueryExecutor, RunledgerDatabase};
 ///
 /// Use [`migrate_after_idempotency_cutover`] to apply Runledger migrations, or
 /// [`ensure_schema_compatible_after_idempotency_cutover`] when DDL is managed
-/// externally. If a compatibility diagnostic intentionally executes a raw
-/// migrator that may mismatch history, give it a disposable connection or
-/// single-use pool and close that connection or pool on every error path.
+/// externally. A raw run also builds every bundled index with ordinary
+/// `CREATE INDEX`, blocking queue writes on populated tables; only the
+/// protected path builds the declared ones online. If a compatibility
+/// diagnostic intentionally executes a raw migrator that may mismatch history,
+/// give it a disposable connection or single-use pool and close that connection
+/// or pool on every error path.
 ///
 /// During an additive compatibility window, an exact older binary that cannot
 /// use the filtered API must be patched before startup or explicitly accept the
@@ -30,6 +33,11 @@ use crate::{PgQueryExecutor, RunledgerDatabase};
 /// also erases relational replay lineage and replay-request idempotency state
 /// while retaining the underlying replay-created queue rows.
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+mod online;
+pub use online::{
+    OnlineIndexPreparation, OnlineIndexProblem, prepare_online_indexes_for_external_migrator,
+};
 
 type RunledgerMigrationMap = HashMap<i64, &'static sqlx::migrate::Migration>;
 
@@ -178,6 +186,12 @@ pub enum SchemaCompatibilityError {
     },
     Incompatible(MigrateError),
     MigrationUnlock(MigrateError),
+    /// A declared online index of an applied migration is absent, `INVALID`,
+    /// or defined differently; see [`OnlineIndexProblem`].
+    OnlineIndex {
+        index: &'static str,
+        problem: OnlineIndexProblem,
+    },
 }
 
 impl fmt::Display for SchemaCompatibilityError {
@@ -226,6 +240,9 @@ impl fmt::Display for SchemaCompatibilityError {
                     "; found {inconsistent_link_count} inconsistent relationships"
                 )
             }
+            Self::OnlineIndex { index, problem } => {
+                write!(f, "Runledger online index {index} {problem}")
+            }
             Self::Incompatible(error) => write!(f, "{error}"),
             Self::MigrationUnlock(error) => {
                 write!(
@@ -242,7 +259,7 @@ impl std::error::Error for SchemaCompatibilityError {
         match self {
             Self::Query(error) => Some(error),
             Self::Snapshot(error) => Some(error),
-            Self::MissingMigrationHistory { .. } => None,
+            Self::MissingMigrationHistory { .. } | Self::OnlineIndex { .. } => None,
             Self::LegacyIdempotencySnapshotsMissing { .. } => None,
             Self::WorkflowJobLinkExpandInvalid { .. }
             | Self::WorkflowJobLinkExpandTriggersInvalid { .. } => None,
@@ -280,26 +297,48 @@ impl From<sqlx::Error> for SchemaCompatibilityError {
 /// Unlike raw [`MIGRATOR`] execution, this filters shared SQLx history through
 /// Runledger's migration compatibility fence so declared additive migrations
 /// can coexist with older compatible startup code.
+///
+/// Bundled index builds that would block queue writes on a populated table
+/// (`202605220001`, `202607280004` and `202609050001`) run online: each such
+/// migration is recorded under its canonical checksum, its remaining
+/// statements commit first, and its declared indexes are then built with
+/// `CREATE INDEX CONCURRENTLY` outside a transaction. Every later call leaves
+/// those indexes valid, rebuilding one lost to an interrupted build, and
+/// refuses a foreign index under a declared name. The SQLx migration lock is
+/// acquired by polling `pg_try_advisory_lock`, so a second Runledger starter
+/// waits without a snapshot and cannot deadlock with the holder's concurrent
+/// build; a raw SQLx migrator blocked in `pg_advisory_lock` still can, so do
+/// not run one beside a starting Runledger process. Column additions and
+/// validating `CHECK` constraints in bundled migrations still take their
+/// ordinary locks. External tooling that applies the canonical SQL itself can
+/// prebuild the adoptable pair with
+/// [`prepare_online_indexes_for_external_migrator`].
 pub async fn migrate_after_idempotency_cutover(
     database: &RunledgerDatabase,
 ) -> Result<(), SchemaCompatibilityError> {
     let mut conn = database.pool().acquire().await?;
 
-    if MIGRATOR.locking {
-        // PostgreSQL advisory migration locks are session-scoped; never return
-        // a possibly locked session to the pool if this future is cancelled.
+    // PostgreSQL advisory migration locks are session-scoped; never return a
+    // possibly locked session to the pool if this future is cancelled. The
+    // wait polls without a snapshot so a concurrent online index build on the
+    // lock holder cannot deadlock with this starter.
+    let lock = if MIGRATOR.locking {
         conn.close_on_drop();
-        (*conn)
-            .lock()
-            .await
-            .map_err(SchemaCompatibilityError::Incompatible)?;
-    }
-
-    let result = run_migrations_with_filtered_history(&mut conn, database).await;
-    let unlock_result = if MIGRATOR.locking {
-        (*conn).unlock().await
+        Some(
+            online::MigrationLock::acquire(&mut conn)
+                .await
+                .map_err(|error| {
+                    SchemaCompatibilityError::Incompatible(MigrateError::Execute(error))
+                })?,
+        )
     } else {
-        Ok(())
+        None
+    };
+
+    let result = online::run_migrations_with_filtered_history(&mut conn, database).await;
+    let unlock_result = match lock {
+        Some(lock) => lock.release(&mut conn).await.map_err(MigrateError::Execute),
+        None => Ok(()),
     };
 
     match (result, unlock_result) {
@@ -308,9 +347,9 @@ pub async fn migrate_after_idempotency_cutover(
                 error = %unlock_error,
                 "failed to unlock migration lock after migration failure"
             );
-            Err(SchemaCompatibilityError::Incompatible(migration_error))
+            Err(migration_error)
         }
-        (Err(error), Ok(())) => Err(SchemaCompatibilityError::Incompatible(error)),
+        (Err(error), Ok(())) => Err(error),
         (Ok(()), Err(error)) => Err(SchemaCompatibilityError::MigrationUnlock(error)),
         (Ok(()), Ok(())) => {
             // The DDL migration lock is no longer needed here: the NOT VALID
@@ -351,6 +390,12 @@ pub async fn migrate(database: &RunledgerDatabase) -> Result<(), SchemaCompatibi
 /// expand migration's compatibility projection is present and consistent.
 /// This differs from invoking raw [`MIGRATOR`] execution, which rejects any
 /// applied migration version absent from that exact binary's bundle.
+///
+/// It also rejects a declared online index that is missing, `INVALID`, or
+/// defined differently for an applied migration, so a build interrupted after
+/// its migration was recorded is reported rather than silently absent. A build
+/// another session is still running is reported as the transient
+/// [`OnlineIndexProblem::BuildInProgress`]; retry once that build ends.
 ///
 /// This read-only path does not validate `NOT VALID` cutover constraints after
 /// legacy rows are remediated. Deployments that apply DDL externally can run
@@ -498,6 +543,8 @@ async fn inspect_schema(
         return Err(error.into());
     }
     validate_workflow_job_link_expand_schema(conn, database).await?;
+    let applied_versions: HashSet<i64> = applied_by_version.keys().copied().collect();
+    online::verify_applied_indexes(conn, database, &applied_versions).await?;
     reject_legacy_idempotency_rows(conn, database).await
 }
 
@@ -973,55 +1020,6 @@ fn applied_runledger_migrations(
             checksum: row.checksum.clone().into(),
         })
         .collect()
-}
-
-async fn run_migrations_with_filtered_history(
-    conn: &mut sqlx::PgConnection,
-    database: &RunledgerDatabase,
-) -> Result<(), MigrateError> {
-    conn.ensure_migrations_table("_sqlx_migrations").await?;
-
-    let expected_migrations = expected_runledger_migrations();
-    let history = list_migration_history(conn, database).await?;
-
-    if let Some(version) = first_conflicting_runledger_version(&history, &expected_migrations) {
-        return Err(MigrateError::VersionMismatch(version));
-    }
-
-    if let Some(version) = first_dirty_runledger_version(&history, &expected_migrations) {
-        return Err(MigrateError::Dirty(version));
-    }
-
-    if has_runledger_migration_history_table(conn, database).await? {
-        let recorded_versions = list_recorded_runledger_migrations(conn, database).await?;
-        if let Some(version) =
-            first_missing_runledger_version(&recorded_versions, &expected_migrations)
-        {
-            return Err(MigrateError::VersionMissing(version));
-        }
-    }
-
-    let applied = applied_runledger_migrations(&history, &expected_migrations);
-    let applied_by_version: HashMap<_, _> = applied
-        .into_iter()
-        .map(|migration| (migration.version, migration))
-        .collect();
-
-    for migration in MIGRATOR
-        .iter()
-        .filter(|migration| migration.migration_type.is_up_migration())
-    {
-        match applied_by_version.get(&migration.version) {
-            Some(applied_migration) => {
-                validate_checksum(migration.version, applied_migration, migration)?
-            }
-            None => {
-                conn.apply("_sqlx_migrations", migration).await?;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(sqlx::FromRow)]

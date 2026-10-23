@@ -8,6 +8,41 @@ All notable changes to this workspace are documented here.
 
 ### Added
 
+- The protected migration runner builds the five bundled `job_queue` and
+  `workflow_runs` indexes of `202605220001_enforce_enqueue_request_snapshots`,
+  `202607280004_job_execution_resources` and
+  `202609050001_job_summary_pagination` with `CREATE INDEX CONCURRENTLY`
+  outside a transaction instead of blocking queue writes for the build. The
+  canonical SQL and checksums are unchanged: `migrate_after_idempotency_cutover`
+  records each such migration under its canonical checksum, commits the
+  remaining statements first, then builds the declared indexes, and every later
+  startup rebuilds one that is missing or `INVALID` after an interrupted build.
+  A same-named relation that is not the declared index, whether a different
+  definition (valid or `INVALID`), an index on another table or another kind
+  of relation, is refused before the migration is recorded with the new
+  `SchemaCompatibilityError::OnlineIndex` variant and `OnlineIndexProblem`, and
+  `ensure_schema_compatible_after_idempotency_cutover` reports a missing,
+  `INVALID` or differently defined declared index of an applied migration,
+  or the transient `OnlineIndexProblem::BuildInProgress` while another session
+  is still building one, including while that session holds the migration
+  lock before the index exists. Each build runs with the pool profile's
+  statement, lock and transaction timeouts lifted and restored afterwards, so
+  a long in-flight transaction delays the build instead of cancelling it after
+  the migration was recorded while the following cutover validation keeps the
+  profile's bounds.
+- `prepare_online_indexes_for_external_migrator` prebuilds, under the SQLx
+  migration lock, the pending indexes whose canonical
+  `CREATE INDEX IF NOT EXISTS` statement adopts them, so external tooling that
+  applies the canonical SQL skips the blocking build. Its
+  `OnlineIndexPreparation` report lists built, already valid and deferred
+  indexes plus the pending ones that still block under external tooling. An
+  adoptable index is deferred while an earlier bundled migration is unapplied,
+  so the call succeeds on any supported upgrade path; apply through the
+  preceding version and prepare again on a populated database.
+  External tooling may run only after the call returned `Ok`; a leftover
+  `INVALID` index is repaired by a rerun only while its migration is pending.
+  Validating `CHECK` constraints and same-transaction `VALIDATE CONSTRAINT`
+  statements in bundled migrations keep their ordinary locks.
 - `JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
   observes one handler invocation's exit. The worker ends it after the handler
   future is destroyed and before the outcome is persisted, whenever the
@@ -72,6 +107,27 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- `migrate_after_idempotency_cutover` and
+  `prepare_online_indexes_for_external_migrator` acquire the SQLx migration
+  advisory lock by polling `pg_try_advisory_lock` on SQLx's own key instead of
+  blocking in `pg_advisory_lock`. A waiting Runledger starter therefore holds
+  no snapshot, so the lock holder's `CREATE INDEX CONCURRENTLY` cannot deadlock
+  with it; a raw SQLx migrator or older binary blocked in `pg_advisory_lock`
+  still can, so do not run one beside a starting Runledger process. The wait
+  keeps the bound the blocking acquisition had: the smaller nonzero of the
+  session's `statement_timeout` and `lock_timeout` fails it, and only when
+  both are zero does it wait without bound. Lock
+  acquisition and release failures keep surfacing as
+  `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`, but a wait
+  that times out now carries `MigrateError::Execute(sqlx::Error::Protocol(..))`
+  with a message naming the expired setting instead of the server's `55P03`
+  or `57014` database error, because the poll statements themselves never
+  time out. The build
+  session lifts `transaction_timeout` only where the server defines it.
+- Failures while reading migration history in the protected runner now surface
+  as `SchemaCompatibilityError::Query` rather than
+  `Incompatible(MigrateError::Execute(..))`; the new catalog reads and index
+  builds use the same variant.
 - Job claims batch workflow updates, attempt inserts and lease-event inserts
   into three statements per nonempty batch, retaining individual audit rows,
   workflow status guards and the existing lease/resource transaction fences.
