@@ -114,14 +114,15 @@ All notable changes to this workspace are documented here.
   no snapshot, so the lock holder's `CREATE INDEX CONCURRENTLY` cannot deadlock
   with it; a raw SQLx migrator or older binary blocked in `pg_advisory_lock`
   still can, so do not run one beside a starting Runledger process. The wait
-  keeps the bound the blocking acquisition had: the smaller nonzero of the
-  session's `statement_timeout` and `lock_timeout` fails it, and only when
-  both are zero does it wait without bound. Lock
+  keeps the bound the blocking acquisition had: the smallest nonzero of the
+  session's `statement_timeout`, `lock_timeout` and `transaction_timeout`
+  fails it, and only when all of them are zero does it wait without bound. Lock
   acquisition and release failures keep surfacing as
   `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`, but a wait
   that times out now carries `MigrateError::Execute(sqlx::Error::Protocol(..))`
   with a message naming the expired setting instead of the server's `55P03`
-  or `57014` database error, because the poll statements themselves never
+  or `57014` database error or a connection terminated by
+  `transaction_timeout`, because the poll statements themselves never
   time out. The build
   session lifts `transaction_timeout` only where the server defines it.
 - Failures while reading migration history in the protected runner now surface

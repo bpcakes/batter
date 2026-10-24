@@ -346,12 +346,14 @@ async fn table_exists(
 }
 
 /// The session's profile timeouts, saved while a concurrent build runs
-/// without them and restored afterwards so the rest of the startup, including
-/// the cutover validation, runs under the profile again.
+/// without them and restored afterwards so whatever follows on that session
+/// runs under the profile again: the cutover validation in the protected
+/// runner, or the next build in external preparation.
 ///
-/// A concurrent build waits for in-flight writers and older snapshots, and
-/// the migration is already recorded when it runs, so a profile timeout would
-/// cancel it and leave an `INVALID` index behind.
+/// A concurrent build waits for in-flight writers and older snapshots, so a
+/// profile timeout would cancel it and leave an `INVALID` index behind. In
+/// the protected runner the migration is already recorded by then, so only a
+/// later startup could replace that index.
 struct ProfileTimeouts {
     statement: String,
     lock: String,
@@ -702,20 +704,21 @@ async fn prepare_adoptable_indexes(
 /// index itself, because it applies every pending migration.
 ///
 /// Each concurrent build runs with the pool profile's statement, lock and
-/// transaction timeouts lifted on the migration session, because it waits
-/// for in-flight writers and older snapshots and the migration is already
-/// recorded; a long transaction therefore delays the build instead of leaving
-/// an `INVALID` index. The saved values are restored after each build, so the
-/// rest of the startup keeps the profile's bounds.
+/// transaction timeouts lifted on the preparation session, because it waits
+/// for in-flight writers and older snapshots; a long transaction therefore
+/// delays the build instead of cancelling it and leaving an `INVALID` index
+/// that a rerun must drop and replace. The saved values are restored after
+/// each build, so later statements on that session keep the profile's bounds.
 ///
 /// Runledger waits for the migration lock by polling `pg_try_advisory_lock`,
 /// so a waiting Runledger starter holds no snapshot that an in-progress
 /// concurrent build must wait for. The wait keeps the bound the blocking
-/// acquisition had: the smaller nonzero of the session's `statement_timeout`
-/// and `lock_timeout` fails it with
-/// [`crate::SchemaCompatibilityError::Incompatible`], and only when both are
-/// zero does it wait without bound; the expiry is a `sqlx::Error::Protocol`
-/// naming the setting rather than a `55P03` or `57014` database error. A
+/// acquisition had: the smallest nonzero of the session's `statement_timeout`,
+/// `lock_timeout` and, on servers that define it, `transaction_timeout` fails
+/// it with [`crate::SchemaCompatibilityError::Incompatible`], and only when
+/// all of them are zero does it wait without bound; the expiry is a
+/// `sqlx::Error::Protocol` naming the setting rather than a `55P03` or
+/// `57014` database error or a terminated connection. A
 /// migrator or older binary that waits with
 /// blocking `pg_advisory_lock` does hold one, and PostgreSQL then aborts either
 /// that waiter or the build with a deadlock. Do not start such tooling until

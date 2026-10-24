@@ -1540,7 +1540,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
-| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3128,7 +3128,8 @@ writer transaction is open are reported by read-only verification as
 `Missing` and `Invalid`, then rebuilt by the next protected startup. A foreign
 `idx_job_queue_created_id` is refused with `DefinitionMismatch` before the
 migration is recorded, as is a same-named index on `job_attempts`, which the
-table-filtered lookup previously read as missing, and an `INVALID` leftover of
+table-filtered lookup previously read as missing, a table under that name,
+which an index-only lookup would read as free, and an `INVALID` leftover of
 a different definition, which is refused rather than dropped. The
 concurrent-startup case holds a writer lock so the first build waits, starts
 the second starter during that wait and asserts no ungranted advisory lock
@@ -3145,9 +3146,11 @@ aborted one side with `40P01`. With SQLx's own `Migrate::lock` held on another
 connection, external preparation waits without any ungranted advisory lock or
 snapshot-holding lock waiter in the catalog and completes after release, so
 Runledger's derived key matches SQLx's, and under a 250 ms `lock_timeout`
-profile, or a 500 ms `statement_timeout` with `lock_timeout` 0, the same held
-SQLx lock makes the protected runner fail with `Incompatible` within a few
-seconds instead of waiting forever. Under a profile with a 250 ms lock
+profile, a 500 ms `statement_timeout` with `lock_timeout` 0, or a 500 ms
+`transaction_timeout` with both of those zero, the same held SQLx lock makes
+the protected runner fail with `Incompatible` naming that setting within a few
+seconds instead of waiting forever; before the polling lock, the transaction
+timeout had terminated the blocking waiter's connection. Under a profile with a 250 ms lock
 timeout and a 2 s statement timeout, the concurrent build waits more than three
 seconds for an open writer and then completes, whereas before the build session
 lifted those timeouts the runner was cancelled early. While the protected
@@ -3155,9 +3158,10 @@ runner's build waits for a writer, read-only verification from another session
 reports `BuildInProgress` instead of `Invalid` and passes after the build ends;
 a missing index verifies as `BuildInProgress` while another session holds
 SQLx's migration lock and as `Missing` after release. A database-backed
-unit test on a 250 ms `lock_timeout` profile session shows both timeouts read
-`0` while lifted and return to the profile's exact values after the build
-restores them, so the cutover validation that follows keeps its bounds; a
+unit test on a profile session with a 2 s statement, 250 ms lock and 4 s
+transaction timeout shows all three read `0` while lifted and return to the
+profile's exact values after the build restores them, so the cutover
+validation that follows keeps its bounds; a
 conflicting lock queued behind the build cannot show this end to end because
 any waiting session holds a snapshot the build waits for. Build durations on
 populated tables were not measured.

@@ -121,10 +121,11 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
 
     use runledger_test_support::{setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool};
 
-    async fn timeouts(conn: &mut PgConnection) -> (String, String) {
+    async fn timeouts(conn: &mut PgConnection) -> (String, String, String) {
         sqlx::query_as(
             "SELECT pg_catalog.current_setting('statement_timeout'),
-                    pg_catalog.current_setting('lock_timeout')",
+                    pg_catalog.current_setting('lock_timeout'),
+                    pg_catalog.current_setting('transaction_timeout')",
         )
         .fetch_one(conn)
         .await
@@ -134,12 +135,16 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
     let (pool, ephemeral) = setup_unmigrated_ephemeral_pool("online_timeouts_restore", 1).await;
     let options = pool.connect_options();
     let login = options.get_username();
-    let profile = crate::PgSessionProfile::new(
+    // All three lifted settings nonzero, so a regression in any lift or
+    // restore branch, including the transaction_timeout one, is visible.
+    let profile = crate::PgSessionProfile::with_timeouts(
         login,
         login,
         vec!["public".into()],
         Duration::from_secs(2),
         Duration::from_millis(250),
+        Duration::from_secs(3),
+        Duration::from_secs(4),
     )
     .expect("short-timeout profile");
     let database = crate::RunledgerDatabase::connect((*options).clone(), profile, 1)
@@ -148,12 +153,16 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
     let mut conn = database.pool().acquire().await.expect("session");
 
     let before = timeouts(&mut conn).await;
-    assert_ne!(
-        before.1, "0",
-        "the profile bounds lock waits before the build"
+    assert_eq!(
+        before,
+        ("2s".to_owned(), "250ms".to_owned(), "4s".to_owned()),
+        "the profile bounds every timeout before the build"
     );
     let lifted = ProfileTimeouts::lift(&mut conn).await.expect("lift");
-    assert_eq!(timeouts(&mut conn).await, ("0".to_owned(), "0".to_owned()));
+    assert_eq!(
+        timeouts(&mut conn).await,
+        ("0".to_owned(), "0".to_owned(), "0".to_owned())
+    );
     lifted.restore(&mut conn).await.expect("restore");
     assert_eq!(
         timeouts(&mut conn).await,

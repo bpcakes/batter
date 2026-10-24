@@ -11,7 +11,7 @@ use runledger_test_support::{
     EphemeralDatabase, setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool,
 };
 use sqlx::migrate::Migrate;
-use sqlx::{PgPool, Row};
+use sqlx::{Connection, PgPool, Row};
 
 pub const LAST_VERSION_BEFORE_SNAPSHOT_COLUMNS: i64 = 202604100001;
 pub const LAST_VERSION_BEFORE_CUTOVER: i64 = 202605180001;
@@ -150,22 +150,92 @@ pub async fn migrate_with_profile_timeouts(
     statement_timeout: Duration,
     lock_timeout: Duration,
 ) -> Result<(), SchemaCompatibilityError> {
-    let options = pool.connect_options();
-    let login = options.get_username();
+    let login = pool.connect_options().get_username().to_owned();
     let profile = PgSessionProfile::new(
-        login,
-        login,
+        &login,
+        &login,
         vec!["public".into()],
         statement_timeout,
         lock_timeout,
     )
     .expect("profile with explicit timeouts");
+    migrate_through_profile(pool, profile).await
+}
+
+/// Migrate through a profile whose only nonzero bound is `transaction_timeout`,
+/// which PostgreSQL 17 and later apply to each statement's implicit
+/// transaction as well.
+pub async fn migrate_with_transaction_timeout(
+    pool: &PgPool,
+    transaction_timeout: Duration,
+) -> Result<(), SchemaCompatibilityError> {
+    let login = pool.connect_options().get_username().to_owned();
+    let profile = PgSessionProfile::with_timeouts(
+        &login,
+        &login,
+        vec!["public".into()],
+        Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
+        transaction_timeout,
+    )
+    .expect("profile with only a transaction timeout");
+    migrate_through_profile(pool, profile).await
+}
+
+async fn migrate_through_profile(
+    pool: &PgPool,
+    profile: PgSessionProfile,
+) -> Result<(), SchemaCompatibilityError> {
+    let options = pool.connect_options();
     let database = RunledgerDatabase::connect((*options).clone(), profile, 1)
         .await
-        .expect("short-timeout database");
+        .expect("profiled database");
     let result = runledger_postgres::migrate_after_idempotency_cutover(&database).await;
     database.pool().close().await;
     result
+}
+
+/// Hold SQLx's own migration lock on a separate connection and require
+/// `migrate` to give up within the profile bound, failing with `Incompatible`
+/// and a message naming `setting`, before the lock is released again.
+pub async fn assert_lock_wait_expires<F, Fut>(harness: &Harness, setting: &str, migrate: F)
+where
+    F: FnOnce(PgPool) -> Fut,
+    Fut: Future<Output = Result<(), SchemaCompatibilityError>> + Send + 'static,
+{
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("holder connection");
+    holder.lock().await.expect("SQLx migration lock");
+
+    let started = tokio::time::Instant::now();
+    let error = match tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::spawn(migrate(harness.pool.clone())),
+    )
+    .await
+    .expect("the bounded wait must not hang")
+    .expect("runner task")
+    {
+        Err(error) => error,
+        Ok(()) => panic!("a nonzero {setting} must bound the wait for a held lock"),
+    };
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "expiry must follow the profile bound, not the test deadline"
+    );
+    assert!(
+        matches!(error, SchemaCompatibilityError::Incompatible(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error.to_string().contains(setting),
+        "the expiry must name {setting}: {error}"
+    );
+
+    holder.unlock().await.expect("release SQLx lock");
+    holder.close().await.expect("close holder");
 }
 
 /// Whether a concurrent build on `job_queue` is currently waiting for writers

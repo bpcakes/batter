@@ -14,9 +14,9 @@ mod support;
 use online_support::{
     DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, LAST_VERSION_BEFORE_SNAPSHOT_COLUMNS,
     LAST_VERSION_BEFORE_SUMMARY_PAGINATION, SUMMARY_PAGINATION_VERSION,
-    assert_declared_indexes_valid, build_waits_for_writers, hold_writer_lock, index_catalog,
-    migrate_with_profile_timeouts, migrate_with_short_timeouts, raw_apply_through, sqlx_history,
-    wait_for, writer_can_lock,
+    assert_declared_indexes_valid, assert_lock_wait_expires, build_waits_for_writers,
+    hold_writer_lock, index_catalog, migrate_with_profile_timeouts, migrate_with_short_timeouts,
+    migrate_with_transaction_timeout, raw_apply_through, sqlx_history, wait_for, writer_can_lock,
 };
 use sqlx::Connection;
 use sqlx::migrate::Migrate;
@@ -312,7 +312,9 @@ async fn online_build_waits_without_stalling_writers_unlike_the_canonical_build(
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_locks
-                WHERE relation = 'job_queue'::regclass
+                WHERE database = (SELECT oid FROM pg_catalog.pg_database
+                                  WHERE datname = pg_catalog.current_database())
+                  AND relation = 'job_queue'::regclass
                   AND mode = 'ShareLock'
                   AND NOT granted
              )",
@@ -373,7 +375,8 @@ async fn concurrent_protected_startups_both_succeed_with_pending_online_indexes(
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_stat_activity
-                WHERE query = 'SELECT pg_catalog.pg_try_advisory_lock($1)'
+                WHERE datname = pg_catalog.current_database()
+                  AND query = 'SELECT pg_catalog.pg_try_advisory_lock($1)'
              )",
         )
         .fetch_one(&harness.pool)
@@ -382,7 +385,10 @@ async fn concurrent_protected_startups_both_succeed_with_pending_online_indexes(
     })
     .await;
     let blocking_waiters: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND NOT granted",
+        "SELECT count(*) FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND NOT granted
+           AND database = (SELECT oid FROM pg_catalog.pg_database
+                           WHERE datname = pg_catalog.current_database())",
     )
     .fetch_one(&harness.pool)
     .await
@@ -430,13 +436,18 @@ async fn runledger_lock_wait_excludes_sqlx_holders_without_queueing_a_blocking_l
     let database = profiled_database(&harness.pool).await;
     let mut preparation =
         tokio::spawn(async move { prepare_online_indexes_for_external_migrator(&database).await });
+    // Every catalog probe below is scoped to this test's database: sibling
+    // tests run concurrently in their own ephemeral databases on this server.
     let elapsed = tokio::time::timeout(Duration::from_millis(1500), &mut preparation).await;
     assert!(
         elapsed.is_err(),
         "preparation must wait while SQLx holds the lock: the derived key matches"
     );
     let blocking_waiters: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND NOT granted",
+        "SELECT count(*) FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND NOT granted
+           AND database = (SELECT oid FROM pg_catalog.pg_database
+                           WHERE datname = pg_catalog.current_database())",
     )
     .fetch_one(&harness.pool)
     .await
@@ -447,7 +458,8 @@ async fn runledger_lock_wait_excludes_sqlx_holders_without_queueing_a_blocking_l
     );
     let waiting_with_snapshot: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_catalog.pg_stat_activity
-         WHERE wait_event_type = 'Lock' AND backend_xmin IS NOT NULL",
+         WHERE datname = pg_catalog.current_database()
+           AND wait_event_type = 'Lock' AND backend_xmin IS NOT NULL",
     )
     .fetch_one(&harness.pool)
     .await
@@ -576,36 +588,11 @@ async fn protected_runner_refuses_a_same_named_index_on_another_table() {
 async fn lock_wait_honors_the_profile_lock_timeout() {
     let harness = Harness::fresh("online_idx_lock_timeout").await;
     raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
-    let mut holder = sqlx::PgConnection::connect(harness.database.url())
-        .await
-        .expect("holder connection");
-    holder.lock().await.expect("SQLx migration lock");
-
-    let runner_pool = harness.pool.clone();
-    let started = tokio::time::Instant::now();
-    let error = tokio::time::timeout(
-        Duration::from_secs(10),
-        tokio::spawn(async move { migrate_with_short_timeouts(&runner_pool).await }),
-    )
-    .await
-    .expect("the bounded wait must not hang")
-    .expect("runner task")
-    .expect_err("a 250 ms lock_timeout bounds the wait for a held migration lock");
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "expiry must follow the profile bound, not the test deadline"
-    );
-    assert!(
-        matches!(error, SchemaCompatibilityError::Incompatible(_)),
-        "unexpected error: {error}"
-    );
-    assert!(
-        error.to_string().contains("lock_timeout"),
-        "unexpected message: {error}"
-    );
-
-    holder.unlock().await.expect("release SQLx lock");
-    holder.close().await.expect("close holder");
+    // A 250 ms lock_timeout under a 2 s statement_timeout.
+    assert_lock_wait_expires(&harness, "lock_timeout", |pool| async move {
+        migrate_with_short_timeouts(&pool).await
+    })
+    .await;
     migrate_profiled(&harness.pool)
         .await
         .expect("startup proceeds once the lock is free");
@@ -662,42 +649,79 @@ async fn verification_reports_a_missing_index_as_in_progress_under_a_held_migrat
 async fn lock_wait_honors_the_profile_statement_timeout_when_lock_timeout_is_zero() {
     let harness = Harness::fresh("online_idx_statement_timeout").await;
     raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
-    let mut holder = sqlx::PgConnection::connect(harness.database.url())
-        .await
-        .expect("holder connection");
-    holder.lock().await.expect("SQLx migration lock");
-
-    let runner_pool = harness.pool.clone();
-    let started = tokio::time::Instant::now();
-    let error = tokio::time::timeout(
-        Duration::from_secs(10),
-        tokio::spawn(async move {
-            migrate_with_profile_timeouts(&runner_pool, Duration::from_millis(500), Duration::ZERO)
-                .await
-        }),
-    )
-    .await
-    .expect("the statement_timeout must bound the wait when lock_timeout is zero")
-    .expect("runner task")
-    .expect_err("a 500 ms statement_timeout bounds the wait for a held migration lock");
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "expiry must follow the profile bound, not the test deadline"
-    );
-    assert!(
-        matches!(error, SchemaCompatibilityError::Incompatible(_)),
-        "unexpected error: {error}"
-    );
-    assert!(
-        error.to_string().contains("statement_timeout"),
-        "unexpected message: {error}"
-    );
-
-    holder.unlock().await.expect("release SQLx lock");
-    holder.close().await.expect("close holder");
+    assert_lock_wait_expires(&harness, "statement_timeout", |pool| async move {
+        migrate_with_profile_timeouts(&pool, Duration::from_millis(500), Duration::ZERO).await
+    })
+    .await;
     migrate_profiled(&harness.pool)
         .await
         .expect("startup proceeds once the lock is free");
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn lock_wait_honors_the_profile_transaction_timeout_when_the_others_are_zero() {
+    let harness = Harness::fresh("online_idx_transaction_timeout").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
+    // Before the polling lock, a 500 ms transaction_timeout terminated the
+    // blocking pg_advisory_lock session; the poll must keep that bound.
+    assert_lock_wait_expires(&harness, "transaction_timeout", |pool| async move {
+        migrate_with_transaction_timeout(&pool, Duration::from_millis(500)).await
+    })
+    .await;
+    migrate_profiled(&harness.pool)
+        .await
+        .expect("startup proceeds once the lock is free");
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn protected_runner_refuses_a_table_under_a_declared_index_name() {
+    let harness = Harness::fresh("online_idx_foreign_table").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
+    // A relation that is not an index at all: an inner join on pg_index would
+    // read the name as free and record the migration before the build failed.
+    sqlx::raw_sql("CREATE TABLE idx_job_queue_created_id (id bigint)")
+        .execute(&harness.pool)
+        .await
+        .expect("foreign table");
+
+    let error = migrate_profiled(&harness.pool)
+        .await
+        .expect_err("a table under a declared index name is refused");
+    assert!(
+        matches!(
+            error,
+            SchemaCompatibilityError::OnlineIndex {
+                index: "idx_job_queue_created_id",
+                problem: OnlineIndexProblem::DefinitionMismatch
+            }
+        ),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !sqlx_history(&harness.pool)
+            .await
+            .iter()
+            .any(|(version, _, _)| *version == SUMMARY_PAGINATION_VERSION),
+        "the refused migration must not be recorded"
+    );
+    let relkind: String = sqlx::query_scalar(
+        "SELECT relkind::text FROM pg_catalog.pg_class WHERE relname = 'idx_job_queue_created_id'",
+    )
+    .fetch_one(&harness.pool)
+    .await
+    .expect("foreign relation kind");
+    assert_eq!(relkind, "r", "the foreign table is refused, never dropped");
+
+    sqlx::raw_sql("DROP TABLE idx_job_queue_created_id")
+        .execute(&harness.pool)
+        .await
+        .expect("remove the foreign table");
+    migrate_profiled(&harness.pool)
+        .await
+        .expect("runner proceeds once the name is free");
+    assert_declared_indexes_valid(&harness.pool, "after foreign table removal").await;
     harness.teardown().await;
 }
 

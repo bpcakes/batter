@@ -32,28 +32,42 @@ pub(in crate::migrations) struct MigrationLock {
 impl MigrationLock {
     /// Wait for the lock by polling, holding no snapshot between polls.
     ///
-    /// The session's `statement_timeout` and `lock_timeout` bound the wait
-    /// exactly as they bounded the single blocking `pg_advisory_lock`
-    /// statement: the smaller nonzero value fails the wait once it elapses,
-    /// and only when both are zero does the wait continue without bound. An
-    /// expired bound is reported as [`sqlx::Error::Protocol`] naming the
-    /// setting, not as the server's `55P03` or `57014` database error, because
-    /// each short poll statement completes within any timeout.
+    /// The session's `statement_timeout`, `lock_timeout` and, where the
+    /// server defines it, `transaction_timeout` bound the wait exactly as
+    /// they bounded the single blocking `pg_advisory_lock` statement: the
+    /// smallest nonzero value fails the wait once it elapses, and only when
+    /// all of them are zero does the wait continue without bound. An expired
+    /// bound is reported as [`sqlx::Error::Protocol`] naming the setting, not
+    /// as the server's `55P03` or `57014` database error or a connection
+    /// terminated by `transaction_timeout`, because each short poll statement
+    /// completes within any timeout.
     pub(in crate::migrations) async fn acquire(
         conn: &mut PgConnection,
     ) -> Result<Self, sqlx::Error> {
-        let (database_name, statement_timeout_ms, lock_timeout_ms): (String, i64, i64) =
-            sqlx::query_as(
-                "SELECT pg_catalog.current_database(),
-                        (EXTRACT(EPOCH FROM pg_catalog.current_setting('statement_timeout')::interval)
-                         * 1000)::bigint,
-                        (EXTRACT(EPOCH FROM pg_catalog.current_setting('lock_timeout')::interval)
-                         * 1000)::bigint",
-            )
-            .fetch_one(&mut *conn)
-            .await?;
+        // transaction_timeout exists from PostgreSQL 17; a server without it
+        // yields NULL here and contributes no bound.
+        let (database_name, statement_timeout_ms, lock_timeout_ms, transaction_timeout_ms): (
+            String,
+            i64,
+            i64,
+            Option<i64>,
+        ) = sqlx::query_as(
+            "SELECT pg_catalog.current_database(),
+                    (EXTRACT(EPOCH FROM pg_catalog.current_setting('statement_timeout')::interval)
+                     * 1000)::bigint,
+                    (EXTRACT(EPOCH FROM pg_catalog.current_setting('lock_timeout')::interval)
+                     * 1000)::bigint,
+                    (EXTRACT(EPOCH FROM pg_catalog.current_setting('transaction_timeout', true)::interval)
+                     * 1000)::bigint",
+        )
+        .fetch_one(&mut *conn)
+        .await?;
         let id = lock_id(&database_name);
-        let bound = wait_bound(statement_timeout_ms, lock_timeout_ms);
+        let bound = wait_bound(
+            statement_timeout_ms,
+            lock_timeout_ms,
+            transaction_timeout_ms,
+        );
         let started = tokio::time::Instant::now();
         loop {
             let acquired: bool = sqlx::query_scalar("SELECT pg_catalog.pg_try_advisory_lock($1)")
@@ -130,18 +144,31 @@ impl MigrationLock {
     }
 }
 
-/// The bound a blocking lock statement would have had: the smaller nonzero
-/// session timeout, named for the error message, or none when both are zero.
-fn wait_bound(statement_timeout_ms: i64, lock_timeout_ms: i64) -> Option<(Duration, &'static str)> {
+/// The bound a blocking lock statement would have had: the smallest nonzero
+/// session timeout, named for the error message, or none when all are zero.
+/// `transaction_timeout` is `None` on a server that does not define it.
+///
+/// PostgreSQL ignores a narrower timeout equal to a wider one, so an equal
+/// value is attributed to the wider-scoped setting: the transaction before
+/// the statement, the statement before its lock wait.
+fn wait_bound(
+    statement_timeout_ms: i64,
+    lock_timeout_ms: i64,
+    transaction_timeout_ms: Option<i64>,
+) -> Option<(Duration, &'static str)> {
     let nonzero = |ms: i64| u64::try_from(ms).ok().filter(|ms| *ms > 0);
-    match (nonzero(statement_timeout_ms), nonzero(lock_timeout_ms)) {
-        (Some(statement), Some(lock)) if lock <= statement => {
-            Some((Duration::from_millis(lock), "lock_timeout"))
-        }
-        (Some(statement), _) => Some((Duration::from_millis(statement), "statement_timeout")),
-        (None, Some(lock)) => Some((Duration::from_millis(lock), "lock_timeout")),
-        (None, None) => None,
-    }
+    [
+        (
+            "transaction_timeout",
+            transaction_timeout_ms.and_then(nonzero),
+        ),
+        ("statement_timeout", nonzero(statement_timeout_ms)),
+        ("lock_timeout", nonzero(lock_timeout_ms)),
+    ]
+    .into_iter()
+    .filter_map(|(setting, ms)| ms.map(|ms| (ms, setting)))
+    .min_by_key(|(ms, _)| *ms)
+    .map(|(ms, setting)| (Duration::from_millis(ms), setting))
 }
 
 /// The lock id SQLx derives for a database name: `0x3d32ad9e` times the
@@ -173,25 +200,32 @@ mod tests {
     }
 
     #[test]
-    fn wait_bound_is_the_smaller_nonzero_session_timeout() {
-        assert_eq!(wait_bound(0, 0), None);
+    fn wait_bound_is_the_smallest_nonzero_session_timeout() {
+        let bound = |ms, setting| Some((Duration::from_millis(ms), setting));
+        assert_eq!(wait_bound(0, 0, None), None);
+        assert_eq!(wait_bound(0, 0, Some(0)), None);
+        assert_eq!(wait_bound(2000, 250, None), bound(250, "lock_timeout"));
+        assert_eq!(wait_bound(500, 0, Some(0)), bound(500, "statement_timeout"));
+        assert_eq!(wait_bound(0, 750, None), bound(750, "lock_timeout"));
+        assert_eq!(wait_bound(300, 900, None), bound(300, "statement_timeout"));
+        // transaction_timeout alone, shortest of three, and longer than another.
         assert_eq!(
-            wait_bound(2000, 250),
-            Some((Duration::from_millis(250), "lock_timeout"))
+            wait_bound(0, 0, Some(400)),
+            bound(400, "transaction_timeout")
         );
         assert_eq!(
-            wait_bound(500, 0),
-            Some((Duration::from_millis(500), "statement_timeout"))
+            wait_bound(2000, 250, Some(100)),
+            bound(100, "transaction_timeout")
         );
+        assert_eq!(wait_bound(2000, 250, Some(900)), bound(250, "lock_timeout"));
+        assert_eq!(wait_bound(0, 600, Some(900)), bound(600, "lock_timeout"));
+        // Equal values belong to the wider-scoped setting.
         assert_eq!(
-            wait_bound(0, 750),
-            Some((Duration::from_millis(750), "lock_timeout"))
+            wait_bound(500, 0, Some(500)),
+            bound(500, "transaction_timeout")
         );
-        assert_eq!(
-            wait_bound(300, 900),
-            Some((Duration::from_millis(300), "statement_timeout"))
-        );
-        assert_eq!(wait_bound(-1, -1), None);
+        assert_eq!(wait_bound(500, 500, None), bound(500, "statement_timeout"));
+        assert_eq!(wait_bound(-1, -1, Some(-1)), None);
     }
 
     #[test]
