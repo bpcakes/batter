@@ -105,7 +105,9 @@ pub enum ManagedApplyError {
         identity: String,
     },
     /// `COMMIT` was sent but its outcome was not acknowledged. The objects may
-    /// or may not be installed; verification of the ledger decides.
+    /// or may not be installed. Read-only verification inspects the current
+    /// installed state; it does not acknowledge termination of a retired server
+    /// session or authorize replay.
     CommitUnconfirmed(SqlxFailure),
 }
 
