@@ -200,7 +200,9 @@ contracts, capability facts and validation history.
   and session-lock termination to server-session termination. Public call shapes
   and persisted ledger formats are unchanged. Add a lazy object-count boundary
   regression, correct the live-runner summary to 157 cases, and clarify the
-  PostgreSQL lock-before-snapshot reference (`batter-54d0.2`).
+  PostgreSQL lock-before-snapshot reference (`batter-54d0.2`). Align the
+  `CommitUnconfirmed` variant's rustdoc with verification's current-state,
+  server-session termination and replay limits (`batter-54d0.3`).
 
 - Add `batter_sqlx::managed` (also `batter::sqlx::managed`, feature `sqlx`):
   managed routines and the triggers that bind them, kept as source edited in
