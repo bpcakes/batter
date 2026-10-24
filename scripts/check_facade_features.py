@@ -208,6 +208,7 @@ def facade_source(selected: tuple[str, ...]) -> str:
         lines.insert(1, "use batter::runledger::native::runtime::{PreparedSupervisor, Supervisor, catalog::JobCatalog, config::JobsConfig, registry::JobRegistry};")
     if "runledger-test-support" in chosen:
         lines.insert(1, "use batter::runledger::native::test_support::{EphemeralDatabase, create_ephemeral_database};")
+        lines.insert(1, "use batter::runledger::test_support::{HandlerExit, HandlerInvocation, HandlerRun, PersistedProgress};")
     if "runlimit" in chosen or chosen & set(RUNLIMIT_BRIDGES):
         lines.insert(1, "use batter::runlimit::{ConsumptionError, EmptyChecks, Quota};")
         lines.insert(1, "use batter::runlimit::native::{Check, FixedWindowPolicy, KeyHasher, PolicyId, ScopeId};")
@@ -394,6 +395,9 @@ def identity_source(selected: tuple[str, ...]) -> str:
     if "runledger-test-support" in chosen:
         lines += [
             "const _: fn(batter::runledger::native::test_support::EphemeralDatabase) = |_: runledger_test_support::EphemeralDatabase| {};",
+            # The adapter-owned handler drive is one item through both paths.
+            "const _: fn(batter::runledger::test_support::HandlerInvocation) = |_: batter_runledger::test_support::HandlerInvocation| {};",
+            "const _: fn(batter::runledger::test_support::HandlerExit) = |_: batter_runledger::test_support::HandlerExit| {};",
         ]
     if chosen & {"runlimit", *RUNLIMIT_BRIDGES}:
         lines += [

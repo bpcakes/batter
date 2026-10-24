@@ -13,6 +13,8 @@
 //! Inside a handler, [`job_phases`] derives Batter work and finalization contexts
 //! from the native invocation: its deadline is the worker's own, and the
 //! invocation's exit cancels both phases without a guard or forwarding task.
+//! A test drives one handler without a worker, queue or database through
+//! `test_support::HandlerInvocation`, selected by the `test-support` feature.
 //!
 //! Direct adapter consumers can implement [`PgFailurePolicy`] using only this
 //! crate's exports, retaining the concrete causes and provisional outcomes:
@@ -52,6 +54,8 @@
 #![forbid(unsafe_code)]
 
 mod phases;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use phases::{JobPhasesRejection, job_phases};
 
