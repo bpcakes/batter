@@ -328,6 +328,21 @@ strategy:
    lineage-bearing `ENQUEUED` events. Explicitly accept these losses before
    using either down-migration path.
 
+
+## Online Index Builds
+
+`migrate_after_idempotency_cutover` builds the five bundled `job_queue` and
+`workflow_runs` indexes of `202605220001`, `202607280004` and `202609050001`
+with `CREATE INDEX CONCURRENTLY` after recording each migration under its
+canonical checksum, rebuilds one lost to an interrupted build on the next
+startup, and refuses a foreign index under a declared name.
+`ensure_schema_compatible_after_idempotency_cutover` reports a missing,
+`INVALID` or differently defined declared index. Tooling that applies the
+canonical SQL itself calls `prepare_online_indexes_for_external_migrator`
+first; only the `IF NOT EXISTS` pair of `202605220001` is adoptable that way.
+Validating `CHECK` constraints in bundled migrations still scan under
+`ACCESS EXCLUSIVE`.
+
 ## Catalog Rule
 
 Use `JobCatalogDefinitionOverrides` for per-job definition differences from
