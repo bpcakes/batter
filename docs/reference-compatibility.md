@@ -100,7 +100,7 @@ sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]
 batter = { git = "https://github.com/bpcakes/batter", rev = "BATTER_REV", default-features = false, features = [
-  "runledger-test-support", # batter::runledger::native::test_support
+  "runledger-test-support", # batter::runledger::test_support and ::native::test_support
 ] }
 ```
 
@@ -139,7 +139,11 @@ the native layer needs, but never `batter-axum` or `batter::runlimit::http`.
 
 Each namespace is the native package itself, so a type reached through the
 facade and the same type reached through a direct dependency are one identity.
-`runledger-tui` is a binary-only package and has no namespace.
+`runledger-tui` is a binary-only package and has no namespace. The same
+`runledger-test-support` feature also selects `batter::runledger::test_support`,
+which is not a native namespace: it is the Runledger adapter's own worker-free
+handler drive, `batter_runledger::test_support`, with the same identity through
+both paths.
 
 These namespaces are deliberately low-level and are not equivalent to Batter's
 protected composition. `batter::runledger::register_in` still owns registering

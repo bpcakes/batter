@@ -73,10 +73,63 @@ cutoff, excessive and unrepresentable reserves, typed rejection of services
 without an exit claim and of ended invocations without invoking a factory,
 OperationPhases semantics for zero and positive reserves, acknowledged spawned,
 multiple and late observers, copied handles, invocation and sibling isolation,
-and adapted and typed handler forwarding. Runledger's worker tests cover each
+and adapted and typed handler forwarding. `tests/handler_invocation.rs` and
+`tests/handler_progress.rs`
+(`cargo test -p batter-runledger --features test-support --locked`) drive
+handlers through `test_support::HandlerInvocation` under paused time: the
+native deadline is the budget after execution starts and the work deadline the
+reserve earlier; retryable and terminal failures keep the handler's
+classification; a budget inside the reserve reaches the handler as
+`JobPhasesRejection::Exhausted` and invokes no work factory; an unpolled
+execution runs no handler and a destroyed one cancels a derived context a
+spawned observer holds, before work; an elapsed budget destroys a parked
+handler and reports `TimedOut`; a result at the deadline is `TimedOut` while one
+a nanosecond earlier is returned; a handler panic is `Panicked` and ends the
+invocation; an exit-hook panic is retained beside the returned result; progress
+writes merge like the queue row, reject an invalid effective pair and
+`DeadlineElapsed` at the deadline, and start from the declared checkpoint; zero
+and over-long budgets are rejected at declaration; and typed, legacy and
+type-erased handlers run through the worker's dispatch with a `Send` future.
+Runledger's worker tests cover each
 native exit path against PostgreSQL 18, with an advisory-lock gate on the
 outcome write proving that every observer and hook sees the end first. Review closure is tracked separately; older hosted-control sections below describe
 the previous implementation.
+
+## Testing a job handler without a worker
+
+Select the facade's `runledger-test-support` feature in `[dev-dependencies]`
+(Cargo resolver 2 or 3 keeps it out of ordinary builds) and drive the value a
+catalog registers:
+
+```rust,ignore
+use batter::runledger::test_support::{HandlerExit, HandlerInvocation};
+
+let run = HandlerInvocation::new(Duration::from_secs(5))?
+    .execute(&Notify.into_job_handler(), json!({ "recipient": "a" }))
+    .await;
+match run.exit {
+    HandlerExit::Returned(Ok(completion)) => { /* the handler's completion */ }
+    HandlerExit::Returned(Err(failure)) => { /* the handler's own JobFailure */ }
+    HandlerExit::TimedOut => { /* no result strictly before the deadline */ }
+    HandlerExit::Panicked(message) => { /* contained like the worker does */ }
+}
+assert!(run.exit_hook_panics.is_empty());
+```
+
+The facility builds the real `JobExecution`: services that own the invocation's
+exit signal, so `job_phases` derives and the invocation's end cancels every
+derived context; one monotonic deadline that `deadline()`, `remaining_budget()`,
+progress writes and the timeout all read; and in-memory progress persistence
+that merges omitted fields like the queue row. `with_checkpoint` declares the
+resume snapshot; `run.persisted` is the row after the last committed write. The
+budget starts when the returned future is first polled, so paused-time tests
+advance from there. Destroying the future before it completes ends the
+invocation as a worker task abort does: the handler future drops first. The
+facility applies no durable outcome policy: retries, continuations and dead
+letters are the worker's, lease loss is not representable, and a returned
+`JobFailure::timeout` from the handler is distinct from `HandlerExit::TimedOut`.
+Direct adapter consumers use `batter_runledger::test_support` with the adapter's
+`test-support` feature; the same items are reachable through both paths.
 
 Finite command completion controls in `crates/batter-core/tests/command/completion.rs`
 place cancellation or paused-clock expiry in the final poll versus future
@@ -1540,6 +1593,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
+| Worker-free handler drive: budget-derived deadline, strict-before-deadline acceptance, destruction before end, contained panics, retained hook panics, dispatch of typed and legacy handlers; queue-row progress merge, deadline refusal, declared checkpoint and budget acceptance | [handler_invocation.rs](../crates/batter-runledger/tests/handler_invocation.rs), [handler_progress.rs](../crates/batter-runledger/tests/handler_progress.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |

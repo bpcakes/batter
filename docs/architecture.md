@@ -60,6 +60,7 @@ application composition root
   |-- optional batter-sqlx -> batter-core + native SQLx PgPool / owned scopes
   |     `-- opt-in test-support -> external harness + generic test support
   |-- optional batter-runledger -> batter-core + batter-sqlx + native Runledger
+  |     `-- opt-in test-support -> native PostgreSQL test support + worker-free handler drive
   |-- optional batter-runlimit -> batter-core + native Runlimit core
   |     |-- opt-in memory / postgres -> native storage and error bridges
   |     `-- opt-in axum -> batter-axum + native serving
@@ -72,7 +73,8 @@ selects only `batter-core`. Applications opt into `batter::at_rest`, `batter::ax
 `batter::test_support` explicitly. `runlimit-memory`, `runlimit-postgres`,
 `runlimit-axum`, `runlimit-native-http`, `runlimit-native-axum`,
 `runledger-test-support`, and `sqlx-test-support` forward the existing adapter
-features; they do not add facade-owned storage, HTTP, or fixture
+features; `runledger-test-support` also selects the Runledger adapter's
+worker-free handler drive, and none adds facade-owned storage, HTTP, or fixture
 implementations. The
 facade re-exports the adapter types, preserving identity with direct adapter
 imports, and the same features expose the native Runledger and Runlimit packages

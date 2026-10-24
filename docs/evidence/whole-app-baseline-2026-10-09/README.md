@@ -81,7 +81,7 @@ after the acquire timeout with the pool finalizer observed and exit status 1.
 | No budget-aware `run_atomic` on the Runledger side | Sentence added to the adapter README: wrap the call in `context.run`. |
 | `AdmittedRequest::correlation_id` return type undocumented | Sentence added to its rustdoc. |
 | `PgNativeQuery` rejects the runtime `sqlx::query_as` result | Sentence added to the SQLx adapter README. |
-| No test facility for a `JobExecutionHandler` without a worker | Filed as `batter-3upk`. |
+| No test facility for a `JobExecutionHandler` without a worker | Filed as `batter-3upk`; closed on 2026-10-24 by `batter::runledger::test_support::HandlerInvocation` (feature `runledger-test-support`), recorded in ADR-010. |
 | `JobInvocationOwner::end` is `#[must_use]` and the services example never ends the invocation | Sentence added to the `JobExecutionServices::invocation` rustdoc. |
 | Definition sync before `register_in` is not named on the Batter side | Sentence added to the adapter README. |
 | Shutdown budget versus job timeouts has no guidance | Application policy; not changed. |

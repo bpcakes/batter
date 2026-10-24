@@ -8,6 +8,25 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Drive one job handler in a test without a worker, queue or database
+  (`batter-3upk`, closing gap 7 of the
+  [whole-application baseline](docs/evidence/whole-app-baseline-2026-10-09/README.md);
+  [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#handler-test-facility-assessment-batter-3upk)).
+  `batter_runledger::test_support::HandlerInvocation`, reachable as
+  `batter::runledger::test_support` with the facade's `runledger-test-support`
+  feature, declares a budget and an optional resume checkpoint, and `execute`
+  runs the value a catalog registers through the worker's own dispatch with a
+  real `JobExecution`: services that own the invocation's exit signal, so
+  `job_phases` derives and the end cancels derived contexts; one monotonic
+  deadline the budget after the future is first polled, read by `deadline()`,
+  progress writes and the timeout alike; and in-memory progress persistence
+  with the queue row's merge rule. The handler future is destroyed before the
+  invocation ends, on every exit and when the future itself is destroyed. The
+  run's exhaustive `HandlerExit` is the handler's own result when observed
+  strictly before the deadline, `TimedOut` otherwise, or `Panicked` with the
+  message, beside `PersistedProgress` and the contained exit-hook panics. No
+  retry, continuation, dead-letter or lease behaviour is simulated. The
+  adapter's `test-support` feature now also selects `serde_json` and `uuid`.
 - Breaking: browser cookies are presented only where the route group's
   browser policy accepts ambient credentials (`batter-52s3`,
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#browser-credential-gate-assessment-batter-52s3)).
