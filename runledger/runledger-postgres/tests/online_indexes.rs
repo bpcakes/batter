@@ -14,9 +14,8 @@ mod support;
 use online_support::{
     DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, LAST_VERSION_BEFORE_SNAPSHOT_COLUMNS,
     LAST_VERSION_BEFORE_SUMMARY_PAGINATION, SUMMARY_PAGINATION_VERSION,
-    assert_declared_indexes_valid, assert_lock_wait_expires, build_waits_for_writers,
-    hold_writer_lock, index_catalog, migrate_with_profile_timeouts, migrate_with_short_timeouts,
-    migrate_with_transaction_timeout, raw_apply_through, sqlx_history, wait_for, writer_can_lock,
+    assert_declared_indexes_valid, build_waits_for_writers, hold_writer_lock, index_catalog,
+    migrate_with_short_timeouts, raw_apply_through, sqlx_history, wait_for, writer_can_lock,
 };
 use sqlx::Connection;
 use sqlx::migrate::Migrate;
@@ -585,21 +584,6 @@ async fn protected_runner_refuses_a_same_named_index_on_another_table() {
 }
 
 #[tokio::test]
-async fn lock_wait_honors_the_profile_lock_timeout() {
-    let harness = Harness::fresh("online_idx_lock_timeout").await;
-    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
-    // A 250 ms lock_timeout under a 2 s statement_timeout.
-    assert_lock_wait_expires(&harness, "lock_timeout", |pool| async move {
-        migrate_with_short_timeouts(&pool).await
-    })
-    .await;
-    migrate_profiled(&harness.pool)
-        .await
-        .expect("startup proceeds once the lock is free");
-    harness.teardown().await;
-}
-
-#[tokio::test]
 async fn verification_reports_a_missing_index_as_in_progress_under_a_held_migration_lock() {
     let harness = Harness::fresh("online_idx_missing_under_lock").await;
     migrate_profiled(&harness.pool)
@@ -642,36 +626,6 @@ async fn verification_reports_a_missing_index_as_in_progress_under_a_held_migrat
         ),
         "unexpected error: {error}"
     );
-    harness.teardown().await;
-}
-
-#[tokio::test]
-async fn lock_wait_honors_the_profile_statement_timeout_when_lock_timeout_is_zero() {
-    let harness = Harness::fresh("online_idx_statement_timeout").await;
-    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
-    assert_lock_wait_expires(&harness, "statement_timeout", |pool| async move {
-        migrate_with_profile_timeouts(&pool, Duration::from_millis(500), Duration::ZERO).await
-    })
-    .await;
-    migrate_profiled(&harness.pool)
-        .await
-        .expect("startup proceeds once the lock is free");
-    harness.teardown().await;
-}
-
-#[tokio::test]
-async fn lock_wait_honors_the_profile_transaction_timeout_when_the_others_are_zero() {
-    let harness = Harness::fresh("online_idx_transaction_timeout").await;
-    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
-    // Before the polling lock, a 500 ms transaction_timeout terminated the
-    // blocking pg_advisory_lock session; the poll must keep that bound.
-    assert_lock_wait_expires(&harness, "transaction_timeout", |pool| async move {
-        migrate_with_transaction_timeout(&pool, Duration::from_millis(500)).await
-    })
-    .await;
-    migrate_profiled(&harness.pool)
-        .await
-        .expect("startup proceeds once the lock is free");
     harness.teardown().await;
 }
 

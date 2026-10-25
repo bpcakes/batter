@@ -1636,7 +1636,14 @@ pool profile's statement, lock and transaction timeouts lifted, because a
 concurrent build waits for in-flight writers and older snapshots; a long
 transaction delays the build rather than cancelling it. The profile's values
 are restored after each build, so the cutover validation that follows keeps
-its bounds. While another session is still
+its bounds. The build also sets `client_connection_check_interval` to one
+second, preserving a tighter positive value and restoring the original setting
+afterward. Dropping the runner closes its session; PostgreSQL can detect that
+closed socket while blocked on a writer. A dropped future is not proof of
+backend death, and network failure or runtime death can delay detection.
+Build errors retain their index, phase and acknowledged migration version in
+`SchemaCompatibilityError::OnlineIndexExecution`; secondary restoration errors
+remain inspectable. No error authorizes automatic replay. While another session is still
 building, read-only verification reports the transient
 `OnlineIndexProblem::BuildInProgress`; retry once that build ends. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
@@ -1645,7 +1652,12 @@ and `ensure_schema_compatible_after_idempotency_cutover` reports it as
 `SchemaCompatibilityError::OnlineIndex` with an `OnlineIndexProblem` instead
 of starting without it. A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before
-the migration is recorded.
+the migration is recorded. Definition matching is strict, including physical
+storage options: even an explicit default `fillfactor = 90` is refused because
+`pg_get_indexdef` renders a `WITH` clause absent from the bundle. For that case,
+`ALTER INDEX idx_job_queue_created_id RESET (fillfactor)` restores the implicit
+default without replacing the index. Review other mismatches against the
+canonical definition; verification never modifies them.
 
 Deployments whose own tooling applies the canonical SQL can call
 `prepare_online_indexes_for_external_migrator` first. Under the SQLx migration
@@ -1658,8 +1670,13 @@ migration with a foreign checksum or a failed run is refused before any build,
 as the protected runner refuses it. Its report also
 names the pending indexes an external migrator still builds with a blocking
 statement; only the protected runner builds those online. Run the external
-tooling only after the
-call returned `Ok`: a failed or cancelled build can leave an `INVALID` index,
+tooling only after the call returned `Ok` and its report has been inspected.
+`Ok` alone does not mean every index is prepared. On populated tables, stop
+when `deferred()` is nonempty, apply only the prerequisite migration prefix,
+and prepare again before crossing the index migration. When
+`external_build_blocks()` is nonempty, use the protected runner or an
+application-approved deployment window. These are caller obligations for
+external tooling, which the library does not execute. A failed or cancelled build can leave an `INVALID` index,
 which a rerun drops and rebuilds while the migration is pending. Once the
 canonical statement has adopted an `INVALID` index and the migration is
 recorded, preparation no longer touches it and startup verification refuses
@@ -1672,7 +1689,11 @@ contract migration.
 
 Both Runledger entry points wait for the SQLx migration lock by polling
 `pg_try_advisory_lock`, so a second Runledger starter holds no snapshot that
-the holder's concurrent build must wait for. A migrator or older binary that
+the holder's concurrent build must wait for. The smallest nonzero statement,
+lock or transaction timeout bounds this wait; local expiry returns
+`SchemaCompatibilityError::MigrationLockTimeout` with a `MigrationTimeoutSetting`
+and duration, distinct from a native database or connection failure. All zero
+values leave the wait unbounded. A migrator or older binary that
 waits with blocking `pg_advisory_lock` does hold one, and PostgreSQL aborts
 either that waiter or the build with a deadlock, leaving the index `INVALID`.
 Do not start such tooling while a Runledger process is migrating or preparing,

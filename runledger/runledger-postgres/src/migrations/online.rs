@@ -17,16 +17,18 @@ use sqlx::migrate::{Migrate, Migration};
 use sqlx::{AssertSqlSafe, PgConnection, SqlSafeStr};
 
 use super::{
-    MIGRATOR, SchemaCompatibilityError, applied_runledger_migrations,
-    expected_runledger_migrations, first_conflicting_runledger_version,
-    first_dirty_runledger_version, first_missing_runledger_version, has_migrations_table,
-    has_runledger_migration_history_table, list_migration_history,
-    list_recorded_runledger_migrations, validate_checksum,
+    MIGRATOR, OnlineIndexExecutionError, OnlineIndexPhase, SchemaCompatibilityError,
+    applied_runledger_migrations, expected_runledger_migrations,
+    first_conflicting_runledger_version, first_dirty_runledger_version,
+    first_missing_runledger_version, has_migrations_table, has_runledger_migration_history_table,
+    list_migration_history, list_recorded_runledger_migrations, validate_checksum,
 };
 use crate::{PgQueryExecutor, RunledgerDatabase};
 
 mod lock;
+mod session;
 pub(super) use lock::MigrationLock;
+use session::ProfileTimeouts;
 
 /// One bundled index whose ordinary build blocks writes on a populated table.
 #[derive(Clone, Copy)]
@@ -164,6 +166,7 @@ impl fmt::Display for OnlineIndexProblem {
 
 /// Outcome of [`prepare_online_indexes_for_external_migrator`].
 #[derive(Debug, Default)]
+#[must_use = "inspect deferred indexes and external blocking builds before running external tooling"]
 pub struct OnlineIndexPreparation {
     built: Vec<&'static str>,
     already_valid: Vec<&'static str>,
@@ -221,6 +224,28 @@ enum IndexState {
 enum BuildOutcome {
     Built,
     AlreadyValid,
+}
+
+#[derive(Clone, Copy)]
+enum IndexHistory {
+    Recorded,
+    Pending,
+}
+
+fn execution_error(
+    index: &OnlineIndex,
+    history: IndexHistory,
+    phase: OnlineIndexPhase,
+    cause: SchemaCompatibilityError,
+    restoration_error: Option<sqlx::Error>,
+) -> SchemaCompatibilityError {
+    SchemaCompatibilityError::OnlineIndexExecution(OnlineIndexExecutionError::new(
+        index.name,
+        matches!(history, IndexHistory::Recorded).then_some(index.migration_version),
+        phase,
+        cause,
+        restoration_error,
+    ))
 }
 
 fn problem(index: &OnlineIndex, problem: OnlineIndexProblem) -> SchemaCompatibilityError {
@@ -345,66 +370,6 @@ async fn table_exists(
         .await
 }
 
-/// The session's profile timeouts, saved while a concurrent build runs
-/// without them and restored afterwards so whatever follows on that session
-/// runs under the profile again: the cutover validation in the protected
-/// runner, or the next build in external preparation.
-///
-/// A concurrent build waits for in-flight writers and older snapshots, so a
-/// profile timeout would cancel it and leave an `INVALID` index behind. In
-/// the protected runner the migration is already recorded by then, so only a
-/// later startup could replace that index.
-struct ProfileTimeouts {
-    statement: String,
-    lock: String,
-    transaction: Option<String>,
-}
-
-impl ProfileTimeouts {
-    async fn lift(conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
-        // transaction_timeout exists from PostgreSQL 17; read and lift it only
-        // where the server knows it so an older server is not rejected after
-        // the migration was recorded.
-        let (statement, lock, transaction): (String, String, Option<String>) = sqlx::query_as(
-            "SELECT pg_catalog.current_setting('statement_timeout'),
-                    pg_catalog.current_setting('lock_timeout'),
-                    pg_catalog.current_setting('transaction_timeout', true)",
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        sqlx::raw_sql(
-            "SELECT pg_catalog.set_config('statement_timeout', '0', false),
-                    pg_catalog.set_config('lock_timeout', '0', false),
-                    CASE WHEN pg_catalog.current_setting('transaction_timeout', true) IS NOT NULL
-                         THEN pg_catalog.set_config('transaction_timeout', '0', false)
-                    END",
-        )
-        .execute(&mut *conn)
-        .await?;
-        Ok(Self {
-            statement,
-            lock,
-            transaction,
-        })
-    }
-
-    async fn restore(self, conn: &mut PgConnection) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "SELECT pg_catalog.set_config('statement_timeout', $1, false),
-                    pg_catalog.set_config('lock_timeout', $2, false),
-                    CASE WHEN $3::text IS NOT NULL
-                         THEN pg_catalog.set_config('transaction_timeout', $3, false)
-                    END",
-        )
-        .bind(self.statement)
-        .bind(self.lock)
-        .bind(self.transaction)
-        .execute(&mut *conn)
-        .await?;
-        Ok(())
-    }
-}
-
 /// Drop an `INVALID` leftover when asked, then build the declared index
 /// concurrently and check the result.
 async fn build_concurrently(
@@ -443,8 +408,17 @@ async fn ensure_index_built(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
     index: &OnlineIndex,
+    history: IndexHistory,
 ) -> Result<BuildOutcome, SchemaCompatibilityError> {
-    let drop_invalid = match index_state(conn, database, index).await? {
+    let drop_invalid = match index_state(conn, database, index).await.map_err(|error| {
+        execution_error(
+            index,
+            history,
+            OnlineIndexPhase::Inspect,
+            error.into(),
+            None,
+        )
+    })? {
         IndexState::Valid(definition) => {
             return check_valid(index, &definition, database.schema())
                 .map(|()| BuildOutcome::AlreadyValid);
@@ -456,13 +430,33 @@ async fn ensure_index_built(
         IndexState::Invalid => true,
         IndexState::Missing => false,
     };
-    let timeouts = ProfileTimeouts::lift(conn).await?;
+    let timeouts = ProfileTimeouts::lift(conn).await.map_err(|error| {
+        execution_error(
+            index,
+            history,
+            OnlineIndexPhase::Configure,
+            error.into(),
+            None,
+        )
+    })?;
     let built = build_concurrently(conn, database, index, drop_invalid).await;
     let restored = timeouts.restore(conn).await;
     match (built, restored) {
-        (Err(error), _) => Err(error),
+        (Err(error), restored) => Err(execution_error(
+            index,
+            history,
+            OnlineIndexPhase::Build,
+            error,
+            restored.err(),
+        )),
         (Ok(outcome), Ok(())) => Ok(outcome),
-        (Ok(_), Err(error)) => Err(error.into()),
+        (Ok(_), Err(error)) => Err(execution_error(
+            index,
+            history,
+            OnlineIndexPhase::Restore,
+            error.into(),
+            None,
+        )),
     }
 }
 
@@ -521,7 +515,7 @@ async fn apply_online(
     };
     conn.apply("_sqlx_migrations", &rendition).await?;
     for index in declared {
-        ensure_index_built(conn, database, index).await?;
+        ensure_index_built(conn, database, index, IndexHistory::Recorded).await?;
     }
     Ok(())
 }
@@ -576,7 +570,7 @@ pub(super) async fn run_migrations_with_filtered_history(
     // Every declared migration is applied now; repair an index lost between a
     // recorded migration and its concurrent build.
     for index in &ONLINE_INDEXES {
-        ensure_index_built(conn, database, index).await?;
+        ensure_index_built(conn, database, index, IndexHistory::Recorded).await?;
     }
     Ok(())
 }
@@ -666,7 +660,7 @@ async fn prepare_adoptable_indexes(
             report.deferred.push(index.name);
             continue;
         }
-        match ensure_index_built(conn, database, index).await? {
+        match ensure_index_built(conn, database, index, IndexHistory::Pending).await? {
             BuildOutcome::Built => report.built.push(index.name),
             BuildOutcome::AlreadyValid => report.already_valid.push(index.name),
         }
@@ -721,16 +715,20 @@ async fn prepare_adoptable_indexes(
 /// delays the build instead of cancelling it and leaving an `INVALID` index
 /// that a rerun must drop and replace. The saved values are restored after
 /// each build, so later statements on that session keep the profile's bounds.
+/// The build also enables client disconnect checks with an interval no longer
+/// than one second, restoring the original value afterward. Socket closure
+/// can then interrupt a blocked build; this is not a backend-death guarantee
+/// across network failure or runtime death. Execution errors retain their
+/// index and phase in [`crate::SchemaCompatibilityError::OnlineIndexExecution`],
+/// with no recorded version for this preparation path.
 ///
 /// Runledger waits for the migration lock by polling `pg_try_advisory_lock`,
 /// so a waiting Runledger starter holds no snapshot that an in-progress
 /// concurrent build must wait for. The wait keeps the bound the blocking
 /// acquisition had: the smallest nonzero of the session's `statement_timeout`,
 /// `lock_timeout` and, on servers that define it, `transaction_timeout` fails
-/// it with [`crate::SchemaCompatibilityError::Incompatible`], and only when
-/// all of them are zero does it wait without bound; the expiry is a
-/// `sqlx::Error::Protocol` naming the setting rather than a `55P03` or
-/// `57014` database error or a terminated connection. A
+/// it with [`crate::SchemaCompatibilityError::MigrationLockTimeout`], retaining
+/// its typed setting and bound; only when all are zero is the wait unbounded. A
 /// migrator or older binary that waits with
 /// blocking `pg_advisory_lock` does hold one, and PostgreSQL then aborts either
 /// that waiter or the build with a deadlock. Do not start such tooling until
@@ -739,10 +737,16 @@ async fn prepare_adoptable_indexes(
 /// ```rust,no_run
 /// # async fn demo(database: &runledger_postgres::RunledgerDatabase) -> Result<(), Box<dyn std::error::Error>> {
 /// let report = runledger_postgres::prepare_online_indexes_for_external_migrator(database).await?;
-/// if !report.external_build_blocks().is_empty() {
-///     // These pending indexes still block queue writes under external tooling.
+/// if !report.deferred().is_empty() {
+///     // Stop here on a populated database. Apply only the prerequisite prefix,
+///     // then prepare again before applying the index's own migration.
+///     return Err("indexes deferred: prerequisite migration prefix required".into());
 /// }
-/// // Now run the external migrator over the canonical migration files.
+/// if !report.external_build_blocks().is_empty() {
+///     // Use the protected runner, or obtain application approval for downtime.
+///     return Err("external tooling would still perform blocking index builds".into());
+/// }
+/// // With both lists empty, external tooling may apply the canonical files.
 /// # Ok(())
 /// # }
 /// ```
@@ -755,9 +759,7 @@ pub async fn prepare_online_indexes_for_external_migrator(
     // a snapshot so a concurrent build on the lock holder cannot deadlock here.
     let lock = if MIGRATOR.locking {
         conn.close_on_drop();
-        Some(MigrationLock::acquire(&mut conn).await.map_err(|error| {
-            SchemaCompatibilityError::Incompatible(sqlx::migrate::MigrateError::Execute(error))
-        })?)
+        Some(MigrationLock::acquire(&mut conn).await?)
     } else {
         None
     };

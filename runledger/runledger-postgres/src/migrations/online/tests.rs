@@ -121,11 +121,12 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
 
     use runledger_test_support::{setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool};
 
-    async fn timeouts(conn: &mut PgConnection) -> (String, String, String) {
+    async fn timeouts(conn: &mut PgConnection) -> (String, String, String, String) {
         sqlx::query_as(
             "SELECT pg_catalog.current_setting('statement_timeout'),
                     pg_catalog.current_setting('lock_timeout'),
-                    pg_catalog.current_setting('transaction_timeout')",
+                    pg_catalog.current_setting('transaction_timeout'),
+                    pg_catalog.current_setting('client_connection_check_interval')",
         )
         .fetch_one(conn)
         .await
@@ -152,25 +153,56 @@ async fn lifted_profile_timeouts_are_restored_on_the_session() {
         .expect("profiled database");
     let mut conn = database.pool().acquire().await.expect("session");
 
-    let before = timeouts(&mut conn).await;
-    assert_eq!(
-        before,
-        ("2s".to_owned(), "250ms".to_owned(), "4s".to_owned()),
-        "the profile bounds every timeout before the build"
-    );
-    let lifted = ProfileTimeouts::lift(&mut conn).await.expect("lift");
-    assert_eq!(
-        timeouts(&mut conn).await,
-        ("0".to_owned(), "0".to_owned(), "0".to_owned())
-    );
-    lifted.restore(&mut conn).await.expect("restore");
-    assert_eq!(
-        timeouts(&mut conn).await,
-        before,
-        "the profile's exact values return for the rest of the startup"
-    );
+    for (configured, expected) in [("0", "1s"), ("100ms", "100ms"), ("5s", "1s")] {
+        sqlx::query("SELECT pg_catalog.set_config('client_connection_check_interval', $1, false)")
+            .bind(configured)
+            .execute(&mut *conn)
+            .await
+            .expect("initial disconnect check");
+        let before = timeouts(&mut conn).await;
+        assert_eq!(
+            before,
+            ("2s".into(), "250ms".into(), "4s".into(), configured.into())
+        );
+        let lifted = ProfileTimeouts::lift(&mut conn).await.expect("lift");
+        assert_eq!(
+            timeouts(&mut conn).await,
+            ("0".into(), "0".into(), "0".into(), expected.into())
+        );
+        lifted.restore(&mut conn).await.expect("restore");
+        assert_eq!(
+            timeouts(&mut conn).await,
+            before,
+            "all original session settings return after the build"
+        );
+    }
 
     drop(conn);
     database.pool().close().await;
     teardown_ephemeral_pool(pool, ephemeral).await;
+}
+
+#[test]
+fn execution_failure_retains_both_causes_without_rendering_them() {
+    let error = execution_error(
+        &ONLINE_INDEXES[3],
+        IndexHistory::Recorded,
+        OnlineIndexPhase::Build,
+        sqlx::Error::Protocol("primary-secret".into()).into(),
+        Some(sqlx::Error::Protocol("restore-secret".into())),
+    );
+    let rendered = format!("{error} {error:?}");
+    assert!(!rendered.contains("secret"));
+    let SchemaCompatibilityError::OnlineIndexExecution(failure) = error else {
+        panic!("context");
+    };
+    assert!(failure.cause().to_string().contains("primary-secret"));
+    assert!(
+        failure
+            .restoration_error()
+            .expect("secondary restoration cause retained")
+            .to_string()
+            .contains("restore-secret")
+    );
+    assert_eq!(failure.recorded_version(), Some(202609050001));
 }

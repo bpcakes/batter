@@ -110,6 +110,17 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Concurrent index builds enable `client_connection_check_interval` at one
+  second or preserve a tighter positive setting, then restore the original
+  value. Cancelling the runner can interrupt a disconnected build even while
+  profile timeouts are lifted. This does not guarantee backend death across
+  network failure or runtime death. `OnlineIndexExecution` errors retain the
+  index, execution phase, acknowledged migration version and both build and
+  restoration causes behind redacted formatting.
+- External-preparation examples stop for deferred indexes and blocking builds.
+  Strict definition matching includes storage options, even explicit default
+  fillfactor; the migration guide documents resetting that extra option.
+
 - `migrate_after_idempotency_cutover` and
   `prepare_online_indexes_for_external_migrator` acquire the SQLx migration
   advisory lock by polling `pg_try_advisory_lock` on SQLx's own key instead of
@@ -121,12 +132,12 @@ All notable changes to this workspace are documented here.
   session's `statement_timeout`, `lock_timeout` and `transaction_timeout`
   fails it, and only when all of them are zero does it wait without bound. Lock
   acquisition and release failures keep surfacing as
-  `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`, but a wait
-  that times out now carries `MigrateError::Execute(sqlx::Error::Protocol(..))`
-  with a message naming the expired setting instead of the server's `55P03`
-  or `57014` database error or a connection terminated by
-  `transaction_timeout`, because the poll statements themselves never
-  time out. The build
+  `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`. A local wait
+  expiry returns `MigrationLockTimeout` with a typed `MigrationTimeoutSetting`
+  and duration, distinct from the server's database or connection failures.
+  The bound is checked before each poll and before accepting its result, so
+  scheduler delay or a late successful response cannot extend the total wait.
+  The build
   session lifts `transaction_timeout` only where the server defines it; the
   executable suite runs only on PostgreSQL 18, so the branches taken on a
   server without that setting (PostgreSQL 16 and earlier) are unverified.

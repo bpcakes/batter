@@ -6,7 +6,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use runledger_postgres::{MIGRATOR, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError};
+use runledger_postgres::{
+    MIGRATOR, MigrationTimeoutSetting, PgSessionProfile, RunledgerDatabase,
+    SchemaCompatibilityError,
+};
 use runledger_test_support::{
     EphemeralDatabase, setup_unmigrated_ephemeral_pool, teardown_ephemeral_pool,
 };
@@ -197,10 +200,13 @@ async fn migrate_through_profile(
 }
 
 /// Hold SQLx's own migration lock on a separate connection and require
-/// `migrate` to give up within the profile bound, failing with `Incompatible`
-/// and a message naming `setting`, before the lock is released again.
-pub async fn assert_lock_wait_expires<F, Fut>(harness: &Harness, setting: &str, migrate: F)
-where
+/// `migrate` to give up with a typed setting and duration before release.
+pub async fn assert_lock_wait_expires<F, Fut>(
+    harness: &Harness,
+    setting: MigrationTimeoutSetting,
+    bound: Duration,
+    migrate: F,
+) where
     F: FnOnce(PgPool) -> Fut,
     Fut: Future<Output = Result<(), SchemaCompatibilityError>> + Send + 'static,
 {
@@ -219,20 +225,18 @@ where
     .expect("runner task")
     {
         Err(error) => error,
-        Ok(()) => panic!("a nonzero {setting} must bound the wait for a held lock"),
+        Ok(()) => panic!("a nonzero {setting:?} must bound the wait for a held lock"),
     };
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "expiry must follow the profile bound, not the test deadline"
     );
-    assert!(
-        matches!(error, SchemaCompatibilityError::Incompatible(_)),
-        "unexpected error: {error}"
-    );
-    assert!(
-        error.to_string().contains(setting),
-        "the expiry must name {setting}: {error}"
-    );
+    let SchemaCompatibilityError::MigrationLockTimeout(expiry) = error else {
+        panic!("unexpected error: {error}");
+    };
+    assert_eq!(expiry.setting(), setting);
+    assert_eq!(expiry.bound(), bound);
+    assert!(started.elapsed() >= bound);
 
     holder.unlock().await.expect("release SQLx lock");
     holder.close().await.expect("close holder");

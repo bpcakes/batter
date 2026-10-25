@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use sqlx::PgConnection;
 
+use super::super::{MigrationLockTimeout, MigrationTimeoutSetting, SchemaCompatibilityError};
 use crate::PgQueryExecutor;
 
 /// SQLx's lock-id factor from `sqlx-postgres`'s migration lock derivation.
@@ -37,13 +38,11 @@ impl MigrationLock {
     /// they bounded the single blocking `pg_advisory_lock` statement: the
     /// smallest nonzero value fails the wait once it elapses, and only when
     /// all of them are zero does the wait continue without bound. An expired
-    /// bound is reported as [`sqlx::Error::Protocol`] naming the setting, not
-    /// as the server's `55P03` or `57014` database error or a connection
-    /// terminated by `transaction_timeout`, because each short poll statement
-    /// completes within any timeout.
+    /// bound is reported as a typed local expiry, distinct from native
+    /// database or connection failures returned by a poll statement.
     pub(in crate::migrations) async fn acquire(
         conn: &mut PgConnection,
-    ) -> Result<Self, sqlx::Error> {
+    ) -> Result<Self, SchemaCompatibilityError> {
         // transaction_timeout exists from PostgreSQL 17; a server without it
         // yields NULL here and contributes no bound.
         let (database_name, statement_timeout_ms, lock_timeout_ms, transaction_timeout_ms): (
@@ -61,7 +60,9 @@ impl MigrationLock {
                      * 1000)::bigint",
         )
         .fetch_one(&mut *conn)
-        .await?;
+        .await.map_err(|error| {
+            SchemaCompatibilityError::Incompatible(sqlx::migrate::MigrateError::Execute(error))
+        })?;
         let id = lock_id(&database_name);
         let bound = wait_bound(
             statement_timeout_ms,
@@ -70,22 +71,23 @@ impl MigrationLock {
         );
         let started = tokio::time::Instant::now();
         loop {
+            remaining_wait(started, bound)?;
             let acquired: bool = sqlx::query_scalar("SELECT pg_catalog.pg_try_advisory_lock($1)")
                 .bind(id)
                 .fetch_one(&mut *conn)
-                .await?;
+                .await
+                .map_err(|error| {
+                    SchemaCompatibilityError::Incompatible(sqlx::migrate::MigrateError::Execute(
+                        error,
+                    ))
+                })?;
+            // A ready response or a delayed wakeup cannot extend the total
+            // bound. If this poll acquired too late, the caller's armed
+            // close_on_drop retires the session together with its lock.
+            let remaining = remaining_wait(started, bound)?;
             if acquired {
                 return Ok(Self { id });
             }
-            let remaining = match bound {
-                Some((bound, setting)) => bound.checked_sub(started.elapsed()).ok_or_else(|| {
-                    sqlx::Error::Protocol(format!(
-                        "the migration advisory lock was not acquired within the session {setting} of {} ms",
-                        bound.as_millis()
-                    ))
-                })?,
-                None => POLL_INTERVAL,
-            };
             tokio::time::sleep(remaining.min(POLL_INTERVAL)).await;
         }
     }
@@ -144,6 +146,25 @@ impl MigrationLock {
     }
 }
 
+/// Check before a poll and before accepting its result. This includes time
+/// spent suspended in the scheduler and excludes success exactly at expiry.
+fn remaining_wait(
+    started: tokio::time::Instant,
+    bound: Option<(Duration, MigrationTimeoutSetting)>,
+) -> Result<Duration, SchemaCompatibilityError> {
+    match bound {
+        Some((bound, setting)) => bound
+            .checked_sub(started.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                SchemaCompatibilityError::MigrationLockTimeout(MigrationLockTimeout::new(
+                    setting, bound,
+                ))
+            }),
+        None => Ok(POLL_INTERVAL),
+    }
+}
+
 /// The bound a blocking lock statement would have had: the smallest nonzero
 /// session timeout, named for the error message, or none when all are zero.
 /// `transaction_timeout` is `None` on a server that does not define it.
@@ -155,15 +176,18 @@ fn wait_bound(
     statement_timeout_ms: i64,
     lock_timeout_ms: i64,
     transaction_timeout_ms: Option<i64>,
-) -> Option<(Duration, &'static str)> {
+) -> Option<(Duration, MigrationTimeoutSetting)> {
     let nonzero = |ms: i64| u64::try_from(ms).ok().filter(|ms| *ms > 0);
     [
         (
-            "transaction_timeout",
+            MigrationTimeoutSetting::Transaction,
             transaction_timeout_ms.and_then(nonzero),
         ),
-        ("statement_timeout", nonzero(statement_timeout_ms)),
-        ("lock_timeout", nonzero(lock_timeout_ms)),
+        (
+            MigrationTimeoutSetting::Statement,
+            nonzero(statement_timeout_ms),
+        ),
+        (MigrationTimeoutSetting::Lock, nonzero(lock_timeout_ms)),
     ]
     .into_iter()
     .filter_map(|(setting, ms)| ms.map(|ms| (ms, setting)))
@@ -204,27 +228,48 @@ mod tests {
         let bound = |ms, setting| Some((Duration::from_millis(ms), setting));
         assert_eq!(wait_bound(0, 0, None), None);
         assert_eq!(wait_bound(0, 0, Some(0)), None);
-        assert_eq!(wait_bound(2000, 250, None), bound(250, "lock_timeout"));
-        assert_eq!(wait_bound(500, 0, Some(0)), bound(500, "statement_timeout"));
-        assert_eq!(wait_bound(0, 750, None), bound(750, "lock_timeout"));
-        assert_eq!(wait_bound(300, 900, None), bound(300, "statement_timeout"));
+        assert_eq!(
+            wait_bound(2000, 250, None),
+            bound(250, MigrationTimeoutSetting::Lock)
+        );
+        assert_eq!(
+            wait_bound(500, 0, Some(0)),
+            bound(500, MigrationTimeoutSetting::Statement)
+        );
+        assert_eq!(
+            wait_bound(0, 750, None),
+            bound(750, MigrationTimeoutSetting::Lock)
+        );
+        assert_eq!(
+            wait_bound(300, 900, None),
+            bound(300, MigrationTimeoutSetting::Statement)
+        );
         // transaction_timeout alone, shortest of three, and longer than another.
         assert_eq!(
             wait_bound(0, 0, Some(400)),
-            bound(400, "transaction_timeout")
+            bound(400, MigrationTimeoutSetting::Transaction)
         );
         assert_eq!(
             wait_bound(2000, 250, Some(100)),
-            bound(100, "transaction_timeout")
+            bound(100, MigrationTimeoutSetting::Transaction)
         );
-        assert_eq!(wait_bound(2000, 250, Some(900)), bound(250, "lock_timeout"));
-        assert_eq!(wait_bound(0, 600, Some(900)), bound(600, "lock_timeout"));
+        assert_eq!(
+            wait_bound(2000, 250, Some(900)),
+            bound(250, MigrationTimeoutSetting::Lock)
+        );
+        assert_eq!(
+            wait_bound(0, 600, Some(900)),
+            bound(600, MigrationTimeoutSetting::Lock)
+        );
         // Equal values belong to the wider-scoped setting.
         assert_eq!(
             wait_bound(500, 0, Some(500)),
-            bound(500, "transaction_timeout")
+            bound(500, MigrationTimeoutSetting::Transaction)
         );
-        assert_eq!(wait_bound(500, 500, None), bound(500, "statement_timeout"));
+        assert_eq!(
+            wait_bound(500, 500, None),
+            bound(500, MigrationTimeoutSetting::Statement)
+        );
         assert_eq!(wait_bound(-1, -1, Some(-1)), None);
     }
 

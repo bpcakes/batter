@@ -5147,3 +5147,27 @@ that declare a version are kept; the observed `batter-core` dry-run failure
 matches that rule. GitHub's
 [private vulnerability reporting API](https://docs.github.com/en/rest/repos/repos#check-if-private-vulnerability-reporting-is-enabled-for-a-repository)
 returned `enabled: false` for the repository on that date.
+
+
+## Runledger online migration failure handling (2026-10-25)
+
+Checked against SQLx 0.9.0 and PostgreSQL 18.6. PostgreSQL 18's
+[connection settings](https://www.postgresql.org/docs/18/runtime-config-connection.html#GUC-CLIENT-CONNECTION-CHECK-INTERVAL)
+document that `client_connection_check_interval = 0` disables in-query socket
+checks. A positive interval checks while queries run on Linux, macOS and other
+supported servers; network failures may still require keepalive detection.
+SQLx 0.9.0's pool `close_on_drop` schedules connection closure, and its PostgreSQL
+[connection implementation](https://docs.rs/sqlx-postgres/0.9.0/src/sqlx_postgres/connection/mod.rs.html)
+sends Terminate and shuts down the stream, rather than a separate CancelRequest.
+Runledger enables a bounded check interval only during concurrent builds; this
+is not proof of remote termination across network failure or runtime death.
+
+PostgreSQL's [progress view implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/pgstatfuncs.c)
+returns NULL progress details for another role's backend without statistics
+privilege. The migration-lock fallback must therefore work with hidden relid,
+index_relid and phase fields, as the restricted-role regression demonstrates.
+[CREATE INDEX storage parameters](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-STORAGE-PARAMETERS)
+define B-tree fillfactor's default as 90. Explicit options appear in the catalog
+rendering and intentionally fail Runledger's strict definition match;
+[ALTER INDEX RESET](https://www.postgresql.org/docs/18/sql-alterindex.html)
+removes the explicit option. The live test verifies that this restores acceptance.
