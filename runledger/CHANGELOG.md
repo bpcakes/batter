@@ -41,6 +41,9 @@ All notable changes to this workspace are documented here.
   preceding version and prepare again on a populated database.
   External tooling may run only after the call returned `Ok`; a leftover
   `INVALID` index is repaired by a rerun only while its migration is pending.
+  A recorded migration whose checksum differs from the bundle or whose run
+  failed is refused with `Incompatible(VersionMismatch)` or
+  `Incompatible(Dirty)` before any build, as the protected runner refuses it.
   Validating `CHECK` constraints and same-transaction `VALIDATE CONSTRAINT`
   statements in bundled migrations keep their ordinary locks.
 - `JobExecution::invocation()` returns an owned, cloneable `JobInvocation` that
@@ -124,7 +127,9 @@ All notable changes to this workspace are documented here.
   or `57014` database error or a connection terminated by
   `transaction_timeout`, because the poll statements themselves never
   time out. The build
-  session lifts `transaction_timeout` only where the server defines it.
+  session lifts `transaction_timeout` only where the server defines it; the
+  executable suite runs only on PostgreSQL 18, so the branches taken on a
+  server without that setting (PostgreSQL 16 and earlier) are unverified.
 - Failures while reading migration history in the protected runner now surface
   as `SchemaCompatibilityError::Query` rather than
   `Incompatible(MigrateError::Execute(..))`; the new catalog reads and index

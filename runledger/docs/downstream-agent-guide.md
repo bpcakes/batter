@@ -731,7 +731,8 @@ preparation returned `Ok`, never while a Runledger process is migrating or
 preparing: a waiter blocked in `pg_advisory_lock` deadlocks with the
 concurrent build and leaves an `INVALID` index that startup verification then
 refuses, and preparation repairs a leftover only while its migration is still
-pending. Once the migration is recorded, recover by dropping that index with
+pending; a recorded migration with a foreign checksum or a failed run is
+refused before any build. Once the migration is recorded, recover by dropping that index with
 `DROP INDEX CONCURRENTLY` and rebuilding it with the migration file's
 statement plus `CONCURRENTLY`; run `migrate_after_idempotency_cutover` instead
 only where every other pending bundled migration may be applied now, because

@@ -609,28 +609,36 @@ pub(super) async fn verify_applied_indexes(
     Ok(())
 }
 
-async fn applied_versions(
+/// The applied bundled versions, after the same history integrity checks the
+/// protected runner makes: a recorded row with a foreign checksum or a failed
+/// run is refused here, never treated as pending and built under.
+async fn applied_versions_checked(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
-) -> Result<HashSet<i64>, sqlx::Error> {
+    expected: &super::RunledgerMigrationMap,
+) -> Result<HashSet<i64>, SchemaCompatibilityError> {
     if !has_migrations_table(conn, database).await? {
         return Ok(HashSet::new());
     }
     let history = list_migration_history(conn, database).await?;
-    Ok(
-        applied_runledger_migrations(&history, &expected_runledger_migrations())
-            .into_iter()
-            .map(|migration| migration.version)
-            .collect(),
-    )
+    if let Some(version) = first_conflicting_runledger_version(&history, expected) {
+        return Err(sqlx::migrate::MigrateError::VersionMismatch(version).into());
+    }
+    if let Some(version) = first_dirty_runledger_version(&history, expected) {
+        return Err(sqlx::migrate::MigrateError::Dirty(version).into());
+    }
+    Ok(applied_runledger_migrations(&history, expected)
+        .into_iter()
+        .map(|migration| migration.version)
+        .collect())
 }
 
 async fn prepare_adoptable_indexes(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
 ) -> Result<OnlineIndexPreparation, SchemaCompatibilityError> {
-    let applied = applied_versions(conn, database).await?;
     let expected = expected_runledger_migrations();
+    let applied = applied_versions_checked(conn, database, &expected).await?;
     let mut report = OnlineIndexPreparation::default();
     for index in &ONLINE_INDEXES {
         if applied.contains(&index.migration_version) {
@@ -688,7 +696,11 @@ async fn prepare_adoptable_indexes(
 /// rebuilt, and a foreign index under a declared name is refused with
 /// [`OnlineIndexProblem::DefinitionMismatch`]. Applied migrations are never
 /// touched here; [`crate::ensure_schema_compatible_after_idempotency_cutover`]
-/// reports their declared indexes.
+/// reports their declared indexes. A recorded migration whose checksum differs
+/// from the bundle or whose run failed is refused with
+/// [`crate::SchemaCompatibilityError::Incompatible`] (`VersionMismatch` or
+/// `Dirty`) before any build, exactly as the protected runner refuses it,
+/// instead of being treated as pending.
 ///
 /// Run external tooling only after this call returned `Ok`. A build that fails
 /// or is cancelled can leave an `INVALID` index; rerunning this call drops and

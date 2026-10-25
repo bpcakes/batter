@@ -1653,7 +1653,9 @@ lock it concurrently builds the pending indexes whose canonical statement uses
 `CREATE INDEX IF NOT EXISTS`, which is only the `202605220001` pair; the
 canonical statements then adopt them. An adoptable index is deferred while
 an earlier bundled migration is still unapplied; on a populated database apply
-the migrations through the preceding version, then prepare again. Its report also
+the migrations through the preceding version, then prepare again. A recorded
+migration with a foreign checksum or a failed run is refused before any build,
+as the protected runner refuses it. Its report also
 names the pending indexes an external migrator still builds with a blocking
 statement; only the protected runner builds those online. Run the external
 tooling only after the

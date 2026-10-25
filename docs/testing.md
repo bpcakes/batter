@@ -1540,7 +1540,7 @@ excludes archived reviews under `.agent/reviews`.
 | Invocation exit owner/observation: once-only end, waiter replacement, late observers and hooks, contained hook panics | [invocation/tests.rs](../runledger/runledger-core/src/jobs/invocation/tests.rs) |
 | Every native invocation exit ends its signal before outcome persistence; drain keeps it, forced abandonment ends it | [invocation_exit.rs](../runledger/runledger-runtime/src/worker/tests/execution_services/invocation_exit.rs), [worker/invocation.rs](../runledger/runledger-runtime/src/worker/invocation.rs) |
 | Invocation-derived phases: absolute checked deadline, rejections without factories, phase semantics, observers, isolation, adapted/typed forwarding | [job_phases.rs](../crates/batter-runledger/tests/job_phases.rs) |
-| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
+| Online index builds: canonical history and catalog equivalence, external adoption limits, missing/INVALID repair and reporting, foreign-name refusal including a non-index relation, writers not stalled behind the concurrent build, concurrent starters without a lock deadlock, SQLx lock-key match, profile statement/lock/transaction timeouts bounding the lock wait, preparation refusing tampered or failed history rows and rebuilding or refusing leftovers itself | [online_indexes.rs](../runledger/runledger-postgres/tests/online_indexes.rs), [online_preparation.rs](../runledger/runledger-postgres/tests/online_preparation.rs), [online/tests.rs](../runledger/runledger-postgres/src/migrations/online/tests.rs), [online/lock.rs](../runledger/runledger-postgres/src/migrations/online/lock.rs) |
 | Concrete errors, borrowed futures, panic separation | [operation.rs](../crates/batter-core/tests/operation.rs) |
 | Replay prohibition, fresh futures, attempt counts, classifier stop | [retry.rs](../crates/batter-core/tests/retry.rs) |
 | Same-poll attempt cancellation before legacy success acceptance; same-poll input cancellation retains an unclassified returned error | [retry.rs](../crates/batter-core/tests/retry.rs) |
@@ -3163,8 +3163,20 @@ transaction timeout shows all three read `0` while lifted and return to the
 profile's exact values after the build restores them, so the cutover
 validation that follows keeps its bounds; a
 conflicting lock queued behind the build cannot show this end to end because
-any waiting session holds a snapshot the build waits for. Build durations on
+any waiting session holds a snapshot the build waits for. The suite runs only
+on PostgreSQL 18, so the branches taken when the server lacks
+`transaction_timeout` (PostgreSQL 16 and earlier) are unverified by
+executable tests. Build durations on
 populated tables were not measured.
+
+`cargo test -p runledger-postgres --locked --test online_preparation` covers
+the external-preparation path on its own: a `202605220001` history row with a
+tampered checksum is refused with `Incompatible(VersionMismatch)` and a failed
+`202605180001` row with `Incompatible(Dirty)`, both before any build; an
+`INVALID` leftover of the adoptable `job_queue` index, left by a concurrent
+build cancelled behind an open writer, is dropped, rebuilt and reported as
+built; and a foreign index under the adoptable `workflow_runs` name is refused
+with `DefinitionMismatch` and kept.
 
 `cargo test -p runledger-postgres --locked --test claim_batch_writes` covers
 mixed direct/workflow batches through all four claim entry points. Statement
