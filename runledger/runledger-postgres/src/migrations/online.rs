@@ -255,30 +255,23 @@ fn problem(index: &OnlineIndex, problem: OnlineIndexProblem) -> SchemaCompatibil
     }
 }
 
-fn quote_identifier(identifier: &str) -> String {
-    let mut chars = identifier.chars();
-    let plain = chars
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
-        && chars.all(|char| char.is_ascii_lowercase() || char.is_ascii_digit() || char == '_');
-    if plain {
-        identifier.to_owned()
-    } else {
-        format!("\"{}\"", identifier.replace('"', "\"\""))
-    }
-}
-
 /// Compare a live `pg_get_indexdef` rendering with the declared build. The
-/// table is matched by name because the catalog query already pins its schema;
-/// a type rendered with the authoritative schema prefix is normalized away.
+/// catalog pins the schema; accept its quoted or unquoted rendering without
+/// parsing delimiters inside identifiers or maintaining PostgreSQL's keywords.
 fn definition_matches(index: &OnlineIndex, definition: &str, schema: &str) -> bool {
-    let Some((head, tail)) = definition.split_once(" USING ") else {
-        return false;
-    };
-    let schema_prefix = format!("{}.", quote_identifier(schema));
-    head.starts_with(&format!("CREATE INDEX {} ON ", index.name))
-        && head.ends_with(&format!(".{}", index.table))
-        && tail.replace(&schema_prefix, "") == index.expected_definition
+    [
+        format!("\"{}\".", schema.replace('"', "\"\"")),
+        format!("{schema}."),
+    ]
+    .into_iter()
+    .any(|schema_prefix| {
+        definition
+            .strip_prefix(&format!(
+                "CREATE INDEX {} ON {}{} USING ",
+                index.name, schema_prefix, index.table
+            ))
+            .is_some_and(|body| body.replace(&schema_prefix, "") == index.expected_definition)
+    })
 }
 
 fn check_valid(
@@ -530,24 +523,7 @@ pub(super) async fn run_migrations_with_filtered_history(
     conn.ensure_migrations_table("_sqlx_migrations").await?;
 
     let expected_migrations = expected_runledger_migrations();
-    let history = list_migration_history(conn, database).await?;
-
-    if let Some(version) = first_conflicting_runledger_version(&history, &expected_migrations) {
-        return Err(sqlx::migrate::MigrateError::VersionMismatch(version).into());
-    }
-
-    if let Some(version) = first_dirty_runledger_version(&history, &expected_migrations) {
-        return Err(sqlx::migrate::MigrateError::Dirty(version).into());
-    }
-
-    if has_runledger_migration_history_table(conn, database).await? {
-        let recorded_versions = list_recorded_runledger_migrations(conn, database).await?;
-        if let Some(version) =
-            first_missing_runledger_version(&recorded_versions, &expected_migrations)
-        {
-            return Err(sqlx::migrate::MigrateError::VersionMissing(version).into());
-        }
-    }
+    let history = checked_history(conn, database, &expected_migrations).await?;
 
     let applied_by_version: std::collections::HashMap<_, _> =
         applied_runledger_migrations(&history, &expected_migrations)
@@ -603,28 +579,31 @@ pub(super) async fn verify_applied_indexes(
     Ok(())
 }
 
-/// The applied bundled versions, after the same history integrity checks the
-/// protected runner makes: a recorded row with a foreign checksum or a failed
-/// run is refused here, never treated as pending and built under.
-async fn applied_versions_checked(
+/// Both migration entry points reject conflicting, dirty or incompatible newer
+/// history before any index work, including a fence without SQLx history.
+async fn checked_history(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
     expected: &super::RunledgerMigrationMap,
-) -> Result<HashSet<i64>, SchemaCompatibilityError> {
-    if !has_migrations_table(conn, database).await? {
-        return Ok(HashSet::new());
-    }
-    let history = list_migration_history(conn, database).await?;
+) -> Result<Vec<super::MigrationHistoryRow>, SchemaCompatibilityError> {
+    let history = if has_migrations_table(conn, database).await? {
+        list_migration_history(conn, database).await?
+    } else {
+        Vec::new()
+    };
     if let Some(version) = first_conflicting_runledger_version(&history, expected) {
         return Err(sqlx::migrate::MigrateError::VersionMismatch(version).into());
     }
     if let Some(version) = first_dirty_runledger_version(&history, expected) {
         return Err(sqlx::migrate::MigrateError::Dirty(version).into());
     }
-    Ok(applied_runledger_migrations(&history, expected)
-        .into_iter()
-        .map(|migration| migration.version)
-        .collect())
+    if has_runledger_migration_history_table(conn, database).await? {
+        let recorded = list_recorded_runledger_migrations(conn, database).await?;
+        if let Some(version) = first_missing_runledger_version(&recorded, expected) {
+            return Err(sqlx::migrate::MigrateError::VersionMissing(version).into());
+        }
+    }
+    Ok(history)
 }
 
 async fn prepare_adoptable_indexes(
@@ -632,7 +611,11 @@ async fn prepare_adoptable_indexes(
     database: &RunledgerDatabase,
 ) -> Result<OnlineIndexPreparation, SchemaCompatibilityError> {
     let expected = expected_runledger_migrations();
-    let applied = applied_versions_checked(conn, database, &expected).await?;
+    let history = checked_history(conn, database, &expected).await?;
+    let applied: HashSet<_> = applied_runledger_migrations(&history, &expected)
+        .into_iter()
+        .map(|migration| migration.version)
+        .collect();
     let mut report = OnlineIndexPreparation::default();
     for index in &ONLINE_INDEXES {
         if applied.contains(&index.migration_version) {
@@ -694,7 +677,8 @@ async fn prepare_adoptable_indexes(
 /// from the bundle or whose run failed is refused with
 /// [`crate::SchemaCompatibilityError::Incompatible`] (`VersionMismatch` or
 /// `Dirty`) before any build, exactly as the protected runner refuses it,
-/// instead of being treated as pending.
+/// instead of being treated as pending. A newer incompatible version in
+/// `runledger_migration_history` is likewise refused with `VersionMissing`.
 ///
 /// Run external tooling only after this call returned `Ok`. A build that fails
 /// or is cancelled can leave an `INVALID` index; rerunning this call drops and
@@ -729,7 +713,10 @@ async fn prepare_adoptable_indexes(
 /// `lock_timeout` and, on servers that define it, `transaction_timeout` fails
 /// it with [`crate::SchemaCompatibilityError::MigrationLockTimeout`], retaining
 /// its typed setting and bound; only when all are zero is the wait unbounded. A
-/// migrator or older binary that waits with
+/// pending poll response is bounded locally as well; a successful response
+/// observed after expiry cannot grant admission. This does not prove that
+/// the remote session has already ended.
+/// A migrator or older binary that waits with
 /// blocking `pg_advisory_lock` does hold one, and PostgreSQL then aborts either
 /// that waiter or the build with a deadlock. Do not start such tooling until
 /// this call has returned, and do not call this while one is already waiting.

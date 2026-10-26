@@ -72,15 +72,22 @@ impl MigrationLock {
         let started = tokio::time::Instant::now();
         loop {
             remaining_wait(started, bound)?;
-            let acquired: bool = sqlx::query_scalar("SELECT pg_catalog.pg_try_advisory_lock($1)")
+            let poll = sqlx::query_scalar("SELECT pg_catalog.pg_try_advisory_lock($1)")
                 .bind(id)
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(|error| {
-                    SchemaCompatibilityError::Incompatible(sqlx::migrate::MigrateError::Execute(
-                        error,
-                    ))
-                })?;
+                .fetch_one(&mut *conn);
+            let acquired: bool = match bound {
+                Some((duration, setting)) => tokio::time::timeout_at(started + duration, poll)
+                    .await
+                    .map_err(|_| {
+                        SchemaCompatibilityError::MigrationLockTimeout(MigrationLockTimeout::new(
+                            setting, duration,
+                        ))
+                    })?,
+                None => poll.await,
+            }
+            .map_err(|error| {
+                SchemaCompatibilityError::Incompatible(sqlx::migrate::MigrateError::Execute(error))
+            })?;
             // A ready response or a delayed wakeup cannot extend the total
             // bound. If this poll acquired too late, the caller's armed
             // close_on_drop retires the session together with its lock.

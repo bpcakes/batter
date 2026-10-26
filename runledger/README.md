@@ -1653,7 +1653,9 @@ and `ensure_schema_compatible_after_idempotency_cutover` reports it as
 of starting without it. A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before
 the migration is recorded. Definition matching is strict, including physical
-storage options: even an explicit default `fillfactor = 90` is refused because
+storage options. Quoted authoritative schemas, including SQL keywords and
+identifiers containing ` USING `, retain the same canonical match. Even an
+explicit default `fillfactor = 90` is refused because
 `pg_get_indexdef` renders a `WITH` clause absent from the bundle. For that case,
 `ALTER INDEX idx_job_queue_created_id RESET (fillfactor)` restores the implicit
 default without replacing the index. Review other mismatches against the
@@ -1666,8 +1668,9 @@ lock it concurrently builds the pending indexes whose canonical statement uses
 canonical statements then adopt them. An adoptable index is deferred while
 an earlier bundled migration is still unapplied; on a populated database apply
 the migrations through the preceding version, then prepare again. A recorded
-migration with a foreign checksum or a failed run is refused before any build,
-as the protected runner refuses it. Its report also
+migration with a foreign checksum or a failed run, or a newer incompatible
+`runledger_migration_history` version, is refused before any build, as the
+protected runner refuses it. Its report also
 names the pending indexes an external migrator still builds with a blocking
 statement; only the protected runner builds those online. Run the external
 tooling only after the call returned `Ok` and its report has been inspected.
@@ -1692,7 +1695,10 @@ Both Runledger entry points wait for the SQLx migration lock by polling
 the holder's concurrent build must wait for. The smallest nonzero statement,
 lock or transaction timeout bounds this wait; local expiry returns
 `SchemaCompatibilityError::MigrationLockTimeout` with a `MigrationTimeoutSetting`
-and duration, distinct from a native database or connection failure. All zero
+and duration, distinct from a native database or connection failure. The polling
+budget bounds outstanding response I/O locally, and a successful response
+observed after expiry cannot grant admission. Socket retirement does not prove
+remote termination across network failure. All zero
 values leave the wait unbounded. A migrator or older binary that
 waits with blocking `pg_advisory_lock` does hold one, and PostgreSQL aborts
 either that waiter or the build with a deadlock, leaving the index `INVALID`.

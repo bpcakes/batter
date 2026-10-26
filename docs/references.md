@@ -5171,3 +5171,21 @@ define B-tree fillfactor's default as 90. Explicit options appear in the catalog
 rendering and intentionally fail Runledger's strict definition match;
 [ALTER INDEX RESET](https://www.postgresql.org/docs/18/sql-alterindex.html)
 removes the explicit option. The live test verifies that this restores acceptance.
+
+SQLx 0.9.0's [PostgreSQL executor](https://docs.rs/sqlx-postgres/0.9.0/src/sqlx_postgres/connection/executor.rs.html)
+and stream await response I/O without a per-query client deadline. The locally
+resolved [Tokio 1.53.1 timeout](https://docs.rs/tokio/1.53.1/src/tokio/time/timeout.rs.html)
+polls its inner future before checking expiry, so an absolute poll deadline still needs a post-response admission
+check. Runledger bounds local polling, without inferring backend termination.
+The fault relay follows PostgreSQL 18's
+[message formats](https://www.postgresql.org/docs/18/protocol-message-formats.html):
+startup is untagged; Parse and Query contain SQL; tagged frames carry their own
+length. It withholds real DataRow delivery or closes at restoration, while the
+fixture database executes the SQL.
+
+PostgreSQL's [SET privilege](https://www.postgresql.org/docs/18/ddl-priv.html)
+applies to parameters normally restricted to superusers. The
+[PostgreSQL 18 parameter declarations](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/misc/guc_tables.c)
+mark the three lifted timeouts and `client_connection_check_interval` as
+`PGC_USERSET`; revoking SET is therefore not a restoration-failure injection.
+The regression instead disconnects the real SQLx session at restoration.

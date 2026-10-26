@@ -118,6 +118,9 @@ All notable changes to this workspace are documented here.
   index, execution phase, acknowledged migration version and both build and
   restoration causes behind redacted formatting.
 - External-preparation examples stop for deferred indexes and blocking builds.
+  Preparation also refuses newer incompatible Runledger history before any
+  builds, sharing the protected runner's history checks. Canonical index
+  matching accepts quoted schema names containing SQL delimiter text.
   Strict definition matching includes storage options, even explicit default
   fillfactor; the migration guide documents resetting that extra option.
 
@@ -135,16 +138,18 @@ All notable changes to this workspace are documented here.
   `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`. A local wait
   expiry returns `MigrationLockTimeout` with a typed `MigrationTimeoutSetting`
   and duration, distinct from the server's database or connection failures.
-  The bound is checked before each poll and before accepting its result, so
-  scheduler delay or a late successful response cannot extend the total wait.
+  Each outstanding poll has an absolute local deadline. Checks before polling
+  and before accepting its result also reject admission after scheduler delay
+  or a late successful response; expiry does not prove remote termination.
   The build
   session lifts `transaction_timeout` only where the server defines it; the
   executable suite runs only on PostgreSQL 18, so the branches taken on a
   server without that setting (PostgreSQL 16 and earlier) are unverified.
 - Failures while reading migration history in the protected runner now surface
   as `SchemaCompatibilityError::Query` rather than
-  `Incompatible(MigrateError::Execute(..))`; the new catalog reads and index
-  builds use the same variant.
+  `Incompatible(MigrateError::Execute(..))`. Direct catalog reads use `Query`;
+  online-index execution failures use `OnlineIndexExecution`, whose retained
+  cause can be `Query` and whose phase/version preserve execution context.
 - Job claims batch workflow updates, attempt inserts and lease-event inserts
   into three statements per nonempty batch, retaining individual audit rows,
   workflow status guards and the existing lease/resource transaction fences.

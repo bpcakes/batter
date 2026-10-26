@@ -3169,6 +3169,21 @@ on PostgreSQL 18, so the branches taken when the server lacks
 executable tests. Build durations on
 populated tables were not measured.
 
+`online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a
+real successful lock-poll response while the runtime advances, or deliver it
+without polling the runner until after expiry. Both migration entry points
+must return typed local expiry. The relay also closes the connection exactly
+when timeout restoration begins after either a successful build or a server-
+cancelled build, exercising phase selection and retention of both causes.
+Recovery then completes and verifies the schema. The relay changes only
+response delivery or connection lifetime; SQL still executes on PostgreSQL.
+
+`online_compatibility.rs` prepares pending indexes and calls the protected
+runner directly, checking unchanged index OIDs and canonical history. It also
+covers quoted schemas containing ` USING `, embedded quotes and a SQL keyword,
+and preparation refusal of a newer incompatible history fence with and without
+SQLx history. The matcher unit cases retain wrong-definition/schema controls.
+
 `online_failures.rs` adds actual-runner cancellation while a writer remains
 held, requiring independent observation of backend and lock disappearance
 before writer release and successful repair afterward. It covers a returned
@@ -3180,7 +3195,8 @@ refusal of a VALID wrong definition after migration, and explicit default
 fillfactor refusal followed by `RESET (fillfactor)` recovery. Both entry points
 assert typed local lock-wait expiry. A current-thread runtime stall outlasts
 the bound before an independent holder releases the lock; the resumed runner
-must reject late success. Session tests cover restoration of disabled,
+must reject another poll. The separate relay test exercises an already-ready
+successful response after expiry. Session tests cover restoration of disabled,
 tighter and looser disconnect checks along with all three profile timeouts.
 These tests run in the workspace matrix; they do not establish runtime-death or
 network-partition bounds.
