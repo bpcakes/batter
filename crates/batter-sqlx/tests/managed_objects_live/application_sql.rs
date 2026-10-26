@@ -133,6 +133,56 @@ async fn install_original_caller(fixture: &mut Fixture, pool: &PgPool, serving: 
     Ok(())
 }
 
+async fn unrelated_overload_changes(
+    fixture: &Fixture,
+    pool: &PgPool,
+    reader: &PgPool,
+    manifest: &ManagedObjectManifest,
+) -> Result {
+    let schema = fixture.schema();
+    let create = format!(
+        "CREATE OR REPLACE FUNCTION {schema}.report_total(value integer) RETURNS integer
+         LANGUAGE sql RETURN value"
+    );
+    let remove = format!("DROP FUNCTION IF EXISTS {schema}.report_total(integer)");
+    let mut rejected = false;
+    for (operation, setup, change, present) in [
+        ("create", remove.clone(), create.clone(), true),
+        ("remove", create, remove, false),
+    ] {
+        sqlx::raw_sql(AssertSqlSafe(setup)).execute(pool).await?;
+        let result = apply(fixture, pool, manifest, async |sql| {
+            sqlx::raw_sql(AssertSqlSafe(change))
+                .execute(sql.executor())
+                .await?;
+            Ok(())
+        })
+        .await;
+        if let Err(error) = result {
+            eprintln!("unrelated overload {operation} rejected: {error:?}");
+            rejected = true;
+            continue;
+        }
+        let exists: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
+            .bind(format!("{schema}.report_total(integer)"))
+            .fetch_one(reader)
+            .await?;
+        require(exists == present, "unrelated overload change not published")?;
+        if present {
+            let value: i32 = sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT {schema}.report_total(9::integer)"
+            )))
+            .fetch_one(reader)
+            .await?;
+            require(value == 9, "unmanaged public overload is not callable")?;
+        }
+    }
+    require(
+        !rejected,
+        "unrelated overload changes must not reject apply",
+    )
+}
+
 #[tokio::test]
 #[ignore = "requires external PostgreSQL; scripts/test_sqlx_live.sh"]
 async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Result {
@@ -209,6 +259,7 @@ async fn managed_application_sql_publishes_owner_and_grants_atomically() -> Resu
                 .fetch_one(&reader)
                 .await?;
         require(total == 7, "restricted caller could not execute new helper")?;
+        unrelated_overload_changes(fixture, &migrator, &reader, &changed.manifest).await?;
         exact_authority(fixture, &reader, &schema, &owner, &serving).await?;
         require(
             pid(&migrator).await? != before_pid,

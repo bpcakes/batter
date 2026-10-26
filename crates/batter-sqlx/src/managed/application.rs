@@ -196,9 +196,25 @@ impl State {
         .map_err(native)?
         .into_iter()
         .collect();
-        let live = catalog::resolve_live(connection, manifest)
-            .await?
-            .into_iter()
+        let resolved = catalog::resolve_live(connection, manifest).await?;
+        // Resolution includes unrelated overloads; compare only this manifest's
+        // exact identities, including retirements only when their kind matches.
+        let live = manifest
+            .objects()
+            .iter()
+            .map(|object| (object.identity(), object.kind()))
+            .chain(
+                manifest
+                    .retirements()
+                    .iter()
+                    .map(|retirement| (retirement.identity(), retirement.kind())),
+            )
+            .filter_map(|(identity, kind)| {
+                resolved
+                    .get(identity)
+                    .filter(|live| live.kind == Some(kind))
+                    .map(|live| (identity.to_owned(), *live))
+            })
             .collect();
         let definitions = apply::installed_objects(connection, manifest)
             .await?

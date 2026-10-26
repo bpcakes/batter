@@ -2,6 +2,7 @@
 
 use super::*;
 use batter_core::operation::{OperationError, OperationOwner};
+use batter_sqlx::managed::Retirement;
 use std::time::Duration;
 
 #[tokio::test]
@@ -10,7 +11,11 @@ async fn managed_application_cannot_change_definitions_ledger_or_public_policy()
     Fixture::run(async |fixture| {
         let schema = fixture.schema().to_owned();
         let pool = fixture.pool(Role::Migrator).await?;
-        let original = fixture.objects(PublicExecute::Revoke);
+        let original = fixture.objects_with(
+            PublicExecute::Revoke,
+            fixture.standard_objects(),
+            [Retirement::function(RoutineSignature::new(&schema, "retired_total", [])?)],
+        )?;
         let _ = fixture.apply(&pool, &original.manifest).await?;
         let before = catalog_state(&pool,&schema).await?;
         let before_ledger = ledger(&pool,&schema).await?;
@@ -20,6 +25,7 @@ async fn managed_application_cannot_change_definitions_ledger_or_public_policy()
             format!("UPDATE {schema}.managed_objects SET rendered_checksum='\\x00'::bytea"),
             format!("UPDATE {schema}.managed_objects SET applied_at=applied_at + interval '1 second'"),
             format!("GRANT EXECUTE ON FUNCTION {schema}.record_total(bigint) TO PUBLIC"),
+            format!("CREATE FUNCTION {schema}.retired_total() RETURNS bigint LANGUAGE sql RETURN 0"),
         ] {
             let error = apply(fixture,&pool,&original.manifest,async |sql| {
                 sqlx::raw_sql(AssertSqlSafe(statement)).execute(sql.executor()).await?;
