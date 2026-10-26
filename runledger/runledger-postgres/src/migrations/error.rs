@@ -4,7 +4,9 @@ use sqlx::migrate::MigrateError;
 
 use super::{OnlineIndexProblem, WorkflowJobLinkTriggerDiagnostic};
 
+mod cleanup;
 mod online;
+pub use cleanup::MigrationCleanupError;
 pub use online::{
     MigrationLockTimeout, MigrationTimeoutSetting, OnlineIndexExecutionError, OnlineIndexPhase,
 };
@@ -31,6 +33,8 @@ pub enum SchemaCompatibilityError {
     },
     Incompatible(MigrateError),
     MigrationUnlock(MigrateError),
+    /// Migration or preparation and its advisory-lock release both failed.
+    MigrationCleanup(MigrationCleanupError),
     /// A local wait for the migration lock exhausted its profile bound.
     MigrationLockTimeout(MigrationLockTimeout),
     /// Online index execution failed; inspect the retained phase and causes.
@@ -46,6 +50,7 @@ pub enum SchemaCompatibilityError {
 impl fmt::Display for SchemaCompatibilityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MigrationCleanup(error) => fmt::Display::fmt(error, f),
             Self::MigrationLockTimeout(error) => fmt::Display::fmt(error, f),
             Self::OnlineIndexExecution(error) => fmt::Display::fmt(error, f),
             Self::Snapshot(_) => f.write_str("Runledger schema snapshot failed"),
@@ -108,6 +113,7 @@ impl fmt::Display for SchemaCompatibilityError {
 impl std::error::Error for SchemaCompatibilityError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::MigrationCleanup(error) => Some(error),
             Self::MigrationLockTimeout(error) => Some(error),
             Self::OnlineIndexExecution(error) => Some(error),
             Self::Query(error) => Some(error),

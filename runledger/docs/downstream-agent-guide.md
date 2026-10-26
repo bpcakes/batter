@@ -726,8 +726,10 @@ indexes of `202605220001`, `202607280004` and `202609050001` with
 `CREATE INDEX CONCURRENTLY` and repairs or reports an interrupted build; tooling
 that applies the canonical SQL itself calls
 `prepare_online_indexes_for_external_migrator` first and still blocks on the
-three indexes without `IF NOT EXISTS`. Start that tooling only after
-preparation returned `Ok`, never while a Runledger process is migrating or
+three indexes without `IF NOT EXISTS`. Inspect both deferred and blocking
+outcomes after preparation returns `Ok`; even empty lists do not authorize the
+contract migration before old writers drain. Start external tooling only after
+those independent rollout gates are met, never while a Runledger process is migrating or
 preparing: a waiter blocked in `pg_advisory_lock` deadlocks with the
 concurrent build and leaves an `INVALID` index that startup verification then
 refuses, and preparation repairs a leftover only while its migration is still
@@ -736,7 +738,11 @@ refused before any build. Once the migration is recorded, recover by dropping th
 `DROP INDEX CONCURRENTLY` and rebuilding it with the migration file's
 statement plus `CONCURRENTLY`; run `migrate_after_idempotency_cutover` instead
 only where every other pending bundled migration may be applied now, because
-it applies them all. Validating
+it applies them all. A failure of both the operation and advisory-lock release
+returns `MigrationCleanup`; inspect its `operation_error()` and `unlock_error()`
+only in trusted diagnostics. The original online build/restoration context
+stays in the operation error. Direct formatting redacts both causes, while
+error-source traversal may expose native details. Validating
 `CHECK` constraints keep their table scans under
 `ACCESS EXCLUSIVE`. See the README's
 [online index builds](../README.md#online-index-builds).

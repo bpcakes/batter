@@ -36,8 +36,8 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 mod error;
 pub use error::{
-    MigrationLockTimeout, MigrationTimeoutSetting, OnlineIndexExecutionError, OnlineIndexPhase,
-    SchemaCompatibilityError,
+    MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
+    OnlineIndexExecutionError, OnlineIndexPhase, SchemaCompatibilityError,
 };
 
 mod online;
@@ -207,7 +207,9 @@ impl fmt::Display for WorkflowJobLinkTriggerDiagnostic {
 /// A local migration-lock wait expiry returns [`SchemaCompatibilityError::MigrationLockTimeout`].
 /// Build execution errors retain their index, phase and acknowledged migration
 /// version in [`SchemaCompatibilityError::OnlineIndexExecution`]; neither
-/// observation authorizes automatic replay. During concurrent builds the three
+/// observation authorizes automatic replay. If lock release also fails,
+/// [`SchemaCompatibilityError::MigrationCleanup`] retains the original error
+/// and the unlock cause together. During concurrent builds the three
 /// profile timeouts are lifted and client disconnect checks run at least once
 /// per second; all settings are restored afterward. Closing a session on
 /// cancellation enables server disconnect detection, but does not prove
@@ -232,29 +234,12 @@ pub async fn migrate_after_idempotency_cutover(
     };
 
     let result = online::run_migrations_with_filtered_history(&mut conn, database).await;
-    let unlock_result = match lock {
-        Some(lock) => lock.release(&mut conn).await.map_err(MigrateError::Execute),
-        None => Ok(()),
-    };
-
-    match (result, unlock_result) {
-        (Err(migration_error), Err(unlock_error)) => {
-            tracing::error!(
-                error = %unlock_error,
-                "failed to unlock migration lock after migration failure"
-            );
-            Err(migration_error)
-        }
-        (Err(error), Ok(())) => Err(error),
-        (Ok(()), Err(error)) => Err(SchemaCompatibilityError::MigrationUnlock(error)),
-        (Ok(()), Ok(())) => {
-            // The DDL migration lock is no longer needed here: the NOT VALID
-            // cutover constraints already block new violating rows, and
-            // validation is idempotent if another startup validates first.
-            reject_legacy_idempotency_rows(&mut *conn, database).await?;
-            validate_idempotency_cutover_constraints(&mut *conn, database).await
-        }
-    }
+    online::MigrationLock::release_after(lock, &mut conn, result).await?;
+    // The DDL migration lock is no longer needed here: the NOT VALID
+    // cutover constraints already block new violating rows, and
+    // validation is idempotent if another startup validates first.
+    reject_legacy_idempotency_rows(&mut *conn, database).await?;
+    validate_idempotency_cutover_constraints(&mut *conn, database).await
 }
 
 /// Apply the bundled Runledger schema migrations to a PostgreSQL pool.

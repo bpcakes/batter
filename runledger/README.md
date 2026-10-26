@@ -1643,8 +1643,13 @@ closed socket while blocked on a writer. A dropped future is not proof of
 backend death, and network failure or runtime death can delay detection.
 Build errors retain their index, phase and acknowledged migration version in
 `SchemaCompatibilityError::OnlineIndexExecution`; secondary restoration errors
-remain inspectable. No error authorizes automatic replay. While another session is still
-building, read-only verification reports the transient
+remain inspectable. When the operation and advisory-lock release both fail,
+`SchemaCompatibilityError::MigrationCleanup` retains the original error through
+`operation_error()` and the independent unlock cause through `unlock_error()`.
+Direct formatting redacts both; trusted accessors and source-chain reporters
+can expose native details. Connection retirement stays armed, without proving
+remote termination. No error authorizes automatic replay. While another session
+in the same database is still building, read-only verification reports the transient
 `OnlineIndexProblem::BuildInProgress`; retry once that build ends. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
 index missing or `INVALID`; the next protected startup drops and rebuilds it,
@@ -1655,6 +1660,10 @@ adopted; a differently defined index under a declared name is refused before
 the migration is recorded. Definition matching is strict, including physical
 storage options. Quoted authoritative schemas, including SQL keywords and
 identifiers containing ` USING `, retain the same canonical match. Even an
+index predicate containing schema-like text in a literal remains distinct;
+the matcher never removes schema prefixes from catalog text. The declared
+ordinary and fully quoted renderings also support `quote_all_identifiers=on`
+without changing the session setting. An
 explicit default `fillfactor = 90` is refused because
 `pg_get_indexdef` renders a `WITH` clause absent from the bundle. For that case,
 `ALTER INDEX idx_job_queue_created_id RESET (fillfactor)` restores the implicit
@@ -1677,8 +1686,10 @@ tooling only after the call returned `Ok` and its report has been inspected.
 `Ok` alone does not mean every index is prepared. On populated tables, stop
 when `deferred()` is nonempty, apply only the prerequisite migration prefix,
 and prepare again before crossing the index migration. When
-`external_build_blocks()` is nonempty, use the protected runner or an
-application-approved deployment window. These are caller obligations for
+`external_build_blocks()` is nonempty, use the protected runner only when every
+pending migration is approved, or an application-approved deployment window.
+Empty lists remove index-preparation blockers; they do not approve a staged
+contract migration before old writers drain. These are caller obligations for
 external tooling, which the library does not execute. A failed or cancelled build can leave an `INVALID` index,
 which a rerun drops and rebuilds while the migration is pending. Once the
 canonical statement has adopted an `INVALID` index and the migration is

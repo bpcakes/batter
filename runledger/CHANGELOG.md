@@ -110,6 +110,19 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Online index definition matching preserves predicate literals instead of
+  removing schema prefixes from catalog text and accepts canonical fully quoted
+  renderings under `quote_all_identifiers=on` without changing that setting.
+  Progress lookup includes database
+  identity, so an unrelated database's matching index OID cannot suppress local
+  repair. Empty preparation lists do not authorize non-index rollout steps.
+- When migration or preparation fails and advisory-lock release also fails,
+  `SchemaCompatibilityError::MigrationCleanup(MigrationCleanupError)` retains
+  both concrete errors through `operation_error()` and `unlock_error()`.
+  Direct Debug/Display redact the causes; trusted accessors and error-source
+  traversal can expose native details. Existing online execution/restoration
+  context remains nested in the operation error. This is an additive outcome
+  on the non-exhaustive error enum; existing public call shapes are unchanged.
 - Concurrent index builds enable `client_connection_check_interval` at one
   second or preserve a tighter positive setting, then restore the original
   value. Cancelling the runner can interrupt a disconnected build even while
@@ -134,7 +147,7 @@ All notable changes to this workspace are documented here.
   keeps the bound the blocking acquisition had: the smallest nonzero of the
   session's `statement_timeout`, `lock_timeout` and `transaction_timeout`
   fails it, and only when all of them are zero does it wait without bound. Lock
-  acquisition and release failures keep surfacing as
+  acquisition and release-only failures keep surfacing as
   `SchemaCompatibilityError::Incompatible` and `MigrationUnlock`. A local wait
   expiry returns `MigrationLockTimeout` with a typed `MigrationTimeoutSetting`
   and duration, distinct from the server's database or connection failures.

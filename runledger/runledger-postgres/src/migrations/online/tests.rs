@@ -101,6 +101,11 @@ fn definition_matching_pins_name_table_and_rendering() {
     let claim_order = &ONLINE_INDEXES[2];
     let qualified_type = "CREATE INDEX idx_job_queue_execution_resource_claim_order ON app.job_queue USING btree (priority DESC, next_run_at, created_at, id) INCLUDE (execution_resource_key, job_type) WHERE ((status = 'PENDING'::app.job_status) AND (execution_resource_key IS NOT NULL))";
     assert!(definition_matches(claim_order, qualified_type, "app"));
+    assert!(!definition_matches(
+        claim_order,
+        &qualified_type.replace("'PENDING'", "'app.PENDING'"),
+        "app"
+    ));
     for schema in ["tenant USING data", "tenant USING \"data\"", "select"] {
         let quoted = format!("\"{}\"", schema.replace('"', "\"\""));
         let definition = format!(
@@ -108,6 +113,11 @@ fn definition_matching_pins_name_table_and_rendering() {
             claim_order.name
         );
         assert!(definition_matches(claim_order, &definition, schema));
+        assert!(!definition_matches(
+            claim_order,
+            &definition.replace("'PENDING'", &format!("'{quoted}.PENDING'")),
+            schema
+        ));
         assert!(!definition_matches(
             claim_order,
             &definition.replace("priority DESC", "id DESC"),
@@ -119,6 +129,24 @@ fn definition_matching_pins_name_table_and_rendering() {
             "other_schema"
         ));
     }
+}
+
+#[test]
+fn fully_quoted_definitions_preserve_type_qualification_and_literals() {
+    let index = &ONLINE_INDEXES[2];
+    let rendered = r#"CREATE INDEX "idx_job_queue_execution_resource_claim_order" ON "app"."job_queue" USING "btree" ("priority" DESC, "next_run_at", "created_at", "id") INCLUDE ("execution_resource_key", "job_type") WHERE (("status" = 'PENDING'::"app"."job_status") AND ("execution_resource_key" IS NOT NULL))"#;
+    assert!(definition_matches(index, rendered, "app"));
+    assert!(definition_matches(
+        index,
+        &rendered.replace("::\"app\".", "::"),
+        "app"
+    ));
+    assert!(!definition_matches(
+        index,
+        &rendered.replace("'PENDING'", "'\"app\".PENDING'"),
+        "app"
+    ));
+    assert!(!definition_matches(index, rendered, "other"));
 }
 
 #[test]

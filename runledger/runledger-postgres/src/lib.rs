@@ -348,9 +348,9 @@ pub use error::{
 };
 pub use migration_identity::{MigrationBundle, RUNLEDGER_POSTGRES_VERSION, migration_bundle};
 pub use migrations::{
-    MIGRATOR, MigrationLockTimeout, MigrationTimeoutSetting, OnlineIndexExecutionError,
-    OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem, SchemaCompatibilityError,
-    WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
+    MIGRATOR, MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
+    OnlineIndexExecutionError, OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem,
+    SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,
     ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
     prepare_online_indexes_for_external_migrator,
 };
@@ -457,9 +457,9 @@ pub mod prelude {
     };
     pub use crate::{
         AcceptedIntentOutcome, AcceptedIntentState, DbPool, DbTx, FrameworkConstraintSpec,
-        MIGRATOR, MigrationLockTimeout, MigrationTimeoutSetting, OnlineIndexExecutionError,
-        OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem, PgAtomicError,
-        PgAtomicUncertainty, PgFailurePolicy, PgIntentScope, PgPolicyIntentScope,
+        MIGRATOR, MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
+        OnlineIndexExecutionError, OnlineIndexPhase, OnlineIndexPreparation, OnlineIndexProblem,
+        PgAtomicError, PgAtomicUncertainty, PgFailurePolicy, PgIntentScope, PgPolicyIntentScope,
         PgPolicyQueueScope, PgQueueScope, PgScopeFailure, PgScopeLoss, PgSessionProfile,
         QueryError, QueryErrorCategory, QueryErrorKind, RequiredIntentError, RunledgerDatabase,
         SchemaCompatibilityError, WorkflowJobLinkTriggerDiagnostic, WorkflowJobLinkTriggerProblem,

@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use sqlx::PgConnection;
 
-use super::super::{MigrationLockTimeout, MigrationTimeoutSetting, SchemaCompatibilityError};
+use super::super::{
+    MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting, SchemaCompatibilityError,
+};
 use crate::PgQueryExecutor;
 
 /// SQLx's lock-id factor from `sqlx-postgres`'s migration lock derivation.
@@ -31,6 +33,30 @@ pub(in crate::migrations) struct MigrationLock {
 }
 
 impl MigrationLock {
+    /// Settle the operation and lock release together, retaining both failures.
+    /// Callers keep session retirement armed even after a failed release.
+    pub(in crate::migrations) async fn release_after<T>(
+        lock: Option<Self>,
+        conn: &mut PgConnection,
+        result: Result<T, SchemaCompatibilityError>,
+    ) -> Result<T, SchemaCompatibilityError> {
+        let release = match lock {
+            Some(lock) => lock
+                .release(conn)
+                .await
+                .map_err(sqlx::migrate::MigrateError::Execute),
+            None => Ok(()),
+        };
+        match (result, release) {
+            (Err(operation), Err(unlock)) => Err(SchemaCompatibilityError::MigrationCleanup(
+                MigrationCleanupError::new(operation, unlock),
+            )),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(error)) => Err(SchemaCompatibilityError::MigrationUnlock(error)),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+
     /// Wait for the lock by polling, holding no snapshot between polls.
     ///
     /// The session's `statement_timeout`, `lock_timeout` and, where the

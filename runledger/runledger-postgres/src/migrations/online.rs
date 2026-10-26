@@ -25,8 +25,10 @@ use super::{
 };
 use crate::{PgQueryExecutor, RunledgerDatabase};
 
+mod definition;
 mod lock;
 mod session;
+use definition::definition_matches;
 pub(super) use lock::MigrationLock;
 use session::ProfileTimeouts;
 
@@ -42,6 +44,8 @@ struct OnlineIndex {
     /// The `pg_get_indexdef` rendering after `USING`, without schema
     /// qualification, as PostgreSQL 18 renders the canonical build.
     expected_definition: &'static str,
+    /// The same canonical body with `quote_all_identifiers` enabled.
+    expected_quoted_definition: &'static str,
 }
 
 impl OnlineIndex {
@@ -75,6 +79,7 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
     WHERE idempotency_key IS NOT NULL
       AND enqueue_request IS NULL;",
         expected_definition: "btree (id) WHERE ((idempotency_key IS NOT NULL) AND (enqueue_request IS NULL))",
+        expected_quoted_definition: r#""btree" ("id") WHERE (("idempotency_key" IS NOT NULL) AND ("enqueue_request" IS NULL))"#,
     },
     OnlineIndex {
         migration_version: 202605220001,
@@ -86,6 +91,7 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
     WHERE idempotency_key IS NOT NULL
       AND enqueue_request IS NULL;",
         expected_definition: "btree (id) WHERE ((idempotency_key IS NOT NULL) AND (enqueue_request IS NULL))",
+        expected_quoted_definition: r#""btree" ("id") WHERE (("idempotency_key" IS NOT NULL) AND ("enqueue_request" IS NULL))"#,
     },
     OnlineIndex {
         migration_version: 202607280004,
@@ -102,6 +108,7 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
     WHERE status = 'PENDING'
       AND execution_resource_key IS NOT NULL;",
         expected_definition: "btree (priority DESC, next_run_at, created_at, id) INCLUDE (execution_resource_key, job_type) WHERE ((status = 'PENDING'::job_status) AND (execution_resource_key IS NOT NULL))",
+        expected_quoted_definition: r#""btree" ("priority" DESC, "next_run_at", "created_at", "id") INCLUDE ("execution_resource_key", "job_type") WHERE (("status" = 'PENDING'::"job_status") AND ("execution_resource_key" IS NOT NULL))"#,
     },
     OnlineIndex {
         migration_version: 202609050001,
@@ -110,6 +117,7 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
         canonical_statement: "CREATE INDEX idx_job_queue_scope_created_id
     ON job_queue (organization_id, created_at DESC, id DESC);",
         expected_definition: "btree (organization_id, created_at DESC, id DESC)",
+        expected_quoted_definition: r#""btree" ("organization_id", "created_at" DESC, "id" DESC)"#,
     },
     OnlineIndex {
         migration_version: 202609050001,
@@ -118,6 +126,7 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
         canonical_statement: "CREATE INDEX idx_job_queue_created_id
     ON job_queue (created_at DESC, id DESC);",
         expected_definition: "btree (created_at DESC, id DESC)",
+        expected_quoted_definition: r#""btree" ("created_at" DESC, "id" DESC)"#,
     },
 ];
 
@@ -137,7 +146,7 @@ pub enum OnlineIndexProblem {
     /// The bundled migration SQL does not contain the declared statement
     /// exactly once. This is a packaging defect, not a database state.
     StatementNotEmbedded,
-    /// Another session is still building the index concurrently: its build
+    /// Another session in this database is still building the index: its build
     /// shows in `pg_stat_progress_create_index`, or the index is missing or
     /// `INVALID` while another session holds the migration lock. The state is
     /// transient; retry after that build ends.
@@ -255,25 +264,6 @@ fn problem(index: &OnlineIndex, problem: OnlineIndexProblem) -> SchemaCompatibil
     }
 }
 
-/// Compare a live `pg_get_indexdef` rendering with the declared build. The
-/// catalog pins the schema; accept its quoted or unquoted rendering without
-/// parsing delimiters inside identifiers or maintaining PostgreSQL's keywords.
-fn definition_matches(index: &OnlineIndex, definition: &str, schema: &str) -> bool {
-    [
-        format!("\"{}\".", schema.replace('"', "\"\"")),
-        format!("{schema}."),
-    ]
-    .into_iter()
-    .any(|schema_prefix| {
-        definition
-            .strip_prefix(&format!(
-                "CREATE INDEX {} ON {}{} USING ",
-                index.name, schema_prefix, index.table
-            ))
-            .is_some_and(|body| body.replace(&schema_prefix, "") == index.expected_definition)
-    })
-}
-
 fn check_valid(
     index: &OnlineIndex,
     definition: &str,
@@ -311,6 +301,10 @@ async fn index_state(
                     EXISTS (
                         SELECT 1 FROM pg_catalog.pg_stat_progress_create_index p
                         WHERE p.index_relid = c.oid
+                          AND p.datid = (
+                              SELECT oid FROM pg_catalog.pg_database
+                              WHERE datname = pg_catalog.current_database()
+                          )
                     ) AS building,
                     t.relname::text AS \"table\",
                     CASE WHEN i.indexrelid IS NULL THEN NULL
@@ -704,7 +698,9 @@ async fn prepare_adoptable_indexes(
 /// can then interrupt a blocked build; this is not a backend-death guarantee
 /// across network failure or runtime death. Execution errors retain their
 /// index and phase in [`crate::SchemaCompatibilityError::OnlineIndexExecution`],
-/// with no recorded version for this preparation path.
+/// with no recorded version for this preparation path. If lock release also
+/// fails, [`crate::SchemaCompatibilityError::MigrationCleanup`] retains both
+/// the original operation error and the unlock cause with redacted formatting.
 ///
 /// Runledger waits for the migration lock by polling `pg_try_advisory_lock`,
 /// so a waiting Runledger starter holds no snapshot that an in-progress
@@ -730,10 +726,13 @@ async fn prepare_adoptable_indexes(
 ///     return Err("indexes deferred: prerequisite migration prefix required".into());
 /// }
 /// if !report.external_build_blocks().is_empty() {
-///     // Use the protected runner, or obtain application approval for downtime.
+///     // Use the protected runner only if every pending migration is approved,
+///     // or obtain application approval for blocking builds in a rollout window.
 ///     return Err("external tooling would still perform blocking index builds".into());
 /// }
-/// // With both lists empty, external tooling may apply the canonical files.
+/// // Both lists empty means no index-preparation blockers were reported.
+/// // Select external migrations only after their separate rollout gates are met,
+/// // including draining old writers before a staged contract migration.
 /// # Ok(())
 /// # }
 /// ```
@@ -751,25 +750,7 @@ pub async fn prepare_online_indexes_for_external_migrator(
         None
     };
     let result = prepare_adoptable_indexes(&mut conn, database).await;
-    let unlock_result = match lock {
-        Some(lock) => lock
-            .release(&mut conn)
-            .await
-            .map_err(sqlx::migrate::MigrateError::Execute),
-        None => Ok(()),
-    };
-    match (result, unlock_result) {
-        (Err(error), Err(unlock_error)) => {
-            tracing::error!(
-                error = %unlock_error,
-                "failed to unlock migration lock after online index preparation failure"
-            );
-            Err(error)
-        }
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(SchemaCompatibilityError::MigrationUnlock(error)),
-        (Ok(report), Ok(())) => Ok(report),
-    }
+    MigrationLock::release_after(lock, &mut conn, result).await
 }
 
 #[cfg(test)]

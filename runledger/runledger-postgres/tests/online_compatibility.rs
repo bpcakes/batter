@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use runledger_postgres::{
-    MIGRATOR, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
+    MIGRATOR, OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
     ensure_schema_compatible_after_idempotency_cutover, migrate_after_idempotency_cutover,
     prepare_online_indexes_for_external_migrator,
 };
@@ -11,8 +11,8 @@ use sqlx::{AssertSqlSafe, PgPool};
 mod online_support;
 mod support;
 use online_support::{
-    DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, index_catalog, raw_apply_through,
-    sqlx_history,
+    DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, hold_writer_lock, index_catalog,
+    raw_apply_through, sqlx_history,
 };
 
 async fn index_oids(pool: &PgPool, schema: &str) -> BTreeMap<String, i64> {
@@ -66,10 +66,17 @@ async fn protected_runner_adopts_prepared_pending_indexes_without_rebuilding() {
 
 #[tokio::test]
 async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() {
-    for schema in ["tenant USING data", "tenant USING \"data\"", "select"] {
+    for (schema, quote_all) in [
+        ("tenant USING data", false),
+        ("tenant USING \"data\"", false),
+        ("select", false),
+        ("public", true),
+        ("tenant USING \"data\"", true),
+        ("select", true),
+    ] {
         let harness = Harness::fresh("online_quoted_schema").await;
         sqlx::raw_sql(AssertSqlSafe(format!(
-            "CREATE SCHEMA \"{}\"",
+            "CREATE SCHEMA IF NOT EXISTS \"{}\"",
             schema.replace('"', "\"\"")
         )))
         .execute(&harness.pool)
@@ -85,9 +92,14 @@ async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() 
             Duration::ZERO,
         )
         .expect("supported schema identifier");
-        let database = RunledgerDatabase::connect((*options).clone(), profile, 1)
+        let options = (*options).clone().options([(
+            "quote_all_identifiers",
+            if quote_all { "on" } else { "off" },
+        )]);
+        let database = RunledgerDatabase::connect(options, profile, 1)
             .await
             .expect("profiled schema");
+        assert_quoting(database.pool(), quote_all).await;
         raw_apply_through(database.pool(), LAST_VERSION_BEFORE_CUTOVER).await;
         let report = prepare_online_indexes_for_external_migrator(&database)
             .await
@@ -108,9 +120,65 @@ async fn quoted_schema_delimiters_and_keywords_preserve_canonical_definitions() 
         migrate_after_idempotency_cutover(&database)
             .await
             .expect("repeated protected startup");
+        if quote_all && schema == "public" {
+            repair_interrupted_quoted_index(&database, &harness.pool).await;
+        }
+        assert_quoting(database.pool(), quote_all).await;
         database.pool().close().await;
         harness.teardown().await;
     }
+}
+
+async fn repair_interrupted_quoted_index(database: &RunledgerDatabase, pool: &PgPool) {
+    sqlx::raw_sql("DROP INDEX idx_job_queue_created_id")
+        .execute(pool)
+        .await
+        .expect("remove canonical index");
+    let writer = hold_writer_lock(pool).await;
+    let mut builder = pool.acquire().await.expect("interrupted builder");
+    builder.close_on_drop();
+    sqlx::raw_sql("SET statement_timeout = '300ms'")
+        .execute(&mut *builder)
+        .await
+        .expect("bound concurrent build");
+    let error = sqlx::raw_sql(
+        "CREATE INDEX CONCURRENTLY idx_job_queue_created_id
+         ON job_queue (created_at DESC, id DESC)",
+    )
+    .execute(&mut *builder)
+    .await
+    .expect_err("writer interrupts build");
+    assert_eq!(
+        error.as_database_error().and_then(|e| e.code()).as_deref(),
+        Some("57014")
+    );
+    drop(builder);
+    writer.rollback().await.expect("release writer");
+    let error = ensure_schema_compatible_after_idempotency_cutover(database)
+        .await
+        .expect_err("canonical interrupted definition stays repairable");
+    assert!(matches!(
+        error,
+        SchemaCompatibilityError::OnlineIndex {
+            index: "idx_job_queue_created_id",
+            problem: OnlineIndexProblem::Invalid
+        }
+    ));
+    migrate_after_idempotency_cutover(database)
+        .await
+        .expect("repair quoted interrupted index");
+    ensure_schema_compatible_after_idempotency_cutover(database)
+        .await
+        .expect("verify repaired quoted index");
+}
+
+async fn assert_quoting(pool: &PgPool, enabled: bool) {
+    let actual: bool =
+        sqlx::query_scalar("SELECT current_setting('quote_all_identifiers')::boolean")
+            .fetch_one(pool)
+            .await
+            .expect("inherited quoting setting");
+    assert_eq!(actual, enabled);
 }
 
 #[tokio::test]

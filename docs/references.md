@@ -5189,3 +5189,27 @@ applies to parameters normally restricted to superusers. The
 mark the three lifted timeouts and `client_connection_check_interval` as
 `PGC_USERSET`; revoking SET is therefore not a restoration-failure injection.
 The regression instead disconnects the real SQLx session at restoration.
+
+The PostgreSQL 18 [index progress view](https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING)
+exposes database and index identities separately. Its
+[backend implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/pgstatfuncs.c)
+iterates all backends, filtering by command and statistics visibility rather
+than current database. Runledger therefore correlates both `datid` and
+`index_relid`. The live regression clones an owned disposable database using
+[CREATE DATABASE TEMPLATE](https://www.postgresql.org/docs/18/sql-createdatabase.html),
+which requires closing the template's connections. PostgreSQL's
+[reindex implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/index.c)
+publishes the index OID before obtaining its exclusive index lock; a held
+reloption change lets the test keep that remote progress observable without
+blocking local repair. The role test uses the function
+[EXECUTE privilege](https://www.postgresql.org/docs/18/ddl-priv.html), separately
+revoking unlock while preserving lock acquisition. These checks target native
+PostgreSQL 18; execution results are recorded in `batter-fnj8.4`.
+
+PostgreSQL 18's [`quote_all_identifiers` setting](https://www.postgresql.org/docs/18/runtime-config-compatible.html#GUC-QUOTE-ALL-IDENTIFIERS)
+forces quoting when the server renders SQL. The PostgreSQL 18
+[`pg_get_indexdef_worker` and `quote_identifier` implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/ruleutils.c)
+applies it to index, table, access-method, column and type identifiers. Runledger
+declares both canonical renderings and compares the catalog text unchanged;
+only the trusted expected type reference may gain schema qualification. This
+preserves literals and avoids mutating session settings during inspection.

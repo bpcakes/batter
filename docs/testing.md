@@ -3182,7 +3182,35 @@ response delivery or connection lifetime; SQL still executes on PostgreSQL.
 runner directly, checking unchanged index OIDs and canonical history. It also
 covers quoted schemas containing ` USING `, embedded quotes and a SQL keyword,
 and preparation refusal of a newer incompatible history fence with and without
-SQLx history. The matcher unit cases retain wrong-definition/schema controls.
+SQLx history. Inherited `quote_all_identifiers=on` covers preparation, adoption,
+verification and interrupted-index repair while preserving the setting. The
+matcher unit cases retain wrong-definition/schema controls.
+
+`online_identity.rs` creates a real foreign enum-label predicate containing
+`public.` and requires both verification and protected migration to refuse and
+preserve its valid and interrupted indexes, including OIDs and history, with
+ordinary and inherited fully quoted rendering. Each begins with fresh protected
+migration. It also
+clones an interrupted-index database, preserving index OIDs, and holds the
+clone's `REINDEX TABLE` at an index lock. Progress is visible from the original
+database throughout its own `Invalid` classification and successful repair.
+No catalog OIDs or validity flags are fabricated.
+The positive control starts a local canonical `CREATE INDEX CONCURRENTLY`
+without a migration lock, independently observes its progress and the absence
+of advisory locks, and requires `BuildInProgress` from verification and protected
+migration. It preserves the builder's OID and verifies after writer release.
+This separates progress detection from the migration-lock fallback; an
+always-false progress-query negative control fails that assertion.
+
+`online_cleanup.rs` denies only the restricted role's advisory unlock in its
+disposable database and combines that failure with a different history refusal.
+Both entry points must retain the original version mismatch and native unlock
+SQLSTATE with redacted default diagnostics. The test independently observes
+session and lock retirement. The transport tests additionally retain failed
+unlock alongside their existing build/restoration evidence, including all
+three causes after a cancelled build, failed restoration and failed unlock.
+These targets are discovered by the workspace test command; execution outcomes
+and the negative controls belong to `batter-fnj8.4`.
 
 `online_failures.rs` adds actual-runner cancellation while a writer remains
 held, requiring independent observation of backend and lock disappearance

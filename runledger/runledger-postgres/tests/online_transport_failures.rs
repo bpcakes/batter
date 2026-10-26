@@ -162,8 +162,15 @@ fn assert_failure_context(error: SchemaCompatibilityError, cancel_build: bool) {
     let rendered = format!("{error} {error:?}");
     assert!(!rendered.contains("canceling statement"));
     assert!(!rendered.contains("unexpected end"));
-    let SchemaCompatibilityError::OnlineIndexExecution(failure) = error else {
-        panic!("retained execution context: {error}");
+    let SchemaCompatibilityError::MigrationCleanup(cleanup) = error else {
+        panic!("disconnected session must retain the unlock failure: {error}");
+    };
+    assert!(matches!(
+        cleanup.unlock_error(),
+        sqlx::migrate::MigrateError::Execute(_)
+    ));
+    let SchemaCompatibilityError::OnlineIndexExecution(failure) = cleanup.operation_error() else {
+        panic!("retained execution context required");
     };
     assert_eq!(failure.index(), "idx_job_queue_scope_created_id");
     assert_eq!(failure.recorded_version(), Some(SUMMARY_PAGINATION_VERSION));
