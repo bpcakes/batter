@@ -430,7 +430,7 @@ authenticated endpoint, and `BATTER_SQLX_ADMIN_URL` identifying a PostgreSQL
 superuser connection on a dedicated disposable cluster, run
 `bash scripts/test_sqlx_live.sh`. The runner rejects any missing
 configuration and case-inventory mismatches, then executes the two-case native
-migration target, the forty-three-case [managed-object](#managed-routines-and-triggers)
+migration target, the forty-eight-case [managed-object](#managed-routines-and-triggers)
 target and the exact eleven-case
 disposition target, fourteen-case pool-ownership target and thirty-six-case restricted-
 login verification target serially under the existing Unix process watchdog.
@@ -1283,6 +1283,21 @@ only by fresh-cluster execution, not by that count alone.
 The focused `cargo test -p batter-example-postgres-lifecycle --test native_sqlx
 --locked` target checks native pool/connection/transaction composition without
 requiring Runledger or a database. Its unpolled-factory test makes no live SQL claim.
+
+## Managed application SQL regression
+
+`managed_objects_live/application_sql.rs` and `application_failures.rs` extend
+the maintained fixture. A restricted old caller remains callable during the
+callback and sees the new private helper plus precise grants only after commit;
+PUBLIC and unrelated table-write privileges stay absent. Fresh refusal retains
+migrations but rolls back definitions/ledger/grants; SQL failure recovery retains
+its cause. Definition, trigger-enable, ledger-content/timestamp and PUBLIC changes
+are refused, including a deferred trigger's definition mutation. Raw COMMIT,
+ROLLBACK and replacement transactions produce unconfirmed outcomes while keeping
+callback errors. Cancellation observes backend exit before asserting old state.
+Existing atomic live commit-in-flight cancellation/disconnect controls retain the
+separate COMMIT uncertainty evidence. The live runner's exact inventory selects
+all new cases; ordinary tests continue to ignore external PostgreSQL cases.
 
 ## Verification
 

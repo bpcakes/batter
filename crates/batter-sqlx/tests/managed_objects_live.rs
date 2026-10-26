@@ -11,6 +11,9 @@ mod support;
 
 mod managed_objects_fixture;
 
+#[path = "managed_objects_live/application_sql.rs"]
+mod application_sql;
+
 #[path = "managed_objects_live/verification.rs"]
 mod verification;
 

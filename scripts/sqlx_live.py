@@ -95,6 +95,11 @@ TARGETS = {
     },
     # Provisions its own schema and logins through BATTER_SQLX_ADMIN_URL.
     "managed_objects_live": {
+        "managed_application_sql_publishes_owner_and_grants_atomically",
+        "managed_application_refusal_rolls_back_objects_ledger_and_grants",
+        "managed_application_cannot_change_definitions_ledger_or_public_policy",
+        "managed_application_transaction_escape_is_unconfirmed",
+        "managed_application_cancellation_retires_and_preserves_old_state",
         "managed_objects_apply_after_migrations_and_verify_within_policy",
         "managed_objects_reapply_is_idempotent_and_executes_no_ddl",
         "managed_objects_retire_signatures_with_dependent_triggers",

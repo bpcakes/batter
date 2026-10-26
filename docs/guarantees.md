@@ -1221,6 +1221,17 @@ contracts. Resource values must not require an unavailable runtime after shutdow
 
 ## PostgreSQL client disposition
 
+Managed apply with application SQL has one native transaction for definitions,
+ledger and callback grants. `migrate_and_apply_with` reuses savepoint/XID checks;
+refusal cannot become success, and lost continuity is unconfirmed even when the
+callback also returned an error. It rechecks managed evidence and PUBLIC policy
+before commit, after forcing deferred work. Committed migrations remain outside
+that rollback boundary. The opaque SQL capability is not a sandbox: explicit
+transaction control may have irreversible effects before detection. Every
+callback path retires its session; success has no await after acknowledged COMMIT.
+The compatible no-callback method retains its earlier disposition contract.
+
+
 The optional `batter-sqlx` package owns only checked-out client disposition.
 `pool_in` synchronously consumes a prevalidated cleanup slot, constructs a native
 lazy pool from the supplied options, and registers awaited `Pool::close` before
