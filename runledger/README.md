@@ -1658,8 +1658,10 @@ builds on unrelated tables or databases as evidence. Manual builders need no
 Runledger advisory lock or extra statistics privileges. Independently, a missing
 or canonical `INVALID` index is reported as `BuildInProgress` while another
 session holds the migration lock, including repair phases with no CREATE
-progress row. Once that lock is released, an interrupted index with no active
-build is reported as missing or `Invalid`. A build that fails, or a
+progress row. This also covers an index whose current definition disappears
+after verification takes its catalog snapshot; without a held migration lock,
+that removed index reports `Missing`. Once that lock is released, an interrupted
+index with no active build is reported as missing or `Invalid`. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
 index missing or `INVALID`; the next protected startup drops and rebuilds it,
 and `ensure_schema_compatible_after_idempotency_cutover` reports it as

@@ -5187,6 +5187,23 @@ wait for conflicting transactions; the
 [CREATE progress view](https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING)
 reports CREATE/REINDEX, not DROP. The regression isolates the fallback state;
 it does not execute that DROP wait. Execution evidence belongs to `batter-fnj8.6`.
+
+PostgreSQL's [`pg_get_indexdef_worker`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/ruleutils.c)
+uses syscache and can return NULL after an index disappears even when direct
+catalog reads retain its row in an older repeatable-read snapshot.
+[`index_drop`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/catalog/index.c)
+uses two waiter phases for concurrent removal;
+[`WaitForLockersMultiple`](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/storage/lmgr/lmgr.c)
+collects existing holders and does not wait for later arrivals. Thus a verifier
+can acquire its table locks after the final waiter collection but before DROP
+commits. The shared classifier treats an expected-table index with a vanished
+definition as transient while the migration lock is held and missing otherwise,
+while retaining non-index and foreign-table refusal. `online_snapshot.rs` drives
+the public verifier across that actual DROP commit, using ephemeral event-trigger
+and row-security gates, and covers both protected repair and lock-free settlement.
+Both tests failed with `DefinitionMismatch` before the classifier correction;
+executed validation belongs to `batter-fnj8.7`.
+
 [CREATE INDEX storage parameters](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-STORAGE-PARAMETERS)
 define B-tree fillfactor's default as 90. Explicit options appear in the catalog
 rendering and intentionally fail Runledger's strict definition match;

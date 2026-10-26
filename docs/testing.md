@@ -3113,9 +3113,17 @@ API and wrapping known rejections as uncertainty or terminal storage failures.
 
 ## Native Runledger workspace verification
 
-`cargo test -p runledger-postgres --locked --test online_indexes` covers the
-online index builds of the protected migration runner on PostgreSQL 18.6
-(2026-10-23, `batter-fnj8`). A fresh protected run records the same
+The online-index suite covers the protected migration runner on PostgreSQL
+18.6 (2026-10-23, `batter-fnj8`). Use the target that owns each check:
+
+| Coverage | Command |
+| --- | --- |
+| Canonical history, adoption, repair, foreign-name refusal and writer concurrency | `cargo test -p runledger-postgres --locked --test online_indexes` |
+| Typed lock-wait expiry, cancellation and isolated advisory fallback | `cargo test -p runledger-postgres --locked --test online_failures` |
+| Profile timeout restoration unit test | `cargo test -p runledger-postgres --locked --lib migrations::online::tests::lifted_profile_timeouts_are_restored_on_the_session -- --exact` |
+| Public verifier across a concurrent DROP commit | `cargo test -p runledger-postgres --locked --test online_snapshot` |
+
+A fresh protected run records the same
 `_sqlx_migrations` rows and leaves the same `pg_get_indexdef` catalog as the
 raw canonical migrator. External preparation prebuilds only the two
 `IF NOT EXISTS` cutover indexes, reports the three others as blocking under
@@ -3168,6 +3176,18 @@ on PostgreSQL 18, so the branches taken when the server lacks
 `transaction_timeout` (PostgreSQL 16 and earlier) are unverified by
 executable tests. Build durations on
 populated tables were not measured.
+
+`online_snapshot.rs` creates a real canonical INVALID index through an
+interrupted concurrent build. A `sql_drop` event-trigger gate pauses concurrent
+DROP after its waiter phases, and a row-security policy pauses the public
+verifier's history query after its own table locks and snapshot setup. DROP
+then commits before verification proceeds: the snapshot retains the old
+INVALID row while its live definition is absent. The protected-repair case
+requires `BuildInProgress` with the migration lock still held; the completed
+manual-DROP case requires `Missing` without that lock. Both preserve migration
+history and pass fresh verification after repair. The gates are confined to
+the ephemeral database; no production hooks replace the verifier's boundary.
+Executed regression and baseline-failure evidence belongs to `batter-fnj8.7`.
 
 `online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a
 real successful lock-poll response while the runtime advances, or deliver it

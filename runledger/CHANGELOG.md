@@ -110,6 +110,11 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Concurrent index removal during verification no longer misreports a foreign
+  definition when the snapshot retains the old index row but its live catalog
+  definition has disappeared. That state reports `BuildInProgress` while another
+  session holds the migration lock, and `Missing` otherwise. Non-index and
+  foreign-table/definition refusals remain intact. Public call shapes are unchanged.
 - Hidden progress from a different-role manual index builder now prevents
   interrupted-index repair. Verification, migration and pending-index
   preparation correlate its visible PID/database with table locks and return

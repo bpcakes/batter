@@ -134,7 +134,9 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum OnlineIndexProblem {
-    /// The migration is recorded as applied but the index does not exist.
+    /// The migration is recorded as applied but the index does not exist,
+    /// including when its live definition has disappeared while the inspection
+    /// snapshot retains its old catalog row.
     Missing,
     /// The index exists but PostgreSQL marks it `INVALID`, typically after a
     /// failed or interrupted concurrent build.
@@ -150,7 +152,9 @@ pub enum OnlineIndexProblem {
     /// progress identifies the index, or hidden progress is correlated with a
     /// build lock on its table, or another session holds the migration lock
     /// while the index is missing or `INVALID`. Hidden identity conservatively
-    /// defers other indexes on the same table. Retry after the build ends.
+    /// defers other indexes on the same table. A definition removed since the
+    /// inspection snapshot follows the same migration-lock rule. Retry after
+    /// the build ends.
     BuildInProgress,
 }
 
@@ -339,8 +343,19 @@ async fn index_state(
             valid: Some(valid),
             building,
             table: Some(table),
-            definition: Some(definition),
+            definition,
         }) if table == index.table => {
+            // pg_get_indexdef reads current syscache state, while the joined
+            // catalog rows can retain an index already dropped concurrently.
+            // valid: Some and the table guard distinguish it from a foreign
+            // non-index relation or an index on another table.
+            let Some(definition) = definition else {
+                return Ok(if MigrationLock::held_by_another_session(conn).await? {
+                    IndexState::Building
+                } else {
+                    IndexState::Missing
+                });
+            };
             if valid {
                 IndexState::Valid(definition)
             } else if !definition_matches(index, &definition, database.schema()) {
