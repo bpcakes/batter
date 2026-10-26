@@ -6,7 +6,8 @@ use runledger_postgres::{
     ensure_schema_compatible_after_idempotency_cutover,
     prepare_online_indexes_for_external_migrator,
 };
-use sqlx::AssertSqlSafe;
+use sqlx::migrate::Migrate;
+use sqlx::{AssertSqlSafe, Connection};
 
 mod online_support;
 mod support;
@@ -138,7 +139,7 @@ async fn a_failed_build_retains_the_acknowledged_migration_and_native_cause() {
 }
 
 #[tokio::test]
-async fn restricted_verifier_uses_the_migration_lock_when_progress_details_are_hidden() {
+async fn restricted_verifier_recognizes_hidden_build_progress_and_settled_interruption() {
     let harness = Harness::fresh("online_restricted_progress").await;
     raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
     let role = format!("online_reader_{}", sqlx::types::Uuid::new_v4().simple());
@@ -229,6 +230,83 @@ async fn restricted_verifier_uses_the_migration_lock_when_progress_details_are_h
     .execute(&harness.pool)
     .await
     .expect("remove restricted role");
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn verification_uses_the_migration_lock_for_invalid_indexes_without_build_progress() {
+    let harness = Harness::fresh("online_invalid_under_lock").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
+    let writer = hold_writer_lock(&harness.pool).await;
+    let runner_pool = harness.pool.clone();
+    let runner = tokio::spawn(async move { migrate_profiled(&runner_pool).await });
+    let pid = waiting_builder(&harness.pool).await;
+    runner.abort();
+    assert!(runner.await.expect_err("runner cancelled").is_cancelled());
+    wait_for_backend_exit(&harness.pool, pid).await;
+    writer.commit().await.expect("release writer");
+
+    let catalog = index_catalog(&harness.pool).await;
+    assert!(!catalog["idx_job_queue_scope_created_id"].1);
+    let history = sqlx_history(&harness.pool).await;
+    let identity_sql = "SELECT 'public.idx_job_queue_scope_created_id'::regclass::oid::bigint";
+    let oid: i64 = sqlx::query_scalar(identity_sql)
+        .fetch_one(&harness.pool)
+        .await
+        .expect("interrupted index identity");
+    // No visible or hidden CREATE progress can satisfy the classifier here.
+    // This isolates the advisory fallback used, for example, during repair's
+    // DROP INDEX CONCURRENTLY phase before the replacement build starts.
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_stat_progress_create_index
+                WHERE datid = (
+                    SELECT oid FROM pg_catalog.pg_database
+                    WHERE datname = pg_catalog.current_database()
+                )
+             )",
+        )
+        .fetch_one(&harness.pool)
+        .await
+        .expect("no build progress in this database")
+    );
+    let mut holder = sqlx::PgConnection::connect(harness.database.url())
+        .await
+        .expect("migration lock connection");
+    holder.lock().await.expect("SQLx migration lock");
+    let error = verify_profiled(&harness.pool)
+        .await
+        .expect_err("INVALID under a migration lock is transient without build progress");
+    assert!(matches!(
+        error,
+        SchemaCompatibilityError::OnlineIndex {
+            index: "idx_job_queue_scope_created_id",
+            problem: OnlineIndexProblem::BuildInProgress,
+        }
+    ));
+    holder.unlock().await.expect("release migration lock");
+    holder.close().await.expect("close lock connection");
+    let error = verify_profiled(&harness.pool)
+        .await
+        .expect_err("without the lock the interrupted index is persistent");
+    assert!(matches!(
+        error,
+        SchemaCompatibilityError::OnlineIndex {
+            index: "idx_job_queue_scope_created_id",
+            problem: OnlineIndexProblem::Invalid,
+        }
+    ));
+    assert_eq!(index_catalog(&harness.pool).await, catalog);
+    assert_eq!(sqlx_history(&harness.pool).await, history);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(identity_sql)
+            .fetch_one(&harness.pool)
+            .await
+            .expect("index identity after verification"),
+        oid,
+        "verification must not replace the INVALID index"
+    );
     harness.teardown().await;
 }
 

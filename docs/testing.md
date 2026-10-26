@@ -3232,7 +3232,13 @@ before writer release and successful repair afterward. It covers a returned
 server cancellation with acknowledged migration context and retained SQLSTATE,
 a restricted role whose progress fields are demonstrably NULL and whose
 verification changes from BuildInProgress to Invalid after cancelled-backend
-settlement while the writer remains held, read-only
+settlement while the writer remains held. A separate regression leaves a real
+canonical INVALID index after interrupting a build, confirms no CREATE progress
+exists in that database, then holds SQLx's migration lock from another session.
+Verification must report `BuildInProgress` while held and `Invalid` after
+unlock, preserving the index OID, definitions, validity and migration history.
+This isolates the advisory-lock fallback from hidden-progress correlation;
+execution evidence belongs to `batter-fnj8.6`. The suite also covers read-only
 refusal of a VALID wrong definition after migration, and explicit default
 fillfactor refusal followed by `RESET (fillfactor)` recovery. Both entry points
 assert typed local lock-wait expiry. A current-thread runtime stall outlasts

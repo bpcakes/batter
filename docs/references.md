@@ -5164,18 +5164,29 @@ is not proof of remote termination across network failure or runtime death.
 
 PostgreSQL's [progress view implementation](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/pgstatfuncs.c)
 returns NULL progress details for another role's backend without statistics
-privilege. The migration-lock fallback must therefore work with hidden relid,
-index_relid and phase fields, as the restricted-role regression demonstrates.
-The implementation still exposes PID and database identity. For a manual
-builder without that advisory lock, Runledger correlates those fields with
+privilege. The restricted-role regression verifies classification with hidden
+relid, index_relid and phase fields. The implementation still exposes PID and
+database identity. Runledger correlates those fields with
 [`pg_locks`](https://www.postgresql.org/docs/18/view-pg-locks.html) relation,
 database, PID, granted status and mode. PostgreSQL's
 [table-lock modes](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-TABLES)
 include `ShareUpdateExclusiveLock` for concurrent index creation and `ShareLock`
-for ordinary index creation. A hidden builder holding either on the target
+for ordinary index creation. This also covers manual builders without the
+migration advisory lock. A hidden builder holding either on the target
 table conservatively defers repair, including another index on that table;
 unrelated tables and databases do not qualify. The combined restricted-owner,
 manual-builder and unrelated-table regressions are tracked in `batter-fnj8.5`.
+The independent INVALID-index regression in `online_failures.rs` holds SQLx's
+migration lock after the interrupted builder exits and confirms there are no
+CREATE progress rows. Verification reports `BuildInProgress` while the lock is
+held and `Invalid` after release, without changing catalog identity or history.
+This isolates the advisory-lock fallback from progress correlation. It covers
+the classification needed during repair's
+[`DROP INDEX CONCURRENTLY`](https://www.postgresql.org/docs/18/sql-dropindex.html)
+wait for conflicting transactions; the
+[CREATE progress view](https://www.postgresql.org/docs/18/progress-reporting.html#CREATE-INDEX-PROGRESS-REPORTING)
+reports CREATE/REINDEX, not DROP. The regression isolates the fallback state;
+it does not execute that DROP wait. Execution evidence belongs to `batter-fnj8.6`.
 [CREATE INDEX storage parameters](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-STORAGE-PARAMETERS)
 define B-tree fillfactor's default as 90. Explicit options appear in the catalog
 rendering and intentionally fail Runledger's strict definition match;

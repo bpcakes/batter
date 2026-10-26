@@ -1655,7 +1655,11 @@ retry once that build ends. If statistics privileges hide the index identity,
 Runledger correlates the visible builder PID with its table lock. This can
 conservatively defer another index on that same table, without treating hidden
 builds on unrelated tables or databases as evidence. Manual builders need no
-Runledger advisory lock or extra statistics privileges. A build that fails, or a
+Runledger advisory lock or extra statistics privileges. Independently, a missing
+or canonical `INVALID` index is reported as `BuildInProgress` while another
+session holds the migration lock, including repair phases with no CREATE
+progress row. Once that lock is released, an interrupted index with no active
+build is reported as missing or `Invalid`. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
 index missing or `INVALID`; the next protected startup drops and rebuilds it,
 and `ensure_schema_compatible_after_idempotency_cutover` reports it as
