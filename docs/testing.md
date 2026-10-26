@@ -3202,6 +3202,20 @@ migration. It preserves the builder's OID and verifies after writer release.
 This separates progress detection from the migration-lock fallback; an
 always-false progress-query negative control fails that assertion.
 
+`online_hidden_progress.rs` combines a different-role manual builder with a
+restricted schema owner that has actual index DDL authority. It independently
+observes hidden progress fields, the visible PID/database/table lock and absence
+of advisory locks. Verification, migration and pending-index preparation must
+return `BuildInProgress` while the writer is held, retain the index OID and
+verify or adopt it after completion. A hidden build of another index on the
+same table conservatively defers repair until it completes; afterward the
+interrupted target is repairable. An unrelated-table hidden build stays
+blocked on its own writer while the target's actual interrupted index is
+reported `Invalid` and repaired. Together with the cloned-database control,
+these cases constrain correlation to the relevant database and table. The
+verification/migration case fails on the prior classifier with `Invalid`
+instead of `BuildInProgress`; execution outcomes belong to `batter-fnj8.5`.
+
 `online_cleanup.rs` denies only the restricted role's advisory unlock in its
 disposable database and combines that failure with a different history refusal.
 Both entry points must retain the original version mismatch and native unlock

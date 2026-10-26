@@ -5166,6 +5166,16 @@ PostgreSQL's [progress view implementation](https://github.com/postgres/postgres
 returns NULL progress details for another role's backend without statistics
 privilege. The migration-lock fallback must therefore work with hidden relid,
 index_relid and phase fields, as the restricted-role regression demonstrates.
+The implementation still exposes PID and database identity. For a manual
+builder without that advisory lock, Runledger correlates those fields with
+[`pg_locks`](https://www.postgresql.org/docs/18/view-pg-locks.html) relation,
+database, PID, granted status and mode. PostgreSQL's
+[table-lock modes](https://www.postgresql.org/docs/18/explicit-locking.html#LOCKING-TABLES)
+include `ShareUpdateExclusiveLock` for concurrent index creation and `ShareLock`
+for ordinary index creation. A hidden builder holding either on the target
+table conservatively defers repair, including another index on that table;
+unrelated tables and databases do not qualify. The combined restricted-owner,
+manual-builder and unrelated-table regressions are tracked in `batter-fnj8.5`.
 [CREATE INDEX storage parameters](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-STORAGE-PARAMETERS)
 define B-tree fillfactor's default as 90. Explicit options appear in the catalog
 rendering and intentionally fail Runledger's strict definition match;

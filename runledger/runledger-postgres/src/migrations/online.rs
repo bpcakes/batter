@@ -146,10 +146,11 @@ pub enum OnlineIndexProblem {
     /// The bundled migration SQL does not contain the declared statement
     /// exactly once. This is a packaging defect, not a database state.
     StatementNotEmbedded,
-    /// Another session in this database is still building the index: its build
-    /// shows in `pg_stat_progress_create_index`, or the index is missing or
-    /// `INVALID` while another session holds the migration lock. The state is
-    /// transient; retry after that build ends.
+    /// Another session in this database may still be building the index: its
+    /// progress identifies the index, or hidden progress is correlated with a
+    /// build lock on its table, or another session holds the migration lock
+    /// while the index is missing or `INVALID`. Hidden identity conservatively
+    /// defers other indexes on the same table. Retry after the build ends.
     BuildInProgress,
 }
 
@@ -167,7 +168,7 @@ impl fmt::Display for OnlineIndexProblem {
                 "declares a statement the bundled migration SQL does not contain exactly once"
             }
             Self::BuildInProgress => {
-                "is still being built concurrently by another session; retry after that build ends"
+                "may have a build in progress in another session; retry after that build ends"
             }
         })
     }
@@ -293,18 +294,28 @@ async fn index_state(
 ) -> Result<IndexState, sqlx::Error> {
     // Any relation with the declared name is looked up, so a same-named
     // relation of another kind or on another table is refused before the
-    // migration is recorded instead of failing the later build. Progress rows
-    // of other roles hide their index, so the migration lock is the second,
-    // role-independent sign of a build in progress.
+    // migration is recorded instead of failing the later build. Other roles'
+    // progress may hide the index but still exposes pid/datid. Correlate that
+    // backend's table lock so manual builders need no migration-lock protocol.
+    // Hidden progress can conservatively defer other indexes on the same table;
+    // the migration-lock fallback also covers builds not yet in the catalog.
     let row: Option<DeclaredNameRow> = sqlx::query_as(
         "SELECT i.indisvalid AS valid,
                     EXISTS (
                         SELECT 1 FROM pg_catalog.pg_stat_progress_create_index p
-                        WHERE p.index_relid = c.oid
-                          AND p.datid = (
+                        WHERE p.datid = (
                               SELECT oid FROM pg_catalog.pg_database
                               WHERE datname = pg_catalog.current_database()
                           )
+                          AND (p.index_relid = c.oid OR (
+                              p.index_relid IS NULL AND EXISTS (
+                                  SELECT 1 FROM pg_catalog.pg_locks l
+                                  WHERE l.pid = p.pid AND l.database = p.datid
+                                    AND l.locktype = 'relation'
+                                    AND l.relation = i.indrelid AND l.granted
+                                    AND l.mode IN ('ShareUpdateExclusiveLock', 'ShareLock')
+                              )
+                          ))
                     ) AS building,
                     t.relname::text AS \"table\",
                     CASE WHEN i.indexrelid IS NULL THEN NULL
@@ -665,8 +676,11 @@ async fn prepare_adoptable_indexes(
 /// migrator or Runledger entry point runs at the same time. It is idempotent:
 /// a valid prebuilt index is kept, an `INVALID` leftover is dropped and
 /// rebuilt, and a foreign index under a declared name is refused with
-/// [`OnlineIndexProblem::DefinitionMismatch`]. Applied migrations are never
-/// touched here; [`crate::ensure_schema_compatible_after_idempotency_cutover`]
+/// [`OnlineIndexProblem::DefinitionMismatch`]. An active manual build is
+/// refused with [`OnlineIndexProblem::BuildInProgress`], including when its
+/// hidden progress can only be correlated with a build lock on the same table.
+/// Applied migrations are never touched here;
+/// [`crate::ensure_schema_compatible_after_idempotency_cutover`]
 /// reports their declared indexes. A recorded migration whose checksum differs
 /// from the bundle or whose run failed is refused with
 /// [`crate::SchemaCompatibilityError::Incompatible`] (`VersionMismatch` or

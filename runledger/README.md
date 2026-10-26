@@ -1649,8 +1649,13 @@ remain inspectable. When the operation and advisory-lock release both fail,
 Direct formatting redacts both; trusted accessors and source-chain reporters
 can expose native details. Connection retirement stays armed, without proving
 remote termination. No error authorizes automatic replay. While another session
-in the same database is still building, read-only verification reports the transient
-`OnlineIndexProblem::BuildInProgress`; retry once that build ends. A build that fails, or a
+in the same database is still building the index, verification, protected migration
+and pending-index preparation report `OnlineIndexProblem::BuildInProgress`;
+retry once that build ends. If statistics privileges hide the index identity,
+Runledger correlates the visible builder PID with its table lock. This can
+conservatively defer another index on that same table, without treating hidden
+builds on unrelated tables or databases as evidence. Manual builders need no
+Runledger advisory lock or extra statistics privileges. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
 index missing or `INVALID`; the next protected startup drops and rebuilds it,
 and `ensure_schema_compatible_after_idempotency_cutover` reports it as

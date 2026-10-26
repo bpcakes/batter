@@ -110,6 +110,11 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Hidden progress from a different-role manual index builder now prevents
+  interrupted-index repair. Verification, migration and pending-index
+  preparation correlate its visible PID/database with table locks and return
+  `BuildInProgress`, preserving the active index. This may defer another index
+  on the same table; unrelated tables and databases remain independent.
 - Online index definition matching preserves predicate literals instead of
   removing schema prefixes from catalog text and accepts canonical fully quoted
   renderings under `quote_all_identifiers=on` without changing that setting.
