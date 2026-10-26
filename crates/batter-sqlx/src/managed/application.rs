@@ -222,11 +222,16 @@ async fn public_policy_holds(
     if manifest.public_execute() != PublicExecute::Revoke {
         return Ok(true);
     }
-    let routines = catalog::resolve_live(connection, manifest)
-        .await?
-        .into_values()
-        .filter(|object| object.kind.is_some_and(|kind| kind.is_routine()))
-        .map(|object| object.oid)
+    let live = catalog::resolve_live(connection, manifest).await?;
+    let routines = manifest
+        .objects()
+        .iter()
+        .filter(|object| object.kind().is_routine())
+        .filter_map(|object| {
+            live.get(object.identity())
+                .filter(|live| live.kind == Some(object.kind()))
+                .map(|live| live.oid)
+        })
         .collect::<Vec<_>>();
     Ok(catalog::public_execute_holders(connection, &routines)
         .await

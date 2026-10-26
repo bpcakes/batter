@@ -15,7 +15,7 @@ use sqlx::{AssertSqlSafe, PgPool};
 #[path = "application_failures.rs"]
 mod failures;
 
-async fn apply(
+pub(super) async fn apply(
     fixture: &Fixture,
     pool: &PgPool,
     manifest: &ManagedObjectManifest,
@@ -96,6 +96,16 @@ async fn exact_authority(
     .fetch_one(reader)
     .await?;
     require(safe, "helper owner is not restricted")?;
+    let overload: (String, bool) = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {schema}.report_total('public'::text), proacl IS NULL
+         FROM pg_proc WHERE oid = '{schema}.report_total(text)'::regprocedure"
+    )))
+    .fetch_one(reader)
+    .await?;
+    require(
+        overload == ("public".to_owned(), true),
+        "unmanaged overload or its default PUBLIC ACL changed",
+    )?;
     Ok(())
 }
 
@@ -115,6 +125,8 @@ async fn install_original_caller(fixture: &mut Fixture, pool: &PgPool, serving: 
          GRANT CREATE ON SCHEMA {schema} TO {serving};
          ALTER FUNCTION {schema}.report_total() OWNER TO {serving};
          REVOKE CREATE ON SCHEMA {schema} FROM {serving};
+         CREATE FUNCTION {schema}.report_total(value text) RETURNS text
+             LANGUAGE sql RETURN value;
          INSERT INTO {schema}.records(note,amount) VALUES ('seed',7)"
         ))
         .await?;
