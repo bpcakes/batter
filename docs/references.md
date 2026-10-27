@@ -6,6 +6,31 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL 18 guarded index removal, 2026-10-27
+
+For `batter-fnj8.10`, PostgreSQL 18.6 SQL-boundary and public-API probes establish
+that a completed name swap between inspection and DROP can delete a foreign
+UNIQUE index. The protected repair changes the execution boundary, not the matcher.
+
+- [DROP INDEX](https://www.postgresql.org/docs/18/sql-dropindex.html): concurrent
+  DROP takes a name and cannot run inside an explicit transaction; ordinary DROP
+  can, but requires an exclusive parent-table lock.
+- [ALTER INDEX](https://www.postgresql.org/docs/18/sql-alterindex.html): index rename
+  acquires SHARE UPDATE EXCLUSIVE; source `RenameRelation` retains it until transaction
+  end. Two uncommitted renames restore the public name while retaining that lock.
+- [LOCK](https://www.postgresql.org/docs/18/sql-lock.html): NOWAIT refuses contention,
+  and transaction locks remain until completion. The repair takes the parent lock
+  before its final identity/definition inspection and DROP.
+- [PostgreSQL 18 source](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/tablecmds.c):
+  `RemoveRelations` resolves and locks the current name occupant, not a client's
+  previously inspected OID. `index_drop` uses internal session locks across its
+  own concurrent-drop commits; those do not protect a preceding client query.
+
+The metadata transaction uses local 100 ms lock and one-second statement,
+transaction/idle timeouts; long concurrent creation runs only after commit.
+A lost commit acknowledgement is uncertainty, not proof that DROP rolled back.
+Executed outcomes and retained diagnostic probes are recorded in the owning Bead.
+
 ## PostgreSQL 18 scoped managed apply, 2026-10-26
 
 For `batter-aouh`, rechecked the official PostgreSQL 18 commands:

@@ -6,10 +6,12 @@ use super::{OnlineIndexProblem, WorkflowJobLinkTriggerDiagnostic};
 
 mod cleanup;
 mod online;
+mod rollback;
 pub use cleanup::MigrationCleanupError;
 pub use online::{
     MigrationLockTimeout, MigrationTimeoutSetting, OnlineIndexExecutionError, OnlineIndexPhase,
 };
+pub use rollback::OnlineIndexRollbackError;
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -39,6 +41,20 @@ pub enum SchemaCompatibilityError {
     MigrationLockTimeout(MigrationLockTimeout),
     /// Online index execution failed; inspect the retained phase and causes.
     OnlineIndexExecution(OnlineIndexExecutionError),
+    /// Guarded INVALID-index removal and its rollback both failed.
+    OnlineIndexRollback(OnlineIndexRollbackError),
+    /// Commit of guarded INVALID-index removal was not acknowledged. The
+    /// removal may have committed; inspect the retained native cause explicitly.
+    ///
+    /// ```rust,no_run
+    /// # fn inspect(cause: &runledger_postgres::SchemaCompatibilityError) {
+    /// if let runledger_postgres::SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed(error) = cause {
+    ///     let native = error.sqlx_error();
+    ///     // No subsequent build ran, but removal may have committed.
+    /// }
+    /// # }
+    /// ```
+    OnlineIndexRepairCommitUnconfirmed(crate::CommitUnconfirmed),
     /// A declared online index of an applied migration is absent, `INVALID`,
     /// or defined differently; see [`OnlineIndexProblem`].
     OnlineIndex {
@@ -53,6 +69,8 @@ impl fmt::Display for SchemaCompatibilityError {
             Self::MigrationCleanup(error) => fmt::Display::fmt(error, f),
             Self::MigrationLockTimeout(error) => fmt::Display::fmt(error, f),
             Self::OnlineIndexExecution(error) => fmt::Display::fmt(error, f),
+            Self::OnlineIndexRollback(error) => fmt::Display::fmt(error, f),
+            Self::OnlineIndexRepairCommitUnconfirmed(error) => fmt::Display::fmt(error, f),
             Self::Snapshot(_) => f.write_str("Runledger schema snapshot failed"),
             Self::Query(error) => write!(
                 f,
@@ -116,6 +134,8 @@ impl std::error::Error for SchemaCompatibilityError {
             Self::MigrationCleanup(error) => Some(error),
             Self::MigrationLockTimeout(error) => Some(error),
             Self::OnlineIndexExecution(error) => Some(error),
+            Self::OnlineIndexRollback(error) => Some(error),
+            Self::OnlineIndexRepairCommitUnconfirmed(error) => Some(error),
             Self::Query(error) => Some(error),
             Self::Snapshot(error) => Some(error),
             Self::MissingMigrationHistory { .. } | Self::OnlineIndex { .. } => None,

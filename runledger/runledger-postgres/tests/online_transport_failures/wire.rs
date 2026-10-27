@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "shared relay targets select different fault scenarios"
+)]
+
 //! Narrow PostgreSQL relay for online-migration fault tests. All SQL executes
 //! on the real fixture server; only response delivery or socket lifetime changes.
 
@@ -18,6 +23,10 @@ use tokio::task::JoinHandle;
 pub enum Fault {
     HoldPollResponse,
     DisconnectOnRestore,
+    HoldIndexInspection(&'static str),
+    HoldRepairTableLock,
+    LoseRepairCommitResponse,
+    DisconnectOnRepairRollback,
 }
 
 pub struct Relay {
@@ -48,6 +57,8 @@ impl Relay {
             let (mut from_client, mut to_client) = client.split();
             let (mut from_server, mut to_server) = server.split();
             let poll_started = AtomicBool::new(false);
+            let repair_started = AtomicBool::new(false);
+            let repair_commit = AtomicBool::new(false);
             let (reached, release, delivered) = events;
             let requests = async {
                 loop {
@@ -62,7 +73,32 @@ impl Relay {
                         _ => &[],
                     };
                     let sql = sql.split(|b| *b == 0).next().unwrap_or_default();
+                    if let Fault::HoldIndexInspection(index) = fault
+                        && tag == b'B'
+                        && bytes
+                            .windows(index.len())
+                            .any(|part| part == index.as_bytes())
+                    {
+                        poll_started.store(true, Ordering::SeqCst);
+                    }
+                    if sql.starts_with(b"SET LOCAL lock_timeout = '100ms'") {
+                        repair_started.store(true, Ordering::SeqCst);
+                    }
+                    if repair_started.load(Ordering::SeqCst) && sql.starts_with(b"COMMIT") {
+                        repair_commit.store(true, Ordering::SeqCst);
+                    }
                     match fault {
+                        Fault::HoldRepairTableLock if sql.starts_with(b"LOCK TABLE ONLY ") => {
+                            reached.notify_one();
+                            release.notified().await;
+                        }
+                        Fault::DisconnectOnRepairRollback
+                            if repair_started.load(Ordering::SeqCst)
+                                && sql.starts_with(b"ROLLBACK") =>
+                        {
+                            reached.notify_one();
+                            return Ok::<(), io::Error>(());
+                        }
                         Fault::DisconnectOnRestore
                             if sql.starts_with(
                                 b"SELECT pg_catalog.set_config('statement_timeout', $1",
@@ -87,7 +123,18 @@ impl Relay {
                 loop {
                     let tag = from_server.read_u8().await?;
                     let bytes = body(&mut from_server).await?;
-                    if !held && tag == b'D' && poll_started.load(Ordering::SeqCst) {
+                    if matches!(fault, Fault::LoseRepairCommitResponse)
+                        && repair_commit.load(Ordering::SeqCst)
+                        && tag == b'C'
+                    {
+                        reached.notify_one();
+                        return Ok::<(), io::Error>(());
+                    }
+                    let boundary = match fault {
+                        Fault::HoldIndexInspection(_) => b'Z',
+                        _ => b'D',
+                    };
+                    if !held && tag == boundary && poll_started.load(Ordering::SeqCst) {
                         held = true;
                         reached.notify_one();
                         release.notified().await;

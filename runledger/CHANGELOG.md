@@ -110,6 +110,23 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- INVALID online-index repair now locks and revalidates the actual object
+  through transactional metadata removal, preserving foreign names swapped in
+  after inspection. Removal requires an immediately available exclusive table
+  lock; contention returns native `55P03`. Index lock waits are capped at 100 ms
+  and metadata statement/transaction/idle timeouts at one second. Long builds
+  remain concurrent after commit. Lost removal commit acknowledgement is
+  retained as `OnlineIndexRepairCommitUnconfirmed`, and rollback failure as
+  `OnlineIndexRollback` with both causes. Cancellation does not prove remote
+  termination. `ChangedDuringRepair` refuses a replaced INVALID identity.
+- External preparation now refuses occupied non-adoptable names before building:
+  matching valid/INVALID indexes return `ExternalCannotAdopt`, while foreign and
+  active objects retain their distinct refusals. Only absent names are listed
+  as external blocking builds. Existing public paths/signatures are unchanged;
+  diagnostics add variants to already non-exhaustive enums. No public hard cut
+  or deprecated shim is needed. `OnlineIndexPreparation` and `OnlineIndexProblem`
+  keep their public re-export paths after private source organization.
+
 - Visible `REINDEX INDEX CONCURRENTLY` progress now defers verification,
   protected migration and pending-index preparation when it names a replacement
   for the canonical INVALID index. Correlation uses the builder's granted lock

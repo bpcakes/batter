@@ -83,6 +83,25 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Native online-index repair assessment (`batter-fnj8.10`)
+
+Catalog identity checks alone did not protect a later name-based DROP: a real
+PostgreSQL 18.6 probe replaced the inspected INVALID index with a foreign UNIQUE
+index, which repair deleted. Earlier matcher/progress fixes addressed observations,
+not this execution gap. Native Runledger now owns a bounded metadata transaction
+that locks the actual index, validates identity and definition under index/table
+locks, and removes it before commit. Concurrent creation begins afterward. Busy
+tables refuse immediate metadata locking instead of queuing a blocking DROP.
+Callers acquire no extra lock and coordinate no new completion phase.
+
+Rollback failures retain both causes; commit uncertainty prevents subsequent
+creation. These opaque observations confer no replay authority or proof of remote
+termination. External tooling remains outside library execution: preparation
+refuses occupied non-adoptable names, but cannot prove later arbitrary DDL or
+approve staged rollout policy. New diagnostics are additive to non-exhaustive
+enums; old public call shapes remain. Public-API failure regressions cover the
+swap and lifecycle boundaries; fresh-agent usability tasks remain unexecuted.
+
 ### Managed application SQL assessment (`batter-aouh`)
 
 Publishing a managed caller and granting its new private dependency in separate

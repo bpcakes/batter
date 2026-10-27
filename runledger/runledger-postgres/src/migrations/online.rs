@@ -11,7 +11,6 @@
 //! it, and read-only verification reports it instead.
 
 use std::collections::HashSet;
-use std::fmt;
 
 use sqlx::migrate::{Migrate, Migration};
 use sqlx::{AssertSqlSafe, PgConnection, SqlSafeStr};
@@ -27,9 +26,12 @@ use crate::{PgQueryExecutor, RunledgerDatabase};
 
 mod definition;
 mod lock;
+mod repair;
+mod report;
 mod session;
 use definition::definition_matches;
 pub(super) use lock::MigrationLock;
+pub use report::{OnlineIndexPreparation, OnlineIndexProblem};
 use session::ProfileTimeouts;
 
 /// One bundled index whose ordinary build blocks writes on a populated table.
@@ -130,104 +132,9 @@ const ONLINE_INDEXES: [OnlineIndex; 5] = [
     },
 ];
 
-/// One reason a declared online index does not match its bundled migration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum OnlineIndexProblem {
-    /// The migration is recorded as applied but the index does not exist,
-    /// including when its live definition has disappeared while the inspection
-    /// snapshot retains its old catalog row.
-    Missing,
-    /// The index exists but PostgreSQL marks it `INVALID`, typically after a
-    /// failed or interrupted concurrent build.
-    Invalid,
-    /// A relation with the declared name exists that is not the declared
-    /// index: a different definition, an index on another table, or another
-    /// kind of relation.
-    DefinitionMismatch,
-    /// The bundled migration SQL does not contain the declared statement
-    /// exactly once. This is a packaging defect, not a database state.
-    StatementNotEmbedded,
-    /// Another session in this database may still be building the index: its
-    /// progress identifies the index, concurrent reindex holds its original
-    /// index lock, hidden progress is correlated with a build lock on its table,
-    /// or another session holds the migration lock while the index is missing
-    /// or `INVALID`. Hidden identity conservatively
-    /// defers other indexes on the same table. A definition removed since the
-    /// inspection snapshot follows the same migration-lock rule. Retry after
-    /// the build ends.
-    BuildInProgress,
-}
-
-impl fmt::Display for OnlineIndexProblem {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Missing => "is missing although its migration is recorded as applied",
-            Self::Invalid => {
-                "is INVALID after an interrupted concurrent build; the protected migration path rebuilds it"
-            }
-            Self::DefinitionMismatch => {
-                "names a relation that is not the bundled index definition on its declared table"
-            }
-            Self::StatementNotEmbedded => {
-                "declares a statement the bundled migration SQL does not contain exactly once"
-            }
-            Self::BuildInProgress => {
-                "may have a build in progress in another session; retry after that build ends"
-            }
-        })
-    }
-}
-
-/// Outcome of [`prepare_online_indexes_for_external_migrator`].
-#[derive(Debug, Default)]
-#[must_use = "inspect deferred indexes and external blocking builds before running external tooling"]
-pub struct OnlineIndexPreparation {
-    built: Vec<&'static str>,
-    already_valid: Vec<&'static str>,
-    deferred: Vec<&'static str>,
-    external_build_blocks: Vec<&'static str>,
-}
-
-impl OnlineIndexPreparation {
-    /// Indexes this call built with `CREATE INDEX CONCURRENTLY`.
-    #[must_use]
-    pub fn built(&self) -> &[&'static str] {
-        &self.built
-    }
-
-    /// Indexes that already existed, valid and with the bundled definition.
-    #[must_use]
-    pub fn already_valid(&self) -> &[&'static str] {
-        &self.already_valid
-    }
-
-    /// Pending indexes not built by this call: an adoptable index whose
-    /// migration cannot run yet because an earlier bundled migration is
-    /// unapplied, or any index whose table does not exist. On a fresh database
-    /// the pending migrations build these on empty tables. On a populated
-    /// database, apply the migrations through the version preceding the
-    /// adoptable index's own migration, then call
-    /// [`crate::prepare_online_indexes_for_external_migrator`] again; otherwise
-    /// the external migrator builds the index with a blocking statement.
-    #[must_use]
-    pub fn deferred(&self) -> &[&'static str] {
-        &self.deferred
-    }
-
-    /// Pending indexes on an existing table whose canonical statement has no
-    /// `IF NOT EXISTS`, so an external migrator builds them with a blocking
-    /// `CREATE INDEX`. Only [`crate::migrate_after_idempotency_cutover`] builds
-    /// them online.
-    #[must_use]
-    pub fn external_build_blocks(&self) -> &[&'static str] {
-        &self.external_build_blocks
-    }
-}
-
 enum IndexState {
     Missing,
-    Invalid,
+    Invalid(i64),
     Building,
     /// A relation with the declared name that is not an index on the declared
     /// table: another kind of relation, or an index elsewhere.
@@ -286,6 +193,7 @@ fn check_valid(
 /// columns are `NULL` for a relation that is not an index.
 #[derive(sqlx::FromRow)]
 struct DeclaredNameRow {
+    oid: i64,
     valid: Option<bool>,
     building: bool,
     table: Option<String>,
@@ -306,7 +214,7 @@ async fn index_state(
     // visible concurrent reindex names its replacement but locks the original.
     // The migration-lock fallback also covers builds not yet in the catalog.
     let row: Option<DeclaredNameRow> = sqlx::query_as(
-        "SELECT i.indisvalid AS valid,
+        "SELECT i.indisvalid AS valid, c.oid::bigint AS oid,
                     EXISTS (
                         SELECT 1 FROM pg_catalog.pg_stat_progress_create_index p
                         WHERE p.datid = (
@@ -343,6 +251,7 @@ async fn index_state(
         None if MigrationLock::held_by_another_session(conn).await? => IndexState::Building,
         None => IndexState::Missing,
         Some(DeclaredNameRow {
+            oid,
             valid: Some(valid),
             building,
             table: Some(table),
@@ -368,7 +277,7 @@ async fn index_state(
             } else if building || MigrationLock::held_by_another_session(conn).await? {
                 IndexState::Building
             } else {
-                IndexState::Invalid
+                IndexState::Invalid(oid)
             }
         }
         Some(_) => IndexState::Foreign,
@@ -386,21 +295,18 @@ async fn table_exists(
         .await
 }
 
-/// Drop an `INVALID` leftover when asked, then build the declared index
-/// concurrently and check the result.
+/// Remove an inspected `INVALID` leftover under protected metadata locks,
+/// then build the declared index concurrently and check the result.
 async fn build_concurrently(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
     index: &OnlineIndex,
-    drop_invalid: bool,
+    invalid_oid: Option<i64>,
 ) -> Result<BuildOutcome, SchemaCompatibilityError> {
-    if drop_invalid {
-        sqlx::raw_sql(AssertSqlSafe(format!(
-            "DROP INDEX CONCURRENTLY IF EXISTS {}",
-            database.relation(index.name)
-        )))
-        .execute(&mut *conn)
-        .await?;
+    if let Some(oid) = invalid_oid
+        && !repair::remove_invalid(conn, database, index, oid).await?
+    {
+        return Ok(BuildOutcome::AlreadyValid);
     }
     sqlx::raw_sql(AssertSqlSafe(index.concurrent_statement()))
         .execute(&mut *conn)
@@ -411,7 +317,7 @@ async fn build_concurrently(
         }
         IndexState::Building => Err(problem(index, OnlineIndexProblem::BuildInProgress)),
         IndexState::Foreign => Err(problem(index, OnlineIndexProblem::DefinitionMismatch)),
-        IndexState::Invalid => Err(problem(index, OnlineIndexProblem::Invalid)),
+        IndexState::Invalid(_) => Err(problem(index, OnlineIndexProblem::Invalid)),
         IndexState::Missing => Err(problem(index, OnlineIndexProblem::Missing)),
     }
 }
@@ -426,7 +332,7 @@ async fn ensure_index_built(
     index: &OnlineIndex,
     history: IndexHistory,
 ) -> Result<BuildOutcome, SchemaCompatibilityError> {
-    let drop_invalid = match index_state(conn, database, index).await.map_err(|error| {
+    let invalid_oid = match index_state(conn, database, index).await.map_err(|error| {
         execution_error(
             index,
             history,
@@ -443,8 +349,8 @@ async fn ensure_index_built(
         IndexState::Foreign => {
             return Err(problem(index, OnlineIndexProblem::DefinitionMismatch));
         }
-        IndexState::Invalid => true,
-        IndexState::Missing => false,
+        IndexState::Invalid(oid) => Some(oid),
+        IndexState::Missing => None,
     };
     let timeouts = ProfileTimeouts::lift(conn).await.map_err(|error| {
         execution_error(
@@ -455,7 +361,7 @@ async fn ensure_index_built(
             None,
         )
     })?;
-    let built = build_concurrently(conn, database, index, drop_invalid).await;
+    let built = build_concurrently(conn, database, index, invalid_oid).await;
     let restored = timeouts.restore(conn).await;
     match (built, restored) {
         (Err(error), restored) => Err(execution_error(
@@ -518,7 +424,7 @@ async fn apply_online(
             IndexState::Building => {
                 return Err(problem(index, OnlineIndexProblem::BuildInProgress));
             }
-            IndexState::Invalid | IndexState::Missing => {}
+            IndexState::Invalid(_) | IndexState::Missing => {}
         }
     }
     let rendition = Migration {
@@ -595,7 +501,7 @@ pub(super) async fn verify_applied_indexes(
             IndexState::Foreign => {
                 return Err(problem(index, OnlineIndexProblem::DefinitionMismatch));
             }
-            IndexState::Invalid => return Err(problem(index, OnlineIndexProblem::Invalid)),
+            IndexState::Invalid(_) => return Err(problem(index, OnlineIndexProblem::Invalid)),
             IndexState::Missing => return Err(problem(index, OnlineIndexProblem::Missing)),
         }
     }
@@ -640,17 +546,30 @@ async fn prepare_adoptable_indexes(
         .map(|migration| migration.version)
         .collect();
     let mut report = OnlineIndexPreparation::default();
+    let mut eligible = Vec::new();
     for index in &ONLINE_INDEXES {
         if applied.contains(&index.migration_version) {
             continue;
         }
         let table_exists = table_exists(conn, database, index.table).await?;
         if !index.adoptable_by_canonical_sql() {
-            // External tooling builds this one with a blocking statement
-            // whenever its table already exists, however many earlier
-            // migrations are still pending.
             if table_exists {
-                report.external_build_blocks.push(index.name);
+                match index_state(conn, database, index).await? {
+                    IndexState::Missing => report.external_build_blocks.push(index.name),
+                    IndexState::Foreign => {
+                        return Err(problem(index, OnlineIndexProblem::DefinitionMismatch));
+                    }
+                    IndexState::Building => {
+                        return Err(problem(index, OnlineIndexProblem::BuildInProgress));
+                    }
+                    IndexState::Valid(definition) => {
+                        check_valid(index, &definition, database.schema())?;
+                        return Err(problem(index, OnlineIndexProblem::ExternalCannotAdopt));
+                    }
+                    IndexState::Invalid(_) => {
+                        return Err(problem(index, OnlineIndexProblem::ExternalCannotAdopt));
+                    }
+                }
             } else {
                 report.deferred.push(index.name);
             }
@@ -666,6 +585,10 @@ async fn prepare_adoptable_indexes(
             report.deferred.push(index.name);
             continue;
         }
+        eligible.push(index);
+    }
+    // Refuse occupied non-adoptable names before doing any preparation work.
+    for index in eligible {
         match ensure_index_built(conn, database, index, IndexHistory::Pending).await? {
             BuildOutcome::Built => report.built.push(index.name),
             BuildOutcome::AlreadyValid => report.already_valid.push(index.name),
@@ -686,8 +609,10 @@ async fn prepare_adoptable_indexes(
 /// populated database apply the migrations through the preceding version and
 /// call this again before the index's own migration. A
 /// pending index whose canonical statement cannot adopt a prebuilt one is only
-/// reported in [`OnlineIndexPreparation::external_build_blocks`]; the external
-/// migrator builds it with a blocking `CREATE INDEX`, and only
+/// reported in [`OnlineIndexPreparation::external_build_blocks`] when its name
+/// is absent. A matching existing name returns [`OnlineIndexProblem::ExternalCannotAdopt`],
+/// because canonical SQL would fail instead of adopting it. Foreign or active
+/// names retain their respective refusal. Only
 /// [`crate::migrate_after_idempotency_cutover`] builds it online.
 ///
 /// The call holds the SQLx migration advisory lock while building, so no SQLx
@@ -697,6 +622,15 @@ async fn prepare_adoptable_indexes(
 /// [`OnlineIndexProblem::DefinitionMismatch`]. An active manual build is
 /// refused with [`OnlineIndexProblem::BuildInProgress`], including when its
 /// hidden progress can only be correlated with a build lock on the same table.
+/// INVALID removal first locks and revalidates the actual object in a short
+/// transaction. It requires an immediate exclusive table lock; busy tables
+/// refuse repair with native `55P03` instead of queuing a blocking DROP. The
+/// metadata transaction sets 100 ms lock and one-second statement, transaction
+/// (where available) and idle-transaction timeouts. The long concurrent build
+/// starts only after its commit. A lost commit acknowledgement returns
+/// [`crate::SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed`]
+/// inside the execution cause; no subsequent build is dispatched. Rollback
+/// failure retains both causes in [`crate::SchemaCompatibilityError::OnlineIndexRollback`].
 /// Applied migrations are never touched here;
 /// [`crate::ensure_schema_compatible_after_idempotency_cutover`]
 /// reports their declared indexes. A recorded migration whose checksum differs

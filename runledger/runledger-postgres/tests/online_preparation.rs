@@ -249,3 +249,114 @@ async fn failed_preparation_retains_the_native_cause_without_recording_a_migrati
     assert_eq!(sqlx_history(&harness.pool).await, history);
     harness.teardown().await;
 }
+
+#[tokio::test]
+async fn preparation_refuses_nonadoptable_occupied_names_without_mutation() {
+    use online_support::LAST_VERSION_BEFORE_SUMMARY_PAGINATION;
+    use sqlx::AssertSqlSafe;
+    let harness = Harness::fresh("online_prep_nonadoptable").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
+    let history = sqlx_history(&harness.pool).await;
+    let canonical = "CREATE INDEX idx_job_queue_created_id ON job_queue(created_at DESC,id DESC)";
+    let foreign = "CREATE INDEX idx_job_queue_created_id ON job_queue(id)";
+    for (statement, invalid, expected) in [
+        (canonical, false, OnlineIndexProblem::ExternalCannotAdopt),
+        (canonical, true, OnlineIndexProblem::ExternalCannotAdopt),
+        (foreign, false, OnlineIndexProblem::DefinitionMismatch),
+        (foreign, true, OnlineIndexProblem::DefinitionMismatch),
+    ] {
+        if invalid {
+            let writer = hold_writer_lock(&harness.pool).await;
+            let mut builder = harness.pool.acquire().await.expect("builder");
+            builder.close_on_drop();
+            sqlx::raw_sql("SET statement_timeout='200ms'")
+                .execute(&mut *builder)
+                .await
+                .expect("bound build");
+            sqlx::raw_sql(AssertSqlSafe(statement.replacen(
+                "CREATE INDEX",
+                "CREATE INDEX CONCURRENTLY",
+                1,
+            )))
+            .execute(&mut *builder)
+            .await
+            .expect_err("interrupted build");
+            builder.close().await.expect("retire builder");
+            writer.rollback().await.expect("release writer");
+        } else {
+            sqlx::raw_sql(AssertSqlSafe(statement))
+                .execute(&harness.pool)
+                .await
+                .expect("existing index");
+        }
+        let before = index_catalog(&harness.pool).await;
+        let error = prepare(&harness)
+            .await
+            .expect_err("canonical external SQL cannot adopt this name");
+        assert!(
+            matches!(error, SchemaCompatibilityError::OnlineIndex { index: "idx_job_queue_created_id", problem } if problem == expected),
+            "{error}"
+        );
+        assert_eq!(index_catalog(&harness.pool).await, before);
+        assert_eq!(sqlx_history(&harness.pool).await, history);
+        sqlx::raw_sql("DROP INDEX idx_job_queue_created_id")
+            .execute(&harness.pool)
+            .await
+            .expect("next case");
+    }
+    let database = profiled_database(&harness.pool).await;
+    let report = prepare_online_indexes_for_external_migrator(&database)
+        .await
+        .expect("missing names still report blocking builds");
+    assert_eq!(
+        report.external_build_blocks(),
+        &["idx_job_queue_scope_created_id", "idx_job_queue_created_id"]
+    );
+    database.pool().close().await;
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn preparation_defers_active_nonadoptable_build_without_touching_it() {
+    use online_support::LAST_VERSION_BEFORE_SUMMARY_PAGINATION;
+    let harness = Harness::fresh("online_prep_nonadoptable_active").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_SUMMARY_PAGINATION).await;
+    let history = sqlx_history(&harness.pool).await;
+    let writer = hold_writer_lock(&harness.pool).await;
+    let pool = harness.pool.clone();
+    let builder = tokio::spawn(async move {
+        sqlx::raw_sql("CREATE INDEX CONCURRENTLY idx_job_queue_created_id ON job_queue(created_at DESC,id DESC)").execute(&pool).await
+    });
+    wait_for("manual build waiting for writer", || {
+        build_waits_for_writers(&harness.pool)
+    })
+    .await;
+    let before = index_catalog(&harness.pool).await;
+    let error = prepare(&harness).await.expect_err("manual build is active");
+    assert!(matches!(
+        error,
+        SchemaCompatibilityError::OnlineIndex {
+            index: "idx_job_queue_created_id",
+            problem: OnlineIndexProblem::BuildInProgress
+        }
+    ));
+    assert_eq!(index_catalog(&harness.pool).await, before);
+    assert_eq!(sqlx_history(&harness.pool).await, history);
+    assert!(!builder.is_finished());
+    writer.rollback().await.expect("release writer");
+    builder
+        .await
+        .expect("builder task")
+        .expect("manual build completes");
+    let error = prepare(&harness)
+        .await
+        .expect_err("completed name is still not adoptable");
+    assert!(matches!(
+        error,
+        SchemaCompatibilityError::OnlineIndex {
+            problem: OnlineIndexProblem::ExternalCannotAdopt,
+            ..
+        }
+    ));
+    harness.teardown().await;
+}

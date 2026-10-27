@@ -6,6 +6,7 @@ use runledger_postgres::{
     OnlineIndexProblem, PgSessionProfile, RunledgerDatabase, SchemaCompatibilityError,
     ensure_schema_compatible_after_idempotency_cutover,
 };
+use sqlx::migrate::Migrate;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool};
 use tokio::task::JoinHandle;
 
@@ -18,6 +19,7 @@ const INDEX: &str = "idx_job_queue_scope_created_id";
 const GATE_CLASS: i32 = 726_341;
 const DROP_GATE: i32 = 1;
 const VERIFIER_GATE: i32 = 2;
+const COMPLETION_GATE: i32 = 3;
 
 struct Fixture {
     harness: Harness,
@@ -51,7 +53,7 @@ impl Fixture {
         let mut gates = PgConnection::connect(harness.database.url())
             .await
             .expect("gate connection");
-        for gate in [DROP_GATE, VERIFIER_GATE] {
+        for gate in [DROP_GATE, VERIFIER_GATE, COMPLETION_GATE] {
             sqlx::query("SELECT pg_catalog.pg_advisory_lock($1, $2)")
                 .bind(GATE_CLASS)
                 .bind(gate)
@@ -79,7 +81,7 @@ impl Fixture {
         );
     }
 
-    async fn assert_drop_committed(&self, drop_pid: i32, protected: bool) {
+    async fn assert_drop_committed(&self, drop_pid: i32, cooperating: bool) {
         wait_for("DROP committed outside the verifier snapshot", || async {
             sqlx::query_scalar::<_, bool>(
                 "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index WHERE indexrelid::bigint = $1)
@@ -98,8 +100,8 @@ impl Fixture {
         .bind(drop_pid)
         .fetch_one(&self.harness.pool)
         .await
-        .expect("protected runner retains its SQLx migration lock");
-        assert_eq!(migration_lock, protected);
+        .expect("cooperating dropper retains its SQLx migration lock");
+        assert_eq!(migration_lock, cooperating);
     }
 
     async fn remove_gates(&self) {
@@ -229,28 +231,38 @@ async fn waiting_at_gate(pool: &PgPool, gate: i32) -> i32 {
         .expect("one waiter on the database-local gate")
 }
 
-fn start_drop(pool: PgPool, protected: bool) -> JoinHandle<Result<(), SchemaCompatibilityError>> {
+fn start_drop(pool: PgPool, cooperating: bool) -> JoinHandle<Result<(), SchemaCompatibilityError>> {
     tokio::spawn(async move {
-        if protected {
-            migrate_profiled(&pool).await
-        } else {
-            let mut conn = pool.acquire().await?;
-            conn.close_on_drop();
-            sqlx::raw_sql("SET statement_timeout = '20s'")
-                .execute(&mut *conn)
-                .await?;
-            sqlx::raw_sql("DROP INDEX CONCURRENTLY idx_job_queue_scope_created_id")
-                .execute(&mut *conn)
-                .await?;
-            Ok(())
+        let mut conn = pool.acquire().await?;
+        conn.close_on_drop();
+        sqlx::raw_sql("SET statement_timeout = '20s'")
+            .execute(&mut *conn)
+            .await?;
+        if cooperating {
+            // A concurrent manual drop may follow the migration-lock protocol.
+            // Protected repair now removes INVALID indexes transactionally,
+            // so its table lock prevents this older-snapshot interleaving.
+            (*conn).lock().await?;
         }
+        sqlx::raw_sql("DROP INDEX CONCURRENTLY idx_job_queue_scope_created_id")
+            .execute(&mut *conn)
+            .await?;
+        if cooperating {
+            sqlx::query("SELECT pg_catalog.pg_advisory_xact_lock($1, $2)")
+                .bind(GATE_CLASS)
+                .bind(COMPLETION_GATE)
+                .execute(&mut *conn)
+                .await?;
+            (*conn).unlock().await?;
+        }
+        Ok(())
     })
 }
 
-async fn assert_drop_commit_classification(protected: bool) {
+async fn assert_drop_commit_classification(cooperating: bool) {
     let mut fixture = Fixture::fresh().await;
     let history = sqlx_history(&fixture.harness.pool).await;
-    let dropper = start_drop(fixture.harness.pool.clone(), protected);
+    let dropper = start_drop(fixture.harness.pool.clone(), cooperating);
     let drop_pid = waiting_at_gate(&fixture.harness.pool, DROP_GATE).await;
     let database = Arc::clone(&fixture.verifier);
     let verifier =
@@ -259,12 +271,13 @@ async fn assert_drop_commit_classification(protected: bool) {
         );
     waiting_at_gate(&fixture.harness.pool, VERIFIER_GATE).await;
     fixture.release(DROP_GATE).await;
-    fixture.assert_drop_committed(drop_pid, protected).await;
+    fixture.assert_drop_committed(drop_pid, cooperating).await;
     fixture.release(VERIFIER_GATE).await;
     let result = tokio::time::timeout(Duration::from_secs(20), verifier)
         .await
         .expect("verifier completes")
         .expect("verifier task");
+    fixture.release(COMPLETION_GATE).await;
     tokio::time::timeout(Duration::from_secs(20), dropper)
         .await
         .expect("drop or repair completes after verifier rollback")
@@ -272,7 +285,7 @@ async fn assert_drop_commit_classification(protected: bool) {
         .expect("drop or repair succeeds");
     fixture.remove_gates().await;
     assert_eq!(sqlx_history(&fixture.harness.pool).await, history);
-    // A settled manual DROP is repaired by the next protected startup.
+    // A settled manual DROP is repaired by the next cooperating startup.
     migrate_profiled(&fixture.harness.pool)
         .await
         .expect("settled schema");
@@ -280,7 +293,7 @@ async fn assert_drop_commit_classification(protected: bool) {
         .await
         .expect("fresh verification");
     fixture.teardown().await;
-    let expected = if protected {
+    let expected = if cooperating {
         OnlineIndexProblem::BuildInProgress
     } else {
         OnlineIndexProblem::Missing
@@ -295,7 +308,7 @@ async fn assert_drop_commit_classification(protected: bool) {
 }
 
 #[tokio::test]
-async fn verifier_reports_active_repair_after_drop_commits_inside_its_snapshot() {
+async fn verifier_reports_cooperating_drop_after_it_commits_inside_its_snapshot() {
     assert_drop_commit_classification(true).await;
 }
 

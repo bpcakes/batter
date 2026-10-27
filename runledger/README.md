@@ -1667,10 +1667,23 @@ after verification takes its catalog snapshot; without a held migration lock,
 that removed index reports `Missing`. Once that lock is released, an interrupted
 index with no active build is reported as missing or `Invalid`. A build that fails, or a
 process that dies between the recorded migration and the build, leaves the
-index missing or `INVALID`; the next protected startup drops and rebuilds it,
+index missing or `INVALID`; the next protected startup repairs it,
 and `ensure_schema_compatible_after_idempotency_cutover` reports it as
 `SchemaCompatibilityError::OnlineIndex` with an `OnlineIndexProblem` instead
-of starting without it. A valid prebuilt index with the bundled definition is
+of starting without it. INVALID removal uses a short metadata transaction: it locks the actual index,
+restores its original name within that transaction, locks its table immediately,
+and rechecks OID and definition before ordinary DROP. No temporary rename is
+committed. The table lock uses `NOWAIT`; readers or writers can cause native
+`55P03` refusal without deletion. Index-lock waits are capped at 100 ms; metadata
+statement, transaction (where supported), and idle-transaction timeouts are one
+second. These server settings are not network/runtime-death guarantees. The
+exclusive table lock covers only metadata removal; the potentially long
+`CREATE INDEX CONCURRENTLY` starts after commit. Commit acknowledgement loss is
+`OnlineIndexRepairCommitUnconfirmed` inside the execution cause and prevents a
+subsequent build; `OnlineIndexRollback` retains an original refusal plus rollback
+failure. A changed INVALID OID is refused as `ChangedDuringRepair`; a completed
+canonical reindex is kept. Foreign replacements are rolled back unchanged.
+A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before
 the migration is recorded. Definition matching is strict, including physical
 storage options. Quoted authoritative schemas, including SQL keywords and
@@ -1695,8 +1708,12 @@ the migrations through the preceding version, then prepare again. A recorded
 migration with a foreign checksum or a failed run, or a newer incompatible
 `runledger_migration_history` version, is refused before any build, as the
 protected runner refuses it. Its report also
-names the pending indexes an external migrator still builds with a blocking
-statement; only the protected runner builds those online. Run the external
+names absent pending indexes an external migrator still builds with a blocking
+statement; only the protected runner builds those online. For non-adoptable
+canonical statements, an existing matching valid or INVALID name instead returns
+`ExternalCannotAdopt`: the external statement would fail with a duplicate name.
+Foreign and active names retain `DefinitionMismatch` and `BuildInProgress`.
+These checks precede preparation builds and leave occupied objects unchanged. Run the external
 tooling only after the call returned `Ok` and its report has been inspected.
 `Ok` alone does not mean every index is prepared. On populated tables, stop
 when `deferred()` is nonempty, apply only the prerequisite migration prefix,

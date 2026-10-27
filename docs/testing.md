@@ -3199,9 +3199,11 @@ interrupted concurrent build. A `sql_drop` event-trigger gate pauses concurrent
 DROP after its waiter phases, and a row-security policy pauses the public
 verifier's history query after its own table locks and snapshot setup. DROP
 then commits before verification proceeds: the snapshot retains the old
-INVALID row while its live definition is absent. The protected-repair case
-requires `BuildInProgress` with the migration lock still held; the completed
-manual-DROP case requires `Missing` without that lock. Both preserve migration
+INVALID row while its live definition is absent. The cooperating manual-DROP case
+requires `BuildInProgress` with its SQLx migration lock still held; the completed
+uncoordinated manual-DROP case requires `Missing` without that lock. Protected
+INVALID removal now uses a metadata transaction whose table lock prevents this
+older-snapshot interleaving; its contention/cancellation cases are tested separately. Both preserve migration
 history and pass fresh verification after repair. The gates are confined to
 the ephemeral database; no production hooks replace the verifier's boundary.
 Executed regression and baseline-failure evidence belongs to `batter-fnj8.7`.
@@ -3221,6 +3223,19 @@ while its writer remains held. It checks `OnlineIndexPhase::Build`, no recorded
 migration version, retained SQLSTATE `57014`, redacted formatting and unchanged
 history, then successfully prepares again. Executed evidence for both targets
 belongs to `batter-fnj8.8`.
+
+`online_repair.rs` and `online_repair/lifecycle.rs` hold the actual inspection
+response, swap a foreign UNIQUE index into the declared name, then resume both
+public entrypoints. The baseline deletes that index; repaired behavior preserves
+its OID, definition, uniqueness and migration history. Controls cover a completed
+manual reindex winning that race, busy-writer refusal followed by recovery,
+server-committed removal with its COMMIT acknowledgement withheld, paired repair/
+rollback errors, and cancellation with independent observation of backend exit.
+The relay changes transport only; PostgreSQL executes all statements. Preparation
+also covers occupied non-adoptable valid/INVALID/foreign names and an active build,
+with unchanged history/objects and accurate absent-name reporting. Verification
+outcomes belong to `batter-fnj8.10`; these do not prove arbitrary remote DDL safety
+outside the locked removal transaction.
 
 `online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a
 real successful lock-poll response while the runtime advances, or deliver it

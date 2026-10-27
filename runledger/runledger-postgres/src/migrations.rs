@@ -37,7 +37,8 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 mod error;
 pub use error::{
     MigrationCleanupError, MigrationLockTimeout, MigrationTimeoutSetting,
-    OnlineIndexExecutionError, OnlineIndexPhase, SchemaCompatibilityError,
+    OnlineIndexExecutionError, OnlineIndexPhase, OnlineIndexRollbackError,
+    SchemaCompatibilityError,
 };
 
 mod online;
@@ -194,7 +195,14 @@ impl fmt::Display for WorkflowJobLinkTriggerDiagnostic {
 /// statements commit first, and its declared indexes are then built with
 /// `CREATE INDEX CONCURRENTLY` outside a transaction. Every later call leaves
 /// those indexes valid, rebuilding one lost to an interrupted build, and
-/// refuses a foreign index under a declared name. The SQLx migration lock is
+/// refuses a foreign index under a declared name. INVALID removal uses a short
+/// transaction to lock and revalidate identity through DROP. It requires an
+/// immediate exclusive table lock (`55P03` if busy), caps index-lock waits at
+/// 100 ms and sets one-second metadata statement/transaction/idle timeouts.
+/// The long concurrent build starts after commit; removal commit uncertainty
+/// and rollback failures remain typed execution causes. See
+/// [`prepare_online_indexes_for_external_migrator`] for those diagnostics.
+/// The SQLx migration lock is
 /// acquired by polling `pg_try_advisory_lock`, so a second Runledger starter
 /// waits without a snapshot and cannot deadlock with the holder's concurrent
 /// build; a raw SQLx migrator blocked in `pg_advisory_lock` still can, so do
