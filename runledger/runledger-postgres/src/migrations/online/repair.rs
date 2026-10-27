@@ -1,14 +1,55 @@
 //! An INVALID observation is not authority to drop a later name occupant.
 //! Keep object validation and removal in one bounded metadata transaction.
+//! A refused lock leaves nothing changed, so the whole attempt is retried
+//! briefly instead of queuing an exclusive lock behind queue traffic.
+
+use std::time::Duration;
 
 use sqlx::{AssertSqlSafe, Connection, PgConnection};
 
 use super::{IndexState, OnlineIndex, OnlineIndexProblem, check_valid, index_state, problem};
 use crate::{OnlineIndexRollbackError, RunledgerDatabase, SchemaCompatibilityError};
 
+/// Time after the first attempt within which a refused attempt is retried.
+const LOCK_RETRY_BUDGET: Duration = Duration::from_secs(5);
+const FIRST_RETRY_DELAY: Duration = Duration::from_millis(10);
+const MAX_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 /// Returns false when the locked object has become a valid canonical index.
 /// The connection is already marked close-on-drop by the owning entrypoint.
+/// Only native `55P03` with an acknowledged rollback is retried; each attempt
+/// rechecks identity under its own locks. Other outcomes return at once.
 pub(super) async fn remove_invalid(
+    conn: &mut PgConnection,
+    database: &RunledgerDatabase,
+    index: &OnlineIndex,
+    expected_oid: i64,
+) -> Result<bool, SchemaCompatibilityError> {
+    let deadline = tokio::time::Instant::now() + LOCK_RETRY_BUDGET;
+    let mut delay = FIRST_RETRY_DELAY;
+    loop {
+        match attempt(conn, database, index, expected_oid).await {
+            Err(error)
+                if lock_refused(&error) && tokio::time::Instant::now() + delay < deadline =>
+            {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(MAX_RETRY_DELAY);
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A rolled-back attempt whose index or table lock was not available.
+fn lock_refused(error: &SchemaCompatibilityError) -> bool {
+    matches!(
+        error,
+        SchemaCompatibilityError::Query(cause)
+            if cause.as_database_error().and_then(|e| e.code()).as_deref() == Some("55P03")
+    )
+}
+
+async fn attempt(
     conn: &mut PgConnection,
     database: &RunledgerDatabase,
     index: &OnlineIndex,
@@ -79,8 +120,9 @@ async fn remove_locked(
     )))
     .execute(&mut *conn)
     .await?;
-    // Never queue ACCESS EXCLUSIVE behind an active reader/writer. Once held,
-    // it also protects table identity through the final inspection and DROP.
+    // Never queue ACCESS EXCLUSIVE behind an active reader/writer; the caller
+    // retries a refusal. Once held, it also protects table identity through
+    // the final inspection and DROP.
     sqlx::raw_sql(AssertSqlSafe(format!(
         "LOCK TABLE ONLY {} IN ACCESS EXCLUSIVE MODE NOWAIT",
         database.relation(index.table),

@@ -3227,14 +3227,20 @@ belongs to `batter-fnj8.8`.
 `online_repair.rs` and `online_repair/lifecycle.rs` hold the actual inspection
 response, swap a foreign UNIQUE index into the declared name, then resume both
 public entrypoints. The baseline deletes that index; repaired behavior preserves
-its OID, definition, uniqueness and migration history. Controls cover a completed
-manual reindex winning that race, busy-writer refusal followed by recovery,
+its OID, definition, uniqueness and migration history. A second swap moves the
+inspected INVALID index aside and leaves another canonical INVALID build under
+the declared name; both entrypoints must refuse it as `ChangedDuringRepair` and
+keep both OIDs and history. Controls cover a completed
+manual reindex winning that race, refusal after a writer outlasts the
+five-second retry budget followed by recovery, a relay-observed refused attempt
+that the same call retries and completes once the writer releases,
 server-committed removal with its COMMIT acknowledgement withheld, paired repair/
 rollback errors, and cancellation with independent observation of backend exit.
 The relay changes transport only; PostgreSQL executes all statements. Preparation
 also covers occupied non-adoptable valid/INVALID/foreign names and an active build,
 with unchanged history/objects and accurate absent-name reporting. Verification
-outcomes belong to `batter-fnj8.10`; these do not prove arbitrary remote DDL safety
+outcomes belong to `batter-fnj8.10` and, for the retry and changed-identity
+cases, `batter-fnj8.11`; these do not prove arbitrary remote DDL safety
 outside the locked removal transaction.
 
 `online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a

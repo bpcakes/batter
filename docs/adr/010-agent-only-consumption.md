@@ -92,6 +92,12 @@ not this execution gap. Native Runledger now owns a bounded metadata transaction
 that locks the actual index, validates identity and definition under index/table
 locks, and removes it before commit. Concurrent creation begins afterward. Busy
 tables refuse immediate metadata locking instead of queuing a blocking DROP.
+A later review (`batter-fnj8.11`) found that one refused attempt left a live
+queue unrepairable, so native Runledger now retries the whole rolled-back
+transaction within a fixed five-second budget, each attempt still `NOWAIT`
+with its own identity checks; no committed rename or caller retry protocol was
+added. A table never idle for an instant still needs an operator's
+`DROP INDEX CONCURRENTLY`, documented as protected-path recovery.
 Callers acquire no extra lock and coordinate no new completion phase.
 
 Rollback failures retain both causes; commit uncertainty prevents subsequent

@@ -355,7 +355,9 @@ async fn concurrent_protected_startups_both_succeed_with_pending_online_indexes(
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_stat_progress_create_index
-                WHERE command = 'CREATE INDEX CONCURRENTLY'
+                WHERE datid = (SELECT oid FROM pg_catalog.pg_database
+                               WHERE datname = pg_catalog.current_database())
+                  AND command = 'CREATE INDEX CONCURRENTLY'
                   AND relid = 'job_queue'::regclass
                   AND phase LIKE 'waiting for%'
              )",

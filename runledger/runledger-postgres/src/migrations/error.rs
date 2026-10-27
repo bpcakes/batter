@@ -42,14 +42,37 @@ pub enum SchemaCompatibilityError {
     /// Online index execution failed; inspect the retained phase and causes.
     OnlineIndexExecution(OnlineIndexExecutionError),
     /// Guarded INVALID-index removal and its rollback both failed.
+    ///
+    /// Removal runs inside an online build, so this is never returned at top
+    /// level: it is only the [`OnlineIndexExecutionError::cause`] of
+    /// [`Self::OnlineIndexExecution`], which itself can be the
+    /// [`MigrationCleanupError::operation_error`] of [`Self::MigrationCleanup`].
+    ///
+    /// ```rust,no_run
+    /// use runledger_postgres::SchemaCompatibilityError;
+    /// # fn inspect(error: &SchemaCompatibilityError) {
+    /// if let SchemaCompatibilityError::OnlineIndexExecution(execution) = error
+    ///     && let SchemaCompatibilityError::OnlineIndexRollback(pair) = execution.cause()
+    /// {
+    ///     let (refusal, rollback) = (pair.operation_error(), pair.rollback_error());
+    /// }
+    /// # }
+    /// ```
     OnlineIndexRollback(OnlineIndexRollbackError),
     /// Commit of guarded INVALID-index removal was not acknowledged. The
     /// removal may have committed; inspect the retained native cause explicitly.
     ///
+    /// Like [`Self::OnlineIndexRollback`], this is only reachable through
+    /// [`OnlineIndexExecutionError::cause`], never as the top-level error.
+    ///
     /// ```rust,no_run
-    /// # fn inspect(cause: &runledger_postgres::SchemaCompatibilityError) {
-    /// if let runledger_postgres::SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed(error) = cause {
-    ///     let native = error.sqlx_error();
+    /// use runledger_postgres::SchemaCompatibilityError;
+    /// # fn inspect(error: &SchemaCompatibilityError) {
+    /// if let SchemaCompatibilityError::OnlineIndexExecution(execution) = error
+    ///     && let SchemaCompatibilityError::OnlineIndexRepairCommitUnconfirmed(commit) =
+    ///         execution.cause()
+    /// {
+    ///     let native = commit.sqlx_error();
     ///     // No subsequent build ran, but removal may have committed.
     /// }
     /// # }

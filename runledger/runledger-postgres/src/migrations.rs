@@ -197,8 +197,11 @@ impl fmt::Display for WorkflowJobLinkTriggerDiagnostic {
 /// those indexes valid, rebuilding one lost to an interrupted build, and
 /// refuses a foreign index under a declared name. INVALID removal uses a short
 /// transaction to lock and revalidate identity through DROP. It requires an
-/// immediate exclusive table lock (`55P03` if busy), caps index-lock waits at
-/// 100 ms and sets one-second metadata statement/transaction/idle timeouts.
+/// immediately available exclusive table lock, retrying a refused (`55P03`)
+/// attempt for up to five seconds before returning it; a table that is never
+/// idle needs `DROP INDEX CONCURRENTLY` on the `INVALID` index and a restart.
+/// Each attempt caps index-lock waits at 100 ms and sets one-second metadata
+/// statement/transaction/idle timeouts.
 /// The long concurrent build starts after commit; removal commit uncertainty
 /// and rollback failures remain typed execution causes. See
 /// [`prepare_online_indexes_for_external_migrator`] for those diagnostics.

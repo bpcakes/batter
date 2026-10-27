@@ -21,6 +21,17 @@ UNIQUE index. The protected repair changes the execution boundary, not the match
 - [LOCK](https://www.postgresql.org/docs/18/sql-lock.html): NOWAIT refuses contention,
   and transaction locks remain until completion. The repair takes the parent lock
   before its final identity/definition inspection and DROP.
+- [Explicit locking](https://www.postgresql.org/docs/18/explicit-locking.html)
+  (rechecked 2026-10-27 for `batter-fnj8.11`): `ACCESS EXCLUSIVE` conflicts with
+  every table lock mode, including `ACCESS SHARE` from plain reads, `ROW SHARE`
+  from `FOR UPDATE SKIP LOCKED` claims and `SHARE UPDATE EXCLUSIVE` from
+  (auto)vacuum, so one `NOWAIT` attempt is refused whenever any of them is held.
+  A failed `LOCK` or `lock_timeout` raises SQLSTATE `55P03` (`lock_not_available`,
+  [error codes](https://www.postgresql.org/docs/18/errcodes-appendix.html)).
+  [DROP INDEX](https://www.postgresql.org/docs/18/sql-dropindex.html)
+  `CONCURRENTLY` drops an index without locking out concurrent selects, inserts,
+  updates and deletes on its table, which is why it is the operator recovery
+  for a table that is never idle.
 - [PostgreSQL 18 source](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/commands/tablecmds.c):
   `RemoveRelations` resolves and locks the current name occupant, not a client's
   previously inspected OID. `index_drop` uses internal session locks across its

@@ -723,7 +723,13 @@ schema boundary:
 
 The protected runner builds the five bundled `job_queue`/`workflow_runs`
 indexes of `202605220001`, `202607280004` and `202609050001` with
-`CREATE INDEX CONCURRENTLY` and repairs or reports an interrupted build; tooling
+`CREATE INDEX CONCURRENTLY` and repairs or reports an interrupted build.
+Removing an `INVALID` leftover needs an instant with no other lock on its table;
+refused attempts are retried for up to five seconds, then startup fails with
+native `55P03` inside `OnlineIndexExecution` and leaves the index in place. If
+traffic or autovacuum never leaves that instant, run `DROP INDEX CONCURRENTLY`
+on the `INVALID` index and restart; the protected runner then builds the
+missing index concurrently. Tooling
 that applies the canonical SQL itself calls
 `prepare_online_indexes_for_external_migrator` first and still blocks on the
 three indexes without `IF NOT EXISTS`. Inspect both deferred and blocking

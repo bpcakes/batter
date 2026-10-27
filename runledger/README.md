@@ -1673,15 +1673,22 @@ and `ensure_schema_compatible_after_idempotency_cutover` reports it as
 of starting without it. INVALID removal uses a short metadata transaction: it locks the actual index,
 restores its original name within that transaction, locks its table immediately,
 and rechecks OID and definition before ordinary DROP. No temporary rename is
-committed. The table lock uses `NOWAIT`; readers or writers can cause native
-`55P03` refusal without deletion. Index-lock waits are capped at 100 ms; metadata
+committed. The table lock uses `NOWAIT`, so it never queues behind readers,
+claimers, writers or autovacuum. A refused attempt (native `55P03`) rolls back
+unchanged and the whole transaction, including its identity checks, is retried
+with backoff for up to five seconds; a table that stays busy throughout returns
+that `55P03` without deletion. Index-lock waits are capped at 100 ms per attempt; metadata
 statement, transaction (where supported), and idle-transaction timeouts are one
 second. These server settings are not network/runtime-death guarantees. The
 exclusive table lock covers only metadata removal; the potentially long
-`CREATE INDEX CONCURRENTLY` starts after commit. Commit acknowledgement loss is
+`CREATE INDEX CONCURRENTLY` starts after commit. If that table is never idle
+for an instant, for example under continuous traffic or a long autovacuum,
+recover by running `DROP INDEX CONCURRENTLY` on the `INVALID` index, which does
+not block queue writes, then restarting: the next protected startup builds the
+now-missing index concurrently. Commit acknowledgement loss is
 `OnlineIndexRepairCommitUnconfirmed` inside the execution cause and prevents a
 subsequent build; `OnlineIndexRollback` retains an original refusal plus rollback
-failure. A changed INVALID OID is refused as `ChangedDuringRepair`; a completed
+failure. Neither is retried. A changed INVALID OID is refused as `ChangedDuringRepair`; a completed
 canonical reindex is kept. Foreign replacements are rolled back unchanged.
 A valid prebuilt index with the bundled definition is
 adopted; a differently defined index under a declared name is refused before

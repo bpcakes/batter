@@ -27,6 +27,7 @@ pub enum Fault {
     HoldRepairTableLock,
     LoseRepairCommitResponse,
     DisconnectOnRepairRollback,
+    ObserveRepairRollback,
 }
 
 pub struct Relay {
@@ -98,6 +99,12 @@ impl Relay {
                         {
                             reached.notify_one();
                             return Ok::<(), io::Error>(());
+                        }
+                        Fault::ObserveRepairRollback
+                            if repair_started.load(Ordering::SeqCst)
+                                && sql.starts_with(b"ROLLBACK") =>
+                        {
+                            reached.notify_one();
                         }
                         Fault::DisconnectOnRestore
                             if sql.starts_with(

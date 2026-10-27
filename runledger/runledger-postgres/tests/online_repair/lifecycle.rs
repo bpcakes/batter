@@ -35,10 +35,17 @@ async fn busy_writer_refuses_metadata_drop_and_later_recovery_succeeds() {
         let history = sqlx_history(&harness.pool).await;
         let writer = hold_writer_lock(&harness.pool).await;
         let database = profiled_database(&harness.pool).await;
-        let error = tokio::time::timeout(Duration::from_secs(3), run(&database, prepare))
+        // Every NOWAIT attempt is refused while this writer outlasts the
+        // documented five-second retry budget.
+        let started = std::time::Instant::now();
+        let error = tokio::time::timeout(Duration::from_secs(15), run(&database, prepare))
             .await
-            .expect("immediate table lock refusal")
+            .expect("bounded table lock refusal")
             .expect_err("writer keeps invalid object intact");
+        assert!(
+            started.elapsed() >= Duration::from_secs(4),
+            "refused attempts are retried for the budget, not abandoned at once"
+        );
         let SchemaCompatibilityError::Query(cause) = execution(&error).cause() else {
             panic!("native lock refusal")
         };
@@ -54,6 +61,38 @@ async fn busy_writer_refuses_metadata_drop_and_later_recovery_succeeds() {
             .expect("repair after writer settles");
         assert!(index_catalog(&harness.pool).await[index].1);
         database.pool().close().await;
+        harness.teardown().await;
+    }
+}
+
+#[tokio::test]
+async fn refused_metadata_attempt_is_retried_once_a_busy_writer_releases() {
+    for prepare in [false, true] {
+        let harness = Harness::fresh("online_repair_retry").await;
+        let index = invalid_index(&harness.pool, prepare).await;
+        let history = sqlx_history(&harness.pool).await;
+        let writer = hold_writer_lock(&harness.pool).await;
+        let mut relay = Relay::start(
+            &harness.pool.connect_options(),
+            Fault::ObserveRepairRollback,
+        )
+        .await;
+        let database = relayed_database(&harness.pool, &relay);
+        let task_database = database.clone();
+        let task = tokio::spawn(async move { run(&task_database, prepare).await });
+        // The first metadata attempt was refused and rolled back while the
+        // writer held its lock; the same call must still repair the index.
+        relay.reached().await;
+        writer.rollback().await.expect("release writer");
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("retry within the budget")
+            .expect("repair task")
+            .expect("repair in the same call after the writer settles");
+        assert!(index_catalog(&harness.pool).await[index].1);
+        assert_eq!(sqlx_history(&harness.pool).await, history);
+        database.pool().close().await;
+        relay.finish().await;
         harness.teardown().await;
     }
 }

@@ -623,8 +623,9 @@ async fn prepare_adoptable_indexes(
 /// refused with [`OnlineIndexProblem::BuildInProgress`], including when its
 /// hidden progress can only be correlated with a build lock on the same table.
 /// INVALID removal first locks and revalidates the actual object in a short
-/// transaction. It requires an immediate exclusive table lock; busy tables
-/// refuse repair with native `55P03` instead of queuing a blocking DROP. The
+/// transaction. It requires an immediate exclusive table lock and never queues
+/// a blocking DROP: a refused attempt rolls back and is retried for up to five
+/// seconds, after which a still-busy table returns native `55P03`. Each
 /// metadata transaction sets 100 ms lock and one-second statement, transaction
 /// (where available) and idle-transaction timeouts. The long concurrent build
 /// starts only after its commit. A lost commit acknowledgement returns

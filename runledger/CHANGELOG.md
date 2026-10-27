@@ -17,6 +17,10 @@ All notable changes to this workspace are documented here.
   records each such migration under its canonical checksum, commits the
   remaining statements first, then builds the declared indexes, and every later
   startup rebuilds one that is missing or `INVALID` after an interrupted build.
+  Removing an `INVALID` one needs an immediately available exclusive table
+  lock; refused attempts are retried for up to five seconds, after which a
+  still-busy table fails startup with native `55P03`. Recover such a table by
+  running `DROP INDEX CONCURRENTLY` on the `INVALID` index and restarting.
   A same-named relation that is not the declared index, whether a different
   definition (valid or `INVALID`), an index on another table or another kind
   of relation, is refused before the migration is recorded with the new
@@ -112,9 +116,13 @@ All notable changes to this workspace are documented here.
 
 - INVALID online-index repair now locks and revalidates the actual object
   through transactional metadata removal, preserving foreign names swapped in
-  after inspection. Removal requires an immediately available exclusive table
-  lock; contention returns native `55P03`. Index lock waits are capped at 100 ms
-  and metadata statement/transaction/idle timeouts at one second. Long builds
+  after inspection. Each removal attempt requires an immediately available
+  exclusive table lock and never queues for it; a refused attempt rolls back
+  and the whole transaction, identity checks included, is retried with backoff
+  for up to five seconds before native `55P03` is returned. Rollback failure,
+  commit uncertainty and identity refusals are not retried. Per attempt, index
+  lock waits are capped at 100 ms and metadata statement/transaction/idle
+  timeouts at one second. Long builds
   remain concurrent after commit. Lost removal commit acknowledgement is
   retained as `OnlineIndexRepairCommitUnconfirmed`, and rollback failure as
   `OnlineIndexRollback` with both causes. Cancellation does not prove remote
