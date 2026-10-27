@@ -102,7 +102,10 @@ SQL, pools and policy remain native. It also executes an application-selected
 migrator and then applies an application-declared manifest of managed routines
 and triggers on the same lease, and verifies that set read-only at readiness
 ([ADR-013](adr/013-managed-database-objects.md)); the object source, migration
-selection, ownership transfer and grants remain application-owned. The implemented optional
+selection, ownership transfer and grants remain application-owned.
+`migrate_and_apply_with` executes those application policies through opaque scoped
+SQL before the managed transaction commits; native continuity and catalog checks
+keep that callback inside the protected apply boundary. The implemented optional
 `batter-runledger` adapter adds a phase-scoped atomic enqueue runner and schema
 snapshots built on those SQLx scopes. It also translates owned native
 preparation, initialization, stop clocks and complete settlement into managed

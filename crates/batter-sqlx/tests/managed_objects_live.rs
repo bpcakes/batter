@@ -11,6 +11,9 @@ mod support;
 
 mod managed_objects_fixture;
 
+#[path = "managed_objects_live/application_sql.rs"]
+mod application_sql;
+
 #[path = "managed_objects_live/verification.rs"]
 mod verification;
 
@@ -727,6 +730,24 @@ async fn managed_objects_retirement_of_another_kind_is_left_alone() -> Result {
             fixture.exists(&migrator, "legacy").await?,
             "the procedure was dropped",
         )?;
+        require(
+            fixture.public_can_execute(&reader, "legacy()").await?,
+            "unmanaged procedure did not start with PUBLIC execution",
+        )?;
+        let before = catalog_state(&reader, &schema).await?;
+        let applied =
+            application_sql::apply(fixture, &migrator, &objects.manifest, async |_| Ok(())).await?;
+        require(
+            applied.retired() == 0,
+            "callback retired another routine kind",
+        )?;
+        require(
+            catalog_state(&reader, &schema).await? == before,
+            "callback changed the retained procedure or its ACL",
+        )?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("CALL {schema}.legacy()")))
+            .execute(&reader)
+            .await?;
         let report = fixture
             .verify(
                 &reader,

@@ -41,6 +41,14 @@ regression, aligns the live-runner summary with its 157 cases, and cites the
 precise PostgreSQL lock-before-snapshot rule. Execution outcomes are recorded
 in the owning Beads.
 
+2026-10-26 scoped managed application SQL (`batter-aouh`): the additive
+`PgLease::migrate_and_apply_with` composes application ownership/grants before
+managed commit, reusing scoped SQL and native continuity. Concrete refusals,
+native failures and unconfirmed boundaries remain separate; post-callback
+managed-state/PUBLIC checks include deferred work. The old entrypoint stays
+compatible. Source-bound live and complete verification results are retained in
+the owning task; this implementation note does not claim hosted CI or publication.
+
 2026-10-15 managed database objects (`batter-54d0`): `batter_sqlx::managed`
 declares routines and the triggers that bind them as in-place source with
 explicit retirements and a required `PUBLIC` `EXECUTE` policy.

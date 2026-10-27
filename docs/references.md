@@ -6,6 +6,19 @@ verify the resolved Cargo.lock and pinned documentation when implementing or
 upgrading adapters. These sources explain ecosystem semantics. They do not
 validate Batter's source or prove any of its tests pass.
 
+## PostgreSQL 18 scoped managed apply, 2026-10-26
+
+For `batter-aouh`, rechecked the official PostgreSQL 18 commands:
+
+- [SET CONSTRAINTS](https://www.postgresql.org/docs/18/sql-set-constraints.html):
+  switching deferred checks to immediate runs outstanding checks and constraint
+  triggers during that command. The new callback path does this before its final
+  managed-definition/ledger inspection.
+- [ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/18/sql-rollback-to.html):
+  recovery discards later work and nested savepoints; the named savepoint remains
+  until released. Native XID validation is still needed to reject a replacement
+  top-level transaction. Already committed effects cannot be recovered this way.
+
 ## PostgreSQL 18 managed routine and trigger semantics, 2026-10-15
 
 For `batter-54d0` ([ADR-013](adr/013-managed-database-objects.md)), rechecked:

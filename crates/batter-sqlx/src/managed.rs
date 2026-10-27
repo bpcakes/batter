@@ -73,6 +73,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub(crate) mod application;
 mod apply;
 mod catalog;
 mod error;
@@ -80,6 +81,7 @@ mod source;
 #[cfg(test)]
 mod tests;
 
+pub use application::ManagedApplyWithError;
 pub(crate) use apply::migrate_and_apply;
 pub use apply::{AppliedManagedObjects, ManagedApplyError};
 pub(crate) use catalog::{

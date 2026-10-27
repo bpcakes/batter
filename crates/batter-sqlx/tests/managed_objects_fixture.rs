@@ -201,7 +201,7 @@ impl Fixture {
         self.migrations.push(sql);
     }
 
-    fn migrator_bundle(&self) -> Migrator {
+    pub(crate) fn migrator_bundle(&self) -> Migrator {
         let records = format!(
             "CREATE TABLE {}.records (
                  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -442,7 +442,7 @@ impl Fixture {
     }
 }
 
-fn context() -> OperationContext {
+pub(crate) fn context() -> OperationContext {
     OperationOwner::new(Duration::from_secs(30))
         .expect("constant budget")
         .into_context()

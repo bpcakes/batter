@@ -83,6 +83,25 @@ placement and documentation must distinguish it from the protected path and list
 the obligations it leaves with the caller. Its existence does not justify making
 the same invalid state representable through the canonical API.
 
+### Managed application SQL assessment (`batter-aouh`)
+
+Publishing a managed caller and granting its new private dependency in separate
+transactions is an invalid ordering when both must become available together.
+`migrate_and_apply_with` makes that composition one consuming lease operation.
+The callback cannot extract/replace the connection, commit through a typed
+handle, or reuse the consumed lease. Native savepoint/XID checks reject raw
+transaction escape; explicit COMMIT effects remain remote uncertainty, never
+an invented rollback. Refusal and continuity failure remain independently
+inspectable without exposing either in automatic formatting.
+
+Ownership and exact grant decisions are application policy. Managed definitions,
+ledger evidence and the selected PUBLIC policy are library invariants and are
+checked again after callback and deferred work, before COMMIT. No optional
+caller validation step or paired finalize call exists. Successful application
+work still retires session state. The existing no-work method remains compatible
+for consumers without atomic application grants. Live failure scenarios exercise
+these boundaries; no fresh-agent usability evaluation is claimed.
+
 ### At-rest rewrap pairing assessment (`batter-t2uq`)
 
 The earlier wrapper-only rotation returned a `WrappedKey` that the caller had to
