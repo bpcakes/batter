@@ -3,14 +3,17 @@
 //! `INVALID` adoptable leftover, and refuses a foreign index under an
 //! adoptable name without dropping it.
 
+use std::time::Duration;
+
 use runledger_postgres::{
-    OnlineIndexProblem, SchemaCompatibilityError, prepare_online_indexes_for_external_migrator,
+    OnlineIndexPhase, OnlineIndexProblem, SchemaCompatibilityError,
+    prepare_online_indexes_for_external_migrator,
 };
 mod online_support;
 mod support;
 use online_support::{
-    DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, hold_writer_lock, index_catalog,
-    raw_apply_through,
+    DECLARED_INDEXES, Harness, LAST_VERSION_BEFORE_CUTOVER, build_waits_for_writers,
+    hold_writer_lock, index_catalog, raw_apply_through, sqlx_history, wait_for,
 };
 use sqlx::migrate::MigrateError;
 use support::profiled_database;
@@ -175,5 +178,74 @@ async fn preparation_refuses_a_foreign_index_under_an_adoptable_name() {
         .await
         .expect("preparation proceeds once the name is free");
     assert!(built.contains(&DECLARED_INDEXES[1]));
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn failed_preparation_retains_the_native_cause_without_recording_a_migration() {
+    let harness = Harness::fresh("online_prep_build_error").await;
+    raw_apply_through(&harness.pool, LAST_VERSION_BEFORE_CUTOVER).await;
+    let history = sqlx_history(&harness.pool).await;
+    let writer = hold_writer_lock(&harness.pool).await;
+    let pool = harness.pool.clone();
+    let runner = tokio::spawn(async move {
+        let database = profiled_database(&pool).await;
+        let result = prepare_online_indexes_for_external_migrator(&database).await;
+        database.pool().close().await;
+        result
+    });
+    wait_for("preparation build waits on the writer", || {
+        build_waits_for_writers(&harness.pool)
+    })
+    .await;
+    let pid: i32 = sqlx::query_scalar(
+        "SELECT pid FROM pg_catalog.pg_stat_progress_create_index
+         WHERE datid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
+           AND index_relid = pg_catalog.to_regclass($1) AND phase LIKE 'waiting for%'",
+    )
+    .bind(DECLARED_INDEXES[0])
+    .fetch_one(&harness.pool)
+    .await
+    .expect("the actual preparation builder");
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT pg_catalog.pg_cancel_backend($1)")
+            .bind(pid)
+            .fetch_one(&harness.pool)
+            .await
+            .expect("cancel the preparation build")
+    );
+    let error = tokio::time::timeout(Duration::from_secs(10), runner)
+        .await
+        .expect("preparation settles while the writer remains held")
+        .expect("preparation task")
+        .expect_err("cancelled build");
+    let rendered = format!("{error} {error:?}");
+    assert!(!rendered.contains("canceling statement"));
+    let SchemaCompatibilityError::OnlineIndexExecution(failure) = error else {
+        panic!("missing preparation build context: {error}");
+    };
+    assert_eq!(failure.index(), DECLARED_INDEXES[0]);
+    assert_eq!(failure.recorded_version(), None);
+    assert_eq!(failure.phase(), OnlineIndexPhase::Build);
+    assert!(failure.restoration_error().is_none());
+    let SchemaCompatibilityError::Query(native) = failure.cause() else {
+        panic!("native cancellation cause");
+    };
+    assert_eq!(
+        native
+            .as_database_error()
+            .expect("server cancellation")
+            .code()
+            .as_deref(),
+        Some("57014")
+    );
+    assert_eq!(sqlx_history(&harness.pool).await, history);
+    assert!(!index_catalog(&harness.pool).await[DECLARED_INDEXES[0]].1);
+    writer.rollback().await.expect("release writer");
+    let built = prepare(&harness)
+        .await
+        .expect("repair the interrupted preparation");
+    assert_eq!(built, &DECLARED_INDEXES[..2]);
+    assert_eq!(sqlx_history(&harness.pool).await, history);
     harness.teardown().await;
 }

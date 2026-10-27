@@ -110,6 +110,14 @@ All notable changes to this workspace are documented here.
 
 ### Changed
 
+- Visible `REINDEX INDEX CONCURRENTLY` progress now defers verification,
+  protected migration and pending-index preparation when it names a replacement
+  for the canonical INVALID index. Correlation uses the builder's granted lock
+  on the original index, preserving foreign-definition refusal and excluding
+  other indexes on the same table. No caller migration lock or new statistics
+  privilege is required. Public call shapes are unchanged. A cancelled-build
+  preparation regression also proves that failure context retains no recorded
+  migration version and leaves migration history unchanged.
 - Concurrent index removal during verification no longer misreports a foreign
   definition when the snapshot retains the old index row but its live catalog
   definition has disappeared. That state reports `BuildInProgress` while another

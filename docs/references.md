@@ -5204,6 +5204,25 @@ and row-security gates, and covers both protected repair and lock-free settlemen
 Both tests failed with `DefinitionMismatch` before the classifier correction;
 executed validation belongs to `batter-fnj8.7`.
 
+PostgreSQL 18.6's
+[`ReindexRelationConcurrently`](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/indexcmds.c)
+changes `PROGRESS_CREATEIDX_INDEX_OID` from the original to its replacement
+during build and validation, while retaining session-level
+`ShareUpdateExclusiveLock` locks on both indexes. The
+[`REINDEX` contract](https://www.postgresql.org/docs/18/sql-reindex.html)
+permits `REINDEX INDEX CONCURRENTLY` on an INVALID index. Runledger correlates
+visible concurrent-reindex progress with the original index's granted lock,
+scoped to the builder PID and database; another index on the same table does
+not qualify. Two isolated PostgreSQL 18.6 probes first reproduced the missed
+classification and competing DROP/rebuild. `online_reindex.rs` then exercises
+the three public entry points after progress names the replacement, retaining
+identity/history and foreign/unrelated-index controls. The public verifier test
+failed before the correction. The separate preparation cancellation regression
+retains native SQLSTATE `57014` without claiming an acknowledged migration;
+[`pg_cancel_backend`](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL)
+cancels the current statement rather than terminating the session. Executed
+validation belongs to `batter-fnj8.8`.
+
 [CREATE INDEX storage parameters](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-STORAGE-PARAMETERS)
 define B-tree fillfactor's default as 90. Explicit options appear in the catalog
 rendering and intentionally fail Runledger's strict definition match;

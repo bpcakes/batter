@@ -3122,6 +3122,8 @@ The online-index suite covers the protected migration runner on PostgreSQL
 | Typed lock-wait expiry, cancellation and isolated advisory fallback | `cargo test -p runledger-postgres --locked --test online_failures` |
 | Profile timeout restoration unit test | `cargo test -p runledger-postgres --locked --lib migrations::online::tests::lifted_profile_timeouts_are_restored_on_the_session -- --exact` |
 | Public verifier across a concurrent DROP commit | `cargo test -p runledger-postgres --locked --test online_snapshot` |
+| Concurrent reindex after progress changes to its replacement OID | `cargo test -p runledger-postgres --locked --test online_reindex` |
+| External-preparation history, repair and failed-build context | `cargo test -p runledger-postgres --locked --test online_preparation` |
 
 A fresh protected run records the same
 `_sqlx_migrations` rows and leaves the same `pg_get_indexdef` catalog as the
@@ -3188,6 +3190,22 @@ manual-DROP case requires `Missing` without that lock. Both preserve migration
 history and pass fresh verification after repair. The gates are confined to
 the ephemeral database; no production hooks replace the verifier's boundary.
 Executed regression and baseline-failure evidence belongs to `batter-fnj8.7`.
+
+`online_reindex.rs` holds an older read-only snapshot while a real
+`REINDEX INDEX CONCURRENTLY` builds and validates its replacement. It waits for
+the `waiting for old snapshots` phase, observes the replacement OID and the
+builder's granted lock on the original index, and confirms no advisory lock is
+held by that builder. Verification, protected migration and pending-index
+preparation must return `BuildInProgress` before the snapshot is released,
+preserve index identity and history, then accept the replacement without another
+build. Controls reindex another index on the same table and a foreign definition
+under a declared name, retaining `Invalid` and `DefinitionMismatch` respectively.
+The public-verifier regression fails the old classifier with `Invalid`.
+`online_preparation.rs` cancels an actual pending preparation build on the server
+while its writer remains held. It checks `OnlineIndexPhase::Build`, no recorded
+migration version, retained SQLSTATE `57014`, redacted formatting and unchanged
+history, then successfully prepares again. Executed evidence for both targets
+belongs to `batter-fnj8.8`.
 
 `online_transport_failures.rs` uses a loopback PostgreSQL relay to withhold a
 real successful lock-poll response while the runtime advances, or deliver it

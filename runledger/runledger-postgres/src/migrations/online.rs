@@ -149,9 +149,10 @@ pub enum OnlineIndexProblem {
     /// exactly once. This is a packaging defect, not a database state.
     StatementNotEmbedded,
     /// Another session in this database may still be building the index: its
-    /// progress identifies the index, or hidden progress is correlated with a
-    /// build lock on its table, or another session holds the migration lock
-    /// while the index is missing or `INVALID`. Hidden identity conservatively
+    /// progress identifies the index, concurrent reindex holds its original
+    /// index lock, hidden progress is correlated with a build lock on its table,
+    /// or another session holds the migration lock while the index is missing
+    /// or `INVALID`. Hidden identity conservatively
     /// defers other indexes on the same table. A definition removed since the
     /// inspection snapshot follows the same migration-lock rule. Retry after
     /// the build ends.
@@ -302,7 +303,8 @@ async fn index_state(
     // progress may hide the index but still exposes pid/datid. Correlate that
     // backend's table lock so manual builders need no migration-lock protocol.
     // Hidden progress can conservatively defer other indexes on the same table;
-    // the migration-lock fallback also covers builds not yet in the catalog.
+    // visible concurrent reindex names its replacement but locks the original.
+    // The migration-lock fallback also covers builds not yet in the catalog.
     let row: Option<DeclaredNameRow> = sqlx::query_as(
         "SELECT i.indisvalid AS valid,
                     EXISTS (
@@ -311,14 +313,15 @@ async fn index_state(
                               SELECT oid FROM pg_catalog.pg_database
                               WHERE datname = pg_catalog.current_database()
                           )
-                          AND (p.index_relid = c.oid OR (
-                              p.index_relid IS NULL AND EXISTS (
-                                  SELECT 1 FROM pg_catalog.pg_locks l
-                                  WHERE l.pid = p.pid AND l.database = p.datid
-                                    AND l.locktype = 'relation'
-                                    AND l.relation = i.indrelid AND l.granted
-                                    AND l.mode IN ('ShareUpdateExclusiveLock', 'ShareLock')
-                              )
+                          AND (p.index_relid = c.oid OR EXISTS (
+                              SELECT 1 FROM pg_catalog.pg_locks l
+                              WHERE l.pid = p.pid AND l.database = p.datid
+                                AND l.locktype = 'relation' AND l.granted
+                                AND ((p.index_relid IS NULL AND l.relation = i.indrelid
+                                      AND l.mode IN ('ShareUpdateExclusiveLock', 'ShareLock'))
+                                     OR (p.command = 'REINDEX CONCURRENTLY'
+                                         AND l.relation = c.oid
+                                         AND l.mode = 'ShareUpdateExclusiveLock'))
                           ))
                     ) AS building,
                     t.relname::text AS \"table\",

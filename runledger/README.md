@@ -1651,7 +1651,11 @@ can expose native details. Connection retirement stays armed, without proving
 remote termination. No error authorizes automatic replay. While another session
 in the same database is still building the index, verification, protected migration
 and pending-index preparation report `OnlineIndexProblem::BuildInProgress`;
-retry once that build ends. If statistics privileges hide the index identity,
+retry once that build ends. Concurrent reindex reports its replacement index's
+OID while the original is still invalid. Runledger recognizes that build through
+the backend's granted lock on the original index, so it does not queue a competing
+drop and rebuild. Visible reindex of another index on the same table does not
+qualify. If statistics privileges hide the index identity,
 Runledger correlates the visible builder PID with its table lock. This can
 conservatively defer another index on that same table, without treating hidden
 builds on unrelated tables or databases as evidence. Manual builders need no
