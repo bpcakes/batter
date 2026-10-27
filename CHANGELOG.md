@@ -8,6 +8,15 @@ contracts, capability facts and validation history.
 
 ## Unreleased
 
+- Add `PgLease::migrate_and_apply_with` (`batter-aouh`) for scoped application SQL
+  after managed definitions and before the same transaction commits. Ownership
+  and grants can publish with changed callers; managed definitions, ledger
+  evidence, transaction continuity and revoked PUBLIC execution are rechecked.
+  Refusals roll back the uncommitted apply and grants; already committed
+  migrations and unconfirmed disposition remain distinct. The existing
+  `migrate_and_apply` API and its no-application path are unchanged. See
+  [ADR-013](docs/adr/013-managed-database-objects.md).
+
 - Breaking: browser cookies are presented only where the route group's
   browser policy accepts ambient credentials (`batter-52s3`,
   [ADR-010 assessment](docs/adr/010-agent-only-consumption.md#browser-credential-gate-assessment-batter-52s3)).
@@ -200,7 +209,9 @@ contracts, capability facts and validation history.
   and session-lock termination to server-session termination. Public call shapes
   and persisted ledger formats are unchanged. Add a lazy object-count boundary
   regression, correct the live-runner summary to 157 cases, and clarify the
-  PostgreSQL lock-before-snapshot reference (`batter-54d0.2`).
+  PostgreSQL lock-before-snapshot reference (`batter-54d0.2`). Align the
+  `CommitUnconfirmed` variant's rustdoc with verification's current-state,
+  server-session termination and replay limits (`batter-54d0.3`).
 
 - Add `batter_sqlx::managed` (also `batter::sqlx::managed`, feature `sqlx`):
   managed routines and the triggers that bind them, kept as source edited in

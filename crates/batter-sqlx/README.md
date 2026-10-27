@@ -783,6 +783,33 @@ if report.status() != VerificationStatus::WithinDeclaredPolicy {
 # Ok(()) }
 ```
 
+For application ownership and dependency grants that must publish with the new
+bodies, use `PgLease::migrate_and_apply_with(migrator, &objects, async |sql| ... )`.
+The callback receives only `&mut PgScopedSql` after the whole set exists and
+before the same transaction commits. Return `Result<(), E>`; retain grant
+policy and role safety checks in the application. The existing
+`migrate_and_apply` remains the compatible no-application-work path, not a way
+to make a later grant transaction atomic.
+
+The callback runs under a native savepoint and assigned transaction identity.
+On refusal, recovery of that savepoint and the same XID must succeed before
+`ManagedApplyWithError::Application(E)` is returned. Failure to recover or
+validate is `Unconfirmed { error, application }`, retaining any refusal.
+An explicit callback `COMMIT` can already have published effects; detection
+cannot undo it. This is not a SQL sandbox against deliberate transaction or
+administrative manipulation. No error authorizes automatic replay.
+
+After successful callback work, pending deferred constraints/triggers run via
+`SET CONSTRAINTS ALL IMMEDIATE`, then the adapter rechecks managed identities,
+definitions, ledger identity/shape/content/timestamps and PUBLIC execution.
+Changes fail instead of becoming a misleading successful manifest receipt.
+Owner and non-PUBLIC ACL changes are allowed. A final continuity check precedes
+COMMIT. Native apply failures retain `ManagedApplyError` through `Apply`,
+including `CommitUnconfirmed`; migrations already committed remain committed.
+The callback form retires its session even on success and has no await after
+acknowledged COMMIT. Cancellation still cannot prove remote rollback or resolve
+an in-flight commit. See the method's rustdoc for an executable grant example.
+
 The manifest is pure and bounded: at most 10,000 entries plus retirements, 1 MiB
 per source and 64 MiB in total. Each `ManagedObject` is exactly one
 `CREATE OR REPLACE FUNCTION`, `PROCEDURE` or `TRIGGER` statement, or one

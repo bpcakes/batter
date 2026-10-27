@@ -105,7 +105,9 @@ pub enum ManagedApplyError {
         identity: String,
     },
     /// `COMMIT` was sent but its outcome was not acknowledged. The objects may
-    /// or may not be installed; verification of the ledger decides.
+    /// or may not be installed. Read-only verification inspects the current
+    /// installed state; it does not acknowledge termination of a retired server
+    /// session or authorize replay.
     CommitUnconfirmed(SqlxFailure),
 }
 
@@ -189,11 +191,13 @@ impl From<CatalogError> for ManagedApplyError {
     }
 }
 
-pub(crate) async fn migrate_and_apply(
+pub(crate) async fn migrate_and_apply<E: From<ManagedApplyError>>(
     mut lease: PgLease,
     migrator: &sqlx::migrate::Migrator,
     manifest: &ManagedObjectManifest,
-) -> Result<AppliedManagedObjects, ManagedApplyError> {
+    application: impl AsyncFnOnce(&mut PgConnection, &ManagedObjectManifest) -> Result<(), E>,
+    return_to_pool: bool,
+) -> Result<AppliedManagedObjects, E> {
     // One session lock spans both phases, so a concurrent apply of the same
     // ledger cannot land between this connection's migrations and objects.
     // Every error below returns while it is held; dropping the lease retires
@@ -210,11 +214,21 @@ pub(crate) async fn migrate_and_apply(
         .await
         .map_err(|error| ManagedApplyError::Migration(sqlx::Error::from(error).into()))?;
     let mut transaction = connection.begin().await.map_err(statement)?;
-    let applied = apply(&mut transaction, manifest).await?;
+    let (applied, settings) = apply(&mut transaction, manifest).await?;
+    settings
+        .restore(&mut transaction)
+        .await
+        .map_err(statement)?;
+    application(&mut transaction, manifest).await?;
     transaction
         .commit()
         .await
         .map_err(|error| ManagedApplyError::CommitUnconfirmed(error.into()))?;
+    if !return_to_pool {
+        // Arbitrary application SQL may leave session state behind. Acknowledge
+        // commit without another await; dropping the lease retires that state.
+        return Ok(applied);
+    }
     // The objects are committed: a failed unlock retires the session rather
     // than turning a committed apply into an error.
     let unlocked = sqlx::query_scalar::<_, bool>("SELECT pg_catalog.pg_advisory_unlock($1)")
@@ -236,7 +250,7 @@ async fn execute(connection: &mut PgConnection, sql: impl SqlSafeStr) -> Result<
 async fn apply(
     connection: &mut PgConnection,
     manifest: &ManagedObjectManifest,
-) -> Result<AppliedManagedObjects, ManagedApplyError> {
+) -> Result<(AppliedManagedObjects, RenderSettings), ManagedApplyError> {
     // Every statement must see what committed before it ran, whatever the
     // session default: a trigger's kind is read again after its table is
     // locked, and under REPEATABLE READ that read would return the
@@ -263,12 +277,15 @@ async fn apply(
         revoke_public_execute(connection, &installed).await?;
     }
     record(connection, manifest, &pending, &installed).await?;
-    Ok(AppliedManagedObjects {
-        digest: manifest.digest(),
-        created_or_replaced: pending.len(),
-        unchanged: manifest.objects().len() - pending.len(),
-        retired: retired.triggers + retired.routines,
-    })
+    Ok((
+        AppliedManagedObjects {
+            digest: manifest.digest(),
+            created_or_replaced: pending.len(),
+            unchanged: manifest.objects().len() - pending.len(),
+            retired: retired.triggers + retired.routines,
+        },
+        settings,
+    ))
 }
 
 /// Retire, drop and execute what this apply changes, and return the executed
@@ -324,7 +341,7 @@ async fn execute_changes<'m>(
 
 /// Every declared object as installed now, with its oid and rendered hash;
 /// an object absent or of another kind fails the apply.
-async fn installed_objects<'m>(
+pub(super) async fn installed_objects<'m>(
     connection: &mut PgConnection,
     manifest: &'m ManagedObjectManifest,
 ) -> Result<Vec<(&'m ManagedObject, i64, [u8; 32])>, ManagedApplyError> {

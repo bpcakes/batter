@@ -69,7 +69,9 @@ the SQLx ledger: Batter never reads or writes migration history for it.
   SHA-256 `ManagedObjectDigest` covers the policy, every entry's kind, identity
   and source checksum and every retirement, in sorted identity order, but not
   the ledger name, so a build can embed it in release evidence.
-- `PgLease::migrate_and_apply(migrator, &manifest)` is the only apply path.
+- `PgLease::migrate_and_apply(migrator, &manifest)` applies without application work.
+  The additive `migrate_and_apply_with` below composes application SQL in the same transaction.
+  Neither path permits apply without migrations.
 - `VerificationPlan::managed_objects(&manifest)`, `with_managed_objects` and
   `verify_managed_objects` add a fourth, read-only verification axis.
 
@@ -710,3 +712,43 @@ Mutation controls against those cases:
   both idempotence cases wait for a concurrent writer. Those cases now apply an
   unchanged set while another transaction holds `ROW EXCLUSIVE` on the trigger
   table, and require it to finish within ten seconds.
+
+## Scoped application SQL before commit, 2026-10-26
+
+`batter-aouh` addresses an existing restricted caller replaced to invoke a new
+private helper. Separate managed apply and role setup commit the caller before
+the helper's ownership/dependency grants exist, producing a permission failure.
+The additive `PgLease::migrate_and_apply_with` keeps one library-owned migration
+and apply flow and inserts application SQL after all managed definitions exist
+but before its commit. It accepts an async callback over `PgScopedSql`, returning
+`Result<(), E>`, and returns `AppliedManagedObjects` only on acknowledged commit.
+The old entrypoint shares that flow with no application work and retains its
+return type and pool-return behavior. No apply-only path, raw replaceable
+resource, grant inventory or provisioning policy is added.
+
+The existing private savepoint and XID/isolation/access validation are reused.
+A callback refusal recovers its savepoint and verifies the original transaction
+before becoming `Application(E)`. Recovery/continuity loss is `Unconfirmed`,
+which also retains the original refusal. Native apply errors remain a separate
+`Apply(ManagedApplyError)`, preserving native COMMIT uncertainty. No error says
+that earlier migrations were rolled back or permits replay. Explicit COMMIT in
+callback SQL may already have published effects; the boundary detects the lost
+transaction but cannot undo remote effects or sandbox hostile administration.
+
+The callback may change owners and exact non-PUBLIC grants, but cannot obtain a
+successful receipt for changed managed definitions or ledger evidence. The
+adapter compares catalog identities/rendered definitions and exact ledger
+identity, shape, evidence columns and times before/after, checks the explicit
+PUBLIC policy again, and validates continuity immediately before commit.
+Deferred work runs before that final inspection; otherwise a deferred callback
+trigger could mutate a definition only after inspection. Application session
+state is retired even on success; no cleanup await can erase acknowledged
+COMMIT. Existing no-callback behavior stays unchanged.
+
+Live contracts use the existing managed fixture for concurrent publication,
+actual restricted calls, exact positive/negative grants, fresh/upgrade refusal,
+SQL-abort recovery, managed-state/deferred-trigger mutation, transaction escape
+and cancellation with observed backend exit. Existing atomic live COMMIT-loss
+controls remain applicable to native commit uncertainty; this increment does
+not claim a new independent wire-level commit fault harness. Final execution
+results belong to the owning task and source-bound handoff.
